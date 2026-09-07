@@ -8,12 +8,13 @@ import sys
 import pytest
 
 import dace
-from dace import nodes
+from dace import dtypes, nodes
 from dace.libraries.ai import verify
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.context import collect_context
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
+from dace.sdfg import infer_types
 
 sys.path.insert(0, os.path.dirname(__file__))
 from ai_test_utils import stub_provider, stub_provider_sequence  # noqa: E402
@@ -123,6 +124,58 @@ def test_verification_can_be_disabled():
             node.expand(state, 'ai')
 
     assert len(provider.calls) == 1, 'the code was verified even though verification is off'
+
+
+#: storage, memlet subset, dynamic, and the C++ types both the prompt and the generated code must
+#: use for the input and the output. A GPU operand is a pointer even for a single element: taking
+#: it by value would compile into a host-side load out of device memory. A dynamic output has no
+#: single destination to write back to and so stays a pointer, while a dynamic input does not.
+CONNECTOR_SHAPES = {
+    'cpu_element': (dtypes.StorageType.CPU_Heap, '0, 0', False, 'float', 'float'),
+    'cpu_tile': (dtypes.StorageType.CPU_Heap, '0:4, 0:4', False, 'float*', 'float*'),
+    'gpu_element': (dtypes.StorageType.GPU_Global, '0, 0', False, 'float*', 'float*'),
+    'gpu_tile': (dtypes.StorageType.GPU_Global, '0:4, 0:4', False, 'float*', 'float*'),
+    'dynamic_element': (dtypes.StorageType.CPU_Heap, '0, 0', True, 'float', 'float*'),
+}
+
+
+@pytest.mark.parametrize('shape', sorted(CONNECTOR_SHAPES))
+def test_the_probe_declares_connectors_the_way_codegen_will(shape):
+    """
+    The probe must predict connector types exactly as ``infer_types`` later resolves them.
+
+    A pointer where the generated code will hold a value (or the reverse) makes the probe accept
+    code the real build rejects -- the one failure the verification step exists to prevent, and one
+    that no amount of prompting can recover from, since the model is told the wrong type too.
+    """
+    storage, subset, dynamic, expected_in, expected_out = CONNECTOR_SHAPES[shape]
+
+    sdfg = dace.SDFG(f'ai_conn_{shape}')
+    sdfg.add_array('A', [8, 8], dace.float32, storage=storage)
+    sdfg.add_array('B', [8, 8], dace.float32, storage=storage)
+    state = sdfg.add_state()
+    node = AINode('n', 'Do something.', inputs={'_in'}, outputs={'_out'})
+    state.add_node(node)
+    read = dace.Memlet(f'A[{subset}]')
+    write = dace.Memlet(f'B[{subset}]')
+    read.dynamic = write.dynamic = dynamic
+    state.add_edge(state.add_read('A'), None, node, '_in', read)
+    state.add_edge(node, '_out', state.add_write('B'), None, write)
+
+    predicted = {c.name: c.ctype for c in collect_context(node, state, sdfg).connectors}
+
+    with dace.config.set_temporary('ai', 'verify', value=False):
+        with stub_provider(TaskletSpec(code='// nothing')):
+            node.expand(state, 'ai')
+    infer_types.infer_connector_types(sdfg)
+
+    tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
+    actual = {
+        name: str(conntype.ctype)
+        for name, conntype in list(tasklet.in_connectors.items()) + list(tasklet.out_connectors.items())
+    }
+    assert predicted == {'_in': expected_in, '_out': expected_out}
+    assert actual == predicted
 
 
 if __name__ == '__main__':

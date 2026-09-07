@@ -69,4 +69,4 @@ class ResponsesProvider:
             payload = json.loads(text)
         except json.JSONDecodeError as e:
             raise AIExpansionError(f'The model response was not valid JSON: {e}') from e
-        return backend.spec_from_dict(payload)
+        return backend.spec_from_dict(payload, raw=text)

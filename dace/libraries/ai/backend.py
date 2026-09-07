@@ -61,6 +61,10 @@ class TaskletSpec:
     environments: List[EnvironmentSpec] = field(default_factory=list)
     notes: str = ''
 
+    #: The provider's answer exactly as it arrived, kept for the transcript. A response that parses
+    #: into something unexpected can only be explained from the text that produced it.
+    raw_response: str = ''
+
 
 #: JSON schema describing :class:`TaskletSpec`, used for structured model output.
 RESPONSE_SCHEMA: Dict[str, Any] = {
@@ -219,11 +223,12 @@ class LLMProvider(Protocol):
         ...
 
 
-def spec_from_dict(payload: Dict[str, Any]) -> TaskletSpec:
+def spec_from_dict(payload: Dict[str, Any], raw: str = '') -> TaskletSpec:
     """
     Converts a decoded JSON response into a :class:`TaskletSpec`.
 
     :param payload: The decoded response object.
+    :param raw: The provider's answer as text, kept verbatim for the transcript.
     :return: The corresponding tasklet specification.
     :raises AIExpansionError: If the response does not contain a tasklet body.
     """
@@ -258,7 +263,8 @@ def spec_from_dict(payload: Dict[str, Any]) -> TaskletSpec:
                        ignored_symbols=list(payload.get('ignored_symbols') or []),
                        use_environments=list(payload.get('use_environments') or []),
                        environments=environments,
-                       notes=payload.get('notes') or '')
+                       notes=payload.get('notes') or '',
+                       raw_response=raw)
 
 
 def api_key(provider: str) -> Optional[str]:

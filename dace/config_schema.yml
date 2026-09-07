@@ -671,6 +671,45 @@ required:
                     Python modules, so that they can be inspected, edited, and resolved again in
                     later sessions. Defaults to ~/.dace/ai_environments when empty.
 
+            cache:
+                type: bool
+                default: true
+                title: Reuse model answers
+                description: >
+                    Store every answer on disk, keyed by the provider, the model, the effort
+                    setting and the whole conversation, and reuse it when the same question is
+                    asked again. Re-expanding an unchanged library node then costs nothing. Any
+                    change to the SDFG, the node, or the model changes the key and misses the
+                    cache, so a stale answer cannot be picked up.
+
+            cache_dir:
+                type: str
+                default: ''
+                title: Answer cache directory
+                description: >
+                    Where reusable answers are stored. Defaults to ~/.dace/ai_cache when empty.
+                    Deleting the directory, or any file in it, only forces the question to be
+                    asked again.
+
+            transcripts:
+                type: bool
+                default: true
+                title: Record expansion transcripts
+                description: >
+                    Write the prompts, the model's answers, and the source and diagnostics of every
+                    probe compilation to disk, one directory per expansion. An expansion is a paid
+                    and non-reproducible call whose result is baked into the SDFG, so the material
+                    that produced it is kept by default. Set DACE_debugprint=verbose to see the
+                    same material on the terminal as it happens.
+
+            transcript_dir:
+                type: str
+                default: ''
+                title: Transcript directory
+                description: >
+                    Where expansion transcripts are written. Defaults to ~/.dace/ai_transcripts
+                    when empty.
+
             extra_instructions:
                 type: str
                 default: ''

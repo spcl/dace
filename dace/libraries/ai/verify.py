@@ -48,6 +48,9 @@ class ProbeResult:
     inconclusive: bool = False
     command: str = ''
     stderr: str = ''
+    #: The translation unit that was compiled, kept so that a probe which accepted code the real
+    #: build later rejects can be compared against what DaCe actually generates.
+    source: str = ''
 
 
 def _headers_of(env: Any) -> List[str]:
@@ -97,14 +100,34 @@ def _env_flags(environments: Sequence[Any]) -> List[str]:
     return flags
 
 
-def build_probe_source(spec: TaskletSpec, ctx: ExpansionContext, environments: Sequence[Any]) -> str:
+def probe_ctype(conn: Any) -> Optional[str]:
+    """
+    Returns the C++ type to declare a connector with in the probe.
+
+    A connector whose own type could not be inferred falls back to the element type of the
+    container behind it. It must fall back to *something* concrete: declaring the probe function as
+    a template instead would leave its body uninstantiated, and an uninstantiated template body is
+    barely checked at all -- which would turn the probe into a source of false passes.
+
+    :param conn: The connector information.
+    :return: The type, or ``None`` if nothing about the connector is known.
+    """
+    if conn.ctype != 'auto':
+        return conn.ctype
+    if not conn.data_ctype:
+        return None
+    return conn.data_ctype if conn.num_elements == '1' else f'{conn.data_ctype}*'
+
+
+def build_probe_source(spec: TaskletSpec, ctx: ExpansionContext, environments: Sequence[Any]) -> Optional[str]:
     """
     Synthesizes a standalone translation unit around a generated tasklet.
 
     :param spec: The generated tasklet.
     :param ctx: The context the tasklet was generated for.
     :param environments: The environment classes attached to the expansion.
-    :return: The source of the probe translation unit.
+    :return: The source of the probe translation unit, or ``None`` if a connector's type is
+             unknown, in which case no faithful probe can be built.
     """
     device = ctx.capabilities is not None and ctx.capabilities.device_level
 
@@ -124,14 +147,15 @@ def build_probe_source(spec: TaskletSpec, ctx: ExpansionContext, environments: S
     if spec.code_global.strip():
         lines.append(spec.code_global)
 
-    # A connector whose type could not be determined is declared as a template parameter rather
-    # than skipped, so that the body still type-checks against it.
-    unresolved = [conn.name for conn in ctx.connectors if conn.ctype == 'auto']
-    if unresolved:
-        lines.append(f'template <{", ".join(f"typename __dace_probe_T{i}" for i in range(len(unresolved)))}>')
-    resolved_types = {name: f'__dace_probe_T{i}' for i, name in enumerate(unresolved)}
-
-    params = [f'{resolved_types.get(conn.name, conn.ctype)} {conn.name}' for conn in ctx.connectors]
+    params = []
+    for conn in ctx.connectors:
+        ctype = probe_ctype(conn)
+        if ctype is None:
+            logger.info(
+                'Skipping AI expansion verification: the type of connector "%s" is not known, so the probe '
+                'would not check the generated code faithfully.', conn.name)
+            return None
+        params.append(f'{ctype} {conn.name}')
     params += [f'{ctype} {name}' for name, ctype in sorted(ctx.symbols.items())]
     qualifier = '__device__ ' if device else ''
     lines.append(f'{qualifier}static void __dace_probe_tasklet({", ".join(params) or "void"}) {{')
@@ -261,23 +285,27 @@ def probe_compile(spec: TaskletSpec, ctx: ExpansionContext, environments: Sequen
 
     device = ctx.capabilities is not None and ctx.capabilities.device_level
     suffix = '.cu' if device else '.cpp'
+    source = build_probe_source(spec, ctx, environments)
+    if source is None:
+        return ProbeResult(ok=True, inconclusive=True)
+
     directory = tempfile.mkdtemp(prefix='dace_ai_probe_')
     source_path = os.path.join(directory, f'probe{suffix}')
     try:
         with open(source_path, 'w') as fp:
-            fp.write(build_probe_source(spec, ctx, environments))
+            fp.write(source)
 
         command = _device_command(source_path, ctx) if device else _host_command(source_path)
         if command is None:
             logger.info('Skipping AI expansion verification: no suitable compiler was found.')
-            return ProbeResult(ok=True, inconclusive=True)
+            return ProbeResult(ok=True, inconclusive=True, source=source)
         command = command[:1] + _env_flags(environments) + command[1:]
 
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=_COMPILE_TIMEOUT, check=False)
         except (OSError, subprocess.SubprocessError) as e:
             logger.info('Skipping AI expansion verification: the probe could not be run (%s).', e)
-            return ProbeResult(ok=True, inconclusive=True)
+            return ProbeResult(ok=True, inconclusive=True, source=source)
 
         # The probe lives in a randomly named temporary directory. Replacing that path with a
         # stable placeholder keeps the diagnostics -- and therefore any repair prompt built from
@@ -287,13 +315,17 @@ def probe_compile(spec: TaskletSpec, ctx: ExpansionContext, environments: Sequen
             return text.replace(source_path, PROBE_DISPLAY_NAME).replace(directory, '')
 
         if result.returncode == 0:
-            return ProbeResult(ok=True, command=stable(' '.join(command)))
+            return ProbeResult(ok=True, command=stable(' '.join(command)), source=source)
         if _is_inconclusive(result.stderr):
             logger.info('AI expansion verification was inconclusive (a header could not be located by the probe).')
             return ProbeResult(ok=False,
                                inconclusive=True,
                                command=stable(' '.join(command)),
-                               stderr=stable(result.stderr))
-        return ProbeResult(ok=False, command=stable(' '.join(command)), stderr=stable(result.stderr or result.stdout))
+                               stderr=stable(result.stderr),
+                               source=source)
+        return ProbeResult(ok=False,
+                           command=stable(' '.join(command)),
+                           stderr=stable(result.stderr or result.stdout),
+                           source=source)
     finally:
         shutil.rmtree(directory, ignore_errors=True)

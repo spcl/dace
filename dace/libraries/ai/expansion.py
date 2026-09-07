@@ -19,7 +19,7 @@ imported inside :meth:`ExpandAI.expansion`.
 
 import functools
 import logging
-from typing import Any, Dict, List, Type
+from typing import Any, Dict, List, Optional, Type
 
 import dace.library
 from dace import dtypes
@@ -79,56 +79,126 @@ class ExpandAI(ExpandTransformation):
         # Imported here so that resolving the reserved 'ai' implementation stays cheap and free of
         # import cycles; none of this is needed unless an expansion actually runs.
         from dace.config import Config
+        from dace.libraries.ai import cache as ai_cache
         from dace.libraries.ai import environments as ai_environments
-        from dace.libraries.ai import prompts, verify
+        from dace.libraries.ai import prompts, transcript, verify
         from dace.libraries.ai.backend import get_provider
         from dace.libraries.ai.context import collect_context
         from dace.libraries.ai.exceptions import AIExpansionError
 
+        described = f'{type(node).__name__} "{node.name}"'
         ctx = collect_context(node, parent_state, parent_sdfg)
-        provider = get_provider()
+        record = transcript.begin(node, parent_state, parent_sdfg)
+        if record.path:
+            _status(f'{described}: transcript in {record.path}')
+
+        # Resolved on first use rather than up front, so that an expansion answered entirely from
+        # the cache needs neither a provider SDK nor an API key
+        provider = None
         system = prompts.SYSTEM_PROMPT
-        messages: List[Dict[str, str]] = [{'role': 'user', 'content': prompts.build_user_prompt(ctx)}]
+        record.record_system_prompt(system)
+        _detail('system prompt', system)
+
+        prompt = prompts.build_user_prompt(ctx)
+        messages: List[Dict[str, str]] = [{'role': 'user', 'content': prompt}]
 
         attempts = max(0, int(Config.get('ai', 'max_repair_attempts'))) + 1
         should_verify = Config.get_bool('ai', 'verify')
 
         spec = None
         environments: List[Any] = []
-        for attempt in range(attempts):
-            spec = provider.generate(system, messages)
-            environments = ai_environments.collect(spec)
-            if not should_verify:
-                break
+        try:
+            for attempt in range(attempts):
+                entry = record.begin_attempt(attempt + 1, prompt)
+                _detail('user prompt' if attempt == 0 else 'repair prompt', prompt)
 
-            result = verify.probe_compile(spec, ctx, environments)
-            if result.ok or result.inconclusive:
-                break
-            if attempt == attempts - 1:
-                raise AIExpansionError(
-                    f'The generated code for {type(node).__name__} "{node.name}" still does not compile after '
-                    f'{attempts} attempt(s). Last diagnostics:\n\n{result.stderr}')
-            logger.info('AI expansion of %s "%s" failed to compile; asking for a repair (attempt %d/%d).',
-                        type(node).__name__, node.name, attempt + 2, attempts)
-            messages.append({'role': 'assistant', 'content': _echo(spec)})
-            messages.append({'role': 'user', 'content': prompts.build_repair_prompt(result.stderr, result.command)})
+                cache_key = ai_cache.key(system, messages)
+                spec = ai_cache.lookup(cache_key)
+                cached = spec is not None
+                if cached:
+                    _status(f'{described}: reusing the cached answer for this prompt ({cache_key[:12]}), '
+                            f'attempt {attempt + 1}/{attempts}')
+                else:
+                    _status(f'{described}: asking {Config.get("ai", "provider")} '
+                            f'({Config.get("ai", "model")}), attempt {attempt + 1}/{attempts}')
+                    provider = provider or get_provider()
+                    spec = provider.generate(system, messages)
+                    ai_cache.store(cache_key, spec, system, messages)
+                record.record_answer(entry, spec, cached=cached)
+                _detail('answer', spec.raw_response or _echo(spec))
+                environments = ai_environments.collect(spec)
+                if not should_verify:
+                    _status(f'{described}: verification is off (ai.verify), taking the code as generated')
+                    break
+
+                result = verify.probe_compile(spec, ctx, environments)
+                record.record_verification(entry, result, result.source, ctx.capabilities is not None
+                                           and ctx.capabilities.device_level)
+                _detail('probe source', result.source)
+                if result.inconclusive:
+                    _status(f'{described}: probe compilation was inconclusive, taking the code as generated')
+                    break
+                if result.ok:
+                    _status(f'{described}: probe compiled cleanly ({result.command})')
+                    break
+
+                _status(f'{described}: probe compilation failed ({result.command})')
+                _detail('probe diagnostics', result.stderr)
+                if attempt == attempts - 1:
+                    raise AIExpansionError(f'The generated code for {described} still does not compile after '
+                                           f'{attempts} attempt(s). Last diagnostics:\n\n{result.stderr}')
+                logger.info('AI expansion of %s failed to compile; asking for a repair (attempt %d/%d).', described,
+                            attempt + 2, attempts)
+                _status(f'{described}: asking for a repair')
+                prompt = prompts.build_repair_prompt(result.stderr, result.command)
+                messages.append({'role': 'assistant', 'content': _echo(spec)})
+                messages.append({'role': 'user', 'content': prompt})
+        except Exception as e:
+            record.record_outcome('failed', str(e))
+            if record.path is None:
+                raise
+            # Named in the message rather than only logged: the run that produced this cost a model
+            # call, and the transcript is the only copy of what it said.
+            if isinstance(e, AIExpansionError):
+                raise AIExpansionError(f'{e}\n\nThe full prompts and answers are in {record.path}') from e
+            logger.warning('AI expansion of %s failed; the prompts and answers are in %s', described, record.path)
+            raise
 
         cls.environments = list(environments)
-        return ExpandAI._make_tasklet(node, spec)
+        record.record_outcome(
+            'expanded', environments=[env.full_class_path() for env in environments if hasattr(env, 'full_class_path')])
+        _status(f'{described}: expanded into a tasklet' +
+                (f' using {len(environments)} environment(s)' if environments else ''))
+        return ExpandAI._make_tasklet(node, spec, ctx)
 
     @staticmethod
-    def _make_tasklet(node: nodes.LibraryNode, spec: Any) -> nodes.Tasklet:
+    def _make_tasklet(node: nodes.LibraryNode, spec: Any, ctx: Any) -> nodes.Tasklet:
         """
         Turns a generated specification into a tasklet.
 
+        The connector types resolved during context collection are stamped onto the tasklet rather
+        than left for :func:`dace.sdfg.infer_types.infer_connector_types` to fill in later. They
+        have to be: the model was told those types and the probe compiled against them, while
+        inference re-derives them from the *tasklet*, and one of its rules -- never pass GPU global
+        memory by value -- only applies while the node is still a library node. Leaving it to
+        inference would turn a GPU operand the model was told to treat as a pointer into a value
+        that the host loads directly out of device memory.
+
         :param node: The library node being replaced.
         :param spec: The generated tasklet specification.
+        :param ctx: The context the tasklet was generated for.
         :return: The tasklet that replaces the library node.
         """
+        inputs = dict(node.in_connectors)
+        outputs = dict(node.out_connectors)
+        for conn in ctx.connectors:
+            if conn.conntype is not None:
+                (inputs if conn.direction == 'in' else outputs)[conn.name] = conn.conntype
+
         language = dtypes.Language.Python if spec.language.upper() == 'PYTHON' else dtypes.Language.CPP
         tasklet = nodes.Tasklet(node.name,
-                                inputs=dict(node.in_connectors),
-                                outputs=dict(node.out_connectors),
+                                inputs=inputs,
+                                outputs=outputs,
                                 code=spec.code,
                                 language=language,
                                 state_fields=list(spec.state_fields),
@@ -140,6 +210,41 @@ class ExpandAI(ExpandTransformation):
         if spec.notes:
             logger.info('AI expansion of %s "%s": %s', type(node).__name__, node.name, spec.notes)
         return tasklet
+
+
+def _status(message: str) -> None:
+    """
+    Prints one line describing a step of the expansion, when ``debugprint`` is set at all.
+
+    An expansion makes a paid network request and may compile and re-ask several times, so it is
+    worth being able to watch it happen rather than waiting in silence.
+
+    :param message: The message, without a trailing newline.
+    """
+    from dace.config import Config
+
+    if Config.get_bool('debugprint'):
+        print(f'[ai] {message}', flush=True)
+
+
+def _detail(label: str, body: Optional[str]) -> None:
+    """
+    Prints a block of text that a step acted on, only under ``debugprint=verbose``.
+
+    The same text is written to the transcript regardless; this is for watching a run live.
+
+    :param label: A short heading, e.g. ``'user prompt'``.
+    :param body: The text. Nothing is printed when it is empty.
+    """
+    import textwrap
+
+    from dace.config import Config
+
+    if Config.get('debugprint') != 'verbose' or not body or not body.strip():
+        return
+    print(f'[ai] --- {label} ---', flush=True)
+    print(textwrap.indent(body.rstrip('\n'), '    '), flush=True)
+    print(f'[ai] --- end {label} ---', flush=True)
 
 
 def _echo(spec: Any) -> str:

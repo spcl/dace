@@ -119,7 +119,7 @@ class ManualProvider:
         except json.JSONDecodeError as e:
             raise AIExpansionError(f'The reply for {node_type} "{node_name}" is not valid JSON: {e}\n'
                                    f'It must be a single JSON object matching the schema in {prompt_path}.') from e
-        return backend.spec_from_dict(payload)
+        return backend.spec_from_dict(payload, raw=reply)
 
 
 def _read(path: str) -> str:

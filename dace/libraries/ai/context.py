@@ -47,9 +47,15 @@ class ConnectorInfo:
     ctype: str  #: The C++ type of the variable that will be in scope
     is_pointer: bool  #: If False, the connector is a plain scalar value
     element_type: str  #: The C++ type of a single element
+    #: The resolved connector type, which the expansion stamps onto the generated tasklet so that
+    #: what the model was told stays true through code generation. Not rendered into the prompt.
+    conntype: Optional[dtypes.typeclass] = None
     data: Optional[str] = None  #: Name of the data container the memlet refers to
     container_kind: Optional[str] = None  #: ``Array``, ``Scalar``, ``Stream``, ``View``, ...
     dtype: Optional[str] = None
+    #: C++ element type of that container. Unlike ``element_type`` this does not depend on the
+    #: connector's own type having been inferable, which is what makes it usable as a fallback.
+    data_ctype: Optional[str] = None
     shape: Optional[Tuple[str, ...]] = None
     strides: Optional[Tuple[str, ...]] = None
     total_size: Optional[str] = None
@@ -345,6 +351,16 @@ def _infer_conntype(node: nodes.LibraryNode, name: str, direction: str, state: S
     which runs after expansion. Since whether a connector is a value or a pointer is exactly what
     the generated code depends on, the same rule is applied here without mutating the SDFG.
 
+    ``infer_types`` refuses to pass GPU global memory to a library node by value, and that guard is
+    applied here too -- otherwise a single-element GPU operand would be handed to the generated
+    code as a ``float``, which DaCe reads with ``float _a = A[0];`` on the host and which therefore
+    faults at run time. The guard is written as ``isinstance(node, nodes.LibraryNode)`` and the
+    library node is gone by the time inference runs, so it does not survive expansion on its own:
+    :meth:`dace.libraries.ai.expansion.ExpandAI._make_tasklet` stamps the types computed here onto
+    the tasklet's connectors, which is what makes this prediction hold rather than merely describe
+    an intent. A prediction that did not hold would be worse than none: the model is told the type,
+    and the probe compiles against it.
+
     :param node: The library node being expanded.
     :param name: The connector name.
     :param direction: ``'in'`` or ``'out'``.
@@ -353,24 +369,23 @@ def _infer_conntype(node: nodes.LibraryNode, name: str, direction: str, state: S
     :param edge: The edge attached to this connector, or ``None``.
     :return: The inferred type, or ``None`` if it cannot be determined.
     """
-    from dace.sdfg import infer_types  # Avoid a cyclic import
-
     declared = (node.in_connectors if direction == 'in' else node.out_connectors).get(name)
     if declared is not None and declared.type is not None:
         return declared
 
-    if direction == 'out':
-        try:
-            return infer_types.infer_out_connector_type(sdfg, state, node, name)
-        except Exception:
-            return None
-
     if edge is None or edge.data.data is None or edge.data.data not in sdfg.arrays:
         return None
-    desc = sdfg.arrays[edge.data.data]
-    scalar = bool(edge.data.subset) and edge.data.subset.num_elements() == 1
+    memlet = edge.data
+    desc = sdfg.arrays[memlet.data]
+
+    scalar = bool(memlet.subset) and memlet.subset.num_elements() == 1
+    if direction == 'out':
+        # A dynamic output without a write-conflict resolution has no single destination to write
+        # back to, so it stays a pointer
+        scalar &= not memlet.dynamic or memlet.wcr is not None
     scalar |= isinstance(desc, dt.Scalar)
-    # A library node never receives GPU global memory as a scalar value
+    # Never by value out of GPU global memory: the load or store would run wherever the tasklet
+    # does, which for a host tasklet means dereferencing a device pointer
     scalar &= desc.storage is not dtypes.StorageType.GPU_Global
     return desc.dtype if scalar else dtypes.pointer(desc.dtype)
 
@@ -395,7 +410,8 @@ def _connector_info(name: str, conntype: Optional[dtypes.typeclass], direction: 
                          direction=direction,
                          ctype=conntype.ctype if usable else 'auto',
                          is_pointer=is_pointer,
-                         element_type=element_type)
+                         element_type=element_type,
+                         conntype=conntype if usable else None)
     if edge is None:
         return info
 
@@ -414,6 +430,7 @@ def _connector_info(name: str, conntype: Optional[dtypes.typeclass], direction: 
     info.data = data_name
     info.container_kind = type(desc).__name__
     info.dtype = str(desc.dtype)
+    info.data_ctype = getattr(desc.dtype, 'ctype', None)
     info.storage = desc.storage.name
     info.transient = desc.transient
     if isinstance(desc, dt.Data):
