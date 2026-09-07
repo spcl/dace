@@ -727,11 +727,13 @@ def writes_container(state: dace.SDFGState, name: str) -> bool:
 
 
 def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array():
-    """A copy for an array first used on the device late must not split the device states.
+    """Staging ``B`` must not split the device states.
 
-    ``B`` is only touched in the second of two device states, so the copy that puts it on the
-    device is placed between them -- a host state in the middle of a run of kernels, which is
-    exactly what a caller fusing that run into one persistent kernel cannot swallow.
+    ``B`` is only touched in the second of two device states, so a copy that puts it on the device
+    naively lands between them -- a host state in the middle of a run of kernels, which is exactly
+    what a caller fusing that run into one persistent kernel cannot swallow. Here the second map
+    writes ALL of ``B`` and nothing reads it first, so there is no stage-down to place at all; the
+    companion test covers the case where a host writer forces one to exist.
     """
     sdfg = device_map_state_sdfg(host_writer_between=False)
     OtA().apply_pass(sdfg, {})
@@ -741,8 +743,10 @@ def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array()
     assert len(device_at) == 2, f"expected both maps on the device, got {[s.label for s in order]}"
     assert device_at == list(range(device_at[0], device_at[-1] +
                                    1)), (f"a host state sits between two device states: {[s.label for s in order]}")
-    assert writes_container(order[device_at[0] - 1],
-                            "B_gpu"), (f"B's copy did not move above the device states: {[s.label for s in order]}")
+    staged = [index for index, state in enumerate(order) if writes_container(state, "B_gpu")]
+    assert all(
+        index in device_at
+        for index in staged), (f"B was staged down although the device writes all of it: {[s.label for s in order]}")
 
 
 def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():
