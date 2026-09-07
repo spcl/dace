@@ -512,12 +512,68 @@ def test_variadic_minmax_nests_binary_calls_in_c():
 
 
 def test_c_scan_helpers_keep_the_parallel_inscan_form():
-    """The scan is the reason the eight helpers exist; a serial loop would not be a parallel scan."""
+    """The scan is the reason the eight helpers exist; a serial loop would not be a parallel scan.
+
+    The PHASE ORDER is asserted with the clause because it is the half that fails quietly: the
+    ``scan`` directive splits the loop body into an input phase and a scan phase, and ``exclusive``
+    names them the other way round from ``inclusive``. Written the inclusive way round an exclusive
+    scan still compiles and stores the seed into every element.
+    """
     for kind, clause in (('incl', 'inclusive'), ('excl', 'exclusive')):
         for operation, reduction in (('sum', '+'), ('product', '*'), ('min', 'min'), ('max', 'max')):
             definition = cpf_lowering.C_INLINE_DEFINITIONS['scan_%s_%s' % (kind, operation)]
-            assert '#pragma omp simd reduction(inscan, %s:acc)' % reduction in definition
-            assert '#pragma omp scan %s(acc)' % clause in definition
+            assert '_Pragma("omp simd reduction(inscan, %s:cpf_scan_acc)")' % reduction in definition
+            directive = '_Pragma("omp scan %s(cpf_scan_acc)")' % clause
+            assert directive in definition
+            store = 'cpf_scan_out[cpf_scan_i] = cpf_scan_acc;'
+            before, after = definition.split(directive)
+            assert (store in after) if clause == 'inclusive' else (store in before), (
+                f'scan_{kind}_{operation} runs its phases in the {clause} order the other kind needs')
+
+
+#: A widening scan: an ``int8_t`` 0/1 mask scanned into ``int64_t`` ranks, which is the compaction
+#: shape prefix sums exist for. The count is past 127 on purpose -- folding at the INPUT's type
+#: instead of the seed's would wrap, and the last rank is the element that says so.
+_WIDENING_SCAN_PROBE = """
+#include <stdint.h>
+#include <math.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <string.h>
+{definitions}
+void probe(double * out) {{
+    int8_t mask[300];
+    int64_t rank[300];
+    for (long i = 0; i < 300; ++i) mask[i] = (int8_t)1;
+    scan_excl_sum(mask, rank, 0L, 300L, (int64_t)(0));
+    out[0] = (double)rank[0];
+    out[1] = (double)rank[1];
+    out[2] = (double)rank[299];
+}}
+"""
+
+
+def test_c_scan_widens_from_the_input_type_to_the_seed():
+    """The three types a scan touches are independent, and the fold happens at the SEED's.
+
+    A ``_Generic`` family dispatching on one operand declares the other two at the type it picked,
+    so this call did not compile at all: the macro selected the ``long`` helper on the seed and then
+    handed it an ``int8_t *``. Folding at the input's type instead would compile and wrap at 128,
+    which is what the 300-element count catches.
+    """
+    definitions = '\n'.join(cpf_lowering.definitions_for({'scan_excl_sum'}, Dialect.STANDALONE_C))
+    code = _WIDENING_SCAN_PROBE.format(definitions=definitions)
+    diagnostics = compile_diagnostics(code, name='cpf_scan_widening', language='c')
+    assert diagnostics == '', f'the widening scan produced compiler diagnostics\n{diagnostics}'
+
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_scan_widening', language='c'))
+    out = np.zeros(3, dtype=np.float64)
+    library.probe.argtypes = [ctypes.c_void_p]
+    library.probe.restype = None
+    library.probe(ctypes.c_void_p(out.ctypes.data))
+    assert list(out) == [0.0, 1.0, 299.0], (f'the exclusive rank sequence is {list(out)}; an all-zero one means the '
+                                            'scan phase sits on the wrong side of the scan directive, and 43 at the '
+                                            'end means the fold ran at the int8 input type')
 
 
 #: A dispatch macro whose argument has a SIDE EFFECT. ``_Generic``'s controlling expression is
