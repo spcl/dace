@@ -45,8 +45,7 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.loop_fusion import LoopFusion
-from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.fusion_inline import FuseStates
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symbolically_equal
@@ -176,7 +175,7 @@ def _fuse_siblings_to_one(sdfg: SDFG, outer: LoopRegion) -> bool:
             # the first, and ``_single_compute_state`` -- the very gate the NEXT pair is judged by --
             # accepts only a single-compute-state body. Without collapsing here a three-sibling nest
             # stalls after one fusion (seidel_2d: two Map-derived siblings plus the scan).
-            PatternMatchAndApplyRepeated([StateFusionExtended()]).apply_pass(sdfg, {})
+            FuseStates().apply_pass(sdfg, {})
             EmptyStateElimination().apply_pass(sdfg, {})
     loops = [b for b in outer.nodes() if isinstance(b, LoopRegion) and b.loop_variable]
     return len(loops) == 1
