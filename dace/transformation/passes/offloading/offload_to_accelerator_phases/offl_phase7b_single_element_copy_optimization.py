@@ -9,6 +9,19 @@ from dace.sdfg.state import SDFGState
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
+def drop_stale_other_subset(memlet, src_node: nodes.Node, dst_node: nodes.Node) -> None:
+    """Clear ``other_subset`` when the rewired edge no longer runs between two data containers.
+
+    ``other_subset`` describes the SECOND container of a container-to-container copy. Moving an
+    access node through a map entry puts a scope node or a tasklet on one end, and the subset then
+    describes a node that is not on the edge any more: validation reads it against the surviving
+    node's descriptor and reports a dimension mismatch, or -- when that node is a tasklet, which has
+    no descriptor at all -- crashes reaching for ``.data`` on it.
+    """
+    if not isinstance(src_node, nodes.AccessNode) or not isinstance(dst_node, nodes.AccessNode):
+        memlet.other_subset = None
+
+
 class SingleElementCopyOptimization():
 
     # pattern   A -> single access -> Map    becomes    A -> Map -> single access
@@ -76,6 +89,8 @@ class SingleElementCopyOptimization():
             map.add_in_connector(in_conn)
             map.add_out_connector(out_conn)
 
+            drop_stale_other_subset(ext_memlet, src, map)
+            drop_stale_other_subset(int_memlet, map, access)
             state.add_edge(src, src_conn, map, in_conn, ext_memlet)  # B -> map
             state.add_edge(map, out_conn, access, None, int_memlet)  # B -> map -> access
 
@@ -95,7 +110,9 @@ class SingleElementCopyOptimization():
 
         # 5) connect the output nodes directly to acces: B -> map -> access -> C
         for e in map_out_edges:
-            state.add_edge(access, None, e.dst, e.dst_conn, deepcopy(e.data))
+            memlet = deepcopy(e.data)
+            drop_stale_other_subset(memlet, access, e.dst)
+            state.add_edge(access, None, e.dst, e.dst_conn, memlet)
             state.remove_edge(e)
 
     def get_corresponding_out_connectors(self, map_entry: nodes.MapEntry, in_connector: str) -> list[str]:

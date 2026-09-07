@@ -15,6 +15,7 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 class SingleIterationMapPhase():
 
     def apply(self, sdfg: SDFG, hybrid_states: OrderedSet, verbose=False):
+        self.verbose = verbose
         if verbose: print("hybrid:", hybrid_states)
         for state in hybrid_states:
             self.make_size1_map_wrappers(sdfg, state)
@@ -53,7 +54,11 @@ class SingleIterationMapPhase():
                                  if isinstance(node, (nodes.MapEntry)) and helpers.has_GPU_schedule(node))
         map_exits = OrderedSet(state.exit_node(node) for node in map_entries)
 
-        partition_nodes = lib_nodes | map_entries | map_exits
+        # A callback can only run on the host, so it bounds a partition the same way a kernel does
+        # rather than being swept into one.
+        callbacks = OrderedSet(node for node in state.scope_children()[None] if helpers.is_callback_tasklet(node, sdfg))
+
+        partition_nodes = lib_nodes | map_entries | map_exits | callbacks
         partitions = self.subgraphs_after_removing_partition_nodes(state, partition_nodes)
 
         # each partition is wrapped into a map
@@ -72,6 +77,12 @@ class SingleIterationMapPhase():
             # reduce partition to nodes which need to go into wrap
             self.remove_all_outer_access_nodes_from_group(state, partition)
 
+            # A partition is a dataflow component, and a map scope spans one, so the partitioning
+            # can hand this a lone MapEntry whose body and exit went to another component.
+            partition = self.scope_closed_partition(state, partition, partition_nodes)
+            if partition is None:
+                continue
+
             # if anything is left, wrap it
             if partition:
                 map_entry, map_exit = self.wrap_region_in_size1_map(state, partition)
@@ -82,6 +93,40 @@ class SingleIterationMapPhase():
                 # Ensure all map inputs are also outputs to avoid dace erroneusly labeling them as constants
                 self.forward_input_only_map_data(state, map_entry, map_exit)
 
+    def scope_closed_partition(self, state: SDFGState, region: OrderedSet, boundary: OrderedSet) -> OrderedSet:
+        """``region`` grown until every map scope it touches lies wholly inside it, or None.
+
+        A size-1 map around HALF a scope puts a map entry inside the new map and its own exit
+        outside it, which is not a scope at all: ``entry_node`` then answers for the wrapping map,
+        and validation reports the pair as Map objects that were copied separately.
+
+        None when closing would have to swallow one of the nodes the partitioning deliberately kept
+        out -- a GPU map or a device-wide library call. Those are the boundaries the partition
+        exists to respect, so the answer there is to leave this group alone rather than to wrap a
+        region that reaches across one.
+        """
+        closed: OrderedSet = OrderedSet(region)
+        scope_children = state.scope_children()
+        queue = list(region)
+        while queue:
+            node = queue.pop()
+            if isinstance(node, nodes.MapEntry):
+                entry = node
+            elif isinstance(node, nodes.MapExit):
+                entry = state.entry_node(node)
+            else:
+                continue
+            if entry is None:
+                continue
+            for extra in [entry, state.exit_node(entry), *scope_children[entry]]:
+                if extra is None or extra in closed:
+                    continue
+                if extra in boundary:
+                    return None
+                closed.add(extra)
+                queue.append(extra)
+        return closed
+
     def wrap_region_in_size1_map(self, state: SDFGState,
                                  region_nodes: OrderedSet) -> Tuple[nodes.MapEntry, nodes.MapExit]:
         if not region_nodes: return
@@ -91,57 +136,73 @@ class SingleIterationMapPhase():
                                             schedule=dtypes.ScheduleType.GPU_Device)
 
         # make MAP ENTRY
-        boundary_in_edges = OrderedSet()
+        # A list, not a set: the connector numbering below follows this order, so a set would make
+        # the emitted names depend on PYTHONHASHSEED.
+        boundary_in_edges = []
         for node in region_nodes:
-            boundary_in_edges |= self._get_boundary_in_edges(state, node, region_nodes)
+            boundary_in_edges += list(self._get_boundary_in_edges(state, node, region_nodes))
 
         idx = 0
-        if not boundary_in_edges:  # if there are no boundary in edges, add new dependcy edges
-            root_nodes = self._get_root_nodes(state, region_nodes)
-            assert root_nodes, f"region: {region_nodes}"
-            for root in root_nodes:
-                state.add_nedge(map_entry, root, Memlet())
+        for edge in boundary_in_edges:
+            src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
+            ext_memlet = deepcopy(edge.data)
+            int_memlet = deepcopy(edge.data)
+            state.remove_edge(edge)
 
-        else:  # if there are, rewire them through the map
-            for idx, edge in enumerate(boundary_in_edges):
-                src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
-                ext_memlet = deepcopy(edge.data)
-                int_memlet = deepcopy(edge.data)
-                state.remove_edge(edge)
+            # An empty memlet ORDERS; it carries no data and so may not carry a connector.
+            # infer_connector_types otherwise reaches for out_connectors[None] and raises KeyError.
+            if ext_memlet.is_empty():
+                state.add_nedge(src, map_entry, ext_memlet)
+                state.add_nedge(map_entry, dst, int_memlet)
+                continue
 
-                in_conn = f"IN_REGION_IN_{idx}"
-                out_conn = f"OUT_REGION_IN_{idx}"
-                map_entry.add_in_connector(in_conn)
-                map_entry.add_out_connector(out_conn)
+            in_conn = f"IN_REGION_IN_{idx}"
+            out_conn = f"OUT_REGION_IN_{idx}"
+            map_entry.add_in_connector(in_conn)
+            map_entry.add_out_connector(out_conn)
+            idx += 1
 
-                state.add_edge(src, src_conn, map_entry, in_conn, ext_memlet)
-                state.add_edge(map_entry, out_conn, dst, dst_conn, int_memlet)
+            state.add_edge(src, src_conn, map_entry, in_conn, ext_memlet)
+            state.add_edge(map_entry, out_conn, dst, dst_conn, int_memlet)
+
+        # A region root the rewiring did not reach reads nothing, so no edge put it under the entry
+        # and the scope does not contain it -- while whatever it feeds does, which is the invalid
+        # inside-to-outside path. Order it after the entry instead. Rewiring a boundary edge does
+        # not make the OTHER roots any less dangling, so this cannot be an else-branch of it.
+        for node in region_nodes:
+            if state.in_degree(node) == 0:
+                state.add_nedge(map_entry, node, Memlet())
 
         # make MAP EXIT
-        boundary_out_edges = OrderedSet()
+        boundary_out_edges = []
         for node in region_nodes:
-            boundary_out_edges |= self._get_boundary_out_edges(state, node, region_nodes)
+            boundary_out_edges += list(self._get_boundary_out_edges(state, node, region_nodes))
 
-        if not boundary_out_edges:  # add new dependency edges
-            leaf_nodes = self._get_leaf_nodes(state, region_nodes)
-            assert leaf_nodes
-            for leaf in leaf_nodes:
-                state.add_nedge(leaf, map_exit, Memlet())
+        idx = 0
+        for edge in boundary_out_edges:
+            src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
+            int_memlet = deepcopy(edge.data)
+            ext_memlet = deepcopy(edge.data)
+            state.remove_edge(edge)
 
-        else:  # rewire out edges
-            for idx, edge in enumerate(boundary_out_edges):
-                src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
-                int_memlet = deepcopy(edge.data)
-                ext_memlet = deepcopy(edge.data)
-                state.remove_edge(edge)
+            if int_memlet.is_empty():  # ordering edge, see above
+                state.add_nedge(src, map_exit, int_memlet)
+                state.add_nedge(map_exit, dst, ext_memlet)
+                continue
 
-                in_conn = f"IN_REGION_OUT_{idx}"
-                out_conn = f"OUT_REGION_OUT_{idx}"
-                map_exit.add_in_connector(in_conn)
-                map_exit.add_out_connector(out_conn)
+            in_conn = f"IN_REGION_OUT_{idx}"
+            out_conn = f"OUT_REGION_OUT_{idx}"
+            map_exit.add_in_connector(in_conn)
+            map_exit.add_out_connector(out_conn)
+            idx += 1
 
-                state.add_edge(src, src_conn, map_exit, in_conn, int_memlet)
-                state.add_edge(map_exit, out_conn, dst, dst_conn, ext_memlet)
+            state.add_edge(src, src_conn, map_exit, in_conn, int_memlet)
+            state.add_edge(map_exit, out_conn, dst, dst_conn, ext_memlet)
+
+        # The leaf half of the same rule.
+        for node in region_nodes:
+            if state.out_degree(node) == 0:
+                state.add_nedge(node, map_exit, Memlet())
 
         return map_entry, map_exit
 

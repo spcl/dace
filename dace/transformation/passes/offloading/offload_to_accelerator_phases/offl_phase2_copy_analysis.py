@@ -269,10 +269,16 @@ class CopyAnalysisPhase():
                     if isinstance(edge.src, nodes.AccessNode):
                         return helpers.get_data_used_by_incoming_access_nodes(sdfg, state, edge.src)
 
+            elif helpers.is_stream(data_name, sdfg):
+                # A Stream is a queue with its own device-side push/pop protocol, not a buffer whose
+                # location this pass decides: there is nothing to place and nothing to copy, and the
+                # code generator allocates it where the kernel that pushes into it runs. Invisible to
+                # the analysis, which is what the transformation this pass replaced did with one too.
+                return OrderedSet()
+
             else:
-                raise RuntimeError(
-                    f"Unknown data type (not array, scalar or view) in get_arrays_used_by_edge. edge:{edge}, data:{edge.data}"
-                )
+                raise RuntimeError(f"Unknown data type (not array, scalar, view or stream) in get_arrays_used_by_edge. "
+                                   f"edge:{edge}, data:{edge.data}")
 
         return OrderedSet()
 
@@ -406,6 +412,18 @@ class CopyAnalysisPhase():
 
             elif isinstance(node, nodes.AccessNode):
                 pass  # nothing to do; cannot be classified without context
+
+            # A nested SDFG is a graph of its own, reached here through its boundary. Its data is on
+            # the side its CONTENTS put it: a nested SDFG holding no GPU-scheduled node runs on the
+            # host whole, which is what a sequential scan in a loop region is -- classifying it by
+            # the state around it would make the state hybrid and hand its body to the size-1
+            # wrapper, turning one scan step into one kernel launch.
+            elif isinstance(node, nodes.NestedSDFG):
+                arrays = self.get_arrays_used_by_node(sdfg, state, node)
+                if helpers.sdfg_holds_gpu_schedule(node.sdfg):
+                    g = arrays
+                else:
+                    c = arrays
 
             else:
                 raise RuntimeError(f"Unknown node {node} of type {node.__class__.__name__} in state {state}.")

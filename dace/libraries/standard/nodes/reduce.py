@@ -627,6 +627,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
     """
         GPU implementation of the reduce node across a thread-block (uses CUB).
     """
+    runs_inside_kernel = True
     environments = [CUDA]
 
     _SPECIAL_RTYPES = {
@@ -754,6 +755,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
          wraps it in outer maps and outputs from the root thread
         to a newly created shared memory container
     """
+    runs_inside_kernel = True
 
     environments = [CUDA]
 
