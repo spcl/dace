@@ -326,8 +326,10 @@ def reduce_to_scalar_sdfg(n: int = 16):
     out = state.add_access("out")
     red = state.add_reduce("lambda a, b: a + b", axes=(0, ), identity=0)
 
-    state.add_nedge(inp, red, dace.Memlet(f"inp[0:{n}]"))
-    state.add_nedge(red, red_scalar, dace.Memlet("red_scalar[0]"))
+    # Through the library node's own connectors: an ``add_nedge`` leaves ``_in`` / ``_out``
+    # dangling, which is not a graph the reduction expansions can read.
+    state.add_edge(inp, None, red, '_in', dace.Memlet(f"inp[0:{n}]"))
+    state.add_edge(red, '_out', red_scalar, None, dace.Memlet("red_scalar[0]"))
     state.add_nedge(red_scalar, out, dace.Memlet("red_scalar[0]"))
 
     sdfg.validate()
@@ -347,8 +349,10 @@ def reduce_to_array_sdfg(n: int = 16):
     out = state.add_access("out")
     red = state.add_reduce("lambda a, b: a + b", axes=(0, ), identity=0)
 
-    state.add_nedge(inp, red, dace.Memlet(f"inp[0:{n}]"))
-    state.add_nedge(red, red_array, dace.Memlet("red_array[0]"))
+    # Through the library node's own connectors: an ``add_nedge`` leaves ``_in`` / ``_out``
+    # dangling, which is not a graph the reduction expansions can read.
+    state.add_edge(inp, None, red, '_in', dace.Memlet(f"inp[0:{n}]"))
+    state.add_edge(red, '_out', red_array, None, dace.Memlet("red_array[0]"))
     state.add_nedge(red_array, out, dace.Memlet("red_array[0]"))
 
     sdfg.validate()
