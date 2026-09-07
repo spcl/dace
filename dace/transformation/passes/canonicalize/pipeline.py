@@ -211,15 +211,15 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     * ``end`` -- the optimization tail (terminal LoopToMap, terminal fuse, redundant-array,
       remat) is the one band whose output nothing else tidies.
 
-    ``SymbolSSA`` closes the phase, after the structural work rather than before it. State fusion
-    UNIONS the interstate assignments of the states it merges, so the phase is itself a producer of
-    chains where one symbol is assigned several times over; versioning them here is what keeps a
-    merged chain from re-pinning the order the fusion just relaxed.
+    ``SymbolSSA`` is deliberately NOT here. State fusion does union the interstate assignments of
+    the states it merges, so the phase can mint a chain assigning one symbol several times over --
+    but versioning those at every boundary buys nothing the single run after ``ShortLoopUnroll``
+    has not already bought, and this phase runs at nine of them.
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
-    return [(label, StructuralCleanup()), (label, SymbolSSA())]
+    return [(label, StructuralCleanup())]
 
 
 @properties.make_properties
