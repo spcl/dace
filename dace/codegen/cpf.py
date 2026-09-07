@@ -217,6 +217,20 @@ QUALIFIED_DESCRIPTIONS: Dict[str, str] = {
 #: is a dispatcher that can land on any of those, which is why only capital ``Auto`` appears here.
 RENDERABLE_IMPLEMENTATIONS = ('Auto', 'pure', 'pure-seq', 'MappedTasklet')
 
+#: Per-node-type implementations that ARE renderable, tried ahead of the global list. The criterion
+#: is unchanged -- "expands to something a standalone unit can compile" -- but it is a property of
+#: the expansion, not of the name, so a name absent from the global list can still qualify for one
+#: node and not for another.
+#:
+#: ``ArgReduce``'s ``OpenMP`` is the case that matters. Unlike ``Reduce``'s and ``FindFirst``'s
+#: same-named expansions, which call into ``dace::reduce`` / ``dace::find_first_index``, it emits a
+#: self-contained tasklet: an ``omp declare reduction`` over a (value, index) pair, no runtime
+#: symbol and no environment. Without it an ArgReduce falls to ``pure``, which is a SEQUENTIAL
+#: scan, and the rendered unit hands its reader a serial loop for a reduction the canonicalize
+#: pipeline itself parallelizes -- ``argmax_with_index``, ``tsvc_2_s318`` and ``tsvc_2_s3110`` all
+#: measured 9-11x over numpy in the parallel form and rendered with no ``omp`` at all.
+RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {'ArgReduce': ('OpenMP', )}
+
 #: Slack in the expand-and-reselect loop of :func:`force_renderable_expansions`, on top of the one
 #: round
 #: per library node a single state holds. A node may expand into further library nodes (``MatMul``
@@ -321,7 +335,7 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
         described: Dict[int, Tuple[str, str, set]] = {}
         for node, state in chosen:
             available = type(node).implementations
-            for candidate in RENDERABLE_IMPLEMENTATIONS:
+            for candidate in RENDERABLE_BY_NODE.get(type(node).__name__, ()) + RENDERABLE_IMPLEMENTATIONS:
                 if candidate in available:
                     node.implementation = candidate
                     break
