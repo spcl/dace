@@ -3,7 +3,7 @@
 
 import dace
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
+from dace.transformation.passes.symbol_ssa import StrictSymbolSSA, SymbolSSA
 
 
 def test_loop_iter_symbol_reused_split():
@@ -335,3 +335,63 @@ if __name__ == '__main__':
     test_loop_iter_symbol_reused_fused()
     test_branch_subscope_nofission()
     test_branch_subscope_fission()
+
+
+def unrolled_index_chain_sdfg() -> dace.SDFG:
+    """The shape short-loop unrolling leaves behind: one index symbol reassigned per replay.
+
+    ``s0 -[idx=arr[0]]-> s1 -[idx=arr[1]]-> s2 -[idx=arr[2]]-> s3``, each state reading ``idx``.
+    """
+    sdfg = dace.SDFG('unrolled_index_chain')
+    sdfg.add_array('arr', [3], dace.int64)
+    sdfg.add_array('out', [3], dace.float64)
+    sdfg.add_symbol('idx', dace.int64)
+
+    states = [sdfg.add_state(f's{i}', is_start_block=(i == 0)) for i in range(4)]
+    for i in range(3):
+        sdfg.add_edge(states[i], states[i + 1], dace.InterstateEdge(assignments={'idx': f'arr[{i}]'}))
+    # Every state after the first reads the symbol, so each replay has a consumer.
+    for i in range(1, 4):
+        tasklet = states[i].add_tasklet(f't{i}', {}, {'o'}, 'o = 1.0')
+        access = states[i].add_access('out')
+        states[i].add_edge(tasklet, 'o', access, None, dace.Memlet(data='out', subset='idx'))
+    return sdfg
+
+
+def test_symbol_ssa_versions_an_unrolled_index_chain():
+    """Each replay's definition gets its own symbol, and each consumer reads its own version."""
+    sdfg = unrolled_index_chain_sdfg()
+    result = SymbolSSA().apply_pass(sdfg, {})
+
+    assert result is not None and 'idx' in result
+    # Three definitions; the last is live at the region exit and must keep the original name.
+    assert len(result['idx']) == 2, result
+    defined = [set(e.data.assignments.keys()) for e in sdfg.edges()]
+    assert all(len(names) == 1 for names in defined), defined
+    assert len({next(iter(names)) for names in defined}) == 3, defined
+
+    # Each state reads exactly the version the edge above it defines.
+    for edge in sdfg.edges():
+        version = next(iter(edge.data.assignments))
+        reads = {str(s) for s in edge.dst.free_symbols}
+        assert version in reads, (version, reads)
+    sdfg.validate()
+
+
+def test_symbol_ssa_leaves_an_ambiguous_definition_alone():
+    """A symbol whose versions merge at a join would need a phi, so nothing is renamed."""
+    sdfg = dace.SDFG('ambiguous_join')
+    sdfg.add_array('out', [4], dace.float64)
+    sdfg.add_symbol('idx', dace.int64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    left, right, join = sdfg.add_state('left'), sdfg.add_state('right'), sdfg.add_state('join')
+    sdfg.add_edge(entry, left, dace.InterstateEdge(condition='idx < 1', assignments={'idx': '1'}))
+    sdfg.add_edge(entry, right, dace.InterstateEdge(condition='idx >= 1', assignments={'idx': '2'}))
+    # Both definitions reach the join, so neither may be renamed to it.
+    sdfg.add_edge(left, join, dace.InterstateEdge())
+    sdfg.add_edge(right, join, dace.InterstateEdge())
+    tasklet = join.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    join.add_edge(tasklet, 'o', join.add_access('out'), None, dace.Memlet(data='out', subset='idx'))
+
+    assert SymbolSSA().apply_pass(sdfg, {}) is None
+    assert all(set(e.data.assignments) <= {'idx'} for e in sdfg.edges())

@@ -55,6 +55,7 @@ from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions impo
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
+from dace.transformation.passes.symbol_ssa import SymbolSSA
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
 from dace.transformation.passes.canonicalize.reverse_map_traversal import ReverseMapTraversal
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
@@ -210,10 +211,15 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     * ``end`` -- the optimization tail (terminal LoopToMap, terminal fuse, redundant-array,
       remat) is the one band whose output nothing else tidies.
 
+    ``SymbolSSA`` closes the phase, after the structural work rather than before it. State fusion
+    UNIONS the interstate assignments of the states it merges, so the phase is itself a producer of
+    chains where one symbol is assigned several times over; versioning them here is what keeps a
+    merged chain from re-pinning the order the fusion just relaxed.
+
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
-    return [(label, StructuralCleanup())]
+    return [(label, StructuralCleanup()), (label, SymbolSSA())]
 
 
 @properties.make_properties
@@ -975,6 +981,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduce', UntileLoops())]
     if unroll_limit > 0:
         s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
+        # Version the index symbols the unroll just multiplied: every replay reassigns the same
+        # frontend-materialized ``idx = arr[k]`` on the edge feeding its copy, so one name carries
+        # one value per replay. That false dependence pins the chain in place -- it is what stops
+        # ``MoveIfIntoLoop`` distributing a guard over an unrolled imperfect nest.
+        s += [('reduce', SymbolSSA())]
     # scalar fission (after unroll + unique-loop-iterators): unrolling and iterator
     # privatization expose transient scalars / size-1 arrays that a dominating write
     # fully redefines; fissioning them into separate containers per dominated scope
