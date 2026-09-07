@@ -41,7 +41,11 @@ class OffloadToAccelerator(ppl.Pass):
         "workload property: the loop converges once no state is hybrid and no container changed.")
     verbose = properties.Property(dtype=bool, default=False, desc="Print what each phase decided.")
 
-    def __init__(self, host_maps: HostMapSpec = False, **kwargs):
+    def __init__(self,
+                 host_maps: HostMapSpec = False,
+                 max_iterations: Optional[int] = None,
+                 verbose: Optional[bool] = None,
+                 **kwargs: Any) -> None:
         """
         :param host_maps: which maps keep a HOST schedule, so that the maps under them become the
             kernels. ``False`` (the default), ``None`` and ``[]`` name none and run no heuristics;
@@ -49,10 +53,16 @@ class OffloadToAccelerator(ppl.Pass):
             given as a map label or as the ``MapEntry`` node itself. Not a serialized ``Property``:
             a ``MapEntry`` cannot round-trip through JSON, and a caller handing over node objects is
             driving the pass in process anyway.
+        :param max_iterations: overrides the safety bound on the phase 2-4 fixpoint.
+        :param verbose: print what each phase decided.
         :note: a map enclosing a device-wide library node is kept on the host whatever this says --
             a call only host code can issue is a requirement, not a preference.
         """
         super().__init__(**kwargs)
+        if max_iterations is not None:
+            self.max_iterations = max_iterations
+        if verbose is not None:
+            self.verbose = verbose
         self._host_maps = host_maps
 
     def modifies(self) -> ppl.Modifies:

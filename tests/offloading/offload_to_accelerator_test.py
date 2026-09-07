@@ -1,8 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
+import networkx as nx
 import numpy as np
 import dace
+from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
@@ -668,6 +670,87 @@ def test_single_element_copy():
         orig_out,
         new_out,
     )
+
+
+def device_map_state_sdfg(host_writer_between: bool) -> dace.SDFG:
+    """Two device states, and ``B`` first touched on the device in the second of them.
+
+    With ``host_writer_between`` a host state writing ``B`` sits between the two, which is what
+    pins ``B``'s copy to that point instead of letting it move up.
+    """
+    sdfg = dace.SDFG("device_map_states_" + ("pinned" if host_writer_between else "free"))
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [20], dace.float64)
+
+    first = sdfg.add_state("scale_a", is_start_block=True)
+    entry, exit_ = first.add_map("scale", dict(i="0:20"))
+    scale = first.add_tasklet("scale", {"x"}, {"y"}, "y = x * 2.0")
+    first.add_memlet_path(first.add_read("A"), entry, scale, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    first.add_memlet_path(scale, exit_, first.add_write("A"), src_conn="y", memlet=dace.Memlet("A[i]"))
+
+    previous = first
+    if host_writer_between:
+        seed = sdfg.add_state("seed_b")
+        sdfg.add_edge(previous, seed, dace.InterstateEdge())
+        one = seed.add_tasklet("one", {}, {"y"}, "y = 1.0")
+        seed.add_edge(one, "y", seed.add_write("B"), None, dace.Memlet("B[0]"))
+        previous = seed
+
+    second = sdfg.add_state("fill_b")
+    sdfg.add_edge(previous, second, dace.InterstateEdge())
+    entry, exit_ = second.add_map("fill", dict(i="0:20"))
+    fill = second.add_tasklet("fill", {"x"}, {"y"}, "y = x + 1.0")
+    second.add_memlet_path(second.add_read("A"), entry, fill, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    second.add_memlet_path(fill, exit_, second.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+
+    sdfg.fill_scope_connectors()
+    sdfg.validate()
+    return sdfg
+
+
+def states_in_execution_order(sdfg: dace.SDFG) -> list:
+    return list(nx.topological_sort(sdfg.nx))
+
+
+def holds_device_map(state: dace.SDFGState) -> bool:
+    return any(
+        isinstance(node, nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device
+        for node in state.nodes())
+
+
+def writes_container(state: dace.SDFGState, name: str) -> bool:
+    return any(node.data == name and state.in_degree(node) > 0 for node in state.data_nodes())
+
+
+def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array():
+    """A copy for an array first used on the device late must not split the device states.
+
+    ``B`` is only touched in the second of two device states, so the copy that puts it on the
+    device is placed between them -- a host state in the middle of a run of kernels, which is
+    exactly what a caller fusing that run into one persistent kernel cannot swallow.
+    """
+    sdfg = device_map_state_sdfg(host_writer_between=False)
+    OtA().apply_pass(sdfg, {})
+
+    order = states_in_execution_order(sdfg)
+    device_at = [index for index, state in enumerate(order) if holds_device_map(state)]
+    assert len(device_at) == 2, f"expected both maps on the device, got {[s.label for s in order]}"
+    assert device_at == list(range(device_at[0], device_at[-1] +
+                                   1)), (f"a host state sits between two device states: {[s.label for s in order]}")
+    assert writes_container(order[device_at[0] - 1],
+                            "B_gpu"), (f"B's copy did not move above the device states: {[s.label for s in order]}")
+
+
+def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():
+    """The hoist is only free where the array is untouched -- a host writer keeps the copy below it."""
+    sdfg = device_map_state_sdfg(host_writer_between=True)
+    OtA().apply_pass(sdfg, {})
+
+    order = states_in_execution_order(sdfg)
+    labels = [state.label for state in order]
+    seeded_at = next(index for index, state in enumerate(order) if state.label == "seed_b")
+    copied_at = next(index for index, state in enumerate(order) if writes_container(state, "B_gpu"))
+    assert copied_at > seeded_at, f"B was copied to the device before the host wrote it: {labels}"
 
 
 if __name__ == "__main__":

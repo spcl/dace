@@ -3,7 +3,7 @@
 from ordered_set import OrderedSet
 
 from dace import dtypes
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.graph import MultiConnectorEdge
@@ -60,7 +60,11 @@ class CopyAnalysisPhase():
         IR.close.gpu_set = initially_on_gpu
         IR.close.cpu_set = initially_on_cpu  # arrays end up where they started
 
+        # Snapshot before propagation: afterwards a node holds names it never touched, and those
+        # are exactly the ones the hoist is allowed to move.
+        own_use = self.collect_own_use(IR)
         self._propagate_arrays(IR)
+        self.hoist_device_copies(IR, own_use)
 
         if self.verbose: print(f"Phase2: full IR \n{IR}\n\n")
         return IR
@@ -251,6 +255,50 @@ class CopyAnalysisPhase():
                         next.gpu_set.add(array)
 
         helpers.traverse_IR(IR, propagate)
+
+    def collect_own_use(self, IR: OffloadingIRNode) -> Dict[OffloadingIRNode, OrderedSet]:
+        """The containers each IR node accesses itself, before propagation adds the inherited ones."""
+        own_use: Dict[OffloadingIRNode, OrderedSet] = {}
+
+        def collect(node: OffloadingIRNode) -> None:
+            own_use[node] = node.cpu_set | node.gpu_set
+
+        helpers.traverse_IR(IR, collect)
+        return own_use
+
+    def hoist_device_copies(self, IR: OffloadingIRNode, own_use: Dict[OffloadingIRNode, OrderedSet]) -> None:
+        """Move a host-to-device copy above the states that do not touch the array.
+
+        :func:`_propagate_arrays` only walks forwards, so an array first used on the device late in
+        the program stays on the host until exactly that point and its copy is inserted there -- in
+        the middle of a run of device states. That is a host state between two kernels, and it is
+        the state a caller building one persistent kernel out of that run then has to swallow: a
+        host-to-device copy inside a kernel has no expansion (``MappedTasklet expansion cannot cross
+        the CPU/GPU boundary``).
+
+        A state that never touches the array cannot care which side the array is on, so the copy is
+        free to move above it, which merges it with whatever copy already sits at the device
+        region's entry. The move is only taken when EVERY successor wants the array on the device:
+        a branch that leaves it on the host is a branch that must not pay for a copy it never uses,
+        so the copy stays where the paths meet.
+        """
+        nodes_in_order: List[OffloadingIRNode] = []
+        helpers.traverse_IR(IR, nodes_in_order.append)
+
+        # Hoisting at one state can free the state above it, so this runs to a fixpoint. Each round
+        # moves at least one name and names never move back, so it terminates.
+        changed = True
+        while changed:
+            changed = False
+            for node in reversed(nodes_in_order):
+                if node.type != OffloadingIRNode.STATE or not node.next:
+                    continue
+                movable = OrderedSet(name for name in node.cpu_set if name not in own_use[node])
+                for name in movable:
+                    if all(name in next.gpu_set for next in node.next):
+                        node.cpu_set.remove(name)
+                        node.gpu_set.add(name)
+                        changed = True
 
     #######################################################
     ###  Helpers get Arrays Used by Edges & Nodes ###
