@@ -44,12 +44,20 @@ def test_an_offset_by_another_symbol_is_left_alone():
     assert {str(s) for s in rng.free_symbols} == {'k', 'j'}, f'unexpected symbols in {rng}'
 
 
+def test_the_guard_reports_a_duplicated_name():
+    from_map, from_string = differently_minted_pair()
+    assert symbolic.has_duplicate_symbol_names(from_map - from_string)
+    assert not symbolic.has_duplicate_symbol_names(from_map - symbolic.symbol('j'))
+    assert not symbolic.has_duplicate_symbol_names(5)
+
+
 def test_compose_folds_it_too():
     """``Range.compose`` adds a bound of one subset to a bound of the other, same as ``offset``."""
     from_map, _ = differently_minted_pair()
-    composed = subsets.Range([(from_map, from_map, 1)]).compose(dace.Memlet('A[0:M - k]').subset)
-    names = [sym.name for sym in composed.min_element()[0].free_symbols]
-    assert len(names) == len(set(names)), f'composition kept one name on two symbols: {composed}'
+    outer = subsets.Range([(from_map, from_map, 1)])
+    composed = outer.compose(dace.Memlet('A[0:M - k]').subset)
+    assert not symbolic.has_duplicate_symbol_names(composed.min_element()[0]), \
+        f'composition kept one name on two symbols: {composed}'
 
 
 if __name__ == '__main__':
