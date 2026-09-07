@@ -1057,10 +1057,15 @@ def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     sdfg = state.parent
     node = view
     desc = sdfg.arrays[node.data]
+    # A view chain is only a chain if it ends. Two views that answer ``get_view_edge`` with each
+    # other -- which a staged view and its host copy in one state do -- make this walk run forever
+    # instead of failing, so the cycle is treated as the unresolvable chain it is.
+    seen: Set[int] = {id(node)}
     while isinstance(desc, dt.View):
         node = get_view_node(state, node)
-        if node is None or not isinstance(node, nd.AccessNode):
+        if node is None or not isinstance(node, nd.AccessNode) or id(node) in seen:
             return None
+        seen.add(id(node))
         desc = sdfg.arrays[node.data]
     return node
 
@@ -1074,10 +1079,13 @@ def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessN
     node = view
     desc = sdfg.arrays[node.data]
     result = [node]
+    # See :func:`get_last_view_node`: a cyclic chain is unresolvable, not infinite.
+    seen: Set[int] = {id(node)}
     while isinstance(desc, dt.View):
         node = get_view_node(state, node)
-        if node is None or not isinstance(node, nd.AccessNode):
+        if node is None or not isinstance(node, nd.AccessNode) or id(node) in seen:
             return None
+        seen.add(id(node))
         desc = sdfg.arrays[node.data]
         result.append(node)
     return result
@@ -1091,6 +1099,7 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
     sdfg = state.parent
     previous_node = view
     result = []
+    seen: Set[int] = {id(previous_node)}
 
     desc = sdfg.arrays[previous_node.data]
     forward = None
@@ -1107,10 +1116,13 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
         else:
             next_node = edge.src
 
-        if previous_node is next_node:
+        # ``previous_node is next_node`` catches a self-loop; ``seen`` catches the longer cycle a
+        # pair of mutually-viewing nodes makes. See :func:`get_last_view_node`.
+        if previous_node is next_node or id(next_node) in seen:
             break
         if not isinstance(next_node, nd.AccessNode):
             break
+        seen.add(id(next_node))
         desc = sdfg.arrays[next_node.data]
         result.append(edge)
         previous_node = next_node
