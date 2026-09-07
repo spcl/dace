@@ -807,6 +807,11 @@ class LiftContext:
     #: the same whole-SDFG walk a third time. Left ``None`` when the lift removed a loop-body-local
     #: array, since dropping a name from ``sdfg.arrays`` drops it from the walk's defined set.
     post_lift_free_symbols: Optional[Set[str]] = None
+    #: container names the lift ``apply`` just performed moved INTO its nested SDFG. The only thing
+    #: that can leave an enclosing region's read/write set: a lift adds no access, it re-homes the
+    #: ones it finds behind a nested node that re-exposes them, so an ancestor's cached sets can be
+    #: patched by subtracting these instead of being dropped and walked again.
+    internalized_data: Optional[Set[str]] = None
 
 
 def build_lift_context(sdfg: SDFG,
@@ -1113,7 +1118,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         # but its subset spans whatever the view looks at (``np.reshape(Xi, ...)``
                         # binds all of ``Xi``), which the ``a*i+b`` test below reads as an
                         # unindexed whole-array store and refuses on (npbench ``mandelbrot2``).
-                        # Real traffic THROUGH the view keeps its own edges and is still analysed:
+                        # Real traffic THROUGH the view keeps its own edges and is still analyzed:
                         # a write-through view's defining edge is its OUT edge, which never appears
                         # here, and a store into the view node is a separate in-edge.
                         if isinstance(sdfg.arrays[dn.data], dt.View) and e is sdutil.get_view_edge(state, dn):
@@ -1852,9 +1857,13 @@ class LoopToMap(xf.MultiStateTransformation):
                 pnode.symbol_mapping[var] = symbolic.pystr_to_symbolic(var)
 
         # Also remove arrays that are unique to the loop body
+        internalized = set()
         for name in unique_set:
             if name in sdfg.arrays:
                 sdfg.remove_data(name)
+                internalized.add(name)
+        if lift_ctx is not None:
+            lift_ctx.internalized_data = internalized
 
         # Hand the post-lift free symbols to the holder, so the context it rebuilds next does not
         # walk the whole SDFG for a set this already has. Nothing between the snapshot above and

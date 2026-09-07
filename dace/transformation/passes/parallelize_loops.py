@@ -9,7 +9,7 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.interstate.loop_to_map import (LiftContext, LiftInvariants, LoopFacts, LoopToMap,
+from dace.transformation.interstate.loop_to_map import (UNCOMPUTED, LiftContext, LiftInvariants, LoopFacts, LoopToMap,
                                                         build_lift_context, build_lift_invariants)
 
 
@@ -168,9 +168,23 @@ class ParallelizeLoops(ppl.Pass):
                 # between -- only a loop whose body now contains this lift has different ones.
                 contexts.clear()
                 loop_facts.pop(loop, None)
+                # An enclosing region's read/write sets are PATCHED, not dropped. A lift adds no
+                # access -- it re-homes the ones it finds behind a nested node that re-exposes them
+                # through its connectors -- so nothing can enter the set, and the only names that
+                # leave are the body-local containers the lift internalized. Measured over every
+                # CloudSC lift: 334 enclosing observations, 0 additions, every removal accounted
+                # for. The other two facts are dropped: the region's block order and its
+                # loop-local-transient analysis both genuinely change under it.
+                gone = ctx.internalized_data
                 region = graph
                 while region is not None and not isinstance(region, SDFG):
-                    loop_facts.pop(region, None)
+                    facts = loop_facts.get(region)
+                    if facts is not None:
+                        if gone and facts.read_write is not UNCOMPUTED:
+                            read_set, write_set = facts.read_write
+                            facts.read_write = (read_set - gone, write_set - gone)
+                        facts.block_order = UNCOMPUTED
+                        facts.carried = UNCOMPUTED
                     region = region.parent_graph
                 break  # restart the sweep so the next probe sees a current loop list and context
 
