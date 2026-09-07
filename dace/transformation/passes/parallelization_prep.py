@@ -1100,10 +1100,16 @@ class BestEffortLoopPeeling(ppl.Pass):
         mini, _ = self._isolate_loop(loop, sdfg)
         if mini is None:
             return None
+        # The split loop's own verdict must be recomputed for every candidate -- it is what the
+        # search is trying to change -- so its label never enters the memo. Its segments are new
+        # labels and miss the memo by construction.
+        split_label = _loops(mini)[0].label if _loops(mini) else None
+        verdicts: Dict[str, bool] = {}
         try:
-            baseline = self._mappable_loop_count(copy.deepcopy(mini))
+            baseline = self._mappable_loop_count(copy.deepcopy(mini), verdicts)
         except Exception:
             return None
+        verdicts.pop(split_label, None)
         best_count, best = baseline, None
         for x in candidates:
             singleton = x not in two_way
@@ -1126,7 +1132,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 self._clean_peeled_remainder(cand)
                 try:
                     cand.validate()
-                    n_mappable = self._mappable_loop_count(cand)
+                    n_mappable = self._mappable_loop_count(cand, dict(verdicts))
                 except Exception:
                     continue
                 if n_mappable > best_count:
@@ -1589,7 +1595,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 for r in ranges_seen:
                     r.replace(repl)
 
-    def _mappable_loop_count(self, candidate: SDFG) -> int:
+    def _mappable_loop_count(self, candidate: SDFG, verdicts: Optional[Dict[str, bool]] = None) -> int:
         """Cheap proxy for "does the peel unblock parallelization?": run scalar
         fission -> symbol propagation -> constant propagation -> iterator SSA (no reduction
         passes), then COUNT the loops ``LoopToMap`` *could* parallelize -- via
@@ -1624,11 +1630,21 @@ class BestEffortLoopPeeling(ppl.Pass):
         for loop in _loops(candidate):
             if loop_analysis.loop_provably_at_most_one_iteration(loop):
                 continue
+            # Memo across the probes of ONE search. Every probe re-scores the same isolated nest --
+            # CloudSC's level loop wraps ~30 inner ones -- and a split rewrites only the loop it
+            # carves, so the inner verdicts are recomputed unchanged once per candidate. The caller
+            # seeds the memo from the baseline and holds back the split loop's own label, whose
+            # verdict is the one the search exists to move.
+            if verdicts is not None and loop.label in verdicts:
+                count += verdicts[loop.label]
+                continue
             try:
-                if LoopToMap.can_be_applied_to(candidate, loop=loop):
-                    count += 1
+                mappable = bool(LoopToMap.can_be_applied_to(candidate, loop=loop))
             except Exception:
-                pass
+                mappable = False
+            if verdicts is not None:
+                verdicts[loop.label] = mappable
+            count += mappable
         return count
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
