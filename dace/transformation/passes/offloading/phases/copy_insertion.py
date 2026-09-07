@@ -7,6 +7,7 @@ from ordered_set import OrderedSet
 from dace import dtypes, Memlet, subsets
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState, ControlFlowBlock, AbstractControlFlowRegion
+from dace.sdfg.utils import get_view_node
 
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 import dace.transformation.passes.offloading.offloading_helpers as helpers
@@ -175,9 +176,9 @@ class CopyInsertionPhase():
         """
         for access in state.data_nodes():
             name = access.data
-            if name in rename_dict or not helpers.is_view(name, sdfg):
+            if name in rename_dict or name not in sdfg.arrays or not helpers.is_view(name, sdfg):
                 continue
-            origin = helpers.view_origin(state, access)
+            origin = self.origin_of_a_staged_view(sdfg, state, access)
             if origin is None or origin not in rename_dict:
                 continue
 
@@ -196,6 +197,29 @@ class CopyInsertionPhase():
                               strides=desc.strides,
                               offset=desc.offset)
             rename_dict[name] = twin
+
+    def origin_of_a_staged_view(self, sdfg: SDFG, state: SDFGState, access: nodes.AccessNode) -> Optional[str]:
+        """The container an access ultimately aliases, or None where the chain has already been staged.
+
+        :func:`offloading_helpers.view_origin` reads a descriptor for every node it walks through,
+        and by the time this runs a state reached earlier may have renamed one of them onto a twin
+        the copy insertion registers later -- npbench scattering_self_energies walks into a
+        ``G_gpu`` that is still only a name. A chain holding one of those is a chain this phase has
+        already handled, so it is answered with None rather than looked up.
+        """
+        node = access
+        seen = OrderedSet()
+        # ``get_view_node`` answers with whatever sits at the other end of the view edge, which is
+        # not always an access node -- npbench trmm reaches a MapEntry -- so every step is checked
+        # before its descriptor is asked for.
+        while (isinstance(node, nodes.AccessNode) and node.data in sdfg.arrays and helpers.is_view(node.data, sdfg)):
+            if node.data in seen:  # a cycle is not a chain to a container
+                return None
+            seen.add(node.data)
+            node = get_view_node(state, node)
+        if not isinstance(node, nodes.AccessNode) or node.data not in sdfg.arrays:
+            return None
+        return node.data
 
     def insert_copy_names_in_state(self, sdfg: SDFG, state: SDFGState, rename_dict: Dict[str, str]) -> None:
         # A view follows the container it aliases, so the names it needs are known only here, once
