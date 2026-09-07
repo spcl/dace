@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``FuseLoops``: the single-pair transformation form of loop fusion -- the LoopRegion analogue of
+"""``LoopFusion``: the single-pair transformation form of loop fusion -- the LoopRegion analogue of
 ``MapFusionVertical``, for the residual sequential loops left after ``LoopToMap``.
 
 ``MapFusionVertical`` / ``MapFusionHorizontal`` only ever fuse ``MapEntry`` nodes, so two consecutive
 sibling loops that ``LoopToMap`` refused (recurrences, Thomas sweeps, sequential scans) are never fused.
 This transformation fuses ONE such pair -- same iteration space, straight-line bodies (a linear chain of
 blocks, ``ConditionalBlock``s included) -- into one loop whose body runs the first body then the second per
-iteration. The ``LoopFusion`` PASS is exactly this
+iteration. The ``FuseLoops`` PASS is exactly this
 transformation applied to every legal pair until a fixpoint; the transformation is the source of truth for
 the legality kernel, so the pass and the transformation can never disagree.
 
@@ -52,7 +52,7 @@ from dace.transformation.passes.loop_fission import _linear_blocks, _single_comp
 
 
 @transformation.explicit_cf_compatible
-class FuseLoops(transformation.MultiStateTransformation):
+class LoopFusion(transformation.MultiStateTransformation):
     """Fuse one consecutive same-range sequential sibling loop pair into a single loop.
 
     Applicable only where the fusion is provably value-preserving, and never on a loop that is
@@ -124,7 +124,7 @@ class FuseLoops(transformation.MultiStateTransformation):
         self._merge(sdfg, graph, first, self.second)
         self._contract_localized_intermediates(sdfg, first)
 
-    # ----- legality kernel (shared source of truth; the LoopFusion pass calls this transformation) -----
+    # ----- legality kernel (shared source of truth; the FuseLoops pass calls this transformation) -----
 
     @staticmethod
     def _is_doall(sdfg: SDFG, loop: LoopRegion) -> bool:
@@ -237,13 +237,13 @@ class FuseLoops(transformation.MultiStateTransformation):
         blocks = _linear_blocks(loop)
         if blocks is not None:
             return blocks, [InterstateEdge() for _ in blocks[1:]]
-        return FuseLoops._indirect_body_chain(loop)
+        return LoopFusion._indirect_body_chain(loop)
 
     @staticmethod
     def _body_blocks(loop: LoopRegion) -> Optional[List]:
         """``loop``'s body blocks in execution order (``_body_chain``), or ``None`` if the body matches
         neither recognized shape."""
-        chain = FuseLoops._body_chain(loop)
+        chain = LoopFusion._body_chain(loop)
         return chain[0] if chain is not None else None
 
     @staticmethod
@@ -253,13 +253,13 @@ class FuseLoops(transformation.MultiStateTransformation):
         both branches' accesses unioned together regardless of which one fires at runtime -- an
         over-approximation, which is the conservative direction: it can only add refusals, never hide a
         real dependence."""
-        blocks = FuseLoops._body_blocks(loop)
+        blocks = LoopFusion._body_blocks(loop)
         if blocks is None:
             return None
         reads: Dict[str, List] = {}
         writes: Dict[str, List] = {}
         for block in blocks:
-            br, bw = FuseLoops._accesses(block)
+            br, bw = LoopFusion._accesses(block)
             for arr, subs in br.items():
                 reads.setdefault(arr, []).extend(subs)
             for arr, subs in bw.items():
@@ -360,7 +360,7 @@ class FuseLoops(transformation.MultiStateTransformation):
         """
         v1 = first.loop_variable
         v2 = second.loop_variable
-        body2, body2_edges = FuseLoops._body_chain(second)
+        body2, body2_edges = LoopFusion._body_chain(second)
         for block in body2:
             second.remove_node(block)  # detach from second (its dataflow survives)
             if v2 != v1:
@@ -368,7 +368,7 @@ class FuseLoops(transformation.MultiStateTransformation):
         if v2 != v1:
             for edata in body2_edges:
                 edata.replace(v2, v1)  # unify the iterator inside a preserved bridge assignment too
-        order = FuseLoops._body_blocks(first)
+        order = LoopFusion._body_blocks(first)
         last = order[-1]
         for block in body2:
             # ensure_unique_name: a block from ``second`` may share the frontend's auto-generated name
@@ -439,13 +439,13 @@ class FuseLoops(transformation.MultiStateTransformation):
                     return None
                 for e in s.in_edges(n):
                     sub = e.data.get_dst_subset(e, s) if e.data is not None else None
-                    ref = FuseLoops._unify_point(ref, sub, ivar)
+                    ref = LoopFusion._unify_point(ref, sub, ivar)
                     if ref is None:
                         return None
                     saw_write = True
                 for e in s.out_edges(n):
                     sub = e.data.get_src_subset(e, s) if e.data is not None else None
-                    ref = FuseLoops._unify_point(ref, sub, ivar)
+                    ref = LoopFusion._unify_point(ref, sub, ivar)
                     if ref is None:
                         return None
                     saw_read = True
@@ -499,4 +499,4 @@ class FuseLoops(transformation.MultiStateTransformation):
             pass  # still referenced by something outside our rewrite -> leave the dead array to simplify
 
 
-__all__ = ['FuseLoops']
+__all__ = ['LoopFusion']

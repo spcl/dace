@@ -22,7 +22,7 @@ from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.dataflow import TrivialMapElimination
-from dace.transformation.passes import FullMapFusion
+from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                            ConvertScalarsToLengthOneArrays)
 from dace.transformation.passes.offloading.taskloop import taskloop_maps
@@ -609,7 +609,7 @@ class OffloadToAccelerator(ppl.Pass):
                     new_maps |= self.make_size1_map_wrappers(sdfg, state)
 
             if new_maps:
-                mapfusion_pass = FullMapFusion(
+                mapfusion_pass = FuseMaps(
                     strict_dataflow=True,
                     perform_vertical_map_fusion=True,
                     perform_horizontal_map_fusion=True,

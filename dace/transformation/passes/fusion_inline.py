@@ -17,6 +17,92 @@ from dace.transformation.transformation import explicit_cf_compatible
 @dataclass(unsafe_hash=True)
 @properties.make_properties
 @explicit_cf_compatible
+class LinearStateFusion(ppl.Pass):
+    """Fuse states by walking each control-flow region's chain forward, once.
+
+    :func:`~dace.sdfg.utils.fuse_states` scans a region's edges and, after fusing ``(u, v)``, puts
+    BOTH endpoints in a skip set -- so the merged block is not retried until the next full scan. A
+    chain of N states therefore costs about log(N) scans of every edge in the region.
+
+    Within a region the blocks are overwhelmingly a line graph, and a line can be collapsed in one
+    walk: fuse ``(i, i+1)``, then try the block that survived against ``i+2``, and keep going. A
+    refusal advances to the next pair instead of restarting. Chains that are not lines -- a block
+    with several successors, or a successor reachable from elsewhere -- simply end the walk, so
+    branching regions cost one visit per block and no rescan.
+
+    Which block survives a fusion is decided by ``StateFusion.apply``: it deletes the FIRST state
+    when that one is empty and the SECOND in every other case.
+    """
+
+    CATEGORY: str = 'Simplification'
+
+    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race condition checks.')
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & (ppl.Modifies.States | ppl.Modifies.InterstateEdges)
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.States
+
+    def fuse_pair(self, cfg, sd, first, second) -> bool:
+        """Fuse ``first`` into ``second`` (or the reverse) if the transformation allows it."""
+        from dace.sdfg.state import SDFGState
+        from dace.transformation.interstate import BlockFusion, StateFusionExtended
+        if isinstance(first, SDFGState) and isinstance(second, SDFGState):
+            xform = StateFusionExtended()
+            candidate = {StateFusionExtended.first_state: first, StateFusionExtended.second_state: second}
+        else:
+            xform = BlockFusion()
+            candidate = {BlockFusion.first_block: first, BlockFusion.second_block: second}
+        xform.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
+        if not xform.can_be_applied(cfg, 0, sd, permissive=self.permissive):
+            return False
+        xform.apply(cfg, sd)
+        return True
+
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+        """Fuse every fusible pair of blocks, walking each region's chains forward.
+
+        :param sdfg: The SDFG to transform.
+        :returns: The number of fusions applied, or ``None`` if none were.
+        """
+        from dace.sdfg.state import SDFGState
+        fused = 0
+        for sd in sdfg.all_sdfgs_recursive():
+            for cfg in sd.all_control_flow_regions():
+                seen = set()
+                for block in list(cfg.nodes()):
+                    if block in seen:
+                        continue
+                    current = block
+                    while current is not None and current not in seen:
+                        seen.add(current)
+                        successors = [e.dst for e in cfg.out_edges(current)]
+                        # Not a line here: leave it, rather than guessing an order for a branch.
+                        if len(successors) != 1 or cfg.in_degree(successors[0]) != 1:
+                            break
+                        following = successors[0]
+                        if following is current:
+                            break
+                        # Ask before applying: ``apply`` deletes the first block only when it is
+                        # empty, so this is what says which one the walk continues from.
+                        first_empty = isinstance(current, SDFGState) and current.is_empty()
+                        if self.fuse_pair(cfg, sd, current, following):
+                            fused += 1
+                            # The merged block against i+2, without rescanning the region.
+                            current = following if first_empty else current
+                            seen.discard(current)
+                        else:
+                            current = following
+        return fused or None
+
+    def report(self, pass_retval: int) -> str:
+        return f'Fused {pass_retval} states.'
+
+
+@dataclass(unsafe_hash=True)
+@properties.make_properties
+@explicit_cf_compatible
 class FuseStates(ppl.Pass):
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs).

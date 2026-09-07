@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""LoopFusion: fusing consecutive same-range sequential sibling loops (the
+"""FuseLoops: fusing consecutive same-range sequential sibling loops (the
 LoopRegion analogue of MapFusion, for the residual loops LoopToMap refused).
 
 Fusion must be value-preserving (compared against the un-fused build) and must
@@ -17,7 +17,7 @@ import numpy as np
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.loop_fusion import LoopFusion
+from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 
 N = dace.symbol("N")
 
@@ -38,7 +38,7 @@ def _fuse_and_check(prog, n=64, arrays=("a", "b"), seed=0):
 
     sd = prog.to_sdfg(simplify=True)
     before = _nloops(sd)
-    applied = LoopFusion().apply_pass(sd, {})
+    applied = FuseLoops().apply_pass(sd, {})
     after = _nloops(sd)
     fus_bufs = {k: v.copy() for k, v in inputs.items()}
     sd.name = prog.name + "_fused"
@@ -122,7 +122,7 @@ def test_fused_loop_blocks_uniquely_named():
             b[i] = b[i - 1] + a[i]
 
     sd = fuse_ok.to_sdfg(simplify=True)
-    assert LoopFusion().apply_pass(sd, {}) == 1
+    assert FuseLoops().apply_pass(sd, {}) == 1
     for loop in [c for c in sd.all_control_flow_regions(recursive=True) if isinstance(c, LoopRegion)]:
         labels = [b.label for b in loop.nodes()]
         assert len(labels) == len(set(labels)), f"duplicate block names in fused loop: {labels}"

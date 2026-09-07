@@ -11,19 +11,33 @@ The recipe, applied once in order:
 1. :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll` -- fully unroll
    constant-trip loops with ``<= unroll_limit`` iterations, so small recurrence / reduction loops
    become inline straight-line code rather than atomically-parallelized maps.
-2. ``UniqueLoopIterators`` -- SSA-rename every loop variable to a unique ``_loop_it_<N>``. Unrolling
-   an outer loop replicates its inner loops, and the copies all keep the original iterator name;
-   ``LoopToMap`` then refuses each copy but the last, because the shared name is read by a LATER
-   block ("loop-defined symbol used after the loop"). Without this stage the lift reaches almost
-   nothing on an unrolled Fortran graph.
-3. ``SimplifyPass`` -- a body guarding on the iteration variable (``if jm == ncldqi``) only exposes
+2. ``UniqueLoopIterators``, with NO post-value assignment -- SSA-rename every loop variable to a
+   unique ``_loop_it_<N>``. Unrolling an outer loop replicates its inner loops, and the copies all
+   keep the original iterator name; ``LoopToMap`` then refuses each copy but the last, because the
+   shared name is read by a LATER block ("loop-defined symbol used after the loop"). Without this
+   stage the lift reaches almost nothing on an unrolled Fortran graph -- and with the pass's default
+   post-value state it would reintroduce the very read it exists to remove.
+3. ``PrivatizeScalars`` -- give each use its own copy of the scalar temporaries. The Fortran
+   frontend emits ONE transient per local for the whole routine, so ten different loops write the
+   same ``zqadj``; ``LoopToMap`` exempts a transient that lives only inside the loop it is lifting,
+   and sharing disqualifies all ten at once. Their writes then fail the ``a*i+b`` uniqueness test on
+   a scalar's ``dst_subset=0``, which is 246 of the 249 refusals measured on CloudSC. The dependence
+   is false -- the ``z*`` locals are thread-private and reassigned before use every iteration.
+4. ``SimplifyPass`` -- a body guarding on the iteration variable (``if jm == ncldqi``) only exposes
    a constant condition once unrolling pins the variable to a literal, so the caller's own simplify,
    run while it was still symbolic, could not fold it. The dead branches left behind still hold
-   constant-index writes that read as loop-carried conflicts and block stage 4.
-4. ``LoopToMap`` -- parallelize every loop now free of loop-carried dependencies.
-5. :data:`FUSE_ROUNDS` x (``StateFusionExtended`` -> ``FullMapFusion``) -- maps fuse only within a
-   state, and fusing maps in turn frees the state boundaries the fused maps were pinning, so the two
-   alternate. One round returns with the graph still shrinking; two is the recipe.
+   constant-index writes that read as loop-carried conflicts and block stage 5. Running after the
+   fission also lets it drop the private copies nothing ends up needing.
+5. ``ParallelizeLoops`` -- lift every loop now free of loop-carried dependencies to a Map. It
+   applies ``LoopToMap`` outermost-first, sharing the per-SDFG analysis across probes and caching
+   refusals, then sweeps once more in graph order to pick up what the outermost-first order misses
+   (measured on CloudSC: the same 314 maps as the plain matcher, 515.2s against 927.7s).
+6. :data:`FUSE_ROUNDS` x ``Pipeline([FuseStates, FuseMaps, FuseLoops, FuseConditions])`` -- maps
+   fuse only within a state, fusing maps in turn frees the state boundaries the fused maps were
+   pinning, and the loop/condition passes remove the two other things that keep fusable bodies
+   apart: a pair of sequential loops ``ParallelizeLoops`` had to refuse (map fusion only ever sees
+   MapEntry nodes) and a pair of guards holding two halves in separate ConditionalBlocks. One round
+   returns with the graph still shrinking; two is the recipe.
 
 The pipeline runs once: every stage is idempotent or internally exhaustive, so there is nothing to
 re-apply. It is modelled on the canonicalization pipeline (a single-shot ``ppl.Pass``) rather than
@@ -41,13 +55,13 @@ from dace.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll, DEFAULT_UNROLL_LIMIT
 
-#: Rounds of (StateFusionExtended -> FullMapFusion) run after the loops have become maps.
+#: Rounds of (StateFusionExtended -> FuseMaps) run after the loops have become maps.
 FUSE_ROUNDS: int = 2
 
 
 @properties.make_properties
 class ParallelizePipeline(ppl.Pass):
-    """Parallelize an SDFG's loops: unroll, uniquify iterators, simplify, lift to maps, then fuse.
+    """Parallelize an SDFG's loops: unroll, uniquify, privatize, simplify, lift to maps, then fuse.
 
     Composes the passes once, imperatively. Does not re-run.
 
@@ -87,25 +101,42 @@ class ParallelizePipeline(ppl.Pass):
         return set()
 
     def _stages(self) -> List[ppl.Pass]:
-        from dace.transformation.interstate.loop_to_map import LoopToMap
-        from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
         from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.full_map_fusion import FullMapFusion
-        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+        from dace.transformation.passes.canonicalize.fuse_conditions import FuseConditions
+        from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
+        from dace.transformation.passes.fuse_maps import FuseMaps
+        from dace.transformation.passes.fusion_inline import FuseStates
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.simplify import SimplifyPass
         from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
         stages: List[ppl.Pass] = [
             ShortLoopUnroll(self.unroll_limit),
-            UniqueLoopIterators(),
+            # ``assign_loop_iterator_post_value=False``: the post-value state materializes
+            # ``<orig_var> = <exit value>`` AFTER the loop, which is a read of a loop-defined symbol
+            # from a later block -- exactly what LoopToMap refuses. Emitting it here would undo the
+            # rename's whole purpose.
+            UniqueLoopIterators(assign_loop_iterator_post_value=False),
+            # Before the simplify: fission renames each use to its own copy (1426 z* scalars ->
+            # 2676 on CloudSC), and the fold then gets to clean up the copies nothing needs.
+            PrivatizeScalars(),
             SimplifyPass(),
-            PatternMatchAndApplyRepeated([LoopToMap()]),
+            ParallelizeLoops(),
         ]
         for _ in range(FUSE_ROUNDS):
-            stages.append(PatternMatchAndApplyRepeated([StateFusionExtended()]))
-            # A fresh Pipeline per round: FullMapFusion declares a FindSingleUseData dependency whose
+            # One Pipeline, four fusion passes, each the pass form of its transformation:
+            # ``FuseStates`` drives ``StateFusionExtended`` per CFG edge instead of re-enumerating
+            # whole-SDFG matches after every apply, and additionally splices out an empty state
+            # sitting next to a LoopRegion / ConditionalBlock -- an edge whose endpoints are not
+            # both ``SDFGState``, which ``StateFusionExtended`` structurally cannot match.
+            # ``FuseMaps`` fuses vertically and horizontally in one FindSingleUseData scan.
+            # ``FuseLoops`` joins the sequential loops ``ParallelizeLoops`` had to refuse (map
+            # fusion only ever sees MapEntry nodes, so those pairs are invisible to it), and
+            # ``FuseConditions`` folds the guards that keep otherwise fusable bodies apart.
+            # A fresh Pipeline per round: FuseMaps declares a FindSingleUseData dependency whose
             # results the Pipeline caches, and the second round runs on a graph the first rewrote.
-            stages.append(Pipeline([FullMapFusion()]))
+            stages.append(Pipeline([FuseStates(), FuseMaps(), FuseLoops(), FuseConditions()]))
         return stages
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:

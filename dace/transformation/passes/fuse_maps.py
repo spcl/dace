@@ -8,7 +8,7 @@ from dace.transformation.passes import analysis as ap, pattern_matching as pmp
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class FullMapFusion(ppl.Pass):
+class FuseMaps(ppl.Pass):
     """Pass that combines `MapFusionVertical`, `MapFusionHorizonatl` and `FindSingleUseData` into one.
 
     Essentially, this function runs `FindSingleUseData` before `MapFusion`, this
@@ -149,12 +149,12 @@ class FullMapFusion(ppl.Pass):
             specified_vertical_arguments = [arg for arg, val in unique_vertical_arguments.items() if val is not None]
             if specified_vertical_arguments:
                 raise ValueError(
-                    f'Used `FullMapFusion` without vertical Map fusion, but speciefied: {", ".join(specified_vertical_arguments)}'
+                    f'Used `FuseMaps` without vertical Map fusion, but speciefied: {", ".join(specified_vertical_arguments)}'
                 )
         if not self.perform_horizontal_map_fusion:
             if only_if_common_ancestor is not None:
                 raise ValueError(
-                    f'Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor')
+                    f'Used `FuseMaps` without horizontal Map fusion, but speciefied: only_if_common_ancestor')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -190,9 +190,9 @@ class FullMapFusion(ppl.Pass):
             # nothing removes afterwards.
             fusion_transforms.append(dftrans.MapReduceFusion())
 
-            # We have to pass the single use data at construction. This is because that
-            #  `fusion._pipeline_results` is only defined, i.e., not `None` during `apply()`
-            #  but during `can_be_applied()` it is not available. Thus we have to set it here.
+            # The single-use data reaches `can_be_applied` through `pipeline_results`, which
+            #  `match_patterns` now installs on every match before probing it -- so this no longer
+            #  has to be threaded in at construction (the issue#1911 workaround).
             fusion_transforms.append(
                 dftrans.MapFusionVertical(
                     only_inner_maps=self.only_inner_maps,
@@ -203,8 +203,6 @@ class FullMapFusion(ppl.Pass):
                     require_all_intermediates=self.require_all_intermediates,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
-                    # TODO: Remove once issue#1911 has been solved.
-                    _single_use_data=pipeline_results["FindSingleUseData"],
                 ))
 
         if self.perform_horizontal_map_fusion:

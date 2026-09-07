@@ -29,17 +29,17 @@ from typing import Any, Dict, Optional
 from dace import SDFG
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.interstate.fuse_loops import FuseLoops
+from dace.transformation.interstate.loop_fusion import LoopFusion
 
 
 @transformation.explicit_cf_compatible
-class LoopFusion(ppl.Pass):
+class FuseLoops(ppl.Pass):
     """Fuse consecutive same-range sequential sibling loops into one loop.
 
-    The deterministic, fuse-everything-legal form of the ``FuseLoops`` transformation: it applies
-    ``FuseLoops`` to every qualifying consecutive-loop pair until a fixpoint. All the legality (same
+    The deterministic, fuse-everything-legal form of the ``LoopFusion`` transformation: it applies
+    ``LoopFusion`` to every qualifying consecutive-loop pair until a fixpoint. All the legality (same
     iteration space, straight-line bodies, not independently DOALL, value-preserving dependence
-    classes) and the merge itself live on ``FuseLoops`` -- this pass owns only the traversal, so the pass
+    classes) and the merge itself live on ``LoopFusion`` -- this pass owns only the traversal, so the pass
     and the transformation can never disagree.
     """
     CATEGORY: str = 'Canonicalization'
@@ -75,13 +75,13 @@ class LoopFusion(ppl.Pass):
 
     @staticmethod
     def _fuse_one(sdfg: SDFG, cfg: ControlFlowRegion) -> bool:
-        """Find and fuse one legal consecutive same-range loop pair inside ``cfg`` via ``FuseLoops``.
+        """Find and fuse one legal consecutive same-range loop pair inside ``cfg`` via ``LoopFusion``.
 
         Enumerates candidate adjacencies (a ``LoopRegion`` with a single out-edge to a ``LoopRegion``) in
-        node order and delegates the legality decision and the merge to :class:`FuseLoops` -- the shared
+        node order and delegates the legality decision and the merge to :class:`LoopFusion` -- the shared
         source of truth. First applicable pair wins, matching the original one-adjacency-per-sweep order.
 
-        :param sdfg: The owning SDFG (for the DOALL oracle FuseLoops consults).
+        :param sdfg: The owning SDFG (for the DOALL oracle LoopFusion consults).
         :param cfg: The control-flow region to search (one level; deeper loops are reached via
                     ``all_control_flow_regions``).
         :returns: ``True`` if a pair was fused.
@@ -95,10 +95,10 @@ class LoopFusion(ppl.Pass):
             second = out_edges[0].dst
             if not isinstance(second, LoopRegion) or second is first:
                 continue
-            if FuseLoops.can_be_applied_to(sdfg, first=first, second=second):
-                FuseLoops.apply_to(sdfg, first=first, second=second, verify=False, annotate=False, save=False)
+            if LoopFusion.can_be_applied_to(sdfg, first=first, second=second):
+                LoopFusion.apply_to(sdfg, first=first, second=second, verify=False, annotate=False, save=False)
                 return True
         return False
 
 
-__all__ = ['LoopFusion']
+__all__ = ['FuseLoops']

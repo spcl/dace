@@ -4,7 +4,7 @@
 The pipeline under test is :class:`~dace.transformation.passes.parallelize.ParallelizePipeline`::
 
     specialize (nclv, ncldq*) -> ShortLoopUnroll -> UniqueLoopIterators -> simplify -> LoopToMap
-        -> 2 x (StateFusionExtended -> FullMapFusion)   [-> offload_to_gpu]
+        -> 2 x (StateFusionExtended -> FuseMaps)   [-> offload_to_gpu]
 
 This is the dwarf-scale test of that pipeline: ``canonicalize`` does not fit a CI budget here, and
 the device leg only needs the graph to reach fusible maps. The two legs share every phase; the
@@ -44,15 +44,19 @@ SPECIES_CONSTANTS = {'nclv': 5, 'ncldql': 1, 'ncldqi': 2, 'ncldqr': 3, 'ncldqs':
 #: frontend change may legitimately produce more.
 MIN_UNROLLABLE_AFTER_SPECIALIZE = 37
 
-#: Maps ``LoopToMap`` lifts on the shipped dwarf. LOWER BOUND: 111 measured at HEAD, floored at 100
-#: so ordinary drift does not fail CI while a collapse does. The number is load-bearing rather than
-#: decorative -- dropping ``UniqueLoopIterators`` from the pipeline takes it from 111 to 2, because
-#: the unroll's replicated inner loops all keep the original iterator name and ``LoopToMap`` refuses
-#: every copy but the last. This assert is what would catch that regression.
-MIN_MAPS_AFTER_LOOP_TO_MAP = 100
+#: Maps ``LoopToMap`` lifts on the shipped dwarf. LOWER BOUND: 314 of 360 loops measured at HEAD,
+#: floored at 300 so ordinary drift does not fail CI while a collapse does. Two pipeline stages hold
+#: that number up, and removing either is a silent parallelism loss this assert exists to catch:
+#: without ``UniqueLoopIterators`` it falls to 111 (the unroll's replicated inner loops all keep the
+#: original iterator name, and LoopToMap refuses every copy but the last), and without
+#: ``PrivatizeScalars`` as well it falls to 2 (the Fortran frontend emits one transient per local
+#: for the whole routine, so ten loops share ``zqadj``, no loop can claim it as loop-local, and the
+#: scalar's ``dst_subset=0`` write fails the a*i+b uniqueness test -- 246 of 249 refusals).
+MIN_MAPS_AFTER_LOOP_TO_MAP = 300
 
 #: ``#pragma omp parallel for`` in the generated host code. A map codegen declines to emit a pragma
-#: for is a silent serialization, so the map count above does not imply this one.
+#: for is a silent serialization, so the map count above does not imply this one. Left at 1 until
+#: measured against the current stage list rather than guessed from the map count.
 MIN_OMP_PARALLEL_FOR = 1
 
 #: IEEE, single-core, deterministic: value-preserving phases stay bit-exact against the reference.

@@ -6,7 +6,7 @@ import dace
 import numpy as np
 import dace.libraries.standard as stdlib
 from dace.transformation.dataflow import (MapReduceFusion, MapFusionVertical, MapWCRFusion)
-from dace.transformation.passes import FullMapFusion
+from dace.transformation.passes import FuseMaps
 
 W = dace.symbol('W')
 H = dace.symbol('H')
@@ -304,8 +304,8 @@ def test_mapreduce_onemap():
     onetest(mapreduce_onemap)
 
 
-def test_full_map_fusion_removes_the_reduced_intermediate():
-    """``FullMapFusion``'s vertical phase must reach a Map that feeds a Reduce, not only a Map.
+def test_fuse_maps_removes_the_reduced_intermediate():
+    """``FuseMaps``'s vertical phase must reach a Map that feeds a Reduce, not only a Map.
 
     ``MapFusionVertical`` matches Map -> Map, so on its own it leaves the whole reduced array
     materialized between the two. That intermediate is the size of the input, and it is why a
@@ -321,11 +321,11 @@ def test_full_map_fusion_removes_the_reduced_intermediate():
         return sorted(k for k, v in sdfg.arrays.items() if v.transient and v.total_size != 1)
 
     without = reduce_a_product.to_sdfg(simplify=True)
-    FullMapFusion(perform_vertical_map_fusion=False).apply_pass(without, {})
+    FuseMaps(perform_vertical_map_fusion=False).apply_pass(without, {})
     assert sized_transients(without), 'nothing to remove: the test no longer covers the case'
 
     with_it = reduce_a_product.to_sdfg(simplify=True)
-    FullMapFusion().apply_pass(with_it, {})
+    FuseMaps().apply_pass(with_it, {})
     assert not sized_transients(with_it), f'intermediate survived: {sized_transients(with_it)}'
     assert not [n for n, _ in with_it.all_nodes_recursive() if isinstance(n, stdlib.Reduce)]
     assert any(e.data.wcr for sd in with_it.all_sdfgs_recursive() for st in sd.states() for e in st.edges()), \
@@ -394,5 +394,5 @@ if __name__ == "__main__":
     test_histogram()
     test_mapreduce_onemap()
     test_mapreduce_twomaps()
-    test_full_map_fusion_removes_the_reduced_intermediate()
+    test_fuse_maps_removes_the_reduced_intermediate()
     test_a_second_body_tasklet_does_not_break_the_match()

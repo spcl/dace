@@ -4,7 +4,7 @@ from .consolidate_edges import ConsolidateEdges
 from .constant_propagation import ConstantPropagation
 from .dead_dataflow_elimination import DeadDataflowElimination
 from .dead_state_elimination import DeadStateElimination
-from .full_map_fusion import FullMapFusion
+from .fuse_maps import FuseMaps
 from .fusion_inline import FuseStates, InlineSDFGs
 from .gpu_block_size_selection import SelectGPUDeviceBlockSize, pick_gpu_block_size, select_gpu_device_block_size
 from .instrument_with_timer import InstrumentWithTimer

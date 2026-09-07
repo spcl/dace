@@ -8,7 +8,7 @@ import pytest
 import dace
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import LoopRegion, SDFGState
-from dace.transformation.passes.canonicalize.loop_fusion import LoopFusion
+from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.sink_state_into_loop import SinkStateIntoLoop
 
 N = 8
@@ -95,7 +95,7 @@ def test_replicable_middle_state_is_sunk_and_the_loops_then_fuse():
     assert np.array_equal(got["B"], oracle["B"]), f"sinking changed B: {got['B']} != {oracle['B']}"
 
     # Adjacency was the only thing blocking fusion.
-    assert LoopFusion().apply_pass(sdfg, {}) == 1
+    assert FuseLoops().apply_pass(sdfg, {}) == 1
     assert len([b for b in sdfg.nodes() if isinstance(b, LoopRegion)]) == 1
     assert np.array_equal(_run(sdfg)["B"], oracle["B"]), "fusing after the sink changed B"
 

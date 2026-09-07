@@ -206,7 +206,7 @@ class NormalizeLoopBounds(NormalizeLoopsAndMaps):
 
     Two loops of the same extent but different offset (a slice map ``0:N-2``
     beside an in-row scan ``1:N-1``) become the same range once both are rebased
-    to 0, so the same-range ``LoopFusion`` can join them. Keeping the stride is
+    to 0, so the same-range ``FuseLoops`` can join them. Keeping the stride is
     deliberate: the sibling ``NormalizeLoopsAndMaps`` (``i -> b + s*j``) was
     dropped from the pipeline because the ``a[b+s*j]`` form blocks ``LoopToMap``
     (it no longer sees a unique ``j`` index); the offset-only ``a[b+j]`` here

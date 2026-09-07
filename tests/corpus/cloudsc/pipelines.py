@@ -2,7 +2,8 @@
 """CloudSC e2e pipeline driver: parallelize / canon_cpu / canon_gpu, phase-checkpointed.
 
 ``parallelize`` is the default pipeline (``ParallelizePipeline``): specialize -> ShortLoopUnroll ->
-UniqueLoopIterators -> simplify -> LoopToMap -> 2x(StateFusionExtended -> FullMapFusion). The canon variants run the full
+UniqueLoopIterators -> PrivatizeScalars -> simplify -> ParallelizeLoops ->
+2x(StateFusionExtended -> FuseMaps). The canon variants run the full
 canonicalization recipe instead, with peeling and anti-dependence breaking on (their defaults).
 ``canon_gpu`` runs every GPU knob but does not offload; the cutoff is structural (``offload_to_gpu``
 absent from ``_build_stages``), so the graph stays CPU-runnable and the numeric check compiles it for
@@ -298,15 +299,18 @@ def _stage_pass_names(unit) -> set:
 #: Parallelize-pipeline pass -> phase label. One entry per stage the pipeline runs; a pass reaching
 #: :func:`_parallelize_phase_of` unlisted here trips its assert rather than landing in a catch-all,
 #: so a stage added upstream cannot silently be filed on the wrong side of the
-#: :data:`_REASSOC_PHASES` tolerance boundary. ``FindSingleUseData`` is FullMapFusion's declared
+#: :data:`_REASSOC_PHASES` tolerance boundary. ``FindSingleUseData`` is FuseMaps's declared
 #: dependency and rides along inside its Pipeline.
 _PARALLELIZE_PHASE: Dict[str, str] = {
     'ShortLoopUnroll': 'unroll',
     'UniqueLoopIterators': 'unique_iterators',
     'SimplifyPass': 'simplify',
-    'LoopToMap': 'parallelize',
-    'StateFusionExtended': 'fuse',
-    'FullMapFusion': 'fuse',
+    'PrivatizeScalars': 'privatize',
+    'ParallelizeLoops': 'parallelize',
+    'FuseStates': 'fuse',
+    'FuseMaps': 'fuse',
+    'FuseLoops': 'fuse',
+    'FuseConditions': 'fuse',
     'FindSingleUseData': 'fuse',
 }
 

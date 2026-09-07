@@ -15,9 +15,9 @@ import pytest
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.sdfg.nodes import LibraryNode
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
-from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.parallelize import ParallelizePipeline
-from dace.transformation.passes.pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 import tests.corpus.measure_parallelization as mp
 
 N = 16
@@ -30,9 +30,9 @@ def _to_maps(sdfg):
     after -- which would make the comparison below vacuously false rather than testing the guard."""
     for stage in ParallelizePipeline()._stages():
         stage.apply_pass(sdfg, {})
-        if isinstance(stage, PatternMatchAndApply) and any(isinstance(t, LoopToMap) for t in stage.transformations):
+        if isinstance(stage, ParallelizeLoops):
             return
-    raise AssertionError('the parallelize pipeline no longer runs LoopToMap')
+    raise AssertionError('the parallelize pipeline no longer runs ParallelizeLoops')
 
 
 def _gemm_libnodes(sdfg):

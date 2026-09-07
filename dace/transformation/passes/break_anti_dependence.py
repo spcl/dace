@@ -417,7 +417,7 @@ class BreakAntiDependence(ppl.Pass):
                 return ('RAW', None)  # provable read-behind (``a[i - K]``): a true recurrence
             # Sign undecidable even under the nonneg-symbol assumption (``K - M``): keep
             # sequential, but do NOT report 'RAW'. RAW means a *proven* read-behind, and a
-            # consumer that fuses on that (FuseLoops) would then wrongly permit fusing a possible
+            # consumer that fuses on that (LoopFusion) would then wrongly permit fusing a possible
             # read-ahead. 'complex' is the honest verdict -- every in-module consumer already
             # treats it exactly like RAW (keep sequential), so this is a no-op for renaming and
             # only tightens the fusion oracle.

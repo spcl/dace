@@ -778,7 +778,11 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     def edges_between(self, source: NodeT, destination: NodeT) -> List[Edge[EdgeT]]:
         if (source, destination) in self._edges:
             return [self._edges[(source, destination)]]
-        if source not in self.nodes(): return []
+        # ``self._nodes``, not ``self.nodes()``: the latter materializes every node into a list and
+        # linear-scans it. On a multigraph the fast path above can never hit (edges hash by identity),
+        # so every call reached this line -- 1.27us at 10 nodes, 79.7us at 4000.
+        if source not in self._nodes:
+            return []
         return [e for e in self.out_edges(source) if e.dst == destination]
 
     def reverse(self):

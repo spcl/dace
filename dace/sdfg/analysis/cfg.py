@@ -247,107 +247,111 @@ def find_sese_region(
             sinks.add(block)
     sink = ControlFlowBlock('__DACE_dummy_sink')
     graph.add_node(sink)
-    for s in sinks:
-        graph.add_edge(s, sink, InterstateEdge())
+    # The sink is a scratch node this function owns, and three of the returns below are early
+    # exits taken after it was added -- so the removal belongs in a ``finally``. Leaving it
+    # behind puts a bare ControlFlowBlock in a real CFG, which nothing downstream expects.
+    try:
+        for s in sinks:
+            graph.add_edge(s, sink, InterstateEdge())
 
-    # Compute dominators and post-dominators
-    dominators = all_dominators(graph)
-    post_dominators = all_postdominators(graph, sink=sink)
+        # Compute dominators and post-dominators
+        dominators = all_dominators(graph)
+        post_dominators = all_postdominators(graph, sink=sink)
 
-    # Find the entry node: the lowest common dominator of all target nodes
-    common_dominators = None
-    for node in target_nodes:
-        if node not in dominators:
-            continue
-        if common_dominators is None:
-            common_dominators = dominators[node].copy()
-        else:
-            common_dominators &= dominators[node]
+        # Find the entry node: the lowest common dominator of all target nodes
+        common_dominators = None
+        for node in target_nodes:
+            if node not in dominators:
+                continue
+            if common_dominators is None:
+                common_dominators = dominators[node].copy()
+            else:
+                common_dominators &= dominators[node]
 
-    if not common_dominators:
-        return OrderedSet(), None, None
+        if not common_dominators:
+            return OrderedSet(), None, None
 
-    # The entry is the dominator closest to the target nodes
-    entry_node = None
-    min_distance = float('inf')
-    for dom in common_dominators:
-        # Find maximum distance to any target node
-        max_dist_to_targets = 0
-        for target in target_nodes:
-            if target in dominators and dom in dominators[target]:
-                # Count nodes between dom and target
-                try:
-                    dist = nx.shortest_path_length(graph.nx, dom, target)
-                    max_dist_to_targets = max(max_dist_to_targets, dist)
-                except nx.NetworkXNoPath:
-                    max_dist_to_targets = float('inf')
-
-        if max_dist_to_targets < min_distance:
-            min_distance = max_dist_to_targets
-            entry_node = dom
-
-    # Find the exit node: the lowest common post-dominator of all target nodes
-    common_post_dominators = None
-    for node in target_nodes:
-        if node not in post_dominators:
-            continue
-        if common_post_dominators is None:
-            common_post_dominators = post_dominators[node].copy()
-        else:
-            common_post_dominators &= post_dominators[node]
-
-    if not common_post_dominators:
-        return OrderedSet(), entry_node, None
-
-    # The exit is the post-dominator closest to the target nodes, from which none of the target nodes can be reached
-    # anymore.
-    exit_node = None
-    min_distance = float('inf')
-    for post_dom in common_post_dominators:
-        max_dist_from_targets = 0
-        if any(nx.has_path(graph.nx, post_dom, t) for t in target_nodes):
-            continue
-        for target in target_nodes:
-            if target in post_dominators and post_dom in post_dominators[target]:
-                path_exists = nx.has_path(graph.nx, target, post_dom)
-                if path_exists:
+        # The entry is the dominator closest to the target nodes
+        entry_node = None
+        min_distance = float('inf')
+        for dom in common_dominators:
+            # Find maximum distance to any target node
+            max_dist_to_targets = 0
+            for target in target_nodes:
+                if target in dominators and dom in dominators[target]:
+                    # Count nodes between dom and target
                     try:
-                        dist = nx.shortest_path_length(graph.nx, target, post_dom)
-                        max_dist_from_targets = max(max_dist_from_targets, dist)
+                        dist = nx.shortest_path_length(graph.nx, dom, target)
+                        max_dist_to_targets = max(max_dist_to_targets, dist)
                     except nx.NetworkXNoPath:
-                        max_dist_from_targets = float('inf')
+                        max_dist_to_targets = float('inf')
 
-        if max_dist_from_targets < min_distance:
-            min_distance = max_dist_from_targets
-            exit_node = post_dom
+            if max_dist_to_targets < min_distance:
+                min_distance = max_dist_to_targets
+                entry_node = dom
 
-    # Find all nodes in the SESE region
-    if entry_node is None or exit_node is None:
-        return target_nodes.copy(), entry_node, exit_node
+        # Find the exit node: the lowest common post-dominator of all target nodes
+        common_post_dominators = None
+        for node in target_nodes:
+            if node not in post_dominators:
+                continue
+            if common_post_dominators is None:
+                common_post_dominators = post_dominators[node].copy()
+            else:
+                common_post_dominators &= post_dominators[node]
 
-    # The region includes all nodes on paths from entry to exit that are reachable from entry and
-    # can reach exit. ``nx.descendants`` answers with a plain set, whose iteration order follows
-    # allocation addresses; the caller REMOVES these nodes from the graph and codegen structures
-    # what is left, so that order reaches the emitted program. Rank both by the graph's own block
-    # order, which is insertion order, before intersecting.
-    reachable = OrderedSet()
-    if entry_node in graph:
-        descendants = nx.descendants(graph.nx, entry_node)
-        reachable = OrderedSet(b for b in graph.nodes() if b is entry_node or b in descendants)
+        if not common_post_dominators:
+            return OrderedSet(), entry_node, None
 
-    backwards = nx.descendants(graph.nx.reverse(), exit_node)
-    can_reach_exit = OrderedSet(b for b in graph.nodes() if b is exit_node or b in backwards)
-
-    region_nodes = reachable & can_reach_exit
-
-    # Remove the dummy sink
-    graph.remove_node(sink)
-    if sink in region_nodes:
-        region_nodes.remove(sink)
-    if exit_node == sink:
+        # The exit is the post-dominator closest to the target nodes, from which none of the target nodes can be reached
+        # anymore.
         exit_node = None
+        min_distance = float('inf')
+        for post_dom in common_post_dominators:
+            max_dist_from_targets = 0
+            if any(nx.has_path(graph.nx, post_dom, t) for t in target_nodes):
+                continue
+            for target in target_nodes:
+                if target in post_dominators and post_dom in post_dominators[target]:
+                    path_exists = nx.has_path(graph.nx, target, post_dom)
+                    if path_exists:
+                        try:
+                            dist = nx.shortest_path_length(graph.nx, target, post_dom)
+                            max_dist_from_targets = max(max_dist_from_targets, dist)
+                        except nx.NetworkXNoPath:
+                            max_dist_from_targets = float('inf')
 
-    return region_nodes, entry_node, exit_node
+            if max_dist_from_targets < min_distance:
+                min_distance = max_dist_from_targets
+                exit_node = post_dom
+
+        # Find all nodes in the SESE region
+        if entry_node is None or exit_node is None:
+            return target_nodes.copy(), entry_node, exit_node
+
+        # The region includes all nodes on paths from entry to exit that are reachable from entry and
+        # can reach exit. ``nx.descendants`` answers with a plain set, whose iteration order follows
+        # allocation addresses; the caller REMOVES these nodes from the graph and codegen structures
+        # what is left, so that order reaches the emitted program. Rank both by the graph's own block
+        # order, which is insertion order, before intersecting.
+        reachable = OrderedSet()
+        if entry_node in graph:
+            descendants = nx.descendants(graph.nx, entry_node)
+            reachable = OrderedSet(b for b in graph.nodes() if b is entry_node or b in descendants)
+
+        backwards = nx.descendants(graph.nx.reverse(), exit_node)
+        can_reach_exit = OrderedSet(b for b in graph.nodes() if b is exit_node or b in backwards)
+
+        region_nodes = reachable & can_reach_exit
+
+        if sink in region_nodes:
+            region_nodes.remove(sink)
+        if exit_node == sink:
+            exit_node = None
+
+        return region_nodes, entry_node, exit_node
+    finally:
+        graph.remove_node(sink)
 
 
 def back_edges(cfg: ControlFlowRegion,

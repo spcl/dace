@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``FuseLoops`` transformation unit tests -- the single-pair loop-fusion transformation form (the agent
-arm; the ``LoopFusion`` pass is this transformation applied to a fixpoint).
+"""``LoopFusion`` transformation unit tests -- the single-pair loop-fusion transformation form (the agent
+arm; the ``FuseLoops`` pass is this transformation applied to a fixpoint).
 
-The transformation shares its legality kernel with the ``LoopFusion`` pass, so the pass's numpy suite
+The transformation shares its legality kernel with the ``FuseLoops`` pass, so the pass's numpy suite
 already covers the fusion math exhaustively. These tests pin the TRANSFORMATION interface an agent (or the
 pass) drives: ``can_be_applied_to`` identifies exactly the legal pairs, ``apply_to`` / repeated application
 fuses them, the result is bit-exact to the un-fused program, and no input crashes.
@@ -19,7 +19,7 @@ import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.interstate.fuse_loops import FuseLoops
+from dace.transformation.interstate.loop_fusion import LoopFusion
 
 N = dace.symbol("N")
 
@@ -42,7 +42,7 @@ def adjacent_loop_pairs(sdfg):
 
 
 def run_fused(prog, inputs, n, simplify=True):
-    """Build the program twice: an un-fused reference and a copy fused by repeated ``FuseLoops``. Returns
+    """Build the program twice: an un-fused reference and a copy fused by repeated ``LoopFusion``. Returns
     (before, after, applied, bit_exact)."""
     ref = prog.to_sdfg(simplify=simplify)
     ref.name = prog.name + "_ref"
@@ -51,7 +51,7 @@ def run_fused(prog, inputs, n, simplify=True):
 
     sd = prog.to_sdfg(simplify=simplify)
     before = nloops(sd)
-    applied = sd.apply_transformations_repeated(FuseLoops) or 0
+    applied = sd.apply_transformations_repeated(LoopFusion) or 0
     after = nloops(sd)
     sd.name = prog.name + "_fused"
     fus_bufs = {k: v.copy() for k, v in inputs.items()}
@@ -96,7 +96,7 @@ def test_can_be_applied_to_identifies_the_fusable_pair():
     pairs = adjacent_loop_pairs(sd)
     assert len(pairs) == 1
     first, second = pairs[0]
-    assert FuseLoops.can_be_applied_to(sd, first=first, second=second)
+    assert LoopFusion.can_be_applied_to(sd, first=first, second=second)
 
 
 def test_apply_to_a_named_pair_fuses_it():
@@ -110,7 +110,7 @@ def test_apply_to_a_named_pair_fuses_it():
 
     sd = prog.to_sdfg(simplify=True)
     first, second = adjacent_loop_pairs(sd)[0]
-    FuseLoops.apply_to(sd, first=first, second=second, verify=True, save=False, annotate=False)
+    LoopFusion.apply_to(sd, first=first, second=second, verify=True, save=False, annotate=False)
     assert nloops(sd) == 1
     bufs = mk(names=("a", "b", "c"))
     ref = {k: v.copy() for k, v in bufs.items()}
@@ -134,11 +134,11 @@ def test_refuses_mismatched_iteration_range():
 
     sd = prog.to_sdfg(simplify=True)
     for first, second in adjacent_loop_pairs(sd):
-        assert not FuseLoops.can_be_applied_to(sd, first=first, second=second)
+        assert not LoopFusion.can_be_applied_to(sd, first=first, second=second)
 
 
 def test_refuses_doall_parallel_loops():
-    # two independent element-wise loops are DOALL -- FuseLoops must not serialize them (LoopToMap's job).
+    # two independent element-wise loops are DOALL -- LoopFusion must not serialize them (LoopToMap's job).
     @dace.program
     def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(N):
@@ -148,7 +148,7 @@ def test_refuses_doall_parallel_loops():
 
     sd = prog.to_sdfg(simplify=True)
     for first, second in adjacent_loop_pairs(sd):
-        assert not FuseLoops.can_be_applied_to(sd, first=first, second=second)
+        assert not LoopFusion.can_be_applied_to(sd, first=first, second=second)
 
 
 # --- never crashes -----------------------------------------------------------------------------------
@@ -163,16 +163,16 @@ def test_never_crashes_on_single_or_no_loop():
             b[i] = b[i - 1] + a[i]
 
     sd = one_loop.to_sdfg(simplify=False)
-    assert (sd.apply_transformations_repeated(FuseLoops) or 0) == 0  # nothing to fuse, no crash
+    assert (sd.apply_transformations_repeated(LoopFusion) or 0) == 0  # nothing to fuse, no crash
 
 
 # =====================================================================================================
 # Arbitrary loop / map nesting patterns.
 #
-# FuseLoops fuses two adjacent loops only when each body is a SINGLE compute state -- a map body
+# LoopFusion fuses two adjacent loops only when each body is a SINGLE compute state -- a map body
 # qualifies, a nested for-loop body does not. So the space splits into: fusable (outer sequential loop +
 # inner map), refused-for-structure (nested for-loops / DOALL outer), refused-for-dependence (a real
-# cross-loop hazard), and deep nests FuseLoops must simply never crash on. The invariant on EVERY case is
+# cross-loop hazard), and deep nests LoopFusion must simply never crash on. The invariant on EVERY case is
 # value-preservation: `exact` (fused result == un-fused reference, bit-for-bit). A wrongly-fused real
 # dependence would fail `exact`, so that assertion alone is the correctness net; `applied == 0` pins the
 # cases we additionally expect to be refused.
@@ -211,7 +211,7 @@ def seq_outer_map_reduction_body(a: f64[N, N], b: f64[N], c: f64[N]):
 
 def test_map_bodied_recurrence_pair_is_conservatively_refused():
     # A cross-loop b-write / b-read dependence expressed through a MAP body carries subsets the v1
-    # point-wise classifier resolves conservatively, so FuseLoops refuses -- it never WRONGLY fuses, which
+    # point-wise classifier resolves conservatively, so LoopFusion refuses -- it never WRONGLY fuses, which
     # is what matters. The un-fused program is the correct result (exact).
     before, after, applied, exact = run_fused(seq_outer_map_inner_2d, mk2d(names=("a", "b", "c")), 24)
     assert exact
@@ -243,7 +243,7 @@ def doall_2d_map_pair(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
 
 def test_doall_map_bodied_pair_is_refused_and_fuses_only_on_opt_in():
     # Their only shared array (a) is read by both, so the dependence check clears the pair -- but the
-    # second loop is DOALL, and serializing a loop LoopToMap could map is not FuseLoops' call. Only
+    # second loop is DOALL, and serializing a loop LoopToMap could map is not LoopFusion' call. Only
     # ReconstructWavefrontNest's allow_doall_fuse opt-in gets it.
     before, after, applied, exact = run_fused(doall_2d_map_pair, mk2d(names=("a", "b", "c")), 24)
     assert exact
@@ -258,7 +258,7 @@ def test_doall_map_bodied_pair_is_refused_and_fuses_only_on_opt_in():
     sdfg = doall_2d_map_pair.to_sdfg(simplify=True)
     first, second = adjacent_loop_pairs(sdfg)[0]
     graph = first.parent_graph
-    xform = FuseLoops()
+    xform = LoopFusion()
     xform.first, xform.second = first, second
     assert xform.can_be_applied(graph, 0, sdfg) is False
     assert xform.can_be_applied(graph, 0, sdfg, allow_doall_fuse=True) is True
@@ -339,10 +339,10 @@ def test_real_dependence_blocks_fusion(prog, names, n, d1):
     inputs = mk(n=n, names=names) if d1 == 1 else mk2d(n=n, names=names)
     before, after, applied, exact = run_fused(prog, inputs, n)
     assert exact  # the un-fused program is the correct result; fusing would diverge
-    assert applied == 0  # FuseLoops recognizes the hazard and refuses
+    assert applied == 0  # LoopFusion recognizes the hazard and refuses
 
 
-# --- mixed and deeper nests: FuseLoops must never crash, always value-preserving ---------------------
+# --- mixed and deeper nests: LoopFusion must never crash, always value-preserving ---------------------
 
 
 @dace.program
@@ -370,7 +370,7 @@ def deep_4level_nest(a: f64[N, N], b: f64[N, N]):
 ])
 def test_arbitrary_nesting_never_crashes_and_preserves_value(prog, names, n):
     before, after, applied, exact = run_fused(prog, mk2d(names=names), n)
-    assert exact  # whatever FuseLoops does (or refuses to do) on the nest, the result is unchanged
+    assert exact  # whatever LoopFusion does (or refuses to do) on the nest, the result is unchanged
 
 
 # --- composition: chains of fusable + interleaved unfusable loops -------------------------------------
@@ -473,7 +473,7 @@ def test_more_scalar_recurrence_pairs_fuse(prog, names):
 
 def test_same_cell_reread_scale_is_refused():
     # body2 rewrites b[i] and body1 reads b[i-1]; in a fused sweep body1 would read the value body2 already
-    # scaled at i-1 -- a read-behind anti-dependence, so FuseLoops must refuse.
+    # scaled at i-1 -- a read-behind anti-dependence, so LoopFusion must refuse.
     before, after, applied, exact = run_fused(same_cell_output_then_scale, mk(names=("a", "b")), 48)
     assert exact
     assert applied == 0
@@ -507,7 +507,7 @@ def read_ahead_anti_is_safe(a: f64[N], b: f64[N], c: f64[N]):
 
 def test_read_ahead_anti_dependence_is_a_legal_fusion():
     # a read that is AHEAD of the other loop's write (WAR, not read-behind) stays correct when fused --
-    # body1 reads b[i+1] before body2 has written it in the fused sweep. FuseLoops fuses, value-preserving.
+    # body1 reads b[i+1] before body2 has written it in the fused sweep. LoopFusion fuses, value-preserving.
     before, after, applied, exact = run_fused(read_ahead_anti_is_safe, mk(names=("a", "b", "c")), 48)
     assert exact
     assert applied >= 1
@@ -585,7 +585,7 @@ def test_fusion_across_an_invariant_scalar_overwritten_later_is_refused():
 # Intermediate contraction (buffer localization).
 #
 # Fusing two sequential loops that share an intermediate ``tmp`` is only half the win: the ``[N]`` buffer
-# between them is reclaimable once both bodies run in the same iteration. FuseLoops contracts a transient
+# between them is reclaimable once both bodies run in the same iteration. LoopFusion contracts a transient
 # the fused body writes-and-reads at the SAME point ``tmp[i]`` -- no cross-iteration history, no use
 # outside the loop -- down to a reused ``[1]`` slot (the loop analogue of MapFusionVertical's smaller
 # intermediate). It is orthogonal to parallelism, so it fires on the sequential recurrences LoopToMap left.
@@ -622,7 +622,7 @@ def fuse_and_measure(prog, inputs, n, simplify=True):
 
     sd = prog.to_sdfg(simplify=simplify)
     big_before = big_transients(sd)
-    applied = sd.apply_transformations_repeated(FuseLoops) or 0
+    applied = sd.apply_transformations_repeated(LoopFusion) or 0
     big_after = big_transients(sd)
     sd.name = prog.name + "_fused"
     fb = {k: v.copy() for k, v in inputs.items()}
@@ -634,7 +634,7 @@ def fuse_and_measure(prog, inputs, n, simplify=True):
 # --- contraction FIRES: transient written & read only at point i, both loops non-DOALL ---------------
 #
 # Neither loop is DOALL (each carries a recurrence on an OUTPUT array), so LoopToMap left them for
-# FuseLoops; ``tmp`` is a pure per-iteration value -> contractible to a scalar.
+# LoopFusion; ``tmp`` is a pure per-iteration value -> contractible to a scalar.
 
 
 @dace.program
@@ -700,7 +700,7 @@ def localize_long_chain(a: f64[N], p: f64[N], q: f64[N], out: f64[N]):
 
 
 def test_long_chain_localizes_every_intermediate():
-    # A 3-loop chain collapses one adjacency per merge: FuseLoops leaves the merged body as two states
+    # A 3-loop chain collapses one adjacency per merge: LoopFusion leaves the merged body as two states
     # (StateFusion runs between passes, not inside the transformation), so the NEXT pair only matches once
     # the body is re-fused to a single compute state. Interleave a simplify to model the canon pipeline and
     # drive the chain fully closed -- then EVERY intermediate is localized.
@@ -715,7 +715,7 @@ def test_long_chain_localizes_every_intermediate():
     big_before = big_transients(sd)
     applied = 0
     while True:
-        got = sd.apply_transformations(FuseLoops)
+        got = sd.apply_transformations(LoopFusion)
         if not got:
             break
         applied += got
@@ -787,7 +787,7 @@ def test_two_d_intermediate_not_contracted_v1():
 #
 # A flow (RAW) hazard carried by a compiler temp: body1 PRODUCES tmp[i], body2 reads tmp[i+1] ahead of
 # that production. Because tmp is genuinely written in body1 (not a foldable constant), the read-ahead
-# dependence survives simplify and FuseLoops must refuse. (The anti/WAR-through-a-temp mirrors are covered
+# dependence survives simplify and LoopFusion must refuse. (The anti/WAR-through-a-temp mirrors are covered
 # by the arg-array cases `read_behind_anti` / `read_ahead_anti_is_safe` above -- a read of a temp BEFORE it
 # is produced folds to its init, dissolving the very dependence under test, so those live on arg arrays.)
 
@@ -863,11 +863,11 @@ def test_fuse_survives_first_id_shift_after_second_removed():
         out = sd.out_edges(first)
         if len(out) == 1 and isinstance(out[0].dst, LoopRegion):
             second = out[0].dst
-            if sd.node_id(first) > sd.node_id(second) and FuseLoops.can_be_applied_to(sd, first=first, second=second):
+            if sd.node_id(first) > sd.node_id(second) and LoopFusion.can_be_applied_to(sd, first=first, second=second):
                 target = (first, second)
     assert target is not None, "expected a legal shift-risk pair after fission"
 
-    FuseLoops.apply_to(sd, first=target[0], second=target[1])  # must not raise NodeNotFoundError
+    LoopFusion.apply_to(sd, first=target[0], second=target[1])  # must not raise NodeNotFoundError
     sd.validate()
     sd.name = "id_shift_fused"
     got = {k: v.copy() for k, v in inputs.items()}
@@ -881,7 +881,7 @@ def test_unknown_sign_symbolic_read_ahead_is_not_fused():
     undecidable sign even under the nonnegative-symbol assumption, so it is neither a proven
     read-behind nor a proven read-ahead. Fusing it is illegal -- at runtime ``K > M`` makes it a
     read-ahead whose fused read is the not-yet-produced (stale) value. Pre-fix ``_dep_class`` dumped
-    ``K - M`` into ``'RAW'`` (its "keep sequential" verdict) and ``FuseLoops`` read ``'RAW'`` as a
+    ``K - M`` into ``'RAW'`` (its "keep sequential" verdict) and ``LoopFusion`` read ``'RAW'`` as a
     proven read-behind, wrongly judging the pair fusable."""
     K, M = dace.symbol("K"), dace.symbol("M")
 
@@ -895,7 +895,7 @@ def test_unknown_sign_symbolic_read_ahead_is_not_fused():
     sd = prog.to_sdfg(simplify=True)
     pairs = adjacent_loop_pairs(sd)
     assert pairs, "expected the two sequential loops as an adjacency"
-    assert not any(FuseLoops.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
+    assert not any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
         "unknown-sign symbolic read-ahead a[i+K-M] must NOT be judged fusable"
 
 
@@ -915,5 +915,5 @@ def test_provable_read_behind_symbolic_still_fuses():
 
     sd = prog.to_sdfg(simplify=True)
     pairs = adjacent_loop_pairs(sd)
-    assert any(FuseLoops.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
+    assert any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
         "provable read-behind a[i-K] must remain fusable"

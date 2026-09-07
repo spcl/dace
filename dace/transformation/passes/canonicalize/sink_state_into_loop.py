@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Sink a state sitting between two loops into the second loop, so the loops become adjacent.
 
-``FuseLoops`` matches a two-node path graph, so ``loop1 -> state -> loop2`` produces no candidate
+``LoopFusion`` matches a two-node path graph, so ``loop1 -> state -> loop2`` produces no candidate
 pair at all and the loops are never offered for fusion. When the intervening state can be
 *replicated* per iteration without changing what the program computes, sinking it into the second
-loop restores adjacency and lets ``LoopFusion`` do its job.
+loop restores adjacency and lets ``FuseLoops`` do its job.
 
 Replication is only value-preserving when re-running the state is idempotent:
   * the second loop must not write anything the state reads -- otherwise later replicas see
