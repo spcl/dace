@@ -2,7 +2,7 @@
 """Maps the offloading keeps on the HOST, and the things it must never offload at all.
 
 Structural tests: they assert which schedule each map came out with, so they do not need a GPU.
-The numerical companion lives in ``offload_to_accelerator_test.py``.
+The numerical companion lives in ``offload_to_accelerator_graphs_test.py``.
 """
 import pytest
 
