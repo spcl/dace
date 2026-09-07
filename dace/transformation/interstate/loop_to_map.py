@@ -1560,6 +1560,17 @@ class LoopToMap(xf.MultiStateTransformation):
         # Create NestedSDFG and add the loop contents to it. Gather symbols defined in it.
         # Same value, without the whole-SDFG walk, when a pass already has it (see LiftContext).
         fsymbols = set(lift_ctx.sdfg_free_symbols) if lift_ctx is not None else set(sdfg.free_symbols)
+        # A lift can only stop DEFINING what the loop itself defines: its iterate (the map defines
+        # it afterwards, but not at this level) and the symbols the body assigns on its interstate
+        # edges (they move inside the nested SDFG). Every other symbol keeps its definition exactly
+        # where it was, so nothing else can become free. When none of those is a DECLARED symbol of
+        # this SDFG, ``sdfg.free_symbols`` cannot move and the two whole-graph walks below have
+        # nothing to find. Read off the loop HERE, while it is still intact.
+        loop_defined = {self.loop.loop_variable}
+        for region in self.loop.all_control_flow_regions(recursive=True):
+            for e in region.edges():
+                loop_defined |= e.data.assignments.keys()
+        frees_nothing = not (loop_defined & sdfg.symbols.keys())
         body = graph.add_state_before(self.loop, 'single_state_body')
         nsdfg = SDFG('loop_body', constants=sdfg.constants_prop, parent=body)
         nsdfg.add_node(self.loop.start_block, is_start_block=True)
@@ -1599,10 +1610,12 @@ class LoopToMap(xf.MultiStateTransformation):
             w = body.add_write(name)
             body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
 
-        # Fix SDFG symbols
-        for sym in sdfg.free_symbols - fsymbols:
-            if sym in sdfg.symbols:
-                sdfg.remove_symbol(sym)
+        # Fix SDFG symbols. Skipped outright when the loop declared nothing: the walk would be a
+        # whole-SDFG traversal whose result is provably empty.
+        if not frees_nothing:
+            for sym in sdfg.free_symbols - fsymbols:
+                if sym in sdfg.symbols:
+                    sdfg.remove_symbol(sym)
         for sym, dtype in nsymbols.items():
             nsdfg.symbols[sym] = dtype
 
@@ -1817,8 +1830,11 @@ class LoopToMap(xf.MultiStateTransformation):
         # One walk, not three: both loops below ask the same question -- which variables this lift
         # turned into free symbols -- and nothing between them touches the graph. ``remove_symbol``
         # only deregisters a declaration; it moves no use, so it cannot change what is used.
-        post_free_symbols = sdfg.free_symbols
-        newly_free = post_free_symbols - fsymbols
+        if frees_nothing:
+            post_free_symbols, newly_free = fsymbols, set()
+        else:
+            post_free_symbols = sdfg.free_symbols
+            newly_free = post_free_symbols - fsymbols
         for var in newly_free:
             if var not in sdfg.symbols:
                 continue
@@ -1846,7 +1862,7 @@ class LoopToMap(xf.MultiStateTransformation):
         # the parent's ``symbol_mapping`` belongs to the parent SDFG. ``remove_data`` DOES change
         # it -- a name leaving ``sdfg.arrays`` leaves the walk's defined set -- so skip the handoff
         # whenever the loop had body-local arrays to drop.
-        if lift_ctx is not None and not unique_set:
+        if lift_ctx is not None and (frees_nothing or not unique_set):
             lift_ctx.post_lift_free_symbols = post_free_symbols
 
         sdfg.reset_cfg_list()
