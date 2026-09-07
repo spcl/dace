@@ -59,7 +59,8 @@ def test_bert_full():
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         bert_path = os.path.join(tmp_dir, "bert-tiny.onnx")
-        torch.onnx.export(_BertONNXExportWrapper(pt_model), (tokens_tensor, attention_mask, segments_tensors),
+        # eval(): the exporter restores the wrapper's mode afterwards, which would turn dropout back on
+        torch.onnx.export(_BertONNXExportWrapper(pt_model).eval(), (tokens_tensor, attention_mask, segments_tensors),
                           bert_path,
                           input_names=["input_ids", "attention_mask", "token_type_ids"],
                           output_names=["output_0", "output_1"],
