@@ -396,7 +396,7 @@ def apply_config(sdfg, config: str, params: Dict):
         cpu_specialize(sdfg, break_anti_dependence=params.get('break_anti_dependence', True))
         _vectorize(sdfg)
     elif config == 'parallelize+vec':
-        parallelize(sdfg, validate=True, validate_all=False, peel_limit=params.get('peel_limit', 4))
+        parallelize(sdfg, validate=True, validate_all=False)
         _vectorize(sdfg)
     elif config == 'autoopt':
         # ``expand=False``: expanding library nodes to their fast vendor calls swaps the construct

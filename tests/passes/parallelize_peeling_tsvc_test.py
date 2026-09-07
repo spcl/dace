@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Loop-peeling landscape for the ``parallelize`` pipeline, grounded in TSVC.
+"""Loop-peeling landscape, grounded in TSVC.
 
 These kernels (from the TSVC suite, expressed inner-loop-only as ``@dace.program``s
 over a symbolic length ``N``) document which shapes peeling can and cannot help:
@@ -18,12 +18,18 @@ over a symbolic length ``N``) document which shapes peeling can and cannot help:
 
 All cases are value-preserving regardless of whether a map is produced.
 """
+import contextlib
+import os
+
 import numpy as np
 
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
+from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import parallelize
+from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling, DEFAULT_PEEL_LIMIT
+from dace.transformation.passes.simplify import SimplifyPass
 
 N = dace.symbol('N')
 
@@ -132,7 +138,11 @@ def test_peeling_unblocks_boundary_conditional():
     """A loop whose first iteration writes a conflicting extra location
     (``if i==0: A[N-1]+=1``) is not parallel as-is, but front-peeling iteration 0
     and pruning the now-dead guard from the remainder leaves a disjoint-write
-    body that LoopToMap parallelizes. The positive demonstration of peel-to-map."""
+    body that LoopToMap parallelizes. The positive demonstration of peel-to-map.
+
+    Driven through ``BestEffortLoopPeeling`` directly rather than through ``parallelize``: the
+    pipeline no longer peels, so routing this through it would test the pipeline's stage list
+    instead of the peeling capability the case exists to pin."""
 
     @dace.program
     def front_conflict(A: dace.float64[N], B: dace.float64[N]):
@@ -142,14 +152,18 @@ def test_peeling_unblocks_boundary_conditional():
                 A[N - 1] = A[N - 1] + 1.0
 
     base = front_conflict.to_sdfg(simplify=True)
-    import contextlib, os
-    from dace.transformation.interstate.loop_to_map import LoopToMap
     with contextlib.redirect_stdout(open(os.devnull, 'w')):
         base.apply_transformations_repeated(LoopToMap)
     assert _nmaps(base) == 0  # LoopToMap alone cannot parallelize it
 
     sdfg = front_conflict.to_sdfg(simplify=True)
-    parallelize(sdfg, validate=True)
+    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+        BestEffortLoopPeeling(DEFAULT_PEEL_LIMIT).apply_pass(sdfg, {})
+        # The peel leaves the remainder's ``i == 0`` guard behind; folding it is what makes the
+        # remaining writes disjoint, so the prune is part of the claim, not incidental tidying.
+        SimplifyPass().apply_pass(sdfg, {})
+        sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.validate()
     assert _nmaps(sdfg) >= 1  # peel + dead-guard prune unblocks the map
 
     A = np.arange(1, 9, dtype=np.float64)

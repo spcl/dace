@@ -68,7 +68,7 @@ def branch_lowered(tag):
     """SDFG after the vectorizer's branch-lowering front only (no tiling)."""
     sdfg = both_arms_nested.to_sdfg(simplify=True)
     sdfg.name = tag
-    parallelize(sdfg, validate=True, validate_all=False, peel_limit=4)
+    parallelize(sdfg, validate=True, validate_all=False)
     for cleaner in (FlattenBranches(), SameWriteSetIfElseToITECFG(), BranchNormalization()):
         cleaner.apply_pass(sdfg, {})
     return sdfg
@@ -102,7 +102,7 @@ def test_value_preserving():
 
     sdfg = both_arms_nested.to_sdfg(simplify=True)
     sdfg.name = 'branch_guard_value'
-    parallelize(sdfg, validate=True, validate_all=False, peel_limit=4)
+    parallelize(sdfg, validate=True, validate_all=False)
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     sdfg.validate()
 

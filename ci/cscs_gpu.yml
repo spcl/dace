@@ -69,7 +69,7 @@ build_cscs_gh200:
     # The CloudSC target pipelines are deselected by PATH, not by marker: they need a whole-dwarf
     # canonicalize per case, which does not fit this job's 300s per-test timeout, while the other
     # integration cases here do. They run in test_cscs_gh200_cloudsc_pipelines.
-    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}" --ignore=tests/corpus/cloudsc/cloudsc_target_pipelines_test.py
+    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}" --ignore=tests/corpus/cloudsc/cloudsc_target_pipelines_test.py --ignore=tests/corpus/cloudsc/cloudsc_parallel_pipeline_test.py
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
     - ./tests/cuda_test.sh
@@ -176,13 +176,14 @@ test_cscs_gh200_hpcagent_canon_gpu:
     # disagreed with numpy. The sweep above is allowed to keep going so every kernel is reported.
     - python -m hpcagent_bench.cli run-framework --summarize canon_gpu_npbench.csv canon_gpu_llr-focus40.csv
 
-# CloudSC on the device, on its own runner. The two legs canonicalize the simplified dwarf for the
-# GPU -- one through CloudSC's own offload recipe, one through the generic device move over the
-# CPU-canonical graph -- and compare every output array against the sequential IEEE reference. A
-# separate job from the broad GPU legs above because a whole-dwarf rebuild does not fit their
-# per-test timeout, and because a red here means "the device pipeline changed the numbers", which
-# is worth reading on its own rather than out of a 30-minute full-GPU run. The host legs of the
-# same file carry no ``gpu`` marker and run in the Integration Tests workflow.
+# CloudSC on the device, on its own runner. The leg drives the short recipe -- specialize ->
+# ShortLoopUnroll -> simplify -> LoopToMap -> 2x(StateFusionExtended -> FullMapFusion) -> offload --
+# and compares every output array against the sequential IEEE reference AT EVERY PHASE BOUNDARY, the
+# last of them run on the device. A separate job from the broad GPU legs above because a whole-dwarf
+# rebuild does not fit their per-test timeout, and because a red here means "the device pipeline
+# changed the numbers", which is worth reading on its own rather than out of a 30-minute full-GPU
+# run. The host leg of the same file carries no ``gpu`` marker and runs in the Integration Tests
+# workflow, so a failure there is the recipe's and a failure here is the offload's.
 test_cscs_gh200_cloudsc_pipelines:
   stage: test
   extends:
@@ -212,4 +213,4 @@ test_cscs_gh200_cloudsc_pipelines:
     - export DACE_optimizer_automatic_simplification=0
     # Serial: the dwarf is parsed once per process and memoized, so a worker per test would pay the
     # multi-minute parse again instead of sharing one.
-    - pytest --tb=short --timeout_method thread --timeout=14400 -m "integration and gpu" tests/corpus/cloudsc/cloudsc_target_pipelines_test.py
+    - pytest --tb=short --timeout_method thread --timeout=14400 -m "integration and gpu" tests/corpus/cloudsc/cloudsc_parallel_pipeline_test.py

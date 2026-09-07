@@ -40,7 +40,7 @@ def broadcast_scalar(a: dace.float64[N]):
 def _vectorized(tag):
     sdfg = broadcast_scalar.to_sdfg(simplify=True)
     sdfg.name = tag
-    parallelize(sdfg, validate=True, validate_all=False, peel_limit=4)
+    parallelize(sdfg, validate=True, validate_all=False)
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     sdfg.validate()
     return sdfg
