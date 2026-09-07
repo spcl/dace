@@ -44,5 +44,13 @@ def test_an_offset_by_another_symbol_is_left_alone():
     assert {str(s) for s in rng.free_symbols} == {'k', 'j'}, f'unexpected symbols in {rng}'
 
 
+def test_compose_folds_it_too():
+    """``Range.compose`` adds a bound of one subset to a bound of the other, same as ``offset``."""
+    from_map, _ = differently_minted_pair()
+    composed = subsets.Range([(from_map, from_map, 1)]).compose(dace.Memlet('A[0:M - k]').subset)
+    names = [sym.name for sym in composed.min_element()[0].free_symbols]
+    assert len(names) == len(set(names)), f'composition kept one name on two symbols: {composed}'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
