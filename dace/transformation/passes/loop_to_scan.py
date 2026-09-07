@@ -427,7 +427,12 @@ class LoopToScan(ppl.Pass):
         def pin_zero_distance(zero_loop: LoopRegion, zero_region: ControlFlowRegion, owner: SDFG) -> None:
             # Inside this clone only: the carry distance IS zero, so say so. ``a[i - K]`` becomes
             # ``a[i]`` and the body is a plain elementwise update LoopToMap takes afterwards.
-            zero_loop.replace_dict({str(info.stride): '0'})
+            #
+            # Substituting a VALUE, not renaming a symbol, so the replacement is handed over as
+            # ``symrepl`` with ``replace_keys=False``: the carry distance need not be a bare name
+            # (a symbolic one reaches here as ``-int_floor(LEN_1D, 2)``), and a name is the only
+            # thing the string-keyed form can mint a symbol from.
+            zero_loop.replace_dict({}, symrepl={info.stride: symbolic.pystr_to_symbolic('0')}, replace_keys=False)
 
         # The negative arm is what is left after the two guards, and it is left as the sequential
         # loop it was: BreakAntiDependence is a separate pass, and the canonicalize pipeline runs
