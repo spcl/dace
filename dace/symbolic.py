@@ -4400,6 +4400,26 @@ def has_duplicate_symbol_names(sym: Any) -> bool:
     return len({symbol_atom.name: None for symbol_atom in symbols}) != len(symbols)
 
 
+def has_duplicate_symbol_names(sym: Any) -> bool:
+    """
+    Whether ``sym`` holds two symbols that share a name but not their dtype or assumptions.
+
+    Symbol identity in DaCe is the name, so such a pair always denotes one value -- but SymPy
+    compares assumptions too, keeps both atoms, and then ``k - k`` does not fold to zero.
+
+    :param sym: expression to check; anything that is not symbolic answers False.
+    :return: True if some name occurs on more than one symbol.
+    """
+    if not isinstance(sym, sympy.Basic):
+        return False
+    symbols = sym.free_symbols
+    if len(symbols) < 2:
+        return False
+    # A dict rather than a set: insertion order is defined, so the answer cannot depend on the
+    # hash seed the way a set's iteration would.
+    return len({symbol_atom.name: None for symbol_atom in symbols}) != len(symbols)
+
+
 def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:
     """
     If the 2 input expressions use different symbols but with the same name,

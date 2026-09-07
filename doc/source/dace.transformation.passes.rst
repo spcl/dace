@@ -4,6 +4,15 @@ Available Passes
 ================
 
 
+Accelerator Offloading
+----------------------
+
+.. automodule:: dace.transformation.passes.offloading.offload_to_accelerator
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 Scalar-to-Symbol Promotion
 --------------------------
 
