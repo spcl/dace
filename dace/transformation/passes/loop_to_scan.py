@@ -386,6 +386,65 @@ class LoopToScan(ppl.Pass):
             return
         specialize_loop_under_condition(loop, guard, _lift, sdfg)
 
+    def _specialize_affine_by_distance(self, parent: ControlFlowRegion, loop: LoopRegion, info: '_AffineScan',
+                                       sdfg: SDFG) -> None:
+        """Split an affine recurrence whose carry distance is a SYMBOL into the three loops it is.
+
+        ``a[i] = c*a[i - K] + d[i]`` is not one loop shape but three, and which one it is cannot be
+        known until ``K`` has a value. Emitting any single form would be wrong on the other two::
+
+            if K >= 1:   a scan       -- K independent residue-class affine scans, the lift below
+            elif K == 0: a map        -- the read IS this iteration's write, so there is no carry
+            else:        an anti-dep  -- the read is a LATER iteration's write, parallel once the
+                                         read window is snapshotted
+
+        Each branch is a clone of the original loop, so the sequential meaning is preserved
+        whatever the pass in it manages: a branch whose pass declines is left as the loop it was.
+
+        The ``K == 0`` branch is specialized by SUBSTITUTION, not by a guard the code re-tests:
+        replacing the symbol inside that branch's clone turns ``a[i - K]`` into ``a[i]``, which is
+        what lets the ordinary machinery see a plain data-parallel body and map it. Confining the
+        substitution to the clone is what makes it sound -- ``K`` keeps its symbolic value
+        everywhere else in the SDFG.
+
+        :param parent: CFG owning ``loop``.
+        :param loop: The matched loop.
+        :param info: The affine match, whose ``stride`` is the carry distance.
+        :param sdfg: SDFG owning ``loop``.
+        """
+        from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+
+        distance = symbolic.symstr(info.stride)
+
+        def lift_scan(par_loop: LoopRegion, par_region: ControlFlowRegion, owner: SDFG) -> None:
+            again = match_affine_scan(par_loop, owner)
+            if again is not None:
+                rewrite_affine_scan(par_region, par_loop, again, owner)
+
+        def split_zero_from_negative(seq_loop: LoopRegion, seq_region: ControlFlowRegion, owner: SDFG) -> None:
+            specialize_loop_under_condition(seq_loop, f'({distance}) == 0', pin_zero_distance, owner)
+
+        def pin_zero_distance(zero_loop: LoopRegion, zero_region: ControlFlowRegion, owner: SDFG) -> None:
+            # Inside this clone only: the carry distance IS zero, so say so. ``a[i - K]`` becomes
+            # ``a[i]`` and the body is a plain elementwise update LoopToMap takes afterwards.
+            zero_loop.replace_dict({str(info.stride): '0'})
+
+        # The negative arm is what is left after the two guards, and it is left as the sequential
+        # loop it was: BreakAntiDependence is a separate pass, and the canonicalize pipeline runs
+        # it over the whole SDFG afterwards, where this clone is just another loop to it.
+        conditional = specialize_loop_under_condition(loop, f'({distance}) >= 1', lift_scan, sdfg)
+        if conditional is None:
+            return
+        # The ELSE branch, reached through the block the split returned rather than by label: all
+        # three clones carry the original loop's label, so a search would find the scan arm.
+        for condition, region in conditional.branches:
+            if condition is not None:
+                continue
+            for block in region.nodes():
+                if isinstance(block, LoopRegion):
+                    split_zero_from_negative(block, region, sdfg)
+                    return
+
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         """Lift carried-dependence loops to ``Scan`` library nodes.
 
@@ -509,7 +568,10 @@ class LoopToScan(ppl.Pass):
             # can lift keeps its existing lowering unchanged.
             aff = match_affine_scan(loop, owner)
             if aff is not None:
-                rewrite_affine_scan(parent, loop, aff, owner)
+                if carry_distance_kind(aff.stride) == 'guard':
+                    self._specialize_affine_by_distance(parent, loop, aff, owner)
+                else:
+                    rewrite_affine_scan(parent, loop, aff, owner)
                 count += 1
         if count > 0:
             # Narrow the freshly-emitted state-level memlets on the new
@@ -3098,6 +3160,26 @@ def _in_conditional_branch(state: SDFGState) -> bool:
     return False
 
 
+def _masked_update_within(state: SDFGState, loop: LoopRegion) -> bool:
+    """``True`` iff a ``ConditionalBlock`` sits between ``state`` and ``loop``.
+
+    :func:`_in_conditional_branch` walks the parent chain to the top, which answers a DIFFERENT
+    question: it is also true when the loop itself sits in a branch, and a loop under a guard is
+    not a masked update. That distinction is what a specialization needs -- it puts the loop in a
+    branch on purpose and then lifts it there, and a check that cannot tell the two apart refuses
+    its own clone.
+
+    :param state: the body state holding the update.
+    :param loop: the loop whose body it is; the walk stops here.
+    """
+    cur = getattr(state, 'parent_graph', None)
+    while cur is not None and cur is not loop:
+        if isinstance(cur, ConditionalBlock):
+            return True
+        cur = getattr(cur, 'parent_graph', None)
+    return False
+
+
 def _identity_for_op(op) -> float:
     """The identity element for an associative scan op -- writes to a per-iter
     ``delta_buf[i]`` of this value contribute nothing to the fold.
@@ -4325,6 +4407,9 @@ class _AffineScan(NamedTuple):
     :param iter_end: Last iteration value (inclusive).
     :param k_w: Constant offset on the write, ``out[i + k_w]``.
     :param k_r: Constant offset on the carry read, ``out[i + k_r]``.
+    :param stride: ``k_w - k_r``, the carry distance -- 1 for the contiguous recurrence, ``S`` for
+        the residue-class one. May be symbolic, in which case the lift is valid only under
+        ``stride >= 1`` and the caller owes that guard (:func:`carry_distance_kind`).
     """
     out_name: str
     body_state: SDFGState
@@ -4338,6 +4423,7 @@ class _AffineScan(NamedTuple):
     iter_end: Any
     k_w: Any
     k_r: Any
+    stride: Any
 
 
 class _AffineRefused(Exception):
@@ -4386,6 +4472,34 @@ def tasklet_symbolic_output(tasklet: nodes.Tasklet, out_conn: str) -> Optional[A
     return result
 
 
+def carry_distance_kind(distance: Any) -> Optional[str]:
+    """Classify a carrier read's distance behind the write: ``'scan'``, ``'guard'``, or ``None``.
+
+    At distance ``S >= 1`` the loop is a scan -- ``S`` independent unit-stride affine scans, one
+    per residue class of the index mod ``S``, which is what the libnode's ``stride`` expresses.
+
+    At ``S <= 0`` it is not a carry at all: ``S == 0`` reads what this iteration writes, and
+    ``S < 0`` reads what a LATER one writes, which is an anti-dependence -- parallel once the read
+    window is snapshotted, and a different pass's job. Refused here rather than mis-lifted.
+
+    A SYMBOLIC distance is neither until the value is known, so it returns ``'guard'``: the lift
+    is real but only under ``S >= 1``, and the caller owes the runtime specialization that
+    establishes it (:meth:`LoopToScan._specialize_affine_by_distance`).
+
+    :param distance: ``k_w - k_r``, the carry's reach.
+    :returns: ``'scan'`` to lift unconditionally, ``'guard'`` to lift under a runtime test, or
+              ``None`` to refuse.
+    """
+    simplified = symbolic.simplify(distance)
+    if isinstance(simplified, sympy.Basic) and simplified.is_Integer or isinstance(simplified, int):
+        return 'scan' if int(simplified) >= 1 else None
+    if getattr(simplified, 'is_positive', None) is True:
+        return 'scan'
+    if getattr(simplified, 'is_positive', None) is False:
+        return None
+    return 'guard'
+
+
 def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, loop_var: str, k_w: Any):
     """Compose the whole straight-line chain behind ``write_edge`` into one symbolic expression.
 
@@ -4414,9 +4528,14 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
         subset = edge.data.subset
         if isinstance(edge.src, nodes.AccessNode) and edge.src.data == out_name:
             axis, k_r, others, coef = _classify_subset(subset, loop_var)
-            if axis != 0 or coef != 1 or others or symbolic.simplify(k_w - k_r) != 1:
-                # A carrier read that is not the immediately preceding element: second order.
-                raise _AffineRefused('carrier read is not the previous element')
+            distance = symbolic.simplify(k_w - k_r)
+            # The carry may reach back any POSITIVE distance: at distance S the recurrence is S
+            # independent unit-stride ones, one per residue class of the index mod S, and the
+            # libnode scans them as such. Zero or negative is not a carry at all -- it reads what
+            # this iteration or a later one writes -- and a distance whose sign is unknown is
+            # decided by the caller's specialization, not here.
+            if axis != 0 or coef != 1 or others or carry_distance_kind(distance) is None:
+                raise _AffineRefused('carrier read is not a positive-distance predecessor')
             if carry:
                 if symbolic.simplify(carry[0][1] - k_r) != 0:
                     raise _AffineRefused('two distinct carrier offsets')
@@ -4542,7 +4661,7 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> Optional[_AffineScan]:
     state, inner_loop = _descend_to_content_state(loop)
     # An inner loop under the carry is the nested shape; the affine lowering has no vector form
     # yet, so it is left unmatched rather than matched and mis-emitted.
-    if state is None or inner_loop is not None or _in_conditional_branch(state):
+    if state is None or inner_loop is not None or _masked_update_within(state, loop):
         return None
     loop_var = loop.loop_variable
     out_name = _find_carried_array(state, sdfg, loop_var)
@@ -4582,7 +4701,8 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> Optional[_AffineScan]:
                        iter_start=iter_start,
                        iter_end=iter_end,
                        k_w=k_w,
-                       k_r=k_r)
+                       k_r=k_r,
+                       stride=symbolic.simplify(k_w - k_r))
 
 
 def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _AffineScan, sdfg: SDFG):
@@ -4684,22 +4804,43 @@ def emit_affine_scan(state: SDFGState, sdfg: SDFG, info: _AffineScan, delta_buf:
     out_desc = sdfg.arrays[info.out_name]
     write_start = symbolic.simplify(info.iter_start + info.k_w)
     node = Scan(name=f'{state.label}_op', op=ScanOp.AFFINE, exclusive=False)
+    # Set after construction: ``stride`` is a Property, and Scan's ``__init__`` forwards its
+    # keyword arguments to CodeNode, which has no such parameter.
+    node.stride = info.stride
     state.add_node(node)
 
-    seed_name, _ = sdfg.add_scalar(f'{_SEED_SCALAR_PREFIX}{info.out_name}',
-                                   out_desc.dtype,
-                                   transient=True,
-                                   find_new_name=True)
+    # ONE seed per residue class: at carry distance S the recurrence is S independent scans, and
+    # class ``r`` enters at the carrier element the sequential loop would have read on its first
+    # visit to that class -- the S elements ending where the contiguous form's single seed sits.
+    #
+    # At S == 1 that is one element, and it stays a SCALAR rather than becoming a one-element
+    # array: codegen hands a scalar to the tasklet by value and an array by pointer, and the
+    # contiguous body spells its seed as a value. A length-1 array here compiles the seed into a
+    # pointer the body then uses as a number.
     seed_axis = symbolic.simplify(info.iter_start + info.k_r)
+    contiguous = symbolic.simplify(info.stride) == 1
+    if contiguous:
+        seed_name, _ = sdfg.add_scalar(f'{_SEED_SCALAR_PREFIX}{info.out_name}',
+                                       out_desc.dtype,
+                                       transient=True,
+                                       find_new_name=True)
+        seed_last, seed_hi = seed_axis, 0
+    else:
+        seed_name, _ = sdfg.add_array(f'{_SEED_SCALAR_PREFIX}{info.out_name}', (info.stride, ),
+                                      out_desc.dtype,
+                                      transient=True,
+                                      find_new_name=True)
+        seed_last = symbolic.simplify(seed_axis + info.stride - 1)
+        seed_hi = symbolic.simplify(info.stride - 1)
     seed_an = state.add_access(seed_name)
     node.add_in_connector(INIT_CONNECTOR_NAME)
     state.add_edge(
         state.add_read(info.out_name), None, seed_an, None,
         mm.Memlet(data=info.out_name,
-                  subset=subsets.Range([(seed_axis, seed_axis, 1)]),
-                  other_subset=subsets.Range([(0, 0, 1)])))
-    state.add_edge(seed_an, None, node, INIT_CONNECTOR_NAME, mm.Memlet(data=seed_name,
-                                                                       subset=subsets.Range([(0, 0, 1)])))
+                  subset=subsets.Range([(seed_axis, seed_last, 1)]),
+                  other_subset=subsets.Range([(0, seed_hi, 1)])))
+    state.add_edge(seed_an, None, node, INIT_CONNECTOR_NAME,
+                   mm.Memlet(data=seed_name, subset=subsets.Range([(0, seed_hi, 1)])))
     state.add_edge(state.add_read(delta_buf), None, node, INPUT_CONNECTOR_NAME,
                    mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
     state.add_edge(state.add_read(coef_buf), None, node, COEF_CONNECTOR_NAME,
