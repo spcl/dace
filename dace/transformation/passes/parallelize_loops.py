@@ -9,8 +9,8 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.interstate.loop_to_map import (LiftContext, LiftInvariants, LoopToMap, build_lift_context,
-                                                        build_lift_invariants)
+from dace.transformation.interstate.loop_to_map import (LiftContext, LiftInvariants, LoopFacts, LoopToMap,
+                                                        build_lift_context, build_lift_invariants)
 
 
 def loop_order_key(loop: LoopRegion) -> Tuple[int, int]:
@@ -95,9 +95,9 @@ class ParallelizeLoops(ppl.Pass):
         # order, the cfg ids) and are dropped after every lift.
         invariants: Dict[SDFG, LiftInvariants] = {}
         contexts: Dict[SDFG, LiftContext] = {}
-        # loop -> its read/write sets. A fact about the loop's own body, so only a lift INSIDE a
-        # loop invalidates it -- see the ancestor walk after each apply.
-        loop_read_write: Dict[Any, Any] = {}
+        # loop -> the facts derived from its own body. Only a lift INSIDE a loop invalidates
+        # them -- see the ancestor walk after each apply.
+        loop_facts: Dict[Any, LoopFacts] = {}
 
         # Two fixpoints, outermost-first and then in graph order. Top-down wins on the big graphs
         # (CloudSC: 314 maps in 515.2s where graph order takes 927.7s for the same 314) but it is
@@ -106,23 +106,27 @@ class ParallelizeLoops(ppl.Pass):
         # whose propagated memlet then fails the ``a*i+b`` write check. Sweeping graph order once
         # more afterwards costs one probe round and recovers those.
         for order in (loop_order_key, None):
-            applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_read_write)
+            applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
 
         if applied and self.propagate:
             propagate_memlets_sdfg(sdfg)
         return applied or None
 
     def lift_fixpoint(self, sdfg: SDFG, pipeline_results: Dict[str, Any], order, contexts: Dict[SDFG, LiftContext],
-                      invariants: Dict[SDFG, LiftInvariants], loop_read_write: Dict[Any, Any]) -> int:
+                      invariants: Dict[SDFG, LiftInvariants], loop_facts: Dict[Any, LoopFacts]) -> int:
         """Lift until no loop in ``sdfg`` is accepted any more, visiting loops in ``order``.
 
         :param order: sort key over the candidate loops, or ``None`` to keep graph order.
         :param contexts: per-SDFG :class:`LiftContext` cache; cleared after every lift.
         :param invariants: per-SDFG facts a lift cannot change; built on first use, never rebuilt.
-        :param loop_read_write: per-loop read/write sets; dropped for the ancestors of each lift.
+        :param loop_facts: per-loop body facts; dropped for the ancestors of each lift.
         :returns: the number of loops lifted.
         """
         applied = 0
+        # SDFG -> its free symbols as of the end of the last lift IN it, handed over by ``apply``
+        # rather than walked again by the next ``build_lift_context``. Holds at most one entry:
+        # every other SDFG's set is stale the moment a lift lands anywhere below it.
+        fresh_free_symbols: Dict[SDFG, Any] = {}
         # One instance, reused: ``setup_match`` overwrites every field a probe reads, and building a
         # ``make_properties`` object per candidate is pure overhead on a graph with hundreds of them.
         xform = LoopToMap()
@@ -137,7 +141,7 @@ class ParallelizeLoops(ppl.Pass):
                     inv = invariants[sd] = build_lift_invariants(sd)
                 ctx = contexts.get(sd)
                 if ctx is None:
-                    ctx = contexts[sd] = build_lift_context(sd, inv, loop_read_write)
+                    ctx = contexts[sd] = build_lift_context(sd, inv, loop_facts, fresh_free_symbols.pop(sd, None))
 
                 xform.lift_context = ctx
                 # ``override=True`` with the loop OBJECT, the way ``fuse_states`` sets up its own
@@ -158,14 +162,15 @@ class ParallelizeLoops(ppl.Pass):
                 xform.apply(graph, sd)
                 applied += 1
                 lifted_one = True
+                fresh_free_symbols = {} if ctx.post_lift_free_symbols is None else {sd: ctx.post_lift_free_symbols}
                 # The graph changed, so every context is stale. The invariants are not: they are
-                # exactly the analysis a lift cannot invalidate. The per-loop read/write sets sit in
+                # exactly the analysis a lift cannot invalidate. The per-loop body facts sit in
                 # between -- only a loop whose body now contains this lift has different ones.
                 contexts.clear()
-                loop_read_write.pop(loop, None)
+                loop_facts.pop(loop, None)
                 region = graph
                 while region is not None and not isinstance(region, SDFG):
-                    loop_read_write.pop(region, None)
+                    loop_facts.pop(region, None)
                     region = region.parent_graph
                 break  # restart the sweep so the next probe sees a current loop list and context
 
