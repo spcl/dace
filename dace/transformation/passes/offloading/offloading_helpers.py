@@ -1,3 +1,6 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+
+from ordered_set import OrderedSet
 
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
@@ -11,16 +14,18 @@ from dace.sdfg.utils import get_last_view_node
 ### is expensive to generate, should be cached ###
 ##################################################
 
+
 def get_sdfg_scope_dict(sdfg):
     scopes = {}
     for state in sdfg.states():
-        scopes[state] = state.scope_dict() 
+        scopes[state] = state.scope_dict()
     return scopes
 
 
 ###################################
 ###  Checking Common Conditions ###
 ###################################
+
 
 def has_GPU_schedule(node):
     schedule = None
@@ -32,26 +37,31 @@ def has_GPU_schedule(node):
         assert False
     return schedule in dtypes.GPU_SCHEDULES
 
+
 def is_array_stored_on_GPU(sdfg, array_name):
     storage = sdfg.arrays[array_name].storage
     return storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES
 
-def is_scalar(data_name:str, sdfg:SDFG):
+
+def is_scalar(data_name: str, sdfg: SDFG):
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, data.Scalar)
 
-def is_array(data_name:str, sdfg:SDFG):
+
+def is_array(data_name: str, sdfg: SDFG):
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, data.Array)
 
-def is_view(data_name:str, sdfg:SDFG):
+
+def is_view(data_name: str, sdfg: SDFG):
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, data.View)
 
-def is_length1_array(data_name:str, sdfg:SDFG):
+
+def is_length1_array(data_name: str, sdfg: SDFG):
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, data.Array) and len(desc.shape) == 1 and desc.shape[0] == 1
@@ -61,31 +71,35 @@ def is_length1_array(data_name:str, sdfg:SDFG):
 ###  SDFG Traversal ###
 #######################
 
+
 def get_children(state, node):
-    return {e.dst for e in state.out_edges(node)}
+    return OrderedSet(e.dst for e in state.out_edges(node))
+
 
 def get_predecessors(state, node):
-    return {e.src for e in state.in_edges(node)}
+    return OrderedSet(e.src for e in state.in_edges(node))
 
 
-def traverse_IR(IR:OffloadingIRNode, method):
+def traverse_IR(IR: OffloadingIRNode, method):
+
     def recursion(node, visited_set):
         if node in visited_set:
             return
         visited_set.add(node)
 
         method(node)
-        
+
         for next in node.next:
             recursion(next, visited_set)
 
-    return recursion(IR, set())
+    return recursion(IR, OrderedSet())
 
-def traverse_same_level(IR:OffloadingIRNode, method): #DFS
+
+def traverse_same_level(IR: OffloadingIRNode, method):  #DFS
     queue = IR.next.copy()
     while queue:
         curr = queue.pop()
-        if curr.type == OffloadingIRNode.STATE or curr.type == OffloadingIRNode.EDGE: # data node
+        if curr.type == OffloadingIRNode.STATE or curr.type == OffloadingIRNode.EDGE:  # data node
             method(curr)
             queue += curr.next
 
@@ -104,24 +118,30 @@ def traverse_same_level(IR:OffloadingIRNode, method): #DFS
 ###  Get Arrays Used by Access Nodes ###
 ########################################
 
-def get_data_used_by_incoming_access_nodes(sdfg:SDFG, state:SDFGState, node:nodes.Node, include_scalars:bool=False) -> set[str]:
 
-    def recursion(node:nodes.Node, visited_set:set[nodes.Node]):
-        if node in visited_set: # the visited set is necessary for edge cases, e.g. an access node A whose predecessor B is a view node refering back to A
-            return set()
+def get_data_used_by_incoming_access_nodes(sdfg: SDFG,
+                                           state: SDFGState,
+                                           node: nodes.Node,
+                                           include_scalars: bool = False) -> OrderedSet[str]:
+
+    def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]):
+        if node in visited_set:  # the visited set is necessary for edge cases, e.g. an access node A whose predecessor B is a view node refering back to A
+            return OrderedSet()
         visited_set.add(node)
 
         # find accessed arrays
-        arrays : set[str] = set()
-        if isinstance(node, nodes.AccessNode): 
+        arrays: OrderedSet[str] = OrderedSet()
+        if isinstance(node, nodes.AccessNode):
             data_name = node.data
             if is_array(data_name, sdfg):
                 arrays.add(data_name)
 
-            elif is_view(data_name, sdfg): # trace it if it is a view
-                original = get_last_view_node(state, node) # once the view access node is known, its original access node can be found and it's data added
+            elif is_view(data_name, sdfg):  # trace it if it is a view
+                original = get_last_view_node(
+                    state, node
+                )  # once the view access node is known, its original access node can be found and it's data added
                 arrays |= recursion(original, visited_set)
-                
+
             elif include_scalars and is_scalar(data_name, sdfg):
                 arrays.add(data_name)
 
@@ -131,52 +151,59 @@ def get_data_used_by_incoming_access_nodes(sdfg:SDFG, state:SDFGState, node:node
                 arrays |= recursion(n, visited_set)
 
         return arrays
-    
-    return recursion(node, set())
 
-def get_data_used_by_outgoing_access_nodes(sdfg:SDFG, state:SDFGState, node:nodes.Node, include_scalars:bool=False) -> set[str]:
-    
-    def recursion(node:nodes.Node, visited_set:set[nodes.Node]):
-        if node in visited_set: # the visited set is necessary for edge cases, e.g. an access node A whose successor B is a view node refering back to A
-            return set()
+    return recursion(node, OrderedSet())
+
+
+def get_data_used_by_outgoing_access_nodes(sdfg: SDFG,
+                                           state: SDFGState,
+                                           node: nodes.Node,
+                                           include_scalars: bool = False) -> OrderedSet[str]:
+
+    def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]):
+        if node in visited_set:  # the visited set is necessary for edge cases, e.g. an access node A whose successor B is a view node refering back to A
+            return OrderedSet()
         visited_set.add(node)
 
         # find accessed arrays
-        arrays : set[str] = set()
-        if isinstance(node, nodes.AccessNode): 
+        arrays: OrderedSet[str] = OrderedSet()
+        if isinstance(node, nodes.AccessNode):
             data_name = node.data
 
             if is_array(data_name, sdfg):
                 arrays.add(data_name)
 
-            elif is_view(data_name, sdfg): # trace it if it is a view
-                original = get_last_view_node(state, node) # once the view access node is known, its original access node can be found and it's data added
+            elif is_view(data_name, sdfg):  # trace it if it is a view
+                original = get_last_view_node(
+                    state, node
+                )  # once the view access node is known, its original access node can be found and it's data added
                 arrays |= recursion(original, visited_set)
 
             elif include_scalars and is_scalar(data_name, sdfg):
                 arrays.add(data_name)
-                
+
         # check if more access nodes DOWNstream
         for n in get_children(state, node):
             if isinstance(n, nodes.AccessNode):
                 arrays |= recursion(n, visited_set)
-                
+
         return arrays
-    
-    return recursion(node, set())
+
+    return recursion(node, OrderedSet())
 
 
 ############################
 ###  Map Creation Helper ###
 ############################
 
+
 def get_new_map_identifiers(state: SDFGState, map_label: str, map_param: str):
-    existing_labels = {getattr(node, "label", None) for node in state.nodes()}
-    existing_params = set()
+    existing_labels = OrderedSet(getattr(node, "label", None) for node in state.nodes())
+    existing_params = OrderedSet()
     for node in state.nodes():
         if isinstance(node, nodes.MapEntry):
             existing_params |= set(node.map.params)
-    
+
     suffix = 0
     new_label = map_label
     while new_label in existing_labels:
@@ -190,4 +217,3 @@ def get_new_map_identifiers(state: SDFGState, map_label: str, map_param: str):
         new_param = f"{map_param}_{suffix}"
 
     return new_label, new_param
-

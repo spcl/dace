@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+from ordered_set import OrderedSet
+
 from dace import properties
 from dace.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
@@ -20,9 +22,21 @@ from typing import Any, Dict, Optional
 @properties.make_properties
 @explicit_cf_compatible
 class OffloadToAccelerator(ppl.Pass):
-    
-    MAX_ITERATIONS : int = 42
-    VERBOSE = False
+    """Decide what runs on the accelerator, and place the host/device copies that follow.
+
+    Phases 2-4 run to a fixpoint: phase 4 resolves hybrid states by wrapping host code in
+    single-iteration maps, and phase 3 rewrites single-element containers. Both consume what they
+    resolve -- a state stops being hybrid, a container is recorded in ``changed_containers`` and is
+    not revisited -- so the loop terminates in a number of rounds bounded by the graph. The counter
+    only stops a runaway from looping forever, so it is set far above what any real SDFG needs.
+    """
+
+    max_iterations = properties.Property(
+        dtype=int,
+        default=1000,
+        desc="Safety bound on the phase 2-4 fixpoint iteration. Reaching it is a bug, not a "
+        "workload property: the loop converges once no state is hybrid and no container changed.")
+    verbose = properties.Property(dtype=bool, default=False, desc="Print what each phase decided.")
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -31,40 +45,44 @@ class OffloadToAccelerator(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
-        cached_scopes = get_sdfg_scope_dict(sdfg) # cache the result of an expensive operation
+        cached_scopes = get_sdfg_scope_dict(sdfg)  # cache the result of an expensive operation
 
         # Phase 1: set sequential / GPU schedules
-        SchedulePhase().apply(sdfg, cached_scopes, verbose=OffloadToAccelerator.VERBOSE)
+        SchedulePhase().apply(sdfg, cached_scopes, verbose=self.verbose)
 
         # Fix Point Iteration of Phases 2 - 4
-        changed_containers = set()
+        changed_containers = OrderedSet()
         maps_changed = False
-        for _ in range(OffloadToAccelerator.MAX_ITERATIONS):
+        for _ in range(self.max_iterations):
 
             # Phase 2: build intermediate representation and find hybrid states
-            hybrid_states = set()
-            IRep = CopyAnalysisPhase().apply(sdfg, hybrid_states, cached_scopes, verbose=OffloadToAccelerator.VERBOSE)
+            hybrid_states = OrderedSet()
+            IRep = CopyAnalysisPhase().apply(sdfg, hybrid_states, cached_scopes, verbose=self.verbose)
 
             # Phase 3: decide if single-element values are stored in Scalars or in length-one Arrays
-            new_changed_containers = SingleElementValuePhase().apply(sdfg, exceptions=changed_containers, verbose=OffloadToAccelerator.VERBOSE)
+            new_changed_containers = SingleElementValuePhase().apply(sdfg,
+                                                                     exceptions=changed_containers,
+                                                                     verbose=self.verbose)
             changed_containers |= new_changed_containers
 
-            # Phase 4: resolve hybrid states into pure GPU states by inserting single-iteration maps 
+            # Phase 4: resolve hybrid states into pure GPU states by inserting single-iteration maps
             if hybrid_states:
-                SingleIterationMapPhase().apply(sdfg, hybrid_states, verbose=OffloadToAccelerator.VERBOSE)
+                SingleIterationMapPhase().apply(sdfg, hybrid_states, verbose=self.verbose)
                 maps_changed = True
 
             # Phase 5: iterate until the SDFG reaches a fixpoint
-            if hybrid_states or new_changed_containers: # sdfg has been changed
+            if hybrid_states or new_changed_containers:  # sdfg has been changed
                 cached_scopes = get_sdfg_scope_dict(sdfg)
-                continue # repeat
+                continue  # repeat
             break
 
         else:
-            raise RuntimeError(f"OffloadToAccelerator pass has reached max. iterations (OffloadToAccelerator.MAX_ITERATIONS = {OffloadToAccelerator.MAX_ITERATIONS}) without conclusive result. Increase limit if this is not a mistake.")
+            raise RuntimeError(f"OffloadToAccelerator did not reach a fixpoint in {self.max_iterations} "
+                               "iterations. The phase 2-4 loop is expected to converge; treat this as a bug "
+                               "rather than raising the bound.")
 
         # Phase 6: insert explicit host-device copies into the SDFG based on the IR
-        CopyInsertionPhase().apply(sdfg, IRep, verbose=OffloadToAccelerator.VERBOSE)
+        CopyInsertionPhase().apply(sdfg, IRep, verbose=self.verbose)
 
         # Phase 7: post-optimization
         # post-optimization 1
@@ -78,4 +96,4 @@ class OffloadToAccelerator(ppl.Pass):
             mapfusion_pipeline.apply_pass(sdfg, {})
 
         # post-optimization 2
-        SingleElementCopyOptimization().apply(sdfg, verbose=OffloadToAccelerator.VERBOSE)
+        SingleElementCopyOptimization().apply(sdfg, verbose=self.verbose)

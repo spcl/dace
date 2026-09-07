@@ -8,18 +8,6 @@ from dace.transformation.passes.offloading.offload_to_accelerator import Offload
 from copy import deepcopy
 
 # ============================================================================
-# Test Groups (pytest markers)
-# ============================================================================
-
-pytest.mark.gpu_offload = pytest.mark.gpu_offload
-pytest.mark.current = pytest.mark.current
-
-def pytest_configure(config):
-    """Register custom markers."""
-    config.addinivalue_line("markers", "gpu_offload: mark test as GPU offload suite")
-    config.addinivalue_line("markers", "current: tests of current interest")
-
-# ============================================================================
 # SDFGs for Tests
 # ============================================================================
 
@@ -370,7 +358,6 @@ def run_numerical_offloading_test(sdfg, param_dict:dict, result_array1, result_a
     # note: all parameters can be modified by this function
     # deepcopy before passing if previous state needs to be retained
     sdfg.validate()
-    #sdfg.view()
 
     # compile and run sdfg without offloading (all on CPU)
     input1 = deepcopy(param_dict)
@@ -380,7 +367,6 @@ def run_numerical_offloading_test(sdfg, param_dict:dict, result_array1, result_a
     # offload sdfg (in place)
     OtA().apply_pass(sdfg, {})
     sdfg.validate()
-    sdfg.view()
 
     # compile and run offloaded sdfg (part may be on GPU, necessary copies were added)
     sdfg._recompile = True
@@ -393,7 +379,7 @@ def run_numerical_offloading_test(sdfg, param_dict:dict, result_array1, result_a
     # assert the results are equal
     assert np.allclose(result_array1, result_array2),f"{result_array1} != {result_array2}"
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_cpu_scalars_no_copies():
     def create_sdfg():
         sdfg = dace.SDFG("test_all_cpu_no_copy_needed")
@@ -419,13 +405,12 @@ def test_cpu_scalars_no_copies():
         return sdfg
     
     sdfg = create_sdfg()
-    sdfg.view()
     input = 3490.2378
     orig_output = np.array([0.0])
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_copy_scalar_to_gpu_and_back():
     sdfg = scalar_to_gpu_sdfg()
     """
@@ -440,7 +425,7 @@ def test_copy_scalar_to_gpu_and_back():
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_loopregion_offload():
     sdfg = scalar_to_gpu_within_loopregion_sdfg()
     
@@ -449,7 +434,7 @@ def test_loopregion_offload():
     new_output = np.array([0.0])
     run_numerical_offloading_test(sdfg, {"in": np.array([input]), "A":np.array([0.0])}, orig_output, new_output)
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_conditional_offload_if():
     sdfg = conditional_branch_map_sdfg()
 
@@ -462,7 +447,7 @@ def test_conditional_offload_if():
         new_output,
     )
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_conditional_offload_else():
     sdfg = conditional_branch_map_sdfg()
     
@@ -475,7 +460,7 @@ def test_conditional_offload_else():
         new_output,
     )
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_nested_sdfg():
     sdfg = nested_sdfg()
     
@@ -488,10 +473,9 @@ def test_nested_sdfg():
         new_output,
     )
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_kernel_sdfg():
     sdfg = kernel_sdfg()
-    #sdfg.view()
     orig_output = np.zeros((100, 100), dtype=np.float64)
     new_output = np.zeros((100, 100), dtype=np.float64)
 
@@ -514,7 +498,7 @@ def test_kernel_sdfg():
         result_name="D",
     )
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_edge_assignment_sdfg():
     sdfg = edge_assignment_sdfg()
     orig_A = np.array([1.0, -2.0, 3.5, 0.25], dtype=np.float64)
@@ -528,7 +512,7 @@ def test_edge_assignment_sdfg():
         result_name="A",
     )
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_tasklet_map_wrapper():
     sdfg = tasklet_map_wrapper_sdfg()
 
@@ -543,7 +527,7 @@ def test_tasklet_map_wrapper():
         new_out,
     )
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_tasklet_map_wrapper_larger():
     sdfg = tasklet_map_wrapper_larger_sdfg()
 
@@ -560,7 +544,7 @@ def test_tasklet_map_wrapper_larger():
     )
 
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_scalar_init():
     sdfg = scalar_init_sdfg()
 
@@ -576,7 +560,7 @@ def test_scalar_init():
         new_out,
     )
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_len1_array_init():
     sdfg = len1_array_init_sdfg()
 
@@ -593,10 +577,9 @@ def test_len1_array_init():
     )
 
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_reduce_to_array():
     sdfg = reduce_to_array_sdfg()
-    sdfg.view()
     inp = np.arange(16, dtype=np.float64) + 1.0
     orig_out = np.zeros(1, dtype=np.float64)
     new_out = np.zeros(1, dtype=np.float64)
@@ -608,10 +591,9 @@ def test_reduce_to_array():
         new_out,
     )
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_reduce_to_scalar():
     sdfg = reduce_to_scalar_sdfg()
-    sdfg.view()
     inp = np.arange(16, dtype=np.float64) + 1.0
     orig_out = np.zeros(1, dtype=np.float64)
     new_out = np.zeros(1, dtype=np.float64)
@@ -624,10 +606,9 @@ def test_reduce_to_scalar():
     )
 
 
-@pytest.mark.gpu_offload
+@pytest.mark.gpu
 def test_single_element_copy():
     sdfg = single_element_copy_sdfg()
-    sdfg.view()
     A = np.arange(16, dtype=np.float64)
     B = np.arange(16, dtype=np.float64) + 5.0
     orig_out = np.zeros(1, dtype=np.float64)
@@ -641,7 +622,6 @@ def test_single_element_copy():
     )
 
 if __name__ == "__main__":
-    #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"]) # @pytest.mark.current 
-    pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
+    pytest.main([__file__, "-v", "--tb=short"])
 
   

@@ -1,26 +1,28 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+from ordered_set import OrderedSet
+
 from copy import deepcopy
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
+
 class SingleElementCopyOptimization():
 
-    # pattern   A -> single access -> Map    becomes    A -> Map -> single access 
-    def apply(self, sdfg:SDFG, verbose=False):
+    # pattern   A -> single access -> Map    becomes    A -> Map -> single access
+    def apply(self, sdfg: SDFG, verbose=False):
         self.verbose = verbose
         self.single_element_copies_into_map(sdfg)
 
-
     def single_element_copies_into_map(self, sdfg):
-        changes = set()
+        changes = OrderedSet()
         for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, nodes.MapEntry):
                     continue
-                map_entry : nodes.MapEntry = node
+                map_entry: nodes.MapEntry = node
 
                 for input in helpers.get_predecessors(state, map_entry):
                     if not isinstance(input, nodes.AccessNode):
@@ -36,11 +38,11 @@ class SingleElementCopyOptimization():
                     changes.add((state, input, map_entry))
 
         for state, access, map_entry in changes:
-            if self.verbose: print(f"Phase 7: ingest single element copy {access} in state {state} into map {map_entry}")
+            if self.verbose:
+                print(f"Phase 7: ingest single element copy {access} in state {state} into map {map_entry}")
             self.rewire_access_into_map(state, access, map_entry)
 
-
-    def rewire_access_into_map(self, state:SDFGState, access: nodes.AccessNode, map: nodes.MapEntry) -> None:
+    def rewire_access_into_map(self, state: SDFGState, access: nodes.AccessNode, map: nodes.MapEntry) -> None:
         """
         Move an access node from outside a map to inside the map entry boundary.
         Rewires
@@ -74,8 +76,8 @@ class SingleElementCopyOptimization():
             map.add_in_connector(in_conn)
             map.add_out_connector(out_conn)
 
-            state.add_edge(src, src_conn, map, in_conn, ext_memlet) # B -> map
-            state.add_edge(map, out_conn, access, None, int_memlet) # B -> map -> access
+            state.add_edge(src, src_conn, map, in_conn, ext_memlet)  # B -> map
+            state.add_edge(map, out_conn, access, None, int_memlet)  # B -> map -> access
 
         # 3) delete the edge and the in_connector of access: B -> map -> access; map -> C
         accesses_to_map = [e for e in state.in_edges(map) if e.src is access]
@@ -96,11 +98,10 @@ class SingleElementCopyOptimization():
             state.add_edge(access, None, e.dst, e.dst_conn, deepcopy(e.data))
             state.remove_edge(e)
 
-    
     def get_corresponding_out_connectors(self, map_entry: nodes.MapEntry, in_connector: str) -> list[str]:
         if not in_connector:
             return []
-        suffix = in_connector[3:] # connectors starts with "IN_"
-        return [out_conn  for out_conn in map_entry.out_connectors if out_conn.startswith("OUT_") and out_conn[4:] == suffix]
-    
-        
+        suffix = in_connector[3:]  # connectors starts with "IN_"
+        return [
+            out_conn for out_conn in map_entry.out_connectors if out_conn.startswith("OUT_") and out_conn[4:] == suffix
+        ]
