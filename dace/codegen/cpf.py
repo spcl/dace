@@ -244,23 +244,47 @@ LIFETIME_DEMOTIONS = {
     dtypes.AllocationLifetime.Global: dtypes.AllocationLifetime.SDFG,
 }
 
+#: What a DEVICE dialect admits ON TOP of the host allowlists. One unit still, but one the device
+#: compiler builds, so a kernel and its global memory belong in it. ``GPU_Shared`` is here because
+#: a thread-block map's scratch is part of the kernel it lives in, not a separate allocation.
+DEVICE_STORAGE = frozenset({dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared})
 
-def uses_device_code(sdfg: SDFG) -> List[str]:
-    """Names of the constructs in ``sdfg`` that would require a device compiler.
+#: Likewise for schedules: the device map, its thread-block map, and the persistent form.
+DEVICE_SCHEDULES = frozenset({
+    dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+    dtypes.ScheduleType.GPU_Persistent
+})
+
+
+def uses_device_code(sdfg: SDFG, dialect: Optional[cpf_lowering.Dialect] = None) -> List[str]:
+    """Names of the constructs in ``sdfg`` that ``dialect`` cannot render.
+
+    Under a host dialect that is every device construct, because CPF would have to invoke a
+    compiler it does not have. Under a device dialect the kernels are the POINT, so the allowlists
+    widen by :data:`DEVICE_STORAGE` and :data:`DEVICE_SCHEDULES` -- and what is left refused is
+    what no single unit can hold whichever compiler builds it (FPGA, SVE, Snitch).
 
     :param sdfg: the SDFG to inspect (recursively).
-    :returns: a description per offending construct, empty when the SDFG is host-only.
+    :param dialect: the dialect being rendered; the ambient one when omitted.
+    :returns: a description per offending construct, empty when the SDFG fits the dialect.
     :seealso: :data:`HOST_STORAGE`, :data:`HOST_SCHEDULES`.
     """
+    on_device = (dialect in cpf_lowering.DEVICE_DIALECTS) if dialect is not None else cpf_lowering.device()
+    storages = HOST_STORAGE | DEVICE_STORAGE if on_device else HOST_STORAGE
+    schedules = HOST_SCHEDULES | DEVICE_SCHEDULES if on_device else HOST_SCHEDULES
+    # Device tasklets are written in CPP -- there is no separate device language in the enum -- so
+    # the language allowlist does not widen; what widens is where the CPP runs.
+    languages = (dtypes.Language.Python, dtypes.Language.CPP)
+
     found: List[str] = []
     for subsdfg, name, desc in sdfg.arrays_recursive():
-        if desc.storage not in HOST_STORAGE:
+        if desc.storage not in storages:
             found.append(f'{subsdfg.name}.{name} is in {desc.storage.name} storage')
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, nodes.EntryNode) and node.schedule not in HOST_SCHEDULES:
+            if isinstance(node, nodes.EntryNode) and node.schedule not in schedules:
                 found.append(f'{state.label}/{node.label} has the {node.schedule.name} schedule')
-            elif isinstance(node, nodes.Tasklet) and node.language not in (dtypes.Language.Python, dtypes.Language.CPP):
+            elif isinstance(node, nodes.Tasklet) and node.language not in languages:
                 found.append(f'{state.label}/{node.label} is a {node.language.name} tasklet')
     return found
 
@@ -500,8 +524,8 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     """
     device = uses_device_code(sdfg)
     if device:
-        raise NotImplementedError('CPF renders one host translation unit, but ' + '; '.join(device) +
-                                  '. Render the CPU form of this SDFG instead.')
+        raise NotImplementedError('CPF renders one translation unit, but ' + '; '.join(device) +
+                                  ". Render the CPU form of this SDFG, or the 'hip' language for a device one.")
     refuse_runtime_scopes(sdfg)
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
     refuse_by_value_returns(sdfg)
@@ -510,6 +534,13 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
         demoted = LIFETIME_DEMOTIONS.get(desc.lifetime)
         if demoted is not None:
             desc.lifetime = demoted
+
+
+#: A complete function definition on one line, which is the shape every generated helper has: the
+#: ``<array>_idx`` index maps and the constants. Anchored on the closing brace so a PROTOTYPE
+#: (same prefix, ending in ``;``) never matches -- dropping a repeated declaration could remove the
+#: only one that precedes a use.
+ONE_LINE_DEFINITION = re.compile(r'^static\s+(?:DACE_HDFI|constexpr|inline|DACE_HDFI\s+constexpr)\b.*\}\s*$')
 
 
 def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
@@ -527,11 +558,53 @@ def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
     :raises NotImplementedError: if the code was split across translation units.
     """
     linkable = [obj for obj in objects if obj.linkable]
-    if len(linkable) != 1:
-        extra = ', '.join(f'{obj.name}.{obj.language}' for obj in linkable if obj.target_type != 'Frame')
-        raise NotImplementedError(f'CPF renders one translation unit, but {name} generated {len(linkable)}: '
-                                  f'{extra}. Turn off the split-translation-unit codegen parameters.')
-    return linkable[0]
+    if len(linkable) == 1:
+        return linkable[0]
+    # A device rendering is EXPECTED to arrive in two pieces: the frame, which calls
+    # ``__dace_runkernel_*``, and the device object, which defines those and the kernels. One
+    # compiler builds both, so they are one unit here -- concatenated frame-first, since the frame
+    # already forward-declares every kernel launcher it calls.
+    if cpf_lowering.device():
+        frame = [obj for obj in linkable if obj.target_type in ('', 'Frame')]
+        rest = [obj for obj in linkable if obj not in frame]
+        if len(frame) == 1:
+            return merged_object(frame[0], rest)
+    extra = ', '.join(f'{obj.name}.{obj.language}' for obj in linkable if obj.target_type != 'Frame')
+    raise NotImplementedError(f'CPF renders one translation unit, but {name} generated {len(linkable)}: '
+                              f'{extra}. Turn off the split-translation-unit codegen parameters.')
+
+
+def merged_object(frame: CodeObject, rest: List[CodeObject]) -> CodeObject:
+    """One code object holding the frame and the device objects, with the shared text emitted once.
+
+    Every object repeats what it needs of the others, because separate compilation gives each unit
+    only what it declares itself: the ``<array>_idx`` helpers are emitted into both. Concatenated,
+    a repeated DEFINITION is a redefinition error, so the second copy is dropped and the first
+    stands. Repeated DECLARATIONS are left alone -- a prototype may appear any number of times, and
+    dropping one risks removing the only declaration before a use.
+
+    The helpers are one-liners by construction (``static DACE_HDFI constexpr T name(...) {{ ... }}``),
+    which is why a line is the unit here rather than a parsed definition.
+
+    :param frame: the frame object, which goes first; it declares every launcher it calls.
+    :param rest: the device objects, which define them.
+    :returns: a new code object carrying the joined text under the frame's identity.
+    """
+    seen: Set[str] = set()
+    chunks: List[str] = []
+    for obj in [frame] + list(rest):
+        kept: List[str] = []
+        for line in obj.clean_code.splitlines():
+            stripped = line.strip()
+            if ONE_LINE_DEFINITION.match(stripped):
+                if stripped in seen:
+                    continue
+                seen.add(stripped)
+            kept.append(line)
+        chunks.append('\n'.join(kept))
+    merged = copy.copy(frame)
+    merged.code = '\n\n'.join(chunks)
+    return merged
 
 
 def written_containers(sdfg: SDFG) -> OrderedSet:
@@ -621,6 +694,7 @@ def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str) -> str:
 LANGUAGES: Dict[str, cpf_lowering.Dialect] = {
     'c++': cpf_lowering.Dialect.STANDALONE,
     'c': cpf_lowering.Dialect.STANDALONE_C,
+    'hip': cpf_lowering.Dialect.STANDALONE_HIP,
 }
 
 
@@ -654,6 +728,10 @@ def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STA
     lines += [f'#include {header}' for header in headers]
     if dialect is cpf_lowering.Dialect.STANDALONE_C:
         lines.append(cpf_lowering.C_UNDEF_LINE)
+    if dialect is cpf_lowering.Dialect.STANDALONE_HIP:
+        lines.append('')
+        lines.append('// What dace/dace.h would define for the device side.')
+        lines.append(cpf_lowering.HIP_DEVICE_PREAMBLE)
     if definitions:
         lines.append('')
         lines.append('// Functions the DaCe runtime headers would otherwise provide.')
@@ -692,6 +770,15 @@ _C_DECLARED_TYPES = (r'(?:const\s+)?(?:unsigned\s+|signed\s+)?'
 #: What a finished C rendering must not contain, on top of :data:`BANNED`. Every one of these is
 #: valid C++ that the C++ dialect emits on purpose, so a leak is a dialect branch that was missed
 #: rather than a construct that should never exist.
+#: What a finished DEVICE rendering must not contain. The two entries dropped from :data:`BANNED`
+#: are dropped because the unit DEFINES them rather than borrowing them: the ``DACE_*`` annotation
+#: macros and the state struct carrying the stream both come from
+#: :data:`~dace.cpf_lowering.HIP_DEVICE_PREAMBLE`. A ``dace/`` header or a ``dace::`` symbol is
+#: still a leak, and those are the two that say the unit needs the runtime.
+BANNED_DEVICE: Tuple[Tuple[re.Pattern, str],
+                     ...] = tuple(entry for entry in BANNED
+                                  if entry[1] not in ('a DaCe preprocessor macro', 'a state-struct dereference'))
+
 BANNED_C: Tuple[Tuple[re.Pattern, str], ...] = BANNED + (
     (re.compile(r'\bstd\s*::'), 'a C++ standard-library symbol'),
     (re.compile(r'\btemplate\s*<'), 'a C++ template'),
@@ -714,7 +801,12 @@ def verify(code: str, name: str, dialect: cpf_lowering.Dialect = cpf_lowering.Di
     :param dialect: which standalone dialect rendered it, choosing the table to check against.
     :raises RuntimeError: on the first banned construct found.
     """
-    banned = BANNED_C if dialect is cpf_lowering.Dialect.STANDALONE_C else BANNED
+    if dialect is cpf_lowering.Dialect.STANDALONE_C:
+        banned = BANNED_C
+    elif dialect in cpf_lowering.DEVICE_DIALECTS:
+        banned = BANNED_DEVICE
+    else:
+        banned = BANNED
     for pattern, meaning in banned:
         match = pattern.search(code)
         if match is None:

@@ -15,6 +15,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.scope import get_node_schedule
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
+from dace import cpf_lowering
 from dace.codegen import common, compiler_family
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
@@ -148,7 +149,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         this method only does framecode-target bookkeeping (statestruct entry, cache
         rebuild, stream manager, pool-release, per-kernel arglists).
         """
-        self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
+        # CPF supplies its own context (cpf_gpu_context) with the same shape, because the field is
+        # what the generated body reaches the stream through; the runtime type would drag in the
+        # header the rendering exists to do without.
+        context_type = 'cpf_gpu_context' if cpf_lowering.device() else 'dace::cuda::Context'
+        self._frame.statestruct.append(f'{context_type} *gpu_context;')
         self._dispatcher._used_targets.add(self)
 
         pipeline_results: Dict[str, Any] = {}
@@ -1060,6 +1065,18 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             # of containing a literal ``{backend}StreamDestroy`` that fails to compile.
             stream_alloc_call = f"DACE_GPU_CHECK({self.backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {self.backend}StreamNonBlocking))"
             stream_free_call = f"DACE_GPU_CHECK({self.backend}StreamDestroy(__state->gpu_context->internal_streams[i]))"
+
+        if cpf_lowering.device():
+            # CPF renders ONE unit, so the device object carries only what is unique to it: the
+            # globals, the kernels and their launch wrappers. Everything the template around them
+            # provides is either supplied by CPF or has no place in a self-contained unit -- the
+            # includes and the state struct come from the preamble and the frame, and the
+            # init/exit pair is a state handshake CPF's single entry point does not have. The
+            # device is selected and the stream created by the entry function instead; see
+            # :func:`~dace.codegen.cpf.device_prologue`.
+            self._codeobject.code = '\n'.join(
+                (fileheader.getvalue(), self._globalcode.getvalue(), self._localcode.getvalue()))
+            return [self._codeobject]
 
         self._codeobject.code = """
 #include <{backend_header}>

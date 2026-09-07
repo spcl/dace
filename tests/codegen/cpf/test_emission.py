@@ -479,7 +479,10 @@ def test_persistent_lifetime_is_demoted_not_left_in_a_state():
 
 
 def test_gpu_schedules_are_refused_with_a_reason():
-    """CPF renders one host unit. A GPU SDFG must say so, not emit half a program."""
+    """A HOST dialect renders one host unit, so a GPU SDFG must say so rather than emit half a
+    program. The refusal names the way out -- the ``hip`` language, which renders the device form
+    into the same single unit -- because "not supported" and "not supported HERE" are different
+    answers and only the second one is true."""
 
     @dace.program
     def on_gpu(x: dace.float64[N], y: dace.float64[N]):
@@ -488,7 +491,7 @@ def test_gpu_schedules_are_refused_with_a_reason():
     sdfg = on_gpu.to_sdfg(simplify=True)
     sdfg.name = 'cpf_gpu'
     sdfg.apply_gpu_transformations()
-    with pytest.raises(NotImplementedError, match='host translation unit'):
+    with pytest.raises(NotImplementedError, match=r"one translation unit.*'hip' language"):
         cpf(sdfg)
 
 
