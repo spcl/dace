@@ -379,8 +379,8 @@ def test_create_loop_for_same_name() -> None:
     )
     sdfg = stree.as_sdfg(validate=True)
 
-    assert len(list(filter(lambda sdfg: isinstance(sdfg, LoopRegion) and sdfg.label == label, sdfg.sdfg_list))) == 1
-    assert len(list(filter(lambda sdfg: isinstance(sdfg, LoopRegion) and sdfg.label != label, sdfg.sdfg_list))) == 1
+    assert len(list(filter(lambda sdfg: isinstance(sdfg, LoopRegion) and sdfg.label == label, sdfg.cfg_list))) == 1
+    assert len(list(filter(lambda sdfg: isinstance(sdfg, LoopRegion) and sdfg.label != label, sdfg.cfg_list))) == 1
 
 
 def test_create_loop_while() -> None:
@@ -753,7 +753,7 @@ def test_read_after_write_nested_SDFG() -> None:
             filter(lambda node: isinstance(node, nodes.Tasklet) and node.label == "fill",
                    [node for node, _ in sdfg.all_nodes_recursive()]))) == 1
     # Ensure that A isn't transient in the nested SDFG
-    nested_sdfg = list(filter(lambda node: node.label == "nested_sdfg", sdfg.sdfg_list))[0]
+    nested_sdfg = list(filter(lambda node: node.label == "nested_sdfg", sdfg.cfg_list))[0]
     assert not nested_sdfg.arrays["A"].transient
 
 
