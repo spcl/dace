@@ -842,7 +842,15 @@ class Range(Subset):
                              "or be not stripped of latter at all.")
 
         if isinstance(other, Range):
-            return Range(new_subset)
+            # Through ``equalize_symbol`` for the same reason ``offset`` does: composition adds a
+            # bound of this subset to one of ``other``, and the two can carry different mints of one
+            # name -- a map parameter's and a string-parsed memlet's. SymPy compares assumptions, so
+            # ``i + (M - i - 1)`` keeps both atoms instead of folding to ``M - 1``.
+            return Range([
+                tuple(symbolic.equalize_symbol(entry)
+                      for entry in bounds) if isinstance(bounds, tuple) else symbolic.equalize_symbol(bounds)
+                for bounds in new_subset
+            ])
         else:
             raise NotImplementedError
 
