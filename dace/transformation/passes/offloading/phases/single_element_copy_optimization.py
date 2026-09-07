@@ -3,13 +3,16 @@
 from ordered_set import OrderedSet
 
 from copy import deepcopy
+from typing import List
+
+from dace import Memlet
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.state import SDFGState
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 
-def drop_stale_other_subset(memlet, src_node: nodes.Node, dst_node: nodes.Node) -> None:
+def drop_stale_other_subset(memlet: Memlet, src_node: nodes.Node, dst_node: nodes.Node) -> None:
     """Clear ``other_subset`` when the rewired edge no longer runs between two data containers.
 
     ``other_subset`` describes the SECOND container of a container-to-container copy. Moving an
@@ -25,11 +28,11 @@ def drop_stale_other_subset(memlet, src_node: nodes.Node, dst_node: nodes.Node) 
 class SingleElementCopyOptimization():
 
     # pattern   A -> single access -> Map    becomes    A -> Map -> single access
-    def apply(self, sdfg: SDFG, verbose=False):
+    def apply(self, sdfg: SDFG, verbose: bool = False) -> None:
         self.verbose = verbose
         self.single_element_copies_into_map(sdfg)
 
-    def single_element_copies_into_map(self, sdfg):
+    def single_element_copies_into_map(self, sdfg: SDFG) -> None:
         changes = OrderedSet()
         for state in sdfg.states():
             for node in state.nodes():
@@ -115,7 +118,7 @@ class SingleElementCopyOptimization():
             state.add_edge(access, None, e.dst, e.dst_conn, memlet)
             state.remove_edge(e)
 
-    def get_corresponding_out_connectors(self, map_entry: nodes.MapEntry, in_connector: str) -> list[str]:
+    def get_corresponding_out_connectors(self, map_entry: nodes.MapEntry, in_connector: str) -> List[str]:
         if not in_connector:
             return []
         suffix = in_connector[3:]  # connectors starts with "IN_"

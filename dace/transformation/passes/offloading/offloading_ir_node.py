@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+from typing import List
+
 from ordered_set import OrderedSet
 
 from dace.sdfg import InterstateEdge
@@ -32,10 +34,10 @@ class OffloadingIRNode:
             self.close
             is not None) == self.is_open_node(), f"node {self.debug_name} of type {self.type} has close {self.close}"
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self._get_str(OrderedSet(), -4)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.__repr__()
 
     def _get_str(self, visited_set, len_before):
@@ -53,22 +55,22 @@ class OffloadingIRNode:
         return s
 
     # utility functions
-    def is_empty(self):
+    def is_empty(self) -> bool:
         return not self.cpu_set and not self.gpu_set
 
-    def is_open_node(self):
+    def is_open_node(self) -> bool:
         return self.type in [OffloadingIRNode.OPEN, OffloadingIRNode.OPEN_LOOP, OffloadingIRNode.OPEN_COND]
 
-    def is_close_node(self):
+    def is_close_node(self) -> bool:
         return self.type in [OffloadingIRNode.CLOSE]
 
-    def append_node(self, node):
+    def append_node(self, node: 'OffloadingIRNode') -> None:
         self.next.append(node)
 
-    def get_all_tails(self):
+    def get_all_tails(self) -> List['OffloadingIRNode']:
         assert self.is_open_node()
 
-        def recursion(node, result: list):
+        def recursion(node: 'OffloadingIRNode', result: List['OffloadingIRNode']) -> None:
             for next in node.next:
                 if next == self.close:  # definition of a tail: a node that points at this section's end (close-node)
                     result.append(node)
@@ -80,7 +82,7 @@ class OffloadingIRNode:
         return result
 
     # static makers
-    def new_open_node(block: ControlFlowBlock):
+    def new_open_node(block: ControlFlowBlock) -> 'OffloadingIRNode':
         close = OffloadingIRNode(OffloadingIRNode.CLOSE, None, OrderedSet(), OrderedSet(), [], None)
         close.debug_name = f"_close_{block.label}"
 
@@ -98,17 +100,17 @@ class OffloadingIRNode:
 
         return open
 
-    def new_state_node(block: ControlFlowBlock, cpu_set: OrderedSet, gpu_set: OrderedSet):
+    def new_state_node(block: ControlFlowBlock, cpu_set: OrderedSet, gpu_set: OrderedSet) -> 'OffloadingIRNode':
         state = OffloadingIRNode(OffloadingIRNode.STATE, block, cpu_set, gpu_set, [], None)
         state.debug_name = f"_state_{block.label}"
         return state
 
-    def new_edge_node(edge: InterstateEdge, cpu_set: OrderedSet):
+    def new_edge_node(edge: InterstateEdge, cpu_set: OrderedSet) -> 'OffloadingIRNode':
         edge_node = OffloadingIRNode(OffloadingIRNode.EDGE, edge, cpu_set, OrderedSet(), [], None)
         edge_node.debug_name = f"_edge_{edge.label}"
         return edge_node
 
-    def get_type_as_str(type: int):
+    def get_type_as_str(type: int) -> str:
         match type:
             case OffloadingIRNode.STATE:
                 return "state"

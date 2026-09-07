@@ -14,7 +14,7 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 class SingleIterationMapPhase():
 
-    def apply(self, sdfg: SDFG, hybrid_states: OrderedSet, verbose=False):
+    def apply(self, sdfg: SDFG, hybrid_states: OrderedSet, verbose: bool = False) -> None:
         self.verbose = verbose
         if verbose: print("hybrid:", hybrid_states)
         for state in hybrid_states:
@@ -46,7 +46,7 @@ class SingleIterationMapPhase():
     ### Wrapping Logic ###
     ######################
 
-    def make_size1_map_wrappers(self, sdfg: SDFG, state: SDFGState):
+    def make_size1_map_wrappers(self, sdfg: SDFG, state: SDFGState) -> None:
         # top level GPU nodes partition the graph
         lib_nodes = OrderedSet(node for node in state.scope_children()[None]
                                if isinstance(node, (nodes.LibraryNode)) and helpers.has_GPU_schedule(node))
@@ -243,7 +243,7 @@ class SingleIterationMapPhase():
 
         return components
 
-    def remove_all_outer_access_nodes_from_group(self, state: SDFGState, group: OrderedSet):
+    def remove_all_outer_access_nodes_from_group(self, state: SDFGState, group: OrderedSet) -> None:
         outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
         nodes_to_remove = OrderedSet(node for node in outer_nodes if isinstance(node, nodes.AccessNode))
 

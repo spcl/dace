@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+from typing import Dict, Optional
+
 from ordered_set import OrderedSet
 
 from dace import dtypes, Memlet, subsets
@@ -12,7 +14,11 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 class CopyInsertionPhase():
 
-    def apply(self, sdfg: SDFG, IR: OffloadingIRNode, sdfg_scope_dict: dict = None, verbose=False):
+    def apply(self,
+              sdfg: SDFG,
+              IR: OffloadingIRNode,
+              sdfg_scope_dict: Optional[Dict] = None,
+              verbose: bool = False) -> None:
         self.verbose = verbose
         if sdfg_scope_dict:
             self.sdfg_scope_dict = sdfg_scope_dict
@@ -28,7 +34,7 @@ class CopyInsertionPhase():
     ### Ensure Correct Storage Locations Before Inserting Copies ###
     ################################################################
 
-    def correct_transient_storage_locations(self, sdfg: SDFG, IR: OffloadingIRNode):
+    def correct_transient_storage_locations(self, sdfg: SDFG, IR: OffloadingIRNode) -> None:
         seen = OrderedSet()
 
         def _correct_transients(node: OffloadingIRNode):
@@ -48,7 +54,7 @@ class CopyInsertionPhase():
 
         helpers.traverse_IR(IR, _correct_transients)
 
-    def correct_view_storage_locations(self, sdfg: SDFG):
+    def correct_view_storage_locations(self, sdfg: SDFG) -> None:
         state: SDFGState
         for state in sdfg.states():
             scope = self.sdfg_scope_dict[state]
@@ -72,13 +78,17 @@ class CopyInsertionPhase():
         return f"{name}_host"
 
     def _get_gpu_name(self, name: str) -> str:
-        if name == "__return":
+        # startswith, not equality: a program returning several values names them __return_0,
+        # __return_1, ... and "<name>_gpu" still STARTS with __return, which the runtime refuses as a
+        # transient ('Used the special array name "__return_0_gpu" as transient'). The buffer_ prefix
+        # is what moves the twin out of the reserved namespace, so it has to cover every __return.
+        if name.startswith("__return"):
             return f"buffer__return{name[8:]}_gpu"
         return f"{name}_gpu"
 
     ###
 
-    def insert_copy_names_in_SDFG(self, sdfg: SDFG, IR: OffloadingIRNode):
+    def insert_copy_names_in_SDFG(self, sdfg: SDFG, IR: OffloadingIRNode) -> None:
         # make a rename dict for each IR node, then rename all such arrays in the IR.block
         def _insert_copy_names_in_node(node: OffloadingIRNode):
             rename_dict = {}
@@ -97,7 +107,7 @@ class CopyInsertionPhase():
 
         helpers.traverse_IR(IR, _insert_copy_names_in_node)
 
-    def insert_copy_names_in_state(self, state: SDFGState, rename_dict: dict):
+    def insert_copy_names_in_state(self, state: SDFGState, rename_dict: Dict[str, str]) -> None:
         # rename access nodes
         for access in state.data_nodes():
             if access.data in rename_dict:
@@ -110,7 +120,8 @@ class CopyInsertionPhase():
                 if memlet is not None and not memlet.is_empty() and memlet.data in rename_dict:
                     memlet.data = rename_dict[memlet.data]
 
-    def insert_copy_names_in_block(self, sdfg: SDFG, block: ControlFlowBlock, rename_dict: dict):
+    def insert_copy_names_in_block(self, sdfg: SDFG, block: ControlFlowBlock,
+                                   rename_dict: Dict[str, str]) -> None:
         if block is None: return
 
         cfr = block.parent_graph
@@ -147,10 +158,10 @@ class CopyInsertionPhase():
     ### Evaluate the IR to Find Copy Locations in SDFG ###
     ######################################################
 
-    def eval_IR(self, sdfg, IR: OffloadingIRNode):
+    def eval_IR(self, sdfg: SDFG, IR: OffloadingIRNode) -> None:
         # modifies SDFG in place & inserts all necessary copies
 
-        def eval(node: OffloadingIRNode):
+        def eval(node: OffloadingIRNode) -> None:
             # loop copies if applicable
             if node.type == OffloadingIRNode.CLOSE and node.open and node.open.type == OffloadingIRNode.OPEN_LOOP:  # CLOSE LOOP
                 top: OffloadingIRNode = node.open
@@ -206,7 +217,8 @@ class CopyInsertionPhase():
     ### Insert New Copy States into SDFG ###
     ########################################
 
-    def insert_copies(self, sdfg, node, next, node_block, next_block):
+    def insert_copies(self, sdfg: SDFG, node: OffloadingIRNode, next: OffloadingIRNode,
+                      node_block: ControlFlowBlock, next_block: ControlFlowBlock) -> None:
         gpu_copies = node.cpu_set & next.gpu_set
         if gpu_copies:
             if self.verbose:
@@ -219,7 +231,8 @@ class CopyInsertionPhase():
                 print(f"Phase 6: CPU copy for {cpu_copies} between {node.debug_name} and {next.debug_name}")
             self.create_interstate_copy(sdfg, node_block, next_block, cpu_copies, to_gpu=False)
 
-    def create_interstate_copy(self, sdfg, state1, state2, array_names, to_gpu: bool):
+    def create_interstate_copy(self, sdfg: SDFG, state1: ControlFlowBlock, state2: ControlFlowBlock,
+                               array_names: OrderedSet, to_gpu: bool) -> None:
         assert state1 is not None or state2 is not None, "invalid: both states are None"
 
         # 1) insert new state

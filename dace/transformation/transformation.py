@@ -684,12 +684,6 @@ class ExpandTransformation(PatternTransformation):
     This is an internal interface used to track the expansion of library nodes.
     """
 
-    #: The expansion emits device code and must therefore sit INSIDE a kernel, rather than being a
-    #: call host code issues. Only the expansion knows: a cub block reduce refuses to expand outside
-    #: a kernel, while the device-wide reduce next to it in the same library is a host-issued call.
-    #: Offloading reads this to decide whether a map around the node is a kernel or a host loop.
-    runs_inside_kernel = False
-
     @classmethod
     def expressions(clc):
         return [sdutil.node_path_graph(clc._match_node)]

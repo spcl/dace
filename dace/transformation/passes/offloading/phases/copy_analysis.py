@@ -3,7 +3,10 @@
 from ordered_set import OrderedSet
 
 from dace import dtypes
+from typing import Dict, Optional, Tuple
+
 from dace.sdfg import nodes, SDFG
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock, BreakBlock, ControlFlowBlock
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
@@ -12,7 +15,11 @@ from dace.transformation.passes.offloading.offloading_ir_node import OffloadingI
 
 class CopyAnalysisPhase():
 
-    def apply(self, sdfg: SDFG, track_hybrid_states: OrderedSet = None, sdfg_scope_dict: dict = None, verbose=False):
+    def apply(self,
+              sdfg: SDFG,
+              track_hybrid_states: Optional[OrderedSet] = None,
+              sdfg_scope_dict: Optional[Dict] = None,
+              verbose: bool = False) -> OffloadingIRNode:
         self.verbose = verbose
         self.hybrid_states = track_hybrid_states  # results passed back by values as long as track_hybrid_states is not None
 
@@ -23,7 +30,7 @@ class CopyAnalysisPhase():
 
         return self.sdfg_to_IR(sdfg)
 
-    def sdfg_to_IR(self, sdfg: SDFG):
+    def sdfg_to_IR(self, sdfg: SDFG) -> OffloadingIRNode:
         # remember initial non-transient array locations
         non_transients = OrderedSet(name for name in sdfg.arrays
                                     if not sdfg.arrays[name].transient and not helpers.is_scalar(name, sdfg))
@@ -168,7 +175,7 @@ class CopyAnalysisPhase():
         # this can lead to unnecessary copies in the other paths
         location_on_gpu = {}
 
-        def gather_data(node: OffloadingIRNode):
+        def gather_data(node: OffloadingIRNode) -> None:
             if isinstance(node.block, nodes.NestedSDFG
                           ):  # Nested SDFGs do not share namespace, array names should not leak to outer scope
                 return
@@ -208,7 +215,7 @@ class CopyAnalysisPhase():
         # define data gathering function
         location_on_gpu = {}
 
-        def gather_data(node: OffloadingIRNode):
+        def gather_data(node: OffloadingIRNode) -> None:
             if isinstance(node.block, nodes.NestedSDFG
                           ):  # Nested SDFGs do not share namespace, array names should not leak to outer scope
                 return
@@ -229,7 +236,7 @@ class CopyAnalysisPhase():
     def _propagate_arrays(self, IR: OffloadingIRNode):
         # all arrays which aren't used by this state retain their previous status
         # ASSUMPTION: arrays are either gpu or cpu within a state
-        def propagate(node):
+        def propagate(node: OffloadingIRNode) -> None:
             for next in node.next:
                 next_arrays = next.cpu_set | next.gpu_set
 
@@ -246,7 +253,8 @@ class CopyAnalysisPhase():
     ###  Helpers get Arrays Used by Edges & Nodes ###
     #######################################################
 
-    def get_arrays_used_by_edge(self, sdfg: SDFG, state: SDFGState, edge, is_out_edge: bool):
+    def get_arrays_used_by_edge(self, sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge,
+                                is_out_edge: bool) -> OrderedSet:
         if edge.data and not edge.data.is_empty():
             data_name = edge.data.data
 
@@ -282,7 +290,7 @@ class CopyAnalysisPhase():
 
         return OrderedSet()
 
-    def get_arrays_used_by_node(self, sdfg, state, node):
+    def get_arrays_used_by_node(self, sdfg: SDFG, state: SDFGState, node: nodes.Node) -> OrderedSet:
         arrays: OrderedSet[str] = OrderedSet()
 
         # edges
@@ -302,7 +310,8 @@ class CopyAnalysisPhase():
     ###  Recursive Analysis: Each SDFG Node has dedicated method ###
     ################################################################
 
-    def get_data_locations_of_map(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
+    def get_data_locations_of_map(self, sdfg: SDFG, state: SDFGState,
+                                  map_entry: nodes.MapEntry) -> Tuple[OrderedSet[str], OrderedSet[str]]:
         # helper to validate data and add it to correct set
         def _add_data(data_name: str, gpu_set: OrderedSet[str], cpu_set: OrderedSet[str],
                       is_gpu: bool) -> tuple[OrderedSet[str], OrderedSet[str]]:
@@ -375,7 +384,7 @@ class CopyAnalysisPhase():
     def get_data_locations_of_state(self,
                                     sdfg: SDFG,
                                     state: SDFGState,
-                                    recursive_call=False) -> tuple[OrderedSet[str], OrderedSet[str]]:
+                                    recursive_call: bool = False) -> Tuple[OrderedSet[str], OrderedSet[str]]:
         # iterate through all toplevel nodes of this state
         #  - map entry -> give to get_data_locations_of_map, which handles all nodes inside scope
         #  - control flow (nested) -> recurse

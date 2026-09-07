@@ -8,12 +8,12 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes import FullMapFusion
 
-from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase1_schedules import SchedulePhase
-from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase2_copy_analysis import CopyAnalysisPhase
-from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase3_single_element_values import SingleElementValuePhase
-from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase4_single_iteration_maps import SingleIterationMapPhase
-from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase6_copy_insertion import CopyInsertionPhase
-from dace.transformation.passes.offloading.offload_to_accelerator_phases.offl_phase7b_single_element_copy_optimization import SingleElementCopyOptimization
+from dace.transformation.passes.offloading.phases.schedules import SchedulePhase
+from dace.transformation.passes.offloading.phases.copy_analysis import CopyAnalysisPhase
+from dace.transformation.passes.offloading.phases.single_element_values import SingleElementValuePhase
+from dace.transformation.passes.offloading.phases.single_iteration_maps import SingleIterationMapPhase
+from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertionPhase
+from dace.transformation.passes.offloading.phases.single_element_copy_optimization import SingleElementCopyOptimization
 from dace.transformation.passes.offloading.offloading_helpers import (get_sdfg_scope_dict,
                                                                       register_kernel_local_transients)
 

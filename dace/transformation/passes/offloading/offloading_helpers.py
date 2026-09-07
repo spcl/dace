@@ -1,11 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+from typing import Callable, Dict, List, Optional, Tuple
+
 from ordered_set import OrderedSet
 
 from dace import dtypes, data
 from dace.sdfg import nodes, SDFG, SDFGState
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.sdfg.utils import get_last_view_node
+from dace import utils
 
 ##################################################
 ###                Scope Dict                  ###
@@ -13,7 +16,7 @@ from dace.sdfg.utils import get_last_view_node
 ##################################################
 
 
-def get_sdfg_scope_dict(sdfg):
+def get_sdfg_scope_dict(sdfg: SDFG) -> Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]]:
     scopes = {}
     for state in sdfg.states():
         scopes[state] = state.scope_dict()
@@ -25,7 +28,7 @@ def get_sdfg_scope_dict(sdfg):
 ###################################
 
 
-def has_GPU_schedule(node):
+def has_GPU_schedule(node: nodes.Node) -> bool:
     schedule = None
     if isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit):
         schedule = node.map.schedule
@@ -51,7 +54,7 @@ def is_callback_tasklet(node: nodes.Node, sdfg: SDFG) -> bool:
     """
     if not isinstance(node, nodes.Tasklet):
         return False
-    if PYSTATE_CONNECTORS & (set(node.in_connectors) | set(node.out_connectors)):
+    if PYSTATE_CONNECTORS & (OrderedSet(node.in_connectors) | OrderedSet(node.out_connectors)):
         return True
     code = node.code.as_string or ''
     for scope in [sdfg] + list(sdfg.all_sdfgs_recursive()):
@@ -61,7 +64,8 @@ def is_callback_tasklet(node: nodes.Node, sdfg: SDFG) -> bool:
     return False
 
 
-def scope_holds_callback(state: SDFGState, entry, scope_children: dict, sdfg: SDFG) -> bool:
+def scope_holds_callback(state: SDFGState, entry: Optional[nodes.MapEntry],
+                         scope_children: Dict[Optional[nodes.Node], List[nodes.Node]], sdfg: SDFG) -> bool:
     """``entry``'s scope contains a callback, at any depth, so the scope is host code."""
     for node in scope_children.get(entry, ()):
         if is_callback_tasklet(node, sdfg):
@@ -74,11 +78,11 @@ def scope_holds_callback(state: SDFGState, entry, scope_children: dict, sdfg: SD
 
 
 def sdfg_holds_callback(sdfg: SDFG) -> bool:
-    for node, parent in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.Tasklet):
-            owner = parent.sdfg if hasattr(parent, 'sdfg') else sdfg
-            if is_callback_tasklet(node, owner):
-                return True
+    for scope in sdfg.all_sdfgs_recursive():
+        for state in scope.states():
+            for node in state.nodes():
+                if is_callback_tasklet(node, scope):
+                    return True
     return False
 
 
@@ -90,30 +94,30 @@ def sdfg_holds_gpu_schedule(sdfg: SDFG) -> bool:
     return False
 
 
-def is_array_stored_on_GPU(sdfg, array_name):
+def is_array_stored_on_GPU(sdfg: SDFG, array_name: str) -> bool:
     storage = sdfg.arrays[array_name].storage
     return storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES
 
 
-def is_scalar(data_name: str, sdfg: SDFG):
+def is_scalar(data_name: str, sdfg: SDFG) -> bool:
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, data.Scalar)
 
 
-def is_array(data_name: str, sdfg: SDFG):
+def is_array(data_name: str, sdfg: SDFG) -> bool:
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, data.Array)
 
 
-def is_view(data_name: str, sdfg: SDFG):
+def is_view(data_name: str, sdfg: SDFG) -> bool:
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, data.View)
 
 
-def enclosing_kernel(scopes: dict, node: nodes.Node):
+def enclosing_kernel(scopes: Dict[nodes.Node, Optional[nodes.Node]], node: nodes.Node) -> Optional[nodes.MapEntry]:
     """The nearest enclosing map with a GPU schedule, or None outside every kernel."""
     scope = scopes[node]
     while scope is not None:
@@ -157,13 +161,13 @@ def register_kernel_local_transients(sdfg: SDFG) -> None:
             nested.arrays[name].storage = dtypes.StorageType.Register
 
 
-def is_stream(data_name: str, sdfg: SDFG):
+def is_stream(data_name: str, sdfg: SDFG) -> bool:
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, data.Stream)
 
 
-def is_length1_array(data_name: str, sdfg: SDFG):
+def is_length1_array(data_name: str, sdfg: SDFG) -> bool:
     assert data_name in sdfg.arrays
     desc = sdfg.arrays[data_name]
     return isinstance(desc, data.Array) and len(desc.shape) == 1 and desc.shape[0] == 1
@@ -174,17 +178,17 @@ def is_length1_array(data_name: str, sdfg: SDFG):
 #######################
 
 
-def get_children(state, node):
+def get_children(state: SDFGState, node: nodes.Node) -> OrderedSet:
     return OrderedSet(e.dst for e in state.out_edges(node))
 
 
-def get_predecessors(state, node):
+def get_predecessors(state: SDFGState, node: nodes.Node) -> OrderedSet:
     return OrderedSet(e.src for e in state.in_edges(node))
 
 
-def traverse_IR(IR: OffloadingIRNode, method):
+def traverse_IR(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:
 
-    def recursion(node, visited_set):
+    def recursion(node: OffloadingIRNode, visited_set: OrderedSet) -> None:
         if node in visited_set:
             return
         visited_set.add(node)
@@ -197,7 +201,7 @@ def traverse_IR(IR: OffloadingIRNode, method):
     return recursion(IR, OrderedSet())
 
 
-def traverse_same_level(IR: OffloadingIRNode, method):  #DFS
+def traverse_same_level(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:  # DFS
     queue = IR.next.copy()
     while queue:
         curr = queue.pop()
@@ -226,7 +230,7 @@ def get_data_used_by_incoming_access_nodes(sdfg: SDFG,
                                            node: nodes.Node,
                                            include_scalars: bool = False) -> OrderedSet[str]:
 
-    def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]):
+    def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]) -> OrderedSet:
         if node in visited_set:  # the visited set is necessary for edge cases, e.g. an access node A whose predecessor B is a view node refering back to A
             return OrderedSet()
         visited_set.add(node)
@@ -262,7 +266,7 @@ def get_data_used_by_outgoing_access_nodes(sdfg: SDFG,
                                            node: nodes.Node,
                                            include_scalars: bool = False) -> OrderedSet[str]:
 
-    def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]):
+    def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]) -> OrderedSet:
         if node in visited_set:  # the visited set is necessary for edge cases, e.g. an access node A whose successor B is a view node refering back to A
             return OrderedSet()
         visited_set.add(node)
@@ -299,23 +303,34 @@ def get_data_used_by_outgoing_access_nodes(sdfg: SDFG,
 ############################
 
 
-def get_new_map_identifiers(state: SDFGState, map_label: str, map_param: str):
-    existing_labels = OrderedSet(getattr(node, "label", None) for node in state.nodes())
-    existing_params = OrderedSet()
+def get_new_map_identifiers(state: SDFGState, map_label: str, map_param: str) -> Tuple[str, str]:
+    """A label and a map parameter that collide with nothing the SDFG already knows.
+
+    The parameter becomes a SYMBOL, so uniqueness has to be checked against every name that could
+    already carry assumptions -- the SDFG's own symbol table and its parent's, the data descriptors,
+    and the parameters of every map in the SDFG, not just this state's. Reusing a name that is
+    already a symbol elsewhere would give one string two meanings with two sets of assumptions,
+    which resolves differently depending on which one a later pass reaches for.
+    """
+    sdfg = state.sdfg
+    taken: OrderedSet = OrderedSet()
     for node in state.nodes():
-        if isinstance(node, nodes.MapEntry):
-            existing_params |= set(node.map.params)
+        if isinstance(
+                node,
+            (nodes.MapEntry, nodes.MapExit, nodes.Tasklet, nodes.AccessNode, nodes.LibraryNode, nodes.NestedSDFG)):
+            taken.add(node.label)
 
-    suffix = 0
-    new_label = map_label
-    while new_label in existing_labels:
-        suffix += 1
-        new_label = f"{map_label}_{suffix}"
+    symbols: OrderedSet = OrderedSet()
+    for scope in [sdfg] + list(sdfg.all_sdfgs_recursive()):
+        symbols |= OrderedSet(scope.symbols)
+        symbols |= OrderedSet(scope.arrays)
+        for scope_state in scope.states():
+            for node in scope_state.nodes():
+                if isinstance(node, nodes.MapEntry):
+                    symbols |= OrderedSet(node.map.params)
+    parent = sdfg.parent_sdfg
+    while parent is not None:
+        symbols |= OrderedSet(parent.symbols)
+        parent = parent.parent_sdfg
 
-    suffix = 0
-    new_param = map_param
-    while new_param in existing_params:
-        suffix += 1
-        new_param = f"{map_param}_{suffix}"
-
-    return new_label, new_param
+    return utils.find_new_name(map_label, taken), utils.find_new_name(map_param, symbols)

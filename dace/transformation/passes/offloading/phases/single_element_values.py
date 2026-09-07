@@ -3,6 +3,8 @@
 from ordered_set import OrderedSet
 
 from dace import dtypes
+from typing import Optional
+
 from dace.sdfg import nodes, SDFG
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
@@ -13,13 +15,14 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 class SingleElementValuePhase():
 
-    def apply(self, sdfg: SDFG, exceptions: OrderedSet = None, verbose=False):
+    def apply(self, sdfg: SDFG, exceptions: Optional[OrderedSet] = None,
+              verbose: bool = False) -> OrderedSet:
         self.verbose = verbose
         self.exceptions = exceptions if exceptions is not None else OrderedSet(
         )  # results passed back by values as long as track_hybrid_states is not None
         return self.change_single_element_data_containers(sdfg)
 
-    def change_single_element_data_containers(self, sdfg: SDFG):
+    def change_single_element_data_containers(self, sdfg: SDFG) -> OrderedSet:
 
         all_scalars: OrderedSet[str] = OrderedSet(data_name for data_name in sdfg.arrays
                                                   if helpers.is_scalar(data_name, sdfg))
@@ -55,7 +58,7 @@ class SingleElementValuePhase():
 
         return to_scalars | to_len1_arrays
 
-    def get_gpu_written_data(self, sdfg: SDFG):
+    def get_gpu_written_data(self, sdfg: SDFG) -> OrderedSet:
         gpu_written = OrderedSet()
         for state in sdfg.states():
             for node in state.nodes():
