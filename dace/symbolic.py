@@ -1738,6 +1738,20 @@ def _construct_function_uncached(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
+# Operator-derived ``__``-prefixed variants for ``_SerializedSymbolicParser._functions``.
+# Defined at module level because Python name-mangles identifiers starting with ``__``
+# when they appear textually inside a class body.
+_SERIALIZED_OPERATOR_FUNCTIONS = {
+    '__int_floor': __int_floor,
+    '__bitwise_and': __bitwise_and,
+    '__bitwise_or': __bitwise_or,
+    '__bitwise_xor': __bitwise_xor,
+    '__bitwise_invert': __bitwise_invert,
+    '__left_shift': __left_shift,
+    '__right_shift': __right_shift,
+}
+
+
 class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
@@ -1910,6 +1924,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'RightShift': right_shift,
         'left_shift': left_shift,
         'right_shift': right_shift,
+        **_SERIALIZED_OPERATOR_FUNCTIONS,
     }
     _constants = {
         'True': sympy.true,
@@ -2423,6 +2438,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_ceiling(self, expr):
         if not self.cpp_mode:
             return super()._print_Function(expr)
+        # A known-integer argument has nothing to round up, so it stands on its own and
+        # keeps its integer type. Neither C++ spelling works here: libm ``ceil`` widens
+        # to ``double``, and the runtime's ``ceiling`` (math.h) has only ``int``, ``float``
+        # and ``double`` overloads, so any wider integer type makes the call ambiguous.
+        if expr.args[0].is_integer:
+            return self._print(expr.args[0])
         return 'ceil(%s)' % self._print(expr.args[0])
 
     def _print_Mod(self, expr):
