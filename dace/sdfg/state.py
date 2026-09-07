@@ -2582,9 +2582,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if node not in self.nodes():
             raise ValueError(f"Node {node} is not in this state")
 
-        # Check that implementation exists
-        if implementation not in node.implementations:
-            raise KeyError(f"Unknown implementation for node {type(node).__name__}: {implementation}")
+        # Check that implementation exists ('ai' is reserved, and resolved by expand itself)
+        if implementation not in node.available_implementations():
+            raise KeyError(f"Unknown implementation for node {type(node).__name__}: {implementation}. "
+                           f"Available implementations: {', '.join(sorted(node.available_implementations()))}")
 
         # Use the new expand interface
         return node.expand(self, implementation, **expansion_kwargs)

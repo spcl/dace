@@ -584,6 +584,101 @@ required:
                         default_Darwin: ''
                         default_Windows: ''
 
+    ai:
+        type: dict
+        title: AI-generated code
+        description: >
+            Preferences for the "ai" library node implementation, which expands a library node
+            into a tasklet written by a language model.
+        required:
+            provider:
+                type: str
+                default: 'anthropic'
+                title: Model provider
+                description: >
+                    Which backend to generate code with. "anthropic" uses the Anthropic Messages
+                    API (pip install 'dace[ai-anthropic]'); "responses" uses the Responses API of
+                    the openai package (pip install 'dace[ai-openai]'); "manual" prints the prompt and
+                    reads the reply back from the terminal, needing neither a key nor an SDK. The
+                    SDK is only imported when an expansion actually runs.
+
+            manual_dir:
+                type: str
+                default: ''
+                title: Manual provider directory
+                description: >
+                    Directory the "manual" provider writes prompts to and reads replies from.
+                    Defaults to a "dace_ai_prompts" directory under the system temporary directory
+                    when empty.
+
+            api_key_envvar:
+                type: str
+                default: 'ANTHROPIC_API_KEY'
+                title: API key environment variable
+                description: >
+                    Name of the environment variable holding the provider's API key. If
+                    the variable is unset, the provider's own credential chain is used instead.
+
+            model:
+                type: str
+                default: 'claude-opus-5'
+                title: Model
+                description: Identifier of the model used to generate tasklets.
+
+            effort:
+                type: str
+                default: 'high'
+                title: Reasoning effort
+                description: >
+                    How much effort the model should spend per expansion, for providers that
+                    support it (low, medium, high, xhigh, max).
+
+            max_tokens:
+                type: int
+                default: 64000
+                title: Maximum response tokens
+                description: Upper bound on the length of a single generated response.
+
+            timeout:
+                type: int
+                default: 600
+                title: Request timeout
+                description: Timeout, in seconds, for one request to the model provider.
+
+            verify:
+                type: bool
+                default: true
+                title: Verify generated code
+                description: >
+                    Compile the generated tasklet in isolation before it is inserted into the
+                    SDFG, and send any compiler diagnostics back to the model. This catches
+                    syntax and type errors; it does not check that the result is correct.
+
+            max_repair_attempts:
+                type: int
+                default: 2
+                title: Maximum repair attempts
+                description: >
+                    How many times the model may be asked to fix generated code that does not
+                    compile. Only used when verification is enabled.
+
+            environment_dir:
+                type: str
+                default: ''
+                title: Generated environment directory
+                description: >
+                    Directory where library environments requested by the model are written as
+                    Python modules, so that they can be inspected, edited, and resolved again in
+                    later sessions. Defaults to ~/.dace/ai_environments when empty.
+
+            extra_instructions:
+                type: str
+                default: ''
+                title: Extra prompt instructions
+                description: >
+                    Additional text appended to every code generation prompt, e.g. project-wide
+                    coding conventions or libraries that should be preferred.
+
     instrumentation:
         type: dict
         title: Instrumentation
