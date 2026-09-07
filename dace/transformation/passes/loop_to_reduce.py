@@ -20,6 +20,7 @@ from typing import Dict, List, NamedTuple, Optional, Set
 import sympy
 
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, nodes, properties, subsets, symbolic
+from dace.ordered import OrderedSet
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic import AND, OR, bitwise_and, bitwise_or, Subscript
 from dace.transformation import pass_pipeline as ppl
@@ -343,19 +344,53 @@ class AccumulatorCopyChainToWCR(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """:returns: The number of rewrites, or ``None`` if the SDFG was left untouched."""
         from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-        from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         applied = PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
         count = sum(len(v) for v in applied.values()) if applied else 0
-        # ``permissive=False`` required: permissive mode matches scan-shape bodies (TSVC
-        # recurrence_down ``b[i] = b[i+1] + a[i]`` after ``LoopToScan``) as reductions and
-        # rewrites them to WCR writes later parallelised -> carried dependence lost,
-        # off-by-one. Pinned by the descending-recurrence value-preservation test.
-        count += sdfg.apply_transformations_repeated(AugAssignToWCR,
-                                                     validate=False,
-                                                     validate_all=False,
-                                                     permissive=False)
+        count += _augassign_to_wcr_per_state(sdfg)
         return count or None
+
+
+def _augassign_to_wcr_per_state(sdfg: SDFG) -> int:
+    """Drive ``AugAssignToWCR`` to a fixpoint one state at a time.
+
+    ``sdfg.apply_transformations_repeated`` restarts its scan at the FIRST state after every
+    applied match, so a graph with ``M`` rewrites pays ``M + 1`` whole-SDFG VF2 sweeps -- on
+    CloudSC, 99 rewrites for 78 s of matching. ``AugAssignToWCR`` is a
+    ``SingleStateTransformation``: every candidate it can see lives in one state, so the
+    global driver's "scan from the top, take the first match, restart" loop already exhausts
+    the states in order. Exhausting each state in that same order therefore replays the SAME
+    application sequence, but each sweep collapses and matches ONE state instead of all of
+    them. States that ``apply`` splits off (``isolate_tasklet``) are appended to their region,
+    so re-reading ``nodes()`` each step reaches them; the closing whole-SDFG sweep is the
+    fixpoint check the original driver's last (matchless) round performed, and it also catches
+    any match a rewrite could have opened in a region already walked.
+
+    ``permissive=False`` is required: permissive mode matches scan-shape bodies (TSVC
+    recurrence_down ``b[i] = b[i+1] + a[i]`` after ``LoopToScan``) as reductions and rewrites
+    them to WCR writes later parallelised -> carried dependence lost, off-by-one. Pinned by
+    the descending-recurrence value-preservation test.
+    """
+    from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+
+    driver = PatternMatchAndApplyRepeated([AugAssignToWCR()], permissive=False, validate=False, validate_all=False)
+    count = 0
+    for cfr in sdfg.all_control_flow_regions(recursive=True):
+        # Re-read ``nodes()`` per step rather than walking a snapshot: ``apply`` may append a
+        # fission state to the region it is rewriting.
+        visited = OrderedSet()
+        while True:
+            block = next((b for b in cfr.nodes() if isinstance(b, SDFGState) and b not in visited), None)
+            if block is None:
+                break
+            visited.add(block)
+            driver.states = [block]
+            applied = driver.apply_pass(sdfg, {})
+            count += sum(len(v) for v in applied.values()) if applied else 0
+    driver.states = None
+    applied = driver.apply_pass(sdfg, {})
+    return count + (sum(len(v) for v in applied.values()) if applied else 0)
 
 
 def loop_iteration_assigned_symbols(loop: LoopRegion) -> Set[str]:
