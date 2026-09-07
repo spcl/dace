@@ -4723,14 +4723,14 @@ def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _Affi
     """
     out_desc = sdfg.arrays[info.out_name]
     trip = symbolic.simplify(info.iter_end - info.iter_start + 1)
-    delta_buf, _ = sdfg.add_array(f'{_DELTA_BUF_PREFIX}{info.out_name}', [trip],
-                                  out_desc.dtype,
-                                  transient=True,
-                                  find_new_name=True)
-    coef_buf, _ = sdfg.add_array(f'{_COEF_BUF_PREFIX}{info.out_name}', [trip],
-                                 out_desc.dtype,
-                                 transient=True,
-                                 find_new_name=True)
+    # An operand that is already a slice of an existing array is read where it lies; only a
+    # COMPUTED one needs a buffer the body fills. See :func:`direct_operand`.
+    direct_coef = direct_operand(info, info.coef_code, sdfg)
+    direct_delta = direct_operand(info, info.delta_code, sdfg)
+    delta_buf = None if direct_delta else sdfg.add_array(
+        f'{_DELTA_BUF_PREFIX}{info.out_name}', [trip], out_desc.dtype, transient=True, find_new_name=True)[0]
+    coef_buf = None if direct_coef else sdfg.add_array(
+        f'{_COEF_BUF_PREFIX}{info.out_name}', [trip], out_desc.dtype, transient=True, find_new_name=True)[0]
     mutate_body_to_affine_buffers(info, delta_buf, coef_buf)
 
     out_edges = list(parent.out_edges(loop))
@@ -4739,7 +4739,7 @@ def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _Affi
     for e in out_edges:
         parent.remove_edge(e)
         parent.add_edge(s_scan, e.dst, e.data)
-    emit_affine_scan(s_scan, sdfg, info, delta_buf, coef_buf, trip)
+    emit_affine_scan(s_scan, sdfg, info, delta_buf, coef_buf, trip, direct_delta, direct_coef)
     sdfg.reset_cfg_list()
 
 
@@ -4772,7 +4772,49 @@ def emit_affine_build_tasklet(state: SDFGState, info: _AffineScan, label: str, c
                    mm.Memlet(data=buf, subset=subsets.Range([(idx, idx, 1)])))
 
 
-def mutate_body_to_affine_buffers(info: _AffineScan, delta_buf: str, coef_buf: str):
+def direct_operand(info: '_AffineScan', code: str, sdfg: SDFG) -> Optional[Tuple[str, Any]]:
+    """The array an affine operand can be read straight out of, or ``None`` to build a buffer.
+
+    ``c[i]*x[i-1] + d[i]`` needs its coefficient and offset as two per-element sequences. When
+    either is a COMPUTED expression the loop body has to evaluate it into a buffer -- that is what
+    makes the rest of the body data-parallel, and it is the whole point of the rewrite. But when
+    the operand is a BARE LEAF -- one array read at a unit-stride affine index, which is what
+    ``y[i] = c[i]*y[i-1] + x[i]`` gives for both -- the buffer is a verbatim copy of a slice that
+    already exists. Building it costs an allocation and a full pass each way over data the scan is
+    about to read anyway.
+
+    Refused where a copy is doing real work rather than none:
+
+    * an operand read off the CARRIER is a snapshot, not a slice. The scan writes ``out`` as it
+      goes, so an operand aliasing it must be captured before the writes begin -- the shape a
+      negative carry distance produces, where the read is of a later iteration's element.
+    * a non-unit stride or a non-affine index has no contiguous slice to point at.
+
+    :param info: the matched recurrence.
+    :param code: the operand's expression over the leaf connectors.
+    :param sdfg: the SDFG owning the arrays.
+    :returns: ``(array name, index offset)`` to wire directly, or ``None``.
+    """
+    leaf = info.leaves.get(code.strip())
+    if leaf is None or not isinstance(leaf.node, nodes.AccessNode):
+        return None
+    name = leaf.node.data
+    # Aliasing the carrier: the scan writes it while reading, so this needs the snapshot.
+    if name == info.out_name:
+        return None
+    desc = sdfg.arrays.get(name)
+    if not isinstance(desc, data.Array) or isinstance(desc, (data.View, data.Reference)) or len(desc.shape) != 1:
+        return None
+    subset = leaf.memlet.subset if leaf.memlet.data == name else leaf.memlet.other_subset
+    if subset is None:
+        return None
+    axis, offset, others, coef = _classify_subset(subset, info.body_state.parent_graph.loop_variable)
+    if axis != 0 or coef != 1 or others or offset is None:
+        return None
+    return name, offset
+
+
+def mutate_body_to_affine_buffers(info: _AffineScan, delta_buf: Optional[str], coef_buf: Optional[str]):
     """In place: replace the recurrence with two independent per-iteration writes.
 
     The original computation chain is removed wholesale rather than rewired. Every node in it was
@@ -4783,8 +4825,10 @@ def mutate_body_to_affine_buffers(info: _AffineScan, delta_buf: str, coef_buf: s
     state = info.body_state
     idx = symbolic.simplify(symbolic.pystr_to_symbolic(state.parent_graph.loop_variable) - info.iter_start)
 
-    emit_affine_build_tasklet(state, info, 'affine_coef', info.coef_code, coef_buf, idx)
-    emit_affine_build_tasklet(state, info, 'affine_delta', info.delta_code, delta_buf, idx)
+    if coef_buf is not None:
+        emit_affine_build_tasklet(state, info, 'affine_coef', info.coef_code, coef_buf, idx)
+    if delta_buf is not None:
+        emit_affine_build_tasklet(state, info, 'affine_delta', info.delta_code, delta_buf, idx)
 
     state.remove_edge(info.write_edge)
     for node in info.chain:
@@ -4792,12 +4836,22 @@ def mutate_body_to_affine_buffers(info: _AffineScan, delta_buf: str, coef_buf: s
             state.remove_node(node)
     # The carrier's read and write AccessNodes are what carried the dependence; with the chain
     # gone they are isolated, and leaving them would keep the loop looking carried to LoopToMap.
+    # An operand wired directly to its array (:func:`direct_operand`) leaves its leaf isolated for
+    # the same reason -- no build tasklet reads it here any more -- and an isolated access node
+    # fails validation, so every one the rewrite orphaned goes, not only the carrier's.
     for node in list(state.nodes()):
-        if isinstance(node, nodes.AccessNode) and node.data == info.out_name and state.degree(node) == 0:
+        if isinstance(node, nodes.AccessNode) and state.degree(node) == 0:
             state.remove_node(node)
 
 
-def emit_affine_scan(state: SDFGState, sdfg: SDFG, info: _AffineScan, delta_buf: str, coef_buf: str, trip: Any):
+def emit_affine_scan(state: SDFGState,
+                     sdfg: SDFG,
+                     info: _AffineScan,
+                     delta_buf: Optional[str],
+                     coef_buf: Optional[str],
+                     trip: Any,
+                     direct_delta: Optional[Tuple[str, Any]] = None,
+                     direct_coef: Optional[Tuple[str, Any]] = None):
     """Wire the ``Scan(op=AFFINE)`` node reading both buffers and writing ``out`` directly.
 
     ``_scan_init`` carries ``out[start + k_r]``, the value the sequential loop entered with. It
@@ -4844,9 +4898,19 @@ def emit_affine_scan(state: SDFGState, sdfg: SDFG, info: _AffineScan, delta_buf:
                   other_subset=subsets.Range([(0, seed_hi, 1)])))
     state.add_edge(seed_an, None, node, INIT_CONNECTOR_NAME,
                    mm.Memlet(data=seed_name, subset=subsets.Range([(0, seed_hi, 1)])))
-    state.add_edge(state.add_read(delta_buf), None, node, INPUT_CONNECTOR_NAME,
-                   mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
-    state.add_edge(state.add_read(coef_buf), None, node, COEF_CONNECTOR_NAME,
-                   mm.Memlet(data=coef_buf, subset=subsets.Range([(0, trip - 1, 1)])))
+
+    def wire(conn: str, buf: Optional[str], direct: Optional[Tuple[str, Any]]) -> None:
+        """Connect one operand: the built buffer, or the slice of the array it copied."""
+        if direct is None:
+            state.add_edge(state.add_read(buf), None, node, conn,
+                           mm.Memlet(data=buf, subset=subsets.Range([(0, trip - 1, 1)])))
+            return
+        name, offset = direct
+        lo = symbolic.simplify(info.iter_start + offset)
+        state.add_edge(state.add_read(name), None, node, conn,
+                       mm.Memlet(data=name, subset=subsets.Range([(lo, symbolic.simplify(lo + trip - 1), 1)])))
+
+    wire(INPUT_CONNECTOR_NAME, delta_buf, direct_delta)
+    wire(COEF_CONNECTOR_NAME, coef_buf, direct_coef)
     state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write(info.out_name), None,
                    mm.Memlet(data=info.out_name, subset=subsets.Range([(write_start, write_start + trip - 1, 1)])))
