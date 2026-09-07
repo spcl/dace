@@ -127,7 +127,7 @@ required:
                 required:
                     unroll_limit:
                         type: int
-                        default: 8
+                        default: 10
                         title: Short-loop unroll limit
                         description: >
                             Fully unroll constant-trip loops with at most this many
