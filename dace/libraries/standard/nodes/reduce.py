@@ -946,14 +946,13 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        input_data = dcpy(raw_input_data)
-        input_data.transient = False
-        # Through ``set_shape``, because ``offset`` is rank-dependent: assigning ``shape`` alone
-        # leaves it at the source array's rank, and a descriptor whose offset and shape disagree
-        # cannot be read back (``Offset must be the same size as shape``), so the SDFG stops
-        # surviving a serialization round trip.
-        input_data.set_shape(schedule.in_shape, strides=schedule.in_strides, total_size=input_data.total_size)
-        nsdfg.add_datadesc('_in', input_data)
+        # Built rather than cloned, the way ``_out`` below is. A clone carries the caller's
+        # descriptor CLASS, so a reduce reading an ``ArrayView`` -- lenet's second one reads a view of
+        # the maxpool input -- gives the nested SDFG a ``_in`` that is a view of nothing: inside, it
+        # is a plain buffer reached through a connector and read by several edges, which validation
+        # refuses ("Ambiguous or invalid edge to/from a View access node"). Building it also keeps
+        # ``offset`` at the rank of the shape, which a cloned-then-reshaped descriptor loses.
+        nsdfg.add_array('_in', schedule.in_shape, in_type, strides=schedule.in_strides, storage=raw_input_data.storage)
 
         output_data = dcpy(raw_output_data)
         nsdfg.add_array('_out',
