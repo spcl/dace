@@ -441,3 +441,102 @@ if __name__ == '__main__':
     test_nested_boundary_wcr_survives_a_second_reducer()
     test_augassign_operand_is_routed_through_an_access_node()
     test_augassign_operand_at_a_map_exit_is_routed_through_an_access_node()
+
+
+def test_the_output_binding_must_name_the_array_the_wcr_edge_writes():
+    """A map exit with several outputs has one valid ``output`` binding per array.
+
+    ``expr 1`` is the path ``tasklet -> map_exit -> output``, which every one of those bindings
+    satisfies -- nothing in the pattern ties ``output`` to the container the matched WCR edge
+    actually writes. Applying a mismatched binding pairs this edge's memlet with the other array's
+    access node, and the graph no longer validates. CloudSC's vertical flux band is this shape:
+    four fluxes accumulated through one map exit.
+    """
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    KLEV, KLON = dace.symbol('KLEV'), dace.symbol('KLON')
+
+    @dace.program
+    def flux(a: dace.float64[KLEV + 1, KLON], b: dace.float64[KLEV + 1, KLON], c: dace.float64[KLEV + 1, KLON],
+             d: dace.float64[KLEV + 1, KLON], inc: dace.float64[KLEV, KLON], gd: dace.float64[KLEV, KLON]):
+        for jl in range(KLON):
+            a[0, jl] = 0.0
+            b[0, jl] = 0.0
+            c[0, jl] = 0.0
+            d[0, jl] = 0.0
+        for jk in range(KLEV):
+            for jl in range(KLON):
+                a[jk + 1, jl] = a[jk, jl]
+                b[jk + 1, jl] = a[jk, jl]  # cross-seeded, as CloudSC's pfsqrf is from pfsqlf
+                c[jk + 1, jl] = c[jk, jl]
+                d[jk + 1, jl] = c[jk, jl]
+                a[jk + 1, jl] = a[jk + 1, jl] + inc[jk, jl] * gd[jk, jl]
+                c[jk + 1, jl] = c[jk + 1, jl] + gd[jk, jl]
+                b[jk + 1, jl] = b[jk + 1, jl] + inc[jk, jl] * gd[jk, jl]
+                d[jk + 1, jl] = d[jk + 1, jl] + gd[jk, jl]
+
+    sdfg = flux.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True, validate_all=False, target='cpu')
+    sdfg.validate()
+    # Every memlet must name the container its endpoints hold.
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            for edge in state.edges():
+                if edge.data.is_empty():
+                    continue
+                ends = [n.data for n in (edge.src, edge.dst) if isinstance(n, dace.nodes.AccessNode)]
+                if ends:
+                    assert edge.data.data in ends, (f'memlet {edge.data.data} on an edge between '
+                                                    f'{type(edge.src).__name__}/{type(edge.dst).__name__} {ends}')
+
+
+def test_a_scan_seeded_in_the_same_state_keeps_its_accumulator_load():
+    """The copy-wrapped RMW may not become a WCR when the accumulator has another writer here.
+
+    ``_apply_rmw_copy`` drops the accumulator load and lets the WCR read the destination at write
+    time -- but that load is what orders the read-modify-write behind the other write. A scan seeds
+    ``a[k+1] = a[k]`` through its own access node and then accumulates into ``a[k+1]``; without the
+    load the WCR is unordered against the seed and the increment lands on whichever value is there.
+
+    Two-dimensional on purpose: the inner column loop becomes the Map that puts the seed and the
+    accumulate in one state, which is where the ordering is lost. CloudSC's vertical flux band is
+    this shape, and its four cross-seeded fluxes are what first showed the wrong numbers.
+    """
+    import numpy as np
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    KLEV, KLON = dace.symbol('KLEV'), dace.symbol('KLON')
+
+    @dace.program
+    def scan2d(a: dace.float64[KLEV + 1, KLON], b: dace.float64[KLEV + 1, KLON], inc: dace.float64[KLEV, KLON],
+               gd: dace.float64[KLEV, KLON]):
+        for jl in range(KLON):
+            a[0, jl] = 0.0
+            b[0, jl] = 0.0
+        for jk in range(KLEV):
+            for jl in range(KLON):
+                a[jk + 1, jl] = a[jk, jl]
+                b[jk + 1, jl] = a[jk, jl]  # cross-seeded, as CloudSC's pfsqrf is from pfsqlf
+                a[jk + 1, jl] = a[jk + 1, jl] + inc[jk, jl] * gd[jk, jl]
+                b[jk + 1, jl] = b[jk + 1, jl] + inc[jk, jl] * gd[jk, jl]
+
+    klev, klon = 6, 4
+    rng = np.random.default_rng(0)
+    inc, gd = rng.random((klev, klon)), rng.random((klev, klon))
+    ref_a = np.zeros((klev + 1, klon))
+    ref_b = np.zeros((klev + 1, klon))
+    for jk in range(klev):
+        for jl in range(klon):
+            ref_a[jk + 1, jl] = ref_a[jk, jl]
+            ref_b[jk + 1, jl] = ref_a[jk, jl]
+            ref_a[jk + 1, jl] += inc[jk, jl] * gd[jk, jl]
+            ref_b[jk + 1, jl] += inc[jk, jl] * gd[jk, jl]
+
+    sdfg = scan2d.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True, validate_all=False, target='cpu')
+
+    got_a = np.zeros((klev + 1, klon))
+    got_b = np.zeros((klev + 1, klon))
+    sdfg(a=got_a, b=got_b, inc=inc.copy(), gd=gd.copy(), KLEV=klev, KLON=klon)
+    assert np.allclose(got_a, ref_a), f'self-seeded scan wrong: max|d|={np.max(np.abs(got_a - ref_a)):.3e}'
+    assert np.allclose(got_b, ref_b), f'cross-seeded scan wrong: max|d|={np.max(np.abs(got_b - ref_b)):.3e}'

@@ -106,10 +106,70 @@ def test_shadowed_connector_not_inlined():
     sdfg.validate()
 
 
+def _keyword_named_input_sdfg():
+    """A writer and a reader of a length-1 transient, with the input array named ``in``."""
+    sdfg = dace.SDFG('keyword_named_input')
+    state = sdfg.add_state()
+    sdfg.add_array('in', [1], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_transient('A', [1], dace.float64)
+    read, mid, write = state.add_access('in'), state.add_access('A'), state.add_access('out')
+    writer = state.add_tasklet('comp1', {'x'}, {'a'}, 'a = x + 1')
+    reader = state.add_tasklet('comp2', {'a'}, {'y'}, 'y = a * 2')
+    state.add_edge(read, None, writer, 'x', dace.Memlet('in[0]'))
+    state.add_edge(writer, 'a', mid, None, dace.Memlet('A[0]'))
+    state.add_edge(mid, None, reader, 'a', dace.Memlet('A[0]'))
+    state.add_edge(reader, 'y', write, None, dace.Memlet('out[0]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_container_named_like_a_python_keyword_is_not_inlined():
+    """``in`` is not a name the rewritten body could carry.
+
+    The body is unparsed and reparsed, so inlining ``in[0]`` into it comes back a SyntaxError. The
+    transient beside it stays inlinable -- only the connector reading ``in`` keeps classic form.
+    """
+    sdfg = _keyword_named_input_sdfg()
+    InlineTaskletConnectors().apply_pass(sdfg, {})
+    bodies = {tk.label: tk.code.as_string for tk in _tasklets(sdfg)}
+    assert 'in[' not in bodies['comp1'], bodies['comp1']
+    assert 'x' in bodies['comp1'], 'the connector reading `in` must stay classic'
+    assert 'A' in bodies['comp1'], 'the transient is still inlinable'
+    sdfg.validate()
+
+
+def test_the_writer_and_the_reader_of_a_transient_agree():
+    """A container is inlined in its reader only if its WRITER is inlined too.
+
+    The reader names the array directly and relies on the writer's inlining to DECLARE it, so
+    inlining one without the other emits a name nothing declares -- the generated code then does
+    not compile. Checked on the codegen text, because that is where the declaration has to appear.
+    """
+    from dace.codegen import codegen
+
+    sdfg = _keyword_named_input_sdfg()
+    code = [obj for obj in codegen.generate_code(sdfg) if obj.language == 'cpp'][0].clean_code
+    body = code.split('_internal(')[1].split('DACE_EXPORTED')[0]
+    assert 'A' in body, body
+    declares = [line for line in body.splitlines() if 'A' in line and ('double A' in line or 'A[' in line)]
+    assert declares, f'the transient A is used but never declared:\n{body}'
+
+
+def test_the_keyword_named_program_still_computes():
+    sdfg = _keyword_named_input_sdfg()
+    out = np.array([0.0])
+    sdfg(**{'in': np.array([3.0]), 'out': out})
+    assert out[0] == 8.0, out
+
+
 if __name__ == '__main__':
     test_elementwise_inlined_and_valid()
     test_stencil_offsets()
     test_idempotent()
     test_wcr_output_not_inlined()
     test_shadowed_connector_not_inlined()
+    test_a_container_named_like_a_python_keyword_is_not_inlined()
+    test_the_writer_and_the_reader_of_a_transient_agree()
+    test_the_keyword_named_program_still_computes()
     print('ok')

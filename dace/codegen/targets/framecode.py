@@ -264,12 +264,17 @@ class DaCeCodeGenerator(object):
         self.generate_constants(sdfg, global_stream)
 
         #########################################################
-        # Write state struct. CPF has no state: its entry point takes the arguments directly, and
-        # everything a state field would hold (persistent buffers, instrumentation reports,
-        # environment handles) is either demoted to SDFG lifetime or refused outright by
-        # :func:`~dace.codegen.cpf.render`. Emitting an empty struct nobody dereferences would
-        # only invite one back.
-        if not standalone:
+        # Write state struct. A HOST CPF rendering has no state: its entry point takes the
+        # arguments directly, and everything a state field would hold (persistent buffers,
+        # instrumentation reports, environment handles) is either demoted to SDFG lifetime or
+        # refused outright by :func:`~dace.codegen.cpf.render`. Emitting an empty struct nobody
+        # dereferences would only invite one back.
+        #
+        # A DEVICE rendering does have one field it cannot do without: the stream every launch and
+        # every copy is issued on. So the struct is emitted, the entry function declares it as a
+        # local (:func:`~dace.cpf_lowering.device_entry_prologue`), and the generated body reaches
+        # it through the same ``__state`` it always did.
+        if not standalone or (cpf_lowering.device() and backend == 'frame'):
             structstr = '\n'.join(self.statestruct)
             global_stream.write(f'''
 struct {mangle_dace_state_struct_name(sdfg)} {{
@@ -1326,6 +1331,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 # ``extern "C"`` is a C++ construct and the C dialect's ABI is already C's.
                 linkage = '' if cpf_lowering.standalone_c() else 'extern "C" '
                 function_signature = f'{linkage}void {sdfg.name}({params})\n{{'
+                if cpf_lowering.device():
+                    # The device handshake the ordinary build puts in __dace_init / __dace_exit,
+                    # which a single entry point has nowhere to put but here. The generated body
+                    # then reads ``__state->gpu_context->streams`` exactly as it always did, so
+                    # nothing downstream of this line knows the state is a local.
+                    function_signature += ('\n' +
+                                           cpf_lowering.device_entry_prologue(mangle_dace_state_struct_name(sdfg)))
             else:
                 if params:
                     params = ', ' + params

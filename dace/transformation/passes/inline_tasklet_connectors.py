@@ -13,6 +13,7 @@ Correctness-preserving: these keep the classic connector lowering -- WCR outputs
 rewritten here; C++ / library bodies are handled at code-gen time (``rewrite_cpp_tasklet_body``).
 """
 import ast
+import keyword
 import warnings
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -36,17 +37,59 @@ class InlineTaskletConnectors(ppl.Pass):
     def should_reapply(self, modified: Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
-        inlined_tasklets: Set[str] = set()
+    def plan(self, sdfg: SDFG) -> Tuple[List[Tuple[nodes.Tasklet, Dict[str, Tuple[str, List[str]]]]], Set[str]]:
+        """The inlining plan and the containers it may be applied to.
+
+        Decided PER CONTAINER, not per tasklet. A reader rewritten to name the array directly
+        relies on the writer's inlining to declare it -- inlining the reader while the writer stays
+        classic emits a name nothing declares. So a container is inlined only where every tasklet
+        touching it can be, and one tasklet left classic keeps its containers classic everywhere.
+
+        Exposed because :func:`tasklet_emits_brace_free` has to answer the SAME question: a
+        predicate that models only whether one tasklet's connectors are individually inlinable
+        promises an inlining this pass then declines, and its caller
+        (:class:`~dace.transformation.passes.mark_const_init.MarkConstInit`) skips a declaration on
+        the strength of that promise. One rule, computed here, rather than two that can drift.
+
+        :param sdfg: the SDFG to plan over.
+        :returns: ``(plans, safe)`` -- the per-tasklet connector accesses, and the container names
+                  every toucher of which can be inlined.
+        """
+        plans: List[Tuple[nodes.Tasklet, Dict[str, Tuple[str, List[str]]]]] = []
+        touched: Dict[str, int] = {}
+        inlinable: Dict[str, int] = {}
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.Tasklet):
                 continue
             state = parent
-            osdfg = state.sdfg
-            # Per-tasklet resilience: a tasklet we cannot rewrite is simply left
-            # in classic connector form (still correct), never crashing codegen.
+            for edge in state.in_edges(node):
+                if edge.data is not None and edge.data.data:
+                    touched[edge.data.data] = touched.get(edge.data.data, 0) + 1
+            for edge in state.out_edges(node):
+                if edge.data is not None and edge.data.data:
+                    touched[edge.data.data] = touched.get(edge.data.data, 0) + 1
             try:
-                if self._inline_tasklet(osdfg, state, node):
+                accesses = self._plan_tasklet(state.sdfg, state, node)
+            except Exception as ex:  # noqa: BLE001
+                warnings.warn(f'InlineTaskletConnectors: left tasklet {node.label!r} in classic form: '
+                              f'{type(ex).__name__}: {ex}')
+                accesses = {}
+            for data, _indices in accesses.values():
+                inlinable[data] = inlinable.get(data, 0) + 1
+            if accesses:
+                plans.append((node, accesses))
+        return plans, {data for data, count in touched.items() if inlinable.get(data, 0) == count}
+
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
+        plans, safe = self.plan(sdfg)
+
+        inlined_tasklets: Set[str] = set()
+        for node, accesses in plans:
+            accesses = {conn: acc for conn, acc in accesses.items() if acc[0] in safe}
+            if not accesses:
+                continue
+            try:
+                if self._apply_plan(node, accesses):
                     inlined_tasklets.add(node.label)
             except Exception as ex:  # noqa: BLE001
                 warnings.warn(f'InlineTaskletConnectors: left tasklet {node.label!r} in classic form: '
@@ -102,6 +145,10 @@ class InlineTaskletConnectors(ppl.Pass):
         # Dynamic (data-dependent) accesses keep the classic lowering.
         if memlet.dynamic:
             return None
+        # The rewritten body is unparsed and reparsed, so a container whose name is not a usable
+        # Python identifier (``in``) would come back a SyntaxError. Keep those classic.
+        if not memlet.data.isidentifier() or keyword.iskeyword(memlet.data):
+            return None
         subset = memlet.subset
         if subset is None or subset.num_elements() != 1:
             # Only single-element (scalar-like) accesses are inlined for now.
@@ -110,7 +157,8 @@ class InlineTaskletConnectors(ppl.Pass):
         indices = [str(rb) for (rb, _re, _rs) in subset.ranges]
         return (conn, memlet.data, indices)
 
-    def _inline_tasklet(self, osdfg: SDFG, state, node: nodes.Tasklet) -> bool:
+    def _plan_tasklet(self, osdfg: SDFG, state, node: nodes.Tasklet) -> Dict[str, Tuple[str, List[str]]]:
+        """The connectors of ``node`` that could be inlined. Pure -- decides, never rewrites."""
         in_acc: Dict[str, Tuple[str, List[str]]] = {}
         out_acc: Dict[str, Tuple[str, List[str]]] = {}
         for edge in state.in_edges(node):
@@ -140,18 +188,17 @@ class InlineTaskletConnectors(ppl.Pass):
             else:
                 accesses[name] = in_acc.get(name, out_acc.get(name))
 
-        if not accesses:
-            return False
-
         # Only Python bodies are rewritten. A C++/other body is emitted verbatim (no subscript
         # flattening), so an inlined ``A[i, j]`` would become a comma-operator bug -- keep it classic.
         if node.language != dtypes.Language.Python:
-            return False
-        new_code, inlined = self._rewrite_python(node, accesses)
+            return {}
+        return accesses
 
+    def _apply_plan(self, node: nodes.Tasklet, accesses: Dict[str, Tuple[str, List[str]]]) -> bool:
+        """Rewrite ``node``'s body for the planned connectors."""
+        new_code, inlined = self._rewrite_python(node, accesses)
         if not inlined:
             return False
-
         node.code = CodeBlock(new_code, node.language)
         node.ignored_symbols = set(node.ignored_symbols) | {accesses[c][0] for c in inlined}
         return True
@@ -175,17 +222,26 @@ class InlineTaskletConnectors(ppl.Pass):
         return ast.unparse(new_tree), inliner.inlined
 
 
-def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet) -> bool:
+def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet, safe: Optional[Set[str]] = None) -> bool:
     """True iff ``InlineTaskletConnectors`` will inline EVERY connector of ``tasklet``,
     so the readable code generator emits it as a single brace-free statement with no
     copy-in/out local.
 
     ``MarkConstInit`` uses this to decide whether a fused ``const T x = <expr>;`` binding
     lands at the enclosing scope (visible to the reads) or is trapped inside the tasklet's
-    ``{ }`` block (a use-before-declaration miscompile). The predicate is SOUND: it returns
-    True only when every connector is individually inlinable AND there is no inout connector
-    (ITC may keep an inout connector classic even when each side is individually inlinable),
-    so a True answer guarantees the brace-free emission.
+    ``{ }`` block (a use-before-declaration miscompile).
+
+    Individually inlinable connectors are NOT sufficient, which is what this used to check:
+    :meth:`InlineTaskletConnectors.plan` decides per CONTAINER, so a container one other tasklet
+    cannot inline stays classic everywhere -- including here. Predicting True there promised an
+    inlining the pass declined, ``MarkConstInit`` marked the target ``const_runtime`` on the
+    strength of it, ``allocate_array`` skipped the declaration, and no binding was ever emitted:
+    the name reached the compiler undeclared. Every ``LoopToScan`` seed landed in that shape,
+    because the carrier array it is copied from is also read by tasklets that stay classic.
+
+    :param safe: the container set from :meth:`InlineTaskletConnectors.plan`, computed here when
+                 not supplied. A caller asking about many tasklets should compute it ONCE -- the
+                 plan walks the whole SDFG.
     """
     if tasklet.language != dtypes.Language.Python:
         return False
@@ -195,12 +251,16 @@ def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet) -> bool:
     if _rebound_names(ast.parse(tasklet.code.as_string)) & (set(tasklet.in_connectors) | set(tasklet.out_connectors)):
         return False
     checker = InlineTaskletConnectors()
-    for edge in state.in_edges(tasklet):
-        if not edge.data.is_empty() and checker._connector_access(sdfg, state, tasklet, edge, is_output=False) is None:
-            return False
-    for edge in state.out_edges(tasklet):
-        if not edge.data.is_empty() and checker._connector_access(sdfg, state, tasklet, edge, is_output=True) is None:
-            return False
+    if safe is None:
+        _plans, safe = checker.plan(sdfg)
+    for is_output, edges in ((False, state.in_edges(tasklet)), (True, state.out_edges(tasklet))):
+        for edge in edges:
+            if edge.data.is_empty():
+                continue
+            access = checker._connector_access(sdfg, state, tasklet, edge, is_output=is_output)
+            # ``(conn, data, indices)`` -- the CONTAINER is what the safe set is keyed on.
+            if access is None or access[1] not in safe:
+                return False
     return True
 
 

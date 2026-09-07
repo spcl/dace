@@ -278,12 +278,9 @@ def _extract_iv(loop: LoopRegion, sdfg: SDFG,
     """
     if not loop.loop_variable:
         return None
-    start = loop_analysis.get_init_assignment(loop)
-    end = loop_analysis.get_loop_end(loop)
-    stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None:
-        return None
 
+    # Body shape first -- the three bound parses below are sympy round trips, and almost no
+    # loop is a single-tasklet body.
     blocks = loop.nodes()
     if len(blocks) != 1 or not isinstance(blocks[0], SDFGState):
         return None
@@ -298,6 +295,12 @@ def _extract_iv(loop: LoopRegion, sdfg: SDFG,
         elif not isinstance(n, nodes.AccessNode):
             return None
     if tasklet is None:
+        return None
+
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None:
         return None
     iv = extract_tasklet_iv(tasklet, state, loop, sdfg, sdfg_free_symbols)
     if iv is None or not iv.reads_accum:
@@ -627,12 +630,7 @@ def try_substitute_use_site_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg
     """
     if not loop.loop_variable:
         return False
-    start = loop_analysis.get_init_assignment(loop)
-    end = loop_analysis.get_loop_end(loop)
-    stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None or stride == 0:
-        return False
-
+    # Body shape first -- the three bound parses below are sympy round trips.
     blocks = loop.nodes()
     if len(blocks) != 1 or not isinstance(blocks[0], SDFGState):
         return False
@@ -645,6 +643,12 @@ def try_substitute_use_site_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg
             return False  # a Map / NestedSDFG scope hides the per-iteration execution order
     if len(tasklets) < 2:
         return False  # a single-statement body is _try_substitute's whole-loop collapse instead
+
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None or stride == 0:
+        return False
 
     for tasklet in tasklets:
         iv = extract_tasklet_iv(tasklet, state, loop, sdfg, sdfg_free_symbols)
@@ -1139,12 +1143,6 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     """
     if not loop.loop_variable:
         return False
-    start = loop_analysis.get_init_assignment(loop)
-    end = loop_analysis.get_loop_end(loop)
-    stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None or stride == 0:
-        return False
-
     # 1. Find the IV iedge: exactly one iedge in the body whose ONLY assignment
     #    is ``sym := sym + literal`` (or symmetric). Reject any iedge with a
     #    non-trivial condition.
@@ -1189,6 +1187,14 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     if iv_candidate is None:
         return False
     iv_edge, sym_name, step = iv_candidate
+
+    # Bounds parsed only once an IV iedge exists -- three sympy round trips no shape without
+    # one ever needs.
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None or stride == 0:
+        return False
 
     # The IV symbol must be a counter PRIVATE to this loop. If it is also updated
     # in another (nested or enclosing) loop it is a shared counter, and a per-loop
@@ -1918,13 +1924,14 @@ def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: S
 
     if not loop.loop_variable or budget.get(loop, 0) <= 0:
         return False
+    # Body shape first: a scan of the loop's own blocks, against three sympy round trips.
+    chain = rotation_body_chain(loop)
+    if chain is None:
+        return False
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
     if start is None or end is None or stride is None or stride == 0:
-        return False
-    chain = rotation_body_chain(loop)
-    if chain is None:
         return False
 
     # Deterministic candidate order: body-block order, then node order inside each state. The pass

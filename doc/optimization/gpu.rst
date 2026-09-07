@@ -19,10 +19,10 @@ To utilize GPUs, DaCe provides two basic elements:
     * Map schedules for running GPU kernels: :class:`~dace.dtypes.ScheduleType.GPU_Device` for a GPU kernel (grid) map,
       and :class:`~dace.dtypes.ScheduleType.GPU_ThreadBlock` for a map of threads in a single thread-block.
 
-The :class:`~dace.transformation.interstate.gpu_transform_sdfg.GPUTransformSDFG` transformation takes an existing SDFG
-and transforms it into a GPU program. Call it on an SDFG with :func:`~dace.sdfg.sdfg.SDFG.apply_gpu_transformations`.
-The transformation will automatically detect GPU kernels and thread-blocks, and will make copies for all the relevant
-sub-arrays used to the GPU.
+The :class:`~dace.transformation.passes.offloading.offload_to_accelerator.OffloadToAccelerator` pass takes an existing SDFG and turns it into a GPU
+program. Run it on an SDFG with :func:`~dace.sdfg.sdfg.SDFG.apply_gpu_transformations`. The pass decides
+placement from the whole control flow rather than per kernel, and inserts a copy where an array's location
+actually changes.
 
 **Threads**: Each Map scope that has a ``GPU_Device`` schedule will create a GPU kernel call. The number of blocks,
 and threads in each block, are determined by the Map's parameters. The number of elements in a ``GPU_Device`` map will
@@ -183,7 +183,7 @@ function in the `Matrix Multiplication optimization example <https://github.com/
     * **Minimize host<->GPU transfers**: It is important to keep as much data as possible on the GPU across the application.
       This is especially true for data that is accessed frequently, such as data that is used in a loop.
       Copies to/from the GPU are generally much slower than the GPU computation itself.
-      ``GPUTransformSDFG`` will automatically try to keep the arrays on the GPU for as long as possible, but it is not
+      The offloading pass will automatically try to keep the arrays on the GPU for as long as possible, but it is not
       guaranteed. If you have a large array that can be stored on the GPU before the SDFG starts, you can use the
       ``GPU_Global`` storage type to store it on the GPU. This will prevent the array from being copied to the GPU.
 

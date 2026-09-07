@@ -1343,6 +1343,30 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def sub_regions(self) -> List['AbstractControlFlowRegion']:
         return []
 
+    def get_meta_codeblocks(self) -> List[CodeBlock]:
+        """
+        Get a list of codeblocks used by the block.
+        This may include things such as loop control statements or conditions for branching etc.
+        """
+        return []
+
+    def get_meta_read_memlets(self) -> List[mm.Memlet]:
+        """
+        Get read memlets used by the block itself, such as in condition checks for conditional blocks, or
+        in loop conditions for loops etc.
+        """
+        return []
+
+    def replace_meta_accesses(self, replacements: Dict[str, str]) -> None:
+        """
+        Replace accesses to specific data containers in reads or writes performed by the block itself in
+        meta accesses, such as in condition checks for conditional blocks or in loop conditions for loops, etc.
+
+        :param replacements: A dictionary mapping the current data container names to the names of data containers with
+                             which accesses to them should be replaced.
+        """
+        pass
+
     def set_default_lineinfo(self, lineinfo: Optional[dace.dtypes.DebugInfo]) -> None:
         """
         Sets the default source line information to be lineinfo, or None to
@@ -2804,30 +2828,6 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         self._start_block: Optional[int] = None
         self._cached_start_block: Optional[ControlFlowBlock] = None
         self._cfg_list: List['ControlFlowRegion'] = [self]
-
-    def get_meta_codeblocks(self) -> List[CodeBlock]:
-        """
-        Get a list of codeblocks used by the control flow region.
-        This may include things such as loop control statements or conditions for branching etc.
-        """
-        return []
-
-    def get_meta_read_memlets(self) -> List[mm.Memlet]:
-        """
-        Get read memlets used by the control flow region itself, such as in condition checks for conditional blocks, or
-        in loop conditions for loops etc.
-        """
-        return []
-
-    def replace_meta_accesses(self, replacements: Dict[str, str]) -> None:
-        """
-        Replace accesses to specific data containers in reads or writes performed by the control flow region itself in
-        meta accesses, such as in condition checks for conditional blocks or in loop conditions for loops, etc.
-
-        :param replacements: A dictionary mapping the current data container names to the names of data containers with
-                             which accesses to them should be replaced.
-        """
-        pass
 
     def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
         """

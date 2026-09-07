@@ -879,8 +879,8 @@ class EarlyExitToFindIndex(ppl.Pass):
         # Find the loop and conditional by position-in-cfg-list (an id-stable
         # locator survives deep-copy).
         sdfg_copy = _copy.deepcopy(sdfg)
-        loop_copy = self._locate_corresponding(sdfg_copy, loop)
-        cb_copy = self._locate_corresponding(sdfg_copy, cond_block)
+        # One region walk of the copy answers both locators, not one walk each.
+        loop_copy, cb_copy = self._locate_corresponding(sdfg_copy, loop, cond_block)
         if loop_copy is None or cb_copy is None:
             return False
         # Splice the conditional out of the loop body.
@@ -892,16 +892,20 @@ class EarlyExitToFindIndex(ppl.Pass):
         except Exception:
             return False
 
-    def _locate_corresponding(self, sdfg_copy, target):
-        """Find the block in ``sdfg_copy`` corresponding to ``target`` in the
-        original. Uses the cfg-list index + label."""
-        target_label = target.label
-        target_type = type(target).__name__
+    def _locate_corresponding(self, sdfg_copy, *targets):
+        """Find the blocks in ``sdfg_copy`` corresponding to ``targets`` in the
+        original, in one walk. Uses the cfg-list index + label."""
+        want = [(t.label, type(t).__name__) for t in targets]
+        found: List[Optional[Any]] = [None] * len(want)
         for sd in sdfg_copy.all_sdfgs_recursive():
             for region in sd.all_control_flow_regions():
-                if region.label == target_label and type(region).__name__ == target_type:
-                    return region
-        return None
+                key = (region.label, type(region).__name__)
+                for i, w in enumerate(want):
+                    if found[i] is None and key == w:
+                        found[i] = region
+                if all(f is not None for f in found):
+                    return tuple(found) if len(found) > 1 else found[0]
+        return tuple(found) if len(found) > 1 else found[0]
 
     def _splice_out_block(self, loop, block):
         """Remove ``block`` from ``loop``; reconnect incoming/outgoing iedges

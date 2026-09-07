@@ -16,9 +16,16 @@ into grid order -- so ``gpu_block_size`` is stored in CUDA ``(x, y, z)`` order,
 i.e. reversed map-parameter order. Sizes stay in the 256-512 thread band that
 keeps occupancy high without exceeding the per-block thread limit:
 
-    * 1-D domain                 -> ``[128, 1, 1]``
-    * ~square 2-D domain         -> ``[16, 16, 1]``  (256 threads)
-    * moderately skewed 2-D      -> ``[32, 16, 1]`` / ``[16, 32, 1]``  (512)
+    * 1-D domain                 -> four warps on ``x``   (``[128,1,1]`` / ``[256,1,1]``)
+    * ~square 2-D domain         -> one warp on ``x``     (``[32,8,1]`` / ``[64,4,1]``, 256)
+    * moderately skewed 2-D      -> twice the depth       (``[32,16,1]`` / ``[64,8,1]``, 512)
+
+Every shape is stated in WARPS rather than in threads, because the whole point of the pass is
+that one warp stays on the contiguous dimension -- and the warp is 32 lanes on NVIDIA and 64 on
+a CDNA wavefront. A table written in threads is right on one of the two and silently wrong on the
+other: ``[16,16,1]`` puts sixteen lanes on ``x``, so on gfx942 a single 64-lane wavefront spans
+FOUR rows of the block and three quarters of it does exactly the strided access this pass exists
+to prevent. ``dace.libraries.standard.nodes.reduce`` already asks the backend the same question.
 
 The heuristic assumes every symbolic extent is large (>> 64) and roughly equal,
 so a symbolic 2-D domain is treated as square. Skew is only acted on when both
@@ -43,8 +50,25 @@ from dace.transformation import pass_pipeline as ppl, transformation
 #: one of these must not also carry a preset ``gpu_block_size``.
 THREADBLOCK_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
 
-#: Default 1-D thread-block (matches ``compiler.cuda.default_block_size``).
-DEFAULT_1D_BLOCK_SIZE = [128, 1, 1]
+#: Warps per thread block. Four on ``x`` for a 1-D domain (128 threads on NVIDIA, 256 on a CDNA
+#: wavefront); one on ``x`` for a 2-D domain, with the remaining warps stacked on ``y`` so a
+#: wavefront never straddles two rows.
+WARPS_PER_1D_BLOCK = 4
+WARPS_PER_2D_BLOCK = 4
+#: A skewed 2-D domain gets twice the warps, all of the extra depth on the wider dimension.
+WARPS_PER_SKEWED_2D_BLOCK = 8
+
+
+def warp_width() -> int:
+    """Lanes in one hardware warp: 64 on a CDNA wavefront, 32 on NVIDIA.
+
+    Asked of the backend rather than configured, the way
+    :mod:`dace.libraries.standard.nodes.reduce` asks it, so one build serves both and neither
+    inherits the other's shape.
+    """
+    from dace.codegen import common
+    return 64 if common.get_gpu_backend() == 'hip' else 32
+
 
 #: A device map whose reduction is lowered as a block tree-reduce (a WCR map output, where the active
 #: CUDA codegen tree-reduces) wants a DEEP block: more lanes per block-reduce means more of the
@@ -52,10 +76,6 @@ DEFAULT_1D_BLOCK_SIZE = [128, 1, 1]
 #: race through the cross-block atomic. 512 (vs the 128/256 a plain elementwise map takes)
 #: keeps well under the 1024 thread/block limit while roughly halving the atomic traffic.
 TREE_REDUCTION_BLOCK_SIZE = [512, 1, 1]
-
-#: Per-dimension block extents for a 2-D device map (CUDA ``x, y`` order).
-SQUARE_2D_BLOCK_EXTENT = 16
-WIDE_2D_BLOCK_EXTENT = 32
 
 #: A domain dimension at least this many times larger than the other is "skewed".
 SKEW_RATIO = 2
@@ -78,31 +98,36 @@ def domain_matched_2d_block(ext_x, ext_y) -> List[int]:
     """Choose a 2-D thread-block (CUDA ``x, y`` order) for extents ``ext_x`` (contiguous,
     last map dimension) and ``ext_y`` (outer map dimension).
 
-    Square by default (``16x16``); when both extents are known constants and one is at
-    least :data:`SKEW_RATIO` times the other, the wider block dimension (``32``) is placed
-    on the wider domain dimension (``32x16`` / ``16x32``). Total stays in 256-512 threads.
+    ``x`` is ALWAYS one full warp, never a fraction of one: a block narrower than a warp puts
+    lanes of the same warp on different rows, which is the strided access the pass exists to
+    avoid. The remaining warps stack on ``y``, four of them by default; when both extents are
+    known constants and one is at least :data:`SKEW_RATIO` times the other, the block doubles
+    to eight warps and the extra depth goes on the wider domain dimension. Total stays in the
+    256-512 thread band.
     """
+    warp = warp_width()
     cx = constant_extent(ext_x)
     cy = constant_extent(ext_y)
     if cx is not None and cy is not None:
         if cx >= SKEW_RATIO * cy:
-            return [WIDE_2D_BLOCK_EXTENT, SQUARE_2D_BLOCK_EXTENT, 1]
+            # The contiguous dimension is the wide one, so the extra warps widen ``x``.
+            return [warp * 2, WARPS_PER_SKEWED_2D_BLOCK // 2, 1]
         if cy >= SKEW_RATIO * cx:
-            return [SQUARE_2D_BLOCK_EXTENT, WIDE_2D_BLOCK_EXTENT, 1]
-    return [SQUARE_2D_BLOCK_EXTENT, SQUARE_2D_BLOCK_EXTENT, 1]
+            return [warp, WARPS_PER_SKEWED_2D_BLOCK, 1]
+    return [warp, WARPS_PER_2D_BLOCK, 1]
 
 
 def pick_gpu_block_size(gpu_map: nodes.Map) -> Optional[List[int]]:
     """Domain-matched ``gpu_block_size`` for a ``GPU_Device`` ``map``, in CUDA ``(x, y, z)`` order.
 
-    * 1-D map -> :data:`DEFAULT_1D_BLOCK_SIZE`.
+    * 1-D map -> :data:`WARPS_PER_1D_BLOCK` warps on ``x``.
     * 2-D map -> :func:`domain_matched_2d_block` of its (reversed) range sizes; the reversal
       puts the last (contiguous) map dimension on ``threadIdx.x`` to match codegen's grid order.
     * 3-D and higher -> ``None`` (keep the configured 1-D default on ``x``).
     """
     ndim = len(gpu_map.params)
     if ndim <= 1:
-        return list(DEFAULT_1D_BLOCK_SIZE)
+        return [warp_width() * WARPS_PER_1D_BLOCK, 1, 1]
     if ndim == 2:
         # ``gpu_block_size`` is read in CUDA (x, y) order, which is reversed map order:
         # codegen builds ``grid_size = map.range.size()[::-1]`` and zips it with the block.

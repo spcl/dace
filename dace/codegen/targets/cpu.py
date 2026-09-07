@@ -1745,16 +1745,49 @@ class CPUCodeGen(TargetCodeGenerator):
             f'const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})'
         )
 
+    #: WCR operators ``omp atomic update`` accepts on the ``x = x op expr`` form. ``min``/``max``
+    #: are not among them -- OpenMP 5.1 spells those ``atomic compare``, which gcc does not
+    #: implement -- so they take the critical section below.
+    _CPF_ATOMIC_OPS = ('+', '*', '&', '|', '^')
+
+    def standalone_atomic_wcr(self, sdfg: SDFG, memlet, redtype, ptr: str, inname: str, dtype, target: str) -> str:
+        """A conflicting accumulation, in OpenMP's vocabulary and with the hint that says so.
+
+        See :meth:`standalone_wcr` for why this is rendered rather than refused. The comment is not
+        decoration: an atomic accumulation is the shape a program has when its parallelization was
+        NOT resolved into a tree reduction, and a reader comparing CPF output across kernels needs
+        to see which ones are in that shape.
+
+        :raises NotImplementedError: for a vector-typed WCR, which has no scalar location to lock.
+        """
+        if isinstance(dtype, dtypes.vector):
+            raise NotImplementedError(f'CPF cannot render the conflicting vector WCR on {target}: an atomic needs '
+                                      'one scalar location. Scalarize the map before rendering.')
+        hint = (f'// conflicting accumulation on {target} -- NOT parallel-reduced: the writers can collide, so '
+                'this serializes.\n'
+                '// Reducing it into a tree is an optimization the canonicalization did not find.\n')
+        body = self.standalone_wcr(sdfg, memlet, redtype, ptr, inname, dtype, atomic=False)
+        if _REDUCTION_TO_OMP_OP.get(redtype) in self._CPF_ATOMIC_OPS:
+            return f'{hint}_Pragma("omp atomic update")\n{body}'
+        # No atomic form for this operator; a critical section is the portable one. The trailing
+        # semicolon the caller appends lands after the block, where it is an empty statement.
+        return f'{hint}_Pragma("omp critical (cpf_wcr)")\n{{ {body}; }}'
+
     def standalone_wcr(self, sdfg: SDFG, memlet, redtype, ptr: str, inname: str, dtype, atomic: bool) -> str:
         """The CPF spelling of a conflict resolution, or a refusal.
 
-        CPF admits exactly the WCR forms that are TREE-reducible: one an enclosing OpenMP map folds
-        through a ``reduction(op:...)`` clause, and one that has no conflict at all (``nc``) and so
-        is a plain read-modify-write. The remaining form is a per-element atomic, which the runtime
-        provides as ``dace::wcr_fixed<...>::reduce_atomic`` -- serialized machinery, and a runtime
-        symbol CPF does not have. It is refused rather than rendered as an ``omp atomic``: the point
-        of CPF is to show the maximally parallel form of the program, and an atomic accumulation is
-        the form that says the parallelization was not resolved.
+        Two of the three forms are TREE-reducible: one an enclosing OpenMP map folds through a
+        ``reduction(op:...)`` clause, and one that has no conflict at all (``nc``) and so is a plain
+        read-modify-write. The third is a per-element atomic, which the runtime provides as
+        ``dace::wcr_fixed<...>::reduce_atomic`` -- a symbol CPF does not have.
+
+        That third form is rendered, not refused, from OpenMP's own vocabulary: ``omp atomic
+        update`` where the operator is one atomic admits, ``omp critical`` otherwise. Refusing it
+        loses the kernel entirely, and a rendering that drops a kernel says less about the program
+        than one that shows an unresolved accumulation and SAYS SO. The hint above the statement is
+        the honest part: this accumulation serializes, and reducing it is an optimization the
+        canonicalization did not find. llr scatter_accum_dup is the whole of that case here -- a
+        scatter whose index array may repeat.
 
         :param sdfg: the SDFG owning the memlet, for unparsing a custom resolution.
         :param memlet: the memlet carrying the WCR, for the message.
@@ -1768,11 +1801,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         target = f'{memlet.data}[{memlet.subset}]'
         if atomic:
-            raise NotImplementedError(
-                f'CPF cannot render the conflicting write-conflict resolution on {target}: it lowers to an '
-                'atomic, and CPF admits only tree-reducible WCR (an OpenMP reduction clause, or a '
-                'non-conflicting accumulation). Parallelize the map so the accumulator is reduced, or '
-                'render the SDFG that does.')
+            return self.standalone_atomic_wcr(sdfg, memlet, redtype, ptr, inname, dtype, target)
         if isinstance(dtype, dtypes.vector):
             raise NotImplementedError(f'CPF cannot render the vector WCR on {target}: the vector type is a DaCe '
                                       'runtime template. Scalarize the map before rendering.')

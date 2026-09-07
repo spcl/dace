@@ -668,6 +668,16 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             return False
         if op == '-' and not acc_on_left:
             return False
+
+        # Another writer of the accumulator in this state forbids the rewrite. ``apply`` drops the
+        # load edge and lets the WCR read the destination at write time instead -- but that load is
+        # what orders the RMW behind the other write. A scan seeds ``a[k+1] = a[k]`` through its own
+        # access node and then accumulates into ``a[k+1]``; without the load the WCR is unordered
+        # against the seed and the increment is applied to whichever value happens to be there.
+        # (CloudSC's vertical flux band, and TSVC's recurrences, are exactly this shape.)
+        if any(other is not out and isinstance(other, nodes.AccessNode) and other.data == out.data
+               and graph.in_degree(other) > 0 for other in graph.nodes()):
+            return False
         return True
 
     def _apply_rmw_copy(self, state: SDFGState, sdfg: SDFG):
@@ -1215,6 +1225,13 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             return self._can_revert_nested_boundary_wcr(graph, sdfg)
         edge = self._matched_wcr_edge(graph, expr_index)
         if edge is None:
+            return False
+
+        # ``output`` is bound as SOME successor of the map exit, and an exit with several outputs
+        # has one valid binding per array -- nothing in the path pattern ties it to the container
+        # the matched WCR edge writes. Applying a mismatched binding pairs this edge's memlet with
+        # the other array's access node (CloudSC's flux band writes four arrays through one exit).
+        if expr_index in (1, 3) and self.output.data != edge.data.data:
             return False
 
         # Overapproximated WCR subset (access may be dynamic) → unsupported. The two

@@ -164,9 +164,6 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
     # (so order w.r.t. other children is irrelevant).
     hoistable: List[Any] = []
     for ch in children:
-        fs = _region_free_symbols(ch)
-        if fs & variant_syms:
-            continue
         others = [o for o in children if o is not ch]
         r, w = child_reads[ch], child_writes[ch]
         conflict = False
@@ -178,6 +175,10 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
                 conflict = True
                 break
         if conflict:
+            continue
+        # After the set lookups above: (a) is a whole-region symbol walk, and vacuous anyway when
+        # the loop varies nothing.
+        if variant_syms and (_region_free_symbols(ch) & variant_syms):
             continue
         # A region that reads from a container it also writes to is not
         # idempotent across outer iterations — running it K times is not

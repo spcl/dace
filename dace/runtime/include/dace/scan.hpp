@@ -781,4 +781,79 @@ inline void inclusive_affine(CIt coef, DIt delta, OutIt out_first, long n, T see
         [](M x, M y) { return detail::affine_compose<E>(x, y); });
 }
 
+
+// --- STRIDED AFFINE ------------------------------------------------------------
+// A first-order linear recurrence whose carry reaches back ``stride`` elements --
+// ``x[i] = c[i] * x[i - stride] + d[i]`` -- is ``stride`` INDEPENDENT unit-stride affine scans,
+// one per residue class of the index mod ``stride``. Nothing about the monoid changes, so this
+// reuses ``inclusive_affine`` unchanged and only changes what the iterators point at.
+//
+// Where the parallelism comes from depends on ``stride``, and the two sources cannot both be
+// used: ``inclusive_affine`` opens its own parallel region, and OpenMP serialises a nested one by
+// default. With enough classes to fill the team, the classes ARE the parallelism and each one
+// runs its sequential recurrence; with few classes the blocked scan inside a class is the only
+// parallelism there is. ``stride == 1`` is the plain contiguous scan and takes the second path
+// unchanged, which is what keeps this a generalisation rather than a second implementation.
+
+namespace detail {
+
+/// Random-access view of every ``stride``-th element from ``origin``.
+///
+/// Subscripting is the only operation ``fold_affine`` and ``scan_incl_affine`` use, so a class of
+/// a strided recurrence is presented to them as a contiguous one and neither has to know.
+template <typename It>
+struct strided_view {
+    It base;
+    long origin;
+    long stride;
+
+    inline auto operator[](long i) const -> decltype(base[0]) { return base[origin + i * stride]; }
+};
+
+template <typename It>
+inline strided_view<It> strided(It base, long origin, long stride) {
+    return strided_view<It>{base, origin, stride};
+}
+
+/// Seeds for a strided scan nothing seeded: every class enters at the monoid's identity.
+///
+/// A view rather than an allocated array of zeros, because the count is the stride and the
+/// caller would otherwise allocate one element per residue class to say "nothing".
+template <typename E>
+struct zero_seed_view {
+    inline E operator[](long) const { return static_cast<E>(0); }
+};
+
+template <typename E>
+inline zero_seed_view<E> zero_seeds() {
+    return zero_seed_view<E>{};
+}
+
+}  // namespace detail
+
+/// ``out[k] = coef[k] * out[k - stride] + delta[k]`` over ``n`` elements, seeded per class.
+///
+/// :param seeds: one seed per residue class, ``seeds[r]`` entering class ``r``. The caller holds
+///               them because they are the carrier's pre-loop values, which only it can read.
+template <typename CIt, typename DIt, typename OutIt, typename SIt>
+inline void inclusive_affine_strided(CIt coef, DIt delta, OutIt out_first, long n, long stride, SIt seeds) {
+    if (stride <= 1) {
+        inclusive_affine(coef, delta, out_first, n, seeds[0]);
+        return;
+    }
+    const long classes = stride < n ? stride : n;
+    // One class per thread, each running its own sequential recurrence. Requesting the team here
+    // and not inside is deliberate: an inner region would be nested and serialised anyway, and
+    // this way the classes are what the schedule balances.
+    #pragma omp parallel for schedule(static)
+    for (long r = 0; r < classes; ++r) {
+        const long len = (n - r + stride - 1) / stride;
+        detail::affine_map<typename std::iterator_traits<OutIt>::value_type> off{
+            static_cast<typename std::iterator_traits<OutIt>::value_type>(0),
+            static_cast<typename std::iterator_traits<OutIt>::value_type>(seeds[r])};
+        detail::scan_incl_affine(detail::strided(coef, r, stride), detail::strided(delta, r, stride),
+                                 detail::strided(out_first, r, stride), 0L, len, off);
+    }
+}
+
 }}  // namespace dace::scan

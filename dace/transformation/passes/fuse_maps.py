@@ -37,24 +37,24 @@ def _induced_matches(state: SDFGState, pnodes: List[xf.PatternNode],
                      pedges: Set[Tuple[int, int]]) -> Iterator[List[nodes.Node]]:
     """Yield the induced matches of one small pattern in ``state``.
 
-    Replaces the VF2 subgraph isomorphism the pattern matcher used to run for these patterns and
-    reproduces its enumeration order: pattern node 0 ranges over ``state.nodes()``, every later
-    node over the successors of the image of the pattern node that points at it, and a candidate
-    is rejected unless the edges induced among the images are exactly the pattern's.
+    Replaces the VF2 subgraph isomorphism the pattern matcher ran for these patterns: pattern node
+    0 ranges over ``state.nodes()``, every later node over the successors of the image of the
+    pattern node that points at it, and a candidate is rejected unless the edges induced among the
+    images are exactly the pattern's. Same candidate set as VF2, in a deterministic order -- VF2
+    read its own candidates out of a plain `set`, so its order was the set table's, not the graph's.
     """
     npat = len(pnodes)
     all_nodes = state.nodes()
-    # Successor sets are read many times per enumeration; the generator is recreated for every
-    # probe and the caller applies nothing until it is abandoned, so the state cannot change under
-    # the cache -- it dies with the generator.
-    succ_cache: Dict[nodes.Node, Dict[nodes.Node, None]] = {}
+    # Deduplicated successors, built from `state.edges()` because that is the order the collapsed
+    # digraph's adjacency carried -- `out_edges()` can order one node's successors differently.
+    # The generator dies before the caller applies anything, so the state cannot change under it.
+    adjacency: Dict[nodes.Node, Dict[nodes.Node, None]] = {}
+    for edge in state.edges():
+        adjacency.setdefault(edge.src, {})[edge.dst] = None
+    no_successors: Dict[nodes.Node, None] = {}
 
     def successors(node: nodes.Node) -> Dict[nodes.Node, None]:
-        cached = succ_cache.get(node)
-        if cached is None:
-            cached = {e.dst: None for e in state.out_edges(node)}
-            succ_cache[node] = cached
-        return cached
+        return adjacency.get(node, no_successors)
 
     # The pattern node whose image supplies the candidates for each level, or None for a free level.
     parents = [next((i for i in range(j) if (i, j) in pedges), None) for j in range(npat)]

@@ -119,26 +119,31 @@ def _is_single_element(desc) -> bool:
     return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(str(s) == '1' for s in desc.shape))
 
 
-def _referenced_arrays(loop: LoopRegion) -> Dict[str, None]:
-    """Every array name read or written anywhere inside ``loop``."""
+def _loop_data_census(loop: LoopRegion) -> Tuple[Dict[str, None], Dict[str, None], Dict[str, int]]:
+    """``(referenced, written, state_counts)`` for ``loop``, in ONE walk of its states.
+
+    Every candidate needs all three and they read the same nodes, so they share the walk instead
+    of taking one each. ``referenced`` is every array name read or written inside ``loop``,
+    ``written`` those with an in-edge to an AccessNode, ``state_counts`` the per-name number of
+    states holding an AccessNode for it. Insertion order is unchanged: states in ``all_states``
+    order, and within a state the data nodes before the edges.
+    """
     referenced: Dict[str, None] = {}
+    written: Dict[str, None] = {}
+    counts: Dict[str, int] = {}
     for state in loop.all_states():
+        seen: Dict[str, None] = {}
         for dn in state.data_nodes():
             referenced[dn.data] = None
+            if state.in_degree(dn) > 0:
+                written[dn.data] = None
+            seen[dn.data] = None
+        for name in seen:
+            counts[name] = counts.get(name, 0) + 1
         for e in state.edges():
             if e.data is not None and e.data.data is not None:
                 referenced[e.data.data] = None
-    return referenced
-
-
-def _written_arrays(loop: LoopRegion) -> Dict[str, None]:
-    """Array names written (have an in-edge to an AccessNode) inside ``loop``."""
-    written: Dict[str, None] = {}
-    for state in loop.all_states():
-        for dn in state.data_nodes():
-            if state.in_degree(dn) > 0:
-                written[dn.data] = None
-    return written
+    return referenced, written, counts
 
 
 def _data_state_counts(cfg) -> Dict[str, int]:
@@ -150,14 +155,14 @@ def _data_state_counts(cfg) -> Dict[str, int]:
     return counts
 
 
-def _live_outside(loop: LoopRegion, root_counts: Dict[str, int], referenced: Dict[str, None]) -> Dict[str, None]:
-    """Referenced arrays that are also touched by data nodes OUTSIDE ``loop`` --
+def _live_outside(inside: Dict[str, int], root_counts: Dict[str, int], referenced: Dict[str, None]) -> Dict[str, None]:
+    """Referenced arrays that are also touched by data nodes OUTSIDE the loop --
     i.e. cross the loop boundary and so must stay visible (non-transient) in the
     probe, unlike the loop's purely-internal staging scratch. ``root_counts`` is the
-    enclosing SDFG's :func:`_data_state_counts`, computed ONCE per pass run: the
-    inside states are a subset of the root's, so "touched outside" is a subtraction
-    rather than a fresh whole-SDFG walk per candidate."""
-    inside = _data_state_counts(loop)
+    enclosing SDFG's :func:`_data_state_counts`, computed ONCE per pass run, and
+    ``inside`` the loop's own counts from :func:`_loop_data_census`: the inside states
+    are a subset of the root's, so "touched outside" is a subtraction rather than a
+    fresh whole-SDFG walk per candidate."""
     return dict.fromkeys(name for name in referenced if root_counts.get(name, 0) > inside.get(name, 0))
 
 
@@ -1094,11 +1099,10 @@ class LoopToEinsum(ppl.Pass):
 
     def _match(self, loop: LoopRegion, root: SDFG, root_counts: Dict[str, int]):
         """Match ``loop`` directly; on a decline fall back to the probe (and count it)."""
-        referenced = _referenced_arrays(loop)
+        referenced, written, inside = _loop_data_census(loop)
         if not referenced:
             return None
-        live = _live_outside(loop, root_counts, referenced)
-        written = _written_arrays(loop)
+        live = _live_outside(inside, root_counts, referenced)
         if not _plausible_contraction(loop, root, written, live):
             return None
         spec = _match_nest(_nest_of(loop), root)

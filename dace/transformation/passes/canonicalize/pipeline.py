@@ -44,7 +44,7 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.canonicalize.prune_unreferenced_transients import (PruneUnreferencedTransients)
 from dace.transformation.passes.canonicalize.redundant_ordering_edge_elimination import (
     RedundantOrderingEdgeElimination)
-from dace.transformation.passes.fusion_inline import (InlineControlFlowRegions, InlineSDFGs)
+from dace.transformation.passes.fusion_inline import (FuseStates, InlineControlFlowRegions, InlineSDFGs)
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
@@ -274,10 +274,18 @@ class StructuralCleanup(ppl.Pass):
 
     def units(self) -> List[ppl.Pass]:
         """The block's members, in order. Symbols are folded before the state machine is rewritten,
-        and the fusion applies once everywhere rather than to a fixpoint: cheap per boundary, run
-        often, not converging at each of eight boundaries."""
+        then the states are fused twice over: the matcher applies once, and ``FuseStates`` walks the
+        region's edges behind it to settle what one pass could not reach.
+
+        The ORDER is load-bearing. State fusion is not confluent -- fusing ``(a, b)`` can block
+        ``(b, c)`` where taking ``(b, c)`` first would have allowed ``(a, bc)`` -- and it cannot be
+        undone, so whichever runs first fixes the order for good. The matcher's enumeration finds
+        the better one (channel_flow settles at 11 states against the walk's 12); putting the walk
+        first costs that and buys nothing, because the matcher behind it can no longer reach it."""
         fuse = PatternApplyOnceEverywhere([StateFusionExtended()])
         fuse.progress = False
+        walk_fuse = FuseStates()
+        walk_fuse.progress = False
         return [
             SymbolDedup(),
             SymbolPropagation(),
@@ -285,6 +293,7 @@ class StructuralCleanup(ppl.Pass):
             RemoveUnusedSymbols(),
             SymbolDedup(),
             fuse,
+            walk_fuse,
             EmptyStateElimination(),
             DeadStateElimination(),
             RedundantOrderingEdgeElimination(),

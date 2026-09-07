@@ -26,6 +26,7 @@ from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                            ConvertScalarsToLengthOneArrays)
 from dace.transformation.passes.offloading.taskloop import taskloop_maps
+from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps
 
 PRINT_NAMES = 500
 
@@ -200,8 +201,10 @@ class OffloadToAccelerator(ppl.Pass):
         'directions and consulted before any heuristic: a caller naming a map has looked at the '
         'kernel, and the rules have not. Maps left unnamed are classified as usual.')
 
-    def __init__(self, taskloop_overrides: dict[str, bool] | None = None):
+    def __init__(self, taskloop_overrides: dict[str, bool] | None = None, host_maps: HostMapSpec = False):
         self.taskloop_overrides = dict(taskloop_overrides) if taskloop_overrides else {}
+        self._host_maps = host_maps
+        self._host_map_entries = OrderedSet()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -800,6 +803,9 @@ class OffloadToAccelerator(ppl.Pass):
         issued by host code, so a kernel cannot contain it. The launch-only rule is the optional half.
         """
         self.taskloops = taskloop_maps(sdfg, launch_only=self.taskloop_heuristics, overrides=self.taskloop_overrides)
+        # Kept apart from ``taskloops``: a host map is only a map that does not become the kernel, so
+        # it must not pick up the taskloop-specific handling those carry elsewhere in this pass.
+        self._host_map_entries = host_maps(sdfg, self._host_maps)
 
     def assign_schedules(self, sdfg: SDFG, host_level: bool = True) -> None:
         """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.
@@ -810,7 +816,7 @@ class OffloadToAccelerator(ppl.Pass):
         def walk(state: SDFGState, entry, host_level: bool) -> None:
             for node in self.cached_scope_children[state].get(entry, ()):
                 if isinstance(node, nodes.MapEntry):
-                    is_kernel = host_level and node not in self.taskloops
+                    is_kernel = host_level and node not in self.taskloops and node not in self._host_map_entries
                     self.set_schedule(node,
                                       dtypes.ScheduleType.GPU_Device if is_kernel else dtypes.ScheduleType.Sequential)
                     walk(state, node, host_level and not is_kernel)

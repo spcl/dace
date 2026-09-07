@@ -722,13 +722,17 @@ class UntileLoops(ppl.Pass):
         # The outer must be ``for i in range(0, N, K)`` with a positive tile
         # ``K`` -- a concrete literal ``> 1`` or a positive symbol.
         outer_stride = loop_analysis.get_loop_stride(outer)
-        outer_start = loop_analysis.get_init_assignment(outer)
-        outer_end = loop_analysis.get_loop_end(outer)
-        if outer_stride is None or outer_start is None or outer_end is None:
+        if outer_stride is None:
             return False
         tile = _tile_size(outer_stride)
         if tile is None:
             return False  # stride <= 1, or a provably non-positive symbol
+        # Start / end parsed only past the tile-stride gate -- two sympy round trips a
+        # unit-stride loop never needs.
+        outer_start = loop_analysis.get_init_assignment(outer)
+        outer_end = loop_analysis.get_loop_end(outer)
+        if outer_start is None or outer_end is None:
+            return False
         K_expr, K_const = tile
         # ``outer_start`` need not be 0: a tiled stencil walks tile origins over
         # the interior ``[S, N)`` (e.g. ``for ii in range(1, N-1-K, K)``). The

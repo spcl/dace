@@ -61,6 +61,15 @@ class Dialect(enum.Enum):
     #: type-generic and has no templates, so every helper is a ``_Generic`` dispatch macro over a
     #: closed set of typed ``static inline`` functions (see :data:`C_INLINE_DEFINITIONS`).
     STANDALONE_C = 'standalone_c'
+    #: No DaCe headers, one HIP translation unit holding both the host code and the kernels.
+    #: C++ like :attr:`STANDALONE`, so every host-side helper and lowering it has applies here
+    #: too; what it adds is the device vocabulary.
+    #:
+    #: The unit may include the ROCm toolkit's own headers -- ``hip_runtime.h`` and hipCUB --
+    #: on the same footing as ``<math.h>`` and OpenMP on the host: they ship WITH the compiler
+    #: that builds the unit, so requiring them adds no dependency a caller did not already have
+    #: by choosing to compile for a GPU. What stays banned is ``dace/``, which does not.
+    STANDALONE_HIP = 'standalone_hip'
 
 
 #: The dialect a printer uses when its caller names none. Set only through :func:`dialect_scope`.
@@ -101,12 +110,21 @@ def dialect_scope(dialect: Dialect):
 #: The dialects that emit a self-contained translation unit. Everything CPF refuses -- device
 #: code, a state struct, an external buffer handshake -- it refuses for both of them, so the many
 #: call sites that ask "is this an CPF rendering" ask through :func:`standalone`.
-STANDALONE_DIALECTS = frozenset({Dialect.STANDALONE, Dialect.STANDALONE_C})
+STANDALONE_DIALECTS = frozenset({Dialect.STANDALONE, Dialect.STANDALONE_C, Dialect.STANDALONE_HIP})
+
+#: The standalone dialects that render DEVICE code. A rendering under one of these admits GPU
+#: storages and schedules, and emits both the host code and the kernels into the one unit.
+DEVICE_DIALECTS = frozenset({Dialect.STANDALONE_HIP})
 
 
 def standalone() -> bool:
     """Whether the ambient dialect renders a self-contained unit, C++ or C."""
     return _active_dialect in STANDALONE_DIALECTS
+
+
+def device() -> bool:
+    """Whether the ambient dialect renders device code into the standalone unit."""
+    return _active_dialect in DEVICE_DIALECTS
 
 
 def standalone_c() -> bool:
@@ -687,6 +705,88 @@ VARIADIC_MINMAX: Dict[str, str] = {'Max': 'cpf_max', 'Min': 'cpf_min', 'max': 'c
 #: the stream rather than through a printer, so no call-site table can discover it.
 BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>', '<algorithm>', '<cassert>',
                                  '<complex>', '<numeric>', '<new>', '<type_traits>')
+
+#: What a HIP unit adds to :data:`BASE_HEADERS`. Both ship with the ROCm toolkit, so a unit that
+#: includes them needs nothing a caller compiling for an AMD GPU does not already have -- the same
+#: standing OpenMP has on the host side, and the reason they are not what CPF exists to avoid.
+#: hipCUB supplies the device scan, reduce and arg-reduce the library nodes expand into.
+HIP_BASE_HEADERS: Tuple[str, ...] = ('<hip/hip_runtime.h>', '<hipcub/hipcub.hpp>')
+
+#: What ``dace/dace.h`` supplies that a DEVICE unit still needs, written out inline.
+#:
+#: These are not lowerings -- the generated device code is already correct C++ -- they are the
+#: handful of spellings the header defines and the unit therefore has to define for itself: the
+#: annotation macros, the backend-neutral ``gpu*`` aliases the code generator emits so one text
+#: serves CUDA and HIP, and an error check. Everything else the header would have brought (the
+#: reduction functors, the copy templates, the runtime context) is lowered or replaced.
+#:
+#: ``cpf_gpu_context`` is the replacement for ``dace::cuda::Context``: the generated frame reaches
+#: it as ``__state->gpu_context->streams``, so keeping that SHAPE is what lets the device code
+#: stand unaltered. One stream, because canon offloads onto the default stream
+#: (``max_concurrent_streams = -1``); the array is what the emitted indexing expects.
+HIP_DEVICE_PREAMBLE: str = """\
+#define DACE_EXPORTED
+#define DACE_HDFI __host__ __device__ __forceinline__
+#define DACE_HFI __host__ __forceinline__
+#define DACE_DFI __device__ __forceinline__
+using gpuStream_t = hipStream_t;
+using gpuEvent_t = hipEvent_t;
+using gpuError_t = hipError_t;
+static constexpr gpuError_t gpuSuccess = hipSuccess;
+#define DACE_GPU_CHECK(expr) do {                                                             \\
+        gpuError_t __cpf_status = (expr);                                                     \\
+        if (__cpf_status != gpuSuccess) {                                                     \\
+            fprintf(stderr, "%s:%d: GPU error %d (%s) in %s\\n", __FILE__, __LINE__,           \\
+                    (int)__cpf_status, hipGetErrorString(__cpf_status), #expr);               \\
+            abort();                                                                          \\
+        }                                                                                     \\
+    } while (0)
+
+#define DACE_KERNEL_LAUNCH_CHECK(err, name, gx, gy, gz, bx, by, bz)                            \\
+    do {                                                                                      \\
+        if ((err) != gpuSuccess) {                                                            \\
+            fprintf(stderr, "%s launch failed (grid %d,%d,%d block %d,%d,%d): %s\\n", (name),  \\
+                    (int)(gx), (int)(gy), (int)(gz), (int)(bx), (int)(by), (int)(bz),         \\
+                    hipGetErrorString(err));                                                  \\
+            abort();                                                                          \\
+        }                                                                                     \\
+    } while (0)
+
+//: The one stream canon offloads onto, in the shape the generated frame indexes.
+struct cpf_gpu_context {
+    gpuStream_t streams[1];
+    gpuEvent_t events[1];
+    gpuError_t lasterror;
+};
+"""
+
+
+def device_entry_prologue(state_struct: str) -> str:
+    """The device setup CPF's single entry function opens with.
+
+    An ordinary build does this in ``__dace_init_<name>`` and undoes it in ``__dace_exit_<name>``,
+    both taking the state pointer the caller kept between invocations. CPF has one entry point and
+    no handshake, so the context is a LOCAL: created here, destroyed by the scope guard on the way
+    out, whichever way the function leaves.
+
+    The stream is the default one, which is what canon offloads onto
+    (``compiler.cuda.max_concurrent_streams = -1``), so there is nothing to create and nothing to
+    destroy -- only the device to select and the work to drain.
+
+    :param state_struct: the mangled state struct name the generated body dereferences.
+    :returns: the prologue lines, indented one level.
+    """
+    return f"""\
+    // The device handshake, which a single entry point has nowhere else to put.
+    cpf_gpu_context __cpf_context{{}};
+    __cpf_context.streams[0] = nullptr;
+    {state_struct} __cpf_state{{&__cpf_context}};
+    {state_struct} *__state = &__cpf_state;
+    struct __cpf_drain {{
+        ~__cpf_drain() {{ DACE_GPU_CHECK(hipDeviceSynchronize()); }}
+    }} __cpf_drain_guard;
+"""
+
 
 #: Runtime functions CPF deliberately does NOT lower, and why. Reaching one is a refusal, not a
 #: pass-through: the name is declared by a DaCe header CPF does not include, so passing it through
@@ -1630,6 +1730,11 @@ TABLES: Dict[Dialect, Tables] = {
     Dialect.STANDALONE_C:
     _tables(C_STD_RENAMES, C_REWRITES, C_INLINE_DEFINITIONS, C_VARIADIC_MINMAX, C_UNSUPPORTED, C_CTYPE_RENAMES,
             C_BASE_HEADERS, C_DEFINITION_DEPENDENCIES, {}),
+    # The HIP unit is C++, so it takes the C++ vocabulary unchanged and differs only in its
+    # headers: the ROCm toolkit's own, which ship with the compiler that builds the unit.
+    Dialect.STANDALONE_HIP:
+    _tables(STD_RENAMES, REWRITES, INLINE_DEFINITIONS, VARIADIC_MINMAX, UNSUPPORTED, CTYPE_RENAMES,
+            BASE_HEADERS + HIP_BASE_HEADERS, DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
 }
 
 #: Every runtime function the C dialect knows about, in any lane.

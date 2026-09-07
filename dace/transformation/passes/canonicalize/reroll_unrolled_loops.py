@@ -140,8 +140,16 @@ class RerollUnrolledLoops(ppl.Pass):
             rerolled = 0
             for sd in sdfg.all_sdfgs_recursive():
                 for cfg in list(sd.all_control_flow_regions(recursive=True)):
-                    if isinstance(cfg, LoopRegion) and (self._try_reroll(cfg) or self._try_reroll_chain(cfg)
-                                                        or self._try_reroll_accumulator_reduction(cfg)):
+                    if not isinstance(cfg, LoopRegion) or not cfg.loop_variable:
+                        continue
+                    # One stride read per loop -- all three matchers refuse on the same constant step >= 2,
+                    # and a matcher that mutates returns True, so the value cannot go stale between them.
+                    stride = loop_analysis.get_loop_stride(cfg)
+                    step = _const_int(stride) if stride is not None else None
+                    if step is None or step < 2:
+                        continue
+                    if (self._try_reroll(cfg, step) or self._try_reroll_chain(cfg, step)
+                            or self._try_reroll_accumulator_reduction(cfg, step)):
                         rerolled += 1
             if rerolled == 0:
                 break
@@ -315,8 +323,10 @@ class RerollUnrolledLoops(ppl.Pass):
         """
         sdfg = loop.sdfg
         body = dict.fromkeys(loop.all_control_flow_blocks(recursive=True))
-        if any(a in e.data.free_symbols for e in sdfg.all_interstate_edges(recursive=True) for a in accs):
-            return False
+        for e in sdfg.all_interstate_edges(recursive=True):
+            syms = e.data.free_symbols  # once per edge, not once per (edge, accumulator)
+            if any(a in syms for a in accs):
+                return False
         leaves: Dict = {}
         seen_names: Dict[str, None] = {}
         host: Dict[SDFGState, None] = {}
@@ -406,20 +416,14 @@ class RerollUnrolledLoops(ppl.Pass):
                     frontier.append(e.dst)
         return seen
 
-    def _try_reroll(self, loop: LoopRegion) -> bool:
+    def _try_reroll(self, loop: LoopRegion, step: int) -> bool:
         """Attempt to re-roll one loop; return whether it was rerolled.
 
         :param loop: The candidate loop region.
+        :param step: The loop's constant step, read once by the caller.
         :returns: ``True`` if the loop matched and was re-rolled.
         """
         loop_var = loop.loop_variable
-        if not loop_var:
-            return False
-        stride = loop_analysis.get_loop_stride(loop)
-        step = _const_int(stride) if stride is not None else None
-        if step is None or step < 2:
-            return False
-
         states = self._body_states(loop)
         if states is None:
             return False
@@ -672,7 +676,7 @@ class RerollUnrolledLoops(ppl.Pass):
             groups.setdefault(find(key), []).append((key[0], states[key[0]].node(key[1])))
         return list(groups.values())
 
-    def _try_reroll_chain(self, loop: LoopRegion) -> bool:
+    def _try_reroll_chain(self, loop: LoopRegion, step: int) -> bool:
         """Re-roll a lane chain whose lanes READ PAST their own position (TSVC ``s116``).
 
         :meth:`_try_reroll` keys a lane on the offset an edge carries, so a lane that reads
@@ -691,15 +695,10 @@ class RerollUnrolledLoops(ppl.Pass):
         stored value the ascending re-rolled loop does not.
 
         :param loop: The candidate loop region.
+        :param step: The loop's constant step, read once by the caller.
         :returns: ``True`` if the loop matched and was re-rolled.
         """
         loop_var = loop.loop_variable
-        if not loop_var:
-            return False
-        stride = loop_analysis.get_loop_stride(loop)
-        step = _const_int(stride) if stride is not None else None
-        if step is None or step < 2:
-            return False
         states = self._body_states(loop)
         if states is None:
             return False
@@ -783,7 +782,7 @@ class RerollUnrolledLoops(ppl.Pass):
         self._rewrite_step(loop, loop_var, g, m)
         return True
 
-    def _try_reroll_accumulator_reduction(self, loop: LoopRegion) -> bool:
+    def _try_reroll_accumulator_reduction(self, loop: LoopRegion, step: int) -> bool:
         """Re-roll a hand-unrolled *reduction* into a single-lane step-``g`` loop.
 
         The lane-decomposition path (:meth:`_try_reroll`) cannot handle a manually
@@ -809,15 +808,10 @@ class RerollUnrolledLoops(ppl.Pass):
         and collapses each fold tasklet that lost a term to its surviving input.
 
         :param loop: The candidate loop region.
+        :param step: The loop's constant step, read once by the caller.
         :returns: ``True`` if it matched and was re-rolled.
         """
         loop_var = loop.loop_variable
-        if not loop_var:
-            return False
-        stride = loop_analysis.get_loop_stride(loop)
-        step = _const_int(stride) if stride is not None else None
-        if step is None or step < 2:
-            return False
         states = self._body_states(loop)
         if states is None or len(states) != 1:
             return False

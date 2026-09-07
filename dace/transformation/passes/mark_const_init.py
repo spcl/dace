@@ -15,7 +15,7 @@ from dace.sdfg import nodes as nd, utils as sdutil
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow.map_unroll import MapUnroll
 from dace.transformation.passes.analysis.analysis import AccessSets, FindAccessNodes, StateReachability
-from dace.transformation.passes.inline_tasklet_connectors import tasklet_emits_brace_free
+from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors, tasklet_emits_brace_free
 
 # Result of classifying the value produced by a single writer edge of a descriptor.
 WRITER_CONST = 'const'  #: A compile-time constant value (numeric, no data inputs).
@@ -54,6 +54,8 @@ class MarkConstInit(ppl.Pass):
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Dict[str, str]]]:
         """:return: ``{cfg_id: {descriptor name: classification}}`` for marked descriptors, or ``None`` if none."""
+        # Per-run, because the unrolling below rewrites the graph the plan is taken over.
+        self._inlinable_cache: Dict[int, Set[str]] = {}
         # Unroll static-extent constant-fill maps into per-element writes (only those that pay off --
         # see _paying_fill_targets) so the classifier sees a uniform element-wise tasklet pattern.
         if self._unroll_constant_fill_maps(top_sdfg, self._paying_fill_targets(top_sdfg)):
@@ -109,6 +111,20 @@ class MarkConstInit(ppl.Pass):
                 found.extend((sdfg, state, node) for node in state.nodes() if isinstance(node, nd.MapEntry)
                              and scope[node] is None and self._is_constant_fill_map(sdfg, state, node))
         return found
+
+    def _inlinable_containers(self, sdfg: SDFG) -> Set[str]:
+        """The containers ``InlineTaskletConnectors`` will actually inline, cached per SDFG.
+
+        The plan walks the whole graph, and the classifier asks about one writer at a time, so
+        computing it per question would make this pass quadratic in the tasklet count. The cache is
+        keyed by identity and lives for one ``apply_pass``: the classifier only reads the graph, and
+        the marks it writes are descriptor flags the plan does not depend on.
+        """
+        cached = self._inlinable_cache.get(id(sdfg))
+        if cached is None:
+            _plans, cached = InlineTaskletConnectors().plan(sdfg)
+            self._inlinable_cache[id(sdfg)] = cached
+        return cached
 
     def _classify_probe(self, probe: SDFG) -> PayingTargets:
         """Classify an already-unrolled throwaway copy; return the ``constexpr_static`` names keyed by
@@ -335,7 +351,7 @@ class MarkConstInit(ppl.Pass):
                     # const_runtime fuses the write into ``const T x = expr;`` -- sound only for a
                     # single-assignment, BRACE-FREE tasklet (braces would scope the binding away from other reads).
                     if not (isinstance(edge.src, nd.Tasklet) and self._single_assignment_to(edge.src, edge.src_conn)
-                            and tasklet_emits_brace_free(sdfg, state, edge.src)):
+                            and tasklet_emits_brace_free(sdfg, state, edge.src, self._inlinable_containers(sdfg))):
                         runtime_fuseable = False
                 else:
                     records.append((subset, value))
@@ -407,8 +423,47 @@ class MarkConstInit(ppl.Pass):
         src = edge.src
         if isinstance(src, nd.Tasklet):
             return self._tasklet_value(state, src, edge.src_conn)
-        # e.g. a copy from another access node, or a (non-unrolled) map exit -> value from other data.
+        if isinstance(src, nd.MapExit):
+            value = self._uniform_fill_value(state, src, edge.src_conn)
+            if value is not None:
+                return WRITER_CONST, value
+        # e.g. a copy from another access node, or a map exit whose value is not a uniform constant.
         return WRITER_RUNTIME, None
+
+    def _uniform_fill_value(self, state: SDFGState, map_exit: nd.MapExit, out_conn: Optional[str]) -> Optional[Any]:
+        """The constant every element of a fill map writes, or ``None`` when it is not one.
+
+        A map writing the SAME constant to every element of its range is a compile-time constant
+        over that whole range, and :meth:`_subset_to_index` already turns the map's propagated
+        subset into a slice -- so one record initializes it, with no unrolling anywhere.
+
+        Reading it here rather than unrolling first is what makes the shape reachable at all:
+        ``MapUnroll`` duplicates the access node per element but keeps the original out-edge, so
+        every copy claims to deliver the FULL array to a consumer sharing the state, and the pass
+        can only decline. The value is INDEX-INDEPENDENT by construction -- ``_constant_output_value``
+        folds the body to a number and an index-dependent body does not fold -- which is what lets
+        one value stand for the whole range.
+
+        :param state: the state holding the map.
+        :param map_exit: the writing map's exit node.
+        :param out_conn: the exit connector the write leaves through.
+        :returns: the constant, or ``None``.
+        """
+        if out_conn is None or not out_conn.startswith('OUT_'):
+            return None
+        # A scope node's connectors come in IN_x / OUT_x pairs: the write ARRIVES on the input side
+        # of the exit that it leaves through ``out_conn``.
+        in_conn = 'IN_' + out_conn[len('OUT_'):]
+        writers = [e for e in state.in_edges(map_exit) if e.dst_conn == in_conn and not e.data.is_empty()]
+        if len(writers) != 1 or not isinstance(writers[0].src, nd.Tasklet):
+            return None
+        tasklet = writers[0].src
+        # No data may reach the tasklet: a value read from elsewhere is not a compile-time constant,
+        # whatever the body does with it.
+        if any(not e.data.is_empty() for e in state.in_edges(tasklet)):
+            return None
+        kind, value = self._tasklet_value(state, tasklet, writers[0].src_conn)
+        return value if kind == WRITER_CONST else None
 
     def _tasklet_value(self, state: SDFGState, tasklet: nd.Tasklet, out_conn: Optional[str]) -> Tuple[str, Any]:
         """Classifies the value a tasklet assigns to ``out_conn`` as constant, runtime, or unknown."""
@@ -549,10 +604,30 @@ class MarkConstInit(ppl.Pass):
                         continue
                     scope_anchors.update(ie.src for ie in state.in_edges(src)
                                          if ie.data.is_empty() and ie.src is not node)
-                    if isinstance(src, nd.Tasklet) and conn is not None:
+                    if isinstance(src, (nd.Tasklet, nd.MapExit)) and conn is not None:
                         if not any(oe.src_conn == conn for oe in state.out_edges(src)):
                             src.remove_out_connector(conn)
+                            # A scope node's connectors are IN_x / OUT_x pairs: dropping the write
+                            # that left through OUT_x leaves the matching IN_x, and the edge feeding
+                            # it, with nowhere to go. Take both, and let the producer inside the
+                            # scope be pruned as any other orphan.
+                            if isinstance(src, nd.MapExit) and conn.startswith('OUT_'):
+                                in_conn = 'IN_' + conn[len('OUT_'):]
+                                for inner in [e for e in state.in_edges(src) if e.dst_conn == in_conn]:
+                                    state.remove_edge(inner)
+                                    # The producer may write OTHER names too (one tasklet filling two
+                                    # arrays, only one of them promoted), in which case it stays and
+                                    # only the connector this write left through is dead.
+                                    if isinstance(inner.src, nd.Tasklet) and inner.src_conn is not None:
+                                        if not any(oe.src_conn == inner.src_conn for oe in state.out_edges(inner.src)):
+                                            inner.src.remove_out_connector(inner.src_conn)
+                                    self._prune_dead(state, inner.src)
+                                if in_conn in src.in_connectors:
+                                    src.remove_in_connector(in_conn)
                     self._prune_dead(state, src)
+                    if isinstance(src, nd.MapExit):
+                        for end in [n for n in list(state.nodes()) if isinstance(n, nd.MapEntry) and n.map is src.map]:
+                            self._prune_dead(state, end)
                 if node not in state.nodes():
                     continue
                 if state.out_degree(node) > 0:
@@ -563,11 +638,29 @@ class MarkConstInit(ppl.Pass):
                     state.remove_node(node)
 
     def _prune_dead(self, state: SDFGState, node: nd.Node) -> None:
-        """Recursively removes a dead producer node (a consumerless tasklet, and any access node it
-        orphans). Constant-fill maps are unrolled to tasklets first, so no map-scope pruning is needed."""
+        """Recursively removes a dead producer node: a consumerless tasklet, a map scope whose last
+        data output was taken, and any access node either orphans.
+
+        The map case exists because a UNIFORM fill is now classified where it stands
+        (:meth:`_uniform_fill_value`) rather than being unrolled into tasklets first -- so the dead
+        producer left behind by the promotion is a whole scope, not a single node."""
         if node not in state.nodes():
             return
-        if isinstance(node, nd.Tasklet):
+        if isinstance(node, (nd.MapEntry, nd.MapExit)):
+            # Both ends of an emptied scope, taken together. Removing the write took the exit's
+            # connectors and pruning took the body, which leaves the entry and exit with no edges
+            # at all -- and an isolated scope node fails validation. Matched by the shared ``map``
+            # object rather than by ``entry_node``, whose scope lookup no longer resolves once the
+            # two ends are disconnected. Only FULLY isolated nodes are touched, so a scope still
+            # carrying anything is left alone.
+            if state.degree(node) != 0:
+                return
+            for end in [
+                    n for n in list(state.nodes())
+                    if isinstance(n, (nd.MapEntry, nd.MapExit)) and n.map is node.map and state.degree(n) == 0
+            ]:
+                state.remove_node(end)
+        elif isinstance(node, nd.Tasklet):
             if state.out_degree(node) != 0:
                 return
             external_srcs = [ie.src for ie in state.in_edges(node)]

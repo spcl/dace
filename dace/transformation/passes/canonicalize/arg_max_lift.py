@@ -553,19 +553,8 @@ class ArgMaxLift(ppl.Pass):
         :returns: ``(iter_start, iter_end, cond_block, guard_codeblock, true_branch)``
             or ``None``.
         """
-        start = loop_analysis.get_init_assignment(loop)
-        end = loop_analysis.get_loop_end(loop)
-        stride = loop_analysis.get_loop_stride(loop)
-        if start is None or end is None or stride is None:
-            return None
-        try:
-            if int(symbolic.simplify(stride)) != 1:
-                return None
-        except (TypeError, ValueError):
-            return None
-        if self._contains_break(loop):
-            return None
-
+        # Body shape first: it is a scan of the loop's direct children, while the bound parses
+        # below are sympy round trips and the break check walks the whole body.
         cond_block = None
         for b in loop.nodes():
             if isinstance(b, ConditionalBlock):
@@ -585,6 +574,20 @@ class ArgMaxLift(ppl.Pass):
             return None
         if any(self._branch_has_content(br) for c, br in cond_block.branches if c is None):
             return None
+
+        if self._contains_break(loop):
+            return None
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        stride = loop_analysis.get_loop_stride(loop)
+        if start is None or end is None or stride is None:
+            return None
+        try:
+            if int(symbolic.simplify(stride)) != 1:
+                return None
+        except (TypeError, ValueError):
+            return None
+
         guard, true_branch = non_else[0]
         return start, end, cond_block, guard, true_branch
 
@@ -787,6 +790,14 @@ class ArgMaxLift(ppl.Pass):
         """
         if not outer_loop.loop_variable:
             return None
+        # Nest shape first -- each check is a scan of one region's direct children, while the
+        # break walk and the bound parses below cost far more.
+        inner_loop = self._single_child_region(outer_loop, LoopRegion)
+        if inner_loop is None or not inner_loop.loop_variable:
+            return None
+        cond_block = self._single_child_region(inner_loop, ConditionalBlock)
+        if cond_block is None:
+            return None
         # A break anywhere in the nest makes it an early-exit search, not a
         # reduction over the whole (contiguous) array -- refuse (see :meth:`_match`).
         if self._contains_break(outer_loop):
@@ -794,14 +805,8 @@ class ArgMaxLift(ppl.Pass):
         o_range = self._unit_loop_from_zero(outer_loop)
         if o_range is None:
             return None
-        inner_loop = self._single_child_region(outer_loop, LoopRegion)
-        if inner_loop is None or not inner_loop.loop_variable:
-            return None
         i_range = self._unit_loop_from_zero(inner_loop)
         if i_range is None:
-            return None
-        cond_block = self._single_child_region(inner_loop, ConditionalBlock)
-        if cond_block is None:
             return None
 
         non_else = [(c, br) for c, br in cond_block.branches if c is not None]

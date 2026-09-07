@@ -124,6 +124,43 @@ def test_wcr_folds_into_an_openmp_reduction():
     assert_matches({'out': np.array([x.sum()])}, {'out': out}, 'cpf_sum')
 
 
+def test_a_conflicting_wcr_renders_as_an_atomic_that_says_it_is_not_reduced():
+    """A scatter whose indices repeat has no tree-reducible form, so CPF renders the atomic.
+
+    The other two WCR shapes are covered above: the fold into a ``reduction`` clause, and the
+    no-conflict read-modify-write. This is the third, and it used to be REFUSED -- which lost the
+    whole kernel. llr scatter_accum_dup was the measured case.
+
+    OpenMP's own ``atomic update`` spells it with no runtime symbol, so the unit stays standalone.
+    What makes the rendering honest is the hint: an atomic accumulation is the shape a program has
+    when its parallelization was not resolved, and a reader comparing kernels has to be able to see
+    which ones are in it.
+    """
+    length = 512
+
+    @dace.program
+    def scatter(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[N]):
+        for i in dace.map[0:N]:
+            out[idx[i]] += val[i]
+
+    sdfg, code = render(scatter, 'cpf_scatter_atomic')
+    assert '_Pragma("omp atomic update")' in code, 'a conflicting accumulation must render as an atomic'
+    assert 'NOT parallel-reduced' in code, 'the atomic must carry the hint that says it is not reduced'
+    assert 'reduction(' not in code, 'a conflicting scatter has no tree-reducible form to fold into'
+
+    rng = np.random.default_rng(0)
+    # Deliberately repeated: with distinct indices the write would not conflict and this would
+    # take the non-atomic path the tests above already cover.
+    idx = rng.integers(0, length // 8, size=length).astype(np.int64)
+    val = rng.random(length)
+    out = np.zeros(length)
+    expected = np.zeros(length)
+    np.add.at(expected, idx, val)
+
+    run(sdfg, code, {'idx': idx, 'val': val, 'out': out, 'N': length}, 'cpf_scatter_atomic')
+    assert_matches({'out': expected}, {'out': out}, 'cpf_scatter_atomic')
+
+
 #: Non-conflicting conflict resolutions, with the statement each must render to and its oracle.
 #: ``Sub`` and ``Div`` are not in the table -- no OpenMP clause names them, so they reach CPF as
 #: ``Custom``, which is why one entry per SPELLING is not the same as one entry per reduction type.
@@ -442,7 +479,10 @@ def test_persistent_lifetime_is_demoted_not_left_in_a_state():
 
 
 def test_gpu_schedules_are_refused_with_a_reason():
-    """CPF renders one host unit. A GPU SDFG must say so, not emit half a program."""
+    """A HOST dialect renders one host unit, so a GPU SDFG must say so rather than emit half a
+    program. The refusal names the way out -- the ``hip`` language, which renders the device form
+    into the same single unit -- because "not supported" and "not supported HERE" are different
+    answers and only the second one is true."""
 
     @dace.program
     def on_gpu(x: dace.float64[N], y: dace.float64[N]):
@@ -451,7 +491,7 @@ def test_gpu_schedules_are_refused_with_a_reason():
     sdfg = on_gpu.to_sdfg(simplify=True)
     sdfg.name = 'cpf_gpu'
     sdfg.apply_gpu_transformations()
-    with pytest.raises(NotImplementedError, match='host translation unit'):
+    with pytest.raises(NotImplementedError, match=r"one translation unit.*'hip' language"):
         cpf(sdfg)
 
 

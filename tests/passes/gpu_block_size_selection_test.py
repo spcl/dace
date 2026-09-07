@@ -6,10 +6,21 @@ None of these need a GPU: they build SDFGs, run the selection pass, and inspect
 """
 import dace
 from dace import dtypes, nodes, subsets
-from dace.transformation.passes.gpu_block_size_selection import pick_gpu_block_size, select_gpu_device_block_size
+from dace.transformation.passes.gpu_block_size_selection import (pick_gpu_block_size, select_gpu_device_block_size,
+                                                                 warp_width)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
+
+#: The expected shapes, stated in WARPS. A block size written as a thread count is right on one
+#: backend and silently wrong on the other -- a 16-wide ``x`` is half a warp on NVIDIA and a
+#: quarter of a CDNA wavefront -- so the contract these tests hold the pass to is "one warp on the
+#: contiguous dimension", and the numbers follow from the backend rather than being written down.
+WARP = warp_width()
+BLOCK_1D = [WARP * 4, 1, 1]
+BLOCK_2D_SQUARE = [WARP, 4, 1]
+BLOCK_2D_WIDE_X = [WARP * 2, 4, 1]
+BLOCK_2D_WIDE_Y = [WARP, 8, 1]
 
 
 def make_device_map(params, ranges):
@@ -19,30 +30,30 @@ def make_device_map(params, ranges):
 
 def test_pick_block_size_1d():
     m = make_device_map(['i'], [(0, N - 1, 1)])
-    assert pick_gpu_block_size(m) == [128, 1, 1]
+    assert pick_gpu_block_size(m) == BLOCK_1D
 
 
 def test_pick_block_size_2d_square_symbolic():
     # Symbolic extents are assumed large and roughly equal -> square block.
     m = make_device_map(['i', 'j'], [(0, N - 1, 1), (0, M - 1, 1)])
-    assert pick_gpu_block_size(m) == [16, 16, 1]
+    assert pick_gpu_block_size(m) == BLOCK_2D_SQUARE
 
 
 def test_pick_block_size_2d_square_constant():
     m = make_device_map(['i', 'j'], [(0, 1023, 1), (0, 1023, 1)])
-    assert pick_gpu_block_size(m) == [16, 16, 1]
+    assert pick_gpu_block_size(m) == BLOCK_2D_SQUARE
 
 
 def test_pick_block_size_2d_skewed_last_dim_wide():
     # Last (contiguous, threadIdx.x) dimension is 4x larger -> 32 on x.
     m = make_device_map(['i', 'j'], [(0, 255, 1), (0, 1023, 1)])
-    assert pick_gpu_block_size(m) == [32, 16, 1]
+    assert pick_gpu_block_size(m) == BLOCK_2D_WIDE_X
 
 
 def test_pick_block_size_2d_skewed_outer_dim_wide():
     # Outer (threadIdx.y) dimension is 4x larger -> 32 on y.
     m = make_device_map(['i', 'j'], [(0, 1023, 1), (0, 255, 1)])
-    assert pick_gpu_block_size(m) == [16, 32, 1]
+    assert pick_gpu_block_size(m) == BLOCK_2D_WIDE_Y
 
 
 def make_wcr_reduction_sdfg():
@@ -78,7 +89,7 @@ def test_wcr_map_uses_default_block_when_tree_reduction_off():
     with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
         with dace.config.set_temporary('compiler', 'emit_tree_reductions', value=False):
             select_gpu_device_block_size(sdfg)
-    assert m.gpu_block_size == [128, 1, 1]
+    assert m.gpu_block_size == BLOCK_1D
 
 
 def test_experimental_codegen_gets_deep_block_with_the_flag_off():
@@ -94,7 +105,7 @@ def test_experimental_codegen_gets_deep_block_with_the_flag_off():
 def test_pick_block_size_2d_mild_ratio_stays_square():
     # Ratio below the skew threshold (2x) stays square.
     m = make_device_map(['i', 'j'], [(0, 599, 1), (0, 1023, 1)])
-    assert pick_gpu_block_size(m) == [16, 16, 1]
+    assert pick_gpu_block_size(m) == BLOCK_2D_SQUARE
 
 
 def test_pick_block_size_3d_leaves_default():
@@ -127,8 +138,8 @@ def device_maps(sdfg):
 def test_pass_assigns_2d_square():
     sdfg, _ = build_2d_map_sdfg(dtypes.ScheduleType.GPU_Device)
     assigned = select_gpu_device_block_size(sdfg)
-    assert assigned == {'kernel_map': [16, 16, 1]}
-    assert device_maps(sdfg)[0].gpu_block_size == [16, 16, 1]
+    assert assigned == {'kernel_map': BLOCK_2D_SQUARE}
+    assert device_maps(sdfg)[0].gpu_block_size == BLOCK_2D_SQUARE
 
 
 def test_pass_does_not_override_user_block_size():
@@ -156,7 +167,7 @@ def test_gpu_transform_end_to_end():
     assert len(dmaps) == 1
     assert dmaps[0].gpu_block_size is None  # transform leaves it unset
     select_gpu_device_block_size(sdfg)
-    assert dmaps[0].gpu_block_size == [16, 16, 1]
+    assert dmaps[0].gpu_block_size == BLOCK_2D_SQUARE
 
 
 def test_gpu_transform_1d_end_to_end():
@@ -171,7 +182,7 @@ def test_gpu_transform_1d_end_to_end():
     dmaps = device_maps(sdfg)
     assert len(dmaps) == 1
     select_gpu_device_block_size(sdfg)
-    assert dmaps[0].gpu_block_size == [128, 1, 1]
+    assert dmaps[0].gpu_block_size == BLOCK_1D
 
 
 def test_config_default_block_size_is_128():
@@ -221,8 +232,8 @@ def test_pass_still_sizes_a_kernel_over_an_untagged_sequential_map():
     # No tag and no thread-block schedule: nothing under the kernel will ever own the block, so the
     # 1-D domain takes the ordinary default.
     sdfg, kernel, _ = build_kernel_over_inner_map(dtypes.ScheduleType.Sequential)
-    assert select_gpu_device_block_size(sdfg) == {'kernel': [128, 1, 1]}
-    assert kernel.gpu_block_size == [128, 1, 1]
+    assert select_gpu_device_block_size(sdfg) == {'kernel': BLOCK_1D}
+    assert kernel.gpu_block_size == BLOCK_1D
 
 
 def test_a_pending_warp_tile_reaches_codegen_without_a_block_size_conflict():
@@ -249,7 +260,7 @@ def test_pass_is_idempotent():
     select_gpu_device_block_size(sdfg)
     # Re-running assigns nothing (already set) and preserves the value.
     assert select_gpu_device_block_size(sdfg) == {}
-    assert device_maps(sdfg)[0].gpu_block_size == [16, 16, 1]
+    assert device_maps(sdfg)[0].gpu_block_size == BLOCK_2D_SQUARE
 
 
 if __name__ == '__main__':
@@ -275,3 +286,18 @@ if __name__ == '__main__':
     test_wcr_map_uses_default_block_when_tree_reduction_off()
     test_experimental_codegen_gets_deep_block_with_the_flag_off()
     print('OK')
+
+
+def test_the_contiguous_dimension_is_never_narrower_than_a_warp():
+    """The property the whole pass exists for, asserted directly rather than through a constant.
+
+    A block whose ``x`` is a FRACTION of a warp puts lanes of one warp on different rows, which is
+    the strided access this pass was written to prevent -- so a table calibrated on a 32-lane warp
+    reintroduces the bug on a 64-lane CDNA wavefront. ``[16,16,1]`` was that table: sixteen lanes
+    on ``x``, so one gfx942 wavefront spanned four rows and three quarters of it strode.
+    """
+    for params, ranges in ((['i'], [(0, N - 1, 1)]), (['i', 'j'], [(0, N - 1, 1), (0, M - 1, 1)]),
+                           (['i', 'j'], [(0, 1023, 1), (0, 7, 1)]), (['i', 'j'], [(0, 7, 1), (0, 1023, 1)])):
+        block = pick_gpu_block_size(make_device_map(params, ranges))
+        assert block[0] % WARP == 0, f'{block} puts {block[0]} lanes on x, which is not whole warps'
+        assert 256 <= block[0] * block[1] * block[2] <= 512, f'{block} leaves the occupancy band'

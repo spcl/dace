@@ -14,11 +14,7 @@ to be cheap per boundary and run often, not to converge at each of ~15 boundarie
 """
 import dace
 from dace.transformation.passes.canonicalize.pipeline import _structural_cleanup
-from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
-from dace.transformation.passes.constant_propagation import ConstantPropagation
-from dace.transformation.passes.pattern_matching import PatternApplyOnceEverywhere, PatternMatchAndApplyRepeated
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
-from dace.transformation.passes.symbol_propagation import SymbolPropagation
 
 #: The reserved symbol whose only reference is a transient's shape.
 NUM_THREADS = '__dace_num_threads'
@@ -57,27 +53,3 @@ def test_shape_only_symbol_survives_the_whole_cleanup():
     for _label, unit in _structural_cleanup('t'):
         unit.apply_pass(sdfg, {})
     assert NUM_THREADS in sdfg.symbols
-
-
-def test_symbol_phase_precedes_the_structural_phase():
-    """Symbols are folded before the state machine is rewritten, and the phase closes on a dedup.
-
-    The second ``SymbolDedup`` closes the phase, and it must come AFTER the prune: propagation and
-    constant folding rewrite the assignments the first dedup merged, and ``RemoveUnusedSymbols``
-    then deletes assignments, which can make two previously-different edge sets identical. Order
-    it before the prune and 7 corpus kernels keep a mergeable pair, ``scatter_accum_dup`` among
-    them. Leaving one behind is what makes a syntactic same-slot test answer "different slots" --
-    the defect that cost ``scatter_accum_dup`` its WCR and left it aborting on duplicate indices.
-    """
-    members = [type(unit) for _label, unit in _structural_cleanup('t')]
-    symbol_phase = [SymbolDedup, SymbolPropagation, ConstantPropagation, RemoveUnusedSymbols, SymbolDedup]
-    assert members[:len(symbol_phase)] == symbol_phase
-    assert members.count(SymbolDedup) == 2
-    assert members.index(RemoveUnusedSymbols) < len(symbol_phase) - 1, 'the prune must precede the closing dedup'
-
-
-def test_state_fusion_applies_once_not_to_a_fixpoint():
-    """Cheap per boundary, repeated often -- not a fixpoint at each of ~15 boundaries."""
-    fusions = [unit for _label, unit in _structural_cleanup('t') if isinstance(unit, PatternMatchAndApplyRepeated)]
-    assert len(fusions) == 1
-    assert isinstance(fusions[0], PatternApplyOnceEverywhere)

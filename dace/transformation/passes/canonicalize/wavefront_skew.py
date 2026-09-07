@@ -113,7 +113,7 @@ DEFAULT_TILE_SIZE = 64
 #: changes the KIND of barrier. A bigger tile converts kernel launches into ``__syncthreads``,
 #: which are far cheaper; it also concentrates the work on fewer CUs, and this is a memory-bound
 #: stencil, so aggregate bandwidth pulls the other way. 128 sits between the two.
-DEFAULT_GPU_TILE_SIZE = 64
+DEFAULT_GPU_TILE_SIZE = 128
 
 #: Dim names for the tile-index polyhedron handed to ``poly.skew_bounds``, and the
 #: PARAMETER names standing for its two tile counts. Handing ISL the counts as opaque
@@ -744,8 +744,8 @@ def map_scope_context(state: SDFGState, node: nodes.Node) -> Optional[List[Tuple
     interval, which has no such reading.
     """
     ctx: List[Tuple[str, object, object]] = []
-    scope = state.scope_dict()
-    cur = scope[node]
+    # entry_node reads the cached scope map directly; scope_dict shallow-copies it on every call.
+    cur = state.entry_node(node)
     while cur is not None:
         if not isinstance(cur, nodes.MapEntry):
             return None
@@ -753,7 +753,7 @@ def map_scope_context(state: SDFGState, node: nodes.Node) -> Optional[List[Tuple
             if symbolic.simplify(step) != 1:
                 return None
             ctx.append((param, lo, hi))
-        cur = scope[cur]
+        cur = state.entry_node(cur)
     return ctx
 
 

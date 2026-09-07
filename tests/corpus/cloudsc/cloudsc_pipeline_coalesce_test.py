@@ -1,11 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the coalescing phase in :mod:`tests.corpus.cloudsc.pipelines`.
+"""Tests for the coalescing band of the canonicalization recipe
+(:func:`dace.transformation.passes.canonicalize.pipeline._coalesce`).
 
-Fast and in-process. The phase-plan tests build plans only (no CloudSC parse, no pipeline run). The
-effect tests use a small CloudSC-shaped fixture -- four element-wise ``(jl, jk)`` loop nests over
-shared arrays -- driven through the ``parallelize`` variant's own phases up to, but not including,
-``coalesce``. That is exactly the graph the phase is meant to see: every lifted loop body sits in its
-own NestedSDFG, so the maps cannot fuse until the walls come down.
+The band used to be an extra phase that ``tests.corpus.cloudsc.pipelines`` appended to the
+``parallelize`` plan. It now lives in the canonicalize recipe itself, as one contiguous run of
+``coalesce``-labelled stages between ``post_l2m`` and ``loop_fuse``, and the CloudSC plan files those
+labels into the ``parallelize`` super-phase instead of opening a checkpoint boundary of their own.
+
+The placement tests read the recipe only (no CloudSC parse, no pipeline run). The effect tests use a
+small CloudSC-shaped fixture -- four element-wise ``(jl, jk)`` loop nests over shared arrays -- driven
+through the canon recipe up to, but not including, the band. That is the graph the band is meant to
+see: the loops have just become maps and nothing has fused them yet.
 
     pytest tests/corpus/cloudsc/cloudsc_pipeline_coalesce_test.py -v
 """
@@ -16,9 +21,12 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from tests.corpus.cloudsc.pipelines import _parallelize_phases as parallelize_phases
-from tests.corpus.cloudsc.pipelines import (COALESCE_PHASE, COALESCE_VARIANTS, VARIANTS, pretreat_stages,
-                                            specialize_stage, variant_phases)
+from dace.transformation.passes.canonicalize.pipeline import _build_stages, _coalesce
+from tests.corpus.cloudsc.pipelines import variant_phases
+
+#: The recipe label the band carries, and the stages it must sit between.
+BAND = 'coalesce'
+BEFORE_BAND, AFTER_BAND = 'post_l2m', 'loop_fuse'
 
 KLON = dace.symbol('KLON')
 KLEV = dace.symbol('KLEV')
@@ -47,34 +55,71 @@ def elementwise_chain(pt: dace.float64[KLON, KLEV], pq: dace.float64[KLON, KLEV]
             tend_q[jl, jk] = tend_q[jl, jk] * pt[jl, jk] + 1.0
 
 
-def graph_counts(sdfg: dace.SDFG):
-    """``(nested SDFGs, map entries)`` over the whole graph, nestings included."""
-    nested = sum(1 for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.NestedSDFG))
-    maps = sum(1 for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.MapEntry))
-    return nested, maps
+def nmaps(sdfg: dace.SDFG) -> int:
+    return sum(1 for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.MapEntry))
 
 
-def phase_names(variant: str):
-    return [name for name, _ in variant_phases(variant)]
+def band_bounds(target: str):
+    """``(labels, first, last)`` for the coalescing band in the ``target`` recipe."""
+    labels = [label for label, _ in _build_stages(target=target)]
+    at = [i for i, label in enumerate(labels) if label == BAND]
+    assert at, f'no {BAND!r} stage in the {target} recipe'
+    return labels, at[0], at[-1]
 
 
-def apply_phase(sdfg: dace.SDFG, name: str):
-    """Apply the named phase of the ``parallelize`` plan; return the per-stage ``apply_pass`` returns."""
-    stages = dict(variant_phases('parallelize'))[name]
-    return [apply_fn(sdfg) for _label, apply_fn in stages]
+@pytest.mark.parametrize('target', ['cpu', 'gpu'])
+def test_band_is_one_contiguous_run_between_l2m_and_loop_fuse(target):
+    """The band is a single uninterrupted run of the length ``_coalesce`` declares, and it sits after
+    the loops have become maps but before loop fusion -- it has nothing to fuse any earlier, and
+    ``loop_fuse`` would see un-coalesced maps any later."""
+    labels, first, last = band_bounds(target)
+    assert last - first + 1 == labels.count(BAND), f'{BAND} band is split: {labels.count(BAND)} stages, {first}..{last}'
+    assert labels.count(BAND) == len(_coalesce()), 'recipe and _coalesce() disagree on the band length'
+    assert labels[first - 1] == BEFORE_BAND, labels[first - 1]
+    assert labels[last + 1] == AFTER_BAND, labels[last + 1]
+
+
+@pytest.mark.parametrize('variant', ['canon_cpu', 'canon_gpu'])
+def test_band_folds_into_the_parallelize_super_phase(variant):
+    """The CloudSC plan must not open a checkpoint boundary for the band: its stages ride inside the
+    ``parallelize`` super-phase, next to the ``post_l2m`` stages they follow."""
+    phases = variant_phases(variant)
+    assert BAND not in [name for name, _ in phases], 'the band must not be its own phase any more'
+    holders = {name for name, stages in phases if any(label == BAND for label, _ in stages)}
+    assert holders == {'parallelize'}, holders
+
+
+def test_the_parallelize_variant_has_no_band():
+    """``parallelize`` runs ``ParallelizePipeline``, which coalesces in its own ``fuse`` phase; a
+    second band here would be dead work."""
+    labels = [label for _, stages in variant_phases('parallelize') for label, _ in stages]
+    assert BAND not in labels, labels
 
 
 @pytest.fixture(scope='module')
-def parallelized():
-    """The ``parallelize`` variant driven up to -- and stopping before -- the coalescing phase."""
+def premapped():
+    """The fixture driven through the canon recipe up to -- and stopping before -- the band."""
+    stages = _build_stages(target='cpu')
+    _, first, _ = band_bounds('cpu')
     sdfg = elementwise_chain.to_sdfg(simplify=False)
-    for name, stages in variant_phases('parallelize'):
-        if name == COALESCE_PHASE:
-            break
-        for _label, apply_fn in stages:
-            apply_fn(sdfg)
+    for _label, unit in stages[:first]:
+        unit.apply_pass(sdfg, {})
     sdfg.validate()
     return sdfg
+
+
+def apply_band(sdfg: dace.SDFG):
+    """Apply the coalescing band to ``sdfg``; return the per-stage ``apply_pass`` returns."""
+    stages = _build_stages(target='cpu')
+    _, first, last = band_bounds('cpu')
+    return [unit.apply_pass(sdfg, {}) for _label, unit in stages[first:last + 1]]
+
+
+def fused_maps(returns) -> bool:
+    """Did any stage of the band report a map fusion? ``FuseMaps`` runs inside a ``Pipeline``, whose
+    return always carries its ``FindSingleUseData`` dependency -- so presence of the key, not
+    truthiness of the return, is what says the fusion happened."""
+    return any(isinstance(ret, dict) and 'FuseMaps' in ret for ret in returns)
 
 
 def run_fixture(sdfg: dace.SDFG, tag: str):
@@ -94,92 +139,37 @@ def run_fixture(sdfg: dace.SDFG, tag: str):
     return args['tend_t'], args['tend_q']
 
 
-@pytest.mark.parametrize('variant', COALESCE_VARIANTS)
-def test_phase_present_for_its_variants(variant):
-    """The coalescing phase is appended after the map-producing phase -- it has nothing to fuse until
-    the loops are maps -- and holds the inline-then-fuse recipe in that order."""
-    phases = variant_phases(variant)
-    names = [name for name, _ in phases]
-    assert names.count(COALESCE_PHASE) == 1, names
-    assert names.index(COALESCE_PHASE) > names.index('parallelize'), names
-    assert [label for label, _ in dict(phases)[COALESCE_PHASE]
-            ] == ['inline_nsdfgs', 'fuse_states', 'collapse', 'fuse_maps', 'fuse_states']
-
-
-@pytest.mark.parametrize('variant', [v for v in VARIANTS if v not in COALESCE_VARIANTS])
-def test_phase_absent_for_the_canon_variants(variant):
-    """Canon already coalesces inside its own recipe, so it must not get a second round here."""
-    assert COALESCE_PHASE not in phase_names(variant)
-
-
-@pytest.mark.parametrize('variant', COALESCE_VARIANTS)
-def test_rest_of_the_plan_is_unchanged(variant):
-    """Only one phase is added, and it is appended: every earlier phase keeps its name and stage count
-    against the plan's own sources of truth, so the per-phase numeric checks before it still run on
-    exactly the graphs they used to."""
-    phases = variant_phases(variant)
-    expected = [('start', len(specialize_stage(None) + pretreat_stages()))]
-    expected += [(name, len(stages)) for name, stages in parallelize_phases()]
-    assert [(name, len(stages)) for name, stages in phases[:-1]] == expected
-    assert phases[-1][0] == COALESCE_PHASE
-
-
-def test_coalesce_stays_before_the_terminal_offload_phase():
-    """Offload is terminal by construction; coalescing must not displace it."""
-    names = [name for name, _ in variant_phases('parallelize', offload=True)]
-    assert names[-1] == 'offload'
-    assert names.index(COALESCE_PHASE) == len(names) - 2, names
-
-
-def test_coalescing_removes_the_nsdfg_walls_and_fuses_maps(parallelized):
-    """The measurement: NSDFG and map counts strictly drop, and the graph still validates."""
-    sdfg = copy.deepcopy(parallelized)
-    before = graph_counts(sdfg)
-    assert before[0] > 0, 'fixture is not NSDFG-wrapped -- the phase would have nothing to inline'
-    assert before[1] > 1, 'fixture has no adjacent maps -- the phase would have nothing to fuse'
-    apply_phase(sdfg, COALESCE_PHASE)
+def test_coalescing_fuses_the_maps(premapped):
+    """The measurement: the map count strictly drops and the graph still validates."""
+    sdfg = copy.deepcopy(premapped)
+    before = nmaps(sdfg)
+    assert before > 1, 'fixture has no adjacent maps -- the band would have nothing to fuse'
+    returns = apply_band(sdfg)
     sdfg.validate()
-    after = graph_counts(sdfg)
-    assert after[0] == 0, f'nested SDFGs left after inlining: {before} -> {after}'
-    assert after[1] < before[1], f'no maps fused: {before} -> {after}'
+    assert fused_maps(returns), 'the band reported no map fusion'
+    assert nmaps(sdfg) < before, f'no maps fused: {before} -> {nmaps(sdfg)}'
 
 
-def test_coalescing_does_not_change_the_numbers(parallelized):
+def test_coalescing_does_not_change_the_numbers(premapped):
     """Inlining and fusion are value-preserving: bit-identical outputs, not merely close."""
-    sdfg = copy.deepcopy(parallelized)
+    sdfg = copy.deepcopy(premapped)
     reference = run_fixture(sdfg, 'before')
-    apply_phase(sdfg, COALESCE_PHASE)
+    apply_band(sdfg)
     sdfg.validate()
     coalesced = run_fixture(sdfg, 'after')
     for name, ref, out in zip(('tend_t', 'tend_q'), reference, coalesced):
         assert np.array_equal(ref, out), f'{name} changed: max |diff| = {np.max(np.abs(ref - out))}'
 
 
-def test_reapplying_the_phase_is_a_no_op(parallelized):
+def test_reapplying_the_band_is_a_no_op(premapped):
     """Idempotence -- the ``FixedPointPipeline`` spin hazard. ONE application coalesces fully: the
-    second leaves the graph bit-identical and every stage reports "did not modify"."""
-    sdfg = copy.deepcopy(parallelized)
-    apply_phase(sdfg, COALESCE_PHASE)
+    second leaves the graph bit-identical and reports no further fusion."""
+    sdfg = copy.deepcopy(premapped)
+    apply_band(sdfg)
     settled = sdfg.hash_sdfg()
-    returns = apply_phase(sdfg, COALESCE_PHASE)
-    assert sdfg.hash_sdfg() == settled, 'the phase kept mutating a graph it had already coalesced'
-    inline, fuse_states, collapse, fuse_maps, fuse_states_again = returns
-    assert (inline, fuse_states, collapse, fuse_states_again) == (None, None, None, None)
-    # ``fuse_maps`` is a ``Pipeline``, whose return always carries its ``FindSingleUseData``
-    # dependency's result -- so it is never ``None``. What must be absent is the fusion itself.
-    assert 'FuseMaps' not in fuse_maps
-
-
-def test_every_coalesce_stage_actually_fires(parallelized):
-    """No dead stages: on the first application each one reports a modification. A stage that never
-    matches costs a graph scan and hides the fact that nothing was coalesced."""
-    sdfg = copy.deepcopy(parallelized)
-    inline, fuse_states, collapse, fuse_maps, fuse_states_again = apply_phase(sdfg, COALESCE_PHASE)
-    assert inline, 'nothing inlined'
-    assert fuse_states, 'no states fused before map fusion'
-    assert collapse, 'no map nest collapsed'
-    assert 'FuseMaps' in fuse_maps, f'no maps fused: {sorted(fuse_maps)}'
-    assert fuse_states_again, 'the trailing state fusion is dead -- drop it'
+    again = apply_band(sdfg)
+    assert sdfg.hash_sdfg() == settled, 'the band kept mutating a graph it had already coalesced'
+    assert not fused_maps(again), 'the band fused maps a second time'
 
 
 if __name__ == '__main__':

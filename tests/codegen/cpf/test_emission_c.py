@@ -378,7 +378,7 @@ def test_gpu_schedules_are_refused_with_a_reason():
     sdfg = c_scale_add.to_sdfg(simplify=True)
     sdfg.name = 'mprc_gpu'
     sdfg.apply_gpu_transformations()
-    with pytest.raises(NotImplementedError, match='host translation unit'):
+    with pytest.raises(NotImplementedError, match=r"one translation unit.*'hip' language"):
         cpf(sdfg, language='c')
 
 
@@ -396,7 +396,7 @@ def test_an_unknown_language_is_refused():
     """A typo must name what is available rather than silently rendering C++."""
     sdfg = c_scale_add.to_sdfg(simplify=True)
     sdfg.name = 'mprc_bad_language'
-    with pytest.raises(ValueError, match=r"\['c', 'c\+\+'\]"):
+    with pytest.raises(ValueError, match=r"\['c', 'c\+\+', 'hip'\]"):
         cpf(sdfg, language='fortran')
 
 
