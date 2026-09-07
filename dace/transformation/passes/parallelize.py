@@ -109,10 +109,16 @@ class ParallelizePipeline(ppl.Pass):
         from dace.transformation.passes.parallelize_loops import ParallelizeLoops
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.simplify import SimplifyPass
+        from dace.transformation.passes.symbol_ssa import SymbolSSA
         from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
         stages: List[ppl.Pass] = [
             ShortLoopUnroll(self.unroll_limit),
+            # Immediately after the unroll: each replay reassigns the same frontend index symbol on
+            # the edge feeding its copy, so one name carries N values and nothing may be reordered
+            # or re-guarded around the chain. Versioning the definitions removes that false
+            # dependence while the unrolled chains are still intact.
+            SymbolSSA(),
             # ``assign_loop_iterator_post_value=False``: the post-value state materializes
             # ``<orig_var> = <exit value>`` AFTER the loop, which is a read of a loop-defined symbol
             # from a later block -- exactly what LoopToMap refuses. Emitting it here would undo the

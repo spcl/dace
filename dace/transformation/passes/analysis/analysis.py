@@ -623,7 +623,12 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
                         other_accesses = result[sym][iedges[0]]
                         coarsen = False
                         for a_state_or_edge in other_accesses:
-                            if isinstance(a_state_or_edge, SDFGState):
+                            # A read location is a block or an interstate edge -- the same union
+                            # ``_find_dominating_write`` dispatches on. Testing SDFGState alone sent
+                            # every OTHER block kind (a LoopRegion reading a symbol in its bounds, a
+                            # ConditionalBlock reading it in a guard) down the edge branch, where it
+                            # has no ``.src``: an AttributeError on any explicit-control-flow graph.
+                            if isinstance(a_state_or_edge, ControlFlowBlock):
                                 if a_state_or_edge in reach:
                                     coarsen = True
                                     break
