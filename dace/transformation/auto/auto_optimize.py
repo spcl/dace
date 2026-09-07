@@ -806,17 +806,25 @@ def interstate_read_names(sdfg: SDFG) -> OrderedSet:
 def apply_gpu_storage(sdfg: SDFG) -> None:
     """ Changes the storage of the SDFG's input and output arrays to GPU global memory.
 
-    Scalars stay on the host: host code reads them (loop bounds, branch conditions, a tasklet
-    outside any map), and a device-resident scalar makes every such read invalid. A device map
-    that writes one gets a GPU transient and a copy back from the offload pass.
+    EVERY non-transient array moves, including one an interstate edge indexes. That read -- a loop
+    condition ``A[0] < N``, a branch on ``src[k]`` -- is host code, and host code cannot read device
+    memory; but leaving the array behind does not fix it, it only moves the contradiction. A caller
+    whose ABI hands every array in as a device pointer then has a descriptor that disagrees with the
+    pointer: the same address read as host memory, which is a wrong answer rather than a failed
+    compile. Holding the array back also strands whatever kernel wanted it on the device.
 
-    An array an interstate edge indexes stays for the same reason, and it is the same host read --
-    ``A[0] < N`` on a loop condition is not a scalar, so the check above does not cover it, and the
-    graph it produces is refused only later, by validation, as a host read of device memory.
+    The offload is what resolves it. ``OffloadToAccelerator.stage_on_host`` gives a device-resident
+    container that host code reads its own host copy, repoints every host use at it -- interstate
+    conditions and the loop and branch metadata included -- and copies at the SDFG boundary. It only
+    considers containers already in ``GPU_Global``, so placing them here is what puts them in front
+    of it. Measured on llr-focus40: six kernels (argmax_with_index, compact_threshold_pack,
+    scatter_accum_dup, tsvc s3110/s316/s318) were unoffloadable for exactly this reason.
+
+    Scalars stay on the host: they are passed by value, so there is no buffer to place, and a device
+    map that writes one gets a GPU transient and a copy back from the offload pass.
     """
-    host_read = interstate_read_names(sdfg)
     for name, desc in sdfg.arrays.items():
-        if isinstance(desc, dt.Scalar) or name in host_read:
+        if isinstance(desc, dt.Scalar):
             continue
         if not desc.transient and desc.storage == dtypes.StorageType.Default:
             desc.storage = dtypes.StorageType.GPU_Global

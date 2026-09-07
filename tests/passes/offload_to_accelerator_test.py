@@ -673,19 +673,22 @@ def test_the_sequential_arm_of_a_guarded_loop_keeps_its_host_copies():
         assert any(loops), f'{label} was called a fallback arm without a loop above it'
 
 
-def test_apply_gpu_storage_leaves_an_array_an_interstate_edge_reads_on_the_host():
-    """The scalar rule again, for the case the scalar check cannot see.
+def test_apply_gpu_storage_moves_an_array_an_interstate_edge_reads_and_the_offload_stages_it():
+    """EVERY non-transient array moves, and the offload is what makes the host read legal.
 
     An interstate edge's reads live in its condition and assignments, not on any AccessNode, so a
     pass that walks nodes concludes the array is only ever touched by the maps it can see. Indexing
-    one element does not make the container a Scalar, so ``A[0] < N`` on a loop condition took the
-    array to the device and left the host reading device memory -- a graph validation refuses, well
-    after the pass that shaped it. npbench azimint_hist reaches this through the bin edges
-    ``np.histogram`` derives from its ``radius`` argument.
+    one element does not make the container a Scalar, so ``bounds[0] < bounds[1]`` on an edge is a
+    host read of a container the caller delivers as a device pointer.
+
+    Holding the array back does not fix that -- it only moves the contradiction to the ABI, where
+    nothing checks it, and strands any kernel that wanted the array. ``stage_on_host`` is the
+    resolution: a host copy, every host use repointed at it, a copy at the boundary. Measured on
+    llr-focus40: six kernels were unoffloadable until the array moved.
     """
     from dace.transformation.auto import auto_optimize
 
-    sdfg = dace.SDFG('interstate_read_stays_on_host')
+    sdfg = dace.SDFG('interstate_read_is_staged')
     sdfg.add_array('bounds', [2], dace.float64, transient=False)
     sdfg.add_array('data', [8], dace.float64, transient=False)
     body = sdfg.add_state('body')
@@ -693,14 +696,40 @@ def test_apply_gpu_storage_leaves_an_array_an_interstate_edge_reads_on_the_host(
     tasklet = body.add_tasklet('scale', {'d': None}, {'o': None}, 'o = d * 2.0')
     body.add_memlet_path(body.add_read('data'), entry, tasklet, dst_conn='d', memlet=dace.Memlet('data[i]'))
     body.add_memlet_path(tasklet, exit_, body.add_write('data'), src_conn='o', memlet=dace.Memlet('data[i]'))
-    after = sdfg.add_state('after')
+
+    # A REAL branch, both arms doing work: a lone conditional successor folds away in simplify,
+    # and the edge carrying the read goes with it.
+    def bump(label: str, by: str) -> dace.SDFGState:
+        st = sdfg.add_state(label)
+        m_entry, m_exit = st.add_map(label, {'i': '0:8'}, schedule=dace.ScheduleType.GPU_Device)
+        node = st.add_tasklet(label, {'d': None}, {'o': None}, f'o = d + {by}')
+        st.add_memlet_path(st.add_read('data'), m_entry, node, dst_conn='d', memlet=dace.Memlet('data[i]'))
+        st.add_memlet_path(node, m_exit, st.add_write('data'), src_conn='o', memlet=dace.Memlet('data[i]'))
+        return st
+
     # The read that no AccessNode carries.
-    sdfg.add_edge(body, after, dace.InterstateEdge(condition='bounds[0] < bounds[1]'))
+    sdfg.add_edge(body, bump('lo', '1.0'), dace.InterstateEdge(condition='bounds[0] < bounds[1]'))
+    sdfg.add_edge(body, bump('hi', '2.0'), dace.InterstateEdge(condition='not (bounds[0] < bounds[1])'))
 
     auto_optimize.apply_gpu_storage(sdfg)
 
-    assert sdfg.arrays['bounds'].storage is not dace.StorageType.GPU_Global
+    assert sdfg.arrays['bounds'].storage is dace.StorageType.GPU_Global
     assert sdfg.arrays['data'].storage is dace.StorageType.GPU_Global
+
+    sdfg.apply_gpu_transformations()
+
+    # Both places the read can live: on an interstate edge, or -- once simplify raises the branch
+    # into a ConditionalBlock -- in that block's own condition, which is what get_meta_read_memlets
+    # answers and what replace_meta_accesses had to rewrite.
+    read = set(auto_optimize.interstate_read_names(sdfg))
+    for block in sdfg.all_control_flow_blocks():
+        read |= {m.data for m in block.get_meta_read_memlets() if m is not None and m.data in sdfg.arrays}
+
+    assert 'bounds' not in read, 'host code still reads the device array'
+    staged = sorted(name for name in read if name.startswith('bounds'))
+    assert staged, f'the condition reads nothing that came from bounds: {sorted(read)}'
+    for name in staged:
+        assert sdfg.arrays[name].storage is not dace.StorageType.GPU_Global
     sdfg.validate()
 
 
