@@ -6,6 +6,8 @@ import numpy as np
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.transformation.dataflow import GPUTransformMap
+from dace.transformation.optimizer import Optimizer
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
 
@@ -751,6 +753,75 @@ def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():
     seeded_at = next(index for index, state in enumerate(order) if state.label == "seed_b")
     copied_at = next(index for index, state in enumerate(order) if writes_container(state, "B_gpu"))
     assert copied_at > seeded_at, f"B was copied to the device before the host wrote it: {labels}"
+
+
+def read_only_input_sdfg() -> dace.SDFG:
+    """``A`` is read and never written, ``B`` is written -- the two halves of the copy-back rule."""
+    sdfg = dace.SDFG("read_only_input")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [20], dace.float64)
+
+    state = sdfg.add_state("scale", is_start_block=True)
+    entry, exit_ = state.add_map("scale", dict(i="0:20"))
+    scale = state.add_tasklet("scale", {"x"}, {"y"}, "y = x * 2.0")
+    state.add_memlet_path(state.add_read("A"), entry, scale, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(scale, exit_, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+
+    sdfg.fill_scope_connectors()
+    sdfg.validate()
+    return sdfg
+
+
+N = dace.symbol("N")
+
+
+@dace.program
+def laplace_program(A: dace.float64[N], T: dace.int64):
+    tmp = np.zeros_like(A)
+    for _ in range(T):
+        for i in dace.map[1:N - 1]:
+            tmp[i] = A[i - 1] - 2 * A[i] + A[i + 1]
+        for i in dace.map[1:N - 1]:
+            A[i] = tmp[i - 1] - 2 * tmp[i] + tmp[i + 1]
+
+
+def test_a_never_written_input_is_not_copied_back_to_the_host():
+    """Only a container the run can have moved is brought back.
+
+    Copying a read-only input back writes bytes the host already holds, and that write is what a
+    nested SDFG's input-only connector refuses.
+    """
+    sdfg = read_only_input_sdfg()
+    OtA().apply_pass(sdfg, {})
+
+    states = list(sdfg.states())
+    assert any(writes_container(state, "B") for state in states), \
+        f"the written array was not copied back: {[state.label for state in states]}"
+    assert not any(writes_container(state, "A") for state in states), \
+        f"the read-only array was copied back: {[state.label for state in states]}"
+
+
+def test_a_map_over_a_read_only_container_survives_being_nested():
+    """``GPUTransformMap`` nests one map and offloads it, so each container reaches it one-way.
+
+    laplace is the shape that exposes it: one map reads ``A`` and writes ``tmp``, the next reads
+    ``tmp`` and writes ``A``, so whichever map is nested holds one container it never writes.
+    Copying that one back writes through a connector the nested SDFG only has as an input, which
+    validation refuses: "Data descriptor A is written to, but only given to nested SDFG as an
+    input connector".
+    """
+    sdfg = laplace_program.to_sdfg()
+    matches = list(Optimizer(sdfg).get_pattern_matches(patterns=[GPUTransformMap]))
+    assert matches, "no map to offload -- the fixture no longer exercises the transformation"
+
+    for match in matches:
+        candidate = deepcopy(sdfg)
+        cfg = candidate.cfg_list[match.cfg_id]
+        target = cfg.sdfg if not isinstance(cfg, dace.SDFG) else cfg
+        graph = cfg.node(match.state_id) if match.state_id >= 0 else cfg
+        match._sdfg = target
+        match.apply(graph, target)
+        candidate.validate()
 
 
 if __name__ == "__main__":

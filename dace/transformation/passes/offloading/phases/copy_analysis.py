@@ -57,8 +57,16 @@ class CopyAnalysisPhase():
 
         # finish graph: tie the final node together with the inital close node
         end.append_node(IR.close)
-        IR.close.gpu_set = initially_on_gpu
-        IR.close.cpu_set = initially_on_cpu  # arrays end up where they started
+        # Arrays end up where they started -- but only the ones the run can have moved. A container
+        # nothing writes holds the same bytes on the host after the run as before it, so bringing it
+        # back copies what the host already has. That copy is not merely wasted: it WRITES the
+        # container, which is invalid the moment this SDFG is nested and the container reaches it
+        # through an input connector only ("Data descriptor A is written to, but only given to
+        # nested SDFG as an input connector") -- the graph ``GPUTransformMap`` builds around a map
+        # that reads one array and writes another.
+        written = self.containers_written(sdfg)
+        IR.close.gpu_set = OrderedSet(name for name in initially_on_gpu if name in written)
+        IR.close.cpu_set = OrderedSet(name for name in initially_on_cpu if name in written)
 
         # Snapshot before propagation: afterwards a node holds names it never touched, and those
         # are exactly the ones the hoist is allowed to move.
@@ -68,6 +76,19 @@ class CopyAnalysisPhase():
 
         if self.verbose: print(f"Phase2: full IR \n{IR}\n\n")
         return IR
+
+    def containers_written(self, sdfg: SDFG) -> OrderedSet:
+        """Every container this SDFG writes, read off the graph rather than off the IR.
+
+        An incoming edge is the write, whichever node carries it: a tasklet, a map exit, or a nested
+        SDFG's output connector all reach the container the same way.
+        """
+        written: OrderedSet[str] = OrderedSet()
+        for state in sdfg.states():
+            for node in state.data_nodes():
+                if state.in_degree(node) > 0:
+                    written.add(node.data)
+        return written
 
     #############################
     ###       create IR       ###
