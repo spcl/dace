@@ -39,7 +39,7 @@ on any other carried writes to non-transient arrays.
 """
 import ast
 import copy
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import sympy
 
