@@ -123,7 +123,7 @@ from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopE
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 
-from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
@@ -320,7 +320,7 @@ def _inline_single_state(label: str) -> List[Tuple[str, ppl.Pass]]:
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
-    return [(label, PatternMatchAndApplyRepeated([PruneConnectors(), InlineSDFG()]))]
+    return [(label, PatternApplyOnceEverywhere([PruneConnectors(), InlineSDFG()]))]
 
 
 def _fold_scalar_slices(label: str) -> List[Tuple[str, ppl.Pass]]:
@@ -379,9 +379,9 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
     """
     s: List[Tuple[str, ppl.Pass]] = [('coalesce', CascadeInterstateEdgeAssignmentsUp()),
                                      ('coalesce', EmptyStateElimination()),
-                                     ('coalesce', PatternMatchAndApplyRepeated([TrivialMapElimination()])),
+                                     ('coalesce', PatternApplyOnceEverywhere([TrivialMapElimination()])),
                                      ('coalesce', EmptyLoopElimination()),
-                                     ('coalesce', PatternMatchAndApplyRepeated([MoveIfIntoMap()]))]
+                                     ('coalesce', PatternApplyOnceEverywhere([MoveIfIntoMap()]))]
     s += _inline_single_state('coalesce')
     s += _structural_cleanup('coalesce')
     # Direction before order: a reversed source loop reaches here as an ascending parameter over
@@ -389,10 +389,10 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
     # scores the accesses the emitted code will actually make.
     s += [('coalesce', ReverseMapTraversal())]
     s += [('coalesce', MinimizeStridePermutation())]
-    s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
-    s += [('coalesce', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap()]))]
+    s += [('coalesce', PatternApplyOnceEverywhere([MapCollapse()]))]
+    s += [('coalesce', PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
     s += [('coalesce', ppl.Pipeline([FuseMaps()]))]
-    s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
+    s += [('coalesce', PatternApplyOnceEverywhere([MapCollapse()]))]
     # 10. structural cleanup AGAIN -- map fusion rebuilds map bodies as fresh single-state
     #     NestedSDFGs, and an un-inlined body hides its precise per-element memlets behind a
     #     whole-array boundary memlet. Every downstream dependence test then reads the bounding
@@ -876,7 +876,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # frame code so it is visible in the IR, inherited by nested SDFGs through symbol_mapping,
     # and emitted by whatever already emits tasklets -- including the standalone CPF frame.
     s += [('prep', SupplyNumThreads())]
-    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prep', ConvertLengthOneArraysToScalars()),
+    s += [('prep', PatternApplyOnceEverywhere([MoveIfIntoMap()])), ('prep', ConvertLengthOneArraysToScalars()),
           ('prep', ForwardStoreToLoad()), ('prep', SplitStatements())]
     # Distribute first: the split removes the anti-dependence where reader and writer separate.
     if break_anti_dependence:
@@ -886,14 +886,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # an explicit RMW while maps are still maps; what stays WCR is a genuine reduction
     # that MapToForLoop then refuses to lower (kept parallel -> OMP reduction), so the
     # in-state producer->consumer edge is never severed by the map->loop round-trip.
-    s += [('lower', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+    s += [('lower', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
     # lower: every map -> LoopRegion (MapToLoop = reuse MapToForLoop), then
     # structural cleanup (no SimplifyPass).
     lower_maps = MapToForLoop()
     lower_maps.keep_reductions_parallel = True  # canon preference, off in the transformation's default contract
-    s += [('lower', PatternMatchAndApplyRepeated([lower_maps]))]
+    s += [('lower', PatternApplyOnceEverywhere([lower_maps]))]
     # The pipeline's only ``InlineMultistateSDFG``: lowering mints the nestings here.
-    s += [('lower', PatternMatchAndApplyRepeated([PruneConnectors()]))]
+    s += [('lower', PatternApplyOnceEverywhere([PruneConnectors()]))]
     s += [('lower', InlineSDFGs())]
     s += _fold_scalar_slices('lower')
     s += _structural_cleanup('lower')
@@ -952,8 +952,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # AugAssignToWCR is intentionally NOT in this recipe: reductions are handled
     # via loop_to_reduce -> Reduce nodes, not WCR-on-Map. PrivatizeScalars is
     # adapted (_PrivatizeScalarsStage) so its analysis dependencies resolve.
-    s += [('reduce', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
-          ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()])), ('reduce', _PrivatizeScalarsStage()),
+    s += [('reduce', PatternApplyOnceEverywhere([TrivialTaskletElimination()])),
+          ('reduce', PatternApplyOnceEverywhere([WCRToAugAssign()])), ('reduce', _PrivatizeScalarsStage()),
           ('reduce', _PrivatizeArraysStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
     # UntileLoops (BEFORE ShortLoopUnroll): collapse manually-tiled two-level
     # nests (``for i in range(0, N, K): for ii in range(0, K): body[i+ii]`` or
@@ -1162,7 +1162,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # SDFGState)``. Leaving the scaffold in place through those stages silently
     # disabled them. Fission runs first because the fission stage needs the
     # uniform all-siblings-are-loops shape the scaffold provides.
-    s += [('untrivialize', PatternMatchAndApplyRepeated([TrivialLoopElimination()]))]
+    s += [('untrivialize', PatternApplyOnceEverywhere([TrivialLoopElimination()]))]
 
     # normalize: dropped from the pipeline. ``NormalizeLoopsAndMaps`` rewrites
     # ``for i in b:e:s`` into ``for j in 0:(e-b)//s:1`` with body
@@ -1278,7 +1278,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += _fold_scalar_slices('loop_to_x')
     if semantic_lifting and lift:
         s += [('loop_to_x', LoopToTranspose())]
-    s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', PatternMatchAndApplyRepeated([WCRToAugAssign()])),
+    s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', PatternApplyOnceEverywhere([WCRToAugAssign()])),
           ('loop_to_x', LoopToReduce()), ('loop_to_x', LiftPreprocess()),
           ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target)),
           ('loop_to_x', ArgMaxLift()), ('loop_to_x', LoopToConditionalReduce()),
@@ -1327,7 +1327,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # LoopToMap a DOALL loop. Must precede it -- afterwards there is no LoopRegion to peel.
     s += [('parallelize', DeadCarriedStoreElimination())]
     s += [('parallelize', PropagateMemlets())]
-    s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('parallelize', ParallelizeLoops(propagate=False))]
 
     # ``LoopToMap`` is where body NestedSDFGs are MINTED, and it derives their connector set from
     # the loop's read/write sets rather than from what the body still uses -- so a statement split
@@ -1336,14 +1336,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # the next pass to derive read sets from memlets builds a body SDFG without that descriptor and
     # dies looking the node up. ``PruneConnectors`` removes the connector, its outer memlets and the
     # orphaned descriptor; the earlier 'lower' instance runs long before these nodes exist.
-    s += [('parallelize', PatternMatchAndApplyRepeated([PruneConnectors()]))]
+    s += [('parallelize', PatternApplyOnceEverywhere([PruneConnectors()]))]
 
     # GPU: perfect MAP nests for the grid collapse, via the map-side PerfLoopNesting
     # (delegates to MapFission -- the safe, data-parallel distribution; map iterations carry no
     # dependences, so unlike the removed loop-side PerfectLoopNesting no grouping analysis can
     # silently split a recurrence). Runs after LoopToMap, once maps exist.
     if target == 'gpu':
-        s += [('parallelize', PatternMatchAndApplyRepeated([PerfLoopNesting()]))]
+        s += [('parallelize', PatternApplyOnceEverywhere([PerfLoopNesting()]))]
 
     # parallelize_guarded: loops that ``LoopToMap`` refused but would accept
     # permissively, where the blocker is an algebraic side condition (TSVC s171's
@@ -1383,7 +1383,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``AccumulatorCopyChainToWCR`` destroys the augassign shape ``LoopToReduce`` claims and
     # creates the WCR shape ``RetargetWCRAccumulator`` claims, so it sits strictly between
     # them and ``LoopToReduce`` must not run again after it.
-    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+    s += [('reduction_to_wcr_map', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
     # Re-use LoopToMap's dependence analysis to pin any top-level loop it refuses because of
     # a carried dependency; leave DOALL-eligible top-level loops untouched. Nesting alone pins
     # nothing: whether a reduction map inside a sequential loop earns its OpenMP region is a CPU
@@ -1394,7 +1394,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduction_to_wcr_map', RetargetWCRAccumulator())]
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('reduction_to_wcr_map', PropagateMemlets())]
-    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('reduction_to_wcr_map', ParallelizeLoops(propagate=False))]
     # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG
     # states whose intermediate transients share names across siblings --
     # scratch arrays as much as scalars. Renaming each scope's transient
@@ -1458,7 +1458,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         # which WCRToAugAssign must refuse (a scalar aug-assign tasklet over an array memlet would
         # codegen ``double* + double*``); only after LoopToMap splits the slice into a per-element
         # map body is the write scalar and the spurious WCR revertible (polybench seidel_2d).
-        s += [('loop_fuse', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+        s += [('loop_fuse', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
         # ...then tidy, because reverting the WCR is what makes the body inlinable at all: while the
         # RMW lives in the WCR, the body NestedSDFG's in/out connector for the destination has NO
         # read AccessNode inside, and ``InlineSDFG`` refuses a connector with no valid matching
@@ -1484,7 +1484,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('loop_fuse', WavefrontSkew(target=target))]
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('loop_fuse', PropagateMemlets())]
-    s += [('loop_fuse', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('loop_fuse', ParallelizeLoops(propagate=False))]
     s += _inline_single_state('loop_fuse')
 
     # lift_copy (cleaning, post-parallelize): now that loops are maps, extract pure
@@ -1556,7 +1556,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # maximal fission produced for differently-parallel statements (e.g. a
     # parallel ``map[i, j]`` beside a carried ``map i: { loop j }``) survives
     # the fuse stage instead of being re-merged into one mixed-parallelism map.
-    s += [('collapse', PatternMatchAndApplyRepeated([MapCollapse()]))]
+    s += [('collapse', PatternApplyOnceEverywhere([MapCollapse()]))]
 
     # fuse: first recombine adjacent identical-condition ConditionalBlocks
     # (ConditionFusion -- the inverse of branch-replicated fission, so maps
@@ -1567,11 +1567,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # branch's maps share a state, then vertical+horizontal map fusion in one
     # fixpoint (vertical priority; horizontal can expose further vertical
     # opportunities; no FindSingleUseData).
-    s += [('fuse', PatternMatchAndApplyRepeated([ConditionFusion()]))]
+    s += [('fuse', PatternApplyOnceEverywhere([ConditionFusion()]))]
     s += [('fuse', LiftTrivialIf())]
     s += _inline_single_state('fuse')
     s += _structural_cleanup('fuse')
-    s += [('fuse', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap()]))]
+    s += [('fuse', PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
     s += [('fuse', ppl.Pipeline([FuseMaps()]))]
 
     # A map that only fills a transient for an immediately following reduction is that reduction:
@@ -1581,7 +1581,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # that already IS the exposed parallelism -- with no buffer and no library node. Both guard on
     # the intermediate being a transient nothing else reads, which is what makes the producer safe
     # to delete. After MapFusion, so a producer built from several fused maps is matched whole.
-    s += [('fuse', PatternMatchAndApplyRepeated([MapReduceFusion(), MapWCRFusion()]))]
+    s += [('fuse', PatternApplyOnceEverywhere([MapReduceFusion(), MapWCRFusion()]))]
 
     # normalize_map_body (post-fuse): MapFusion co-locates independent guarded
     # computations under one map but leaves each as its own NestedSDFG
@@ -1593,7 +1593,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # merged guard can then hoist out of the map at the terminal hoist_guards
     # stage. Structural cleanup tidies the spliced states.
     s += [('fuse', NormalizeMapBody())]
-    s += [('fuse', PatternMatchAndApplyRepeated([ConditionFusion()]))]
+    s += [('fuse', PatternApplyOnceEverywhere([ConditionFusion()]))]
     s += _inline_single_state('fuse')
     s += _structural_cleanup('fuse')
 
@@ -1615,7 +1615,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # lifts -- this einsum lift and the lift_copy memset/memcpy above -- so the residual
     # stays as raw maps the vectorizer can lower (a library node is not vectorizable).
     if semantic_lifting and lift:
-        s += [('lift', PatternMatchAndApplyRepeated([LiftEinsum()]))]
+        s += [('lift', PatternApplyOnceEverywhere([LiftEinsum()]))]
 
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
     s += [('licm', LoopInvariantCodeMotion())]
@@ -1662,7 +1662,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # revert_nonreduction_wcr: WCRs that never became a genuine reduction (left in
     # sequential loops, or injective in-place updates) go back to explicit aug-assigns;
     # WCRToAugAssign's injectivity gate keeps real in-map reductions + scatters as WCR.
-    s += [('revert_nonreduction_wcr', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+    s += [('revert_nonreduction_wcr', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
 
     # relax_powers: freeze a provable non-negative integer ``base ** exp`` to the exact integer
     # ``ipow`` on the size / subscript / bound sites WHILE the loop-iterator ranges that prove the
@@ -1747,7 +1747,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('end', LiftLoopCarriedReduction())]
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('end', PropagateMemlets())]
-    s += [('end', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('end', ParallelizeLoops(propagate=False))]
     s += _inline_single_state('end')
 
     # Terminal fuse: the main ``fuse`` stage runs BEFORE ``normalize_wcr`` and the
@@ -1762,7 +1762,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Re-run vertical+horizontal fusion in final map form so every fuseable pair is
     # fused; the dependency guards still refuse the unsafe ones. The
     # following SymbolDedup cleans up the duplicate index symbols fusion introduces.
-    s += [('end', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap()]))]
+    s += [('end', PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
     s += [('end', ppl.Pipeline([FuseMaps()]))]
 
     # redundant_array (post-fuse cleanup): drop a transient that only ever gets copied wholesale into
@@ -1777,7 +1777,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # s212) is what that guard exists for and is deliberately NOT run here -- on the corpus it never
     # matched anyway, and refusing costs a warning. BEFORE the remat stage: deleting the buffer first
     # shortens the chains remat then walks.
-    s += [('end', PatternMatchAndApplyRepeated([RedundantArray()]))]
+    s += [('end', PatternApplyOnceEverywhere([RedundantArray()]))]
 
     # remat: vertical fusion pulls a consumer sub-expression UP into the producer, because the value it
     # is built from is a register there; when a THIRD map still consumes the result, fusion cannot delete
@@ -1831,7 +1831,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # so the map-exit WCR is a spurious atomic over a conflict-free store: WCRToAugAssign (expr 4)
     # drops it to a plain indexed write. The injectivity gate still keeps genuine reductions (a
     # real ``w[i] += ...`` k-reduction whose write does NOT vary with the map lane).
-    s += [('end', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+    s += [('end', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
 
     # cleanup (terminal): drop transients nothing names any more. The stages above delete a
     # temporary's last reader without deleting its descriptor, and ``ArrayElimination`` -- the only

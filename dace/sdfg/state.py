@@ -342,6 +342,14 @@ class BlockGraphView(object):
         pass
 
 
+#: Descriptor symbol memo, armed only for the span of ONE region-wide symbol walk. Access nodes
+#: share descriptors -- 686 nodes over 301 descriptors on npbench channel_flow -- so the same
+#: ``desc.used_symbols()`` is recomputed several times per walk. Sound because a walk only reads:
+#: nothing it does can change a descriptor, and every descriptor stays alive in ``sdfg.arrays`` for
+#: the duration, so the ``id`` keys cannot be recycled underneath it.
+_DESC_SYMBOLS_MEMO: Optional[Dict[Tuple[int, bool], Set[str]]] = None
+
+
 @make_properties
 class DataflowGraphView(BlockGraphView, abc.ABC):
 
@@ -719,7 +727,16 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 new_symbols |= n.new_symbol_names(self)
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
-                freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
+                desc = n.desc(sdfg)
+                if _DESC_SYMBOLS_MEMO is None:
+                    freesyms |= set(map(str, desc.used_symbols(all_symbols)))
+                else:
+                    key = (id(desc), all_symbols)
+                    cached = _DESC_SYMBOLS_MEMO.get(key)
+                    if cached is None:
+                        cached = set(map(str, desc.used_symbols(all_symbols)))
+                        _DESC_SYMBOLS_MEMO[key] = cached
+                    freesyms |= cached
             elif isinstance(n, nd.Tasklet):
                 if n.language == dtypes.Language.Python:
                     # Consider callbacks defined as symbols as free
@@ -3218,6 +3235,19 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
+        global _DESC_SYMBOLS_MEMO
+        armed_memo = _DESC_SYMBOLS_MEMO is None  # outermost walk owns it
+        if armed_memo:
+            _DESC_SYMBOLS_MEMO = {}
+        try:
+            return self._used_symbols_walk(all_symbols, defined_syms, free_syms, used_before_assignment,
+                                           keep_defined_in_mapping, with_contents)
+        finally:
+            if armed_memo:
+                _DESC_SYMBOLS_MEMO = None
+
+    def _used_symbols_walk(self, all_symbols, defined_syms, free_syms, used_before_assignment, keep_defined_in_mapping,
+                           with_contents) -> Tuple[Set[str], Set[str], Set[str]]:
         if with_contents:
             try:
                 ordered_blocks = self.bfs_nodes(self.start_block)
