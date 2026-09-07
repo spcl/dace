@@ -168,6 +168,16 @@ def _safe_sympify(expr) -> Optional[sympy.Expr]:
         return None
 
 
+def _memo_sympify(text: str, memo: Dict[str, Optional[sympy.Expr]]) -> Optional[sympy.Expr]:
+    """:func:`_safe_sympify` behind a string-keyed memo. Safe anywhere: the parse is a pure
+    function of the string."""
+    if text in memo:
+        return memo[text]
+    expr = _safe_sympify(text)
+    memo[text] = expr
+    return expr
+
+
 def _direct_symbols(expr: sympy.Expr) -> Set[str]:
     """Symbol names appearing OUTSIDE any gather Subscript in ``expr``. Math functions on iter-vars
     (``floor(i / 4)``, ``exp(i)``) still expose ``i`` as direct (iter-var in address arithmetic, no
@@ -263,11 +273,9 @@ def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = No
     return None
 
 
-def build_symbol_definition_map(
-    inner_sdfg: Optional[SDFG],
-    state=None,
-    scan_cache: Optional[Dict[int, Tuple[Dict[str, Set[str]], Dict[str, Set[sympy.Expr]], Set[str]]]] = None
-) -> Dict[str, sympy.Expr]:
+def build_symbol_definition_map(inner_sdfg: Optional[SDFG],
+                                state=None,
+                                scan_cache: Optional[Dict[int, Tuple]] = None) -> Dict[str, sympy.Expr]:
     """Map ``symbol_name -> defining sympy expression`` for symbols resolvable within ``inner_sdfg``
     (optionally reaching-def-disambiguated at ``state``).
 
@@ -294,15 +302,14 @@ def build_symbol_definition_map(
         return {}
 
     # Both raw scans below (source 1 = interstate-edge assignments, source 2 = single-tasklet scalar
-    # writes) are a function of ``inner_sdfg`` ALONE, never of ``state``: ``state`` is consulted only
-    # afterwards, to disambiguate a multiply-assigned symbol. A candidate-selection loop calls this
-    # once per innermost map with the SAME ``inner_sdfg``, so re-scanning the whole SDFG per map is
-    # O(maps^2). When a caller passes ``scan_cache`` -- a dict it keeps for the span of an UNMUTATED
-    # scan -- the raw scans are memoized by SDFG identity. Omitting it reproduces the original scan
-    # exactly (default None -> every caller unchanged).
+    # writes) are a function of ``inner_sdfg`` ALONE: ``state`` is consulted only afterwards, to
+    # disambiguate a multiply-assigned symbol. ``scan_cache`` -- a dict the caller keeps for the span
+    # of an UNMUTATED SDFG -- memoizes them by SDFG identity, together with every value DERIVED from
+    # them alone, so a hit re-parses nothing. Omitting it reproduces the original scan exactly.
     cache_key = id(inner_sdfg)
-    if scan_cache is not None and cache_key in scan_cache:
-        ise_rhs, scalar_defs, unreadable_writes = scan_cache[cache_key]
+    cached = scan_cache.get(cache_key) if scan_cache is not None else None
+    if cached is not None:
+        ise_rhs, scalar_defs, unreadable_writes, unique_ise_defs, sympify_memo, recurrence_syms = cached
     else:
         # --- source 1: interstate-edge symbol assignments ---
         ise_rhs: Dict[str, Set[str]] = {}
@@ -358,20 +365,53 @@ def build_symbol_definition_map(
                         rhs_expr = rhs_expr.xreplace(rename)
                     scalar_defs.setdefault(node.data, set()).add(rhs_expr)
 
+        # Uniquely-assigned symbol: the RHS is fixed, so its parse is state-free too.
+        sympify_memo: Dict[str, Optional[sympy.Expr]] = {}
+        unique_ise_defs: Dict[str, sympy.Expr] = {}
+        for k, rhs_set in ise_rhs.items():
+            if len(rhs_set) != 1:
+                continue
+            uexpr = _memo_sympify(next(iter(rhs_set)), sympify_memo)
+            if uexpr is not None:
+                unique_ise_defs[k] = uexpr
+
+        # A symbol whose own definition references itself (``j = j + 1``) is a loop-carried RECURRENCE:
+        # its value changes between program points. Such a loop is never a tiled parallel map (LoopToMap
+        # refuses recurrences) → access stays in scalar control flow, so leave the symbol UNRESOLVED,
+        # preserving the subset (``a[j]``) verbatim. Substituting would run ``resolve_index_expr``'s
+        # fixpoint to the cap (``j`` -> ``j + _max_depth``) and corrupt the subset (TSVC s123). The same
+        # instability propagates transitively: an index DEFINED from a recurrence symbol (``k = j + 1``,
+        # snapshotted at loop-top while ``j`` is bumped before the ``b[k]``/``c[k]`` use -- TSVC s128) is
+        # equally unstable, because the substituted ``j`` would read its post-update value at the use
+        # site. Collect every recurrence symbol from the raw assignment RHSs and drop both the
+        # self-referential defs AND any def whose RHS depends on one. (Tiled access carrying such an
+        # index is refused downstream by the tile-index builder, not rewritten -- see InsertTileLoadStore.)
+        recurrence_syms: Set[str] = set()
+        for sym, rhs_set in ise_rhs.items():
+            for rhs in rhs_set:
+                rexpr = _memo_sympify(rhs, sympify_memo)
+                if rexpr is not None and sym in {str(s) for s in rexpr.free_symbols}:
+                    recurrence_syms.add(sym)
+                    break
+        for name, rhs_set in scalar_defs.items():
+            if any(name in {str(s) for s in rhs.free_symbols} for rhs in rhs_set):
+                recurrence_syms.add(name)
+
         if scan_cache is not None:
-            scan_cache[cache_key] = (ise_rhs, scalar_defs, unreadable_writes)
+            scan_cache[cache_key] = (ise_rhs, scalar_defs, unreadable_writes, unique_ise_defs, sympify_memo,
+                                     recurrence_syms)
 
     defs: Dict[str, sympy.Expr] = {}
     for k, rhs_set in ise_rhs.items():
         if len(rhs_set) == 1:
-            chosen = next(iter(rhs_set))
+            expr = unique_ise_defs.get(k)
         elif state is not None:
             chosen = _reaching_ise_assignment(state, k, inner_sdfg)  # reaching def disambiguates
             if chosen is None:
                 continue
+            expr = _memo_sympify(chosen, sympify_memo)
         else:
             continue  # ambiguous, no state -> unresolved
-        expr = _safe_sympify(chosen)
         if expr is not None:
             defs[k] = expr
 
@@ -379,27 +419,6 @@ def build_symbol_definition_map(
         if name in defs or name in unreadable_writes or len(rhs_set) != 1:
             continue  # ISE def wins / partially-readable or ambiguous scalar def -> skip
         defs[name] = next(iter(rhs_set))
-    # A symbol whose own definition references itself (``j = j + 1``) is a loop-carried RECURRENCE:
-    # its value changes between program points. Such a loop is never a tiled parallel map (LoopToMap
-    # refuses recurrences) → access stays in scalar control flow, so leave the symbol UNRESOLVED,
-    # preserving the subset (``a[j]``) verbatim. Substituting would run ``resolve_index_expr``'s
-    # fixpoint to the cap (``j`` -> ``j + _max_depth``) and corrupt the subset (TSVC s123). The same
-    # instability propagates transitively: an index DEFINED from a recurrence symbol (``k = j + 1``,
-    # snapshotted at loop-top while ``j`` is bumped before the ``b[k]``/``c[k]`` use -- TSVC s128) is
-    # equally unstable, because the substituted ``j`` would read its post-update value at the use
-    # site. Collect every recurrence symbol from the raw assignment RHSs and drop both the
-    # self-referential defs AND any def whose RHS depends on one. (Tiled access carrying such an
-    # index is refused downstream by the tile-index builder, not rewritten -- see InsertTileLoadStore.)
-    recurrence_syms: Set[str] = set()
-    for sym, rhs_set in ise_rhs.items():
-        for rhs in rhs_set:
-            rexpr = _safe_sympify(rhs)
-            if rexpr is not None and sym in {str(s) for s in rexpr.free_symbols}:
-                recurrence_syms.add(sym)
-                break
-    for name, rhs_set in scalar_defs.items():
-        if any(name in {str(s) for s in rhs.free_symbols} for rhs in rhs_set):
-            recurrence_syms.add(name)
     # Taint every def transitively reaching a recurrence symbol, to a fixpoint. A def that
     # references a recurrence symbol is itself unstable (``LEN_1D_minus_k = LEN_1D - k``, ``k``
     # carried; ``k = j + 1``, ``j`` carried), and so is any def that references such a tainted mint
@@ -464,7 +483,7 @@ def resolve_index_expr(expr: sympy.Expr,
     return cur
 
 
-def _scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
+def _scalar_loaded_from_array(sdfg: SDFG, name: str, memo: Optional[Dict[str, bool]] = None) -> bool:
     """True if ``name`` is a transient Scalar whose value is loaded from a (non-Scalar) Array -- a
     gather-index scalar (``N__slice = Xiv[j]``, written by a memlet COPY). The frontend promotes such
     a scalar to a subset symbol (``__sym_N__slice = N__slice``); ``build_symbol_definition_map``
@@ -472,7 +491,22 @@ def _scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
     missed and the array name never surfaces. The scalar is state-local, so inlining it into a later
     state's subset references it out of scope (undeclared-identifier compile error) -- keep the
     promoted symbol instead.
+
+    :param memo: Optional ``{name: bool}`` memo for one UNMUTATED ``sdfg``; without it every free
+        symbol of every memlet bound pays a full SDFG scan.
     """
+    if memo is not None:
+        hit = memo.get(name)
+        if hit is not None:
+            return hit
+    result = _scan_scalar_loaded_from_array(sdfg, name)
+    if memo is not None:
+        memo[name] = result
+    return result
+
+
+def _scan_scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
+    """Uncached body of :func:`_scalar_loaded_from_array`."""
     import dace.data as _dd
     desc = sdfg.arrays.get(name)
     if not (isinstance(desc, _dd.Scalar) and desc.transient):
@@ -498,7 +532,7 @@ def _scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
     return False
 
 
-def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
+def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG, memo: Optional[Dict[str, bool]] = None) -> bool:
     """True if ``expr`` is a data-dependent index -- reads an array value (a gather like ``idx[i]``),
     so must NOT be inlined into a memlet subset (stays gather form for the gather machinery).
 
@@ -506,6 +540,9 @@ def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
     non-Scalar :class:`~dace.data.Array` descriptor (resolver rewrites a gather scalar's defining
     tasklet to read the source array name, so ``idx`` shows up as a free symbol), or a transient
     Scalar loaded from an Array (a copy-defined gather-index scalar the tasklet-only rewrite misses).
+
+    :param memo: Optional gather-scalar memo for ``sdfg``, forwarded to
+        :func:`_scalar_loaded_from_array` (see its contract).
     """
     if expr is None:
         return False
@@ -519,12 +556,16 @@ def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG) -> bool:
         desc = sdfg.arrays.get(str(s))
         if isinstance(desc, _dd.Array) and not isinstance(desc, _dd.Scalar):
             return True
-        if _scalar_loaded_from_array(sdfg, str(s)):  # gather-index scalar (copy-defined)
+        if _scalar_loaded_from_array(sdfg, str(s), memo):  # gather-index scalar (copy-defined)
             return True
     return False
 
 
-def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
+def propagate_subset(subset,
+                     inner_sdfg: Optional[SDFG],
+                     state=None,
+                     defs: Optional[Dict[str, sympy.Expr]] = None,
+                     data_dep_memo: Optional[Dict[str, bool]] = None):
     """Rewrite a memlet ``subset`` by inlining promoted index symbols back to their original
     arithmetic (``A[__sym]`` / ``A[i_plus_offset]`` -> ``A[i+offset]``) so access is direct, widens
     to a dense load.
@@ -537,13 +578,23 @@ def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
     :param subset: The memlet :class:`~dace.subsets.Range` to rewrite.
     :param inner_sdfg: Body SDFG carrying the symbol/scalar definitions.
     :param state: Access state for reaching-def disambiguation.
+    :param defs: The ``build_symbol_definition_map(inner_sdfg, state)`` result, when the caller
+                 already holds it. A caller rewriting every subset of a state builds it once and
+                 passes it here rather than paying for a whole-SDFG scan per subset; the map is a
+                 function of ``(inner_sdfg, state)`` only, and a subset rewrite does not change it.
+                 ``None`` builds it here, as before.
+    :param data_dep_memo: Gather-scalar memo for ``inner_sdfg`` (see
+        :func:`_scalar_loaded_from_array`); ``None`` scopes a fresh one to this subset.
     :returns: A new :class:`~dace.subsets.Range` if anything changed, else ``None``.
     """
     if inner_sdfg is None or not isinstance(subset, Range):
         return None
-    defs = build_symbol_definition_map(inner_sdfg, state)
+    if defs is None:
+        defs = build_symbol_definition_map(inner_sdfg, state)
     if not defs:
         return None
+    if data_dep_memo is None:
+        data_dep_memo = {}
 
     def _rewrite(bound):
         e = _safe_sympify(bound)
@@ -552,7 +603,7 @@ def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
         resolved = resolve_index_expr(e, inner_sdfg, _defs=defs)
         if resolved == e:
             return bound, False
-        if expr_is_data_dependent(resolved, inner_sdfg):
+        if expr_is_data_dependent(resolved, inner_sdfg, data_dep_memo):
             return bound, False  # gather index -> keep
         return resolved, True
 

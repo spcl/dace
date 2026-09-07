@@ -92,11 +92,12 @@ def scope_edge_is_walkable(state: SDFGState, sdfg, e) -> bool:
     # Ordering (empty) edge: ``memlet_path`` hands it back untouched.
     if e.src_conn is None and e.dst_conn is None and (e.data is None or e.data.is_empty()):
         return True
-    # Explicit GPU stream out-connector: also handed back untouched.
-    dst_desc = sdfg.arrays.get(e.dst.data) if isinstance(e.dst, nodes.AccessNode) else None
-    if (isinstance(e.src, nodes.MapExit) and e.src.map.schedule == dtypes.ScheduleType.GPU_Device
-            and dst_desc is not None and dst_desc.dtype == dtypes.gpuStream_t):
-        return True
+    # Explicit GPU stream out-connector: also handed back untouched. The descriptor lookup is
+    # behind the MapExit test, which refuses almost every edge without touching ``sdfg.arrays``.
+    if isinstance(e.src, nodes.MapExit) and e.src.map.schedule == dtypes.ScheduleType.GPU_Device:
+        dst_desc = sdfg.arrays.get(e.dst.data) if isinstance(e.dst, nodes.AccessNode) else None
+        if dst_desc is not None and dst_desc.dtype == dtypes.gpuStream_t:
+            return True
     if src_is_scope:
         if e.src_conn is None or not e.src_conn.startswith('OUT_'):
             return False
@@ -130,11 +131,16 @@ def is_fusible_state_shape(state: SDFGState, sdfg) -> bool:
         state.scope_children()
     except (ValueError, RuntimeError):
         return False  # ``scope_children`` is itself the scope validator (cycles, dangling scopes).
+    arrays = sdfg.arrays  # Hoisted: property lookup, was re-read per edge.
+    scope_types = (nodes.EntryNode, nodes.ExitNode)
     for e in state.edges():
-        if e.data is not None and e.data.data is not None and e.data.data not in sdfg.arrays:
+        if e.data is not None and e.data.data is not None and e.data.data not in arrays:
             return False
-        if not scope_edge_is_walkable(state, sdfg, e):
-            return False
+        # ``scope_edge_is_walkable`` waves through any edge with no scope endpoint; asking here
+        # keeps the call off the (large) majority of edges. Same verdict, one test instead of a call.
+        if isinstance(e.src, scope_types) or isinstance(e.dst, scope_types):
+            if not scope_edge_is_walkable(state, sdfg, e):
+                return False
     return True
 
 

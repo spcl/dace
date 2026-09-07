@@ -503,7 +503,10 @@ class ArgMaxLift(ppl.Pass):
                 # LoopRegion from its parent.
                 if region.parent_graph is None or region not in region.parent_graph.nodes():
                     continue
-                m = self._match(region, sd)
+                # Both matchers gate on this skeleton, whose break check walks the whole body.
+                # Neither of them rewrites, so one computation serves both.
+                skeleton = self.guarded_loop_skeleton(region)
+                m = self._match(region, sd, skeleton) if skeleton is not None else None
                 if m is not None:
                     self._rewrite(m, sd)
                     rewritten += 1
@@ -515,7 +518,7 @@ class ArgMaxLift(ppl.Pass):
                     rewritten += 1
                     continue
                 # Predicate-index, no value carrier (TSVC s331).
-                mp = self.match_predicate_index(region, sd)
+                mp = self.match_predicate_index(region, sd, skeleton) if skeleton is not None else None
                 if mp is not None:
                     self.rewrite_predicate_index(mp, sd)
                     rewritten += 1
@@ -585,8 +588,8 @@ class ArgMaxLift(ppl.Pass):
         guard, true_branch = non_else[0]
         return start, end, cond_block, guard, true_branch
 
-    def _match(self, loop: LoopRegion, sdfg: SDFG) -> Optional[_Match]:
-        skeleton = self.guarded_loop_skeleton(loop)
+    def _match(self, loop: LoopRegion, sdfg: SDFG, skeleton=None) -> Optional[_Match]:
+        skeleton = skeleton if skeleton is not None else self.guarded_loop_skeleton(loop)
         if skeleton is None:
             return None
         start, end, cond_block, cond_codeblock, true_branch = skeleton
@@ -2029,7 +2032,7 @@ class ArgMaxLift(ppl.Pass):
 
     # ------------------- predicate index (TSVC s331) -------------------
 
-    def match_predicate_index(self, loop: LoopRegion, sdfg: SDFG) -> Optional[MatchPredIndex]:
+    def match_predicate_index(self, loop: LoopRegion, sdfg: SDFG, skeleton=None) -> Optional[MatchPredIndex]:
         """Match ``for i: if pred(a[i]): j = i`` -- a position tracked with NO value
         carrier, i.e. ``j = max{i : pred}`` seeded from the pre-loop value of ``j``.
 
@@ -2039,7 +2042,7 @@ class ArgMaxLift(ppl.Pass):
         (:meth:`guarded_loop_skeleton`); only the branch payload differs -- an index
         write with no value carrier, against a guard that names no carrier at all.
         """
-        skeleton = self.guarded_loop_skeleton(loop)
+        skeleton = skeleton if skeleton is not None else self.guarded_loop_skeleton(loop)
         if skeleton is None:
             return None
         start, end, _cond_block, cond_codeblock, true_branch = skeleton

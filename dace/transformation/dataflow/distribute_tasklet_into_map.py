@@ -66,12 +66,6 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
             return False
         if graph.in_degree(access) != 1 or graph.out_degree(access) != 1:
             return False
-        # Scope allocation is only sound if nothing outside this Map's scope names the buffer.
-        if any(node is not access and node.data == access.data for state in sdfg.states()
-               for node in state.data_nodes()):
-            return False
-        if any(access.data in edge.data.free_symbols for edge in sdfg.all_interstate_edges()):
-            return False
 
         consumer_edge = graph.out_edges(access)[0]
         if consumer_edge.dst_conn is None or not consumer_edge.dst_conn.startswith('IN_'):
@@ -84,10 +78,16 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
         if mfhelper.can_topologically_be_fused(first_map_entry, second_map_entry, graph, sdfg) is None:
             return False
         # That data path is also what keeps the dropped ordering edge satisfied after the move.
-        return mfhelper.is_node_reachable_from(graph=graph,
-                                               begin=self.first_map_exit,
-                                               end=second_map_entry,
-                                               ignore_empty_edges=True)
+        if not mfhelper.is_node_reachable_from(
+                graph=graph, begin=self.first_map_exit, end=second_map_entry, ignore_empty_edges=True):
+            return False
+
+        # Whole-SDFG walks last: the local refusals above reject nearly every candidate.
+        # Scope allocation is only sound if nothing outside this Map's scope names the buffer.
+        if any(node is not access and node.data == access.data for state in sdfg.states()
+               for node in state.data_nodes()):
+            return False
+        return not any(access.data in edge.data.free_symbols for edge in sdfg.all_interstate_edges())
 
     def apply(self, graph: Union[SDFGState, SDFG], sdfg: SDFG) -> None:
         tasklet, access, second_map_entry = self.tasklet, self.access, self.second_map_entry

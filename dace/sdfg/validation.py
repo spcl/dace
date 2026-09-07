@@ -5,7 +5,7 @@ import copy
 import os
 import re
 import warnings
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 from dace import dtypes, graphlib as nx, subsets, symbolic
@@ -98,7 +98,8 @@ def validate_control_flow_region(sdfg: 'SDFG',
         ##########################################
         # Edge
         # Check inter-state edge for undefined symbols
-        undef_syms = set(edge.data.free_symbols) - set(symbols.keys())
+        # free_symbols is already a fresh set; a keys view avoids copying the symbol table per edge.
+        undef_syms = edge.data.free_symbols - symbols.keys()
         if len(undef_syms) > 0:
             eid = region.edge_id(edge)
             raise InvalidSDFGInterstateEdgeError(
@@ -516,6 +517,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except Exception as ex:
             raise InvalidSDFGNodeError(f"Node validation failed: {ex}", sdfg, state_id, nid, cfg=cfg) from ex
 
+        # Hoisted: in_edges/out_edges allocate a fresh list, and nothing below mutates the graph.
+        in_edges = state.in_edges(node)
+        out_edges = state.out_edges(node)
+
         # Isolated nodes
         ########################################
         if state.in_degree(node) + state.out_degree(node) == 0:
@@ -598,7 +603,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             # Find uninitialized transients
             if node.data not in initialized_transients:
                 if isinstance(arr, dt.Reference):  # References are considered more conservatively
-                    if any(e.dst_conn == 'set' for e in state.in_edges(node)):
+                    if any(e.dst_conn == 'set' for e in in_edges):
                         initialized_transients.add(node.data)
                     else:
                         raise InvalidSDFGNodeError(
@@ -633,10 +638,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         nid,
                         cfg=cfg)
 
-                # Find writes to input-only arrays
-                only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
-                if (not arr.transient) and (not only_empty_inputs):
-                    if node_data not in nsdfg_node.out_connectors:
+                # Find writes to input-only arrays; the edge scan sits behind the cheap test.
+                if not arr.transient:
+                    only_empty_inputs = all(e.data.is_empty() for e in in_edges)
+                    if not only_empty_inputs and node_data not in nsdfg_node.out_connectors:
                         raise InvalidSDFGNodeError('Data descriptor %s is '
                                                    'written to, but only given to nested SDFG as an '
                                                    'input connector' % node.data,
@@ -655,12 +660,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Tasklet connector tests
         if not isinstance(node, (nd.NestedSDFG, nd.LibraryNode)):
             # Check for duplicate connector names (unless it's a nested SDFG)
-            if len(node.in_connectors.keys() & node.out_connectors.keys()) > 0:
-                dups = node.in_connectors.keys() & node.out_connectors.keys()
+            dups = node.in_connectors.keys() & node.out_connectors.keys()
+            if dups:
                 raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid, cfg=cfg)
 
             for conn in node.in_connectors.keys() | node.out_connectors.keys():
-                if conn in (sdfg.constants_prop.keys() | sdfg.symbols.keys() | sdfg.arrays.keys()):
+                # Not `in (a.keys() | ...)`: NestedDict.keys() expands Structure members every call.
+                # __contains__ walks dotted names too, so "P.x" still answers the same.
+                if conn in sdfg.constants_prop or conn in sdfg.symbols or conn in sdfg.arrays:
                     if not isinstance(node, nd.EntryNode):  # Special case for dynamic map inputs
                         raise InvalidSDFGNodeError(
                             "Connector name '%s' is already used as a symbol, constant, or array name" % conn,
@@ -669,13 +676,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                             nid,
                             cfg=cfg)
 
+        # Tallied once instead of per connector; connectorless edges land under None, never a name.
+        in_conn_edges = Counter(e.dst_conn for e in in_edges)
+        out_conn_edges = Counter(e.src_conn for e in out_edges)
+
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
-            incoming_edges = 0
-            for e in state.in_edges(node):
-                # Connector found
-                if e.dst_conn == conn:
-                    incoming_edges += 1
+            incoming_edges = in_conn_edges[conn]
 
             if incoming_edges == 0:
                 raise InvalidSDFGNodeError("Dangling in-connector %s" % conn, sdfg, state_id, nid, cfg=cfg)
@@ -692,11 +699,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Check for dangling connectors (outgoing)
         for conn in node.out_connectors:
-            outgoing_edges = 0
-            for e in state.out_edges(node):
-                # Connector found
-                if e.src_conn == conn:
-                    outgoing_edges += 1
+            outgoing_edges = out_conn_edges[conn]
 
             if outgoing_edges == 0:
                 raise InvalidSDFGNodeError("Dangling out-connector %s" % conn, sdfg, state_id, nid, cfg=cfg)
@@ -712,7 +715,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                            cfg=cfg)
 
         # Check for edges to nonexistent connectors
-        for e in state.in_edges(node):
+        for e in in_edges:
             if e.dst_conn is not None and e.dst_conn not in node.in_connectors:
                 raise InvalidSDFGNodeError(
                     ("Memlet %s leading to " + "nonexistent connector %s") % (str(e.data), e.dst_conn),
@@ -720,7 +723,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id,
                     nid,
                     cfg=cfg)
-        for e in state.out_edges(node):
+        for e in out_edges:
             if e.src_conn is not None and e.src_conn not in node.out_connectors:
                 raise InvalidSDFGNodeError(
                     ("Memlet %s coming from " + "nonexistent connector %s") % (str(e.data), e.src_conn),

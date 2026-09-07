@@ -1340,7 +1340,7 @@ def concurrent_subgraphs(graph):
         # fuse them
         to_delete = []
         for i, other in enumerate(subgraphs):
-            if len(other & seen) > 0:
+            if not other.isdisjoint(seen):
                 to_delete.append(i)
         if len(to_delete) == 0:
             # If there was no overlap, this is a concurrent subgraph
@@ -1376,7 +1376,8 @@ def separate_maps(state, dfg, schedule):
     from dace.sdfg.scope import StateSubgraphView
 
     sorted_nodes = list(dfs_topological_sort(dfg, dfg.source_nodes()[0]))
-    nodes_to_skip = [dfg.source_nodes()[0], dfg.sink_nodes()[0]]
+    # Membership only, never iterated.
+    nodes_to_skip = {dfg.source_nodes()[0], dfg.sink_nodes()[0]}
     result = []
 
     current = []
@@ -1387,11 +1388,11 @@ def separate_maps(state, dfg, schedule):
             if node.map.schedule == schedule:
                 result.append(StateSubgraphView(state, current))
                 result.append(state.scope_subgraph(node))
-                nodes_to_skip += result[-1].nodes()
+                nodes_to_skip.update(result[-1].nodes())
                 current = []
             else:
                 temp_nodes = state.scope_subgraph(node).nodes()
-                nodes_to_skip += temp_nodes
+                nodes_to_skip.update(temp_nodes)
                 current += temp_nodes
         else:
             current.append(node)
@@ -2307,7 +2308,7 @@ def get_control_flow_block_dominators(sdfg: SDFG,
         #   dominator of that loop or conditional.
         # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
-        for k, _ in idom.items():
+        for k in idom:
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
                 next_dom = idom[k.parent_graph]
                 while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
@@ -2363,7 +2364,7 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
-        for k, _ in ipostdom.items():
+        for k in ipostdom:
             if k.parent_graph is not sdfg and (k is sinks_per_cfg[k.parent_graph]
                                                or isinstance(k.parent_graph, ConditionalBlock)):
                 next_pdom = ipostdom[k.parent_graph]
@@ -2557,7 +2558,7 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
         written_symbols = set()
         for edge in cfg.all_interstate_edges():
             if edge.data is not None:
-                written_symbols = written_symbols.union(edge.data.assignments.keys())
+                written_symbols.update(edge.data.assignments.keys())
         return written_symbols
 
     offset_symbols = set()
@@ -2678,9 +2679,10 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[
     for state in sdfg.all_states():
         # Check dynamic inputs
         for e in state.edges():
-            if e not in state.edges():
-                continue
+            # Cheap filter first: the liveness check below rebuilds and scans the edge list.
             if e.data is None or e.data.data not in scalars:
+                continue
+            if e not in state.edges():
                 continue
 
             # Now we know we have an edge where memlet.data is one of the scalars. Each edge carries
@@ -2999,10 +3001,12 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
     # 1
     # Replace all code in tasklets and access nodes
     for g in sdfg.all_states():
+        # Once per state, not per match: the mutations below clear the scope-dict cache, and no
+        # lookup here is of a node they touch. Lazy, so a state with no match is never walked.
+        sdict = None
         for n in g.nodes():
             if isinstance(n, dace.nodes.Tasklet):
                 assert isinstance(g, dace.SDFGState)
-                sdict = g.scope_dict()
                 if tutil.tasklet_has_symbol(n, symbol_str):
                     # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
                     # Sanity check no tasklet should assign to a symbol
@@ -3013,6 +3017,8 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                     assert symbol_str != "False"
                     tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
                     n.add_in_connector(f"_in_{symbol_str}")
+                    if sdict is None:
+                        sdict = g.scope_dict()
                     access = g.add_access(scalar_name)
                     g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{scalar_name}[0]"))
                     # If parent scope is not None add a dependency edge to it

@@ -849,11 +849,14 @@ def analyze_happens_before_fusion(
 
     # An ordering edge must end up in front of the second Map's access, and a nested scope
     #  is ordered as a whole, i.e. after its exit resp. before its entry.
+    # Read once: nothing here mutates `state`, and `scope_dict()` copies the whole map per call.
+    scope = state.scope_dict()
+
     def order_source(node: nodes.Node) -> Optional[nodes.Node]:
         return safe_exit_node(state, node) if isinstance(node, nodes.EntryNode) else node
 
     def order_target(node: nodes.Node) -> Optional[nodes.Node]:
-        return state.scope_dict().get(node) if isinstance(node, nodes.ExitNode) else node
+        return scope.get(node) if isinstance(node, nodes.ExitNode) else node
 
     inner_pairs: List[Tuple[nodes.Node, nodes.Node]] = []
     # Read/read is not a hazard, the other three combinations are (WAW, RAW, WAR).
@@ -931,6 +934,7 @@ def can_topologically_be_fused(
     permissive: bool = False,
     only_inner_maps: bool = False,
     only_toplevel_maps: bool = False,
+    scope: Optional[Dict[nodes.Node, Optional[nodes.Node]]] = None,
 ) -> Optional[Dict[str, str]]:
     """Performs basic checks if the maps can be fused.
 
@@ -949,6 +953,9 @@ def can_topologically_be_fused(
     :param graph: The SDFGState in which the maps are located.
     :param sdfg: The SDFG itself.
     :param permissive: Currently unused.
+    :param scope: The caller's own `graph.scope_dict()`, to save recomputing it. Sound because the
+        caller takes it inside the same match probe and the graph is not mutated in between; pass
+        `None` to have it read here.
 
     :note: It is invalid to call this function after nodes have been removed from the SDFG.
     :note: `only_inner_maps` and `only_toplevel_maps` are mutually exclusive; the transformations
@@ -960,8 +967,17 @@ def can_topologically_be_fused(
     if first_map_entry.map.schedule != second_map_entry.map.schedule:
         return None
 
+    # Node-local refusals first: an incompatible iteration space rejects the overwhelming majority
+    #  of candidate pairs, and everything below it has to walk the state.
+    #  We check here if we can rename the Map parameter of the second Map such that they
+    #  match the one of the first Map.
+    param_repl = find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
+    if param_repl is None:
+        return None
+
     # Fusing is only possible if the two entries are in the same scope.
-    scope = graph.scope_dict()
+    if scope is None:
+        scope = graph.scope_dict()
     if scope[first_map_entry] != scope[second_map_entry]:
         return None
     elif only_inner_maps:
@@ -975,7 +991,4 @@ def can_topologically_be_fused(
     if not dynamic_map_ranges_agree(first_map_entry, second_map_entry, graph):
         return None
 
-    # We will now check if we can rename the Map parameter of the second Map such that they
-    #  match the one of the first Map.
-    param_repl = find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
     return param_repl

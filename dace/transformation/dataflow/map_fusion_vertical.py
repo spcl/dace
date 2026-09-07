@@ -345,20 +345,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if first_map_exit not in scope or second_map_entry not in scope or self.array not in scope:
             return False
         first_map_entry: nodes.MapEntry = scope[first_map_exit]
-        second_map_exit: Optional[nodes.MapExit] = mfhelper.safe_exit_node(graph, second_map_entry)
-        if not isinstance(first_map_entry, nodes.MapEntry) or second_map_exit is None:
-            return False
-
-        # The rewrite moves whole `IN_x`/`OUT_x` groups between the scope nodes, so a connector
-        #  without an edge (or a data edge without a connector) breaks it half way through.
-        if not all(
-                mfhelper.scope_connectors_are_sound(graph, scope_node)
-                for scope_node in (first_map_entry, first_map_exit, second_map_entry, second_map_exit)):
+        if not isinstance(first_map_entry, nodes.MapEntry):
             return False
 
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
-        #  or `None` if the maps can not be structurally fused.
+        #  or `None` if the maps can not be structurally fused. It comes before the scope walks
+        #  below because it refuses the majority of candidates; `scope` is this probe's own, so
+        #  it need not be read again.
         param_repl = mfhelper.can_topologically_be_fused(
             first_map_entry=first_map_entry,
             second_map_entry=second_map_entry,
@@ -366,8 +360,20 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             sdfg=sdfg,
             only_inner_maps=self.only_inner_maps,
             only_toplevel_maps=self.only_toplevel_maps,
+            scope=scope,
         )
         if param_repl is None:
+            return False
+
+        second_map_exit: Optional[nodes.MapExit] = mfhelper.safe_exit_node(graph, second_map_entry)
+        if second_map_exit is None:
+            return False
+
+        # The rewrite moves whole `IN_x`/`OUT_x` groups between the scope nodes, so a connector
+        #  without an edge (or a data edge without a connector) breaks it half way through.
+        if not all(
+                mfhelper.scope_connectors_are_sound(graph, scope_node)
+                for scope_node in (first_map_entry, first_map_exit, second_map_entry, second_map_exit)):
             return False
 
         # To ensures that the `{src,dst}_subset` are properly set, run initialization.

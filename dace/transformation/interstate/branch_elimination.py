@@ -268,6 +268,50 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         return False
 
+    def _symbols_required_as_symbols(self, sdfg: dace.SDFG, symbol_names) -> set:
+        """``_symbol_required_as_symbol`` for a whole name set, in ONE walk of the SDFG.
+
+        The single-name version scans every state edge, every MapEntry range, every descriptor
+        shape/stride and every LoopRegion statement per name. The scan does not depend on the
+        name, so it is done once and the names are looked up in the collected set. The walk stops
+        as soon as every requested name is accounted for, matching the early return of the
+        single-name version.
+        """
+        wanted = set(symbol_names)
+        found = set()
+        if not wanted:
+            return found
+
+        def _add(*exprs) -> bool:
+            for x in exprs:
+                if hasattr(x, "free_symbols"):
+                    found.update(wanted.intersection(str(s) for s in x.free_symbols))
+            return found == wanted
+
+        for state in sdfg.all_states():
+            for edge in state.edges():
+                if edge.data.data is not None:
+                    for (b, e, s) in edge.data.subset:
+                        if _add(b, e, s):
+                            return found
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.MapEntry):
+                    for (b, e, s) in node.map.range:
+                        if _add(b, e, s):
+                            return found
+        for arr in sdfg.arrays.values():
+            for dim, stride in zip(arr.shape, arr.strides):
+                if _add(dim, stride):
+                    return found
+        for lr in sdfg.all_control_flow_regions():
+            if isinstance(lr, LoopRegion):
+                for code in (lr.init_statement, lr.update_statement, lr.loop_condition):
+                    if code is not None:
+                        found.update(wanted.intersection(dace.symbolic.symbols_in_code(code.as_string)))
+                        if found == wanted:
+                            return found
+        return found
+
     def _symbol_required_as_symbol(self, sdfg: dace.SDFG, symbol_name: str) -> bool:
         """Whether ``symbol_name`` appears where code generation needs a
         compile-time symbol -- a memlet subset, a map range, an array
@@ -2133,10 +2177,8 @@ class BranchElimination(transformation.MultiStateTransformation):
                     # ``C[__sym_offset]``, materialised from the condition
                     # assignment) cannot become a runtime scalar; demoting it
                     # would drop its declaration and leave the index dangling.
-                    demotable = {
-                        k
-                        for k in src_edge.data.assignments if not self._symbol_required_as_symbol(graph.sdfg, k)
-                    }
+                    required = self._symbols_required_as_symbols(graph.sdfg, src_edge.data.assignments.keys())
+                    demotable = {k for k in src_edge.data.assignments if k not in required}
                     for k in demotable:
                         sdutil.demote_symbol_to_scalar(graph.sdfg, k)
                     for k in demotable:

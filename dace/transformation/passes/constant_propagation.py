@@ -177,27 +177,31 @@ class ConstantPropagation(ppl.Pass):
             # Gather initial propagated symbols
             result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
 
-            # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
-            sdfg.replace_dict({
-                k: v
-                for k, v in result.items() if k in desc_symbols
-            },
-                              replace_in_graph=False,
-                              replace_keys=False)
+            # Cheap refusal first: with nothing propagated, every step below is a no-op on an empty
+            # dict, but each still pays a full SDFG walk -- and ``SDFG.replace_dict`` has no empty
+            # early return, so it re-normalizes every descriptor property for no replacement.
+            if result:
+                # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
+                sdfg.replace_dict({
+                    k: v
+                    for k, v in result.items() if k in desc_symbols
+                },
+                                  replace_in_graph=False,
+                                  replace_keys=False)
 
-            # Remove constant symbol assignments in interstate edges
-            for edge in sdfg.all_interstate_edges():
-                intersection = result & edge.data.assignments.keys()
-                for sym in intersection:
-                    del edge.data.assignments[sym]
+                # Remove constant symbol assignments in interstate edges
+                for edge in sdfg.all_interstate_edges():
+                    intersection = result & edge.data.assignments.keys()
+                    for sym in intersection:
+                        del edge.data.assignments[sym]
 
-            # If symbols are never unknown any longer, remove from SDFG
-            fsyms = sdfg.used_symbols(all_symbols=False)
-            result = {k: v for k, v in result.items() if k not in fsyms}
-            for sym in result:
-                if sym in sdfg.symbols:
-                    # Remove from symbol repository and nested SDFG symbol mapping
-                    sdfg.remove_symbol(sym)
+                # If symbols are never unknown any longer, remove from SDFG
+                fsyms = sdfg.used_symbols(all_symbols=False)
+                result = {k: v for k, v in result.items() if k not in fsyms}
+                for sym in result:
+                    if sym in sdfg.symbols:
+                        # Remove from symbol repository and nested SDFG symbol mapping
+                        sdfg.remove_symbol(sym)
 
         result = set(result.keys()) | specialized_scalars
 

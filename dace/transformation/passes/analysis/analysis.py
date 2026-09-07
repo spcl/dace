@@ -297,6 +297,50 @@ class AccessSets(ppl.Pass):
             readset |= (symbolic.free_symbols_and_functions(expr) | symbolic.arrays(expr)) & arrays
         return readset
 
+    def _state_sets(self, state: SDFGState) -> Tuple[OrderedSet[str], OrderedSet[str]]:
+        readset, writeset = OrderedSet(), OrderedSet()
+        for anode in state.data_nodes():
+            # Ordering edges transfer nothing: neither read nor written. Must match
+            # ``FindAccessNodes`` -- ``MarkConstInit`` bails on a disagreement.
+            if any(not e.data.is_empty() for e in state.in_edges(anode)):
+                writeset.add(anode.data)
+                if has_wcr_in_edge(state, anode):
+                    readset.add(anode.data)
+            if any(not e.data.is_empty() for e in state.out_edges(anode)):
+                readset.add(anode.data)
+        return readset, writeset
+
+    def _collect_sets(
+        self, region: AbstractControlFlowRegion, arrays: OrderedSet[str],
+        result: Dict[ControlFlowBlock, Tuple[OrderedSet[str],
+                                             OrderedSet[str]]]) -> Tuple[OrderedSet[str], OrderedSet[str]]:
+        """Fill ``result`` for every block under ``region``; return ``region``'s own data-node sets.
+
+        Rolled up from the children rather than re-walking ``all_states()`` per level: that walk is
+        exactly the children's states in ``nodes()`` order, so same set, same order, one visit per
+        state instead of 1+D. A region's own extras land on the stored set only after the rollup.
+        """
+        raw_read, raw_write = OrderedSet(), OrderedSet()
+        for block in region.nodes():
+            if isinstance(block, SDFGState):
+                readset, writeset = self._state_sets(block)
+            elif isinstance(block, AbstractControlFlowRegion):
+                readset, writeset = self._collect_sets(block, arrays, result)
+            else:
+                readset, writeset = OrderedSet(), OrderedSet()
+            raw_read |= readset
+            raw_write |= writeset
+
+            if isinstance(block, LoopRegion):
+                readset |= self._get_loop_region_readset(block, arrays)
+            elif isinstance(block, ConditionalBlock):
+                for cond, _ in block.branches:
+                    if cond is not None:
+                        readset |= (symbolic.free_symbols_and_functions(cond.as_string)
+                                    | symbolic.arrays(cond.as_string)) & arrays
+            result[block] = (readset, writeset)
+        return raw_read, raw_write
+
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[OrderedSet[str], OrderedSet[str]]]:
         """
         :return: A dictionary mapping each control flow block to a tuple of its (read, written) data descriptors.
@@ -304,36 +348,11 @@ class AccessSets(ppl.Pass):
         result: Dict[ControlFlowBlock, Tuple[OrderedSet[str], OrderedSet[str]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             arrays: OrderedSet[str] = OrderedSet(sdfg.arrays.keys())
+            # Key order is load-bearing (it reaches ``ScalarFission`` through the shadow-scope
+            # passes) and the fill below is depth-first, so claim the keys in the old order first.
             for block in sdfg.all_control_flow_blocks():
-                readset, writeset = OrderedSet(), OrderedSet()
-                if isinstance(block, SDFGState):
-                    for anode in block.data_nodes():
-                        # Ordering edges transfer nothing: neither read nor written. Must match
-                        # ``FindAccessNodes`` -- ``MarkConstInit`` bails on a disagreement.
-                        if any(not e.data.is_empty() for e in block.in_edges(anode)):
-                            writeset.add(anode.data)
-                            if has_wcr_in_edge(block, anode):
-                                readset.add(anode.data)
-                        if any(not e.data.is_empty() for e in block.out_edges(anode)):
-                            readset.add(anode.data)
-                elif isinstance(block, AbstractControlFlowRegion):
-                    for state in block.all_states():
-                        for anode in state.data_nodes():
-                            if any(not e.data.is_empty() for e in state.in_edges(anode)):
-                                writeset.add(anode.data)
-                                if has_wcr_in_edge(state, anode):
-                                    readset.add(anode.data)
-                            if any(not e.data.is_empty() for e in state.out_edges(anode)):
-                                readset.add(anode.data)
-                    if isinstance(block, LoopRegion):
-                        readset |= self._get_loop_region_readset(block, arrays)
-                    elif isinstance(block, ConditionalBlock):
-                        for cond, _ in block.branches:
-                            if cond is not None:
-                                readset |= (symbolic.free_symbols_and_functions(cond.as_string)
-                                            | symbolic.arrays(cond.as_string)) & arrays
-
-                result[block] = (readset, writeset)
+                result[block] = (OrderedSet(), OrderedSet())
+            self._collect_sets(sdfg, arrays, result)
 
             # Edges that read from arrays add to both ends' access sets
             anames = sdfg.arrays.keys()
@@ -821,6 +840,29 @@ class ScalarWriteShadowScopes(ppl.Pass):
         """
         return list(sdfg.arrays.keys())
 
+    @staticmethod
+    def _reach_memo(state: SDFGState, desc: str, cache: Optional[Dict[Tuple[int, str], Dict[nd.AccessNode,
+                                                                                            Set[nd.Node]]]]) -> Dict:
+        """The descendant memo for the write nodes of ``desc`` in ``state``.
+
+        Safe: an analysis pass, and ``cache`` spans one SDFG of one ``apply_pass``, over which no
+        node or edge moves.
+        """
+        return {} if cache is None else cache.setdefault((id(state), desc), {})
+
+    @staticmethod
+    def _reaches(state: SDFGState, src: nd.Node, dst: nd.Node, memo: Dict) -> bool:
+        """``dst`` is reachable from ``src``, answered from ``memo`` and filled on demand.
+
+        One BFS per source instead of one per (source, target) pair. ``nx.descendants`` omits the
+        node itself, which is what ``has_path`` answered here anyway -- every call site compares two
+        DISTINCT nodes.
+        """
+        reach = memo.get(src)
+        if reach is None:
+            reach = memo[src] = nx.descendants(state._nx, src)
+        return dst in reach
+
     def _find_dominating_write(
         self,
         desc: str,
@@ -830,7 +872,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
         idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
         access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]],
         no_self_shadowing: bool = False,
-        must_write_cache: Optional[Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]]] = None
+        must_write_cache: Optional[Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]]] = None,
+        reach_cache: Optional[Dict[Tuple[int, str], Dict[nd.AccessNode, Set[nd.Node]]]] = None
     ) -> Optional[Tuple[SDFGState, nd.AccessNode]]:
         if isinstance(read, nd.AccessNode):
             state: SDFGState = block
@@ -842,10 +885,10 @@ class ScalarWriteShadowScopes(ppl.Pass):
             # Find a dominating write within the same state.
             # TODO: Can this be done more efficiently?
             closest_candidate = None
-            write_nodes = access_nodes[desc][state][1]
-            for cand in write_nodes:
-                if cand != read and nxsp.has_path(state._nx, cand, read):
-                    if closest_candidate is None or nxsp.has_path(state._nx, closest_candidate, cand):
+            memo = self._reach_memo(state, desc, reach_cache)
+            for cand in access_nodes[desc][state][1]:
+                if cand != read and self._reaches(state, cand, read, memo):
+                    if closest_candidate is None or self._reaches(state, closest_candidate, cand, memo):
                         closest_candidate = cand
             if closest_candidate is not None:
                 return (state, closest_candidate)
@@ -853,9 +896,9 @@ class ScalarWriteShadowScopes(ppl.Pass):
             # Attempt to find a shadowing write in the current state.
             # TODO: Can this be done more efficiently?
             closest_candidate = None
-            write_nodes = access_nodes[desc][block][1]
-            for cand in write_nodes:
-                if closest_candidate is None or nxsp.has_path(block._nx, closest_candidate, cand):
+            memo = self._reach_memo(block, desc, reach_cache)
+            for cand in access_nodes[desc][block][1]:
+                if closest_candidate is None or self._reaches(block, closest_candidate, cand, memo):
                     closest_candidate = cand
             if closest_candidate is not None:
                 return (block, closest_candidate)
@@ -887,11 +930,12 @@ class ScalarWriteShadowScopes(ppl.Pass):
         # Find a dominating write in the write state, i.e., the 'last' write to the data container.
         if write_state is not None:
             closest_candidate = None
+            memo = self._reach_memo(write_state, desc, reach_cache)
             for cand in access_nodes[desc][write_state][1]:
                 if write_state.out_degree(cand) == 0:
                     closest_candidate = cand
                     break
-                elif closest_candidate is None or nxsp.has_path(write_state._nx, closest_candidate, cand):
+                elif closest_candidate is None or self._reaches(write_state, closest_candidate, cand, memo):
                     closest_candidate = cand
             if closest_candidate is not None:
                 return (write_state, closest_candidate)
@@ -939,8 +983,24 @@ class ScalarWriteShadowScopes(ppl.Pass):
             # One memo per SDFG: ``must_write_state`` is asked the same (container, block) question
             # once per read on the idom chain, and its region case walks a whole subtree.
             must_write_cache: Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]] = {}
+            # Same span, same argument: nothing below mutates the graph.
+            reach_cache: Dict[Tuple[int, str], Dict[nd.AccessNode, Set[nd.Node]]] = {}
 
             anames = sdfg.arrays.keys()
+            # Interstate reads indexed by container in ONE walk of ``access_sets``, which spans the
+            # whole SDFG tree and was re-walked (and re-parsed) once per candidate. Appended in that
+            # same order, so each list is a subsequence of what the per-candidate scan visited.
+            iedge_reads: Dict[str, List[Tuple[ControlFlowBlock, Edge[InterstateEdge]]]] = defaultdict(list)
+            for block, accesses in access_sets.items():
+                # Foreign blocks are skipped: ``idom_dict`` covers only this SDFG, and a clone of it
+                # declares the same array names (see the ``desc_states_with_nodes`` note below).
+                if block.sdfg is not sdfg or not accesses[0]:
+                    continue
+                for oedge in block.parent_graph.out_edges(block):
+                    for name in oedge.data.free_symbols & anames:
+                        if name in accesses[0]:
+                            iedge_reads[name].append((block, oedge))
+
             for desc in self.shadow_candidates(sdfg):
                 # Restrict to states this SDFG owns. With cloned NestedSDFGs after loop
                 # fission, cfg_id collisions can make ``FindAccessNodes[sdfg.cfg_id]`` surface
@@ -964,29 +1024,20 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                                             access_nodes,
                                                             idom_dict,
                                                             access_sets,
-                                                            must_write_cache=must_write_cache)
+                                                            must_write_cache=must_write_cache,
+                                                            reach_cache=reach_cache)
                         result[desc][write].add((state, read_node))
-                # Ensure accesses to interstate edges are also considered. ``access_sets`` spans every
-                # SDFG, but ``idom_dict`` is built only for the current one; a foreign block whose SDFG
-                # happens to declare an identically-named array (e.g. two cloned NestedSDFGs after loop
-                # fission) would otherwise walk up into a region absent from ``idom_dict``. Restrict to
-                # blocks this SDFG owns.
-                for block, accesses in access_sets.items():
-                    if block.sdfg is not sdfg:
-                        continue
-                    if desc in accesses[0]:
-                        out_edges = block.parent_graph.out_edges(block)
-                        for oedge in out_edges:
-                            syms = oedge.data.free_symbols & anames
-                            if desc in syms:
-                                write = self._find_dominating_write(desc,
-                                                                    block,
-                                                                    oedge.data,
-                                                                    access_nodes,
-                                                                    idom_dict,
-                                                                    access_sets,
-                                                                    must_write_cache=must_write_cache)
-                                result[desc][write].add((block, oedge.data))
+                # Ensure accesses to interstate edges are also considered.
+                for block, oedge in iedge_reads.get(desc, ()):
+                    write = self._find_dominating_write(desc,
+                                                        block,
+                                                        oedge.data,
+                                                        access_nodes,
+                                                        idom_dict,
+                                                        access_sets,
+                                                        must_write_cache=must_write_cache,
+                                                        reach_cache=reach_cache)
+                    result[desc][write].add((block, oedge.data))
                 # Take care of any write nodes that have not been assigned to a scope yet, i.e., writes that are not
                 # dominating any reads and are thus not part of the results yet.
                 for state in desc_states_with_nodes:
@@ -999,7 +1050,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                                                 idom_dict,
                                                                 access_sets,
                                                                 no_self_shadowing=True,
-                                                                must_write_cache=must_write_cache)
+                                                                must_write_cache=must_write_cache,
+                                                                reach_cache=reach_cache)
                             result[desc][write].add((state, write_node))
 
                 # If any write A is dominated by another write B and any reads in B's scope are also reachable by A,
@@ -1137,6 +1189,9 @@ def fully_overwritten_arrays(sdfg: SDFG) -> Set[str]:
             continue
         candidates.add(name)
 
+    if not candidates:
+        return candidates  # nothing to disprove -- skip the scan
+
     for state in sdfg.all_states():
         for node in state.data_nodes():
             if node.data not in candidates:
@@ -1240,6 +1295,9 @@ class FindReferenceSources(ppl.Pass):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[str, OrderedSet[Memlet]] = defaultdict(OrderedSet)
             reference_descs = OrderedSet(k for k, v in sdfg.arrays.items() if isinstance(v, dt.Reference))
+            if not reference_descs:
+                top_result[sdfg.cfg_id] = result  # no Reference: every branch below is dead
+                continue
             for state in sdfg.states():
                 code_sources: Dict[str, OrderedSet[nd.CodeNode]] = defaultdict(OrderedSet)
                 for anode in state.data_nodes():

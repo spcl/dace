@@ -625,13 +625,15 @@ class UntileLoops(ppl.Pass):
         # inline_after step because they were Map-scoped at the time.
         # After all Maps are lifted they are no longer scoped, so a
         # fixpoint sweep flattens them.
+        # Carried over: nothing runs between one round's ``after`` and the next round's ``before``.
+        before = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
         for _ in range(16):
-            before = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
             applied += count_applied(PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {}))
             applied += count_applied(PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {}))
             after = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
             if after >= before:
                 break
+            before = after
         return applied
 
     def _loops_back_to_maps(self, sdfg: SDFG) -> int:

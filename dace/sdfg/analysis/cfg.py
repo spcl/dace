@@ -170,18 +170,25 @@ def all_dominators(cfg: ControlFlowRegion,
                    idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, OrderedSet]:
     """ Returns a mapping between each control flow block and all its dominators. """
     idom = idom or block_immediate_dominators(cfg)
-    # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
-    g = nx.DiGraph()
+    # The idoms are a forest, so a block's dominators are just its idom chain -- 7x cheaper than the
+    # transitive closure this used to build. Nearest-first is a STABLE order; the closure's was
+    # ``set`` order over block objects, i.e. addresses, so nothing may depend on it.
+    # Seeded with every block: a root is dominated by nothing, and an unreachable block is a root.
+    alldoms: Dict[ControlFlowBlock, OrderedSet] = {block: OrderedSet() for block in cfg.nodes()}
     for node, dom in idom.items():
         if node is dom:  # Skip root
             continue
-        g.add_edge(node, dom)
-    tc = nx.transitive_closure_dag(g)
-    # Seeded with every block, not just the start one: a root is dominated by nothing, and an
-    # unreachable block is a root, so both need an entry the transitive closure will never supply.
-    alldoms: Dict[ControlFlowBlock, OrderedSet] = {block: OrderedSet() for block in cfg.nodes()}
-    for node in tc:
-        alldoms[node] = OrderedSet(dst for _, dst in tc.out_edges(node))
+        doms = alldoms.setdefault(node, OrderedSet())
+        alldoms.setdefault(dom, OrderedSet())  # A dominator that is not itself a key still gets an entry
+        while True:
+            doms.add(dom)
+            nextdom = idom.get(dom, dom)  # Absent key = root, matching the closure's leaf
+            if nextdom is dom:  # Root reached
+                break
+            if nextdom in doms:
+                # utils.get_control_flow_block_dominators merges idom maps by hand and can cycle.
+                raise nx.NetworkXUnfeasible('Immediate dominator map contains a cycle')
+            dom = nextdom
 
     return alldoms
 
@@ -391,9 +398,10 @@ def branch_merges(
         common_frontier = OrderedSet()
         descendants_blacklist = OrderedSet()
         disjoint_edges = OrderedSet()
+        # Deferred: the blacklist is read only in the empty-frontier arm, which a diamond never
+        # enters. Expanding ``pending`` in edge order there gives the same content and order.
+        pending: List[gr.Edge[InterstateEdge]] = []
         for oedge in oedges:
-            branch_descendants = OrderedSet(cfg.dfs_edges(oedge.dst))
-            branch_descendants.add(oedge.dst)
             frontier = adf[oedge.dst]
             if not frontier:
                 # If no dominance frontier is found for this edge, there are two possible scenarios under which this
@@ -403,13 +411,22 @@ def branch_merges(
                 #    common frontier block.
                 # 2: The edge leads to a completely separate control flow path that does not reconnect to the branch
                 #    merge state and can not reach any of the other branch descendants.
+                for pending_edge in pending:
+                    descendants_blacklist.update(cfg.dfs_edges(pending_edge.dst))
+                    descendants_blacklist.add(pending_edge.dst)
+                pending.clear()
+                branch_descendants = OrderedSet(cfg.dfs_edges(oedge.dst))
+                branch_descendants.add(oedge.dst)
                 if not (branch_descendants & descendants_blacklist):
-                    disjoint_edges.add(oedge)
+                    disjoint_edges.add(oedge)  # Deliberately NOT blacklisted
                     continue
                 else:
                     frontier = OrderedSet((oedge.dst, ))
+                common_frontier |= frontier
+                descendants_blacklist.update(branch_descendants)
+                continue
             common_frontier |= frontier
-            descendants_blacklist.update(branch_descendants)
+            pending.append(oedge)
         if len(common_frontier) == 1:
             merge = next(iter(common_frontier))
             if block in alldoms[merge]:
@@ -420,10 +437,13 @@ def branch_merges(
     return result
 
 
-def block_parent_tree(cfg: ControlFlowRegion,
-                      loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
-                      idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-                      with_loops: bool = True) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+def block_parent_tree(
+        cfg: ControlFlowRegion,
+        loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+        idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+        with_loops: bool = True,
+        merges: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+        alldoms: Optional[Dict[ControlFlowBlock, OrderedSet]] = None) -> Dict[ControlFlowBlock, ControlFlowBlock]:
     """
     Computes an upward-pointing tree of each control flow block, pointing to the "parent block" it belongs to (in terms
     of structured control flow). More formally, each block is either mapped to its immediate dominator with out
@@ -434,12 +454,16 @@ def block_parent_tree(cfg: ControlFlowRegion,
     :param idom: An optional, pre-computed immediate dominator dictionary.
     :param with_loops: Respect loops in the parent computation, mapping blocks to a parent one block upwards of a loop
                        if the block occurs after a loop. Defaults to true.
+    :param merges: An optional, pre-computed branch merge dictionary (from ``branch_merges``).
+    :param alldoms: An optional, pre-computed full dominator dictionary (from ``all_dominators``).
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
     idom = idom or block_immediate_dominators(cfg)
-    merges = branch_merges(cfg, idom)
+    if merges is None:
+        merges = branch_merges(cfg, idom, alldoms)
     if with_loops:
-        alldoms = all_dominators(cfg, idom)
+        if alldoms is None:
+            alldoms = all_dominators(cfg, idom)
         loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
 
         # First, annotate loops
@@ -667,13 +691,12 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
     :param ignore_nonstate_blocks: If true, only produce basic blocks / SDFGStates. Defaults to False.
     :return: Generator that yields control flow blocks in execution-order.
     """
-    # Get parent states
+    # Get parent states. Computed once and handed down: block_parent_tree derives both internally.
     loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
     idom = block_immediate_dominators(cfg)
-    ptree = block_parent_tree(cfg, loopexits, idom=idom)
-
-    # Annotate branches
-    merges = branch_merges(cfg, idom)
+    alldoms = all_dominators(cfg, idom)
+    merges = branch_merges(cfg, idom, alldoms)
+    ptree = block_parent_tree(cfg, loopexits, idom=idom, merges=merges, alldoms=alldoms)
 
     for block in _blockorder_topological_sort(cfg, cfg.start_block, ptree, merges, loopexits=loopexits):
         if isinstance(block, ControlFlowRegion):

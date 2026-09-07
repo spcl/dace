@@ -219,8 +219,19 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Symbols
         outer_symbols = {str(k): v for k, v in sdfg.symbols.items()}
+        # `new_symbols` rebuilds the {name: dtype} environment over `sdfg.arrays` on every call,
+        # but the keys it returns depend only on the assignments. Build the environment once and
+        # pass it as `symbols` with a `None` SDFG, and skip edges that assign nothing.
+        symbol_types = None
         for ise in sdfg.all_interstate_edges():
-            outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
+            if not ise.data.assignments:
+                continue
+            if symbol_types is None:
+                symbol_types = dict(outer_symbols)
+                symbol_types.update({k: v.dtype for k, v in sdfg.arrays.items()})
+            defined = ise.data.new_symbols(None, symbol_types)
+            outer_symbols.update(defined)
+            symbol_types.update(defined)
 
         # Isolate the nested SDFG in a separate state.
         predecessor_state, nsdfg_state, successor_state = helpers.isolate_nested_sdfg(state=outer_state,

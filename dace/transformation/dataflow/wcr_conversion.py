@@ -65,7 +65,7 @@ def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
         outer = set()
         for name in syms:
             if name in mapping and mapping[name] is not None:
-                outer |= {str(s) for s in symbolic.pystr_to_symbolic(str(mapping[name])).free_symbols}
+                outer |= {str(s) for s in symbolic.pystr_to_symbolic(mapping[name]).free_symbols}
         syms |= outer
         cur = cur.parent_sdfg
     return syms
@@ -226,7 +226,7 @@ def nested_connector_subset(nsdfg_node: nodes.NestedSDFG, conn: str, writes: boo
                 acc = copy.deepcopy(sub) if acc is None else subsets.union(acc, sub)
     if acc is None:
         return None
-    acc.replace({k: symbolic.pystr_to_symbolic(str(v)) for k, v in nsdfg_node.symbol_mapping.items()})
+    acc.replace({k: symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()})
     if boundary_subset is not None and _same_extent(boundary_subset.size(), idesc.shape):
         acc.offset(boundary_subset, negative=False)
     return acc

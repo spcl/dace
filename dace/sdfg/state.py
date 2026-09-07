@@ -713,8 +713,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             if isinstance(n, nd.EntryNode):
                 new_symbols |= n.new_symbol_names(self)
             elif isinstance(n, nd.AccessNode):
-                # Add data descriptor symbols
-                freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
+                # Add data descriptor symbols. ``symbol.name`` is what ``str`` prints, without
+                # going through the sympy printer.
+                freesyms |= {
+                    s.name if isinstance(s, sympy.Symbol) else str(s)
+                    for s in n.desc(sdfg).used_symbols(all_symbols)
+                }
             elif isinstance(n, nd.Tasklet):
                 if n.language == dtypes.Language.Python:
                     # Consider callbacks defined as symbols as free
@@ -865,8 +869,23 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
-        read_set, write_set = self._read_and_write_sets()
-        return set(read_set.keys()), set(write_set.keys())
+        # Names only: ``_read_and_write_sets`` builds a Range per edge and deep-copies it, and this
+        # kept only the keys. ``try_initialize`` stays -- callers have relied on that side effect.
+        for edge in self.edges():
+            edge.data.try_initialize(self.sdfg, self, edge)
+        read_set: Set[AnyStr] = set()
+        write_set: Set[AnyStr] = set()
+        for n in self.nodes():
+            if not isinstance(n, nd.AccessNode):
+                continue
+            if n.data in read_set and n.data in write_set:
+                continue
+            # Empty memlets are ordering edges: no data moves along them.
+            if any(not e.data.is_empty() for e in self.out_edges(n)):
+                read_set.add(n.data)
+            if any(not e.data.is_empty() for e in self.in_edges(n)):
+                write_set.add(n.data)
+        return read_set, write_set
 
     def unordered_arglist(self,
                           defined_syms=None,
@@ -1170,9 +1189,11 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         read_set = set()
         write_set = set()
+        # Hoisted: NestedDict.keys() expands Structure members, and was rebuilt per edge.
+        array_names = self.sdfg.arrays.keys() if self.sdfg is not None else frozenset()
         for block in self.nodes():
             for edge in self.in_edges(block):
-                read_set |= edge.data.free_symbols & self.sdfg.arrays.keys()
+                read_set |= edge.data.free_symbols & array_names
             rs, ws = block.read_and_write_sets()
             read_set.update(rs)
             write_set.update(ws)
@@ -3237,7 +3258,11 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                     # collect symbols representing data containers
                     dsyms = {sym for sym in efsyms if sym in self.sdfg.arrays}
                     for d in dsyms:
-                        efsyms |= {str(sym) for sym in self.sdfg.arrays[d].used_symbols(all_symbols)}
+                        # ``symbol.name`` is what ``str`` prints, without the sympy printer.
+                        efsyms |= {
+                            sym.name if isinstance(sym, sympy.Symbol) else str(sym)
+                            for sym in self.sdfg.arrays[d].used_symbols(all_symbols)
+                        }
                     defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                     used_before_assignment.update(efsyms - defined_syms)
                     free_syms |= efsyms

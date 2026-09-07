@@ -85,27 +85,35 @@ def _subsets_at_node(node: nodes.AccessNode, state: SDFGState):
             yield sub, is_write
 
 
-def _accesses_interfere_across_iterations(loop: LoopRegion, subset_a, subset_b) -> bool:
+def _loop_bounds(loop: LoopRegion):
+    """``(start, end, stride)`` of ``loop``; any ``None`` means it is unanalyzable."""
+    return (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
+            loop_analysis.get_loop_stride(loop))
+
+
+def _accesses_interfere_across_iterations(loop: LoopRegion, subset_a, subset_b, bounds=None) -> bool:
     """``True`` unless z3 proves the two loop-body subsets never alias across iterations.
 
     Conservative: any exception, missing bound, or inconclusive solver result is
     treated as a real dependence, so the caller keeps the two accesses in the same
     fission group.
+
+    ``bounds`` is :func:`_loop_bounds` of ``loop``, hoisted by a caller with many subset pairs.
     """
     if loop is None or not loop.loop_variable or not smt_dependence.has_z3():
-        return True
-    start = loop_analysis.get_init_assignment(loop)
-    end = loop_analysis.get_loop_end(loop)
-    step = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or step is None:
         return True
     nd_a = list(subset_a.ndrange())
     nd_b = list(subset_b.ndrange())
     if len(nd_a) != len(nd_b) or not nd_a:
+        return True  # cheap refusal first: nothing below can change it
+    start, end, step = _loop_bounds(loop) if bounds is None else bounds
+    if start is None or end is None or step is None:
         return True
     try:
-        box_a = [(symbolic.pystr_to_symbolic(str(rb)), symbolic.pystr_to_symbolic(str(re_))) for rb, re_, _ in nd_a]
-        box_b = [(symbolic.pystr_to_symbolic(str(rb)), symbolic.pystr_to_symbolic(str(re_))) for rb, re_, _ in nd_b]
+        # No ``str()`` round trip -- printing loses the typed-symbol metadata, and
+        # ``pystr_to_symbolic`` passes an existing expression straight through.
+        box_a = [(symbolic.pystr_to_symbolic(rb), symbolic.pystr_to_symbolic(re_)) for rb, re_, _ in nd_a]
+        box_b = [(symbolic.pystr_to_symbolic(rb), symbolic.pystr_to_symbolic(re_)) for rb, re_, _ in nd_b]
     except Exception:
         return True
     try:
@@ -345,6 +353,8 @@ def _independent_groups(state: SDFGState,
     :returns: A list of node lists, one per independent group, deterministic.
     """
     order = {n: i for i, n in enumerate(state.nodes())}
+    # Hoisted: fixed per loop, was re-parsed for every subset pair of the four-deep nest below.
+    loop_bounds = _loop_bounds(loop) if loop is not None and smt_dependence.has_z3() else None
     written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
     is_input = OrderedSet(n for n in state.nodes()
                           if isinstance(n, nodes.AccessNode) and state.in_degree(n) == 0 and n.data not in written)
@@ -415,7 +425,7 @@ def _independent_groups(state: SDFGState,
                 for sub1, is_w1 in subs1:
                     for sub2, is_w2 in subs2:
                         if is_w1 or is_w2:
-                            if _accesses_interfere_across_iterations(loop, sub1, sub2):
+                            if _accesses_interfere_across_iterations(loop, sub1, sub2, bounds=loop_bounds):
                                 dependent = True
                                 break
                     if dependent:

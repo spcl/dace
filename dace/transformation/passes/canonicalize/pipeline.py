@@ -44,7 +44,8 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.canonicalize.prune_unreferenced_transients import (PruneUnreferencedTransients)
 from dace.transformation.passes.canonicalize.redundant_ordering_edge_elimination import (
     RedundantOrderingEdgeElimination)
-from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
+from dace.transformation.passes.fusion_inline import (InlineControlFlowRegions, InlineSDFGs)
+from dace.transformation.passes.full_map_fusion import FullMapFusion
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -68,8 +69,6 @@ from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.distribute_tasklet_into_map import DistributeTaskletIntoMap
 from dace.transformation.dataflow.mapreduce import MapReduceFusion, MapWCRFusion
-from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
-from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.redundant_array import RedundantArray
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
@@ -131,7 +130,6 @@ from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvar
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.dataflow.prune_connectors import PruneConnectors
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
@@ -215,10 +213,89 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
-    return [(label, SymbolDedup()), (label, SymbolPropagation()), (label, ConstantPropagation()),
-            (label, RemoveUnusedSymbols()), (label, SymbolDedup()),
-            (label, PatternApplyOnceEverywhere([StateFusionExtended()])), (label, EmptyStateElimination()),
-            (label, DeadStateElimination()), (label, RedundantOrderingEdgeElimination())]
+    return [(label, StructuralCleanup())]
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class PropagateAndPrune(ppl.Pass):
+    """Fold symbols and constants, then drop the dataflow that folding made dead -- TWICE.
+
+    Two rounds, not a fixpoint. The prune is what exposes the second round's propagation, and a
+    fixpoint pays a third round that only confirms convergence: on the corpus the third round has
+    nothing to fold and nothing to drop, so it is three whole-SDFG walks for no rewrite.
+    """
+
+    CATEGORY: str = 'Canonicalization'
+
+    #: Rounds to run. Two is the measured requirement, not a guess.
+    ROUNDS: int = 2
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Everything
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return True
+
+    def depends_on(self):
+        return {}
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+        changed = 0
+        for _ in range(self.ROUNDS):
+            # A Pipeline per round, not bare passes: DeadDataflowElimination declares a
+            # ControlFlowBlockReachability dependency that only a Pipeline resolves.
+            round_pipeline = ppl.Pipeline([SymbolPropagation(), ConstantPropagation(), DeadDataflowElimination()])
+            if round_pipeline.apply_pass(sdfg, {}):
+                changed += 1
+        return changed or None
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class StructuralCleanup(ppl.Pass):
+    """The between-phase structural cleanup, as ONE unit.
+
+    One unit rather than nine so the pipeline can skip the whole block when nothing has touched the
+    graph since the last one -- the block is spliced in at 8 stage boundaries and on a settled graph
+    every member reports no change.
+    """
+
+    CATEGORY: str = 'Canonicalization'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Everything
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return True
+
+    def depends_on(self):
+        return {}
+
+    def units(self) -> List[ppl.Pass]:
+        """The block's members, in order. Symbols are folded before the state machine is rewritten,
+        and the fusion applies once everywhere rather than to a fixpoint: cheap per boundary, run
+        often, not converging at each of eight boundaries."""
+        fuse = PatternApplyOnceEverywhere([StateFusionExtended()])
+        fuse.progress = False
+        return [
+            SymbolDedup(),
+            SymbolPropagation(),
+            ConstantPropagation(),
+            RemoveUnusedSymbols(),
+            SymbolDedup(),
+            fuse,
+            EmptyStateElimination(),
+            DeadStateElimination(),
+            RedundantOrderingEdgeElimination(),
+        ]
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+        changed = 0
+        for unit in self.units():
+            if unit.apply_pass(sdfg, {}) is not None:
+                changed += 1
+        return changed or None
 
 
 def run_structural_cleanup(sdfg: SDFG) -> None:
@@ -232,8 +309,6 @@ def run_structural_cleanup(sdfg: SDFG) -> None:
     :param sdfg: The SDFG to clean up in place.
     """
     for _label, unit in _structural_cleanup('structural_cleanup'):
-        if isinstance(unit, PatternMatchAndApplyRepeated):
-            unit.progress = False
         unit.apply_pass(sdfg, {})
 
 
@@ -315,10 +390,8 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
     s += [('coalesce', ReverseMapTraversal())]
     s += [('coalesce', MinimizeStridePermutation())]
     s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
-    s += [('coalesce',
-           PatternMatchAndApplyRepeated([DistributeTaskletIntoMap(),
-                                         MapFusionVertical(),
-                                         MapFusionHorizontal()]))]
+    s += [('coalesce', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap()]))]
+    s += [('coalesce', ppl.Pipeline([FullMapFusion()]))]
     s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
     # 10. structural cleanup AGAIN -- map fusion rebuilds map bodies as fresh single-state
     #     NestedSDFGs, and an un-inlined body hides its precise per-element memlets behind a
@@ -666,8 +739,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # front so the canonicalized reference, every downstream tasklet split, and the
     # base codegen all carry Python/NumPy modulo semantics (cppunparse lowers a bare
     # ``%`` to C's dividend-sign ``%``, which miscompiles negative operands).
-    # StateFusionExtended runs as an early cleaning pass (after SimplifyPass's
-    # own non-extended StateFusion): merging adjacent states up front collapses
+    # SimplifyPass's own FuseStates does this: it drives StateFusionExtended (and BlockFusion)
+    # to a fixpoint, so no second fusion follows it. Merging adjacent states up front collapses
     # multi-state loop/branch bodies into the single-state shape the main
     # LoopFission path (and the reduction lifts) require, so a body that was
     # split across states becomes fissionable / liftable instead of being left
@@ -749,7 +822,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # genuine cast (differing dtypes) fails the pass's own equality check and is kept.
     s += [('clean', CollapseNoOpCast()), ('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()),
           ('clean', _uniq), ('clean', ContinueToCondition()), ('clean', EarlyExitToFindIndex()),
-          ('clean', SimplifyPass()), ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
+          ('clean', SimplifyPass())]
 
     # loop_to_syrk / loop_to_syr2k (semantic lift, gated like loop_to_symm): the
     # hand-written symmetric rank-k / rank-2k update nests (polybench syrk / syr2k) are
@@ -820,7 +893,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     lower_maps.keep_reductions_parallel = True  # canon preference, off in the transformation's default contract
     s += [('lower', PatternMatchAndApplyRepeated([lower_maps]))]
     # The pipeline's only ``InlineMultistateSDFG``: lowering mints the nestings here.
-    s += [('lower', PatternMatchAndApplyRepeated([PruneConnectors(), InlineMultistateSDFG(), InlineSDFG()]))]
+    s += [('lower', PatternMatchAndApplyRepeated([PruneConnectors()]))]
+    s += [('lower', InlineSDFGs())]
     s += _fold_scalar_slices('lower')
     s += _structural_cleanup('lower')
     # MapToForLoop leaves empty *_pre_state / *_post_state boundary states;
@@ -961,10 +1035,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # (``split_tasklets_test::test_add_missing_symbols_honors_integer_cast``).
     # This narrow cleanup (not a full ``SimplifyPass``) folds those expressions
     # and removes the now-dead dataflow.
-    s += [('index_subsets',
-           ppl.FixedPointPipeline([SymbolPropagation(),
-                                   ConstantPropagation(),
-                                   DeadDataflowElimination()]))]
+    s += [('index_subsets', PropagateAndPrune())]
 
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
@@ -1500,10 +1571,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('fuse', LiftTrivialIf())]
     s += _inline_single_state('fuse')
     s += _structural_cleanup('fuse')
-    s += [('fuse',
-           PatternMatchAndApplyRepeated([DistributeTaskletIntoMap(),
-                                         MapFusionVertical(),
-                                         MapFusionHorizontal()]))]
+    s += [('fuse', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap()]))]
+    s += [('fuse', ppl.Pipeline([FullMapFusion()]))]
 
     # A map that only fills a transient for an immediately following reduction is that reduction:
     # ``maxv = max(|a[i]|)`` reaches here as ``map -> _argf_buf[LEN_1D] -> Reduce``, so the
@@ -1693,9 +1762,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Re-run vertical+horizontal fusion in final map form so every fuseable pair is
     # fused; the dependency guards still refuse the unsafe ones. The
     # following SymbolDedup cleans up the duplicate index symbols fusion introduces.
-    s += [('end', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap(),
-                                                MapFusionVertical(),
-                                                MapFusionHorizontal()]))]
+    s += [('end', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap()]))]
+    s += [('end', ppl.Pipeline([FullMapFusion()]))]
 
     # redundant_array (post-fuse cleanup): drop a transient that only ever gets copied wholesale into
     # its destination, so the producing map writes the destination directly. No ``SimplifyPass`` runs
@@ -1828,9 +1896,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('end', AnnotateLoopKinds())]
 
     # Pipeline does not propagate `progress` to subpasses, so sweep once here instead of at each call site.
+    # ``validate`` too: 49 pattern units each validate the whole SDFG, which this pipeline's own
+    # ``validate`` / ``validate_all`` already covers.
     for _, unit in s:
         if isinstance(unit, PatternMatchAndApplyRepeated):
             unit.progress = False
+            unit.validate = False
     return s
 
 
@@ -1908,10 +1979,11 @@ class CanonicalizationPipeline(ppl.Pass):
     ``PatternMatchAndApplyRepeated`` across stages. Composites that need
     iteration iterate internally; the pipeline itself does not re-run.
 
-    :param validate: Validate the SDFG once at the end.
+    :param validate: Validate the SDFG once at the end. OFF by default -- validation is a whole-SDFG
+                     walk and a measurable share of the pipeline on a large graph.
     :param validate_all: Validate the SDFG after EVERY stage -- a debugging bisect aid, off by
-                         default (the final ``validate`` still catches an invalid result). Set True
-                         to pinpoint which stage produced an invalid SDFG.
+                         default. Set ``validate`` to check the result, and this as well to find
+                         WHICH stage broke it.
     :param unroll_limit: Fully unroll constant-trip loops with at most this many
                          iterations (0 disables).
     :param peel_limit: Best-effort loop peeling before parallelize (0 disables;
@@ -1950,14 +2022,20 @@ class CanonicalizationPipeline(ppl.Pass):
 
     CATEGORY: str = 'Canonicalization'
 
-    validate = properties.Property(dtype=bool, default=True, desc='Validate the SDFG at the end.')
+    validate = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Validate the SDFG once at the end. OFF by default, with validate_all: validation is a '
+        'whole-SDFG walk and it is a measurable share of the pipeline on a large graph. Turn validate on '
+        'to check the result, and validate_all as well to find WHICH stage broke it.')
     validate_all = properties.Property(
         dtype=bool,
-        default=True,
+        default=False,
         desc='Validate the SDFG after EVERY stage that reported a modification, which pinpoints the '
-        'stage that produced an invalid SDFG instead of only catching it at the end. Affordable by '
-        'default because it is scoped: a stage returning None is skipped, and a Pipeline validates '
-        'its own sub-passes rather than re-walking the whole SDFG here. Set False to skip it.')
+        'stage that produced an invalid SDFG instead of only catching it at the end. OFF by default: '
+        'it is one whole-SDFG walk per modifying stage, and the recipe has 235 of them, so on a large '
+        'graph it costs more than the passes it watches. Turn it on to bisect a stage that produced '
+        'an invalid SDFG; the end-of-pipeline ``validate`` still catches the break either way.')
     dump_dir = properties.Property(
         dtype=str,
         default=None,
@@ -2030,8 +2108,8 @@ class CanonicalizationPipeline(ppl.Pass):
         'False (set by the vectorizer) keeps the residual as raw maps it can lower.')
 
     def __init__(self,
-                 validate: bool = True,
-                 validate_all: bool = True,
+                 validate: bool = False,
+                 validate_all: bool = False,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                  peel_limit: Optional[int] = None,
                  break_anti_dependence: Optional[bool] = None,
@@ -2130,7 +2208,15 @@ class CanonicalizationPipeline(ppl.Pass):
         if self.dump_dir:
             os.makedirs(self.dump_dir, exist_ok=True)
             sdfg.save(os.path.join(self.dump_dir, '000_input.sdfgz'), compress=True)
+        # The cleanup block is spliced in at every stage boundary, and on a settled graph every
+        # member of it reports no change. Skip it unless a transformation has touched the graph
+        # since the last one; the graph starts dirty, and only NON-cleanup units re-dirty it, so a
+        # cleanup that tidies something does not thereby earn the next one.
+        dirty = True
         for index, (_label, unit) in enumerate(stages, start=1):
+            is_cleanup = isinstance(unit, StructuralCleanup)
+            if is_cleanup and not dirty:
+                continue
             _assert_self_contained(unit)
             # A Pipeline validates its own members when asked, so scope validation to the
             # sub-pass that actually changed something instead of re-walking the whole SDFG here.
@@ -2138,6 +2224,10 @@ class CanonicalizationPipeline(ppl.Pass):
             if self.validate_all and is_pipeline:
                 unit.validate_subpasses = True
             result = unit.apply_pass(sdfg, {})
+            if is_cleanup:
+                dirty = False
+            elif result is not None:
+                dirty = True
             # apply_pass returns non-None iff it modified the SDFG, so an unchanged SDFG needs no
             # re-validation -- that is what makes validate_all affordable by default.
             if self.validate_all and result is not None and not is_pipeline:
@@ -2153,8 +2243,8 @@ class CanonicalizationPipeline(ppl.Pass):
 
 
 def canonicalize(sdfg: SDFG,
-                 validate: bool = True,
-                 validate_all: bool = True,
+                 validate: bool = False,
+                 validate_all: bool = False,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                  peel_limit: Optional[int] = None,
                  break_anti_dependence: Optional[bool] = None,
@@ -2184,10 +2274,11 @@ def canonicalize(sdfg: SDFG,
     is where a map is made sequential again for its size or its nesting.
 
     :param sdfg: The SDFG to canonicalize.
-    :param validate: Validate the SDFG after canonicalization.
+    :param validate: Validate the SDFG after canonicalization. OFF by default -- validation is a
+                     whole-SDFG walk and a measurable share of the pipeline on a large graph.
     :param validate_all: Validate the SDFG after EVERY stage -- a debugging bisect aid, off by
-                         default (the final ``validate`` still catches an invalid result). Set True
-                         to pinpoint which stage produced an invalid SDFG.
+                         default. Set ``validate`` to check the result, and this as well to find
+                         WHICH stage broke it.
     :param unroll_limit: Unroll constant-trip loops <= this many iterations (0 disables).
     :param peel_limit: Best-effort loop peeling before parallelize; ``None``
                        (default) -> per-target preset (CPU=4, GPU=4).

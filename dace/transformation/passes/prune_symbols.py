@@ -109,11 +109,11 @@ class RemoveUnusedSymbols(ppl.Pass):
             result |= set(map(str, desc.free_symbols))
 
         for block in sdfg.all_control_flow_blocks():
-            result |= block.free_symbols
             # In addition to the standard free symbols, we are conservative with other tasklet languages by
             # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
             # ok to include
             if isinstance(block, SDFGState):
+                result |= block.free_symbols
                 for node in block.nodes():
                     if isinstance(node, nodes.Tasklet):
                         if node.code.language != dtypes.Language.Python:
@@ -129,6 +129,9 @@ class RemoveUnusedSymbols(ppl.Pass):
                             result |= symbolic.symbols_in_code(node.code_exit.as_string, sdfg.symbols.keys(),
                                                                node.ignored_symbols)
             else:
+                # A region's recursive free_symbols re-walks blocks this loop visits anyway, and its
+                # extra work -- subtracting symbols the region itself defines -- can only shrink a
+                # union every enclosed block already contributes to. Only its own meta symbols are new.
                 result |= block.used_symbols(all_symbols=True, with_contents=False)
 
         for e in sdfg.all_interstate_edges():

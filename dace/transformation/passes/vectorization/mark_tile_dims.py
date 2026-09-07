@@ -6,7 +6,7 @@ First per-map analysis step in the v2 orchestrator. Loud failure on any inner ma
 be K-dim tiled (step != 1, < K params, ...) so error points at the offending map, not a
 confusing downstream masked-tail failure.
 """
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties, symbolic
@@ -176,12 +176,14 @@ class MarkTileDims(ppl.Pass):
         :raises NotImplementedError: When an inner map is ineligible and ``skip_ineligible`` False.
         """
         specs: Dict[MapEntry, TileDimSpec] = {}
+        # Safe: this loop only classifies, so the gate's whole-SDFG scan is shared, not O(maps^2).
+        scan_cache: Dict[int, Any] = {}
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry):
                 continue
             if not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n, len(self.widths)):
+            if not is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache):
                 continue
             # GPU path: only tile maps running inside a GPU kernel (GPU_Device, or
             # nested under one). Host-map half2 __device__ tile ops won't compile.

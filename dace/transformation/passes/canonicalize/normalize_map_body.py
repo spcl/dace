@@ -16,6 +16,7 @@ target form is ``map_consists_of_single_nsdfg_or_no_nsdfg``: a map body is eithe
 all tasklets (no control flow, left untouched) or exactly one NestedSDFG.
 """
 import copy
+from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
 from dace import SDFG, data, nodes, properties
@@ -94,12 +95,15 @@ def shared_carrier_connectors(state: SDFGState, keep: nodes.NestedSDFG,
         return None
 
     forward: Dict[str, Tuple[str, nodes.AccessNode]] = {}
+    # One whole-SDFG count for all carriers, built on first need -- most edges never reach it.
+    elsewhere: Optional[Counter] = None
     for e in state.in_edges(drop):
         if e.data.data not in produced or not isinstance(e.src, nodes.AccessNode):
             continue
         carrier, name = e.src, e.data.data
-        elsewhere = sum(1 for st in state.sdfg.states() for n in st.data_nodes() if n.data == name)
-        if elsewhere != 1 or not state.sdfg.arrays[name].transient:
+        if elsewhere is None:
+            elsewhere = Counter(n.data for st in state.sdfg.states() for n in st.data_nodes())
+        if elsewhere[name] != 1 or not state.sdfg.arrays[name].transient:
             return None  # something else observes it: cannot be made internal
         if any(oe.dst is not drop for oe in state.out_edges(carrier)):
             return None

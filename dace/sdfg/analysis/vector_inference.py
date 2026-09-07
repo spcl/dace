@@ -116,6 +116,9 @@ class VectorInferenceGraph:
 
         self.flags = flags
 
+        # Walked three times below; the subgraph does not change between them.
+        self._topo_order = list(dfs_topological_sort(self.subgraph))
+
         self._build()
         self._detect_constraints()
 
@@ -288,7 +291,7 @@ class VectorInferenceGraph:
             Builds the vector inference graph.
         """
         # Create all necessary nodes
-        for node in dfs_topological_sort(self.subgraph):
+        for node in self._topo_order:
             if isinstance(node, nodes.Tasklet):
                 non_pointer_in_conns = [
                     conn for conn in node.in_connectors if not isinstance(self.inf[(node, conn, True)], dtypes.pointer)
@@ -332,7 +335,7 @@ class VectorInferenceGraph:
                 raise VectorInferenceException('Only Tasklets and AccessNodes are supported')
 
         # Create edges based on connectors
-        for node in dfs_topological_sort(self.subgraph):
+        for node in self._topo_order:
             if isinstance(node, nodes.Tasklet):
                 for e in self.state.in_edges(node):
                     if isinstance(e.src, nodes.Tasklet):
@@ -401,7 +404,7 @@ class VectorInferenceGraph:
             * Reads/writes containing the loop param are Vectors
             * Reads/writes from/to an Array access node without loop param is always a Scalar
         """
-        for node in dfs_topological_sort(self.subgraph):
+        for node in self._topo_order:
             if isinstance(node, nodes.Tasklet):
                 for edge in self.state.in_edges(node):
                     if self._carries_vector_data(edge):

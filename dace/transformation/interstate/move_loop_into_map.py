@@ -351,8 +351,19 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         # that are now defined only in the nested SDFG in memlets.
         propagation.propagate_memlets_scope(sdfg, body, scope_tree)
 
+        # ``is_symbol_unused`` walks every descriptor, every state and every interstate edge PER
+        # symbol. It never reads ``sdfg.symbols``, and ``remove_symbol`` touches only that (plus the
+        # PARENT nested-SDFG node's symbol_mapping, which lives outside ``sdfg``), so one union of
+        # the used names answers all of them.
+        used_symbols = set()
+        for desc in sdfg.arrays.values():
+            used_symbols.update(str(s) for s in desc.free_symbols)
+        for state in sdfg.states():
+            used_symbols.update(state.free_symbols)
+        for e in sdfg.all_interstate_edges():
+            used_symbols.update(e.data.free_symbols)
         for s in to_delete:
-            if helpers.is_symbol_unused(sdfg, s):
+            if s not in used_symbols:
                 sdfg.remove_symbol(s)
 
         sdfg.reset_cfg_list()

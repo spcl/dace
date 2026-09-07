@@ -454,10 +454,12 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     def __init__(self, graph: Graph[NodeT, EdgeT], subgraph_nodes: Sequence[NodeT]):
         super().__init__()
         self._graph = graph
-        # Is there an inherent reason why the nodes are in the same relative order than
-        #  in their source graph. If there is no reason we can even drop the `sorted()`
-        #  and store them in a `set`. Note as of Pathon 3.6, `dict` is ordered.
-        self._subgraph_nodes = {n: None for n in sorted(subgraph_nodes, key=lambda n: graph.node_id(n))}
+        # Source-graph order, which `node_id()` below reports, without a `node_id()` scan per node.
+        wanted = set(subgraph_nodes)
+        self._subgraph_nodes = {n: None for n in graph.nodes() if n in wanted}
+        if len(self._subgraph_nodes) != len(wanted):
+            # A foreign node must still raise, not be silently filtered out.
+            raise NodeNotFoundError(next(iter(wanted - self._subgraph_nodes.keys())))
 
     def nodes(self) -> List[NodeT]:
         # TODO: The `Graph` interface defines that `nodes()` returns an `Iterable`, but here
@@ -778,7 +780,10 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     def edges_between(self, source: NodeT, destination: NodeT) -> List[Edge[EdgeT]]:
         if (source, destination) in self._edges:
             return [self._edges[(source, destination)]]
-        if source not in self.nodes(): return []
+        # ``self._nodes``, not ``self.nodes()``: the latter builds a list of every node and scans it,
+        # and a multigraph never hits the fast path above, so every call paid that. Same verdict --
+        # an absent source still returns ``[]`` rather than raising out of ``out_edges``.
+        if source not in self._nodes: return []
         return [e for e in self.out_edges(source) if e.dst == destination]
 
     def reverse(self):

@@ -106,6 +106,19 @@ class ReferenceToView(ppl.Pass):
         if not result:  # Early return
             return result
 
+        # Safe: ``find_candidates`` only removes from ``result``, so the graph the helper walks is
+        # unchanged for the whole span. Worth memoizing because it enumerates SIMPLE PATHS between
+        # the two blocks -- exponential -- and the same pair recurs across candidates.
+        modified_between: Dict[Tuple[int, int], Set[str]] = {}
+
+        def modified_syms(src, dst) -> Set[str]:
+            key = (id(src), id(dst))
+            syms = modified_between.get(key)
+            if syms is None:
+                syms = modified_symbols_between(src, dst)
+                modified_between[key] = syms
+            return syms
+
         # If memlet does not depend on any symbol, it can be kept. Otherwise,
         # it may depend on a (free) symbol. There are multiple options:
         #   * If dependent on scope symbol (e.g., map parameter) - remove from candidates
@@ -133,7 +146,7 @@ class ReferenceToView(ppl.Pass):
                 for other_state in access_states[cand]:
                     if other_state is state:
                         continue
-                    if fsyms & modified_symbols_between(state, other_state):
+                    if fsyms & modified_syms(state, other_state):
                         result.remove(cand)
                         break
 

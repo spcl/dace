@@ -170,23 +170,17 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         if scope[first_map_entry] != scope[second_map_entry]:
             return False
 
-        first_map_exit = mfhelper.safe_exit_node(graph, first_map_entry)
-        second_map_exit = mfhelper.safe_exit_node(graph, second_map_entry)
-        if first_map_exit is None or second_map_exit is None:
-            return False
-
         # Test if they have they share a node as direct ancestor.
         if self.only_if_common_ancestor:
             first_ancestors: Set[nodes.Node] = {e1.src for e1 in graph.in_edges(first_map_entry)}
             if not any(e2.src in first_ancestors for e2 in graph.in_edges(second_map_entry)):
                 return False
 
-        # We will now check if the two maps are parallel.
-        maps_are_parallel = mfhelper.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry)
-
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
-        #  or `None` if the maps can not be structurally fused.
+        #  or `None` if the maps can not be structurally fused. This comes first because it
+        #  refuses nearly every one of the all-pairs candidates, and every check below it walks
+        #  the state; `scope` is this probe's own, so it need not be read again.
         param_repl = mfhelper.can_topologically_be_fused(
             first_map_entry=first_map_entry,
             second_map_entry=second_map_entry,
@@ -194,8 +188,14 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
             sdfg=sdfg,
             only_inner_maps=self.only_inner_maps,
             only_toplevel_maps=self.only_toplevel_maps,
+            scope=scope,
         )
         if param_repl is None:
+            return False
+
+        first_map_exit = mfhelper.safe_exit_node(graph, first_map_entry)
+        second_map_exit = mfhelper.safe_exit_node(graph, second_map_entry)
+        if first_map_exit is None or second_map_exit is None:
             return False
 
         # `relocate_nodes()` moves whole `IN_x`/`OUT_x` groups between the scope nodes, so a
@@ -213,7 +213,8 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         # Maps that are only ordered by happens-before edges, the shape `StateFusionExtended`
         #  produces for a WAR/WAW hazard, are not parallel but can still be fused if no
         #  iteration can collide with a different one. See `analyze_happens_before_fusion()`.
-        if not maps_are_parallel:
+        # The two reachability walks are paid only here, where the answer is actually read.
+        if not mfhelper.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry):
             return mfhelper.analyze_happens_before_fusion(
                 state=graph,
                 sdfg=sdfg,

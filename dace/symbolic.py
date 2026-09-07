@@ -849,6 +849,10 @@ def symtype(expr):
                         (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])))
 
 
+#: Bound types that provably carry no free symbol, so the traversal can be skipped outright.
+_NUMERIC_TYPES = (int, float, sympy.Number)
+
+
 def symlist(values):
     """ Finds symbol dependencies of expressions. """
     result = {}
@@ -860,6 +864,9 @@ def symlist(values):
     skip = set()
 
     for expr in values:
+        if isinstance(expr, _NUMERIC_TYPES):
+            # A numeric bound has no free symbols; skip the traversal.
+            continue
         if isinstance(expr, SymExpr):
             true_expr = expr.expr
         else:
@@ -885,6 +892,57 @@ def symlist(values):
                 continue
             if isinstance(atom, symbol):
                 result[atom.name] = atom
+    return result
+
+
+def free_symbol_names(values, result: Optional[Dict[str, None]] = None) -> Dict[str, None]:
+    """
+    Name-only counterpart of :func:`symlist`, for callers that discard the symbol instances.
+
+    Skips exactly what :func:`symlist` skips, but never materializes the name-to-instance map.
+    Keys are inserted in the same order, so ``set(free_symbol_names(v)) == set(symlist(v))`` holds
+    with the same iteration order.
+
+    :param values: An expression or an iterable of expressions.
+    :param result: Optional dictionary to accumulate the names into, so a multi-bound caller keeps one dictionary.
+    :return: ``result``, or a fresh dictionary mapping every free symbol name to ``None``.
+    """
+    if result is None:
+        result = {}
+    try:
+        values = iter(values)
+    except TypeError:
+        values = [values]
+
+    skip = set()
+
+    for expr in values:
+        if isinstance(expr, _NUMERIC_TYPES):
+            # A numeric bound has no free symbols; skip the traversal.
+            continue
+        if isinstance(expr, SymExpr):
+            true_expr = expr.expr
+        else:
+            true_expr = expr
+            if to_sympy is not None:
+                converted = to_sympy(true_expr)
+                if converted is not None:
+                    true_expr = converted
+            if not isinstance(true_expr, sympy.Basic):
+                continue
+        for atom in sympy.preorder_traversal(true_expr):
+            if atom in skip:
+                continue
+            if isinstance(atom, Attr):
+                # Skip attributes
+                skip.add(atom.args[1])
+                continue
+            if isinstance(atom, Subscript):
+                # Only the indices are free symbols; skip the whole head subtree.
+                skip.update(sympy.preorder_traversal(atom.args[0]))
+                continue
+            if isinstance(atom, symbol):
+                result[atom.name] = None
     return result
 
 

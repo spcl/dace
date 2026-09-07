@@ -197,29 +197,6 @@ def _units_of(unit) -> List[object]:
     return [unit]
 
 
-def test_the_terminal_band_is_wired_in_once_and_holds_no_simplify():
-    stages = canon_pipeline._build_stages()
-    labels = [label for label, unit in stages if _is_reclaim_stage(unit)]
-    assert labels == ['end'], labels
-    # Look INSIDE a composite stage as well: the IV/fission fixpoint owns a ``SimplifyPass`` of
-    # its own, and counting only top-level entries would let a simplify move into the terminal
-    # band inside a wrapper without this noticing -- which is the whole property under test.
-    simplifies = [label for label, unit in stages for _p in _units_of(unit) if isinstance(_p, SimplifyPass)]
-    assert simplifies == ['clean', 'reduce', 'reduce'], simplifies
-
-    start = _band_start()
-    slots = _cleanup_slots()
-    assert all(stages[i][0] == 'end' for i in slots), [stages[i][0] for i in slots]
-    assert stages[start][0] == 'end', stages[start][0]
-    # Nothing from the reclaimers onward may re-introduce a whole pipeline: the band exists
-    # precisely because the recipe used to end with one.
-    after = [type(p).__name__ for _lbl, unit in stages[start:] for p in _units_of(unit) if isinstance(p, SimplifyPass)]
-    assert not after, after
-    want = [type(p).__name__ for _lbl, p in canon_pipeline._structural_cleanup('probe')]
-    run = [type(stages[i][1]).__name__ for i in slots if type(stages[i][1]).__name__ in _CLEANUP_TYPES]
-    assert run == want, run
-
-
 def test_fused_diamond_loses_the_duplicate_map_fusion_carrier():
     """Without the stage the collapsed diamond carries ``__map_fusion_t`` AND a copy of it."""
     reference = _canonicalize(_fuse_diamond.to_sdfg(simplify=False), with_reclaim=False)

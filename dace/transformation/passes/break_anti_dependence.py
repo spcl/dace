@@ -82,6 +82,13 @@ def _subset_key(subset):
     return key
 
 
+def _smt_loop_bounds(loop):
+    """``(start, end, stride)`` of ``loop``; any ``None`` means the SMT query cannot be posed."""
+    from dace.transformation.passes.analysis import loop_analysis
+    return (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
+            loop_analysis.get_loop_stride(loop))
+
+
 @lru_cache(maxsize=8192, typed=True)
 def _reparsed_index(raw):
     """A memlet subset bound re-read through DaCe's own parser.
@@ -428,8 +435,16 @@ class BreakAntiDependence(ppl.Pass):
                 return ('WAR_indirected', arr)
         return ('complex', None)
 
-    def _smt_dep_class(self, read, write, loop: LoopRegion, sdfg: SDFG, read_state, internal_syms: Set[str],
-                       written: Set[str]):
+    def _smt_dep_class(self,
+                       read,
+                       write,
+                       loop: LoopRegion,
+                       sdfg: SDFG,
+                       read_state,
+                       internal_syms: Set[str],
+                       written: Set[str],
+                       bindings=None,
+                       loop_bounds=None):
         """The verdict :meth:`_dep_class` could not reach, asked of the SMT oracle.
 
         Only ever consulted where the affine matcher already gave up (``'complex'``), and only
@@ -449,8 +464,8 @@ class BreakAntiDependence(ppl.Pass):
         * no container the index reads is written by the loop. The oracle models a container as
           an immutable array, so a loop that writes it is outside what the encoding says.
         """
-        from dace.transformation.passes.analysis import loop_analysis, smt_dependence
-        from dace.transformation.passes.symbol_propagation import resolve_bindings
+        from dace.transformation.passes.analysis import smt_dependence
+        from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
         if not smt_dependence.has_z3() or read_state is None:
             return ('complex', None)
         rb, wb = point_index(read), point_index(write)
@@ -458,16 +473,18 @@ class BreakAntiDependence(ppl.Pass):
             return ('complex', None)
         ivar = loop.loop_variable
         guard = cfg_analysis.collect_enclosing_conditions(read_state, stop=loop)
-        exprs = [resolve_bindings(e, sdfg, expand_data_reads=True) for e in (rb, wb, guard)]
+        if bindings is None:
+            bindings = consistent_bindings(sdfg)
+        exprs = [resolve_bindings(e, sdfg, expand_data_reads=True, bindings=bindings) for e in (rb, wb, guard)]
         for e in exprs:
             if ({str(sym) for sym in e.free_symbols} - {ivar}) & internal_syms:
                 return ('complex', None)
             if referenced_arrays(e) & written:
                 return ('complex', None)
         rb, wb, guard = exprs
-        start = loop_analysis.get_init_assignment(loop)
-        end = loop_analysis.get_loop_end(loop)
-        stride = loop_analysis.get_loop_stride(loop)
+        if loop_bounds is None:
+            loop_bounds = _smt_loop_bounds(loop)
+        start, end, stride = loop_bounds
         if start is None or end is None or stride is None:
             return ('complex', None)
         read_guard = None if guard is sympy.true else guard
@@ -784,6 +801,13 @@ class BreakAntiDependence(ppl.Pass):
         # which dominated the pass on deeply nested SDFGs.
         iedge_subs = self._collect_iedge_substitutions(loop, symbolic.pystr_to_symbolic(loop.loop_variable), sdfg)
         written = written_data(loop)
+        from dace.transformation.passes.analysis import smt_dependence
+        from dace.transformation.passes.symbol_propagation import consistent_bindings
+        # Same reason, for the SMT fallback's own invariants: ``resolve_bindings`` is a query and
+        # the classification below never mutates (the rewrite runs after ``renamable`` is
+        # assembled). Built on first use, so a loop the affine matcher settles pays nothing.
+        have_z3 = smt_dependence.has_z3()
+        bindings, loop_bounds = None, None
 
         renamable = []
         for name, read_subsets in reads.items():
@@ -798,7 +822,17 @@ class BreakAntiDependence(ppl.Pass):
                 for w in write_subsets.values():
                     c = self._dep_class(r, w, loop.loop_variable, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)
                     if c[0] == 'complex':
-                        c = self._smt_dep_class(r, w, loop, sdfg, read_states[name].get(rkey), internal_syms, written)
+                        if bindings is None and have_z3:
+                            bindings, loop_bounds = consistent_bindings(sdfg), _smt_loop_bounds(loop)
+                        c = self._smt_dep_class(r,
+                                                w,
+                                                loop,
+                                                sdfg,
+                                                read_states[name].get(rkey),
+                                                internal_syms,
+                                                written,
+                                                bindings=bindings,
+                                                loop_bounds=loop_bounds)
                     if c[0] == 'RAW' or c[0] == 'complex':
                         disqualified = True
                         break
@@ -990,6 +1024,11 @@ class BreakAntiDependence(ppl.Pass):
         iedge_subs = self._collect_iedge_substitutions(loop, symbolic.pystr_to_symbolic(ivar), sdfg)
         internal_syms = self._loop_internal_symbols(loop)
         written = written_data(loop)
+        from dace.transformation.passes.analysis import smt_dependence
+        from dace.transformation.passes.symbol_propagation import consistent_bindings
+        # Loop-invariant; the classification below only reads, the rewrite starts after ``to_move``.
+        have_z3 = smt_dependence.has_z3()
+        bindings, loop_bounds = None, None
 
         # Read edges to redirect: those whose subset is a strict read-ahead
         # against EVERY write (WAR / WAR_symbolic / WAR_indirected). A read that
@@ -1016,7 +1055,17 @@ class BreakAntiDependence(ppl.Pass):
                         for w in writes:
                             kind = self._dep_class(rs, w, ivar, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)[0]
                             if kind == 'complex':
-                                kind = self._smt_dep_class(rs, w, loop, sdfg, st, internal_syms, written)[0]
+                                if bindings is None and have_z3:
+                                    bindings, loop_bounds = consistent_bindings(sdfg), _smt_loop_bounds(loop)
+                                kind = self._smt_dep_class(rs,
+                                                           w,
+                                                           loop,
+                                                           sdfg,
+                                                           st,
+                                                           internal_syms,
+                                                           written,
+                                                           bindings=bindings,
+                                                           loop_bounds=loop_bounds)[0]
                             kinds.add(kind)
                         verdict = bool(kinds) and kinds <= ahead
                         is_ahead[key] = verdict

@@ -117,6 +117,7 @@ Parallelization of the resulting statements is done by the passes that follow
 re-fuses whatever should recombine.
 """
 import copy
+from collections import Counter
 from typing import Any
 
 from dace import SDFG, Memlet, dtypes, properties, symbolic
@@ -233,7 +234,22 @@ def body_compute_states(loop: LoopRegion) -> list | None:
     return states or None
 
 
-def staged_producer_edges(body, state, node, input_names: dict[str, None]) -> list:
+def body_stage_index(body, index: dict) -> dict[str, list]:
+    """``name -> [(state, node)]`` for every data node in ``body``, in walk order, filled into
+    ``index`` on first use.
+
+    Lazy because most nodes have a local producer and never reach :func:`staged_producer_edges`'s
+    whole-body fallback -- an eager build costs more than the scans it replaces. Empty means
+    unbuilt: the fallback is only reached from an AccessNode of ``body``.
+    """
+    if not index:
+        for st in body.all_states():
+            for n in st.data_nodes():
+                index.setdefault(n.data, []).append((st, n))
+    return index
+
+
+def staged_producer_edges(body, state, node, input_names: dict[str, None], stage_index=None) -> list:
     """``(state, edge)`` for every VALUE producer of ``node``, following one staged transient back
     into the state that wrote it.
 
@@ -248,15 +264,52 @@ def staged_producer_edges(body, state, node, input_names: dict[str, None]) -> li
     :param state: The state holding ``node``.
     :param node: The node whose producers are wanted.
     :param input_names: The names whose values enter ``body`` from outside.
+    :param stage_index: A dict the caller shares across one walk of ``body``, for
+                        :func:`body_stage_index` to fill; ``None`` keeps it to this call.
     """
     own = [(state, e) for e in producer_edges(state, node)]
     if own or not isinstance(node, nodes.AccessNode) or node.data in input_names:
         return own
-    return [(st, e) for st in body.all_states() if st is not state for n in st.data_nodes() if n.data == node.data
-            for e in producer_edges(st, n)]
+    sites = body_stage_index(body, stage_index if stage_index is not None else {})
+    return [(st, e) for st, n in sites.get(node.data, ()) if st is not state for e in producer_edges(st, n)]
 
 
-def loop_local_transients(loop: LoopRegion, sdfg: SDFG) -> dict[str, None]:
+def local_transient_index(sdfg: SDFG) -> tuple:
+    """One walk of ``sdfg`` answering :func:`loop_local_transients` for every loop it contains.
+
+    "Observed outside THIS loop" is a whole-SDFG question with a per-loop hole in it, so the walk
+    is shared and the hole subtracted: counts of the states and of the loop conditions naming a
+    name, less the asking loop's own. Interstate edges and ConditionalBlock guards are outside
+    every loop equally, so they need no per-loop term.
+
+    :param sdfg: The SDFG whose loops will be asked about.
+    :returns: ``(per-state names, states per name, always-outside, per-loop condition names,
+              loop conditions per name)``.
+    """
+    state_names: dict[int, dict[str, None]] = {}
+    in_states: Counter = Counter()
+    for state in sdfg.all_states():
+        names = dict.fromkeys(n.data for n in state.data_nodes())
+        state_names[id(state)] = names
+        in_states.update(names.keys())
+    always: dict[str, None] = {}
+    for e in sdfg.all_interstate_edges():
+        always.update(dict.fromkeys(s for s in e.data.free_symbols if s in sdfg.arrays))
+    cond_names: dict[int, dict[str, None]] = {}
+    in_conditions: Counter = Counter()
+    for cfr in sdfg.all_control_flow_regions(recursive=True):
+        if isinstance(cfr, ConditionalBlock):
+            for cond, _ in cfr.branches:
+                if cond is not None:
+                    always.update(dict.fromkeys(s for s in cond.get_free_symbols() if s in sdfg.arrays))
+        elif isinstance(cfr, LoopRegion):
+            names = dict.fromkeys(s for s in cfr.loop_condition.get_free_symbols() if s in sdfg.arrays)
+            cond_names[id(cfr)] = names
+            in_conditions.update(names.keys())
+    return state_names, in_states, always, cond_names, in_conditions
+
+
+def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: tuple | None = None) -> dict[str, None]:
     """``sdfg``'s transients that nothing outside ``loop`` observes -- the loop's own temporaries.
 
     Read as a value by anything outside (an access node, an interstate-edge or region condition
@@ -265,30 +318,26 @@ def loop_local_transients(loop: LoopRegion, sdfg: SDFG) -> dict[str, None]:
 
     :param loop: The loop whose temporaries are wanted.
     :param sdfg: The SDFG owning ``loop``.
+    :param index: :func:`local_transient_index` of this (unmutated) ``sdfg``, when the caller
+                  already holds one. ``None`` builds it here, per loop.
     """
-    inner = dict.fromkeys(id(s) for s in loop.all_states())
-    outside: dict[str, None] = {}
-    for state in sdfg.all_states():
-        if id(state) in inner:
-            continue
-        for n in state.data_nodes():
-            outside[n.data] = None
-    for e in sdfg.all_interstate_edges():
-        outside.update(dict.fromkeys(s for s in e.data.free_symbols if s in sdfg.arrays))
-    for cfr in sdfg.all_control_flow_regions(recursive=True):
-        conditions = []
-        if isinstance(cfr, ConditionalBlock):
-            conditions = [c for c, _ in cfr.branches if c is not None]
-        elif isinstance(cfr, LoopRegion) and cfr is not loop:
-            conditions = [cfr.loop_condition]
-        for cond in conditions:
-            outside.update(dict.fromkeys(s for s in cond.get_free_symbols() if s in sdfg.arrays))
-    return dict.fromkeys(nm for nm, desc in sdfg.arrays.items() if desc.transient and nm not in outside)
+    state_names, in_states, always, cond_names, in_conditions = index or local_transient_index(sdfg)
+    inner: Counter = Counter()
+    for state in loop.all_states():
+        names = state_names.get(id(state))
+        if names is not None:
+            inner.update(names.keys())
+    own_cond = cond_names.get(id(loop), {})
+    return dict.fromkeys(
+        nm for nm, desc in sdfg.arrays.items()
+        if desc.transient and nm not in always and in_states[nm] == inner[nm] and in_conditions[nm] == (
+            1 if nm in own_cond else 0))
 
 
 def _output_dependency(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -> dict[str, None]:
     """Inner array names that feed ``out_name``, excluding pure shared inputs."""
     deps: dict[str, None] = {}
+    stage_index: dict = {}
     for state in sdfg.all_states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
         seen: dict = {}
@@ -302,7 +351,7 @@ def _output_dependency(sdfg: SDFG, out_name: str, input_names: dict[str, None]) 
                 if node.data in input_names:
                     continue
                 deps[node.data] = None
-            stack.extend((s2, e.src) for s2, e in staged_producer_edges(sdfg, st, node, input_names))
+            stack.extend((s2, e.src) for s2, e in staged_producer_edges(sdfg, st, node, input_names, stage_index))
     return deps
 
 
@@ -318,10 +367,12 @@ def output_input_reads(sdfg: SDFG, out_name: str, input_names: dict[str, None]) 
     :param input_names: The body's input connector names.
     """
     reads: dict[str, None] = {}
+    stage_index: dict = {}
     for state in sdfg.all_states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
         seen: dict = dict.fromkeys((state, w) for w in writers)
-        stack = [(s2, e.src) for w in writers for s2, e in staged_producer_edges(sdfg, state, w, input_names)]
+        stack = [(s2, e.src) for w in writers
+                 for s2, e in staged_producer_edges(sdfg, state, w, input_names, stage_index)]
         while stack:
             st, node = stack.pop()
             if (st, node) in seen:
@@ -330,7 +381,7 @@ def output_input_reads(sdfg: SDFG, out_name: str, input_names: dict[str, None]) 
             if isinstance(node, nodes.AccessNode) and node.data in input_names:
                 reads[node.data] = None
                 continue
-            stack.extend((s2, e.src) for s2, e in staged_producer_edges(sdfg, st, node, input_names))
+            stack.extend((s2, e.src) for s2, e in staged_producer_edges(sdfg, st, node, input_names, stage_index))
     return reads
 
 
@@ -441,10 +492,11 @@ def output_read_edges(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -
     :param input_names: The names whose values enter the body from outside.
     """
     found = []
+    stage_index: dict = {}
     for state in sdfg.all_states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
         seen: dict = dict.fromkeys((state, w) for w in writers)
-        stack = [pair for w in writers for pair in staged_producer_edges(sdfg, state, w, input_names)]
+        stack = [pair for w in writers for pair in staged_producer_edges(sdfg, state, w, input_names, stage_index)]
         while stack:
             st, edge = stack.pop()
             node = edge.src
@@ -454,8 +506,23 @@ def output_read_edges(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -
             if (st, node) in seen:
                 continue
             seen[(st, node)] = None
-            stack.extend(staged_producer_edges(sdfg, st, node, input_names))
+            stack.extend(staged_producer_edges(sdfg, st, node, input_names, stage_index))
     return found
+
+
+def read_cone(body, out_name: str, in_names: dict[str, None], memo=None) -> list:
+    """:func:`output_read_edges` memoised per output name.
+
+    The cone depends on ``(body, out_name, in_names)`` only, yet the split analyses ask for it once
+    per read-modify-write NAME and filter afterwards.
+
+    :param memo: A dict private to one analysis of an unmutated ``body``; ``None`` skips memoising.
+    """
+    if memo is None:
+        return output_read_edges(body, out_name, in_names)
+    if out_name not in memo:
+        memo[out_name] = output_read_edges(body, out_name, in_names)
+    return memo[out_name]
 
 
 def write_subsets(body, name: str) -> list:
@@ -577,7 +644,7 @@ def iteration_distinct(subsets, loop_var: str) -> bool:
     return bool(subsets) and all(sub is not None and loop_var in (str(s) for s in sub.free_symbols) for sub in subsets)
 
 
-def carries_across_iterations(body, name: str, in_names: dict[str, None]) -> bool:
+def carries_across_iterations(body, name: str, in_names: dict[str, None], cone=None) -> bool:
     """Whether ``name``'s read-modify-write actually crosses iterations.
 
     A name the loop both reads and writes is not automatically a recurrence: ``a[i] = a[i] + x[i]``
@@ -590,11 +657,12 @@ def carries_across_iterations(body, name: str, in_names: dict[str, None]) -> boo
     :param body: The body being split (the ``LoopRegion`` on the loop path).
     :param name: A name ``body`` both reads and writes.
     :param in_names: The names whose values enter ``body`` from outside.
+    :param cone: A :func:`read_cone` memo shared with the caller's other analyses of ``body``.
     """
     stores = write_subsets(body, name)
     if not iteration_distinct(stores, body.loop_variable):
         return True
-    for _state, node, edge in output_read_edges(body, name, in_names):
+    for _state, node, edge in read_cone(body, name, in_names, cone):
         if node.data == name and {access_offset(edge_subset(edge, name), w) for w in stores} != {0}:
             return True
     return False
@@ -621,7 +689,7 @@ def sees_written_value(states: list, name: str, state, node) -> bool:
     return any(producer_edges(st, n) for st in before for n in st.data_nodes() if n.data == name)
 
 
-def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[dict[str, None]]):
+def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[dict[str, None]], cone=None):
     """``groups`` re-ordered so the split is legal, or ``None`` when no order is.
 
     :func:`rmw_confined` decides whether the groups can run as UNORDERED siblings, which needs every
@@ -652,6 +720,7 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
     :param in_names: The names whose values enter ``body`` from outside.
     :param rmw: Names ``body`` both reads and writes.
     :param groups: The independent output groups.
+    :param cone: A :func:`read_cone` memo shared with the caller's other analyses of ``body``.
     """
     if len(groups) < 2 or not rmw_analyzable(body):
         return None
@@ -668,7 +737,7 @@ def split_order(body, in_names: dict[str, None], rmw: list[str], groups: list[di
         for reader, grp in enumerate(groups):
             if reader == writer:
                 continue
-            for state, node, edge in [r for oc in grp for r in output_read_edges(body, oc, in_names)]:
+            for state, node, edge in [r for oc in grp for r in read_cone(body, oc, in_names, cone)]:
                 if node.data != name:
                     continue
                 if stores is None:
@@ -721,8 +790,11 @@ def topological_group_order(after: list[dict[int, None]]) -> list[int] | None:
     return order if len(order) == len(after) else None
 
 
-def merge_carried_groups(body, groups: list[dict[str, None]], rmw: list[str],
-                         in_names: dict[str, None]) -> list[dict[str, None]]:
+def merge_carried_groups(body,
+                         groups: list[dict[str, None]],
+                         rmw: list[str],
+                         in_names: dict[str, None],
+                         cone=None) -> list[dict[str, None]]:
     """``groups`` with the producer of a CARRIED value and everything that reads it merged into one.
 
     A value the loop carries -- ``s`` in TSVC ``s2251``, written every iteration at the same element
@@ -737,6 +809,7 @@ def merge_carried_groups(body, groups: list[dict[str, None]], rmw: list[str],
     :param groups: The independent output groups.
     :param rmw: Names ``body`` both reads and writes.
     :param in_names: The names whose values enter ``body`` from outside.
+    :param cone: A :func:`read_cone` memo shared with the caller's other analyses of ``body``.
     """
     merged = list(groups)
     for name in rmw:
@@ -747,7 +820,7 @@ def merge_carried_groups(body, groups: list[dict[str, None]], rmw: list[str],
             continue
         readers = [
             i for i, grp in enumerate(merged)
-            if i != writer and any(n.data == name for oc in grp for _s, n, _e in output_read_edges(body, oc, in_names))
+            if i != writer and any(n.data == name for oc in grp for _s, n, _e in read_cone(body, oc, in_names, cone))
         ]
         if not readers:
             continue
@@ -1099,22 +1172,33 @@ class SplitStatements(ppl.Pass):
         from dace.transformation import helpers
         from dace.transformation.interstate import InlineMultistateSDFG
         from dace.sdfg.graph import SubgraphView
+        from dace.transformation.passes.analysis import loop_analysis
 
         count = 0
         for cfg in list(sdfg.all_sdfgs_recursive()):
+            # Hoisted: loop-invariant, both were a whole-SDFG walk per loop.
+            use_index = None
+            local_index = None
             for loop in [r for r in cfg.all_control_flow_regions() if isinstance(r, LoopRegion)]:
-                local = loop_local_transients(loop, cfg)
-                decision = self._loop_output_groups(loop, cfg, local)
+                if use_index is None:
+                    use_index = loop_analysis.symbol_use_sites(cfg)
+                    local_index = local_transient_index(cfg)
+                local = loop_local_transients(loop, cfg, local_index)
+                decision = self._loop_output_groups(loop, cfg, local, use_index)
                 if decision is None:
                     continue
                 groups, ordered = decision
                 if self._split_one_loop(cfg, loop, groups, ordered, SimplifyPass, helpers, InlineMultistateSDFG,
                                         SubgraphView):
                     count += 1
+                    # Dropped: the split destroyed the blocks, and both indices key on id(), which
+                    # CPython recycles -- a stale entry would name a live block wrongly.
+                    use_index = None
+                    local_index = None
         return count
 
     @staticmethod
-    def _loop_output_groups(loop: LoopRegion, sdfg: SDFG, local: dict[str, None]):
+    def _loop_output_groups(loop: LoopRegion, sdfg: SDFG, local: dict[str, None], use_index=None):
         """``(groups, ordered)`` for the loop, or ``None`` to refuse -- computed WITHOUT touching it.
 
         ``ordered`` says the clones must run one after the other, in the order ``groups`` gives,
@@ -1124,6 +1208,8 @@ class SplitStatements(ppl.Pass):
         :param sdfg: The SDFG owning ``loop``.
         :param local: The loop's own temporaries (:func:`loop_local_transients`); they become
                       private to each clone, so they are neither inputs nor outputs of the split.
+        :param use_index: The ``symbol_use_sites(sdfg)`` pair, when the caller already holds one for
+                          this (unmutated) ``sdfg``. ``None`` builds it here, per loop.
         """
         from dace.transformation.passes.analysis import loop_analysis
 
@@ -1151,7 +1237,8 @@ class SplitStatements(ppl.Pass):
             return None
         # A counter something outside the loop reads is EXPORTED by the outlining as an extra
         # scalar output, which the per-output clones would each have to write. Leave those alone.
-        if loop_analysis.counter_used_outside_loop(loop.loop_variable, loop, sdfg):
+        use_sites, descriptor_symbols = use_index if use_index is not None else (None, None)
+        if loop_analysis.counter_used_outside_loop(loop.loop_variable, loop, sdfg, use_sites, descriptor_symbols):
             return None
 
         # Empty memlets are ORDERING edges, so they neither read nor write: counting one as a write
@@ -1187,21 +1274,26 @@ class SplitStatements(ppl.Pass):
         if len(groups) < 2:
             return None
         rmw = [o for o in out_names if o in in_names]
-        groups = merge_carried_groups(loop, groups, rmw, in_names)
+        # Shared across the three analyses below: none of them touches ``loop``.
+        cone: dict = {}
+        groups = merge_carried_groups(loop, groups, rmw, in_names, cone)
         if len(groups) < 2:
             return None
         if not rmw or rmw_confined(loop, in_names, rmw, groups):
-            minimal = SplitStatements._minimal_loops(loop, groups, rmw, in_names)
+            minimal = SplitStatements._minimal_loops(loop, groups, rmw, in_names, cone)
             return None if minimal is None else (minimal, False)
         # The clones cannot stand as unordered siblings, but ONE order of the two loops may still
         # reproduce the fused loop exactly -- see :func:`split_order`. That is the whole of TSVC
         # s212 (reader first) and s221 (writer first), neither of which the sibling split reaches.
-        ordered = split_order(loop, in_names, rmw, groups)
+        ordered = split_order(loop, in_names, rmw, groups, cone)
         return None if ordered is None else (ordered, True)
 
     @staticmethod
-    def _minimal_loops(body, groups: list[dict[str, None]], rmw: list[str],
-                       in_names: dict[str, None]) -> list[dict[str, None]] | None:
+    def _minimal_loops(body,
+                       groups: list[dict[str, None]],
+                       rmw: list[str],
+                       in_names: dict[str, None],
+                       cone=None) -> list[dict[str, None]] | None:
         """Coalesce the output groups into the FEWEST loops that free the parallel work: TWO.
 
         What the split is FOR is peeling the data-parallel statements out of a loop that carries a
@@ -1225,8 +1317,9 @@ class SplitStatements(ppl.Pass):
         :param groups: The independent output groups.
         :param rmw: Names the loop both reads and writes.
         :param in_names: The names whose values enter ``body`` from outside.
+        :param cone: A :func:`read_cone` memo shared with the caller's other analyses of ``body``.
         """
-        recurrences = [n for n in rmw if carries_across_iterations(body, n, in_names)]
+        recurrences = [n for n in rmw if carries_across_iterations(body, n, in_names, cone)]
         carried: dict[str, None] = {}
         free: dict[str, None] = {}
         for grp in groups:

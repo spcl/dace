@@ -33,7 +33,7 @@ original) and on step-1 maps (before :class:`StrideMapByTileWidths`). A dim
 provably divisible by ``W`` is not split -> a fully-divisible map yields just
 the mask-free interior, no remainder.
 """
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties, symbolic
@@ -349,9 +349,11 @@ class SplitMapForTileRemainder(ppl.Pass):
         self._stride_checks = []
         # Snapshot up front: splitting mutates the graph; must not re-split a
         # freshly replicated remainder map.
+        # Safe: the comprehension is fully evaluated before the first ``_split`` mutates anything.
+        scan_cache: Dict[int, Any] = {}
         eligible = [(n, g) for n, g in sdfg.all_nodes_recursive()
                     if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState)
-                    and is_vectorizable_map(g, n, len(self.widths)) and len(n.map.params) >= K
+                    and is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache) and len(n.map.params) >= K
                     and not n.map.label.endswith(TILE_MAIN_MARKER) and not n.map.label.endswith(SCALAR_TAIL_MARKER)
                     and not n.map.label.endswith(TILE_K1_TAIL_MARKER) and not n.map.label.endswith(MASKED_TAIL_MARKER)]
         for n, g in eligible:

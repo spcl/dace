@@ -581,6 +581,15 @@ class Range(Subset):
         return "[" + ", ".join(map(Range._range_pystr, self.ranges)) + "]"
 
     @property
+    def free_symbols(self) -> Set[str]:
+        # Same traversal as ``symbols``, without materializing the name-to-instance map.
+        names: Dict[str, None] = {}
+        for dim in self.ranges:
+            for d in dim:
+                symbolic.free_symbol_names(d, names)
+        return set(names)
+
+    @property
     def symbols(self) -> Dict[str, 'symbolic.symbol']:
         result = {}
         for dim in self.ranges:

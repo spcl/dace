@@ -28,7 +28,7 @@ as a ConditionalBlock in the CFG (afterwards the reduction is smeared across the
 nested-SDFG boundary and there is no single edge to gate).
 """
 import copy
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy
 
@@ -73,13 +73,14 @@ def _body_has_data_dependent_read(sd: SDFG, state: SDFGState) -> bool:
     lanes once the branch is dissolved to unconditional, so predication must
     refuse. Structured affine subsets (functions of iteration/scope symbols only)
     are in-bounds by construction and return False."""
+    dd_memo: Dict[str, bool] = {}  # one read-only query; nothing mutates ``sd`` under it
     for edge in state.edges():
         m = edge.data
         if m is None or m.data is None or m.subset is None:
             continue
         for rng in m.subset.ranges:
             for bound in rng:  # (start, end, step)
-                if bound is not None and expr_is_data_dependent(bound, sd):
+                if bound is not None and expr_is_data_dependent(bound, sd, dd_memo):
                     return True
     return False
 

@@ -110,7 +110,9 @@ class PerfLoopNesting(xf.SingleStateTransformation):
 
         pe = self.parent_entry
         px = graph.exit_node(pe)
-        body = [n for n in graph.nodes() if graph.entry_node(n) is pe]
+        # One scope map for the whole scan: `entry_node()` copies it per node, so this is O(N^2).
+        scope = graph.scope_dict()
+        body = [n for n in graph.nodes() if scope[n] is pe]
         nsdfgs = [n for n in body if isinstance(n, nodes.NestedSDFG)]
 
         # Inlined same-state form (no NestedSDFG indirection): a parent map --
@@ -126,7 +128,7 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             return MapFission.can_be_applied_to(sdfg, map_entry=pe)
 
         # NestedSDFG-wrapped path (original behavior): only at the top level.
-        if graph.entry_node(pe) is not None:
+        if scope[pe] is not None:
             return False
         if len(nsdfgs) != 1:
             return False
@@ -155,7 +157,8 @@ class PerfLoopNesting(xf.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG):
         pe = self.parent_entry
         px = graph.exit_node(pe)
-        body = [n for n in graph.nodes() if graph.entry_node(n) is pe]
+        scope = graph.scope_dict()
+        body = [n for n in graph.nodes() if scope[n] is pe]
 
         # Inlined same-state form: delegate to MapFission (see can_be_applied).
         if not any(isinstance(n, nodes.NestedSDFG) for n in body):
@@ -199,7 +202,8 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             graph.remove_edge(ie)
         for oe in list(graph.out_edges(px)):
             graph.remove_edge(oe)
-        body = [n for n in graph.nodes() if graph.entry_node(n) is pe]
+        scope = graph.scope_dict()  # Re-read: the edge removals above invalidated the old one.
+        body = [n for n in graph.nodes() if scope[n] is pe]
         for n in body + [pe, px]:
             if n in graph.nodes():
                 graph.remove_node(n)
@@ -264,7 +268,8 @@ def _ordered_top_children(state: SDFGState, types=(nodes.MapEntry, nodes.Tasklet
     :returns: The matching top-level nodes in topological order.
     """
     rank = {n: i for i, n in enumerate(sdutil.dfs_topological_sort(state))}
-    children = [n for n in state.nodes() if state.entry_node(n) is None and isinstance(n, types)]
+    scope = state.scope_dict()
+    children = [n for n in state.nodes() if scope[n] is None and isinstance(n, types)]
     return sorted(children, key=lambda n: rank.get(n, len(rank)))
 
 
@@ -536,8 +541,9 @@ def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> Set[nod
     imperfect nest -- the transitive top-level producer chain of any such
     input AccessNode (the sunk intervening chain)."""
     ch_exit = inner_state.exit_node(ch_entry)
+    scope = inner_state.scope_dict()  # Nothing below mutates `inner_state`.
     keep: Set[nodes.Node] = {ch_entry, ch_exit}
-    keep.update(n for n in inner_state.nodes() if inner_state.entry_node(n) is ch_entry)
+    keep.update(n for n in inner_state.nodes() if scope[n] is ch_entry)
     frontier: List[nodes.Node] = []
     for e in inner_state.in_edges(ch_entry):
         if isinstance(e.src, nodes.AccessNode):
@@ -552,7 +558,7 @@ def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> Set[nod
         node = frontier.pop()
         for ie in inner_state.in_edges(node):
             src = ie.src
-            if src in keep or inner_state.entry_node(src) is not None:
+            if src in keep or scope[src] is not None:
                 continue
             if isinstance(src, (nodes.Tasklet, nodes.AccessNode)):
                 keep.add(src)

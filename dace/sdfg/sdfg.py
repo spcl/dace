@@ -15,6 +15,8 @@ import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
+import sympy
+
 import dace
 from dace.sdfg.graph import generate_element_id, SubgraphView
 import dace.serialize
@@ -386,7 +388,11 @@ class InterstateEdge(object):
         #       excluding keys from being considered "defined" if they have been already read.
 
         # Symbols in conditions are always free, because the condition is executed before the assignments
-        cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
+        cond_code = self.condition.code[0]
+        if isinstance(cond_code, ast.Expr) and isinstance(cond_code.value, ast.Constant):
+            cond_symbols = set()  # An unconditional edge carries no names to walk for.
+        else:
+            cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(cond_code)))
         # Symbols in assignment keys are candidate defined symbols
         lhs_symbols = set()
         # Symbols in assignment values are candidate free symbols
@@ -1600,11 +1606,25 @@ class SDFG(ControlFlowRegion):
         # code-block guard/condition -- so expand the extent symbols of those alone.
         res_free, res_defined, res_before = result
         if with_contents:
-            read_set, write_set = self.read_and_write_sets()
+            # Gate: the used arrays' extents are a subset of every array's, so when none of the
+            # latter is missing from ``res_free`` the read/write walk cannot add anything.
+            # ``symbol.name`` is what ``str`` prints, without the sympy printer.
+            array_names = self.arrays.keys()  # Hoisted: NestedDict.keys() rescans every entry.
+            per_array_extents = {}
+            all_extents = set()
+            for name in array_names:
+                syms = {
+                    s.name if isinstance(s, sympy.Symbol) else str(s)
+                    for s in self.arrays[name].used_symbols(all_symbols)
+                }
+                per_array_extents[name] = syms
+                all_extents |= syms
             extents = set()
-            for name in (read_set | write_set) & self.arrays.keys():
-                extents |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
-            extents -= res_free
+            if all_extents - res_free:
+                read_set, write_set = self.read_and_write_sets()
+                for name in (read_set | write_set) & array_names:
+                    extents |= per_array_extents[name]
+                extents -= res_free
             if extents:
                 # A transient sized by its enclosing map parameter (``t[_loop_it_0]`` under ``map
                 # _loop_it_0``) is allocated where that parameter is defined, so its extent is no
@@ -1654,10 +1674,10 @@ class SDFG(ControlFlowRegion):
         read_set = set()
         write_set = set()
         for state in self.states():
-            # Get dictionaries of subsets read and written from each state
-            rs, ws = state._read_and_write_sets()
-            read_set |= rs.keys()
-            write_set |= ws.keys()
+            # Name-level: only the keys were used, and the subset dicts cost a Range per edge.
+            rs, ws = state.read_and_write_sets()
+            read_set |= rs
+            write_set |= ws
 
         array_names = self.arrays.keys()
         for edge in self.all_interstate_edges():

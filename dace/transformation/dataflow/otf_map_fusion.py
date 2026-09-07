@@ -358,7 +358,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         if graph.out_degree(intermediate_access_node) == 0:
             graph.remove_node(intermediate_access_node)
 
-            subgraph = graph.scope_subgraph(first_map_entry, include_entry=True, include_exit=True)
             obsolete_nodes = graph.all_nodes_between(first_map_entry,
                                                      first_map_exit) | {first_map_entry, first_map_exit}
             graph.remove_nodes_from(obsolete_nodes)

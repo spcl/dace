@@ -1025,12 +1025,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         ignore = set()
         for nstate in nsdfg.sdfg.states():
+            # Hoisted: a property of the state, was recomputed for every data node in it.
+            read_set, write_set = nstate.read_and_write_sets()
             for dnode in nstate.data_nodes():
                 if nsdfg.sdfg.arrays[dnode.data].transient:
                     continue
 
                 # For now we only detect one element
-                read_set, write_set = nstate.read_and_write_sets()
                 for e in nstate.in_edges(dnode):
                     if e.data.data not in write_set:
                         # Skip data which is not in the read and write set of the state -> there also won't be a

@@ -2,6 +2,7 @@
 
 import ast
 import itertools
+from functools import lru_cache
 from dataclasses import dataclass
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -74,8 +75,11 @@ def is_array_access(value: Optional[str]) -> bool:
     return reads_struct_member(value)
 
 
+@lru_cache(maxsize=8192, typed=True)
 def reads_struct_member(value: str) -> bool:
-    """``value`` reads an attribute off a plain name; a callee (``math.floor``) does not count."""
+    """``value`` reads an attribute off a plain name; a callee (``math.floor``) does not count.
+
+    Memoized: pure in the string, and the fixed point re-asks the same handful of texts."""
     try:
         tree = ast.parse(value.strip(), mode='eval')
     except (SyntaxError, ValueError):
@@ -174,7 +178,11 @@ def consistent_bindings(sd: SDFG) -> Dict[str, Optional[str]]:
     return bindings
 
 
-def resolve_bindings(expr: SymbolicType, sd: SDFG, rounds: int = 8, expand_data_reads: bool = False) -> SymbolicType:
+def resolve_bindings(expr: SymbolicType,
+                     sd: SDFG,
+                     rounds: int = 8,
+                     expand_data_reads: bool = False,
+                     bindings: Optional[Dict[str, Optional[str]]] = None) -> SymbolicType:
     """``expr`` with every consistently-bound interstate symbol expanded into its RHS, to a fixed
     point (bounded by ``rounds``).
 
@@ -202,9 +210,12 @@ def resolve_bindings(expr: SymbolicType, sd: SDFG, rounds: int = 8, expand_data_
     :param sd: The SDFG whose interstate edges carry the bindings.
     :param rounds: Substitution rounds before giving up on a chain.
     :param expand_data_reads: Also expand bindings whose RHS reads a data container.
+    :param bindings: A :func:`consistent_bindings` table for ``sd``, to hoist that whole-SDFG walk
+        out of a caller's loop; recomputed here when omitted.
     :returns: The expanded expression; unresolved symbols simply stay put.
     """
-    bindings = consistent_bindings(sd)
+    if bindings is None:
+        bindings = consistent_bindings(sd)
     if not bindings:
         return expr
     resolved = expr
@@ -255,6 +266,10 @@ class SymbolPropagation(ppl.Pass):
             if isinstance(node, ControlFlowBlock):
                 all_cfg_blks[node] = parent
 
+        # Live only for the fixed point below, which is a pure query -- rewriting starts at
+        # ``_update_syms``, which may rewrite an init/update LHS and so change the answer.
+        self._loop_bound_cache: Optional[Dict[int, Set[str]]] = {}
+
         # An unwritten Scalar of the top-level SDFG is read-only and propagates like a symbol.
         self._opaque_scalars: Dict[SDFG, Set[str]] = {}
         for sd in sdfg.all_sdfgs_recursive():
@@ -292,6 +307,8 @@ class SymbolPropagation(ppl.Pass):
 
                 if moved:
                     dirty |= readers[id(cfg_blk)]
+
+        self._loop_bound_cache = None  # rewriting starts here; the memo is no longer sound
 
         # An honest return set is what lets a FixedPointPipeline converge.
         propagated: Set[str] = set()
@@ -487,7 +504,7 @@ class SymbolPropagation(ppl.Pass):
 
             if isinstance(parent, LoopRegion):
                 new_in_syms = dict(new_in_syms)
-                for sym in loop_bound_symbols(parent):
+                for sym in self._loop_bound_symbols(parent):
                     if sym in new_in_syms:
                         new_in_syms[sym] = None
 
@@ -503,7 +520,7 @@ class SymbolPropagation(ppl.Pass):
     ) -> Dict[str, Any]:
         if isinstance(cfg_blk, LoopRegion):
             new_out_syms = dict(in_syms[cfg_blk])
-            for sym in loop_bound_symbols(cfg_blk):
+            for sym in self._loop_bound_symbols(cfg_blk):
                 if sym in new_out_syms:
                     new_out_syms[sym] = None
             return new_out_syms
@@ -534,6 +551,17 @@ class SymbolPropagation(ppl.Pass):
             for n in sink_nodes:
                 self._combine_syms(new_out_syms, out_syms[n])
             return new_out_syms
+
+    def _loop_bound_symbols(self, loop: LoopRegion) -> Set[str]:
+        """:func:`loop_bound_symbols`, memoized per loop while the memo is armed."""
+        cache = self._loop_bound_cache
+        if cache is None:
+            return loop_bound_symbols(loop)
+        bound = cache.get(id(loop))
+        if bound is None:
+            bound = loop_bound_symbols(loop)
+            cache[id(loop)] = bound
+        return bound
 
     def _block_free_symbols(self, cfg_blk: ControlFlowBlock, parent: ControlFlowRegion) -> Set[str]:
         """Names of symbols read by ``cfg_blk`` and by its outgoing edges."""

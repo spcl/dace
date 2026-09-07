@@ -43,8 +43,19 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
                                                                             lane_dep_transients_widened,
                                                                             no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
-from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
+from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, build_symbol_definition_map,
+                                                                        classify_tile_access)
 from dace.ordered import OrderedSet
+
+
+def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: Dict[int, Dict[str, Any]],
+                scan_cache: Dict[int, Any]) -> Dict[str, Any]:
+    """``build_symbol_definition_map(inner_sdfg, state)`` memoised per state. Caller owns both dicts
+    and must scope them to a span in which ``inner_sdfg`` is not mutated."""
+    defs = cache.get(id(state))
+    if defs is None:
+        defs = cache[id(state)] = build_symbol_definition_map(inner_sdfg, state, scan_cache)
+    return defs
 
 
 def _is_single_element(size) -> bool:
@@ -207,6 +218,9 @@ class WidenAccesses(ppl.Pass):
         its accesses widen in place (step 2) and it is never descriptor-swapped (step 4).
         """
         lane_dep: Set[str] = set()
+        # Safe: step 1 classifies only, so the whole-SDFG symbol scan is loop-invariant here.
+        scan_cache: Dict[int, Any] = {}
+        state_defs: Dict[int, Dict[str, Any]] = {}
         for state in inner_sdfg.states():
             for an in state.nodes():
                 if not isinstance(an, AccessNode):
@@ -223,7 +237,11 @@ class WidenAccesses(ppl.Pass):
                         lane_dep.add(an.data)  # conservative
                         break
                     try:
-                        record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=state)
+                        record = classify_tile_access(sub,
+                                                      iter_vars=iter_vars,
+                                                      inner_sdfg=inner_sdfg,
+                                                      state=state,
+                                                      sym_defs=_state_defs(inner_sdfg, state, state_defs, scan_cache))
                     except Exception:  # noqa: BLE001
                         lane_dep.add(an.data)
                         break
@@ -419,6 +437,8 @@ class WidenAccesses(ppl.Pass):
         index_symbols = self._index_promoted_names(inner_sdfg)
         if not index_symbols:
             return None
+        scan_cache: Dict[int, Any] = {}  # read-only query: nothing here mutates ``inner_sdfg``
+        state_defs: Dict[int, Dict[str, Any]] = {}
         for state in inner_sdfg.states():
             for edge in state.edges():
                 if not (isinstance(edge.src, AccessNode) and isinstance(edge.dst, AccessNode)):
@@ -428,7 +448,8 @@ class WidenAccesses(ppl.Pass):
                 desc = inner_sdfg.arrays.get(edge.dst.data)
                 if desc is None or not desc.transient:
                     continue
-                if self._edge_reads_lane_dependent(edge, state, inner_sdfg, iter_vars):
+                if self._edge_reads_lane_dependent(edge, state, inner_sdfg, iter_vars,
+                                                   _state_defs(inner_sdfg, state, state_defs, scan_cache)):
                     return edge.dst.data
         return None
 
@@ -450,6 +471,12 @@ class WidenAccesses(ppl.Pass):
         # Index symbols (scalars promoted to symbols in subsets) are addresses,
         # not data -> stay scalar; excluded even if their tasklet uses an iter-var.
         index_symbols = self._index_promoted_names(inner_sdfg)
+        # Safe for the whole fixpoint: this method only grows ``lane_dep_transients`` (or raises),
+        # so no graph-derived answer below can change between rounds.
+        scan_cache: Dict[int, Any] = {}
+        state_defs: Dict[int, Dict[str, Any]] = {}
+        edge_lane_dep: Dict[int, bool] = {}
+        narrowed: Dict[str, bool] = {}
         changed = True
         max_iters = 32
         while changed and max_iters > 0:
@@ -481,15 +508,21 @@ class WidenAccesses(ppl.Pass):
                     # node dimension").
                     src_desc = inner_sdfg.arrays.get(src_name)
                     src_is_scalar_like = (src_desc is not None and src_desc.transient and self._is_widenable(src_desc))
-                    if (not src_is_scalar_like
-                            and not self._edge_reads_lane_dependent(edge, state, inner_sdfg, iter_vars)):
-                        continue
+                    if not src_is_scalar_like:
+                        lane_dep_read = edge_lane_dep.get(id(edge))
+                        if lane_dep_read is None:
+                            lane_dep_read = self._edge_reads_lane_dependent(
+                                edge, state, inner_sdfg, iter_vars,
+                                _state_defs(inner_sdfg, state, state_defs, scan_cache))
+                            edge_lane_dep[id(edge)] = lane_dep_read
+                        if not lane_dep_read:
+                            continue
                     desc = inner_sdfg.arrays.get(dst_name)
                     if desc is None or not desc.transient or isinstance(desc, dd.View):
                         continue
                     if dst_name in index_symbols:
                         continue  # index/address symbol -> stays scalar
-                    if self._is_narrowed_constant_transient(inner_sdfg, dst_name):
+                    if self._is_narrowed_constant_transient(inner_sdfg, dst_name, narrowed):
                         continue  # narrowed compile-time constant -> stays a Scalar broadcast
                     if not self._is_widenable(desc):
                         raise self._unwidenable_lane_dep_error(dst_name, desc)
@@ -518,7 +551,7 @@ class WidenAccesses(ppl.Pass):
                                 continue
                             if nm in index_symbols:
                                 continue  # index/address symbol -> stays scalar
-                            if self._is_narrowed_constant_transient(inner_sdfg, nm):
+                            if self._is_narrowed_constant_transient(inner_sdfg, nm, narrowed):
                                 continue  # narrowed compile-time constant -> stays a Scalar broadcast
                             if not self._is_widenable(desc):
                                 raise self._unwidenable_lane_dep_error(nm, desc)
@@ -528,7 +561,7 @@ class WidenAccesses(ppl.Pass):
         return lane_dep_transients
 
     @staticmethod
-    def _is_narrowed_constant_transient(inner_sdfg: SDFG, name: str) -> bool:
+    def _is_narrowed_constant_transient(inner_sdfg: SDFG, name: str, memo: Optional[Dict[str, bool]] = None) -> bool:
         """True iff transient ``name`` is produced SOLELY by pure compile-time constant
         assignments -- ``out = <numeric literal>`` or a SAME-DOMAIN dtype cast
         ``out = TYPE(<numeric literal>)`` (fp -> fp / int -> int) with NO data inputs.
@@ -540,7 +573,19 @@ class WidenAccesses(ppl.Pass):
         (fp <-> int) is a real numeric conversion and is NOT matched (it stays widenable).
         Any non-tasklet producer (a copy / lib node) or a data-input tasklet disqualifies
         the name (it is a genuine produced per-lane value).
+
+        ``memo`` caches ``{name: bool}`` for one UNMUTATED ``inner_sdfg``.
         """
+        if memo is not None and name in memo:
+            return memo[name]
+        result = WidenAccesses._scan_narrowed_constant_transient(inner_sdfg, name)
+        if memo is not None:
+            memo[name] = result
+        return result
+
+    @staticmethod
+    def _scan_narrowed_constant_transient(inner_sdfg: SDFG, name: str) -> bool:
+        """Uncached body of :meth:`_is_narrowed_constant_transient`."""
         desc = inner_sdfg.arrays.get(name)
         if desc is None:
             return False
@@ -568,7 +613,12 @@ class WidenAccesses(ppl.Pass):
                     found_producer = True
         return found_producer
 
-    def _edge_reads_lane_dependent(self, edge, state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> bool:
+    def _edge_reads_lane_dependent(self,
+                                   edge,
+                                   state: SDFGState,
+                                   inner_sdfg: SDFG,
+                                   iter_vars: Tuple[str, ...],
+                                   sym_defs: Optional[Dict[str, Any]] = None) -> bool:
         """True if the copy edge's SOURCE-side subset has >=1 non-CONSTANT (lane-dependent) dim.
 
         A fully-CONSTANT read (``a[0]``, or ``a[j]`` with ``j`` loop-invariant w.r.t. the tiled
@@ -580,6 +630,8 @@ class WidenAccesses(ppl.Pass):
         :param state: The state holding the edge.
         :param inner_sdfg: The body NSDFG.
         :param iter_vars: The tiled iter-var names.
+        :param sym_defs: ``build_symbol_definition_map(inner_sdfg, state)``, when the caller holds
+            it; ``None`` rebuilds it inside ``classify_tile_access``, as before.
         :returns: ``True`` if the read is lane-dependent (dest must widen), else ``False``.
         """
         try:
@@ -587,7 +639,11 @@ class WidenAccesses(ppl.Pass):
         except Exception:  # noqa: BLE001 -- helper may refuse exotic edges
             return True
         try:
-            record = classify_tile_access(sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=state)
+            record = classify_tile_access(sub,
+                                          iter_vars=iter_vars,
+                                          inner_sdfg=inner_sdfg,
+                                          state=state,
+                                          sym_defs=sym_defs)
         except Exception:  # noqa: BLE001
             return True
         if not record.per_dim_kind:
@@ -645,6 +701,9 @@ class WidenAccesses(ppl.Pass):
         """
         widths = tuple(self.widths)
         seeded = 0
+        # Fanout adds interstate assignments, so both caches are dropped after every success.
+        scan_cache: Dict[int, Any] = {}
+        state_defs: Dict[int, Dict[str, Any]] = {}
         for inner_state in inner_sdfg.states():
             for an in list(inner_state.nodes()):
                 if not isinstance(an, AccessNode):
@@ -663,7 +722,9 @@ class WidenAccesses(ppl.Pass):
                         record = classify_tile_access(sub,
                                                       iter_vars=iter_vars,
                                                       inner_sdfg=inner_sdfg,
-                                                      state=inner_state)
+                                                      state=inner_state,
+                                                      sym_defs=_state_defs(inner_sdfg, inner_state, state_defs,
+                                                                           scan_cache))
                     except Exception:  # noqa: BLE001
                         continue
                     if not record.per_dim_kind or PerDimKind.GATHER not in record.per_dim_kind:
@@ -680,6 +741,8 @@ class WidenAccesses(ppl.Pass):
                                                        widths,
                                                        iter_var_ubs=iter_var_ubs) is not None:
                             seeded += 1
+                            scan_cache.clear()
+                            state_defs.clear()
         return seeded
 
     def _widen_transient(self, inner_sdfg: SDFG, name: str, to_widen: Set[str]) -> bool:
