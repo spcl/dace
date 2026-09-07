@@ -576,6 +576,53 @@ def test_c_scan_widens_from_the_input_type_to_the_seed():
                                             'end means the fold ran at the int8 input type')
 
 
+#: A scan whose SEED is a read-only scalar. The backend emits every read-only scalar that way
+#: (``const double _scan_seed_b = b[0];`` in ``tsvc_2_s323``), so this is the ordinary case rather
+#: than an exotic one.
+_CONST_SEED_SCAN_PROBE = """
+#include <stdint.h>
+#include <math.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <string.h>
+{definitions}
+void probe(double * out) {{
+    double src[8];
+    double acc[8];
+    for (long i = 0; i < 8; ++i) src[i] = (double)(i + 1);
+    const double seed = 10.0;
+    scan_incl_sum(src, acc, 0L, 8L, seed);
+    out[0] = acc[0];
+    out[1] = acc[7];
+}}
+"""
+
+
+def test_a_c_scan_accepts_a_const_seed():
+    """The accumulator is built from the seed's type, and the seed is normally ``const``.
+
+    ``typeof`` keeps qualifiers, so deriving the accumulator with it makes it ``const`` -- the fold
+    cannot assign it, and OpenMP refuses a const reduction variable outright ("may appear only in
+    shared or firstprivate clauses"). ``typeof_unqual`` is the C23 spelling that drops the
+    qualifier and keeps the width, which is the whole reason the accumulator is not just ``double``.
+
+    Not a corner case: every read-only scalar the backend hands a scan arrives ``const``, so this is
+    what ``tsvc_2_s323`` does and it stopped compiling entirely.
+    """
+    definitions = '\n'.join(cpf_lowering.definitions_for({'scan_incl_sum'}, Dialect.STANDALONE_C))
+    code = _CONST_SEED_SCAN_PROBE.format(definitions=definitions)
+    diagnostics = compile_diagnostics(code, name='cpf_scan_const_seed', language='c')
+    assert diagnostics == '', f'a const seed produced compiler diagnostics\n{diagnostics}'
+
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_scan_const_seed', language='c'))
+    out = np.zeros(2, dtype=np.float64)
+    library.probe.argtypes = [ctypes.c_void_p]
+    library.probe.restype = None
+    library.probe(ctypes.c_void_p(out.ctypes.data))
+    # Inclusive from a seed of 10: first is 10+1, last is 10 + sum(1..8).
+    assert list(out) == [11.0, 46.0], f'the inclusive sequence from a const seed is {list(out)}'
+
+
 #: A dispatch macro whose argument has a SIDE EFFECT. ``_Generic``'s controlling expression is
 #: unevaluated, so the argument must be evaluated exactly once -- but the argument is written twice
 #: in the macro's expansion, and nothing but the standard says the first one does not run.

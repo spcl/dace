@@ -1395,7 +1395,7 @@ def _c_scan_family(kind: str, operation: str, clause: str, step: str) -> str:
     the price of being a statement rather than a call -- the trade ``cpf_find_first`` already makes,
     for the same reason.
 
-    The accumulator is ``typeof(seed)`` and never the input's: a 0/1 mask folded at ``int8_t``
+    The accumulator is ``typeof_unqual(seed)`` and never the input's: a 0/1 mask folded at ``int8_t``
     wraps at 128, and the seed is the one argument that names the type the caller wants the fold
     carried out in. Every argument is bound to a local before the loop, so each is evaluated
     exactly once even though the loop names it on every iteration.
@@ -1417,7 +1417,12 @@ def _c_scan_family(kind: str, operation: str, clause: str, step: str) -> str:
         '        typeof(*(o)) * cpf_scan_out = (o);',
         '        const long cpf_scan_lo = (lo);',
         '        const long cpf_scan_hi = (hi);',
-        '        typeof(seed) cpf_scan_acc = (seed);',
+        # ``typeof_unqual``, not ``typeof``: the seed is normally a read-only scalar the backend
+        # already emitted as ``const double _scan_seed_b = ...``, and ``typeof`` keeps that
+        # qualifier, so the accumulator comes out const -- the fold cannot assign it and OpenMP
+        # refuses it outright ("may appear only in shared or firstprivate clauses"). The INPUT
+        # binding deliberately keeps its qualifiers; only the accumulator is written.
+        '        typeof_unqual(seed) cpf_scan_acc = (seed);',
         '        _Pragma("omp simd reduction(inscan, %s:cpf_scan_acc)")' % clause,
         '        for (long cpf_scan_i = cpf_scan_lo; cpf_scan_i < cpf_scan_hi; ++cpf_scan_i) {',
         phases[0],
