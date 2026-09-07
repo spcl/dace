@@ -9,8 +9,9 @@ from dace.memlet import Memlet
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.sdfg.propagation import _propagate_node
+from dace.sdfg.propagation import _propagate_node, propagate_subset
 from dace.transformation.subgraph import helpers
+from dace.sdfg import utils as sdutil
 from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation.helpers import find_contiguous_subsets
 
@@ -1266,13 +1267,25 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     # Connect transient data to the outer output node.
                     if acc in intermediate_sinks[dname]:
-                        if not onode:
-                            onode = graph.add_access(dname)
-                        graph.add_memlet_path(acc,
-                                              global_map_exit,
-                                              onode,
-                                              memlet=Memlet(data=dname, subset=in_subset),
-                                              src_conn=None)
+                        # Skip a store the downstream chain overwrites: it would leave the fused
+                        # MapExit and that chain writing the same slot unordered.
+                        outer_subset = propagate_subset([Memlet(data=dname, subset=in_subset)], sdfg.arrays[dname],
+                                                        global_map_exit.map.params, global_map_exit.map.range).subset
+                        downstream = sdutil.find_downstream_nodes(acc, graph)
+                        superseded = any(
+                            ie.src in downstream and not ie.data.is_empty()
+                            and ie.data.get_dst_subset(ie, graph) is not None
+                            and subsets.intersects(ie.data.get_dst_subset(ie, graph), outer_subset) is not False
+                            for ds in graph.data_nodes() if ds.data == dname and graph.out_degree(ds) == 0
+                            for ie in graph.in_edges(ds))
+                        if not superseded:
+                            if not onode:
+                                onode = graph.add_access(dname)
+                            graph.add_memlet_path(acc,
+                                                  global_map_exit,
+                                                  onode,
+                                                  memlet=Memlet(data=dname, subset=in_subset),
+                                                  src_conn=None)
 
         for e in edges_to_remove:
             graph.remove_edge(e)
