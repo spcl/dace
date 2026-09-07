@@ -2,7 +2,6 @@
 """ Tests the MarkConstInit pass. """
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes as nd
