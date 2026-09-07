@@ -44,7 +44,7 @@ SIMPLIFY_PASSES = [
     EmptyLoopElimination,
 ]
 
-_nonrecursive_passes = [
+_recursive_passes = [
     ScalarToSymbolPromotion,
     DeadDataflowElimination,
     DeadStateElimination,
@@ -128,7 +128,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
                               'for more information.')
                 return None
 
-        if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value
+        if type(p) in _recursive_passes:  # If pass needs to run recursively, do so and modify return value
             ret: Dict[int, Any] = {}
             for sd in sdfg.all_sdfgs_recursive():
                 subret = p.apply_pass(sd, state)
@@ -142,7 +142,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
 
         if self.verbose:
             if ret is not None:
-                if type(p) not in _nonrecursive_passes:
+                if type(p) not in _recursive_passes:
                     rep = p.report(ret)
                 else:
                     # Create report from recursive application
