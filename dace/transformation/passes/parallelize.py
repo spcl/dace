@@ -1,64 +1,62 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Single-shot pipeline that turns sequential loops into parallel maps.
 
-It composes standalone passes in order, applied once:
+The recipe, applied once in order:
 
-0a. :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll` --
-    fully unroll constant-trip loops with ``<= unroll_limit`` iterations, so small
-    recurrence / reduction loops become inline straight-line code rather than
-    atomically-parallelized maps.
-0b. :class:`~dace.transformation.passes.parallelization_prep.BestEffortLoopPeeling`
-    -- index-set-split a loop at a point derived from its body (an ``if i == x``
-    guard, a broadcast read's conflicting index), and peel a wrapping body modulo
-    to its floor-correct affine form. Runs before scalar fission so the
-    freshly-introduced straight-line bodies' scalars get renamed.
-1.  ``PrivatizeScalars`` -- privatize loop-local scalars (drop false carried deps).
-2.  ``SymbolPropagation`` + ``ConstantPropagation`` -- peeling / unrolling fold
-    concrete iteration indices into the bodies; propagating them simplifies
-    bounds and conditions enough to expose more maps.
-3.  ``TrivialTaskletElimination`` -- drop the ``__out = __inp`` copy tasklets the
-    frontend emits, exposing the bare read-modify-write spine of accumulators.
-4.  ``AugAssignToWCR`` -- rewrite ``arr[S] += x`` (incl. the copy-wrapped form)
-    into a write-conflict-resolution write so the reduction loop maps.
-5.  ``LoopToReduce`` -- lift pure accumulator loops to ``Reduce`` library nodes.
-6.  ``LoopToMap`` -- parallelize every loop now free of loop-carried dependencies.
+0. ``specialize_symbols`` -- bake ``specialize_constants`` into the graph, recursively through
+   nested SDFGs. Load-bearing rather than cosmetic: on cloudsc NONE of the 150 loops has a constant
+   trip count until the species PARAMETERs (``nclv`` and the ``ncldq*`` indices) are baked, and 37
+   do afterwards -- so without this step stage 1 has nothing to fire on. Skipped when no constants
+   are given.
+1. :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll` -- fully unroll
+   constant-trip loops with ``<= unroll_limit`` iterations, so small recurrence / reduction loops
+   become inline straight-line code rather than atomically-parallelized maps.
+2. ``UniqueLoopIterators`` -- SSA-rename every loop variable to a unique ``_loop_it_<N>``. Unrolling
+   an outer loop replicates its inner loops, and the copies all keep the original iterator name;
+   ``LoopToMap`` then refuses each copy but the last, because the shared name is read by a LATER
+   block ("loop-defined symbol used after the loop"). Without this stage the lift reaches almost
+   nothing on an unrolled Fortran graph.
+3. ``SimplifyPass`` -- a body guarding on the iteration variable (``if jm == ncldqi``) only exposes
+   a constant condition once unrolling pins the variable to a literal, so the caller's own simplify,
+   run while it was still symbolic, could not fold it. The dead branches left behind still hold
+   constant-index writes that read as loop-carried conflicts and block stage 4.
+4. ``LoopToMap`` -- parallelize every loop now free of loop-carried dependencies.
+5. :data:`FUSE_ROUNDS` x (``StateFusionExtended`` -> ``FullMapFusion``) -- maps fuse only within a
+   state, and fusing maps in turn frees the state boundaries the fused maps were pinning, so the two
+   alternate. One round returns with the graph still shrinking; two is the recipe.
 
-``AccumulatorToMapAndReduce`` deliberately does NOT run here. It parallelizes the
-accumulator loops ``LoopToReduce`` refuses, but pays for them with a per-iteration
-``(trip,)`` buffer plus a second ``Reduce`` pass over it -- more memory traffic than
-the scalar accumulation it replaces, and on cloudsc a net slowdown. Its Map-with-WCR
-pattern also partly undoes stage 4 (``AugAssignToWCR`` creates the WCR; that pattern
-rewrites it back into buffer + ``Reduce``). The canonicalization pipeline still runs
-it, where the surrounding fusion/lift stages can consume the ``Reduce``.
+The pipeline runs once: every stage is idempotent or internally exhaustive, so there is nothing to
+re-apply. It is modelled on the canonicalization pipeline (a single-shot ``ppl.Pass``) rather than
+``Pipeline``/``FixedPointPipeline``, which would forbid re-using a pass type and re-run on a
+fixed-point loop.
 
-The pipeline runs once: every stage is idempotent or internally exhaustive, so
-there is nothing to re-apply. It is modelled on the canonicalization pipeline
-(a single-shot ``ppl.Pass``) rather than ``Pipeline``/``FixedPointPipeline``,
-which would forbid re-using a pass type and re-run on a fixed-point loop.
-
-Transformation classes are imported lazily inside ``apply_pass``: importing them
-at module load would cycle (this module is imported by
-``dace.transformation.passes`` whose subpackages those transformations import).
+Transformation classes are imported lazily inside ``_stages``: importing them at module load would
+cycle (this module is imported by ``dace.transformation.passes`` whose subpackages those
+transformations import).
 """
 from typing import Any, Dict, List, Optional
 
 from dace import properties
 from dace.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll, DEFAULT_PEEL_LIMIT,
-                                                             DEFAULT_UNROLL_LIMIT)
+from dace.transformation.passes.parallelization_prep import ShortLoopUnroll, DEFAULT_UNROLL_LIMIT
+
+#: Rounds of (StateFusionExtended -> FullMapFusion) run after the loops have become maps.
+FUSE_ROUNDS: int = 2
 
 
 @properties.make_properties
 class ParallelizePipeline(ppl.Pass):
-    """Parallelize an SDFG's loops, lifting reductions on the way.
+    """Parallelize an SDFG's loops: unroll, uniquify iterators, simplify, lift to maps, then fuse.
 
-    Composes the parallelization passes once, imperatively. Does not re-run.
+    Composes the passes once, imperatively. Does not re-run.
 
     :param validate: Validate the SDFG once at the end.
     :param validate_all: Validate the SDFG after each stage.
     :param unroll_limit: Forwarded to :class:`ShortLoopUnroll` (0 disables).
-    :param peel_limit: Forwarded to :class:`BestEffortLoopPeeling` (0 disables).
+    :param specialize_constants: Symbol values to bake in before anything else runs. Without them a
+                                 loop whose bound is a symbolic PARAMETER has no constant trip count,
+                                 so ``ShortLoopUnroll`` refuses it.
     """
 
     CATEGORY: str = 'Optimization Preparation'
@@ -68,19 +66,16 @@ class ParallelizePipeline(ppl.Pass):
     unroll_limit = properties.Property(dtype=int,
                                        default=DEFAULT_UNROLL_LIMIT,
                                        desc='See ShortLoopUnroll (0 disables).')
-    peel_limit = properties.Property(dtype=int,
-                                     default=DEFAULT_PEEL_LIMIT,
-                                     desc='See BestEffortLoopPeeling (0 disables).')
 
     def __init__(self,
                  validate: bool = False,
                  validate_all: bool = False,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-                 peel_limit: int = DEFAULT_PEEL_LIMIT):
+                 specialize_constants: Optional[Dict[str, Any]] = None):
         self.validate = validate
         self.validate_all = validate_all
         self.unroll_limit = unroll_limit
-        self.peel_limit = peel_limit
+        self._specialize_constants = specialize_constants or {}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -92,61 +87,37 @@ class ParallelizePipeline(ppl.Pass):
         return set()
 
     def _stages(self) -> List[ppl.Pass]:
-        from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, WCRToAugAssign
-        from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
         from dace.transformation.interstate.loop_to_map import LoopToMap
-        from dace.transformation.passes.constant_propagation import ConstantPropagation
-        from dace.transformation.passes.loop_to_reduce import LoopToReduce
+        from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+        from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes.full_map_fusion import FullMapFusion
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.simplify import SimplifyPass
-        from dace.transformation.passes.symbol_propagation import SymbolPropagation
-        from dace.transformation.passes.propagate_memlets import PropagateMemlets
+        from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
-        return [
-            # Loop-structure transforms first (unroll, peel; reversal lives inside
-            # peeling). Then symbol/constant propagation folds the constant
-            # iteration values and guard symbols those expose -- it must run after
-            # them, not before. The rest (privatize, trivial-tasklet, AugWCR,
-            # reduce, loop-to-map) is order-insensitive to propagation.
+        stages: List[ppl.Pass] = [
             ShortLoopUnroll(self.unroll_limit),
-            BestEffortLoopPeeling(self.peel_limit),
-            # Re-simplify once, after unrolling. The caller simplifies before this
-            # pipeline, but a loop body that guards on the iteration variable (e.g.
-            # ``if jm == ncldqi``) only exposes a constant condition once unrolling pins
-            # ``jm`` to a literal -- so the caller's simplify, run while the guard was
-            # still symbolic, could not fold it. Unrolling (with the species constants
-            # specialised) then leaves dead branches like ``if 1 == 2`` whose never-taken
-            # bodies still hold constant-index writes (e.g. ``zvqx[1] = ...``) that read
-            # as a loop-carried conflict and block LoopToMap. Folding the conditions here
-            # drops those dead branches and their phantom writes.
+            UniqueLoopIterators(),
             SimplifyPass(),
-            # Re-propagate memlets so propagation re-runs with the unrolled / specialised
-            # body and the corrected ``symbols_defined_at`` (enclosing-LoopRegion loop
-            # variables now folded in). Without this, NSDFG-out connector memlets that
-            # propagation had previously widened to the full array extent stay stale and
-            # cause ``LoopToMap`` to refuse with "dynamic write not indexed by the
-            # iteration variable" -- the cloudsc ``tendency_loc_cld`` shape.
-            PropagateMemlets(),
-            SymbolPropagation(),
-            ConstantPropagation(),
-            PrivatizeScalars(),
-            PatternMatchAndApplyRepeated([TrivialTaskletElimination()]),
-            PatternMatchAndApplyRepeated([AugAssignToWCR()]),
-            # Closes the AugAssignToWCR round-trip: the WCR write goes back to an in-body
-            # augassign, now without the frontend copy chain -- the shape ``LoopToReduce``'s
-            # matcher claims. ``LoopToReduce`` no longer normalizes on its own behalf.
-            PatternMatchAndApplyRepeated([WCRToAugAssign()]),
-            LoopToReduce(),
             PatternMatchAndApplyRepeated([LoopToMap()]),
         ]
+        for _ in range(FUSE_ROUNDS):
+            stages.append(PatternMatchAndApplyRepeated([StateFusionExtended()]))
+            # A fresh Pipeline per round: FullMapFusion declares a FindSingleUseData dependency whose
+            # results the Pipeline caches, and the second round runs on a graph the first rewrote.
+            stages.append(Pipeline([FullMapFusion()]))
+        return stages
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Parallelize ``sdfg`` in place.
 
         :param sdfg: The SDFG to parallelize.
-        :returns: The number of stages applied.
+        :returns: The number of stages applied. The specialization is not one of them -- it is what
+                  makes the first stage applicable, not a stage in its own right.
         """
+        if self._specialize_constants:
+            from dace.sdfg.utils import specialize_symbols
+            specialize_symbols(sdfg, self._specialize_constants)
         stages = self._stages()
         for stage in stages:
             stage.apply_pass(sdfg, {})
@@ -161,18 +132,18 @@ def parallelize(sdfg: SDFG,
                 validate: bool = True,
                 validate_all: bool = False,
                 unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-                peel_limit: int = DEFAULT_PEEL_LIMIT) -> SDFG:
+                specialize_constants: Optional[Dict[str, Any]] = None) -> SDFG:
     """Parallelize ``sdfg``'s loops in place and return it.
-
-    One-call recipe meant to run after ``simplify``.
 
     :param sdfg: The SDFG to parallelize.
     :param validate: Validate the SDFG after parallelization.
     :param validate_all: Validate the SDFG after each stage.
     :param unroll_limit: See :class:`ShortLoopUnroll`.
-    :param peel_limit: See :class:`BestEffortLoopPeeling`.
+    :param specialize_constants: Symbol values to bake in first; see :class:`ParallelizePipeline`.
     :returns: The same ``sdfg`` instance, parallelized.
     """
-    ParallelizePipeline(validate=validate, validate_all=validate_all, unroll_limit=unroll_limit,
-                        peel_limit=peel_limit).apply_pass(sdfg, {})
+    ParallelizePipeline(validate=validate,
+                        validate_all=validate_all,
+                        unroll_limit=unroll_limit,
+                        specialize_constants=specialize_constants).apply_pass(sdfg, {})
     return sdfg

@@ -15,10 +15,24 @@ import pytest
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.sdfg.nodes import LibraryNode
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.parallelize import ParallelizePipeline
+from dace.transformation.passes.pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated
 import tests.corpus.measure_parallelization as mp
 
 N = 16
+
+
+def _to_maps(sdfg):
+    """Run the parallelize pipeline up to and including ``LoopToMap``, stopping before its fusion
+    rounds. The rounds absorb the outer-product maps into their neighbours, and ``LiftEinsum`` then
+    matches nothing in EITHER mode -- measured on gemver: 2 Einsums lifted before the rounds, 0
+    after -- which would make the comparison below vacuously false rather than testing the guard."""
+    for stage in ParallelizePipeline()._stages():
+        stage.apply_pass(sdfg, {})
+        if isinstance(stage, PatternMatchAndApply) and any(isinstance(t, LoopToMap) for t in stage.transformations):
+            return
+    raise AssertionError('the parallelize pipeline no longer runs LoopToMap')
 
 
 def _gemm_libnodes(sdfg):
@@ -32,16 +46,14 @@ def _gemm_libnodes(sdfg):
 def test_default_mode_lifts_outer_products_contraction_only_does_not():
     """On gemver's rank-2 update, the default lift produces GEMM/Einsum nodes
     from the outer products; the contraction-only mode produces none."""
-    from dace.transformation.passes.parallelize import parallelize
-
     base, _ = mp.CORPORA['poly'][1]('gemver')
 
     default = copy.deepcopy(base)
-    parallelize(default, validate=True, validate_all=False, peel_limit=4)
+    _to_maps(default)
     PatternMatchAndApplyRepeated([LiftEinsum()]).apply_pass(default, {})
 
     guarded = copy.deepcopy(base)
-    parallelize(guarded, validate=True, validate_all=False, peel_limit=4)
+    _to_maps(guarded)
     PatternMatchAndApplyRepeated([LiftEinsum(contraction_only=True)]).apply_pass(guarded, {})
 
     # The default lift turns the outer products into GEMM/Einsum nodes; the
@@ -57,7 +69,7 @@ def test_existing_matmul_contractions_are_untouched():
 
     base, _ = mp.CORPORA['poly'][1]('gemver')
     sd = copy.deepcopy(base)
-    parallelize(sd, validate=True, validate_all=False, peel_limit=4)
+    parallelize(sd, validate=True, validate_all=False)
     matmuls_before = sum(1 for s in sd.all_sdfgs_recursive() for st in s.states() for n in st.nodes()
                          if isinstance(n, MatMul))
     PatternMatchAndApplyRepeated([LiftEinsum(contraction_only=True)]).apply_pass(sd, {})
