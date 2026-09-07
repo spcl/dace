@@ -37,12 +37,24 @@ class InlineTaskletConnectors(ppl.Pass):
     def should_reapply(self, modified: Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
-        # Planned first, applied second, and decided PER CONTAINER. A reader rewritten to name the
-        # array directly relies on the writer's inlining to declare it -- inlining the reader while
-        # the writer stays classic emits a name nothing declares. So a container is inlined only
-        # where every tasklet touching it can be, and one tasklet left classic keeps its containers
-        # classic everywhere.
+    def plan(self, sdfg: SDFG) -> Tuple[List[Tuple[nodes.Tasklet, Dict[str, Tuple[str, List[str]]]]], Set[str]]:
+        """The inlining plan and the containers it may be applied to.
+
+        Decided PER CONTAINER, not per tasklet. A reader rewritten to name the array directly
+        relies on the writer's inlining to declare it -- inlining the reader while the writer stays
+        classic emits a name nothing declares. So a container is inlined only where every tasklet
+        touching it can be, and one tasklet left classic keeps its containers classic everywhere.
+
+        Exposed because :func:`tasklet_emits_brace_free` has to answer the SAME question: a
+        predicate that models only whether one tasklet's connectors are individually inlinable
+        promises an inlining this pass then declines, and its caller
+        (:class:`~dace.transformation.passes.mark_const_init.MarkConstInit`) skips a declaration on
+        the strength of that promise. One rule, computed here, rather than two that can drift.
+
+        :param sdfg: the SDFG to plan over.
+        :returns: ``(plans, safe)`` -- the per-tasklet connector accesses, and the container names
+                  every toucher of which can be inlined.
+        """
         plans: List[Tuple[nodes.Tasklet, Dict[str, Tuple[str, List[str]]]]] = []
         touched: Dict[str, int] = {}
         inlinable: Dict[str, int] = {}
@@ -66,8 +78,10 @@ class InlineTaskletConnectors(ppl.Pass):
                 inlinable[data] = inlinable.get(data, 0) + 1
             if accesses:
                 plans.append((node, accesses))
+        return plans, {data for data, count in touched.items() if inlinable.get(data, 0) == count}
 
-        safe = {data for data, count in touched.items() if inlinable.get(data, 0) == count}
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
+        plans, safe = self.plan(sdfg)
 
         inlined_tasklets: Set[str] = set()
         for node, accesses in plans:
@@ -208,17 +222,26 @@ class InlineTaskletConnectors(ppl.Pass):
         return ast.unparse(new_tree), inliner.inlined
 
 
-def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet) -> bool:
+def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet, safe: Optional[Set[str]] = None) -> bool:
     """True iff ``InlineTaskletConnectors`` will inline EVERY connector of ``tasklet``,
     so the readable code generator emits it as a single brace-free statement with no
     copy-in/out local.
 
     ``MarkConstInit`` uses this to decide whether a fused ``const T x = <expr>;`` binding
     lands at the enclosing scope (visible to the reads) or is trapped inside the tasklet's
-    ``{ }`` block (a use-before-declaration miscompile). The predicate is SOUND: it returns
-    True only when every connector is individually inlinable AND there is no inout connector
-    (ITC may keep an inout connector classic even when each side is individually inlinable),
-    so a True answer guarantees the brace-free emission.
+    ``{ }`` block (a use-before-declaration miscompile).
+
+    Individually inlinable connectors are NOT sufficient, which is what this used to check:
+    :meth:`InlineTaskletConnectors.plan` decides per CONTAINER, so a container one other tasklet
+    cannot inline stays classic everywhere -- including here. Predicting True there promised an
+    inlining the pass declined, ``MarkConstInit`` marked the target ``const_runtime`` on the
+    strength of it, ``allocate_array`` skipped the declaration, and no binding was ever emitted:
+    the name reached the compiler undeclared. Every ``LoopToScan`` seed landed in that shape,
+    because the carrier array it is copied from is also read by tasklets that stay classic.
+
+    :param safe: the container set from :meth:`InlineTaskletConnectors.plan`, computed here when
+                 not supplied. A caller asking about many tasklets should compute it ONCE -- the
+                 plan walks the whole SDFG.
     """
     if tasklet.language != dtypes.Language.Python:
         return False
@@ -228,12 +251,16 @@ def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet) -> bool:
     if _rebound_names(ast.parse(tasklet.code.as_string)) & (set(tasklet.in_connectors) | set(tasklet.out_connectors)):
         return False
     checker = InlineTaskletConnectors()
-    for edge in state.in_edges(tasklet):
-        if not edge.data.is_empty() and checker._connector_access(sdfg, state, tasklet, edge, is_output=False) is None:
-            return False
-    for edge in state.out_edges(tasklet):
-        if not edge.data.is_empty() and checker._connector_access(sdfg, state, tasklet, edge, is_output=True) is None:
-            return False
+    if safe is None:
+        _plans, safe = checker.plan(sdfg)
+    for is_output, edges in ((False, state.in_edges(tasklet)), (True, state.out_edges(tasklet))):
+        for edge in edges:
+            if edge.data.is_empty():
+                continue
+            access = checker._connector_access(sdfg, state, tasklet, edge, is_output=is_output)
+            # ``(conn, data, indices)`` -- the CONTAINER is what the safe set is keyed on.
+            if access is None or access[1] not in safe:
+                return False
     return True
 
 
