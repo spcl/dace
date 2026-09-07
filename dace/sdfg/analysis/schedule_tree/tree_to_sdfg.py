@@ -706,9 +706,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         if parent_sdfg.arrays[memlet.data].transient:
                             sdfg.arrays[memlet.data].transient = False
 
-                    # Dev note: memlet.data and nview.target are identical
-                    assert memlet.data not in to_connect["inputs"]
-                    to_connect["inputs"].add(memlet.data)
+                # Add in_connector in any case if not yet present, e.g. read after (partial) write
+                # Dev note: memlet.data and nview.target are identical
+                to_connect["inputs"].add(memlet.data)
             else:
                 assert scope_node is None
 
