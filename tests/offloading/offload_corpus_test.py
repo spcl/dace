@@ -57,36 +57,26 @@ def load_module(path: pathlib.Path) -> ModuleType | None:
     return module
 
 
-def gpu_skip_reason(module: ModuleType) -> str:
-    """Why upstream disabled this kernel's own GPU test, or '' if it did not.
-
-    A kernel whose ``test_gpu`` is skipped is one DaCe already knows is broken -- mandelbrot2 is
-    issue #1139, lenet raises std::runtime_error. Reporting those here would be reporting somebody
-    else's open bug as this pass's, so the corpus follows the same verdict and stays in step with it
-    automatically when upstream re-enables one.
-    """
-    test = module.__dict__.get('test_gpu')
-    for mark in vars(test).get('pytestmark', ()) if test is not None else ():
-        if mark.name == 'skip':
-            return mark.kwargs.get('reason', 'skipped upstream')
-    return ''
-
-
 def npbench_programs() -> list:
-    """Every ``@dace.program`` reachable under ``tests/npbench``, as pytest params."""
+    """Every ``@dace.program`` reachable under ``tests/npbench``, as pytest params.
+
+    Every one of them, including the kernels whose own ``test_gpu`` upstream disabled. Those marks
+    record a RUNTIME verdict -- an illegal access, a std::runtime_error -- which says nothing about
+    whether the kernel lowers, and lowering is all this file claims. Following them cost five
+    kernels of coverage and hid two real bugs: the GPUAuto reduce cloning a view descriptor
+    (lenet) and a view left behind on the other side of a staged container (mandelbrot2).
+    """
     found = []
     for path in sorted(NPBENCH_ROOT.rglob('*_test.py')):
         module = load_module(path)
         if module is None:
             continue
-        skip = gpu_skip_reason(module)
-        marks = [pytest.mark.skip(reason=f'{path.stem}: {skip}')] if skip else []
         for attr in sorted(module.__dict__):
             if not attr.endswith(PROGRAM_SUFFIX):
                 continue
             obj = module.__dict__[attr]
             if isinstance(obj, dace.frontend.python.parser.DaceProgram):
-                found.append(pytest.param(obj, marks=marks, id=f'{path.stem}-{attr}'))
+                found.append(pytest.param(obj, id=f'{path.stem}-{attr}'))
     return found
 
 
