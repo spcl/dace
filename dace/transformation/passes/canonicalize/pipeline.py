@@ -123,7 +123,7 @@ from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopE
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 
-from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
@@ -1327,7 +1327,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # LoopToMap a DOALL loop. Must precede it -- afterwards there is no LoopRegion to peel.
     s += [('parallelize', DeadCarriedStoreElimination())]
     s += [('parallelize', PropagateMemlets())]
-    s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('parallelize', ParallelizeLoops(propagate=False))]
 
     # ``LoopToMap`` is where body NestedSDFGs are MINTED, and it derives their connector set from
     # the loop's read/write sets rather than from what the body still uses -- so a statement split
@@ -1394,7 +1394,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduction_to_wcr_map', RetargetWCRAccumulator())]
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('reduction_to_wcr_map', PropagateMemlets())]
-    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('reduction_to_wcr_map', ParallelizeLoops(propagate=False))]
     # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG
     # states whose intermediate transients share names across siblings --
     # scratch arrays as much as scalars. Renaming each scope's transient
@@ -1484,7 +1484,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('loop_fuse', WavefrontSkew(target=target))]
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('loop_fuse', PropagateMemlets())]
-    s += [('loop_fuse', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('loop_fuse', ParallelizeLoops(propagate=False))]
     s += _inline_single_state('loop_fuse')
 
     # lift_copy (cleaning, post-parallelize): now that loops are maps, extract pure
@@ -1747,7 +1747,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('end', LiftLoopCarriedReduction())]
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('end', PropagateMemlets())]
-    s += [('end', PatternMatchAndApplyRepeated([LoopToMap()]))]
+    s += [('end', ParallelizeLoops(propagate=False))]
     s += _inline_single_state('end')
 
     # Terminal fuse: the main ``fuse`` stage runs BEFORE ``normalize_wcr`` and the
