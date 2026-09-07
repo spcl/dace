@@ -24,6 +24,11 @@ class CopyInsertionPhase():
             self.sdfg_scope_dict = sdfg_scope_dict
         else:
             self.sdfg_scope_dict = helpers.get_sdfg_scope_dict(sdfg)
+        # Both read before the phase rewrites anything: renaming moves the writes onto the staged
+        # twins, and the transient correction below rewrites the very storage that says where a
+        # container's home is.
+        self.written = helpers.containers_written(sdfg)
+        self.home_on_gpu = OrderedSet(name for name in sdfg.arrays if helpers.is_array_stored_on_GPU(sdfg, name))
 
         self.correct_transient_storage_locations(sdfg, IR)
         self.correct_view_storage_locations(sdfg)
@@ -279,6 +284,10 @@ class CopyInsertionPhase():
                                array_names: OrderedSet, to_gpu: bool) -> None:
         assert state1 is not None or state2 is not None, "invalid: both states are None"
 
+        array_names = OrderedSet(name for name in array_names if not self.copy_is_redundant(name, to_gpu))
+        if not array_names:
+            return
+
         # 1) insert new state
         copy_state: SDFGState
         joined = "_".join(sorted(array_names))
@@ -345,6 +354,23 @@ class CopyInsertionPhase():
             )
 
             copy_state.add_edge(copy_in, None, copy_out, None, copy_memlet)
+
+    def copy_is_redundant(self, name: str, to_gpu: bool) -> bool:
+        """A copy back into the container's own home carries nothing new when nothing wrote it.
+
+        The container never moves -- the placement stages a twin on the other side and points the
+        accesses there -- so the home copy is only stale once something has written the twin. For a
+        container the SDFG never writes it never goes stale, and restoring it copies bytes that are
+        already in place. Not merely wasted: the copy WRITES the container, which validation refuses
+        as soon as this SDFG is nested and the container reaches it through an input connector only
+        ("Data descriptor A is written to, but only given to nested SDFG as an input connector"),
+        the graph ``GPUTransformMap`` builds around a map that reads one array and writes another.
+
+        Only the direction that restores the home is dropped. Filling the twin is what makes the
+        other side readable at all, so it stands whether or not anything writes it.
+        """
+        restores_the_home = (name in self.home_on_gpu) == to_gpu
+        return restores_the_home and name not in self.written
 
     def _register_new_copy_transient(self, sdfg: SDFG, unknown_name: str, known_name: str):
         assert known_name in sdfg.arrays

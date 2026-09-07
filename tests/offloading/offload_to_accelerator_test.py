@@ -756,10 +756,14 @@ def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():
 
 
 def read_only_input_sdfg() -> dace.SDFG:
-    """``A`` is read and never written, ``B`` is written -- the two halves of the copy-back rule."""
+    """``A`` is read and never written, ``B`` is written -- the two halves of the copy-back rule.
+
+    ``C`` is touched by nothing at all, the case that must not be placed anywhere.
+    """
     sdfg = dace.SDFG("read_only_input")
     sdfg.add_array("A", [20], dace.float64)
     sdfg.add_array("B", [20], dace.float64)
+    sdfg.add_array("C", [20], dace.float64)
 
     state = sdfg.add_state("scale", is_start_block=True)
     entry, exit_ = state.add_map("scale", dict(i="0:20"))
@@ -786,19 +790,36 @@ def laplace_program(A: dace.float64[N], T: dace.int64):
 
 
 def test_a_never_written_input_is_not_copied_back_to_the_host():
-    """Only a container the run can have moved is brought back.
+    """Only a container something wrote is restored; the twin that makes it readable still stands.
 
-    Copying a read-only input back writes bytes the host already holds, and that write is what a
-    nested SDFG's input-only connector refuses.
+    A container never moves -- a twin is staged on the other side and the accesses are pointed at
+    it -- so its home copy goes stale only once something writes the twin. Restoring a read-only
+    one copies bytes already in place, and that write is what a nested SDFG's input-only connector
+    refuses.
     """
     sdfg = read_only_input_sdfg()
     OtA().apply_pass(sdfg, {})
 
     states = list(sdfg.states())
+    labels = [state.label for state in states]
+    assert any(writes_container(state, "A_gpu") for state in states), \
+        f"the read-only array was not staged onto the device at all: {labels}"
     assert any(writes_container(state, "B") for state in states), \
-        f"the written array was not copied back: {[state.label for state in states]}"
+        f"the written array was not copied back: {labels}"
     assert not any(writes_container(state, "A") for state in states), \
-        f"the read-only array was copied back: {[state.label for state in states]}"
+        f"the read-only array was copied back: {labels}"
+
+
+def test_a_container_nothing_touches_is_left_where_it_started():
+    """An array no state reads or writes is not staged, not copied, and grows no twin."""
+    sdfg = read_only_input_sdfg()
+    OtA().apply_pass(sdfg, {})
+
+    assert "C_gpu" not in sdfg.arrays, f"an untouched array was given a device twin: {sorted(sdfg.arrays)}"
+    assert sdfg.arrays["C"].storage == dace.StorageType.Default, \
+        f"an untouched array was moved off the host: {sdfg.arrays['C'].storage}"
+    assert not any(writes_container(state, "C") for state in sdfg.states()), \
+        "an untouched array was copied"
 
 
 def test_a_map_over_a_read_only_container_survives_being_nested():
