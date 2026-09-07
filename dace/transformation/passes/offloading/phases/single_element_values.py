@@ -15,8 +15,7 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 class SingleElementValuePhase():
 
-    def apply(self, sdfg: SDFG, exceptions: Optional[OrderedSet] = None,
-              verbose: bool = False) -> OrderedSet:
+    def apply(self, sdfg: SDFG, exceptions: Optional[OrderedSet] = None, verbose: bool = False) -> OrderedSet:
         self.verbose = verbose
         self.exceptions = exceptions if exceptions is not None else OrderedSet(
         )  # results passed back by values as long as track_hybrid_states is not None
