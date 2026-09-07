@@ -112,8 +112,30 @@ DEFAULT_TILE_SIZE = 64
 #: dependence caps instantaneous parallelism at N however the nest is tiled, and tiling only
 #: changes the KIND of barrier. A bigger tile converts kernel launches into ``__syncthreads``,
 #: which are far cheaper; it also concentrates the work on fewer CUs, and this is a memory-bound
-#: stencil, so aggregate bandwidth pulls the other way. 128 sits between the two.
-DEFAULT_GPU_TILE_SIZE = 128
+#: stencil, so aggregate bandwidth pulls the other way.
+#:
+#: The end-to-end A/B through the benchmark could not separate 64 from 128 -- with the arms swapped
+#: to control for order it moved with the ARM ORDER, not the tile. A standalone kernel reproducing
+#: this exact schedule at n=22820, fp64, does separate them, and says SMALLER:
+#:
+#:   B      launches   tiles/diagonal   time
+#:   32         1427              714   43.27 ms
+#:   64          713              357   44.48 ms
+#:  128          357              179   47.18 ms
+#:  256          179               90   51.22 ms
+#:
+#: Monotonic in TILES PER DIAGONAL, which is what sets how many blocks are resident at once. The
+#: dependence caps instantaneous parallelism at about N, so 357 tiles x 64 lanes is ~23k threads on
+#: a device that wants ~300k: this kernel is parallelism-starved, and every step that shrinks the
+#: tile buys back occupancy. 64 rather than 32 because a 32-wide block is half a gfx942 wavefront
+#: and wastes half of every one; the 2.8% that costs is not worth the misalignment.
+#:
+#: NOT a bandwidth question, which is why staging the tile in shared memory does not help: the same
+#: kernel with all memory traffic removed still takes 11% of the runtime, and the real thing moves
+#: its ~8.3 GB at ~211 GB/s against ~3300 GB/s achievable here, so the neighbour reads are already
+#: cache-resident. Staging measured 0.79x at B=64 -- an extra load phase, store phase and two
+#: barriers on a 127-step critical path cost more than the traffic they save at this occupancy.
+DEFAULT_GPU_TILE_SIZE = 64
 
 #: Dim names for the tile-index polyhedron handed to ``poly.skew_bounds``, and the
 #: PARAMETER names standing for its two tile counts. Handing ISL the counts as opaque
