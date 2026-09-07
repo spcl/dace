@@ -1868,7 +1868,13 @@ class OffloadToAccelerator(ppl.Pass):
                     # "old_name"
                 )
 
-            # b) add (Access Node -> Access Node) to state
+            # b) a view is re-derived from whichever container it aliases on each side, so it needs
+            # the descriptor above but no copy of its own: it has no storage, and the container's
+            # copy in this same state already carries the data.
+            if isinstance(sdfg.arrays[old_name], data.View) or isinstance(sdfg.arrays[new_name], data.View):
+                continue
+
+            # c) add (Access Node -> Access Node) to state
             copy_in = copy_state.add_access(old_name)
             copy_out = copy_state.add_access(new_name)
 
