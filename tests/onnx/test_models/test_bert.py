@@ -11,78 +11,44 @@ pytest.importorskip("onnxsim", reason="ONNX Simplifier not installed. Please ins
 pytest.importorskip("transformers",
                     reason="transformers not installed. Please install with: pip install dace[ml-testing]")
 import os
-import shutil
+import tempfile
 
 import onnx
 import onnxsim
-import pathlib
-import urllib.error
-import urllib.parse
-import urllib.request
 
 import torch
 from transformers import BertTokenizer, BertModel
 
-import dace
 import dace.libraries.onnx as donnx
 from tests.utils import torch_tensors_close
 from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
-#: Seconds to wait on the fixture server before calling it unreachable.
-FETCH_TIMEOUT_S = 60
+BERT_TINY_MODEL = "google/bert_uncased_L-2_H-128_A-2"
 
 
-def get_data_file(url, directory_name=None) -> str:
-    """ Get a data file from ``url``, cache it locally and return the local file path to it.
+class _BertONNXExportWrapper(torch.nn.Module):
+    """ Fixes the forward kwargs: the ONNX tracer passes BertModel's use_cache default positionally otherwise. """
 
-        A fetch that fails SKIPS the test rather than failing it: the fixtures live on a web server
-        this repository does not own, and one that stops answering says nothing about dace. The
-        cached copy is used whenever it is already there, so a machine that fetched the fixtures
-        once keeps running the test even while the server is down.
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
 
-        :param url: the url to download from.
-        :param directory_name: an optional relative directory path where the file will be downloaded to.
-        :return: the path of the downloaded file.
-    """
-
-    data_directory = (pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data')
-
-    if directory_name is not None:
-        data_directory /= directory_name
-
-    data_directory.mkdir(exist_ok=True, parents=True)
-
-    file_name = os.path.basename(urllib.parse.urlparse(url).path)
-    file_path = str(data_directory / file_name)
-
-    if not os.path.exists(file_path):
-        try:
-            # A bounded read, not ``urlretrieve``: that one inherits the global socket timeout,
-            # which is none, so an unreachable host hangs the run instead of skipping it.
-            with urllib.request.urlopen(url, timeout=FETCH_TIMEOUT_S) as response, open(file_path, 'wb') as out:
-                shutil.copyfileobj(response, out)
-        except OSError as ex:  # URLError and HTTPError are both OSError
-            # Whatever urlretrieve left behind is a truncated file that would read as a cache hit.
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            pytest.skip(f"bert-tiny fixture {url} is unreachable ({ex}); the model files this test "
-                        "needs are not part of the repository")
-    return file_path
+    def forward(self, input_ids, attention_mask, token_type_ids):
+        output = self.model(input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            use_cache=False,
+                            return_dict=False)
+        return output[0], output[1]
 
 
 @pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.onnx
 @pytest.mark.parametrize("device", DEVICES)
 def test_bert_full(device):
-    bert_tiny_root = 'http://spclstorage.inf.ethz.ch/~rauscho/bert-tiny'
-    get_data_file(bert_tiny_root + "/config.json", directory_name='bert-tiny')
-    vocab = get_data_file(bert_tiny_root + "/vocab.txt", directory_name='bert-tiny')
-    bert_path = get_data_file(bert_tiny_root + "/bert-tiny.onnx", directory_name='bert-tiny')
-    get_data_file(bert_tiny_root + "/pytorch_model.bin", directory_name='bert-tiny')
-    model_dir = os.path.dirname(vocab)
-
-    tokenizer = BertTokenizer.from_pretrained(vocab)
-    pt_model = BertModel.from_pretrained(model_dir)
+    tokenizer = BertTokenizer.from_pretrained(BERT_TINY_MODEL)
+    pt_model = BertModel.from_pretrained(BERT_TINY_MODEL)
+    pt_model.eval()
 
     text = "[CLS] how are you today [SEP] dude [SEP]"
     tokenized_text = tokenizer.tokenize(text)
@@ -91,15 +57,26 @@ def test_bert_full(device):
 
     tokens_tensor = torch.tensor([indexed_tokens])
     segments_tensors = torch.tensor([segment_ids])
-    attention_mask = torch.ones(1, 8, dtype=torch.int64)
+    # a 4D mask is passed through as-is; the mask factory reads traced shapes, which the ONNX tracer cannot handle
+    attention_mask = torch.zeros(1, 1, 1, 8)
 
-    model = onnx.load(bert_path)
-    # infer shapes
-    model, _ = onnxsim.simplify(model,
-                                skip_fuse_bn=True,
-                                input_shapes=dict(input_ids=tokens_tensor.shape,
-                                                  token_type_ids=segments_tensors.shape,
-                                                  attention_mask=attention_mask.shape))
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        bert_path = os.path.join(tmp_dir, "bert-tiny.onnx")
+        # eval(): the exporter restores the wrapper's mode afterwards, which would turn dropout back on
+        torch.onnx.export(_BertONNXExportWrapper(pt_model).eval(), (tokens_tensor, attention_mask, segments_tensors),
+                          bert_path,
+                          input_names=["input_ids", "attention_mask", "token_type_ids"],
+                          output_names=["output_0", "output_1"],
+                          opset_version=14,
+                          dynamo=False)
+
+        model = onnx.load(bert_path)
+        # infer shapes
+        model, _ = onnxsim.simplify(model,
+                                    skip_fuse_bn=True,
+                                    input_shapes=dict(input_ids=tokens_tensor.shape,
+                                                      token_type_ids=segments_tensors.shape,
+                                                      attention_mask=attention_mask.shape))
 
     dace_model = donnx.ONNXModel(f"test_bert_full_{device}", model, auto_merge=True, cuda=is_gpu(device))
 
