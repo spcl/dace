@@ -40,7 +40,19 @@ N = dace.symbol('N')
 #: The three TSVC kernels whose canonical form is exactly "sequential loop around one parallel
 #: map", i.e. the shape this pass exists for. ``s115`` additionally carries an anti-dependence
 #: snapshot at the state's top level, which is the branch that has to be worksharing-wrapped.
-HOISTED_KERNELS = ['s115_d_single', 's119_d_single', 's233_d_single']
+#: Kernels the team hoist takes. ``s233`` is NOT among them any more: every one of its
+#: loop-carried dependences is at distance zero in the map parameter, so ``BandCarriedLoops``
+#: claims it first and gives each thread a whole band, which is the faster shape and the one this
+#: file's ``test_the_canonical_form_keeps_every_barrier`` predicted a specialization stage would
+#: take. Its numerics and its barrier policy are still checked, over ``TSVC_KERNELS`` below.
+HOISTED_KERNELS = ['s115_d_single', 's119_d_single']
+
+#: Kernels banded instead of hoisted -- one region for the nest either way, but the worksharing
+#: construct sits OUTSIDE the carry rather than inside it.
+BANDED_KERNELS = ['s233_d_single']
+
+#: Every TSVC kernel this file finalizes, whichever of the two rewrites claims it.
+TSVC_KERNELS = HOISTED_KERNELS + BANDED_KERNELS
 
 
 def finalized(name, tag):
@@ -135,11 +147,11 @@ def test_one_team_replaces_the_per_trip_region(name):
     assert worksharing >= 1, f'{name} must still distribute its map, got {worksharing} omp-for'
 
 
-@pytest.mark.parametrize('name', HOISTED_KERNELS)
-def test_hoisted_kernel_matches_the_numpy_reference(name):
-    """The rewrite reorders nothing, so the values must be the reference's."""
+@pytest.mark.parametrize('name', TSVC_KERNELS)
+def test_finalized_kernel_matches_the_numpy_reference(name):
+    """Neither rewrite reorders anything, so the values must be the reference's."""
     kernel, sdfg = finalized(name, 'num_' + name)
-    assert teams(sdfg) == 1, f'{name} was expected to hoist'
+    assert teams(sdfg) == (1 if name in HOISTED_KERNELS else 0), f'{name} took the wrong rewrite'
     assert_matches_reference(kernel, sdfg)
 
 
@@ -344,7 +356,7 @@ def test_break_in_the_loop_is_refused():
     assert_declined(sdfg, 'a BreakBlock inside the loop is refused')
 
 
-@pytest.mark.parametrize('name', HOISTED_KERNELS)
+@pytest.mark.parametrize('name', TSVC_KERNELS)
 def test_the_canonical_form_keeps_every_barrier(name):
     """No ``omp for`` may carry ``nowait``, and this is policy rather than an unfinished feature.
 
@@ -366,7 +378,8 @@ def test_the_canonical_form_keeps_every_barrier(name):
 if __name__ == '__main__':
     for kernel_name in HOISTED_KERNELS:
         test_one_team_replaces_the_per_trip_region(kernel_name)
-        test_hoisted_kernel_matches_the_numpy_reference(kernel_name)
+    for kernel_name in TSVC_KERNELS:
+        test_finalized_kernel_matches_the_numpy_reference(kernel_name)
     test_s115_snapshot_is_worksharing_rather_than_replicated()
     test_wavefront_reaching_into_the_neighbouring_band_is_still_correct()
     test_minimal_loop_over_map_hoists()
@@ -378,5 +391,5 @@ if __name__ == '__main__':
     test_bulk_copy_between_access_nodes_in_the_loop_is_refused()
     test_loop_without_a_parallel_map_is_refused()
     test_break_in_the_loop_is_refused()
-    for kernel_name in HOISTED_KERNELS:
+    for kernel_name in TSVC_KERNELS:
         test_the_canonical_form_keeps_every_barrier(kernel_name)
