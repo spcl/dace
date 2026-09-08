@@ -59,6 +59,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import sympy
 
+from dace import data as dt
 from dace import symbolic
 from dace.sdfg import SDFG, nodes
 from dace.subsets import Range
@@ -1166,6 +1167,29 @@ def classify_tile_access(subset: Range,
     )
 
 
+def _holds_one_value(desc) -> bool:
+    """Whether ``desc`` holds exactly one element -- a ``Scalar``, or an ``Array`` whose every
+    dimension simplifies to 1 (the ``(1,)`` / ``(1, 1)`` frontend artifacts).
+
+    Mirrors ``WidenAccesses._is_widenable``, which decides the same shapes are tile-widenable;
+    importing it here would close an import cycle, and the question is about the descriptor alone.
+
+    :param desc: the data descriptor to test.
+    :returns: ``True`` when the descriptor carries a single value.
+    """
+    if isinstance(desc, dt.Scalar):
+        return True
+    if isinstance(desc, dt.Array):
+        shape = tuple(desc.shape)
+        if not shape:
+            return False
+        try:
+            return all(bool(symbolic.simplify(s - 1) == 0) for s in shape)
+        except Exception:  # noqa: BLE001 -- symbolic simplification may refuse
+            return False
+    return False
+
+
 def data_is_lane_indexed(inner_sdfg: SDFG, name: str, iter_vars: Sequence[str]) -> bool:
     """True iff some memlet indexes ``name`` BY a tile iter-var.
 
@@ -1180,6 +1204,18 @@ def data_is_lane_indexed(inner_sdfg: SDFG, name: str, iter_vars: Sequence[str]) 
     :param iter_vars: the K tile iter-var names.
     :returns: whether the lane axis is part of the data's own indexing.
     """
+    desc = inner_sdfg.arrays.get(name)
+    if desc is None:
+        return False
+    # A scalar-like buffer has no lane axis to carry: it holds ONE value, so whatever its memlets
+    # say it is a per-lane buffer whose DESCRIPTOR must be swapped for a ``(W,)`` tile, never an
+    # array already spanning the lane dimension. Answering True for one seeds it for in-place
+    # widening instead: its memlets go to ``[0:W]`` while the descriptor stays ``(1,)``, which is
+    # the "Memlet subset out-of-bounds" TSVC-2.5 ``scan_conditional`` hits on ``_then__scan_in_out``.
+    # Two of the three callers ask only after their own widenable check; this keeps the answer
+    # right for the one that does not, and for anyone who asks later.
+    if _holds_one_value(desc):
+        return False
     only = set(iter_vars)
     for state in inner_sdfg.states():
         for edge in state.edges():

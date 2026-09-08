@@ -128,3 +128,19 @@ def test_the_other_arrays_side_is_left_alone():
 
     edge = next(iter(next(iter(sdfg.states())).edges()))
     assert str(edge.data.subset) == 'i', f"the A side was rewritten to {edge.data.subset}"
+
+
+def test_a_scalar_like_buffer_is_never_lane_indexed():
+    """A shape-``(1,)`` buffer holds one value, so it has no lane axis to carry.
+
+    It is a per-lane buffer whose DESCRIPTOR gets swapped for a ``(W,)`` tile. Calling it
+    lane-indexed instead seeds it for in-place widening: the memlets go to ``[0:W]`` while the
+    descriptor stays ``(1,)``, which is the "Memlet subset out-of-bounds" TSVC-2.5
+    ``scan_conditional`` hits on its ``_then__scan_in_out`` arm temp. The copy below is indexed by
+    the tile iter-var on its SOURCE side, so the orientation-aware lookup does reach a subset
+    naming ``i`` -- the descriptor is what settles it.
+    """
+    sdfg = scalar_staging_copy('source')
+    assert data_is_lane_indexed(sdfg, 's', ('i', )) is False
+    # The multi-element array the exemption exists for still answers True.
+    assert data_is_lane_indexed(copy_into_lane_indexed_transient('source'), 'buf', ('i', )) is True
