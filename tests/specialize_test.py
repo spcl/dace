@@ -43,12 +43,18 @@ def test_constant_specialization():
 
     code_nonspec = spec_sdfg.generate_code()
 
-    assert 'Dynamic' in code_nonspec[0].code
+    # Was ``'Dynamic' in code``: the implicit copy used to lower to the ``dace::CopyNDDynamic``
+    # runtime template, whose name doubled as the "shape is still symbolic" marker. Explicit copy
+    # nodes lower it to a mapped tasklet, so assert specialization itself -- N and M are runtime
+    # arguments before it and compile-time constants after.
+    assert 'constexpr int64_t N' not in code_nonspec[0].code
+    assert 'constexpr int64_t M' not in code_nonspec[0].code
 
     spec_sdfg.specialize(dict(N=n, M=m))
     code_spec = spec_sdfg.generate_code()
 
-    assert 'Dynamic' not in code_spec[0].code
+    assert f'constexpr int64_t N = {n};' in code_spec[0].code
+    assert f'constexpr int64_t M = {m};' in code_spec[0].code
 
     func = spec_sdfg.compile()
     func(A=input, B=output, N=n, M=m)

@@ -408,8 +408,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # insert nested SDFG
         nsdfg = self._current_state.add_nested_sdfg(
             sdfg=inner_sdfg,
-            inputs=connectors["inputs"],
-            outputs=connectors["outputs"],
+            inputs={name: None
+                    for name in connectors["inputs"]},
+            outputs={name: None
+                     for name in connectors["outputs"]},
         )
         # connect nested SDFG to surrounding map scope
         assert self._dataflow_stack
@@ -550,9 +552,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                             if parent_sdfg.arrays[memlet_data].transient:
                                 sdfg.arrays[memlet_data].transient = False
 
-                        # Dev note: nview.target and memlet_data are identical
-                        assert memlet_data not in outer_to_connect["inputs"]
-                        outer_to_connect["inputs"].add(memlet_data)
+                    # Dev note: nview.target and memlet_data are identical
+                    outer_to_connect["inputs"].add(memlet_data)
                 else:
                     assert outer_map_entry is None
 

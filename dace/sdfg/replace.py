@@ -22,6 +22,12 @@ tokenize_cpp = re.compile(r'\b\w+\b')
 
 
 def _internal_replace(sym, symrepl):
+    # A SymExpr is a (exact, over-approximation) pair, not a sympy.Basic, so the guard below
+    # would hand it back untouched. Strip-mined bounds are SymExprs and sit in the same range
+    # tuple as plain ones, so skipping them renames a range's start and leaves its end naming
+    # the old symbol. Rewrite both halves; SymExpr collapses back when they agree.
+    if isinstance(sym, symbolic.SymExpr):
+        return symbolic.SymExpr(_internal_replace(sym.expr, symrepl), _internal_replace(sym.approx, symrepl))
     if not isinstance(sym, sp.Basic):
         return sym
 
