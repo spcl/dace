@@ -50,6 +50,36 @@ DESCRIPTOR_PROPERTIES: Dict[str, Any] = {
 }
 
 
+def _with_operand_storage(result: 'Inferred', data_operands: List['Inferred']) -> 'Inferred':
+    """
+    Place a computed result in the storage its operands live in, unless the
+    inference that produced it already chose one.
+
+    An expression over GPU arrays produces a GPU array: this is the rule the
+    classic frontend's operator replacements apply, allocating the temporary
+    with ``left_arr.storage``. Left in Default storage, the result is a host
+    container sitting in GPU dataflow, and schedule inference reads two
+    different answers off the arrays around one map and refuses to pick a
+    default schedule for it. It also blocks a replacement from adopting the
+    declared target as its own result (see
+    ``tree_to_sdfg._adopt_replacement_result``, which requires the two
+    descriptors to agree), leaving a copy behind.
+
+    :param result: The inferred result of an operator.
+    :param data_operands: The operator's data operands, in source order.
+    :return: ``result``, with its storage filled in where it had none.
+    """
+    descriptor = result.descriptor
+    if descriptor is None or getattr(descriptor, 'storage', None) != dtypes.StorageType.Default:
+        return result
+    for operand in data_operands:
+        storage = getattr(operand.descriptor, 'storage', dtypes.StorageType.Default)
+        if storage != dtypes.StorageType.Default:
+            descriptor.storage = storage
+            break
+    return result
+
+
 def _attribute_value(descriptor: data.Data, attr_name: str) -> Any:
     """
     Evaluate an ATTRIBUTE-family replacement that computes a compile-time
@@ -1544,7 +1574,7 @@ class InferenceService:
         # elementwise multiply -- the wrong answer, silently.
         registry_result = self._infer_registry_operator(node, operands)
         if registry_result is not None:
-            return registry_result
+            return _with_operand_storage(registry_result, data_operands)
 
         result_dtype = None
         if isinstance(node, ast.BinOp) and not boolean_result:
@@ -1563,8 +1593,9 @@ class InferenceService:
             # ``float64[1]`` parameter incompatible with its own container, so
             # the name was rebound to a fresh scalar and the parameter was
             # never written.
-            return Inferred(kind='data', descriptor=data.Scalar(result_dtype))
-        return Inferred(kind='data', descriptor=data.Array(result_dtype, list(shape)))
+            return _with_operand_storage(Inferred(kind='data', descriptor=data.Scalar(result_dtype)), data_operands)
+        return _with_operand_storage(Inferred(kind='data', descriptor=data.Array(result_dtype, list(shape))),
+                                    data_operands)
 
     def boolop_decider(self, node: ast.BoolOp) -> Optional[ast.expr]:
         """

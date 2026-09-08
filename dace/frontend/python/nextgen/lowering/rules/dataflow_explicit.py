@@ -372,8 +372,8 @@ def _stored_names(target: ast.expr) -> Iterator[ast.Name]:
 def _validate_tasklet_body(code_statements: List[ast.stmt], in_memlets: Dict[str, Memlet],
                            out_memlets: Dict[str, Memlet], state: LoweringState) -> None:
     """
-    Reject a tasklet body that names a data container directly, or that assigns
-    to a symbol.
+    Reject a tasklet body that names a data container directly, assigns to a
+    symbol, or calls an array-returning Python callback.
 
     Inside an explicit tasklet every data access must arrive through a memlet
     (``local << A[i]``). A bare container name has no connector behind it, so
@@ -417,6 +417,22 @@ def _validate_tasklet_body(code_statements: List[ast.stmt], in_memlets: Dict[str
                     None, statement, f'"{node.id}" is a data container and cannot be accessed directly in tasklet '
                     f'code: route it through a memlet ("{node.id}_local << {node.id}[...]") and use the '
                     'connector name instead')
+
+    # An array-returning callback is called through an out-pointer, which a
+    # tasklet has nowhere to put: the value would have to land in a container,
+    # and a tasklet only writes through its connectors. Emitted anyway, the
+    # call site passed no arguments at all and the generated C++ did not
+    # compile.
+    for statement in code_statements:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            symbol = state.context.symbols.get(node.func.id)
+            dtype = getattr(symbol, 'dtype', symbol)
+            if isinstance(dtype, dtypes.callback) and not dtype.is_scalar_function():
+                raise DaceSyntaxError(
+                    None, statement, 'Python callbacks that return arrays are not supported within `dace.tasklet` '
+                    f'scopes. Please use function "{node.func.id}" outside of a tasklet.')
 
 
 def _memlet_binop(statement: ast.stmt) -> Optional[ast.BinOp]:
