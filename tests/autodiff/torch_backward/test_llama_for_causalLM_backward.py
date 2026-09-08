@@ -40,16 +40,14 @@ class LlamaWrapper(nn.Module):
             # Get rotary embeddings
             cos, sin = self.model.model.rotary_emb(hidden_states, position_ids)
 
-            layer_outputs = decoder_layer(
+            hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
-                past_key_value=None,
-                output_attentions=False,
+                past_key_values=None,
                 use_cache=False,
                 position_embeddings=(cos, sin),
             )
-            hidden_states = layer_outputs[0]
 
         # Final layer norm
         hidden_states = self.model.model.norm(hidden_states)
