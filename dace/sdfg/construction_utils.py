@@ -599,16 +599,22 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
         for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript) if str(sub.args[0]) in state.sdfg.arrays
     }
     name_mapping.update({s: in_connectors[s] for s in rhs_sym_expr.free_symbols if str(s) in state.sdfg.arrays})
-    name_mapping[out_access_expr] = out_connectors[out_access_expr]
 
     printer = dace.symbolic.DaceSympyPrinter(arrays=state.sdfg.arrays)
     # Replace each array-access ``Subscript`` (and bare array symbol) with its
     # connector symbol. Use ``xreplace`` for exact-node replacement: ``subs``
     # does not reliably rewrite a whole ``Subscript`` node (its custom ``_subs``
     # recurses into the indices instead of swapping the node out).
-    xrepl = {k: sympy.Symbol(v) if isinstance(v, str) else v for k, v in name_mapping.items()}
-    rhs = printer.doprint(rhs_sym_expr.xreplace(xrepl))
-    lhs = printer.doprint(lhs_sym_expr.xreplace(xrepl))
+    #
+    # The two sides are rewritten with DIFFERENT maps. A read-modify-write names the same
+    # array on both (``c = c >> 1``), and under one shared map the LHS entry overwrites the
+    # RHS one -- the body then reads the OUT connector, which nothing feeds, while the in
+    # connector and its edge sit unused. That name survives as a free symbol of the tasklet
+    # and reaches ``arglist`` as a symbol the SDFG has no entry for.
+    rhs_repl = {k: sympy.Symbol(v) if isinstance(v, str) else v for k, v in name_mapping.items()}
+    lhs_repl = {out_access_expr: sympy.Symbol(out_connectors[out_access_expr])}
+    rhs = printer.doprint(rhs_sym_expr.xreplace(rhs_repl))
+    lhs = printer.doprint(lhs_sym_expr.xreplace(lhs_repl))
 
     # Ass tasklets
     t = state.add_tasklet(name=f"assign_{lhs}",
