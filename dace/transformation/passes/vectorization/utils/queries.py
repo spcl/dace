@@ -28,10 +28,18 @@ def collect_element_write_subsets(state: dace.SDFGState) -> Optional[Dict[str, d
         for e in state.in_edges(n):
             if e.data.data is None:
                 continue
+            # The DESTINATION side, which is what a write subset means. ``subset`` describes
+            # whichever side ``data`` names, and on an access-node-to-access-node copy that is the
+            # SOURCE: ``delta[i] -> _scan_in_out`` carries ``delta``'s subset while the write lands
+            # at ``_scan_in_out[i - 1]``. Read as the write, it dropped the offset, and the ITE that
+            # replaced the copy wrote one element past its buffer.
+            subset = e.data.dst_subset
+            if subset is None:
+                return None
             try:
-                if e.data.subset.num_elements_exact() != 1:
+                if subset.num_elements_exact() != 1:
                     return None
             except Exception:
                 return None
-            out[n.data] = e.data.subset
+            out[n.data] = subset
     return out
