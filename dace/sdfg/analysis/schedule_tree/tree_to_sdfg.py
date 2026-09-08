@@ -87,6 +87,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_nestedSDFG: int | None = None
         """Id of the current nested SDFG if we are inside one."""
 
+        self._known_data_outside_nestedSDFG: set[str] | None = None
+        """In case we are inside a nested SDFG, this list previously accessed data (arrays and scalars) outside the nestedSDFG."""
+
         self._interstate_symbols: list[tn.AssignNode] = []
         """Interstate symbol assignments. Will be assigned with the next state transition."""
 
@@ -215,8 +218,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         assert memlet.data not in to_connect["inputs"]
                         to_connect["inputs"].add(memlet.data)
 
-                    # Add in_connector in case of read after write
-                    if memlet.data in to_connect["outputs"]:
+                    # Add in_connector in case of read after write of "outside" data
+                    if memlet.data in self._known_data_outside_nestedSDFG:
                         to_connect["inputs"].add(memlet.data)
                 return
 
@@ -299,8 +302,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     assert memlet.data not in to_connect["inputs"]
                     to_connect["inputs"].add(memlet.data)
 
-                # Add in_connector in case of read after write
-                if memlet.data in to_connect["outputs"]:
+                # Add in_connector in case of read after write in case of "outside data"
+                if memlet.data in self._known_data_outside_nestedSDFG:
                     to_connect["inputs"].add(memlet.data)
 
     def visit_IfScope(self, node: tn.IfScope, sdfg: SDFG) -> None:
@@ -387,6 +390,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         dataflow_stack_size = len(self._dataflow_stack)
         state_stack_size = len(self._state_stack)
         outer_nestedSDFG = self._current_nestedSDFG
+        outer_known_data = self._known_data_outside_nestedSDFG
+
+        self._known_data_outside_nestedSDFG = set()
+        for access_dict in self._ctx.access_cache.values():
+            for name in access_dict:
+                self._known_data_outside_nestedSDFG.add(name)
 
         # prepare inner SDFG
         inner_sdfg = SDFG("nested_sdfg", parent=self._current_state)
@@ -475,6 +484,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # Restore current nested SDFG
         self._current_nestedSDFG = outer_nestedSDFG
+        self._known_data_outside_nestedSDFG = outer_known_data
 
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
@@ -563,8 +573,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         # Dev note: nview.target and memlet_data are identical
                         outer_to_connect["inputs"].add(memlet_data)
 
-                    # Add in_connector in case of read after write
-                    if memlet_data in outer_to_connect["outputs"]:
+                    # Add in_connector in case of read after write of "outside data"
+                    if memlet_data in self._known_data_outside_nestedSDFG:
                         outer_to_connect["inputs"].add(memlet_data)
                 else:
                     assert outer_map_entry is None
@@ -721,8 +731,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     # Dev note: memlet.data and nview.target are identical
                     to_connect["inputs"].add(memlet.data)
 
-                # Add in_connector in case of read after (partial) write
-                if memlet.data in to_connect["outputs"]:
+                # Add in_connector in case of read after (partial) write of "outside data"
+                if memlet.data in self._known_data_outside_nestedSDFG:
                     to_connect["inputs"].add(memlet.data)
             else:
                 assert scope_node is None
