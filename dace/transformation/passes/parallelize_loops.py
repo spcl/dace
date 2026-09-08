@@ -6,7 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from dace import properties
 from dace.sdfg import SDFG
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.sdfg.state import LoopRegion
+from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_to_map import (UNCOMPUTED, LiftContext, LiftInvariants, LoopFacts, LoopToMap,
@@ -108,6 +109,8 @@ class ParallelizeLoops(ppl.Pass):
         for order in (loop_order_key, None):
             applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
 
+        if applied:
+            prune_stale_symbol_mappings(sdfg)
         if applied and self.propagate:
             propagate_memlets_sdfg(sdfg)
         return applied or None
@@ -190,3 +193,35 @@ class ParallelizeLoops(ppl.Pass):
 
             if not lifted_one:
                 return applied
+
+
+def prune_stale_symbol_mappings(sdfg: SDFG) -> int:
+    """Drop nested-SDFG ``symbol_mapping`` entries the callee no longer needs.
+
+    A lift moves the loop's interstate assignments INTO the new body, so a symbol the enclosing
+    SDFG used to receive from outside can end up produced inside it and stop being free there. The
+    node wrapping that SDFG still maps it -- and a mapping's VALUE is what keeps a name alive in the
+    CALLER -- so the entry holds a symbol one level up that nothing defines any more. It sits
+    harmless until that scope is itself nested, which then has no value to pass for it: azimint_naive
+    fails validation with ``Missing symbols on nested SDFG: ['__map_fusion___tmp0', ...]``, one lift
+    making the entry stale and a later one tripping over it.
+
+    ``free_symbols`` is the exact test -- it already excludes a symbol the callee assigns before use.
+    Bottom-up, because pruning a node's mapping can retire its parent's entry too.
+
+    :param sdfg: the SDFG to clean, recursively.
+    :returns: how many entries were dropped.
+    """
+    removed = 0
+    for block in sdfg.all_control_flow_blocks():
+        if not isinstance(block, SDFGState):
+            continue
+        for node in block.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            removed += prune_stale_symbol_mappings(node.sdfg)
+            keep = {str(sym) for sym in node.sdfg.free_symbols} | set(node.sdfg.arrays)
+            for key in [k for k in node.symbol_mapping if k not in keep]:
+                del node.symbol_mapping[key]
+                removed += 1
+    return removed

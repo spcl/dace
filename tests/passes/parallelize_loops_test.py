@@ -283,3 +283,42 @@ def test_a_lift_only_ever_removes_from_an_enclosing_regions_read_write_sets():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def test_a_mapping_the_callee_stopped_needing_is_pruned():
+    """A nested SDFG node must not map a symbol its own SDFG no longer reads.
+
+    A lift moves the loop's interstate assignments INTO the new body, so a symbol the enclosing
+    SDFG used to receive from outside can end up produced inside it. The wrapping node still maps
+    it, and a mapping's VALUE is what keeps a name alive in the CALLER -- so the entry holds a
+    symbol one level up that nothing defines any more. Harmless where it sits, and a hard failure
+    the moment that scope is itself nested: azimint_naive died on ``Missing symbols on nested SDFG:
+    ['__map_fusion___tmp0', '__map_fusion___tmp1']``, one lift making the entry stale and a later
+    one tripping over it.
+    """
+    from dace.transformation.passes.parallelize_loops import prune_stale_symbol_mappings
+
+    inner = dace.SDFG('callee_binds_it')
+    inner.add_array('a', (4, ), dace.float64)
+    inner.add_symbol('k', dace.int64)
+    first = inner.add_state('first', is_start_block=True)
+    second = inner.add_state('second')
+    # ``k`` is ASSIGNED here, so the callee does not need it from outside -- it is not free.
+    inner.add_edge(first, second, dace.InterstateEdge(assignments={'k': '1'}))
+    second.add_edge(second.add_tasklet('w', {}, {'o'}, 'o = 2.0'), 'o', second.add_write('a'), None,
+                    dace.Memlet('a[k]'))
+
+    sdfg = dace.SDFG('caller')
+    sdfg.add_array('a', (4, ), dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    node = state.add_nested_sdfg(inner, {}, {'a'})
+    state.add_edge(node, 'a', state.add_write('a'), None, dace.Memlet('a[0:4]'))
+    node.symbol_mapping['k'] = dace.symbolic.pystr_to_symbolic('k')
+
+    assert 'k' not in {str(s) for s in inner.free_symbols}, 'fixture broken: the callee still needs k'
+    assert 'k' in {str(s) for s in sdfg.free_symbols}, 'the stale entry should keep k alive in the caller'
+
+    assert prune_stale_symbol_mappings(sdfg) == 1
+    assert 'k' not in node.symbol_mapping
+    assert 'k' not in {str(s) for s in sdfg.free_symbols}, 'pruning did not release the caller'
+    sdfg.validate()
