@@ -7,8 +7,9 @@ folded a unit denominator. That asymmetry leaked: ``strides_from_layout`` pads w
 folded back to ``N``. Both functions now share the unit-denominator and exact-division rules.
 """
 import pytest
+import sympy
 
-from dace.symbolic import int_ceil, int_floor, pystr_to_symbolic
+from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symstr, sympy_intdiv_fix
 
 N = pystr_to_symbolic('N')
 M = pystr_to_symbolic('M')
@@ -40,6 +41,43 @@ def test_inexact_division_is_left_symbolic(fn):
     assert fn(4 * N + 2, 4).func is fn
     # A symbolic denominator cannot be shown to divide, so it is left alone too.
     assert fn(N, M).func is fn
+
+
+@pytest.mark.parametrize('rounding', [sympy.floor, sympy.ceiling])
+def test_rounding_of_a_non_integer_expression_is_kept(rounding):
+    """A rounding call with nothing to divide by must survive the rewrite."""
+    x = sympy.Symbol('x')
+    expr = rounding(sympy.sin(x))
+    assert sympy_intdiv_fix(expr) == expr
+
+
+@pytest.mark.parametrize('rounding,call', [(sympy.floor, 'floor'), (sympy.ceiling, 'ceil')])
+def test_rounding_of_a_non_integer_expression_lowers_to_the_math_call(rounding, call):
+    """The kept rounding must reach C++ as the matching math-library call."""
+    x = pystr_to_symbolic('x')
+    assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == '(%s(sin(x)))' % call
+
+
+def test_ceiling_of_an_integer_prints_as_its_argument():
+    """A ``ceiling`` over a known-integer argument must print as the argument itself.
+
+    Deserialization rebuilds an application through ``Basic.__new__`` and bypasses the
+    ``eval`` that would have folded the wrapper, so a stored ``ceiling`` reaches the
+    printer unevaluated. Neither call is acceptable there: libm ``ceil`` returns a
+    ``double``, and the runtime's ``ceiling`` is only overloaded for ``int``, ``float``
+    and ``double``, which leaves a 64-bit or unsigned argument ambiguous.
+    """
+    stored = deserialize_symbolic('ceiling(__int_floor($N, 2))')
+    assert isinstance(stored, sympy.ceiling)
+    assert stored.args[0].is_integer
+
+    assert symstr(stored, cpp_mode=True) == '(((N) / (2)))'
+
+
+@pytest.mark.parametrize('rounding,name', [(sympy.floor, 'int_floor'), (sympy.ceiling, 'int_ceil')])
+def test_division_by_an_integer_still_rewrites(rounding, name):
+    """The integer-division rewrite is unchanged where a real denominator is present."""
+    assert sympy_intdiv_fix(rounding(N / 8)).func.__name__ == name
 
 
 @pytest.mark.parametrize('x,y,expected', [(17, 8, 3), (16, 8, 2), (1, 8, 1), (0, 8, 0)])

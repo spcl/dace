@@ -710,8 +710,8 @@ class TaskletTransformer(ExtNodeTransformer):
             self.lang = dtypes.Language.Python
 
         t = self.state.add_tasklet(name,
-                                   set(self.inputs.keys()),
-                                   set(self.outputs.keys()),
+                                   self.inputs.keys(),
+                                   self.outputs.keys(),
                                    self.extcode or tasklet_ast.body,
                                    language=self.lang,
                                    code_global=self.globalcode,
