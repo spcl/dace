@@ -1621,8 +1621,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         Only for a target that is this statement's own declaration and holds
         nothing yet: a preexisting name may already have been read, and a
         non-transient is the caller's storage, whose identity the program
-        depends on. The two descriptors must also agree on what they describe,
-        since after this the target IS the result's descriptor.
+        depends on. A ``__return`` container is the exception -- it is the
+        program's own output buffer, and writing the result straight into it is
+        what the classic frontend does -- so it adopts the result while keeping
+        its own transient flag. The two descriptors must otherwise agree on what
+        they describe, since after this the target IS the result's descriptor.
 
         :return: True if the result was renamed, in which case no copy is
                  needed.
@@ -1631,7 +1634,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if target is None or node.target_preexisting or target not in sdfg.arrays or result not in sdfg.arrays:
             return False
         target_desc, result_desc = sdfg.arrays[target], sdfg.arrays[result]
-        if not target_desc.transient or not result_desc.transient:
+        if not result_desc.transient:
+            return False
+        if not target_desc.transient and not target.startswith('__return'):
             return False
         if type(target_desc) is not type(result_desc):
             return False
@@ -1656,6 +1661,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             return False
         sdfg.remove_data(target, validate=False)
         replace_datadesc_names(sdfg, {result: target})
+        # A return container is the program's output buffer, so it keeps its own
+        # transient flag: the replacement's result now IS that output, which is
+        # what lets the library node write it directly instead of through a copy.
+        sdfg.arrays[target].transient = target_desc.transient
         return True
 
     def _release_declared_descriptor(self, target: Optional[str], sdfg: SDFG) -> None:

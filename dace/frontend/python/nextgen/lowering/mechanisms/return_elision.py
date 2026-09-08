@@ -32,21 +32,23 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 #: type outside this set is not necessarily unsafe -- it has simply not been
 #: taught to the rewriter, so a container it mentions is left alone.
 _REWRITABLE = (tn.TaskletNode, tn.LibraryCall, tn.CopyNode, tn.DynScopeCopyNode, tn.ViewNode, tn.RefSetNode,
-               tn.ReturnNode)
+               tn.ReturnNode, tn.ReplacementCallNode)
 
 #: Attributes holding memlets, whichever way a node stores them.
 _MEMLET_FIELDS = ('memlet', 'in_memlets', 'out_memlets', 'memlets')
 
 #: Attributes naming containers directly.
 _NAME_FIELDS = ('target', 'source', 'values', 'return_targets', 'data_arguments', 'receiver', 'extra_targets',
-                'input_names', 'output_names', 'targets', 'container', 'name')
+                'input_names', 'output_names', 'targets', 'container', 'name', 'arguments',
+                'keyword_arguments')
 
 #: Attributes holding free-form expressions, where a container can be named
 #: without this pass being able to tell where.
 _EXPRESSION_FIELDS = ('condition', 'init', 'update', 'value', 'expression')
 
 #: The subset of :data:`_NAME_FIELDS` the rewriter knows how to write back.
-_REWRITABLE_NAME_FIELDS = ('target', 'source', 'values', 'return_targets', 'extra_targets', 'data_arguments')
+_REWRITABLE_NAME_FIELDS = ('target', 'source', 'values', 'return_targets', 'extra_targets', 'data_arguments',
+                           'receiver', 'arguments', 'keyword_arguments')
 
 
 def elide_return_copies(root: tn.ScheduleTreeRoot) -> None:
@@ -209,6 +211,8 @@ def _own_names(node: tn.ScheduleTreeNode) -> Set[str]:
         value = getattr(node, attribute, None)
         if isinstance(value, str):
             names.add(value)
+        elif isinstance(value, dict):
+            names.update(item for item in value.values() if isinstance(item, str))
         elif isinstance(value, (list, set, tuple)):
             names.update(item for item in value if isinstance(item, str))
     if isinstance(node, tn.SDFGCallNode):
@@ -260,3 +264,5 @@ def _rename_names(node: tn.ScheduleTreeNode, old: str, new: str) -> None:
             setattr(node, attribute, [new if item == old else item for item in value])
         elif isinstance(value, set):
             setattr(node, attribute, {new if item == old else item for item in value})
+        elif isinstance(value, dict):
+            setattr(node, attribute, {key: new if item == old else item for key, item in value.items()})
