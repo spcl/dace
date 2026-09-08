@@ -469,7 +469,7 @@ class BranchNormalization(ppl.Pass):
             cb.add_branch(CodeBlock(frozen), body0)
         neg_block = ConditionalBlock(label=f"{cb.label}_negated", sdfg=parent.sdfg, parent=parent)
         neg_block.add_branch(CodeBlock(f"not ({frozen})"), body1)
-        parent.add_node(neg_block)
+        parent.add_node(neg_block, ensure_unique_name=True)
         out_edges = list(parent.out_edges(cb))
         for oe in out_edges:
             parent.remove_edge(oe)
@@ -814,62 +814,78 @@ class BranchNormalization(ppl.Pass):
                 in_edges = [e for e in state.in_edges(write_an) if not e.data.is_empty()]
                 if not in_edges:
                     continue
-                if len(in_edges) != 1:
-                    raise NotImplementedError(
-                        f"BranchNormalization: write to {arr_name!r} has {len(in_edges)} in-edges; "
-                        f"only single-edge writes are supported in this slice")
-                in_edge = in_edges[0]
-                write_subset = in_edge.data.subset
+                # One AN can carry several writes, each its own subset -- cloudsc's ``zsolqa`` is
+                # written at two element subsets in one arm body, and state fusion brings both onto
+                # the same node. Each in-edge is an independent write of one element and gets its
+                # own gate; the loop is the only thing the multi-write case needs, since everything
+                # below already reads the subset off the edge in hand.
+                for in_edge in in_edges:
+                    self._gate_one_write(sdfg, state, arr_name, write_an, in_edge, cond_text, cond_array_name,
+                                         cond_producer)
 
-                # 1-element scratch ``__bn_<arr>_new`` holds this element's value.
-                tmp_name, _ = sdfg.add_array(name=f"__bn_{arr_name}_new",
-                                             shape=(1, ),
-                                             dtype=sdfg.arrays[arr_name].dtype,
-                                             storage=dace.dtypes.StorageType.Register,
-                                             transient=True,
-                                             find_new_name=True)
-                tmp_an = state.add_access(tmp_name)
+    def _gate_one_write(self, sdfg: dace.SDFG, state: dace.SDFGState, arr_name: str, write_an, in_edge, cond_text: str,
+                        cond_array_name, cond_producer) -> None:
+        """Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``.
 
-                # ITE "old value" = ``arr_name`` BEFORE the writing tasklet ran.
-                # For chained RMW (``arr[s] = expr + arr[s]``) that's the AN the
-                # tasklet read via its own in-edge at the same subset; for non-RMW
-                # a fresh AN falls back to pre-state. Locate the chained source
-                # BEFORE redirecting the out-edge (need the tasklet's read pattern).
-                writer_tasklet = in_edge.src
-                old_an = None
-                if isinstance(writer_tasklet, dace.nodes.Tasklet):
-                    for re_ in state.in_edges(writer_tasklet):
-                        if (isinstance(re_.src, dace.nodes.AccessNode) and re_.src.data == arr_name
-                                and re_.data.subset is not None and str(re_.data.subset) == str(in_edge.data.subset)):
-                            old_an = re_.src
-                            break
-                if old_an is None:
-                    old_an = state.add_access(arr_name)
+        :param sdfg: SDFG the state belongs to, for name resolution.
+        :param state: the lifted arm-body state.
+        :param arr_name: the array written.
+        :param write_an: the access node the write lands on.
+        :param in_edge: the write edge to gate; its memlet carries the subset.
+        :param cond_text: arm condition expression, used when it has no array form.
+        :param cond_array_name: array holding the condition, or None.
+        :param cond_producer: the access node producing it, or None for a fresh read.
+        """
+        write_subset = in_edge.data.subset
 
-                # Redirect the existing in-edge to write to the temp instead.
-                state.remove_edge(in_edge)
-                state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None, dace.Memlet(expr=f"{tmp_name}[0]"))
-                if cond_array_name is not None:
-                    # Reuse the producing AN (see ``_resolve_cond_to_array``): a
-                    # fresh read node disconnects the lift and lets codegen emit
-                    # the ITE before the cond is computed.
-                    cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
-                    ite_t = state.add_tasklet(
-                        name=f"bn_ite_{arr_name}",
-                        inputs=OrderedSet(('_c', '_new', '_old')),
-                        outputs={"_o"},
-                        code="_o = ITE(_c, _new, _old)",
-                    )
-                    cond_subset = "0" if sdfg.arrays[cond_array_name].total_size == 1 else write_subset
-                    state.add_edge(cond_access, None, ite_t, "_c",
-                                   dace.Memlet(expr=f"{cond_array_name}[{cond_subset}]"))
-                else:
-                    ite_t = state.add_tasklet(
-                        name=f"bn_ite_{arr_name}",
-                        inputs=OrderedSet(('_new', '_old')),
-                        outputs={"_o"},
-                        code=f"_o = ITE({cond_text}, _new, _old)",
-                    )
-                state.add_edge(tmp_an, None, ite_t, "_new", dace.Memlet(expr=f"{tmp_name}[0]"))
-                state.add_edge(old_an, None, ite_t, "_old", dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
-                state.add_edge(ite_t, "_o", write_an, None, dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
+        # 1-element scratch ``__bn_<arr>_new`` holds this element's value.
+        tmp_name, _ = sdfg.add_array(name=f"__bn_{arr_name}_new",
+                                     shape=(1, ),
+                                     dtype=sdfg.arrays[arr_name].dtype,
+                                     storage=dace.dtypes.StorageType.Register,
+                                     transient=True,
+                                     find_new_name=True)
+        tmp_an = state.add_access(tmp_name)
+
+        # ITE "old value" = ``arr_name`` BEFORE the writing tasklet ran.
+        # For chained RMW (``arr[s] = expr + arr[s]``) that's the AN the
+        # tasklet read via its own in-edge at the same subset; for non-RMW
+        # a fresh AN falls back to pre-state. Locate the chained source
+        # BEFORE redirecting the out-edge (need the tasklet's read pattern).
+        writer_tasklet = in_edge.src
+        old_an = None
+        if isinstance(writer_tasklet, dace.nodes.Tasklet):
+            for re_ in state.in_edges(writer_tasklet):
+                if (isinstance(re_.src, dace.nodes.AccessNode) and re_.src.data == arr_name
+                        and re_.data.subset is not None and str(re_.data.subset) == str(in_edge.data.subset)):
+                    old_an = re_.src
+                    break
+        if old_an is None:
+            old_an = state.add_access(arr_name)
+
+        # Redirect the existing in-edge to write to the temp instead.
+        state.remove_edge(in_edge)
+        state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None, dace.Memlet(expr=f"{tmp_name}[0]"))
+        if cond_array_name is not None:
+            # Reuse the producing AN (see ``_resolve_cond_to_array``): a
+            # fresh read node disconnects the lift and lets codegen emit
+            # the ITE before the cond is computed.
+            cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
+            ite_t = state.add_tasklet(
+                name=f"bn_ite_{arr_name}",
+                inputs=OrderedSet(('_c', '_new', '_old')),
+                outputs={"_o"},
+                code="_o = ITE(_c, _new, _old)",
+            )
+            cond_subset = "0" if sdfg.arrays[cond_array_name].total_size == 1 else write_subset
+            state.add_edge(cond_access, None, ite_t, "_c", dace.Memlet(expr=f"{cond_array_name}[{cond_subset}]"))
+        else:
+            ite_t = state.add_tasklet(
+                name=f"bn_ite_{arr_name}",
+                inputs=OrderedSet(('_new', '_old')),
+                outputs={"_o"},
+                code=f"_o = ITE({cond_text}, _new, _old)",
+            )
+        state.add_edge(tmp_an, None, ite_t, "_new", dace.Memlet(expr=f"{tmp_name}[0]"))
+        state.add_edge(old_an, None, ite_t, "_old", dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
+        state.add_edge(ite_t, "_o", write_an, None, dace.Memlet(expr=f"{arr_name}[{write_subset}]"))
