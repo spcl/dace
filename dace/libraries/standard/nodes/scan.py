@@ -336,6 +336,31 @@ def future_value(ctype: str, expr: str) -> str:
     return f'::gpucub::FutureValue<{ctype}, const {ctype}*>({expr})'
 
 
+def device_seed_prologue(ctype: str) -> str:
+    """Bind ``__sc_seed`` to the device-resident seed at ``__sc_init``, per backend.
+
+    CUB reads a ``FutureValue`` inside the scan's kernels, so on CUDA the future goes straight to
+    the call and the seed may still be in flight. rocPRIM does not: measured on ROCm 7.2.3, its
+    ``inclusive_scan`` evaluates the future's iterator on the HOST at call time, so a seed the
+    kernel enqueued just ahead of the scan is still writing is read before it exists. That is a
+    silent wrong answer, not a failure: the scan runs with whatever the buffer held, so tsvc s323,
+    whose lifted recurrence seeds the scan from ``b[0]``, came out short by exactly that seed on
+    some calls and not others. Staging the value first is what a future exists to avoid, so only
+    the backend that needs it pays the synchronisation.
+    """
+    return ('#if defined(__HIPCC__) || defined(WITH_HIP)\n'
+            f'    {ctype} __sc_staged;\n'
+            f'    gpuError_t _sc_fetch = gpuMemcpyAsync(&__sc_staged, __sc_init, sizeof(__sc_staged), '
+            'gpuMemcpyDeviceToHost, __sc_stream);\n'
+            '    if (_sc_fetch != gpuSuccess) return _sc_fetch;\n'
+            '    _sc_fetch = gpuStreamSynchronize(__sc_stream);\n'
+            '    if (_sc_fetch != gpuSuccess) return _sc_fetch;\n'
+            '    auto __sc_seed = __sc_staged;\n'
+            '#else\n'
+            f'    auto __sc_seed = {future_value(ctype, "__sc_init")};\n'
+            '#endif\n')
+
+
 def seed_arg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int) -> str:
     """The ``init_value`` argument of the cub call for chain ``chain``."""
     conn = init_connector(chain)
@@ -1179,7 +1204,7 @@ class ExpandCUDA(ExpandTransformation):
         blocks = []
         for chain in range(node.chains):
             in_conn, out_conn = in_connector(chain), out_connector(chain)
-            seed_param, seed_expr, seed_actual = '', '', ''
+            seed_param, seed_expr, seed_actual, seed_prologue = '', '', '', ''
             if node.exclusive:
                 # The OUTPUT descriptor, not the input: this argument is what fixes cub's accumulator
                 # width, and on a widening scan the accumulator is the output's type.
@@ -1197,7 +1222,8 @@ class ExpandCUDA(ExpandTransformation):
                 seed_ctype = desc.dtype.base_type.ctype
                 if desc is not None and desc.storage in GPU_RESIDENT_STORAGES:
                     seed_param = f', const {seed_ctype}* __sc_init'
-                    extra = f', {future_value(seed_ctype, "__sc_init")}'
+                    seed_prologue = device_seed_prologue(seed_ctype)
+                    extra = ', __sc_seed'
                 else:
                     seed_param = f', {seed_ctype} __sc_init'
                     extra = ', __sc_init'
@@ -1216,6 +1242,7 @@ class ExpandCUDA(ExpandTransformation):
             sdfg.append_global_code(
                 f'{prototype}\n'
                 f'gpuError_t {wrapper}({params}) {{\n'
+                f'{seed_prologue}'
                 f'    size_t _sc_needed = 0;\n'
                 f'    gpuError_t _sc_status = ::gpucub::DeviceScan::{call}(nullptr, _sc_needed, {args});\n'
                 f'    if (_sc_status != gpuSuccess) return _sc_status;\n'
