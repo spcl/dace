@@ -31,6 +31,7 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 
 NB = dace.symbol("NB")
@@ -50,6 +51,9 @@ def _run_compare(kern, make_inputs, params, widths=(8, ), branch_mode="merge", s
     ref_sdfg.simplify()
     vec_sdfg = copy.deepcopy(ref_sdfg)
     vec_sdfg.name = ref_sdfg.name + "_vec"
+    # The tiler's input contract -- canonical (or dace-parallelized) form. Only the copy: the
+    # reference stays the plain scalar oracle these numbers are compared against.
+    canonicalize(vec_sdfg, validate=True)
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=widths,
                         target_isa=ISA.SCALAR,

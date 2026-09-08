@@ -717,6 +717,15 @@ class VectorizeMultiDim(ppl.Pipeline):
     The ``device`` knob selects CPU vs. GPU reduction/finalize behavior;
     :class:`VectorizeCPUMultiDim` / :class:`VectorizeGPUMultiDim` are the thin
     device-fixed entry points. ``target_isa='CUDA'`` implies ``device=GPU``.
+
+    **Input contract: the SDFG must already be canonical.** Run
+    :func:`~dace.transformation.passes.canonicalize.pipeline.canonicalize` (or, where it suffices,
+    :func:`~dace.transformation.passes.parallelize.parallelize`) first. This pass used to
+    canonicalize at its own entry, which cost 98% of its runtime on CloudSC and re-ran a recipe the
+    caller had already run; :func:`prepare_for_vectorization` now runs only the structural passes the
+    tiler cannot do without (IV substitution, structural cleanup), and everything else is the
+    caller's. Feeding it a raw front-end SDFG is out of contract: the tiler can widen an operand
+    whose consumer never became a tile and fail validation on the tile-kind rule.
     """
 
     CATEGORY: str = "Vectorization"

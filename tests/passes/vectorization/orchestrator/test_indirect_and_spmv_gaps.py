@@ -17,6 +17,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileLoad, TileReduce
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.utils.tile_dims import (
@@ -101,6 +102,7 @@ def test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(n):
     ref.name = f"ind1d_ref{n}"
     vec = _build_1d_indirect_stencil()
     vec.name = f"ind1d_vec{n}"
+    canonicalize(vec, validate=True)  # the tiler's input contract
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
 
     ref.compile()(a=a_ref, b=b.copy(), idx=idx.copy(), N=n)
@@ -115,6 +117,7 @@ def test_1d_indirect_stencil_emits_tilegather():
     the numerical test above cannot see the difference between a real gather and a scalar fallback
     that happens to compute the same values."""
     sdfg = _build_1d_indirect_stencil()
+    canonicalize(sdfg, validate=True)  # the tiler's input contract
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     loads = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, TileLoad)]
     gathers = [node for node in loads if tuple(node.gather_dims)]
@@ -146,6 +149,7 @@ def test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(m, n):
     ref.name = f"ind2d_ref{m}_{n}"
     vec = _build_2d_indirect_stencil()
     vec.name = f"ind2d_vec{m}_{n}"
+    canonicalize(vec, validate=True)  # the tiler's input contract
     VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(vec, {})
 
     ref.compile()(a=a.copy(), c=c_ref, idx=idx.copy(), M=m, N=n)
@@ -159,6 +163,7 @@ def test_vectorize_cpu_multi_dim_accepts_spmv():
     shape matches -- and leaves the kernel correct and un-tiled. The prior contract was a hard
     ``NotImplementedError``; declining quietly and correctly is what this pins."""
     sdfg = _build_spmv()
+    canonicalize(sdfg, validate=True)  # the tiler's input contract
     VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
 
     rng = np.random.default_rng(seed=20260824)
@@ -205,6 +210,7 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
             {"_s": dace.Memlet("s[0]", wcr="lambda a, b: a + b")},
             external_edges=True,
         )
+    canonicalize(sdfg, validate=True)  # the tiler's input contract
     VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
 
     assert any(isinstance(node, TileReduce) for node, _ in sdfg.all_nodes_recursive()), \
