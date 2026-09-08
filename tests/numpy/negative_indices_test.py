@@ -27,7 +27,10 @@ def test_runtime_negative_index():
         code = sdfg.generate_code()[0].clean_code
         out = sdfg(A=A, i=np.int64(-2))
 
-    assert 'py_mod(__sym_i, 10)' in code
+    # The wraparound has to reach generated code, in whichever shape the read
+    # lowered to: ``py_mod`` on the subset of a promoted index symbol, or the
+    # conditional a tasklet carries when the read lowers as indirection.
+    assert 'py_mod(__sym_i, 10)' in code or '< 0) ? ' in code
     assert out[0] == A[-2]
 
 

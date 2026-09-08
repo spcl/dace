@@ -6,9 +6,10 @@ containers, subsets, and connector-substituted tasklet code.
 import ast
 import copy
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from dace import data, dtypes, subsets, symbolic
+from dace.config import Config
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
@@ -499,6 +500,48 @@ def _member_access(node: ast.Attribute, state: LoweringState) -> Optional[DataAc
     return DataAccess(path, subsets.Range.from_array(descriptor), descriptor, plan=container_plan(descriptor))
 
 
+def wrap_negative_indices(index_node: ast.expr, extents: Sequence[Any]) -> ast.expr:
+    """
+    Apply Python's wraparound to the element indices of an indirect access.
+
+    An indirect read indexes the base POINTER from tasklet code, so a negative
+    index reads before the array rather than counting back from its end. On the
+    subset path ``memlet_parser._wrap_scalar_index`` handles this; here the wrap
+    has to go into the code, and as a conditional expression rather than ``%``,
+    which is C++'s truncating modulo in tasklet code -- the same reasoning as
+    :func:`...advanced_indexing.index_expressions`.
+
+    Gated on ``frontend.runtime_negative_indices`` like every other runtime wrap,
+    so the default path stays byte-identical.
+
+    :param index_node: The index expression, a tuple for a multidimensional access.
+    :param extents: The number of elements the access spans per axis.
+    :return: The index expression, wrapped where it could be negative.
+    """
+    if not Config.get_bool('frontend', 'runtime_negative_indices'):
+        return index_node
+    elements = index_node.elts if isinstance(index_node, ast.Tuple) else [index_node]
+    if len(elements) != len(extents):
+        return index_node
+    wrapped = [_wrap_one_index(element, extent) for element, extent in zip(elements, extents)]
+    if not isinstance(index_node, ast.Tuple):
+        return wrapped[0]
+    index_node.elts = wrapped
+    return index_node
+
+
+def _wrap_one_index(element: ast.expr, extent: Any) -> ast.expr:
+    """One axis of :func:`wrap_negative_indices`, left alone if its extent will not parse."""
+    try:
+        size = ast.parse(str(extent), mode='eval').body
+    except SyntaxError:
+        return element
+    wrapped = ast.IfExp(test=ast.Compare(left=astutils.copy_tree(element), ops=[ast.Lt()], comparators=[ast.Constant(value=0)]),
+                        body=ast.BinOp(left=astutils.copy_tree(element), op=ast.Add(), right=size),
+                        orelse=astutils.copy_tree(element))
+    return ast.fix_missing_locations(ast.copy_location(wrapped, element))
+
+
 def indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> List[ast.expr]:
     """
     The outermost data-access subexpressions inside a subscript's index (e.g.
@@ -739,6 +782,7 @@ def substitute_data_operands(expr: ast.expr,
                 seen[base_key] = connector
             connector = seen[base_key]
             index_node = self.visit(astutils.copy_tree(node.slice))
+            index_node = wrap_negative_indices(index_node, base_access.subset.size())
             # Built as an AST rather than round-tripped through source: an
             # unparsed index tuple carries parentheses, and ``base[(i, 1:3)]``
             # is not valid Python even though ``base[i, 1:3]`` is.
