@@ -1843,11 +1843,15 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             if mini_warps:
                 ime, imx = real_state.add_map('reduce_values', {
                     '_i':
-                    f'_b0*{schedule.num_mini_warps}+_mwid:{schedule.sequential[0]}:{16*schedule.num_mini_warps}'
+                    f'_b0*{schedule.num_mini_warps}+_mwid:{schedule.sequential[0]}:'
+                    f'{schedule.block[0]*schedule.num_mini_warps}'
                 },
                                               schedule=dtypes.ScheduleType.Sequential)
             else:
-                ime, imx = real_state.add_map('reduce_values', {'_i': f'_b0:{schedule.sequential[0]}:16'},
+                # Strided by the number of threads cooperating on one output (``_b0``'s extent), or
+                # a block covers only part of the reduced axis and the rest is never summed.
+                ime, imx = real_state.add_map('reduce_values',
+                                              {'_i': f'_b0:{schedule.sequential[0]}:{schedule.block[0]}'},
                                               schedule=dtypes.ScheduleType.Sequential)
 
             id = real_state.add_tasklet('identity', {'__a_in', '__b_in'}, {'__o_out'}, '__o_out = __b_in')

@@ -75,6 +75,25 @@ def gpu_auto_reduce_from_view_sdfg() -> dace.SDFG:
     return sdfg
 
 
+def gpu_auto_reduce_over_leading_axis_sdfg() -> dace.SDFG:
+    """A reduction over a NON-contiguous axis, the branch that tiles the output by the warp size."""
+    sdfg = dace.SDFG('gpu_auto_reduce_leading_axis')
+    sdfg.add_array('A', [4, 128], dace.float32, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('B', [128], dace.float32, storage=dtypes.StorageType.GPU_Global)
+
+    state = sdfg.add_state()
+    reduce_node = Reduce('reduce', wcr='lambda a, b: a + b', axes=[0], identity=0)
+    reduce_node.implementation = 'GPUAuto'
+    reduce_node.add_in_connector('_in')
+    reduce_node.add_out_connector('_out')
+    state.add_node(reduce_node)
+    state.add_edge(state.add_read('A'), None, reduce_node, '_in', dace.Memlet('A[0:4, 0:128]'))
+    state.add_edge(reduce_node, '_out', state.add_write('B'), None, dace.Memlet('B[0:128]'))
+
+    sdfg.validate()
+    return sdfg
+
+
 def test_the_expansion_leaves_every_descriptor_valid():
     sdfg = gpu_auto_reduce_sdfg()
     sdfg.expand_library_nodes()
@@ -143,6 +162,24 @@ def every_map(sdfg: dace.SDFG):
                 yield sdfg.label, state, node
             elif isinstance(node, nodes.NestedSDFG):
                 yield from every_map(node.sdfg)
+
+
+def test_the_non_contiguous_branch_tiles_the_output_by_the_backend_warp_size():
+    """A 64-lane backend must get a 64-wide tile, not the 32 the schedule was written for.
+
+    The expansion addresses shared memory and the reduced dimension as ``_g * warp_size + _b``
+    while the planner sized the block, the shared buffer and the grid for a 32-lane warp. On HIP
+    that reads 64 lanes out of a 32-element buffer, and half the output tiles are never visited.
+    """
+    with dace.config.set_temporary('compiler', 'cuda', 'backend', value='hip'):
+        sdfg = gpu_auto_reduce_over_leading_axis_sdfg()
+        sdfg.expand_library_nodes()
+
+        shared = [desc for _, name, desc in all_descriptors(sdfg) if name == 's_mem']
+        assert shared, 'the non-contiguous GPUAuto branch did not run, so this test is anchored on nothing'
+        assert [d for d in shared if d.shape == (64, )], \
+            f'shared buffer holds {[d.shape for d in shared]}, one output per lane needs 64'
+        sdfg.validate()
 
 
 if __name__ == '__main__':
