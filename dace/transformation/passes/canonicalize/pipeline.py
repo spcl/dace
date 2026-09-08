@@ -1870,6 +1870,16 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``ControlFlowRegion`` carries none, which is why it is the one safe to flatten here.
     s += [('end', InlineControlFlowRegions())]
 
+    # cleanup (terminal): fold the views the inlines above just minted. ``InlineSDFG`` gives a
+    # sliced connector its own View descriptor, and the reclaim pipeline runs BEFORE
+    # ``_inline_single_state`` / ``InlineControlFlowRegions``, so nothing ever folds what they
+    # leave: CloudSC finished canonicalization holding 18 views of ``zpfplsx``, every one of them
+    # a FULL-array alias carrying the base's own shape and strides. A view reaches the vectorizer
+    # as an alias it has to reason about rather than the array itself. Same pass as the reclaim
+    # above (0.9s on the whole CloudSC SDFG), so the guards that keep a view a WAR carrier
+    # standing -- ``_view_fold_breaks_anti_dependence`` -- apply here unchanged.
+    s += [('end', ppl.Pipeline([ArrayElimination()]))]
+
     # NOTE: fresh WCR accumulators are identity-seeded by ``NormalizeWCRSource`` (the
     # ``normalize_wcr`` stage above), not a separate pass -- codegen never seeds a WCR
     # accumulator, so a reduction into genuinely-uninitialized scratch reads garbage. That pass
