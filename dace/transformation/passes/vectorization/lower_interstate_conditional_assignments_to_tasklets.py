@@ -13,7 +13,29 @@ import dace.sdfg.utils as sdutil
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
-    """Demote free symbols of conditional-assignment tasklets to fp64 scalars.
+    """Demote to fp64 scalars the symbols a conditional binds, so branch lowering can predicate them.
+
+    Two sources, both of which leave a symbol whose value depends on which branch ran:
+
+    * the free symbols of a ``condition_symbol_to_scalar`` tasklet (the fp-factor path's own
+      lowering of a guard);
+    * a symbol an arm of a ``ConditionalBlock`` binds on one of its OWN interstate edges --
+      ``if mask[j]: count = count + 1``.
+
+    The second is a correctness requirement, not a tidy-up. A symbol holds ONE value for a whole
+    tile, so a per-lane guard deciding an interstate assignment cannot be represented after
+    widening: codegen emits ``if (<bool[W]>)``, an array decaying to a never-null pointer, and
+    every lane takes the branch. ``BranchNormalization`` will not touch such an arm either -- it
+    refuses any arm binding a symbol read outside it, on the reasoning that a loop carrying such a
+    recurrence is sequential and therefore never tiled. That holds for a loop the frontend wrote as
+    a loop; it does NOT hold for a ``dc.map`` whose body carries a masked counter, which arrives
+    already parallel and is tiled with the scalar guard still in it. Demoting the symbol turns the
+    binding into a dataflow write, which the ITE rewrite then gates per lane like any other.
+
+    Refusals are inherited from :mod:`dace.sdfg.utils`: an SDFG argument has no definition here to
+    rewrite, and a symbol the graph evaluates (a subset, a map range, a loop variable) stops being
+    expressible as a scalar. Both are uniform across lanes, so the guard holds with them left as
+    symbols.
 
     Tested as part of the vectorization pipeline.
     """
@@ -40,6 +62,46 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
 
     def depends_on(self):
         return {}
+
+    @staticmethod
+    def arm_bound_symbols(sd: SDFG) -> Dict[str, None]:
+        """Symbols an arm of a ``ConditionalBlock`` binds on one of its own interstate edges.
+
+        Only ``sd``'s own regions are walked -- a nested SDFG binds symbols in its own scope and is
+        reached separately, by the caller's walk over :meth:`~dace.SDFG.all_sdfgs_recursive`.
+
+        :param sd: the SDFG whose conditional blocks are inspected.
+        :returns: the bound names, insertion-ordered (this drives ``demote_symbol_to_scalar``,
+            which adds arrays to the SDFG).
+        """
+        bound: Dict[str, None] = {}
+        for block in sd.all_control_flow_blocks():
+            if not isinstance(block, ConditionalBlock):
+                continue
+            for _condition, region in block.branches:
+                for r in region.all_control_flow_regions():
+                    for e in r.edges():
+                        bound.update(dict.fromkeys(sorted(e.data.assignments)))
+        return bound
+
+    def demote_arm_bound_symbols(self, sdfg: SDFG) -> int:
+        """Demote every conditionally-bound symbol that CAN be demoted, in ``sdfg`` and its nests.
+
+        :param sdfg: the SDFG to transform in place.
+        :returns: how many symbols were demoted.
+        """
+        demoted = 0
+        for sd in sdfg.all_sdfgs_recursive():
+            for name in self.arm_bound_symbols(sd):
+                if name not in sd.symbols:
+                    continue
+                if (not sdutil.symbol_demotes_to_transient_scalar(sd, name)
+                        or sdutil.symbol_carries_graph_structure(sd, name)):
+                    continue
+                sd.symbols[name] = dace.float64
+                sdutil.demote_symbol_to_scalar(sd, name, dace.float64, None)
+                demoted += 1
+        return demoted
 
     def _apply(self, cfg: ControlFlowRegion) -> bool:
         """Recursively demote conditional-assignment free symbols within a control-flow region.
@@ -152,6 +214,10 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         :returns: ``True`` if any symbol was demoted.
         """
         self._applied = 0
+        # Before the tasklet scan: that one only sees guards the fp-factor path already lowered
+        # into ``condition_symbol_to_scalar`` tasklets, while an arm's own interstate binding is
+        # still a symbol on an edge and is the shape that miscompiles when tiled.
+        self._applied += self.demote_arm_bound_symbols(sdfg)
         has_applied = self._apply(sdfg)
 
-        return has_applied
+        return has_applied or self._applied > 0
