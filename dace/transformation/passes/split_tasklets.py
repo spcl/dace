@@ -255,7 +255,6 @@ class SplitTasklets(ppl.Pass):
                         )
                         assert array_name not in added_accesses
                         added_accesses[array_name] = state.add_access(array_name)
-                    state.sdfg.save("x.sdfgz", compress=True)
                     state.add_edge(
                         t, out_conn, added_accesses[array_name], None,
                         dace.memlet.Memlet.from_array(dataname=array_name, datadesc=state.sdfg.arrays[array_name]))

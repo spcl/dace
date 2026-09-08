@@ -123,6 +123,10 @@ class PyTorchConvBackward(BackwardImplementation):
 
         inputs = {result.given_grad_names["Y"]}.union(required_forward_inputs)
         outputs = {result.required_grad_names[n] for n in sorted(required_gradients)}
-        node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
+        node = context.backward_state.add_nested_sdfg(nsdfg,
+                                                      sorted(inputs),
+                                                      sorted(outputs),
+                                                      symbol_mapping=butils.backward_symbol_mapping(
+                                                          nsdfg, context.backward_state))
 
         return node, result

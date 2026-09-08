@@ -10,7 +10,7 @@
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error
 #include <string>     // std::to_string
-#include <unordered_map>
+#include <optional>
 
 namespace dace {
 
@@ -23,12 +23,7 @@ static void CheckRocblasError(rocblas_status const& status) {
   }
 }
 
-static rocblas_handle CreateRocblasHandle(int device) {
-  if (device >= 0) {
-    if (hipSetDevice(device) != hipSuccess) {
-      throw std::runtime_error("Failed to set HIP device.");
-    }
-  }
+static rocblas_handle CreateRocblasHandle() {
   rocblas_handle handle;
   CheckRocblasError(rocblas_create_handle(&handle));
   return handle;
@@ -69,12 +64,7 @@ class _RocblasConstants {
     return (hipDoubleComplex*)custom_beta_;
   }
 
-  _RocblasConstants(int device) {
-    if (device >= 0) {
-      if (hipSetDevice(device) != hipSuccess) {
-        throw std::runtime_error("Failed to set HIP device.");
-      }
-    }
+  _RocblasConstants() {
     // Allocate constant zero with the largest used size
     (void)hipMalloc(&zero_, sizeof(hipDoubleComplex) * 1);
     (void)hipMemset(zero_, 0, sizeof(hipDoubleComplex) * 1);
@@ -142,9 +132,9 @@ class _RocblasConstants {
 
 /**
  * ROCBLAS wrapper class for DaCe. Once constructed, the class can be used to
- * get or create a ROCBLAS library handle (rocblas_handle) for a given GPU ID,
- * or get pre-allocated constants (see ``_RocblasConstants`` class) for ROCBLAS
- * calls.
+ * get or create the ROCBLAS library handle (rocblas_handle), or get pre-allocated
+ * constants (see ``_RocblasConstants`` class) for ROCBLAS calls. One per process,
+ * like the GPU itself.
  * The class is constructed when the ROCBLAS DaCe library is used.
  **/
 class RocblasHandle {
@@ -152,37 +142,30 @@ class RocblasHandle {
   RocblasHandle() = default;
   RocblasHandle(RocblasHandle const&) = delete;
 
-  rocblas_handle& Get(int device) {
-    auto f = handles_.find(device);
-    if (f == handles_.end()) {
-      // Lazily construct new rocBLAS handle if the specified key does not yet
-      // exist
-      auto handle = CreateRocblasHandle(device);
+  rocblas_handle& Get() {
+    if (!handle_) {
+      auto handle = CreateRocblasHandle();
       rocblas_set_pointer_mode(handle, rocblas_pointer_mode_device);
-      f = handles_.emplace(device, handle).first;
+      handle_ = handle;
     }
-    return f->second;
+    return *handle_;
   }
 
-  _RocblasConstants& Constants(int device) {
-    auto f = constants_.find(device);
-    if (f == constants_.end()) {
-      // Lazily construct new rocBLAS constants
-      f = constants_.emplace(device, device).first;
-    }
-    return f->second;
+  _RocblasConstants& Constants() {
+    if (!constants_) constants_.emplace();
+    return *constants_;
   }
 
+  // A destructor that throws terminates the process. Teardown failures have nowhere left to go, so
+  // they are dropped rather than turned into a crash that hides whatever the program computed.
   ~RocblasHandle() {
-    for (auto& h : handles_) {
-      CheckRocblasError(rocblas_destroy_handle(h.second));
-    }
+    if (handle_) CheckRocblasError(rocblas_destroy_handle(*handle_));
   }
 
   RocblasHandle& operator=(RocblasHandle const&) = delete;
 
-  std::unordered_map<int, rocblas_handle> handles_;
-  std::unordered_map<int, _RocblasConstants> constants_;
+  std::optional<rocblas_handle> handle_;
+  std::optional<_RocblasConstants> constants_;
 };
 
 }  // namespace blas

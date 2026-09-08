@@ -53,22 +53,40 @@ def resolve_worker_id() -> str:
     return ''
 
 
-def pin_worker_to_gpu() -> None:
+def visible_device_pool() -> list:
+    """Devices this process may be placed on: its CUDA_VISIBLE_DEVICES, else every node device."""
+    preset = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+    if preset.strip():
+        return [entry.strip() for entry in preset.split(',') if entry.strip()]
+    return list_cuda_devices()
+
+
+def is_xdist_controller(config: pytest.Config) -> bool:
+    """True in the xdist process that only spawns workers, and therefore runs no test itself."""
+    return bool(getattr(config.option, 'numprocesses', None)) and 'PYTEST_XDIST_WORKER' not in os.environ
+
+
+def pin_worker_to_gpu(controller: bool = False) -> None:
     """Pin this worker process (pytest-xdist or an MPI-launched rank) to a single GPU.
 
     Without this, every worker/rank sees all GPUs and piles its CUDA context onto device 0, which
     is the root cause of flaky 'invalid device ordinal' failures under high worker/rank counts.
     """
+    device_pool = visible_device_pool()
+    if len(device_pool) <= 1:
+        return
+    if controller:
+        # Every worker is spawned with this environment. A launcher rank var makes the controller
+        # look pinnable (SLURM_PROCID=0 is set for the CI's single task), and narrowing here would
+        # hand each worker a one-device pool -- the whole rotation below would then never happen.
+        # Republishing the pool also spares each worker an nvidia-smi of its own.
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(device_pool)
+        return
     worker_id = resolve_worker_id()
     if not worker_id:
-        return
-    preset = os.environ.get('CUDA_VISIBLE_DEVICES', '')
-    device_pool = [entry.strip() for entry in preset.split(',') if entry.strip()] if preset.strip() \
-        else list_cuda_devices()
-    if len(device_pool) <= 1:
         return
     os.environ['CUDA_VISIBLE_DEVICES'] = pick_gpu_worker_device(worker_id, device_pool)
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    pin_worker_to_gpu()
+    pin_worker_to_gpu(is_xdist_controller(config))

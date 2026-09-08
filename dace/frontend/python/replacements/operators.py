@@ -421,8 +421,10 @@ def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
     out_operand, out_arr = visitor.add_temp_transient(out_shape, restype, left_arr.storage)
 
     if list(out_shape) == [1]:
-        tasklet = state.add_tasklet('_%s_' % operator, {'__in1', '__in2'}, {'__out'},
-                                    '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+        tasklet = state.add_tasklet('_%s_' % operator, {
+            '__in1': None,
+            '__in2': None
+        }, {'__out'}, '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
         n1 = state.add_read(left_operand)
         n2 = state.add_read(right_operand)
         n3 = state.add_write(out_operand)
@@ -613,8 +615,10 @@ def _scalar_scalar_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, 
                                             storage=left_scal.storage,
                                             find_new_name=True)
 
-    tasklet = state.add_tasklet('_%s_' % operator, {'__in1', '__in2'}, {'__out'},
-                                '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+    tasklet = state.add_tasklet('_%s_' % operator, {
+        '__in1': None,
+        '__in2': None
+    }, {'__out'}, '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
     n1 = state.add_read(left_operand)
     n2 = state.add_read(right_operand)
     n3 = state.add_write(out_operand)

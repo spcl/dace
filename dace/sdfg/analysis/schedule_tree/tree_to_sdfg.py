@@ -501,8 +501,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # insert nested SDFG
         nsdfg = self._current_state.add_nested_sdfg(
             sdfg=inner_sdfg,
-            inputs=connectors["inputs"],
-            outputs=connectors["outputs"],
+            inputs={name: None
+                    for name in connectors["inputs"]},
+            outputs={name: None
+                     for name in connectors["outputs"]},
         )
         self._own_nested_sdfgs.append((self._current_state, nsdfg))
         self._own_map_bodies.append((self._current_state, nsdfg))
