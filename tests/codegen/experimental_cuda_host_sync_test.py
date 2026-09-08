@@ -142,7 +142,10 @@ def test_a_host_tasklet_consumer_is_synchronized():
     """A plain host tasklet reading the destination is a host consumer like any other."""
     code = _generated_code(_host_consumer_sdfg('d2h_host_tasklet'))
     copy = _position(code, r'MemcpyAsync\([^;]*DeviceToHost')
-    read = _position(code, r'copied \* 3\.0')
+    # Either spelling of the tasklet's read of the copy's destination. Whether the connector is
+    # inlined (``copied * 3.0``) or bound to a local first (``double sc = copied;``) is a codegen
+    # style question; what this test is about is that the read lands after the synchronization.
+    read = _position(code, r'copied \s*\*\s*3\.0|\bdouble\s+\w+\s*=\s*copied\s*;')
     sync = _position(code, r'StreamSynchronize')
     assert copy < sync < read, 'the host tasklet reads the destination of an unsynchronized copy'
 
