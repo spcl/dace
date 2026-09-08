@@ -59,6 +59,23 @@ class Binding:
     declared: bool = False
 
 
+def _settle_optional(descriptor: data.Data) -> None:
+    """
+    Record that a transient is never optional.
+
+    A descriptor decides this in its constructor, from the ``transient``
+    argument it was built with. The repository builds descriptors first and
+    sets ``transient`` afterwards, once it knows whether the container is a
+    temporary, so the flag would stay at its "unknown" default -- and
+    ``OptionalArrayInference`` reports "maybe null" for storage the program
+    itself allocates.
+
+    :param descriptor: The descriptor whose ``transient`` was just set.
+    """
+    if descriptor.transient and getattr(descriptor, 'optional', False) is None:
+        descriptor.optional = False
+
+
 def foldable_scalar_names(body: List[ast.stmt]) -> Set[str]:
     """
     The source-level names of a canonical body whose compile-time value may be
@@ -338,6 +355,7 @@ class ProgramContext:
         :return: The actual repository name used.
         """
         descriptor.transient = transient
+        _settle_optional(descriptor)
         actual_name = name
         if actual_name in self.containers or actual_name in self.symbols:
             actual_name = self.fresh_name(f'{name}_')
@@ -365,6 +383,7 @@ class ProgramContext:
         """
         existing = self.containers[name]
         descriptor.transient = existing.transient
+        _settle_optional(descriptor)
         self.containers[name] = descriptor
         for free_symbol in descriptor.free_symbols:
             self.symbols.setdefault(free_symbol.name, free_symbol)

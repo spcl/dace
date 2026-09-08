@@ -522,8 +522,9 @@ class InferenceService:
 
         True is returned only where the frontend can see the answer itself: a
         closure array is an object it already resolved (so ``self.field`` holds
-        an array, not ``None``), and a descriptor explicitly marked
-        non-optional cannot be null.
+        an array, not ``None``), a scalar crosses the ABI by value and so has no
+        null to be, and a descriptor explicitly marked non-optional cannot be
+        null.
         """
         if not isinstance(node, ast.Name):
             return None
@@ -533,6 +534,12 @@ class InferenceService:
         if binding.container in self.context.closure_containers.values():
             return True
         descriptor = self.context.containers.get(binding.container)
+        if isinstance(descriptor, data.Scalar):
+            # Passed by value, not as a pointer: ``a_scalar == nullptr`` is not
+            # even a legal comparison in the generated C++, and an argument that
+            # really was ``None`` never reaches here as a scalar -- preprocessing
+            # substitutes it as the constant and the test folds.
+            return True
         return True if getattr(descriptor, 'optional', None) is False else None
 
     def resolve_callee(self, func: ast.expr) -> Tuple[str, Optional[Any]]:

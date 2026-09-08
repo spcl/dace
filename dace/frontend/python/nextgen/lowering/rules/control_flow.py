@@ -74,14 +74,14 @@ def _lower_if_chain(statement: ast.If, before: BindingSnapshot,
         state.context.restore(before)
 
     opaque_values.reject_opaque_condition(statement.test, statement, state)
-    condition = CodeBlock(astutils.unparse(resolve_condition_names(statement.test, state)))
+    condition = CodeBlock(astutils.unparse(resolve_condition_names(_fold_none_identity(statement.test, state), state)))
     _lower_branch(tn.IfScope(condition=condition, children=[]), statement.body)
 
     orelse = statement.orelse
     while len(orelse) == 1 and isinstance(orelse[0], ast.If):
         elif_statement = orelse[0]
         opaque_values.reject_opaque_condition(elif_statement.test, elif_statement, state)
-        condition = CodeBlock(astutils.unparse(resolve_condition_names(elif_statement.test, state)))
+        condition = CodeBlock(astutils.unparse(resolve_condition_names(_fold_none_identity(elif_statement.test, state), state)))
         _lower_branch(tn.ElifScope(condition=condition, children=[]), elif_statement.body)
         orelse = elif_statement.orelse
 
@@ -93,12 +93,48 @@ def _lower_if_chain(statement: ast.If, before: BindingSnapshot,
     return branch_scopes, branch_ends
 
 
+def _fold_none_identity(node: ast.expr, state: LoweringState) -> ast.expr:
+    """
+    Settle ``x is None`` / ``x is not None`` inside a condition wherever the
+    frontend can already see the answer.
+
+    Identity with ``None`` is only a run-time question for a nullable
+    POINTER: an optional array argument really can arrive null, and that test
+    has to reach generated code as ``bias == nullptr``. A scalar crosses the
+    ABI by value, where the same comparison is not even legal C++ -- and a
+    scalar argument that really was ``None`` never gets this far, since
+    preprocessing substitutes the constant. Inference draws that line
+    (``TypeInference._identity_with_none``); fold what it settles and leave
+    the rest for the state machine to evaluate.
+
+    :param node: The condition expression, in canonical form.
+    :param state: The lowering state to infer with.
+    :return: A copy of the expression with settled identity tests folded.
+    """
+
+    class _Folder(ast.NodeTransformer):
+
+        def visit_Compare(self, compare_node: ast.Compare) -> ast.AST:
+            if not any(isinstance(op, (ast.Is, ast.IsNot)) for op in compare_node.ops):
+                return self.generic_visit(compare_node)
+            try:
+                inferred = state.inference.infer(compare_node)
+            except (UnsupportedFeatureError, DaceSyntaxError):
+                # Undecidable here: it stays a run-time null test.
+                return compare_node
+            if inferred.kind != 'constant' or not isinstance(inferred.value, bool):
+                return compare_node
+            return ast.copy_location(ast.Constant(value=inferred.value), compare_node)
+
+    return ast.fix_missing_locations(_Folder().visit(astutils.copy_tree(node)))
+
+
 @rule(ast.While)
 def lower_while(statement: ast.While, state: LoweringState) -> None:
 
     def _emit(state: LoweringState) -> None:
         opaque_values.reject_opaque_condition(statement.test, statement, state)
-        condition = astutils.unparse(resolve_condition_names(statement.test, state))
+        condition = astutils.unparse(resolve_condition_names(_fold_none_identity(statement.test, state), state))
         loop = LoopRegion(f'while_{statement.lineno}', condition_expr=condition)
         with state.emitter.scope(tn.WhileScope(loop=loop, children=[])):
             state.lower_body(statement.body)
