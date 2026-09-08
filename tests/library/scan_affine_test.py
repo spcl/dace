@@ -220,13 +220,32 @@ def test_affine_scan_refuses_a_coefficient_of_the_wrong_length():
 
 
 def test_affine_scan_refuses_shapes_without_a_lowering():
-    """Exclusive / multi-chain / strided affine scans refuse instead of falling back to a scalar op."""
-    for attr, value in (('exclusive', True), ('chains', 2), ('stride', 2)):
+    """Exclusive and multi-chain affine scans refuse instead of falling back to a scalar op.
+
+    A carry distance is NOT on this list: ``out[k] = c[k]*out[k-S] + d[k]`` is S independent
+    unit-stride affine scans, one per residue class, and the runtime has that entry point -- see
+    :func:`test_a_strided_affine_scan_takes_the_per_class_entry_point`.
+    """
+    for attr, value in (('exclusive', True), ('chains', 2)):
         sdfg = build_affine_sdfg()
         node = next(n for n in sdfg.states()[0].nodes() if isinstance(n, Scan))
         setattr(node, attr, value)
         with pytest.raises(NotImplementedError, match='AFFINE'):
             sdfg.expand_library_nodes()
+
+
+def test_a_strided_affine_scan_takes_the_per_class_entry_point():
+    """A carry distance expands, and to the STRIDED runtime call rather than the contiguous one.
+
+    The distinction is the whole point: the contiguous entry point on a strided recurrence would
+    compute a different function, silently.
+    """
+    sdfg = build_affine_sdfg()
+    node = next(n for n in sdfg.states()[0].nodes() if isinstance(n, Scan))
+    node.stride = 2
+    sdfg.expand_library_nodes()
+    code = '\n'.join(c.clean_code for c in sdfg.generate_code())
+    assert 'inclusive_affine_strided' in code, 'strided affine scan did not take the per-class entry point'
 
 
 def build_affine_cuda_sdfg(seed_on_device: bool) -> dace.SDFG:
