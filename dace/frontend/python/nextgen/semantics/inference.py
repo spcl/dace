@@ -50,6 +50,20 @@ DESCRIPTOR_PROPERTIES: Dict[str, Any] = {
 }
 
 
+#: The storages a computed temporary may inherit from its operands.
+#:
+#: A result outlives the scope that computes it, so it needs storage that does
+#: too. The per-thread and per-scope kinds (``CPU_ThreadLocal``, ``GPU_Shared``,
+#: registers) do not: inheriting one put ``b + 1`` where only the producing
+#: thread could see it, and the read after the map got uninitialized memory.
+INHERITABLE_STORAGE = frozenset({
+    dtypes.StorageType.CPU_Heap,
+    dtypes.StorageType.CPU_Pinned,
+    dtypes.StorageType.GPU_Global,
+    dtypes.StorageType.Snitch_L2,
+})
+
+
 def _with_operand_storage(result: 'Inferred', data_operands: List['Inferred']) -> 'Inferred':
     """
     Place a computed result in the storage its operands live in, unless the
@@ -74,7 +88,7 @@ def _with_operand_storage(result: 'Inferred', data_operands: List['Inferred']) -
         return result
     for operand in data_operands:
         storage = getattr(operand.descriptor, 'storage', dtypes.StorageType.Default)
-        if storage != dtypes.StorageType.Default:
+        if storage in INHERITABLE_STORAGE:
             descriptor.storage = storage
             break
     return result

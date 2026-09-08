@@ -972,8 +972,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)
 
             if isinstance(scope_node, nodes.EntryNode):
-                # copy the memlet since we already used it in the memlet path above
-                to_connect[memlet.data] = (access_node, _combined_scope_write(to_connect.get(memlet.data), memlet))
+                # A container nothing outside this scope touches is local to it (a
+                # temporary of a map body): routing it through the exit would give
+                # every concurrent iteration one shared instance to write, and it
+                # leaves the scope holding a single dependent component that map
+                # fission cannot split.
+                if self._escapes_dataflow_scope(memlet.data, self._ctx.current_scope, sdfg):
+                    # copy the memlet since we already used it in the memlet path above
+                    to_connect[memlet.data] = (access_node,
+                                               _combined_scope_write(to_connect.get(memlet.data), memlet))
                 continue
 
             if isinstance(scope_node, SDFG):
@@ -1011,6 +1018,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         :param sdfg: The SDFG being built, for the container's descriptor.
         :return: True if the write has to leave the scope.
         """
+        if container not in sdfg.arrays:
+            # Not declared at this level yet: it belongs to an enclosing SDFG,
+            # which is exactly what "visible outside" means.
+            return True
         if not sdfg.arrays[container].transient:
             return True
         key = id(scope)
