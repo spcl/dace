@@ -26,6 +26,7 @@ import dace
 from dace import nodes
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
+from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.utils.pass_invariants import (
@@ -82,7 +83,9 @@ def test_azimint_naive_masked_counter_is_predicated_per_lane():
     sdfg = npbench.fresh_sdfg(corpus)
     canonicalize(sdfg, validate=True)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=WIDTHS, target_isa='AVX512', remainder_strategy='full_mask',
+        VectorizeConfig(widths=WIDTHS,
+                        target_isa=detect_host_isa(),
+                        remainder_strategy='full_mask',
                         branch_mode='merge')).apply_pass(sdfg, {})
 
     assert no_conditional_interstate_assign_on_widened_data(sdfg, WIDTHS) is None
