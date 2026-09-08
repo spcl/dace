@@ -1930,8 +1930,60 @@ def from_schedule_tree(
     _refine_own_boundaries(result, visitor._own_map_bodies)
     _propagate_scopes(result, visitor._own_nested_sdfgs)
     _shrink_own_boundaries(visitor._own_map_bodies)
+    _prune_unreferenced_symbols(result)
 
     return result
+
+
+def _referenced_symbols(sdfg: SDFG) -> Set[str]:
+    """
+    Every symbol name ``sdfg`` mentions anywhere: used as a value, defined on
+    one of its own interstate edges, or named by a container's shape.
+
+    :param sdfg: The SDFG to scan. Nested SDFGs contribute only through the
+                 symbol mapping on their node, which is what the parent has to
+                 supply.
+    :return: The set of symbol names.
+    """
+    referenced = set(sdfg.used_symbols(all_symbols=False))
+    for edge in sdfg.all_interstate_edges():
+        referenced |= set(edge.data.assignments.keys())
+        referenced |= edge.data.free_symbols
+    for cfg in sdfg.all_control_flow_regions():
+        referenced |= cfg.used_symbols(all_symbols=False, with_contents=False)
+        if isinstance(cfg, LoopRegion) and cfg.loop_variable:
+            referenced.add(cfg.loop_variable)
+    for descriptor in sdfg.arrays.values():
+        referenced |= {str(symbol) for symbol in descriptor.free_symbols}
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                for value in node.symbol_mapping.values():
+                    referenced |= {str(symbol) for symbol in symbolic.pystr_to_symbolic(value).free_symbols}
+    return referenced
+
+
+def _prune_unreferenced_symbols(sdfg: SDFG) -> None:
+    """
+    Drop from every symbol repository the symbols the built SDFG never mentions.
+
+    The frontend registers each ``dace.symbol`` it can see -- every one bound in
+    the program's closure -- so that a reference to one resolves during
+    lowering. A program that never mentions ``TILE_SIZE`` must not gain it as a
+    parameter, though: :attr:`SDFG.free_symbols` reports every *declared*
+    symbol, so an unused one becomes a required call argument and the program
+    fails to run with "Undefined symbols detected".
+
+    Innermost SDFGs are pruned first: removing a symbol also removes its entry
+    from the parent's symbol mapping (:meth:`SDFG.remove_symbol`), which is
+    what can make the name unreferenced one level up.
+
+    :param sdfg: The top-level SDFG to prune, recursively.
+    """
+    for nested in reversed(list(sdfg.all_sdfgs_recursive())):
+        referenced = _referenced_symbols(nested)
+        for name in [name for name in nested.symbols if name not in referenced]:
+            nested.remove_symbol(name)
 
 
 def _refine_own_boundaries(sdfg: SDFG, own_nested: 'list[tuple[SDFGState, nodes.NestedSDFG]]') -> None:

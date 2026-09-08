@@ -627,6 +627,50 @@ def resolve_symbol_names(node: ast.expr, state: LoweringState) -> ast.expr:
     return ast.fix_missing_locations(_Renamer().visit(result))
 
 
+def resolve_condition_names(node: ast.expr, state: LoweringState) -> ast.expr:
+    """
+    Resolve names in a control-flow condition, reading the VALUE of a bare
+    one-element container rather than naming the container itself.
+
+    A condition is unparsed into a code block the state machine evaluates
+    directly, where a container name generates its C *pointer*. ``if flag:``
+    on a one-element container therefore tested an address, which is never
+    null, and the branch was always taken. This is what a call in condition
+    position reduces to -- ``if simple_condition(i):`` becomes a bare name once
+    canonicalization has bound the call to its return container -- so
+    subscript such a name to make the condition read the value.
+
+    Containers with more than one element are left alone: truth of a whole
+    array is not a condition the SDFG can evaluate, and the caller's
+    :class:`~...common.UnsupportedFeatureError` fallback handles it.
+
+    :param node: The condition expression, in canonical form.
+    :param state: The lowering state holding the container repository.
+    :return: A copy of the expression with repository names substituted.
+    """
+    result = resolve_symbol_names(node, state)
+
+    class _Dereferencer(ast.NodeTransformer):
+
+        def visit_Subscript(self, subscript_node: ast.Subscript) -> ast.AST:
+            # Only the index expression can hold a bare name to dereference;
+            # the value slot is already an element access.
+            subscript_node.slice = self.visit(subscript_node.slice)
+            return subscript_node
+
+        def visit_Name(self, name_node: ast.Name) -> ast.AST:
+            descriptor = state.context.containers.get(name_node.id)
+            # A Scalar already generates as a value, not as a pointer.
+            if descriptor is None or isinstance(descriptor, data.Scalar):
+                return name_node
+            if data._prod(descriptor.shape) != 1:
+                return name_node
+            index = ast.Tuple(elts=[ast.Constant(value=0) for _ in descriptor.shape], ctx=ast.Load())
+            return ast.copy_location(ast.Subscript(value=name_node, slice=index, ctx=ast.Load()), name_node)
+
+    return ast.fix_missing_locations(_Dereferencer().visit(result))
+
+
 def substitute_data_operands(expr: ast.expr,
                              state: LoweringState,
                              connector_prefix: str = '__in') -> Tuple[str, List[Tuple[str, DataAccess]]]:
