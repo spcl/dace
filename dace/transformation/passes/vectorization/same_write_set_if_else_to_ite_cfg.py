@@ -1100,31 +1100,58 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         :returns: ``(expanded_text, inlined)`` where ``inlined`` maps each substituted symbol name
             to the LIST of interstate edges that assign it (caller prunes all of them together).
         """
-        # Collect EVERY interstate definition of each symbol. A symbol is safe to inline only if
-        # it has exactly ONE distinct RHS across all its assigning edges (a single, path-independent
-        # reaching value) and is NOT self-referential (``k = k + 1`` is a loop-carried recurrence,
-        # not a staged read -- inlining it would re-fire the fixpoint and grow the text). Protected
-        # symbols (free / parent-bound / loop variables) are never inlined or pruned.
-        all_defs: Dict[str, list] = {}
-        for cfg in sdfg.all_control_flow_regions(recursive=True):
-            for e in cfg.edges():
-                for lhs, rhs in (e.data.assignments or {}).items():
-                    all_defs.setdefault(lhs, []).append((str(rhs), e))
-        protected = self._protected_symbols(sdfg)
-        defs: Dict[str, Tuple[str, list]] = {}
-        for lhs, deflist in all_defs.items():
-            if lhs in protected:
-                continue
+        # Everything below is built ON DEMAND. This runs speculatively, once per candidate guard,
+        # and most guards name no interstate-defined symbol at all -- so the whole-SDFG scans are
+        # deferred behind the names actually present in the text. ``self._protected_symbols`` in
+        # particular recomputes ``sdfg.free_symbols`` (an uncached walk that re-parses every
+        # interstate assignment), which measured 17% of the vectorizer on CloudSC purely because it
+        # ran before anyone asked whether there was a candidate to protect. Same classification,
+        # same order of checks -- only the point at which each is paid moves.
+        arrays = set(sdfg.arrays.keys())
+        all_defs: Optional[Dict[str, list]] = None
+        protected: Optional[set] = None
+        defs: Dict[str, Optional[Tuple[str, list]]] = {}  # name -> definition, or None = not inlinable
+
+        def definition_of(name: str) -> Optional[Tuple[str, list]]:
+            """``(rhs, edges)`` for a name safe to inline, else ``None``. Classified once per name.
+
+            A symbol is safe to inline only if it has exactly ONE distinct RHS across all its
+            assigning edges (a single, path-independent reaching value) and is NOT self-referential
+            (``k = k + 1`` is a loop-carried recurrence, not a staged read -- inlining it would
+            re-fire the fixpoint and grow the text). Protected symbols (free / parent-bound / loop
+            variables) are never inlined or pruned.
+            """
+            nonlocal all_defs, protected
+            if name in defs:
+                return defs[name]
+            if all_defs is None:
+                all_defs = {}
+                for cfg in sdfg.all_control_flow_regions(recursive=True):
+                    for e in cfg.edges():
+                        for lhs, rhs in (e.data.assignments or {}).items():
+                            all_defs.setdefault(lhs, []).append((str(rhs), e))
+            deflist = all_defs.get(name)
+            if deflist is None:
+                defs[name] = None
+                return None
+            if protected is None:
+                protected = self._protected_symbols(sdfg)
+            if name in protected:
+                defs[name] = None
+                return None
             if len({r for r, _ in deflist}) != 1:
-                continue  # path-dependent reaching value -- inlining an arbitrary one is unsound
+                defs[name] = None  # path-dependent reaching value -- inlining an arbitrary one is unsound
+                return None
             rhs_i = deflist[0][0]
             try:
-                if lhs in set(symbolic.free_symbols_and_functions(rhs_i)):
-                    continue  # self-referential recurrence, not a staged read
+                if name in set(symbolic.free_symbols_and_functions(rhs_i)):
+                    defs[name] = None  # self-referential recurrence, not a staged read
+                    return None
             except Exception:
                 pass
-            defs[lhs] = (rhs_i, [e for _, e in deflist])
-        arrays = set(sdfg.arrays.keys())
+            defs[name] = (rhs_i, [e for _, e in deflist])
+            return defs[name]
+
         inlined: dict = {}  # sym -> [edges assigning it]; all pruned together by the caller
         text = rhs_text
         # Fixpoint with an iteration cap guarding against pathological (mutually-recursive) cycles;
@@ -1134,7 +1161,9 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                 names = set(symbolic.free_symbols_and_functions(text))
             except Exception:
                 break
-            targets = sorted(n for n in names if n in defs and n not in arrays and n not in exclude)
+            # Order the cheap refusals (an array name, the lifted symbol itself) ahead of
+            # ``definition_of``, so a text naming only arrays never triggers a scan.
+            targets = sorted(n for n in names if n not in arrays and n not in exclude and definition_of(n) is not None)
             if not targets:
                 break
             for name in targets:

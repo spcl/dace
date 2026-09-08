@@ -396,6 +396,12 @@ def map_body_is_tile_lowerable(state: SDFGState,
     # like a hang on a two-level tiled stencil. Scoped to this call, so no pass can mutate the body
     # out from under it.
     sym_defs_cache: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    # ``scan_cache`` shares the raw body scan across CALLS, and only a caller that owns an unmutated
+    # span may keep one. A call-scoped one is sound unconditionally -- nothing mutates inside a
+    # predicate -- and without it a body NestedSDFG spanning S states is re-scanned once per state,
+    # since ``sym_defs_cache`` keys on the state too.
+    if scan_cache is None:
+        scan_cache = {}
     for subset, inner_sdfg, inner_state, iter_vars in _map_body_per_lane_subsets(state, map_entry):
         key = (id(inner_sdfg), id(inner_state))
         if key not in sym_defs_cache:

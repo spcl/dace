@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Demote free symbols used in conditional-assignment tasklets to scalars."""
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 import dace
 from dace import SDFG, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
@@ -92,15 +92,27 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         """
         demoted = 0
         for sd in sdfg.all_sdfgs_recursive():
+            # Both gates below answer from a whole-SDFG scan that depends on ``sd`` alone, so ask
+            # each ONCE per unmutated span rather than once per candidate symbol -- the two ran to
+            # 8% of the vectorizer on CloudSC purely by re-walking. Only a demotion here can
+            # invalidate them, and candidates far outnumber demotions, so drop them on a demotion
+            # and rebuild lazily at the next ask.
+            structural: Optional[Set[str]] = None
+            free_syms: Optional[Set[str]] = None
             for name in self.arm_bound_symbols(sd):
                 if name not in sd.symbols:
                     continue
-                if (not sdutil.symbol_demotes_to_transient_scalar(sd, name)
-                        or sdutil.symbol_carries_graph_structure(sd, name)):
+                if structural is None:
+                    structural = sdutil.structural_symbols(sd)
+                    # Consulted only for a top-level SDFG; a nested one reads its parent's mapping.
+                    free_syms = sd.free_symbols if sd.parent_nsdfg_node is None else set()
+                if (not sdutil.symbol_demotes_to_transient_scalar(sd, name, free_symbols=free_syms)
+                        or sdutil.symbol_carries_graph_structure(sd, name, structural=structural)):
                     continue
                 sd.symbols[name] = dace.float64
                 sdutil.demote_symbol_to_scalar(sd, name, dace.float64, None)
                 demoted += 1
+                structural = free_syms = None  # the demotion rewrote ``sd``; rebuild before the next ask
         return demoted
 
     def _apply(self, cfg: ControlFlowRegion) -> bool:
