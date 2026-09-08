@@ -640,7 +640,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     outer_to_connect["outputs"].add(name)
 
                 # Add out_connector in case of write after read
-                if memlet_data in outer_to_connect["inputs"]:
+                if name in outer_to_connect["inputs"]:
                     outer_to_connect["outputs"].add(name)
 
             # connect "outside the map"
