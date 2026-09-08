@@ -841,3 +841,64 @@ def test_plain_writes_still_fission():
     out = np.zeros(1, dtype=np.float64)
     sdfg(A=A, m1=m1, m2=m2, out=out)
     assert (m1[0], m2[0], out[0]) == (3.0, 2.0, 5.0), f'got {m1[0]}, {m2[0]}, {out[0]}'
+
+
+def staging_copy_through_map_sdfg(name: str = 'staging_copy') -> dace.SDFG:
+    """``c`` written outside a map and staged into a second access node INSIDE it.
+
+    Both accesses are dominating writes of one container, so fission versions them apart -- which
+    is the only shape where the two ends of a staging copy stop sharing a name.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_scalar('c', dace.float64, transient=True)
+    state = sdfg.add_state('main')
+
+    seed = state.add_tasklet('seed', {}, {'o'}, 'o = 2.0')
+    outer = state.add_access('c')
+    state.add_edge(seed, 'o', outer, None, dace.Memlet('c[0]'))
+
+    me, mx = state.add_map('m', {'i': '0:8'})
+    inner = state.add_access('c')
+    body = state.add_tasklet('use', {'x'}, {'o'}, 'o = x + i')
+    write = state.add_write('A')
+
+    state.add_edge(outer, None, me, 'IN_c', dace.Memlet('c[0]'))
+    me.add_in_connector('IN_c')
+    me.add_out_connector('OUT_c')
+    state.add_edge(me, 'OUT_c', inner, None, dace.Memlet('c[0]'))
+    state.add_edge(inner, None, body, 'x', dace.Memlet('c[0]'))
+    state.add_edge(body, 'o', mx, 'IN_A', dace.Memlet('A[i]'))
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+    state.add_edge(mx, 'OUT_A', write, None, dace.Memlet('A[0:8]'))
+    return sdfg
+
+
+def test_a_versioned_staging_copy_keeps_its_boundary_memlet_on_the_outer_container():
+    """Fissioning the two ends of a staging copy must leave every memlet naming an endpoint.
+
+    A memlet records which SIDE of the copy its ``data`` names (``_is_data_src``). While both ends
+    share one name the flag cannot be wrong; versioning them apart is exactly when it can, and
+    ``align_memlet`` trusts it to decide a boundary memlet needs no realignment. Carried over
+    unchanged, it made memlet propagation stamp the INNER version onto the edge LEAVING the outer
+    access node -- an edge naming neither endpoint, which validation rejects.
+    """
+    from dace.sdfg.propagation import propagate_memlets_sdfg
+
+    sdfg = staging_copy_through_map_sdfg()
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    propagate_memlets_sdfg(sdfg)
+    sdfg.validate()
+
+    state = sdfg.states()[0]
+    entry = next(n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry))
+    boundary = state.in_edges(entry)
+    assert len(boundary) == 1, f'expected one edge into the map entry, got {len(boundary)}'
+    edge = boundary[0]
+    assert edge.data.data == edge.src.data, (f'boundary memlet names {edge.data.data!r}, but the access node '
+                                             f'it leaves is {edge.src.data!r}')
+
+    out = np.zeros(8, dtype=np.float64)
+    sdfg(A=out)
+    assert np.allclose(out, 2.0 + np.arange(8)), f'got {out}'
