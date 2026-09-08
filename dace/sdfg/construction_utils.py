@@ -306,7 +306,11 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
         if body_to_take.out_degree(node) == 0:
             assert new_end_block is None
             new_end_block = copynode
-        graph.add_node(copynode, is_start_block=start_block_case)
+        # ``ensure_unique_name``: the copy keeps the branch's label, and the destination may
+        # already hold a block of that name -- two arms spliced into one parent, or one arm
+        # spliced beside an earlier copy of itself. A duplicate block name is an invalid SDFG,
+        # and it is caught far downstream, at whichever pass validates next.
+        graph.add_node(copynode, is_start_block=start_block_case, ensure_unique_name=True)
 
     for edge in body_to_take.edges():
         src = node_map[edge.src]

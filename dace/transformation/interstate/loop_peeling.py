@@ -132,7 +132,7 @@ class LoopPeeling(LoopUnroll):
         # edges live with the iter, but use the same deepcopy-and-remap
         # pattern as the single-state case.
         new_cfr = ControlFlowRegion(it_label, graph.sdfg, graph)
-        graph.add_node(new_cfr)
+        graph.add_node(new_cfr, ensure_unique_name=True)
         block_map = {}
         for b in body_blocks:
             nb = copy.deepcopy(b)

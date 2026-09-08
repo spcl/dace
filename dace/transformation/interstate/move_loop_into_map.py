@@ -308,7 +308,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         #  the same name". Rename against the labels actually present rather than the CFG's
         #  cached ``_labels`` set, which a re-parenting like this one leaves stale.
         body.label = dt.find_new_name(body.label, {block.label for block in graph.nodes()})
-        graph.add_node(body, is_start_block=(graph.start_block is self.loop))
+        graph.add_node(body, is_start_block=(graph.start_block is self.loop), ensure_unique_name=True)
         for ie in graph.in_edges(self.loop):
             graph.add_edge(ie.src, body, ie.data)
         for oe in graph.out_edges(self.loop):

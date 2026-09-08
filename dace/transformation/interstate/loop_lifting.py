@@ -124,8 +124,8 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
 
             pre_block = deepcopy(exec_before_loop)
             pre_block.label = label + '_pre_' + exec_before_loop.label
-            graph.add_node(pre_block)
-            graph.add_node(loop)
+            graph.add_node(pre_block, ensure_unique_name=True)
+            graph.add_node(loop, ensure_unique_name=True)
             graph.add_edge(
                 init_edge.src, pre_block,
                 InterstateEdge(condition=init_edge.data.condition, assignments=dict(init_edge.data.assignments)))
@@ -206,7 +206,7 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                 #   exiting). Fixing that requires an inverted (do-while) region, which downstream transformations
                 #   such as LoopToMap do not currently expect for lifted self loops.
                 loop_guard_conditional = ConditionalBlock(label + '_guard_conditional')
-                graph.add_node(loop_guard_conditional)
+                graph.add_node(loop_guard_conditional, ensure_unique_name=True)
                 new_init_edge = InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments)
                 if loop_info is not None:
                     new_init_edge.assignments[loop_info[0]] = init_edge.data.assignments[loop_info[0]]
@@ -224,7 +224,7 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
 
                 to_connect = loop_guard_conditional
             else:
-                graph.add_node(loop)
+                graph.add_node(loop, ensure_unique_name=True)
                 graph.add_edge(init_edge.src, loop,
                                InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments))
                 to_connect = loop

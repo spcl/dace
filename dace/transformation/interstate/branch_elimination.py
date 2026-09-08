@@ -1261,7 +1261,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         new_if_block.add_branch(condition=CodeBlock(f"({cond_assignment}) == 0"), branch=body)
 
-        parent_graph.add_node(new_if_block)
+        parent_graph.add_node(new_if_block, ensure_unique_name=True)
 
         for oe in if_out_edges:
             parent_graph.remove_edge(oe)
@@ -1370,12 +1370,12 @@ class BranchElimination(transformation.MultiStateTransformation):
                         cfg = ControlFlowRegion(label=self.conditional.label + f"_v_{ci}_body",
                                                 sdfg=self.conditional.sdfg,
                                                 parent=copy_conditional)
-                        cfg.add_node(copy.deepcopy(node))
+                        cfg.add_node(copy.deepcopy(node), ensure_unique_name=True)
                         copy_conditional.add_branch(condition=copy.deepcopy(cond), branch=cfg)
                     else:
                         copy_conditional = copy.deepcopy(node)
 
-                    parent_graph.add_node(copy_conditional, False, False)
+                    parent_graph.add_node(copy_conditional, False, True)
 
                     for oe in parent_graph.out_edges(node_to_add_after):
                         parent_graph.remove_edge(oe)
