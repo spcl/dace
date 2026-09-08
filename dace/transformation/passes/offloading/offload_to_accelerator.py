@@ -2256,7 +2256,14 @@ class OffloadToAccelerator(ppl.Pass):
         map_entries = OrderedSet(node for node in members
                                  if isinstance(node, (nodes.MapEntry)) and self.has_GPU_schedule(node))
         map_exits = OrderedSet(state.exit_node(node) for node in map_entries)
-        partition_nodes = lib_nodes | map_entries | map_exits
+        # A taskloop or host map is host code by decision, and ``host_level_scopes`` lifts from
+        # INSIDE it. Left out of the boundary it reads as free computation, and closing the
+        # partition then drags its whole body -- device-wide library calls included -- into a kernel.
+        host_entries = OrderedSet(
+            node for node in members
+            if isinstance(node, nodes.MapEntry) and (node in self.taskloops or node in self._host_map_entries))
+        host_exits = OrderedSet(state.exit_node(node) for node in host_entries)
+        partition_nodes = lib_nodes | map_entries | map_exits | host_entries | host_exits
         if scope_entry is not None:
             # The scope's own exit is its boundary, and scope_children lists it beside the body.
             partition_nodes.add(state.exit_node(scope_entry))

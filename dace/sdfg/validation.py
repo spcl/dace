@@ -411,7 +411,7 @@ def _is_scalar(edge: 'gr.MultiConnectorEdge[Memlet]', memlet_path: List['gr.Mult
     else:
         src_conntype = None
     dst_conn = memlet_path[-1].dst_conn
-    if dst_conn and dst_conn in memlet_path[0].dst.in_connectors:
+    if dst_conn and dst_conn in memlet_path[-1].dst.in_connectors:
         dst_conntype = memlet_path[-1].dst.in_connectors[dst_conn]
     else:
         dst_conntype = None
