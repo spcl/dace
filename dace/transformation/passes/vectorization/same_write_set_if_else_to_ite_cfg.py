@@ -365,7 +365,13 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
                 if symbolic.symbols_in_code(cond_text, potential_symbols=only):
                     return True
 
-    for block in sdfg.all_control_flow_blocks():
+    # ``recursive=True``: the DELETION (``_drop_interstate_symbol``) walks
+    # ``all_control_flow_regions(recursive=True)``, which descends through nested SDFGs, so a
+    # shallow consumer scan here is strictly weaker than what it removes -- CloudSC has the same
+    # guarded block at top level AND inside the ``loop_body`` NSDFG that ``LoopToMap`` minted, and
+    # the shallow scan let the top-level rewrite delete the NESTED block's assignment while that
+    # block still tested the symbol. The check must reach at least as deep as the deletion.
+    for block in sdfg.all_control_flow_blocks(recursive=True):
         if isinstance(block, _ConditionalBlock):
             if block is skip_cb:
                 continue
@@ -385,18 +391,21 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG, sym_name: str, defining_edge,
                 if symbolic.symbols_in_code(text, potential_symbols=only):
                     return True
 
-    for state in sdfg.all_states():
-        for n in state.nodes():
-            if isinstance(n, dace.nodes.Tasklet):
-                code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)
-                if symbolic.symbols_in_code(code, potential_symbols=only):
-                    return True
-            elif isinstance(n, dace.nodes.NestedSDFG):
-                # A child nested SDFG consumes the symbol iff it binds an inner symbol to an
-                # expression over it (``symbol_mapping`` VALUES live in this SDFG's scope).
-                for _k, v in n.symbol_mapping.items():
-                    if symbolic.symbols_in_code(str(v), potential_symbols=only):
+    # Same reach as the ConditionalBlock scan above: ``all_states`` stops at this SDFG, so walk
+    # every nested SDFG's states too.
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.all_states():
+            for n in state.nodes():
+                if isinstance(n, dace.nodes.Tasklet):
+                    code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)
+                    if symbolic.symbols_in_code(code, potential_symbols=only):
                         return True
+                elif isinstance(n, dace.nodes.NestedSDFG):
+                    # A child nested SDFG consumes the symbol iff it binds an inner symbol to an
+                    # expression over it (``symbol_mapping`` VALUES live in this SDFG's scope).
+                    for _k, v in n.symbol_mapping.items():
+                        if symbolic.symbols_in_code(str(v), potential_symbols=only):
+                            return True
 
     if sdfg.parent_nsdfg_node is not None:
         for k, v in sdfg.parent_nsdfg_node.symbol_mapping.items():
@@ -416,6 +425,14 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
     """
 
     CATEGORY: str = "Vectorization Preparation"
+
+    #: Buffered ``(sdfg, sym, edges, skip_cb)`` deletions while a COMPOUND cond lift is in
+    #: progress, ``None`` outside one. A compound lifts its names one at a time and each
+    #: name's own lift commits its interstate-definition deletion; a LATER name that refuses
+    #: aborts the whole compound, and the caller then bakes the ORIGINAL cond text into the
+    #: ITE tasklet -- naming symbols the committed names already deleted the definitions of.
+    #: Buffering makes the compound all-or-nothing, which is what "no partial lifts" means.
+    _deferred_drops = None
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.AccessNodes
@@ -940,12 +957,32 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # ``_resolve_cond_to_array`` -> ``(array_name, producer_access)``; producer_access
         # = node a lift/combine tasklet in *this* state writes through (``None`` when name
         # was already a pre-existing array).
-        lifted = {}
-        for name in names:
-            resolved = self._resolve_cond_to_array(sdfg, state, name, subset_str, skip_cb=skip_cb)
-            if resolved is None:
-                return None
-            lifted[name] = resolved
+        # Buffer every component lift's symbol deletions (see ``_deferred_drops``). A nested
+        # compound shares the open buffer and marks its own slice, so an inner refusal discards
+        # only what the inner compound added.
+        outer_buffer = self._deferred_drops
+        buffer = [] if outer_buffer is None else outer_buffer
+        mark = len(buffer)
+        self._deferred_drops = buffer
+        try:
+            lifted = {}
+            for name in names:
+                resolved = self._resolve_cond_to_array(sdfg, state, name, subset_str, skip_cb=skip_cb)
+                if resolved is None:
+                    del buffer[mark:]
+                    return None
+                lifted[name] = resolved
+        finally:
+            self._deferred_drops = outer_buffer
+        # Every name resolved, so this compound has committed. Hand its buffered deletions to an
+        # enclosing compound if there is one -- that one has still to commit -- else apply them.
+        pending = buffer[mark:]
+        del buffer[mark:]
+        if outer_buffer is not None:
+            outer_buffer.extend(pending)
+        else:
+            for drop_sdfg, drop_sym, drop_edges, drop_skip in pending:
+                self._drop_interstate_symbol(drop_sdfg, drop_sym, drop_edges, skip_cb=drop_skip)
 
         # Shape from any lifted transient; all describe the same per-lane bool result.
         any_arr = next(iter(lifted.values()))[0]
@@ -1190,6 +1227,9 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         registry + parent mapping ONLY once no interstate edge still assigns it. Deleting from every
         assigning edge (not just one) avoids leaving a dangling assignment to a removed symbol; the
         protected-symbol and external-consumer guards keep a still-needed symbol in place."""
+        if self._deferred_drops is not None:
+            self._deferred_drops.append((sdfg, sym, edges, skip_cb))
+            return
         if sym in self._protected_symbols(sdfg):
             return
         if _symbol_has_external_consumer(sdfg, sym, None, skip_cb=skip_cb):
@@ -1234,20 +1274,12 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # definitions so the lifted tasklet stages them through connectors instead of
         # leaving orphaned free symbols on the (nested) SDFG.
         rhs, inlined_syms = self._inline_interstate_scalar_symbols(sdfg, str(rhs), exclude={cond_sym})
-        # Delete the cond symbol's assignment(s) + drop it only when no other consumer. With
-        # consumers, the kept assignment serves them while the per-lane lift tasklet supplies the
-        # vector form for the ITE. Collect ALL edges assigning cond_sym (not just ``defining_edge``)
-        # so a multi-edge symbol is not left dangling by removing it globally after deleting one.
-        cond_edges = [
-            e for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges()
-            if cond_sym in (e.data.assignments or {})
-        ]
-        self._drop_interstate_symbol(sdfg, cond_sym, cond_edges, skip_cb=skip_cb)
-        # Prune each inlined scalar symbol's definitions once it has no remaining consumer (its only
-        # use was the now-inlined cond RHS). A still-consumed symbol keeps its def -- the inlined
-        # tasklet form is an equivalent per-lane duplicate.
-        for sym, def_edges in inlined_syms.items():
-            self._drop_interstate_symbol(sdfg, sym, def_edges, skip_cb=skip_cb)
+        # NO mutation yet: every refusal below still returns ``None``, and the caller then keeps the
+        # cond as free-symbol TEXT in the ITE tasklet (``_o = ITE(<cond_sym>, _t, _e)``). Deleting
+        # the assignments here would leave that text naming a symbol with no definition left --
+        # "Missing symbols on nested SDFG" on the enclosing loop body. The prune moved to the
+        # committed path below, which is the rule the sibling ``_lift_array_predicate_cond``
+        # already follows.
 
         # A GATHER read in the cond value (``w[idx[i], k]``) is an un-representable nested
         # subscript for a plain memlet. Promote each nested index read ``idx[i]`` to a fresh
@@ -1355,6 +1387,23 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         else:
             cond_subset = subset_str
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
+
+        # Committed: the lift tasklet now supplies the per-lane form, so the interstate definitions
+        # it replaced can go. Delete the cond symbol's assignment(s) + drop it only when no other
+        # consumer -- with consumers the kept assignment serves them while the tasklet feeds the
+        # ITE. Collect ALL edges assigning ``cond_sym`` (not just ``def_edge``) so a multi-edge
+        # symbol is not left dangling by removing it globally after deleting one. Collected HERE,
+        # after the rewrites above, so the list reflects the edges as they now stand.
+        cond_edges = [
+            e for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges()
+            if cond_sym in (e.data.assignments or {})
+        ]
+        self._drop_interstate_symbol(sdfg, cond_sym, cond_edges, skip_cb=skip_cb)
+        # Prune each inlined scalar symbol's definitions once it has no remaining consumer (its only
+        # use was the now-inlined cond RHS). A still-consumed symbol keeps its def -- the inlined
+        # tasklet form is an equivalent per-lane duplicate.
+        for sym, def_edges in inlined_syms.items():
+            self._drop_interstate_symbol(sdfg, sym, def_edges, skip_cb=skip_cb)
         return cond_name, cond_access
 
     def _lift_array_predicate_cond(self,
