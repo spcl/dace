@@ -215,8 +215,10 @@ class StripMining(transformation.SingleStateTransformation):
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
+            # Exact and approximate bounds must span the same index extent: ``tile_size``
+            # iterations of a step-``td_step`` map cover ``tile_size * td_step`` indices.
             td_to_new = dace.symbolic.SymExpr(sympy.Min(dimsym + tile_size * td_step - 1, td_to),
-                                              dimsym + tile_size - 1)
+                                              dimsym + tile_size * td_step - 1)
         td_step_new = td_step
 
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
