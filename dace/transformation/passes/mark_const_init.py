@@ -113,17 +113,24 @@ class MarkConstInit(ppl.Pass):
         return found
 
     def _inlinable_containers(self, sdfg: SDFG) -> Set[str]:
-        """The containers ``InlineTaskletConnectors`` will actually inline, cached per SDFG.
+        """The containers ``InlineTaskletConnectors`` will actually inline, cached per SDFG tree.
+
+        Planned over the ROOT, because that is the SDFG the inlining pass is applied to and its plan
+        is decided per container NAME over the whole tree: a name a nested SDFG could inline on its
+        own is still left classic when a same-named container elsewhere in the tree cannot be. Asking
+        the nested SDFG instead promises an inlining the pass then declines, and the caller skips a
+        declaration on the strength of that promise -- the name reaches the compiler undeclared.
 
         The plan walks the whole graph, and the classifier asks about one writer at a time, so
         computing it per question would make this pass quadratic in the tasklet count. The cache is
         keyed by identity and lives for one ``apply_pass``: the classifier only reads the graph, and
         the marks it writes are descriptor flags the plan does not depend on.
         """
-        cached = self._inlinable_cache.get(id(sdfg))
+        root = sdfg.root_sdfg
+        cached = self._inlinable_cache.get(id(root))
         if cached is None:
-            _plans, cached = InlineTaskletConnectors().plan(sdfg)
-            self._inlinable_cache[id(sdfg)] = cached
+            _plans, cached = InlineTaskletConnectors().plan(root)
+            self._inlinable_cache[id(root)] = cached
         return cached
 
     def _classify_probe(self, probe: SDFG) -> PayingTargets:
