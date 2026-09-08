@@ -710,6 +710,7 @@ def test_read_after_write_nested_SDFG() -> None:
         containers={
             'A': data.Array(dace.float32, [60], transient=True),
             'B': data.Array(dace.float32, [60]),
+            'tmp_condition': data.Scalar(dace.bool, transient=True)
         },
         children=[
             tn.MapScope(
@@ -721,24 +722,38 @@ def test_read_after_write_nested_SDFG() -> None:
             tn.MapScope(
                 node=nodes.MapEntry(nodes.Map("map_i", "i", sbs.Range.from_string("0:2"))),
                 children=[
+                    tn.TaskletNode(
+                        node=nodes.Tasklet("masklet", {"B0"}, {"out"}, "out = B0 < 0"),
+                        in_memlets={"B0": dace.Memlet("B[0]")},
+                        out_memlets={"out": dace.Memlet("tmp_condition[0]")},
+                    ),
                     tn.IfScope(
-                        condition=CodeBlock("B[0] < 0"),
+                        condition=CodeBlock("tmp_condition"),
                         children=[
-                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 0"), {},
-                                           {"out": dace.Memlet("B[0]")})
+                            tn.TaskletNode(
+                                nodes.Tasklet("assign", {}, {"out"}, "out = 0"),
+                                {},
+                                {"out": dace.Memlet("B[0]")},
+                            )
                         ],
                     ),
                     tn.MapScope(
                         node=nodes.MapEntry(nodes.Map("map_j", "j", sbs.Range.from_string("0:10"))),
                         children=[
-                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 1.0"), {},
-                                           {"out": dace.Memlet("A[i*15+j*3]")})
+                            tn.TaskletNode(
+                                nodes.Tasklet("assign", {}, {"out"}, "out = 1.0"),
+                                {},
+                                {"out": dace.Memlet("A[i*15+j*3]")},
+                            )
                         ],
                     ),
                     tn.MapScope(node=nodes.MapEntry(nodes.Map("map_k", "k", sbs.Range.from_string("10:20"))),
                                 children=[
-                                    tn.TaskletNode(nodes.Tasklet("assign", {"read"}, {"out"}, "out = read"),
-                                                   {"read": dace.Memlet("A[k]")}, {"out": dace.Memlet("B[k]")})
+                                    tn.TaskletNode(
+                                        nodes.Tasklet("assign", {"read"}, {"out"}, "out = read"),
+                                        {"read": dace.Memlet("A[k]")},
+                                        {"out": dace.Memlet("B[k]")},
+                                    )
                                 ])
                 ],
             ),
