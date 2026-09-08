@@ -32,7 +32,8 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import _TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, _promotion_ok, scalar_operand_ref
+from .tile_binop import (_TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, _promotion_ok, edge_moves_a_tile,
+                         scalar_operand_ref)
 
 # Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
 # never installed on CI, so this resolves to ``None`` there (meaning "assume
@@ -333,7 +334,8 @@ class TileITE(nodes.LibraryNode):
         # tile-shape. (In the tile body at least the cond or one arm is a Tile; an
         # all-Symbol/Scalar ITE is loop-invariant and may keep a scalar output.)
         any_tile_input = _TILE in (self.kind_mask, self.kind_t, self.kind_e)
-        if any_tile_input and not _is_tile_shape(o_arr, tuple(self.widths)):
+        if any_tile_input and not (_is_tile_shape(o_arr, tuple(self.widths))
+                                   or edge_moves_a_tile(out_e["_o"], tuple(self.widths))):
             raise NotImplementedError(
                 f"{self.label}: output-kind rule violated -- a Tile input is present but "
                 f"'_o' descriptor is not tile-shape {tuple(self.widths)!r}. Per design section 6.2: "

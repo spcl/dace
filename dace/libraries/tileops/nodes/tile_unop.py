@@ -353,8 +353,9 @@ class TileUnop(nodes.LibraryNode):
                     f"{self.label}: Tile operand '_a' dtype {src} cannot be promoted to output dtype "
                     f"{c_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")
         # Output-kind rule (design 6.2): when input is Tile, the output must be tile-shape.
-        from .tile_binop import _is_tile_shape
-        if self.kind_a == _TILE and not _is_tile_shape(c_arr, tuple(self.widths)):
+        from .tile_binop import _is_tile_shape, edge_moves_a_tile
+        if self.kind_a == _TILE and not (_is_tile_shape(c_arr, tuple(self.widths))
+                                         or edge_moves_a_tile(out_e["_c"], tuple(self.widths))):
             raise NotImplementedError(
                 f"{self.label}: output-kind rule violated -- kind_a=Tile but '_c' descriptor is not "
                 f"tile-shape {tuple(self.widths)!r}. Per design section 6.2: Tile input -> Tile output.")

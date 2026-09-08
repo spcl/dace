@@ -34,6 +34,32 @@ def _is_tile_shape(desc, widths) -> bool:
     return all(bool(dace.symbolic.simplify(s - w) == 0) for s, w in zip(shape, widths))
 
 
+def edge_moves_a_tile(edge, widths) -> bool:
+    """True iff ``edge``'s MEMLET moves a tile-shaped box, whatever its descriptor's shape.
+
+    :class:`WidenAccesses` widens the memlet of a lane-indexed array in place rather than swapping
+    the descriptor -- CloudSC's ``zsolqa[jm, jn, jl]`` keeps its ``(nclv, nclv, klon)`` shape -- so a
+    tile write lands in a WINDOW of a larger array: ``buf[0, i:i+W]`` on a ``(3, N)`` array is a tile
+    even though ``(3, N) != (W,)``. Judging that by the descriptor alone reports a rule violation on
+    a perfectly good tile.
+
+    The leading dims must each be a single element and the trailing dims must be the tile itself,
+    which is exactly what makes the expansions' ``_c[off]`` walk the widened window and nothing else.
+
+    :param edge: the ``_c`` / ``_o`` output edge.
+    :param widths: the node's per-dim tile widths.
+    """
+    if edge.data is None or edge.data.subset is None:
+        return False
+    size = tuple(edge.data.subset.size())
+    if len(size) < len(widths):
+        return False
+    split = len(size) - len(widths)
+    if any(not bool(dace.symbolic.simplify(s - 1) == 0) for s in size[:split]):
+        return False
+    return dace.symbolic.shapes_equal(size[split:], tuple(widths))
+
+
 def _is_scalar_shape(desc) -> bool:
     """True iff ``desc`` is a :class:`dace.data.Scalar` or a length-1 :class:`Array`."""
     if isinstance(desc, dace.data.Scalar):
@@ -547,7 +573,8 @@ class TileBinop(nodes.LibraryNode):
         c_arr = sdfg.arrays[out_e["_c"].data.data]
         # Output-kind rule (design 6.2): when any input is Tile, the output must be tile-shape.
         any_tile_input = (self.kind_a == _TILE or self.kind_b == _TILE)
-        if any_tile_input and not _is_tile_shape(c_arr, tuple(self.widths)):
+        if any_tile_input and not (_is_tile_shape(c_arr, tuple(self.widths))
+                                   or edge_moves_a_tile(out_e["_c"], tuple(self.widths))):
             raise NotImplementedError(f"{self.label}: output-kind rule violated -- kind_a={self.kind_a!r}, "
                                       f"kind_b={self.kind_b!r} (has Tile input) but '_c' descriptor is not tile-shape "
                                       f"{tuple(self.widths)!r}. Per design section 6.2: any Tile input -> Tile output.")

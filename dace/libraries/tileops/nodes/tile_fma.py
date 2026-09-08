@@ -28,8 +28,8 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import (_TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, _is_scalar_shape, scalar_operand_ref,
-                         _promotion_ok)
+from .tile_binop import (_TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, _is_scalar_shape, edge_moves_a_tile,
+                         scalar_operand_ref, _promotion_ok)
 
 
 @library.expansion
@@ -374,7 +374,8 @@ class TileFMA(nodes.LibraryNode):
         o_arr = sdfg.arrays[out_e["_o"].data.data]
         # Output-kind rule (design 6.2): when any input is Tile, ``_o`` must be tile-shape.
         any_tile_input = _TILE in (self.kind_a, self.kind_b, self.kind_c)
-        if any_tile_input and not _is_tile_shape(o_arr, tuple(self.widths)):
+        if any_tile_input and not (_is_tile_shape(o_arr, tuple(self.widths))
+                                   or edge_moves_a_tile(out_e["_o"], tuple(self.widths))):
             raise NotImplementedError(f"{self.label}: output-kind rule violated -- a Tile input is present but "
                                       f"'_o' descriptor is not tile-shape {tuple(self.widths)!r}. Per design "
                                       f"section 6.2: any Tile input -> Tile output.")
