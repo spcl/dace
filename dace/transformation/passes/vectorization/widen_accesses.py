@@ -789,23 +789,43 @@ class WidenAccesses(ppl.Pass):
         )
         for state in inner_sdfg.states():
             for edge in state.edges():
-                if edge.data is None or edge.data.data != name:
+                if edge.data is None:
+                    continue
+                if edge.data.data == name:
+                    own, opposite = "subset", "other_subset"
+                elif (edge.data.other_subset is not None
+                      and any(isinstance(ep, AccessNode) and ep.data == name for ep in (edge.src, edge.dst))):
+                    # WHICH side ``subset`` describes is the memlet's orientation, not the endpoint
+                    # being widened: an AN-to-AN copy names one endpoint in ``data``, and a copy
+                    # built from the OTHER end carries this name's region in ``other_subset``.
+                    # Matching on ``data`` alone skipped such an edge entirely, leaving the copy at
+                    # its pre-widen single-element rank against a descriptor that is now a W-element
+                    # tile -- the "Dimensionality mismatch between src/dst subsets" the symmetric
+                    # widening below exists to prevent.
+                    own, opposite = "other_subset", "subset"
+                else:
                     continue
                 new_sub = subsets.Range(list(target_range.ranges))
-                edge.data.subset = new_sub
+                setattr(edge.data, own, new_sub)
                 # CRITICAL: update ``volume`` too -- codegen sizes CopyND from it, NOT
                 # ``subset.num_elements()``. Stale ``volume=1`` from the Scalar memlet would copy
                 # only 1 element of the W-element tile.
                 edge.data.volume = new_sub.num_elements()
-                # Widen ``other_subset`` symmetrically (AN -> AN copy ``a[i] -> b[0]``); else
+                # Widen the opposite side symmetrically (AN -> AN copy ``a[i] -> b[0]``); else
                 # validator trips ``Dimensionality mismatch between src/dst subsets``. But a WCR
                 # SCALAR / single-element reduction target (a scalar accumulator ``_nnr_out``, or a
                 # broadcast SOURCE scalar read into a tile) stays single-element -- the tile folds
                 # INTO it (TileReduce) or broadcasts FROM it, never a per-lane copy. Over-widening
-                # its ``other_subset`` to ``[0:W]`` on a shape-``(1,)`` array is out-of-bounds. Keep
-                # ``other_subset`` un-widened when the OTHER endpoint stays single-element (not
-                # itself a tile being widened this sweep).
-                if edge.data.other_subset is not None and self._other_endpoint_widens(edge, name, inner_sdfg, to_widen):
+                # it to ``[0:W]`` on a shape-``(1,)`` array is out-of-bounds. Keep it un-widened
+                # when the OTHER endpoint stays single-element (not itself a tile being widened
+                # this sweep).
+                # Only when ``subset`` IS this name's side. On the flipped orientation the opposite
+                # side is the other array's own region in its own terms (a non-transient read
+                # ``A[i]``, widened to ``A[i:i+W]`` by ``_widen_non_transient_memlets``, or another
+                # transient widened by its own sweep) -- overwriting it with the tile range would
+                # rewrite ``A[i]`` to ``A[0:W]`` and read the wrong elements.
+                if own == "subset" and edge.data.other_subset is not None and self._other_endpoint_widens(
+                        edge, name, inner_sdfg, to_widen):
                     edge.data.other_subset = subsets.Range(list(target_range.ranges))
         return True
 
