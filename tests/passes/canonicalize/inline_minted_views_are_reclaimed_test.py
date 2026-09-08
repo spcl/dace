@@ -1,13 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""An inline mints views, so a reclaim has to run after the last one.
+"""The view reclaim has to be the LAST stage of the recipe.
 
 ``InlineSDFG`` gives a sliced connector its own ``View`` descriptor. The recipe's reclaim
 (``ArrayElimination``, the only pass that folds a view back onto the array it views) used to sit
 BEFORE ``_inline_single_state('end')`` and ``InlineControlFlowRegions``, so every view those minted
-survived the whole pipeline: CloudSC finished canonicalization holding 18 views of ``zpfplsx``, all
-of them FULL-array aliases carrying the base's own shape and strides, and 13 foldable by the
-reclaimer that had already run. Downstream that reaches the vectorizer as an alias to reason about
-instead of the array itself.
+survived: CloudSC finished canonicalization holding 18 views of ``zpfplsx``, all of them FULL-array
+aliases carrying the base's own shape and strides. Downstream that reaches the vectorizer as an
+alias to reason about instead of the array itself.
+
+Running it merely after the inlines is not enough, and that is what this pins. Placed straight after
+``InlineControlFlowRegions`` the pass folds NOTHING -- ``RemoveSliceView.can_be_applied`` refuses all
+18 there, while the same pass on the finished graph accepts 13. What it needs is the symbol
+constraints and normalized floor divisions the last three stages register, which is what lets
+``map_view_to_array`` prove the view maps onto its array. So the assertion is that the reclaim is
+LAST, not merely later than the inlines: an "after the inlines" test passes on the placement that
+reclaims nothing.
 """
 import os
 
@@ -36,8 +43,8 @@ def stage_kinds():
     return [{type(child).__name__ for child in flatten(unit)} for _label, unit in _build_stages()]
 
 
-def test_a_reclaim_runs_after_the_last_inline():
-    """No view-minting inline may be the last word: a reclaim has to follow it."""
+def test_the_reclaim_is_the_last_stage():
+    """The recipe ends on the reclaim, so nothing it depends on runs after it."""
     kinds = stage_kinds()
     inlines = [i for i, names in enumerate(kinds) if any('Inline' in name for name in names)]
     reclaims = [i for i, names in enumerate(kinds) if ArrayElimination.__name__ in names]
@@ -45,6 +52,9 @@ def test_a_reclaim_runs_after_the_last_inline():
     assert reclaims, 'the recipe no longer reclaims arrays at all'
     assert max(reclaims) > max(inlines), (f'last inline is stage {max(inlines)} but the last reclaim is stage '
                                           f'{max(reclaims)}: every view that inline mints survives the pipeline')
+    assert max(reclaims) == len(kinds) - 1, (f'the reclaim is stage {max(reclaims)} of {len(kinds)}; the stages after '
+                                             f'it are {[sorted(n)[0] for n in kinds[max(reclaims) + 1:]]}, and a view '
+                                             f'the reclaim cannot yet fold stays for good')
 
 
 def test_the_reclaim_folds_a_full_array_view():
@@ -67,5 +77,5 @@ def test_the_reclaim_folds_a_full_array_view():
 
 
 if __name__ == '__main__':
-    test_a_reclaim_runs_after_the_last_inline()
+    test_the_reclaim_is_the_last_stage()
     test_the_reclaim_folds_a_full_array_view()

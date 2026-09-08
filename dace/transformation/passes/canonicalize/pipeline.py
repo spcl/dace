@@ -1870,16 +1870,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``ControlFlowRegion`` carries none, which is why it is the one safe to flatten here.
     s += [('end', InlineControlFlowRegions())]
 
-    # cleanup (terminal): fold the views the inlines above just minted. ``InlineSDFG`` gives a
-    # sliced connector its own View descriptor, and the reclaim pipeline runs BEFORE
-    # ``_inline_single_state`` / ``InlineControlFlowRegions``, so nothing ever folds what they
-    # leave: CloudSC finished canonicalization holding 18 views of ``zpfplsx``, every one of them
-    # a FULL-array alias carrying the base's own shape and strides. A view reaches the vectorizer
-    # as an alias it has to reason about rather than the array itself. Same pass as the reclaim
-    # above (0.9s on the whole CloudSC SDFG), so the guards that keep a view a WAR carrier
-    # standing -- ``_view_fold_breaks_anti_dependence`` -- apply here unchanged.
-    s += [('end', ppl.Pipeline([ArrayElimination()]))]
-
     # NOTE: fresh WCR accumulators are identity-seeded by ``NormalizeWCRSource`` (the
     # ``normalize_wcr`` stage above), not a separate pass -- codegen never seeds a WCR
     # accumulator, so a reduction into genuinely-uninitialized scratch reads garbage. That pass
@@ -1924,6 +1914,21 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # not on an intermediate one a later pass reshapes. Comments only -- no pass reads them, and
     # the standalone rendering is the one place they are emitted.
     s += [('end', AnnotateLoopKinds())]
+
+    # cleanup (terminal, and LAST): fold the views the inlines above minted. ``InlineSDFG`` gives a
+    # sliced connector its own View descriptor, and the reclaim pipeline runs BEFORE
+    # ``_inline_single_state`` / ``InlineControlFlowRegions``, so nothing folds what they leave:
+    # CloudSC finished canonicalization holding 18 views of ``zpfplsx``, every one a FULL-array
+    # alias carrying the base's own shape and strides, though the source never slices it. A view
+    # reaches the vectorizer as an alias to reason about instead of the array itself.
+    #
+    # LAST, not merely after the inlines: placed straight after ``InlineControlFlowRegions`` the
+    # pass folds NOTHING -- ``RemoveSliceView.can_be_applied`` refuses all 18 there, and the same
+    # pass on the finished graph accepts 13. What it needs is the symbol constraints and the
+    # normalized floor divisions the three stages above register, which is what lets
+    # ``map_view_to_array`` prove the view maps onto its array. Same pass as the earlier reclaim,
+    # so ``_view_fold_breaks_anti_dependence`` keeps a WAR-carrier view standing here unchanged.
+    s += [('end', ppl.Pipeline([ArrayElimination()]))]
 
     # Pipeline does not propagate `progress` to subpasses, so sweep once here instead of at each call site.
     # ``validate`` too: 49 pattern units each validate the whole SDFG, which this pipeline's own
