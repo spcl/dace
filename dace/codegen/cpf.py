@@ -607,6 +607,9 @@ CONSTANT_DEFINITION = re.compile(r'(?:static\s+)?constexpr\s+[\w:<>,\s*&]+\b\w+\
 #: the second copy would delete the second kernel's own constant.
 DUPLICABLE_DEFINITIONS = (ONE_LINE_DEFINITION, CONSTANT_DEFINITION)
 
+#: Source languages a GPU target emits its own translation unit in.
+DEVICE_LANGUAGES = ('cu', 'hip', 'hip.cpp')
+
 
 def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
     """The one translation unit CPF renders, out of what code generation produced.
@@ -630,11 +633,15 @@ def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
     # compiler builds both, so they are one unit here -- concatenated frame-first, since the frame
     # already forward-declares every kernel launcher it calls.
     if cpf_lowering.device():
-        frame = [obj for obj in linkable if obj.target_type in ('', 'Frame')]
-        rest = [obj for obj in linkable if obj not in frame]
+        # What separates the two is the LANGUAGE: a device object is the one the GPU target emits
+        # into a source file of its own. ``target_type`` does not -- it is the build subdirectory,
+        # and both the frame and the device object leave it at the empty default, so a filter on it
+        # matched both, found no single frame, and refused every device rendering.
+        frame = [obj for obj in linkable if obj.language not in DEVICE_LANGUAGES]
+        rest = [obj for obj in linkable if obj.language in DEVICE_LANGUAGES]
         if len(frame) == 1:
             return merged_object(frame[0], rest)
-    extra = ', '.join(f'{obj.name}.{obj.language}' for obj in linkable if obj.target_type != 'Frame')
+    extra = ', '.join(f'{obj.name}.{obj.language}' for obj in linkable)
     raise NotImplementedError(f'CPF renders one translation unit, but {name} generated {len(linkable)}: '
                               f'{extra}. Turn off the split-translation-unit codegen parameters.')
 
