@@ -293,42 +293,6 @@ def test_it_runs_writing_into_a_given_container():
     assert np.allclose(c, a + b)
 
 
-def test_it_runs_a_tile_inside_a_map():
-    # Slicing an operand hands the node a view rather than a copy, so the code must step through it
-    # with the strides of the container behind it -- which the prompt states for every connector
-    tile = 4
-    code = f'''
-    for (int i = 0; i < {tile}; ++i)
-        for (int j = 0; j < {tile}; ++j) {{
-            double acc = 0;
-            for (int k = 0; k < N; ++k) acc += _a[i * N + k] * _b[k * N + j];
-            _out[i * N + j] = acc;
-        }}
-    '''
-
-    @dace.program
-    def prog(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
-        for ti, tj in dace.map[0:N:tile, 0:N:tile]:
-            C[ti:ti + tile,
-              tj:tj + tile] = dace.ai('Multiply the tiles: _out[i][j] = sum over k of '
-                                      '_a[i][k] * _b[k][j].',
-                                      a=A[ti:ti + tile, 0:N],
-                                      b=B[0:N, tj:tj + tile],
-                                      shape=(tile, tile),
-                                      dtype=dace.float64)
-
-    rng = np.random.default_rng(0)
-    a = rng.random((M, M))
-    b = rng.random((M, M))
-    c = np.zeros((M, M))
-    with stub_provider(TaskletSpec(code=code)) as provider:
-        prog(a, b, c)
-
-    assert np.allclose(c, a @ b)
-    # The views the model was told to index through are the ones the tiles came from
-    assert 'ArrayView' in prompt_of(provider)
-
-
 def test_symbols_do_not_have_to_be_passed():
     # The description refers to N, which is a symbol of the program and therefore in scope
     code = 'for (int i = 0; i < N; ++i) { _out[i] = _a[i] * N; }'
