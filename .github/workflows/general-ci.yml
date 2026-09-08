@@ -2,7 +2,7 @@ name: General Tests
 
 on:
   push:
-    branches: [ main, ci-fix ]
+    branches: [ main, ci-fix, pyfrontend2 ]
   pull_request:
     branches: [ main, ci-fix ]
   merge_group:

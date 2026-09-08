@@ -4,12 +4,12 @@
 import dace
 
 
-@dace
+@dace.program(inline=False)
 def nested_prog1(X: dace.int32[2, 2]):
     return X + 1
 
 
-@dace
+@dace.program(inline=False)
 def nested_prog2(X: dace.int32[2, 2]):
     return nested_prog1(X + 1)
 

@@ -26,9 +26,9 @@ class ExpandDotPure(ExpandTransformation):
 
         n = n or node.n or sz
 
-        dtype_x = desc_x.dtype.type
-        dtype_y = desc_y.dtype.type
-        dtype_result = desc_res.dtype.type
+        dtype_x = desc_x.dtype
+        dtype_y = desc_y.dtype
+        dtype_result = desc_res.dtype
         sdfg = dace.SDFG(node.label + "_sdfg")
 
         if desc_x.dtype.veclen > 1 or desc_y.dtype.veclen > 1:
@@ -243,3 +243,9 @@ def dot_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, y, result
     state.add_edge(libnode, '_result', res, None, mm.Memlet(result))
 
     return []
+
+
+@oprepo.infers_descriptor('dace.libraries.blas.dot')
+@oprepo.infers_descriptor('dace.libraries.blas.Dot')
+def _infer_dot_libnode(input_descs, x, y, result, acctype=None, **_kw):
+    return ()

@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
-import pytest
 
 M, N, K = (dace.symbol(name) for name in ['M', 'N', 'K'])
 
@@ -36,7 +35,6 @@ def test_map_python():
     assert np.allclose(A[:, 1:], B[:, 1:])
 
 
-@pytest.mark.skip('Fails due to bug in Python frontend')
 def test_nested_map_with_indirection():
     N = dace.symbol('N')
 
@@ -62,31 +60,34 @@ def test_nested_map_with_indirection():
     assert np.allclose(b, ref)
 
 
-@pytest.mark.skip('Fails due to bug in Python frontend')
 def test_dynamic_map_range_scalar():
     """
     From issue #650.
     """
 
     @dace.program
-    def test(A: dace.float64[20], B: dace.float64[20]):
+    def test(A: dace.float64[20], B: dace.float64[20, 20]):
         N = dace.define_local_scalar(dace.int32)
         N = 5
         for i in dace.map[0:N]:
             for j in dace.map[0:N]:
                 with dace.tasklet:
                     a << A[i]
-                    b >> B[j]
+                    b >> B[i, j]
                     b = a + 1
 
     A = np.random.rand(20)
-    B = np.zeros(20)
+    B = np.zeros((20, 20))
     test(A, B)
-    assert np.allclose(B[:5], A[:5] + 1)
+    ref = np.zeros((20, 20))
+    for i in range(5):
+        for j in range(5):
+            ref[i, j] = A[i] + 1
+    assert np.allclose(B, ref)
 
 
 if __name__ == '__main__':
     test_copy3d()
     test_map_python()
-    # test_nested_map_with_indirection()
-    # test_dynamic_map_range_scalar()
+    test_nested_map_with_indirection()
+    test_dynamic_map_range_scalar()

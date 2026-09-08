@@ -154,6 +154,42 @@ def test_needs_copy():
     assert found_copy
 
 
+def test_overlapping_self_copy_reads_before_writing():
+    """A copy whose source and target overlap must read the source first."""
+
+    @dace.program
+    def selfcopy(q: dace.float64[8]):
+        q[0:5] = q[1:6]
+
+    values = np.arange(8, dtype=np.float64)
+    reference = values.copy()
+    reference[0:5] = reference[1:6]
+
+    result = values.copy()
+    selfcopy(result)
+    assert np.allclose(result, reference)
+
+
+def test_strided_copy_map_to_outer_transient():
+    """A copy inside a map, into a transient declared outside it, leaves the scope."""
+
+    @dace.program
+    def via_transient(dst: dace.uint32[20], src: dace.uint32[40]):
+        tmp = np.full([20], 3, dtype=np.uint32)
+        for i in dace.map[0:2]:
+            tmp[i * 10:(i + 1) * 10:2] = src[i * 20:(i + 1) * 20:4]
+        dst[:] = tmp
+
+    src = np.arange(1, 41, dtype=np.uint32)
+    reference = np.full(20, 3, dtype=np.uint32)
+    for i in range(2):
+        reference[i * 10:(i + 1) * 10:2] = src[i * 20:(i + 1) * 20:4]
+
+    dst = np.zeros(20, dtype=np.uint32)
+    via_transient(dst=dst, src=src.copy())
+    assert np.array_equal(dst, reference)
+
+
 def _test_strided_copy_program(program, symbols=None):
 
     src = np.ones(40, dtype=np.uint32)
@@ -267,6 +303,66 @@ def test_strided_copy_map_symbolic_1():
     _test_strided_copy_program(strided_copy_map_symbolic_1, symbols={'M': 10, 'N': 2})
 
 
+def _negative_start(src: dace.int64[8]):
+    return src[-1:1:-3]
+
+
+def _negative_start_open_stop(src: dace.int64[8]):
+    return src[-2::-2]
+
+
+def _negative_stop(src: dace.int64[8]):
+    return src[5:-8:-2]
+
+
+def _reversed_whole(src: dace.int64[8]):
+    return src[::-1]
+
+
+def _reversed_range(src: dace.int64[8]):
+    return src[6:2:-1]
+
+
+@pytest.mark.parametrize('function', [
+    _negative_start,
+    _negative_start_open_stop,
+    _negative_stop,
+    _reversed_whole,
+    _reversed_range,
+])
+def test_negative_step_slice_bounds(function):
+    """
+    Negative-step slices whose bounds are themselves negative.
+
+    Python counts a negative bound from the end of the axis, so ``a[-1:1:-3]``
+    starts at the last element. Reading such a bound literally rejected these
+    outright; the related defect is that an explicit ``-1`` stop was treated
+    like an OMITTED one -- see :func:`test_negative_step_empty_slice`.
+    """
+    src = np.arange(8, dtype=np.int64)
+    assert np.array_equal(np.asarray(dace.program(function)(src.copy())), function(src.copy()))
+
+
+def test_negative_step_empty_slice():
+    """
+    An explicit ``-1`` stop names the LAST element, unlike an omitted stop
+    which stands for "past the front of the axis". With a negative step that
+    makes ``a[7:-1:-2]`` empty, where ``a[7::-2]`` has four elements.
+
+    An empty result has no representation here, so this is refused rather than
+    returned -- but it must not silently come back as the four elements the
+    omitted-stop reading would give.
+    """
+
+    @dace.program
+    def empty_slice(src: dace.int64[8]):
+        return src[7:-1:-2]
+
+    assert len(empty_slice.f(np.arange(8, dtype=np.int64))) == 0
+    with pytest.raises(Exception):
+        empty_slice(np.arange(8, dtype=np.int64))
+
+
 if __name__ == '__main__':
     test_set_by_view()
     test_set_by_view_1()
@@ -277,6 +373,11 @@ if __name__ == '__main__':
     test_is_a_copy()
     test_needs_view()
     test_needs_copy()
+    test_overlapping_self_copy_reads_before_writing()
+
+    for _function in (_negative_start, _negative_start_open_stop, _negative_stop, _reversed_whole, _reversed_range):
+        test_negative_step_slice_bounds(_function)
+    test_negative_step_empty_slice()
 
     test_strided_copy()
     test_strided_copy_symbolic_0()
@@ -285,5 +386,6 @@ if __name__ == '__main__':
     test_strided_copy_symbolic_3()
     test_strided_copy_map_0()
     test_strided_copy_map_1()
+    test_strided_copy_map_to_outer_transient()
     test_strided_copy_map_symbolic_0()
     test_strided_copy_map_symbolic_1()

@@ -1,0 +1,202 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Replacements for stream (``dace.define_stream``/``dace.define_streamarray``)
+methods.
+
+These implement the *call* surface for streams -- ``stream.push(value)`` and
+``stream.pop()`` -- which mirrors the bulk push/pop the code generator already
+emits for an access-node-to-access-node copy involving a
+:class:`~dace.data.Stream` (see ``codegen.targets.cpu.CPUCodeGen._emit_copy``).
+
+The equivalent statement-level memlet-shift syntax (``A[i] >> ostream(-1)``,
+``ostream >> oarray``) is supported by the legacy Python frontend only; the
+next-generation frontend deliberately does not carry it forward, so these
+methods are the portable spelling of both operations.
+"""
+from numbers import Number
+from typing import Any, Optional, Union
+
+import sympy as sp
+
+from dace import Memlet, SDFG, SDFGState, data, subsets, symbolic
+from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.common import DaceSyntaxError
+from dace.frontend.python.replacements.utils import ProgramVisitor
+
+
+def _stream_descriptor(sdfg: SDFG, name: str, method: str) -> data.Stream:
+    desc = sdfg.arrays.get(name)
+    if not isinstance(desc, data.Stream):
+        raise DaceSyntaxError(None, None, f"'{name}.{method}' requires a stream, but got {type(desc).__name__}.")
+    return desc
+
+
+def _resolve_count(count: Any, method: str) -> Optional[symbolic.SymbolicType]:
+    """Normalize an element-count argument to a constant/symbolic value."""
+    if count is None:
+        return None
+    if isinstance(count, (Number, sp.Basic)) or symbolic.issymbolic(count):
+        return count
+    raise DaceSyntaxError(None, None, f"'{method}' expects a constant or symbolic element count, but got '{count}'.")
+
+
+@oprepo.replaces_method('Stream', 'push')
+def _stream_push(pv: ProgramVisitor,
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 stream: str,
+                 value: Union[str, Number, sp.Expr],
+                 count: Any = None) -> str:
+    """
+    Push data onto a stream.
+
+    :param stream: Name of the stream to push onto.
+    :param value: Data container holding the value(s) to push, or a
+                  constant/symbolic scalar.
+    :param count: Number of pushed elements. Omitted (the default) marks the
+                  write dynamic, matching the ``stream(-1)`` memlet-shift form,
+                  which is the only correct choice under a conditional or a
+                  filtering map.
+    :return: The stream's own name. Pushing produces no new container, but
+             both frontends key "this call mutates its receiver" off the
+             returned name (the legacy frontend promotes it from an input to
+             an output of the enclosing scope; the schedule-tree frontend
+             recognizes ``result is target`` as an in-place mutation), so
+             returning ``[]`` here would drop the write.
+    """
+    desc = _stream_descriptor(sdfg, stream, 'push')
+    num_accesses = _resolve_count(count, f'{stream}.push')
+    # The code generator keys stream copies off the memlet's container, so the
+    # memlet must describe the *stream* side of the edge in both directions
+    # (matching ``newast.ProgramVisitor.visit_TopLevelExpr``).
+    memlet = Memlet.simple(stream,
+                           subsets.Range.from_array(desc),
+                           num_accesses=-1 if num_accesses is None else num_accesses)
+
+    wnode = state.add_write(stream)
+    if isinstance(value, str) and value in sdfg.arrays:
+        if isinstance(sdfg.arrays[value], data.Stream):
+            raise DaceSyntaxError(None, None, f"'{stream}.push' does not support pushing a stream ('{value}').")
+        state.add_nedge(state.add_read(value), wnode, memlet)
+    elif isinstance(value, (Number, sp.Expr)) or symbolic.issymbolic(value):
+        tasklet = state.add_tasklet(f'_push_{stream}_', {}, {'__out'}, f'__out = {symbolic.symstr(value)}')
+        state.add_edge(tasklet, '__out', wnode, None, memlet)
+    else:
+        raise DaceSyntaxError(None, None, f"Unsupported value '{value}' for '{stream}.push'.")
+
+    return stream
+
+
+def _drain_destination(pv: ProgramVisitor, sdfg: SDFG, desc: data.Stream, num_elements: Any) -> Optional[str]:
+    """
+    The container a ``pop`` should drain into instead of allocating one, or
+    None when it has to produce its own buffer.
+
+    This is the array of a whole-container write (``out[:] = stream.pop()``),
+    which the visitor reports through ``get_assignment_destination``. It has
+    to hold exactly what the pop produces -- same element type, and a single
+    dimension of exactly the popped length -- since the drain replaces the
+    write the program spelled, rather than feeding it.
+    """
+    getter = getattr(pv, 'get_assignment_destination', None)
+    if getter is None:
+        return None
+    name = getter()
+    if name is None:
+        return None
+    destination = sdfg.arrays.get(name)
+    # An exact Array only: a view or a reference names storage indirectly, and
+    # the drain writes through the access node it is given.
+    if type(destination) is not data.Array or destination.dtype != desc.dtype:
+        return None
+    if len(destination.shape) != 1 or symbolic.equal(destination.shape[0], num_elements) is not True:
+        return None
+    return name
+
+
+@oprepo.replaces_method('Stream', 'pop')
+def _stream_pop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, stream: str, count: Any = None) -> str:
+    """
+    Drain a stream into an array.
+
+    Draining into an array the program named (``out[:] = stream.pop()``)
+    writes exactly the elements the stream held and leaves the rest of the
+    target as the program left it -- the semantics of the legacy ``ostream >>
+    oarray`` shift, and the shape the code generator recognizes as a
+    zero-copy stream-array view (``dace::ArrayStreamView``): nothing may write
+    the target between the pushes and the drain, which is why this path emits
+    no initialization of its own.
+
+    A stream holds a runtime-determined number of elements, so a pop that has
+    to produce its OWN buffer zero-pads it instead: elements past the drained
+    prefix read as zero. Without that the returned value would be partly
+    uninitialized, and unlike the named-destination form, its caller never had
+    the buffer in hand to initialize it.
+
+    :param stream: Name of the stream to pop from.
+    :param count: Maximum number of popped elements. Defaults to the stream's
+                  buffer size, i.e. the whole stream.
+    :return: Name of the array holding the popped elements -- the destination
+             itself when the program named one.
+    """
+    desc = _stream_descriptor(sdfg, stream, 'pop')
+    num_elements = _resolve_count(count, f'{stream}.pop')
+    if num_elements is None:
+        num_elements = desc.buffer_size
+    if num_elements == 0:
+        raise DaceSyntaxError(
+            None, None, f"'{stream}.pop' cannot infer how many elements to pop from a stream with no "
+            'buffer size; pass an explicit count.')
+
+    destination = _drain_destination(pv, sdfg, desc, num_elements)
+    if destination is not None:
+        # Still its own state: the pushes may leave the stream as both an
+        # input and an output of the scope that wrote it, and two access nodes
+        # for one stream in a single state put no order between the drain and
+        # the writes. State fusion merges the two afterwards where that is
+        # safe, which is what leaves the view pattern for the code generator.
+        _drain(pv._add_state(f'_pop_{stream}_'), stream, desc, destination, sdfg.arrays[destination])
+        return destination
+
+    name, result = pv.add_temp_transient([num_elements], desc.dtype)
+    state.add_mapped_tasklet(f'_pop_init_{stream}_', {'__i0': f'0:{num_elements}'}, {},
+                             '__out = 0', {'__out': Memlet.simple(name, '__i0')},
+                             external_edges=True)
+
+    # The drain goes into its own state so it orders after the zero-fill.
+    _drain(pv._add_state(f'_pop_{stream}_'), stream, desc, name, result)
+    return name
+
+
+def _drain(state: SDFGState, stream: str, desc: data.Stream, name: str, destination: data.Array) -> None:
+    """Emit the stream-to-array bulk pop."""
+    state.add_nedge(
+        state.add_read(stream), state.add_write(name),
+        Memlet(data=stream, subset=subsets.Range.from_array(desc), other_subset=subsets.Range.from_array(destination)))
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for streams (schedule-tree frontend)            #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import infers_method_descriptor  # noqa: E402
+
+
+@infers_method_descriptor('Stream', 'push')
+def _infer_stream_push(self_desc: data.Data, value: Any = None, count: Any = None, **_kw):
+    del value, count
+    if not isinstance(self_desc, data.Stream):
+        return None
+    return ()
+
+
+@infers_method_descriptor('Stream', 'pop')
+def _infer_stream_pop(self_desc: data.Data, count: Any = None, **_kw):
+    if not isinstance(self_desc, data.Stream):
+        return None
+    num_elements = count if count is not None else self_desc.buffer_size
+    if not isinstance(num_elements, (Number, sp.Basic)) and not symbolic.issymbolic(num_elements):
+        return None
+    if num_elements == 0:
+        return None
+    return data.Array(self_desc.dtype, [num_elements], transient=True)

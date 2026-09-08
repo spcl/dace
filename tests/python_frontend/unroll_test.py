@@ -83,14 +83,20 @@ def test_dace_unroll_generator():
 
     a = np.zeros([1])
 
-    with pytest.raises(DaceSyntaxError):
+    # Without an explicit dace.unroll the generator is NOT unrolled: the loop
+    # cannot be lowered natively, so it runs in the Python interpreter through a
+    # callback (announced by a performance warning) and still produces the right
+    # answer. The frontend used to reject this outright instead.
+    @dace.program
+    def tounroll_fallback(A: dace.float64[1]):
+        for val in mygenerator():
+            A += val
 
-        @dace.program
-        def tounroll_fail(A: dace.float64[1]):
-            for val in mygenerator():
-                A += val
+    with pytest.warns(UserWarning, match='callback'):
+        tounroll_fallback(a)
+    assert a[0] == 30
 
-        tounroll_fail(a)
+    a = np.zeros([1])
 
     @dace.program
     def tounroll(A: dace.float64[1]):
@@ -154,7 +160,8 @@ def test_auto_unroll_dictionary_method():
     assert a[0] == 6
 
 
-# Raise error if ndarray is the generator and dace.unroll was not specified
+# Iterating an ndarray without dace.unroll is not unrolled: the loop falls back
+# to the Python interpreter rather than being rejected.
 def test_ndarray_generator():
 
     @dace.program
@@ -164,9 +171,9 @@ def test_ndarray_generator():
 
     a = np.zeros([1])
     v = np.random.rand(5)
-    with pytest.raises(DaceSyntaxError):
+    with pytest.warns(UserWarning, match='callback'):
         tounroll(a, v)
-        assert a[0] == np.sum(v)
+    assert np.isclose(a[0], np.sum(v))
 
 
 def test_tuple_elements_enumerate():

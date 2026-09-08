@@ -640,18 +640,23 @@ with open(r"{temp_path}", "wb") as f:
 
         sig = self._sig
         typedict = self._typedict
-        if len(kwargs) > 0:
+        # Callbacks the SDFG carries itself (synthesized by a frontend rather
+        # than taken from the caller's closure) default the corresponding
+        # argument; an explicitly passed value still wins. Read per call, so
+        # assigning them after compilation still takes effect.
+        callbacks = self._sdfg.callback_objects
+        if len(kwargs) > 0 or callbacks:
             # Construct mapping from arguments to signature
             arglist = []
             argtypes = []
             argnames = []
             for a in sig:
                 try:
-                    arglist.append(kwargs[a])
+                    arglist.append(kwargs[a] if a in kwargs else callbacks[a])
                     argtypes.append(typedict[a])
                     argnames.append(a)
                 except KeyError:
-                    raise KeyError("Missing program argument \"{}\"".format(a))
+                    raise KeyError(self._missing_argument_message(a))
 
         else:
             if len(sig) > 0:
@@ -681,6 +686,19 @@ with open(r"{temp_path}", "wb") as f:
         initargs = tuple(carg for carg, aname in callparams if aname in symbols)
 
         return (newargs, initargs)
+
+    def _missing_argument_message(self, name: str) -> str:
+        """The error text for an argument the caller did not supply, naming the
+        Python-callback case, whose argument is a callable rather than data and
+        is normally filled in from the SDFG itself."""
+        descriptor = self._typedict.get(name)
+        if isinstance(getattr(descriptor, 'dtype', descriptor), dtypes.callback):
+            return (f'Missing program argument "{name}": it is a callback, so its value is a callable. '
+                    'Frontends record the callables they synthesize in "SDFG.callback_objects", which is filled '
+                    'in here automatically -- but those are runtime objects and do not survive serialization, '
+                    'so an SDFG loaded from a file needs them passed explicitly or restored into '
+                    '"SDFG.callback_objects".')
+        return f'Missing program argument "{name}"'
 
     def convert_return_values(self) -> Union[Any, Tuple[Any, ...]]:
         """

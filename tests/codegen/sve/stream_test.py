@@ -16,7 +16,7 @@ def test_stream_push():
                 s >> stream(-1)
                 s = 42.0
 
-        stream >> B
+        B[:] = stream.pop()
 
     code = get_code(program)
 

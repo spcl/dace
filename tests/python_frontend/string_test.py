@@ -78,7 +78,9 @@ def test_string_literal_comparison():
     assert np.allclose(tester(), False)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip(
+    'Returning a Python object is unsupported: a compiled program returns caller-allocated memory, which no Python object can be written into'
+)
 def test_string_literal():
 
     @dace
@@ -88,7 +90,9 @@ def test_string_literal():
     assert tester()[0] == 'Hello World!'
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip(
+    'Returning a Python object is unsupported: a compiled program returns caller-allocated memory, which no Python object can be written into'
+)
 def test_bytes_literal():
 
     @dace

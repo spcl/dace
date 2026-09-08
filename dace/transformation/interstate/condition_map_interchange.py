@@ -4,13 +4,14 @@
 from dace import sdfg as sd
 from dace import dtypes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
+from dace.sdfg.state import ControlFlowRegion, ConditionalBlock, StateSubgraphView
 from dace.properties import CodeBlock
 from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
 from dace.memlet import Memlet
 from dace.transformation import transformation
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.utils import set_nested_sdfg_parent_references
+from dace.transformation.helpers import nest_state_subgraph
 import copy
 
 
@@ -66,102 +67,27 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                 if len(body) == 1 and isinstance(body[0], NestedSDFG):
                     continue
 
-                # Get inputs and outputs of the nested SDFG
-                map_exit = state.exit_node(node)
-                inputs = set()
-                outputs = set()
-                for edge in state.out_edges(node):
-                    if edge.data.data is not None:
-                        inputs.add(edge.data.data)
-                for edge in state.in_edges(map_exit):
-                    if edge.data.data is not None:
-                        outputs.add(edge.data.data)
-
-                # Create the nested SDFG and add all symbols
-                sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}
-                nsdfg = state.add_nested_sdfg(
-                    sd.SDFG("map_body", parent=state),
-                    inputs=inputs,
-                    outputs=outputs,
-                    symbol_mapping=sym_mapping,
-                )
-                for sym, dt in state.sdfg.symbols.items():
-                    if sym not in nsdfg.sdfg.symbols:
-                        nsdfg.sdfg.add_symbol(sym, dt)
-                for a, desc in state.sdfg.arrays.items():
-                    if desc.transient:
-                        nsdfg.sdfg.add_datadesc(a, desc)
-
-                start_state = nsdfg.sdfg.add_state(is_start_block=True)
-                copy_mapping = {}
-                for n in body:
-                    new_n = copy.deepcopy(n)
-                    start_state.add_node(new_n)
-                    copy_mapping[n] = new_n
-
-                param_lb_map = {}
-                for i in range(len(node.map.params)):
-                    param_lb_map[node.map.params[i]] = node.map.range[i][0]
-                for n in body + [map_exit]:
-                    for edge in state.in_edges(n):
-                        src = None
-                        src_conn = edge.src_conn
-                        dst = None
-                        dst_conn = edge.dst_conn
-                        memlet = copy.deepcopy(edge.data)
-
-                        if edge.src in copy_mapping:
-                            src = copy_mapping[edge.src]
-                        elif edge.src is node:
-                            if edge.data.data is None:
-                                continue
-                            src = start_state.add_access(edge.data.data)
-                            src_conn = None
-                            memlet.replace(param_lb_map)
-                        if edge.dst in copy_mapping:
-                            dst = copy_mapping[edge.dst]
-                        elif edge.dst is map_exit:
-                            if edge.data.data is None:
-                                continue
-                            dst = start_state.add_access(edge.data.data)
-                            dst_conn = None
-                            memlet.replace(param_lb_map)
-                        start_state.add_edge(src, src_conn, dst, dst_conn, memlet)
-
-                for edge in state.out_edges(node):
-                    if edge.data.data not in nsdfg.sdfg.arrays and edge.data.data is not None:
-                        desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
-                        desc.shape = edge.data.subset.size()
-                        nsdfg.sdfg.add_datadesc(edge.data.data, desc)
-                    state.add_edge(
-                        edge.src,
-                        edge.src_conn,
-                        nsdfg,
-                        edge.data.data,
-                        copy.deepcopy(edge.data),
-                    )
-                for edge in state.in_edges(state.exit_node(node)):
-                    if edge.data.data not in nsdfg.sdfg.arrays and edge.data.data is not None:
-                        desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
-                        desc.shape = edge.data.subset.size()
-                        nsdfg.sdfg.add_datadesc(edge.data.data, desc)
-                    state.add_edge(
-                        nsdfg,
-                        edge.data.data,
-                        edge.dst,
-                        edge.dst_conn,
-                        copy.deepcopy(edge.data),
-                    )
-
-                state.remove_nodes_from(body)
+                # The general subgraph-nesting utility, rather than assembling
+                # the body by hand: a hand-rolled version has to re-derive the
+                # body's own index space, and gets it wrong as soon as the
+                # boundary memlets are indexed by anything but this map's
+                # parameters -- an enclosing map's parameter (``A[i, j]`` in the
+                # body of a ``j`` map nested in an ``i`` map), or two accesses
+                # to one container through different windows.
+                nest_state_subgraph(state.sdfg, state, StateSubgraphView(state, body), name='map_body')
 
         # Wrap all states in the nested SDFGs with the conditional block
         for state in all_states:
             for node in state.nodes():
                 if not isinstance(node, MapEntry):
                     continue
-                nsdfg: NestedSDFG = list(state.all_nodes_between(node, state.exit_node(node)))[0]
-                assert isinstance(nsdfg, NestedSDFG)
+                # The body nested above, which is the only computation in the
+                # scope. Whatever else the nesting left behind is pure data
+                # movement (access nodes routing a container in and back out),
+                # which is unaffected by the condition.
+                bodies = [n for n in state.all_nodes_between(node, state.exit_node(node)) if isinstance(n, NestedSDFG)]
+                assert len(bodies) == 1
+                nsdfg: NestedSDFG = bodies[0]
                 new_cond_branch = ControlFlowRegion()
                 body = list(nsdfg.sdfg.nodes())
 

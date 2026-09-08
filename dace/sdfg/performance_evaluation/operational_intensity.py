@@ -4,7 +4,7 @@ or from the VS Code extension. """
 
 import argparse
 from dace.sdfg import nodes as nd
-from dace import dtypes, SDFG
+from dace import dtypes, subsets, SDFG
 from dace.sdfg.state import SDFGState, ControlFlowRegion, LoopRegion, FunctionCallRegion, ConditionalBlock
 from typing import Tuple, Dict
 import os
@@ -190,6 +190,24 @@ def map_op_in(state: SDFGState, op_in_map: Dict[str, sp.Expr], entry, mapping, s
     return map_misses
 
 
+def _access_miss(data, subset, clt: CacheLineTracker, array_names, mapping, symbols, stack: AccessStack, C) -> int:
+    """
+    Account a single access to ``data[subset]`` against the cache.
+
+    :return: 1 if the access is a cache miss (or a first-ever touch), else 0. Data that is not a
+             tracked global-memory array contributes nothing.
+    """
+    if subset is None:
+        return 0
+    if data not in clt.array_info and not (data in array_names and array_names[data] in clt.array_info):
+        return 0
+    line_id = clt.cache_line_id(data if data not in array_names else array_names[data],
+                                [x[0].subs(mapping) for x in subset.ranges], mapping)
+    line_id = int(line_id.subs(symbols).subs(mapping))
+    dist = stack.touch(line_id)
+    return 1 if dist >= C or dist == -1 else 0
+
+
 def _edge_miss(edge, clt: CacheLineTracker, array_names, mapping, symbols, stack: AccessStack, C) -> int:
     """
     Account a single memlet access against the cache.
@@ -197,14 +215,7 @@ def _edge_miss(edge, clt: CacheLineTracker, array_names, mapping, symbols, stack
     :return: 1 if accessing the edge's data is a cache miss (or a first-ever touch), else 0. Edges
              whose data is not a tracked global-memory array contribute nothing.
     """
-    data = edge.data.data
-    if data not in clt.array_info and not (data in array_names and array_names[data] in clt.array_info):
-        return 0
-    line_id = clt.cache_line_id(data if data not in array_names else array_names[data],
-                                [x[0].subs(mapping) for x in edge.data.subset.ranges], mapping)
-    line_id = int(line_id.subs(symbols).subs(mapping))
-    dist = stack.touch(line_id)
-    return 1 if dist >= C or dist == -1 else 0
+    return _access_miss(edge.data.data, edge.data.subset, clt, array_names, mapping, symbols, stack, C)
 
 
 def scope_misses(state: SDFGState,
@@ -250,10 +261,26 @@ def scope_misses(state: SDFGState,
         elif isinstance(node, nd.AccessNode):
             # A copy between two access nodes moves data without a tasklet, so the tasklet case below
             # does not see it, yet it still touches memory. Only element-wise copies are accounted:
-            # _edge_miss models a single cache line touch, which says nothing about a bulk copy.
+            # _access_miss models a single cache line touch, which says nothing about a bulk copy.
+            #
+            # BOTH sides are charged: the copy reads the source line and writes the destination one,
+            # which is what the equivalent copy tasklet -- two edges -- is charged for. Charging only
+            # the side the memlet happens to name made the same program look cheaper when a frontend
+            # emitted a copy rather than a tasklet. A copy memlet leaves one side implicit
+            # (``result_0[0]`` names only the source); that side is the whole of its container, which
+            # for an element-wise copy is the single element it holds.
             for e in state.out_edges(node):
-                if isinstance(e.dst, nd.AccessNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:
-                    scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
+                if not isinstance(e.dst, nd.AccessNode) or e.data.is_empty():
+                    continue
+                if e.data.subset.num_elements() != 1:
+                    continue
+                for accessed, subset in ((node.data, e.data.get_src_subset(e, state)), (e.dst.data,
+                                                                                        e.data.get_dst_subset(e,
+                                                                                                              state))):
+                    if subset is None:
+                        descriptor = state.sdfg.arrays.get(accessed)
+                        subset = subsets.Range.from_array(descriptor) if descriptor is not None else None
+                    scope_misses += _access_miss(accessed, subset, clt, array_names, mapping, symbols, stack, C)
         elif isinstance(node, nd.Tasklet):
             tasklet_misses = 0
             # Account each tasklet memory access.

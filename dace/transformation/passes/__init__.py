@@ -15,5 +15,6 @@ from .length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars,
 from .simplify import SimplifyPass
 from .symbol_propagation import SymbolPropagation
 from .transient_reuse import TransientReuse
+from .write_conflict_resolution import ResolveWriteConflicts
 
 from .util import available_passes

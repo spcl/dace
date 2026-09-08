@@ -658,8 +658,9 @@ _STOP = dace.symbol('STOP')
 @dace.program
 def symbolic_strided(A: dace.float64[_N], B: dace.float64[_N]):
     for i in dace.map[_START:_STOP:_STEP]:
-        B[i] = A[i] + 2.0
-        A[i] = B[i] * 0.5
+        tmp = A[i] + 2.0
+        A[i] = tmp * 0.5
+        B[i] = tmp
 
 
 def test_symbolic_strided_fission():

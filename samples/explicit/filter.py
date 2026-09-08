@@ -35,9 +35,10 @@ def pbf(A: dace.float32[N], out: dace.float32[N], outsz: dace.uint32[1], ratio: 
             # Writing to the output size is also dynamic, and uses the sum write-conflict resolution
             osz >> outsz(-1, lambda x, y: x + y, 0)
 
-    # Lastly, we connect ostream to the output array. DaCe detects this pattern and emits
-    # fast code that pushes results to `out` directly
-    ostream >> out
+    # Lastly, we drain the stream into the output array. Draining into an array the program
+    # named writes only what the stream held, leaving the rest of `out` as the caller left it,
+    # so DaCe detects this pattern and emits fast code that pushes results to `out` directly
+    out[:] = ostream.pop()
 
 
 def regression(A, ratio):

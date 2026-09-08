@@ -153,7 +153,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
 
                 # Replace "a << A[i]" with "a = A[i]" at the beginning
                 if not dynamic:
-                    storenode = copy.deepcopy(node.value.left)
+                    storenode = astutils.copy_tree(node.value.left)
                     storenode.ctx = ast.Store()
                     self.pre_statements.append(
                         _copy_location(ast.Assign(targets=[storenode], value=cleaned_right), node))
@@ -173,7 +173,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
                         # lambda: "A[i] = (lambda a,b: a+b)(A[i], a)"
                         rhs = _copy_location(ast.Call(func=wcr, args=[cleaned_right, rhs], keywords=[]), rhs)
 
-                    lhs = copy.deepcopy(cleaned_right)
+                    lhs = astutils.copy_tree(cleaned_right)
                     lhs.ctx = ast.Store()
                     self.post_statements.append(_copy_location(ast.Assign(targets=[lhs], value=rhs), node))
                 else:
@@ -209,7 +209,7 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
             elif (isinstance(target, ast.Name) and target.id in self.wcr_replacements):
                 # Replace WCR assignment
                 newtarget, wcr = copy.deepcopy(self.wcr_replacements[target.id])
-                new_old_rhs = copy.deepcopy(newtarget)
+                new_old_rhs = astutils.copy_tree(newtarget)
                 newtarget.ctx = ast.Store()
                 rhs = _copy_location(ast.Call(func=wcr, args=[new_old_rhs, rhs], keywords=[]), rhs)
                 result.append(_copy_location(ast.Assign(targets=[newtarget], value=rhs), node))

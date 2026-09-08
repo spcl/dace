@@ -124,7 +124,7 @@ def test_memory_pool_multistate():
         pooled = dace.define_local(A.shape, A.dtype)
 
         for i in range(5):
-            pooled << A
+            pooled[:] = A
 
             if i == 1:
                 B += 1

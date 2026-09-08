@@ -22,7 +22,7 @@ def pbf(A: dace.float32[N], out: dace.float32[N], outsz: dace.uint32[1], ratio: 
             b = a
             osz = 1
 
-    ostream >> out
+    out[:] = ostream.pop()
 
 
 def regression(A, ratio):

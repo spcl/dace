@@ -106,13 +106,17 @@ def multiple_array_sizes(x: dace.int64[N], y: dace.int64[N], z: dace.int64[N], x
     if x[0] > 0:
         z[:] = 2 * x + y  # work 2*N, depth 2
     elif x[1] > 0:
-        z2[:] = 2 * x2 + y2  # work 2*M + 3, depth 5
+        # Work 2*M + 3. Both statements land in one dataflow state, where the two
+        # independent chains -- (2*x2) -> (+y2) -> (z2[0] += ...) and (3 + z[1]) ->
+        # (+z[2]) -> (z2[0] += ...) -- run side by side, so the critical path is 3,
+        # not the 5 a statement-per-state lowering charges.
+        z2[:] = 2 * x2 + y2
         z2[0] += 3 + z[1] + z[2]
     elif x[2] > 0:
         z3[:] = 2 * x3 + y3  # work 2*K, depth 2
     elif x[3] > 0:
         z[:] = 3 * x + y + 1  # work 3*N, depth 3
-        # --> work= Max(3*N, 2*M, 2*K) and depth = 5
+        # --> work= Max(3*N, 2*M, 2*K) and depth = 3
 
 
 @dace.program
@@ -205,7 +209,7 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[SymbolicType, Symbolic
     'nested_for_loops': (nested_for_loops, (K * N, K * N)),
     'nested_if_else': (nested_if_else, (sp.Max(K, 3 * N, M + N), sp.Max(3, K, M + 1))),
     'max_of_positive_symbols': (max_of_positive_symbol, (3 * N**2, 3 * N)),
-    'multiple_array_sizes': (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
+    'multiple_array_sizes': (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 3)),
     'unbounded_while_do': (unbounded_while_do, (dace.symbol('num_execs_0_0', nonnegative=True) * N,
                                                 dace.symbol('num_execs_0_0', nonnegative=True))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.

@@ -51,11 +51,14 @@ def test_opteinsum_sym():
         return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
-    try:
-        einsumtest(A, B, C, D, E)
-        raise AssertionError('Exception should have been raised')
-    except ValueError:
-        print('Exception successfully caught')
+    # Symbolic shapes stop opt_einsum from planning the contraction at parse
+    # time, which used to be a hard ValueError. The call now falls back to the
+    # Python interpreter, which contracts the concrete arrays and returns the
+    # right value -- no error is warranted at run time.
+    expected = np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
+    with pytest.warns(UserWarning, match='callback'):
+        result = einsumtest(A, B, C, D, E)
+    assert np.isclose(float(np.asarray(result).reshape(-1)[0]), expected)
 
 
 def test_opteinsum():

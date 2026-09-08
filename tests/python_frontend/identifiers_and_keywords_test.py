@@ -193,8 +193,11 @@ def test_keyword_lambda():
     N = 128
     A = np.random.rand(N).astype(np.float32)
     B = np.zeros((N, ), dtype=np.float32)
-    with pytest.raises(Exception):
-        keyword_lambda(A, B)
+    # Binding a lambda and applying it elementwise used to be rejected. The
+    # nextgen frontend lowers it NATIVELY -- no interpreter callback is created
+    # -- so assert the result rather than a failure.
+    keyword_lambda(A, B)
+    assert np.allclose(A, B)
 
 
 if __name__ == "__main__":

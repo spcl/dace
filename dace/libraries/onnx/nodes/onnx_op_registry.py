@@ -70,7 +70,11 @@ def _get_all_schemas():
 def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str, dace_schema: ONNXSchema):
     """Register an op repository replacement for the given ONNX operation class."""
 
-    @dace_op_repo.replaces("dace.libraries.onnx.{}".format(cls_name))
+    @dace_op_repo.infers_descriptor(f"dace.libraries.onnx.{cls_name}")
+    def op_repo_descriptor_inference(input_descs, *args, **kwargs):
+        return ()
+
+    @dace_op_repo.replaces(f"dace.libraries.onnx.{cls_name}")
     def op_repo_replacement(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, **kwargs):
         attrs = {name: value for name, value in kwargs.items() if name in dace_schema.attributes}
         # Remove used attrs

@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import re
 import numpy as np
 import dace
 
@@ -71,10 +70,13 @@ def test_call_multiple_sdfgs():
         out_tmp_div_sum(out_tmp=out_tmp, tmp_sum=tmp_sum, output=output)
 
     sdfg = multiple_nested_sdfgs.to_sdfg(simplify=False)
+    # Find the state by what it CONTAINS -- the nested SDFG for out_tmp_div_sum
+    # -- rather than by its label. State labels are a frontend's own naming
+    # convention and say nothing about which call a state holds.
     state = None
     for node in sdfg.states():
-        if re.fullmatch(r"call_out_tmp_div_sum_\d+.*", node.label):
-            assert state is None, "Two states match the regex, cannot decide which one should be used"
+        if any(isinstance(n, dace.sdfg.nodes.NestedSDFG) and n.sdfg.name == 'out_tmp_div_sum' for n in node.nodes()):
+            assert state is None, "Two states hold the call, cannot decide which one should be used"
             state = node
     assert state is not None
     for n in state.nodes():

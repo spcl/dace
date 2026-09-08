@@ -142,7 +142,7 @@ def starred_target(a: dace.float32[1]):
     return b, c, d, e
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip('Returning the starred group needs structured (nested) return values')
 def test_starred_target():
     a = np.zeros((1, ), dtype=np.float32)
     a[0] = np.pi
@@ -155,6 +155,29 @@ def test_starred_target():
     assert (e[0] == np.float32(6) * np.float32(np.pi))
 
 
+def test_starred_target_unpacking():
+    """A starred target used inside the program, rather than returned."""
+
+    @dace.program
+    def starred_use(a: dace.float32[1], out: dace.float32[1]):
+        b, *c, d, e = a, 2 * a, 3 * a, 4 * a, 5 * a, 6 * a
+        out[:] = b + c[0] + c[1] + c[2] + d + e
+
+    @dace.program
+    def starred_first(a: dace.float32[1], out: dace.float32[1]):
+        *c, d = 2 * a, 3 * a, 4 * a
+        out[:] = c[0] + c[1] + d
+
+    a = np.full((1, ), 2, dtype=np.float32)
+    out = np.zeros((1, ), dtype=np.float32)
+
+    starred_use(a=a, out=out)
+    assert out[0] == np.float32(2) * np.float32(1 + 2 + 3 + 4 + 5 + 6)
+
+    starred_first(a=a, out=out)
+    assert out[0] == np.float32(2) * np.float32(2 + 3 + 4)
+
+
 mystruct = dace.struct('mystruct', a=dace.int32, b=dace.float32)
 
 
@@ -164,7 +187,6 @@ def attribute_reference(a: mystruct[1]):
     a.b[0] = 6
 
 
-@pytest.mark.skip('Syntax is not yet supported')
 def test_attribute_reference():
     a = np.ndarray((1, ), dtype=np.dtype(mystruct.as_ctypes()))
     attribute_reference(a=a)
@@ -252,7 +274,8 @@ if __name__ == "__main__":
     test_nested_multiple_targets()
 
     # test_starred_target()
-    # test_attribute_reference()
+    test_starred_target_unpacking()
+    test_attribute_reference()
 
     test_ann_assign_supported_type()
     test_assignment_to_nonexistent_variable()

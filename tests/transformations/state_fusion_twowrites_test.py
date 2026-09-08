@@ -61,8 +61,11 @@ def test_sftw():
     sdfg = sftw.to_sdfg()
     sdfg.simplify()
 
-    # Ensure almost all states were fused
-    assert len(sdfg.nodes()) == 2
+    # Ensure almost all states were fused. This is an upper bound rather than an
+    # equality: the count depends on how many states the frontend emitted to
+    # begin with, not on a property of state fusion. The nextgen frontend fuses
+    # this program down to a single state.
+    assert len(sdfg.nodes()) <= 2
 
     sdfg(A=A)
 

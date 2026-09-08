@@ -31,6 +31,7 @@ def program(*args,
             regenerate_code: bool = True,
             recompile: bool = True,
             constant_functions=False,
+            inline: bool = True,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     ...
 
@@ -46,6 +47,7 @@ def program(f: F,
             distributed_compilation: bool = False,
             constant_functions=False,
             use_explicit_cf=True,
+            inline: bool = True,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
@@ -66,6 +68,10 @@ def program(f: F,
     :param distributed_compilation: Whether to compile the code from rank 0, and broadcast it to all the other ranks.
                                     If False, every rank performs the compilation. In this case, make sure to check the ``cache`` configuration entry
                                     such that no caching or clashes can happen between different MPI processes.
+    :param inline: If False, a call to this program from another ``@dace.program`` stays a real
+                   NestedSDFG instead of being inlined into the caller. Use it when a
+                   transformation or analysis needs the nesting to operate on, or when the
+                   callee's declared argument shapes should be enforced at the call boundary.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
@@ -87,7 +93,8 @@ def program(f: F,
                               regenerate_code=regenerate_code,
                               recompile=recompile,
                               distributed_compilation=distributed_compilation,
-                              use_explicit_cf=use_explicit_cf)
+                              use_explicit_cf=use_explicit_cf,
+                              inline=inline)
 
 
 function = program
@@ -132,6 +139,10 @@ def method(f: F,
                             it.
     :param recompile: Whether to recompile the code. If False, the library in the build folder will be used if it exists,
                       without recompiling it.
+    :param inline: If False, a call to this program from another ``@dace.program`` stays a real
+                   NestedSDFG instead of being inlined into the caller. Use it when a
+                   transformation or analysis needs the nesting to operate on, or when the
+                   callee's declared argument shapes should be enforced at the call boundary.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
@@ -200,8 +211,10 @@ class MapGenerator(Generic[_MapT], Iterable[_MapT]):
     for syntactic sugar.
     """
 
-    def __init__(self, rng: Union[slice, tuple[slice, ...]]):
+    def __init__(self, rng: Union[slice, tuple[slice, ...]], schedule: Optional[dtypes.ScheduleType] = None):
         self.rng = rng
+        #: Schedule the map was annotated with, or None for the default schedule.
+        self.schedule = schedule
 
     def __matmul__(self, schedule: dtypes.ScheduleType) -> Self:
         """
@@ -212,9 +225,14 @@ class MapGenerator(Generic[_MapT], Iterable[_MapT]):
 
             for i, j in dace.map[0:N, 0:M] @ ScheduleType.GPU_Global:
                 b[i, j] = a[i, j] + 1
+
+        :return: A generator over the same range, carrying the given schedule.
+                 The schedule has no effect in Python mode; the DaCe frontends
+                 read it off this object.
         """
-        # Ignored in Python mode
-        return self
+        if not isinstance(schedule, dtypes.ScheduleType):
+            raise TypeError(f'Map schedule must be a ScheduleType, got {type(schedule).__name__}')
+        return MapGenerator(self.rng, schedule)
 
     def __iter__(self) -> Iterator[_MapT]:
         return ndloop.ndrange(self.rng)
@@ -321,11 +339,21 @@ class tasklet(metaclass=TaskletMetaclass):
     The DaCe framework cannot analyze these tasklets for optimization.
     """
 
-    def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python, side_effects: bool = False):
+    def __init__(self,
+                 language: Union[str, dtypes.Language] = dtypes.Language.Python,
+                 side_effects: bool = False,
+                 code_global: str = '',
+                 code_init: str = '',
+                 code_exit: str = ''):
         if isinstance(language, str):
             language = dtypes.Language[language]
         self.language = language
         self.side_effects = side_effects
+        #: Global-scope, initialization, and finalization code emitted with
+        #: the tasklet (used by parsing frontends; ignored in pure Python).
+        self.code_global = code_global
+        self.code_init = code_init
+        self.code_exit = code_exit
 
     def __enter__(self):
         if self.language != dtypes.Language.Python:

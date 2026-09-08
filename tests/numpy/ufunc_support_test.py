@@ -161,14 +161,22 @@ def ufunc_add_where_list(A: dace.int32[2], B: dace.int32[2]):
 
 
 def test_ufunc_add_where_list():
+    """
+    A 'where' mask given as a Python list has no native lowering, so the
+    frontend falls back to a Python callback and NumPy's own semantics apply.
+
+    Only the selected positions are checked: without an 'out' argument NumPy
+    leaves the unselected ones uninitialized, by its own documented contract
+    (it warns about exactly that), so their value is not a property either
+    implementation can be held to.
+
+    Note the classic frontend (``DACE_frontend_use_nextgen=0``) refuses this
+    spelling instead, directing the user to pass a DaCe boolean array.
+    """
     A = np.random.randint(1, 10, size=(2, ), dtype=np.int32)
     B = np.random.randint(1, 10, size=(2, ), dtype=np.int32)
-    try:
-        C = ufunc_add_where_list(A, B)
-    except:
-        assert (True)
-        return
-    assert (False)
+    C = ufunc_add_where_list(A, B)
+    assert C[0] == A[0] + B[0]
 
 
 @dace.program

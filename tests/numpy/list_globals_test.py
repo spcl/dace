@@ -43,7 +43,6 @@ def test_local_list():
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
 
 
-@pytest.mark.skip('Syntax is not yet supported')
 def test_local_list_with_slice():
     local_axes = [1, 2, 0, 100]
 
@@ -91,6 +90,6 @@ if __name__ == "__main__":
     test_global_func_access_global_list()
     test_local_func_access_global_list()
     test_local_list()
-    # test_local_list_with_slice()
+    test_local_list_with_slice()
     test_local_list_with_symbols()
     test_local_list_nested_lists()

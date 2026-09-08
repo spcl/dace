@@ -18,7 +18,28 @@ except (ModuleNotFoundError, ImportError):
     ArrayLike = Any
 
 from dace import dtypes, symbolic
-from dace.data.core import Array, Data, Scalar
+from dace.data.core import Array, Data, Scalar, Structure
+
+
+def _array_like_descriptor(obj) -> Optional[Data]:
+    """
+    Attempts to describe an ``__array__``-implementing object through
+    ``numpy.asarray``. Returns None (rather than raising) when conversion
+    fails or is a no-op, so callers can fall through to other descriptor
+    creation rules.
+    """
+    try:
+        arr = np.asarray(obj)
+    except Exception:
+        return None
+    if arr is obj or arr.ndim == 0:
+        # No-op conversion (would recurse forever) or a scalar-valued object
+        # better served by the scalar rules
+        return None
+    try:
+        return create_datadescriptor(arr, no_custom_desc=True)
+    except (TypeError, RecursionError):
+        return None
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
@@ -98,6 +119,13 @@ def create_datadescriptor(obj, no_custom_desc=False):
                      shape=interface['shape'],
                      strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
                      storage=storage)
+    elif (not isinstance(obj, (type, np.generic)) and hasattr(obj, '__array__')
+          and (desc := _array_like_descriptor(obj)) is not None):
+        return desc
+    elif isinstance(obj, dict):
+        from dace.data.pydata import infer_python_dict_descriptor_from_value
+        return infer_python_dict_descriptor_from_value(
+            obj, lambda value: create_datadescriptor(value, no_custom_desc=no_custom_desc), transient=False)
     elif isinstance(obj, (list, tuple)):
         # Lists and tuples are cast to numpy
         obj = np.array(obj)
@@ -128,6 +156,11 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(dtypes.pointer(dtypes.typeclass(None)))
     elif isinstance(obj, str) or obj is str:
         return Scalar(dtypes.string)
+    elif isinstance(obj, type):
+        try:
+            return Structure.from_class(obj)
+        except TypeError:
+            pass
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
@@ -225,7 +258,9 @@ def make_reference_from_descriptor(descriptor: Array,
             raise NotImplementedError('GPU memory can only be referenced in Python if cupy is installed')
 
         def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = dtypes.ptrtocupy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
+            # Only the buffer's ADDRESS is used below, so it is taken as raw
+            # bytes -- see the CPU branch for why the element type is avoided.
+            buffer = dtypes.ptrtocupy(original_array, np.uint8, (total_size * dtype.itemsize, ))
             view = cp.ndarray(shape=shape,
                               dtype=dtype,
                               memptr=buffer.data,
@@ -235,7 +270,16 @@ def make_reference_from_descriptor(descriptor: Array,
     else:
 
         def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = dtypes.ptrtonumpy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
+            # Take the memory as raw bytes and let the view below impose the
+            # element type. Going through the dtype's ctypes equivalent
+            # instead makes this fail for every type whose C representation
+            # NumPy cannot view: complex128's is ``c_longdouble``, which has
+            # no PEP-3118 format, so referencing a complex array raised
+            # ValueError -- inside a callback, where it could only be a silent
+            # no-op. It is also more portable, since a ctypes type need not
+            # have the same width as the DaCe type it stands in for (``long
+            # double`` is 16 bytes here but 8 under MSVC).
+            buffer = dtypes.ptrtonumpy(original_array, ctypes.c_uint8, (total_size * dtype.itemsize, ))
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
             return view
 

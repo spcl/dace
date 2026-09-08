@@ -386,7 +386,7 @@ def test_inout_second_state_2():
 
     @dace.program
     def func(A: dace.float64[128, 128], B: dace.float64[128, 128]):
-        B << A
+        B[:] = A
         for i, j in dace.map[0:128, 0:128]:
             with dace.tasklet:
                 ai << A[i, j]

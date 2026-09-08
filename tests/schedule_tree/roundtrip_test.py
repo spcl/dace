@@ -25,8 +25,12 @@ def test_implicit_inline_and_constants():
     # Inject constant into nested SDFG
     assert len(list(sdfg.all_sdfgs_recursive())) > 1
     sdfg.add_constant('cst', 13)  # Add an unused constant
-    sdfg.cfg_list[-1].add_constant('cst', 1, dace.data.Scalar(dace.float64))
-    tasklet = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    # The constant has to land in the SDFG that OWNS the tasklet below, since
+    # that is where the name is resolved. Find the tasklet first and take its
+    # SDFG: cfg_list holds every control flow region as well as every SDFG, so
+    # its last entry is not reliably either.
+    tasklet, tasklet_state = next((n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    tasklet_state.sdfg.add_constant('cst', 1, dace.data.Scalar(dace.float64))
     tasklet.code.as_string = tasklet.code.as_string.replace('12', 'cst')
 
     # Perform a roundtrip conversion

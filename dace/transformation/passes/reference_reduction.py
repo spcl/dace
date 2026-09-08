@@ -105,6 +105,17 @@ class ReferenceToView(ppl.Pass):
         if not result:  # Early return
             return result
 
+        # A reference whose source is itself a Reference captures the source's
+        # current target at set time; a view would dereference the source at
+        # use time instead, observing later reference sets (e.g. in a
+        # double-buffering pointer swap). Keep such references.
+        for cand in list(result):
+            source = next(iter(reference_sources[cand]))
+            if isinstance(sdfg.arrays[source.data], data.Reference):
+                result.remove(cand)
+        if not result:
+            return result
+
         # If memlet does not depend on any symbol, it can be kept. Otherwise,
         # it may depend on a (free) symbol. There are multiple options:
         #   * If dependent on scope symbol (e.g., map parameter) - remove from candidates
