@@ -365,12 +365,14 @@ def test_finalize_never_selects_mkl_prefers_openblas():
 
 def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
     """``offload_to_gpu`` must move the nest onto the device and choose a thread-block matching the
-    iteration domain (an ``N x N`` map -> a ``16x16`` block, not the ``32,1,1`` default), after
-    which ``finalize_for_target(sdfg, 'gpu')`` generates CUDA. The device move is a step of its own
-    -- finalize refuses an SDFG that has not had it. Codegen-only (no device needed); idempotent."""
+    iteration domain (an ``N x N`` map -> one warp wide and several warps deep, not the ``32,1,1``
+    default), after which ``finalize_for_target(sdfg, 'gpu')`` generates CUDA. The device move is a
+    step of its own -- finalize refuses an SDFG that has not had it. Codegen-only (no device
+    needed); idempotent."""
     from dace.sdfg import nodes
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
+    from dace.transformation.passes.gpu_block_size_selection import WARPS_PER_2D_BLOCK, warp_width
 
     Nsym = dace.symbol("N", dtype=dace.int64)
 
@@ -390,8 +392,13 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
         if isinstance(n, nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
     ]
     assert gpu_maps, "offload_to_gpu should move the loop nest to a GPU_Device map"
-    assert any(n.map.gpu_block_size == [16, 16, 1] for n in gpu_maps), \
-        f"N x N map should get a 16x16 block, got {[n.map.gpu_block_size for n in gpu_maps]}"
+    # One FULL warp on x and the remaining warps stacked on y: a block narrower than a warp would
+    # put lanes of one warp on different rows, which is the strided access the sizing exists to
+    # avoid. Both extents are symbolic here, so the domain counts as square and takes the default
+    # depth. Asked of the backend rather than hardcoded -- a CDNA wavefront is 64 lanes, not 32.
+    want = [warp_width(), WARPS_PER_2D_BLOCK, 1]
+    assert any(n.map.gpu_block_size == want for n in gpu_maps), \
+        f"N x N map should get a {want[0]}x{want[1]} block, got {[n.map.gpu_block_size for n in gpu_maps]}"
     titles = [c.title for c in sdfg.generate_code()]
     assert any("cuda" in t.lower() for t in titles), f"expected CUDA codegen, got {titles}"
 
