@@ -21,6 +21,7 @@ from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets imp
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 NB = dace.symbol("NB")
@@ -68,6 +69,8 @@ def test_icon_zekinh_scatter_descent_to_tile_only():
     """Mixed-scatter ICON-style kernel lowers to zero raw Tasklets at K=2."""
     sdfg = _icon_zekinh_scatter.to_sdfg()
     sdfg.validate()
+    # The tiler's input contract -- canonical (or dace-parallelized) form.
+    canonicalize(sdfg, validate=True)
 
     VectorizeCPUMultiDim(
         VectorizeConfig(

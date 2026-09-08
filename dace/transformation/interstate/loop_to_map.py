@@ -288,8 +288,16 @@ def _smt_proves_injective_write(dst_subset, itersym, start, end, step) -> bool:
 
     A point subset must be injective in the iteration variable; a range subset must have
     intervals that never intersect across iterations. Conservative: returns ``False`` whenever z3
-    is unavailable, the subset is multi-dimensional, or the solver returns ``unknown``.
+    is unavailable, there is no write subset to reason about, the subset is multi-dimensional, or
+    the solver returns ``unknown``.
     """
+    if dst_subset is None:
+        # ``get_dst_subset`` yields ``None`` for an edge that names no data -- an empty memlet,
+        # which is an ordering edge and writes nothing. The callers that test the subset directly
+        # already guard this (``bool(dst_subset) and _check_range(...)``); the oracle is reached
+        # only along the path where that test FAILED, so it inherits the ``None`` and must refuse
+        # it rather than dereference it.
+        return False
     if not smt_dependence.has_z3():
         return False
     nd = list(dst_subset.ndrange())

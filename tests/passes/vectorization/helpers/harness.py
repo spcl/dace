@@ -26,6 +26,8 @@ from dace.sdfg import ControlFlowRegion
 
 from dace.sdfg.state import ConditionalBlock
 
+from dace.transformation.passes.canonicalize import canonicalize
+
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 
 from dace.transformation.passes.vectorization.enums import ISA
@@ -371,6 +373,13 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     if vectorize_config != "tile_nodes":
         raise ValueError(f"legacy vectorize_config {vectorize_config!r} was removed; only the multi-dim "
                          f"tile-op path ('tile_nodes') is supported")
+    # The tiler's input contract: canonicalized (or dace-parallelized) form. The orchestrator used
+    # to canonicalize at its own entry, so every kernel here arrived canonical whether the test said
+    # so or not; that entry call is gone -- it cost 98% of the pass -- and the prerequisite is now
+    # the caller's. Only the copy is canonicalized: the reference stays the plain scalar oracle the
+    # numbers are compared against.
+    canonicalize(copy_sdfg, validate=True)
+
     if vectorize_config == "tile_nodes":
         # Tile-op path (``VectorizeCPUMultiDim``), hybrid emit:
         # flat body -> ``EmitTileOps``; already-NSDFG body -> descent

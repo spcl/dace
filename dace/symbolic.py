@@ -4566,25 +4566,22 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
         return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))
 
 
-def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ignore: Set[str] = None) -> Set[str]:
-    """
-    Tokenizes a code string for symbols and returns a set thereof.
+@lru_cache(maxsize=16384, typed=True)
+def name_tokens_in_code(code: str) -> FrozenSet[str]:
+    """Every identifier-like token in ``code``, minus the ``e`` of a scientific-notation literal.
 
-    :param code: The code to tokenize.
-    :param potential_symbols: If not None, filters symbols to this given set.
-    :param symbols_to_ignore: If not None, filters out symbols from this set.
-    """
-    if not code:
-        return set()
-    if potential_symbols is not None and len(potential_symbols) == 0:
-        # Don't bother tokenizing for an empty set of potential symbols
-        return set()
+    Cached because the tokenize depends on nothing but the string, while its callers ask about one
+    symbol at a time: a pass scanning an SDFG for who reads symbol ``s`` re-tokenizes every
+    interstate condition and every tasklet body once per symbol it considers, and the graph's code
+    strings do not change between those queries. Frozen so a cached entry cannot be mutated through
+    a caller's reference -- :func:`symbols_in_code` copies before filtering.
 
+    :param code: The code string to tokenize.
+    :returns: The token set.
+    """
     tokens_list = re.findall(_NAME_TOKENS, code)
     token_counts = Counter(tokens_list)
     tokens = set(tokens_list)
-    if potential_symbols is not None:
-        tokens &= potential_symbols
 
     # Remove 'e' from tokens if it appears as part of scientific notation
     for match in _NAME_TOKENS.finditer(code):
@@ -4611,6 +4608,30 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
                             token_counts[token] -= 1
                             if token_counts[token] == 0:
                                 tokens.discard(token)
+
+    return frozenset(tokens)
+
+
+def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ignore: Set[str] = None) -> Set[str]:
+    """
+    Tokenizes a code string for symbols and returns a set thereof.
+
+    :param code: The code to tokenize.
+    :param potential_symbols: If not None, filters symbols to this given set.
+    :param symbols_to_ignore: If not None, filters out symbols from this set.
+    """
+    if not code:
+        return set()
+    if potential_symbols is not None and len(potential_symbols) == 0:
+        # Don't bother tokenizing for an empty set of potential symbols
+        return set()
+
+    # A fresh set per call: the cached tokenization is shared, and callers mutate what they get
+    # back. Filtering after the scientific-notation pass rather than before is equivalent -- that
+    # pass discards purely by how often a token occurs in ``code``.
+    tokens = set(name_tokens_in_code(code))
+    if potential_symbols is not None:
+        tokens &= potential_symbols
 
     if symbols_to_ignore is None:
         return tokens

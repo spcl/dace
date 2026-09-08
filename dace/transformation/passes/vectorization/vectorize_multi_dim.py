@@ -72,7 +72,8 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
     RewriteModuloToPyMod,
     StripPowerExponentCast,
 )
-from dace.transformation.passes.canonicalize.pipeline import canonicalize, disable_openmp_sections
+from dace.transformation.passes.canonicalize.pipeline import (IvSubstitutionFissionFixpoint, StructuralCleanup,
+                                                              disable_openmp_sections)
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (SetSymbolNonnegativeAssumptions,
@@ -110,13 +111,43 @@ from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsup
 #: Tile lib-node types -- all of them, used by the implementation selector.
 _TILE_NODE_TYPES = (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
 
-#: ``canonicalize()`` knobs for the vectorizer's own entry normalization (see
-#: :meth:`VectorizeMultiDim.apply_pass`). ``semantic_lifting=False`` is the whole point: canon's
-#: map -> library-node lifts (Einsum / Copy / Fill) would hand the tiler an opaque node with no
-#: per-lane body to widen, so the vectorizer needs the residual left as raw maps.
-#: ``unroll_limit=0``: ShortLoopUnroll would straight-line a short constant-trip loop and delete
-#: the very map the tiler was called to widen.
-ENTRY_CANONICALIZE_KWARGS = {'semantic_lifting': False, 'unroll_limit': 0}
+
+def vectorization_prep_units() -> Tuple[ppl.Pass, ...]:
+    """The structural passes the tile pipeline requires of its input, in order.
+
+    A function rather than a literal inside :func:`prepare_for_vectorization` so the prep says what
+    it contains -- the same reason :meth:`IvSubstitutionFissionFixpoint.round_units` is a method.
+    An invariant about what the vectorizer does and does not run at its entry can then be asserted
+    against the list instead of against the source.
+
+    :returns: the prep passes, to be applied in sequence.
+    """
+    return (IvSubstitutionFissionFixpoint(), StructuralCleanup())
+
+
+def prepare_for_vectorization(sdfg: dace.SDFG) -> None:
+    """Put ``sdfg`` in the structural shape the tile pipeline requires -- without canonicalizing.
+
+    The vectorizer runs AFTER ``canonicalize`` / ``ParallelizeLoops`` (CPU or GPU), so re-running
+    the whole recipe here re-derives a result the caller already has: on CloudSC that second pass
+    cost more than the tiler itself. What the tiler genuinely cannot do without is the structural
+    subset:
+
+    * :class:`IvSubstitutionFissionFixpoint` -- a live induction variable makes every statement in
+      a body read one counter, so the body is a single dependence component and neither the
+      per-lane widening nor the statement fission it depends on is legal. This is the pass that
+      closes the counter, and it carries the prep (scalar->symbol promotion, IV-update hoisting)
+      the IV matcher needs.
+    * :class:`StructuralCleanup` -- folds the symbols the substitution just freed and settles the
+      state machine, so the tile passes see whole bodies rather than the fragments left behind.
+
+    Both are fixpoints that report no change on a settled graph, so a caller who already ran the
+    full recipe pays only the detection sweep.
+
+    :param sdfg: the SDFG to prepare, modified in place.
+    """
+    for unit in vectorization_prep_units():
+        unit.apply_pass(sdfg, {})
 
 
 def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
@@ -686,6 +717,15 @@ class VectorizeMultiDim(ppl.Pipeline):
     The ``device`` knob selects CPU vs. GPU reduction/finalize behavior;
     :class:`VectorizeCPUMultiDim` / :class:`VectorizeGPUMultiDim` are the thin
     device-fixed entry points. ``target_isa='CUDA'`` implies ``device=GPU``.
+
+    **Input contract: the SDFG must already be canonical.** Run
+    :func:`~dace.transformation.passes.canonicalize.pipeline.canonicalize` (or, where it suffices,
+    :func:`~dace.transformation.passes.parallelize.parallelize`) first. This pass used to
+    canonicalize at its own entry, which cost 98% of its runtime on CloudSC and re-ran a recipe the
+    caller had already run; :func:`prepare_for_vectorization` now runs only the structural passes the
+    tiler cannot do without (IV substitution, structural cleanup), and everything else is the
+    caller's. Feeding it a raw front-end SDFG is out of contract: the tiler can widen an operand
+    whose consumer never became a tile and fail validation on the tile-kind rule.
     """
 
     CATEGORY: str = "Vectorization"
@@ -777,7 +817,17 @@ class VectorizeMultiDim(ppl.Pipeline):
             # SameWriteSetIfElseToITECFG emits per-target ITE tasklets for two-arm
             # same-write-set if/else; BranchNormalization flattens any residual single-arm /
             # disjoint-write two-arm ConditionalBlocks (recursing through nested ones).
-            passes += [FlattenBranches(), SameWriteSetIfElseToITECFG(), BranchNormalization()]
+            # The demotion runs FIRST here, unlike the fp-factor path where it cleans up after
+            # ``EliminateBranches``. An arm's own interstate binding (``if mask[j]: count = count +
+            # 1``) has to be dataflow BEFORE the two ITE passes look at the arm, or they see a
+            # symbol on an edge, decline the arm, and leave a scalar guard over per-lane data for
+            # the tiler to widen around -- npbench ``azimint_naive`` counting every lane.
+            passes += [
+                LowerInterstateConditionalAssignmentsToTasklets(),
+                FlattenBranches(),
+                SameWriteSetIfElseToITECFG(),
+                BranchNormalization(),
+            ]
         # Branch lowering (both modes) rewrote each same-write-set ``if arr[s] = f(...)`` into
         # ``arr[s] = ITE(cond, f(...), arr[s])`` (merge) / ``cond*f + (1-cond)*arr[s]`` (fp_factor)
         # INSIDE the frontend's per-``if`` body NestedSDFG, whose only external wiring for the
@@ -1029,22 +1079,17 @@ class VectorizeMultiDim(ppl.Pipeline):
         # correct input and leave it un-tiled -- a clean refusal instead of a crash or a
         # half-transformed SDFG. Cheap relative to the compile that follows; taken once per call.
         snapshot = copy.deepcopy(sdfg)
-        # Opt out of omp sections here too, not just via the entry ``canonicalize`` below -- that
-        # call is skipped on an already-GPU-offloaded SDFG. Taken AFTER the snapshot so a
-        # ``VectorizeUnsupported`` refusal hands the caller back their input untouched.
+        # Taken AFTER the snapshot so a ``VectorizeUnsupported`` refusal hands the caller back
+        # their input untouched.
         disable_openmp_sections(sdfg)
-        # Canonicalize at the vectorizer's OWN entry (user direction). Every prep pass below
-        # assumes the canonical shape -- unit-step maps, parallelized DOALL loops, no branchy
-        # scaffolding -- which until now arrived only when the CALLER happened to run
-        # ``canonicalize`` first: caller discipline nothing enforced. Skipped on an
-        # already-GPU-offloaded SDFG: there the documented order is canonicalize -> offload ->
-        # vectorize, so re-running the recipe on device-resident maps would invert it.
-        if not _has_gpu_device_map(sdfg):
-            canonicalize(sdfg,
-                         validate=self._validate,
-                         validate_all=self._validate_all,
-                         target='gpu' if self._device == DeviceType.GPU else 'cpu',
-                         **ENTRY_CANONICALIZE_KWARGS)
+        # Structural prep only -- NOT canonicalization. The documented order is
+        # canonicalize (or ParallelizeLoops) -> vectorize, on CPU and on GPU alike, so the
+        # canonical shape the tile passes assume (unit-step maps, parallelized DOALL loops, no
+        # branchy scaffolding) is the CALLER's to establish and re-deriving it here just pays for
+        # it twice. What is not the caller's to establish is the induction-variable substitution
+        # and the symbol/state cleanup behind it, which the tiler cannot proceed without and which
+        # a caller running a bare ``LoopToMap`` + ``simplify`` never performs.
+        prepare_for_vectorization(sdfg)
         # Always simplify first (user direction): callers may hand us an un-simplified SDFG
         # (``to_sdfg(simplify=False)``) with FunctionCallRegions / redundant states / un-inlined
         # wrappers. Up-front simplify gives every downstream pass a canonical flat-state body;

@@ -759,6 +759,41 @@ def canonicalize_memlet_trees(
     return total_modified_memlets
 
 
+def reanchor_stranded_ordering(state: SDFGState, outer: Node, kept_outer: Node, is_input: bool) -> bool:
+    """Move ``outer``'s ordering edges to ``kept_outer`` when the fold left ``outer`` unwritten.
+
+    Only for a folded WRITE, and only once ``outer`` has no producer left: then ``kept_outer`` is
+    the node that received the write, so a happens-after on ``outer`` means a happens-after on
+    ``kept_outer``. Transfers are left alone -- a read of a node nothing writes is a different
+    defect, and silently re-pointing it would hide it.
+
+    :param state: State holding both nodes.
+    :param outer: The stranded outer endpoint of the folded edge.
+    :param kept_outer: The outer endpoint that absorbed the write.
+    :param is_input: Whether the folded edge was an input; nothing is done if so.
+    :returns: ``True`` if the ordering was moved.
+    """
+    if is_input or kept_outer is outer:
+        return False
+    # Either endpoint can already be gone: the caller removes the folded path first, and a path can
+    # take its own root with it. Nothing to re-anchor then, and querying a removed node raises.
+    nodes = state.nodes()
+    if outer not in nodes or kept_outer not in nodes:
+        return False
+    if state.in_edges(outer):
+        return False  # still written: its ordering still means what it says
+    ordering = [e for e in state.out_edges(outer) if e.data.is_empty()]
+    if not ordering or len(ordering) != state.out_degree(outer):
+        return False
+    for e in ordering:
+        # A fresh Memlet per edge -- never the object the old edge carried.
+        state.add_nedge(kept_outer, e.dst, dace.Memlet())
+        state.remove_edge(e)
+    if state.degree(outer) == 0:
+        state.remove_node(outer)
+    return True
+
+
 def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
     """
         Union scope-entering memlets relating to the same data node in a scope.
@@ -872,9 +907,17 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         remove_outer_connector(conn_to_remove)
         set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove)))
 
+        # The disjointness test above reasons about DATA. The dropped edge is also a program point:
+        # whatever it wrote to is where some later scope's happens-before may be anchored, and once
+        # nothing writes that node the constraint means nothing. Captured before the removal, since
+        # the removal is what strands it.
+        stranded, absorbed = edge_to_remove.dst, out_edge.dst
+
         # Check if dangling connectors have been created and remove them,
         # as well as their parent edges
         remove_edge_and_dangling_path(state, edge_to_remove)
+        if isinstance(scope_node, nd.ExitNode):
+            reanchor_stranded_ordering(state, stranded, absorbed, False)
 
         consolidated += 1
         # Inner side of the scope - remove and reconnect

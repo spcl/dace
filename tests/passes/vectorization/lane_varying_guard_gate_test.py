@@ -8,15 +8,18 @@
             tmp += data[j]
             on_values += 1
 
-Branch lowering if-converts the float accumulator (a dataflow write) but not the counter, whose
-write is an interstate symbol assignment inside a ``ConditionalBlock``. Widening then turns the
-guard's operand into a ``bool[W]`` buffer while the guard stays scalar control flow, so codegen
-emits ``if (<bool[8]>)`` -- an array decaying to a never-null pointer. Every lane took the branch,
+Branch lowering if-converted the float accumulator (a dataflow write) but not the counter, whose
+write is an interstate symbol assignment inside a ``ConditionalBlock``. Widening then turned the
+guard's operand into a ``bool[W]`` buffer while the guard stayed scalar control flow, so codegen
+emitted ``if (<bool[8]>)`` -- an array decaying to a never-null pointer. Every lane took the branch,
 ``on_values`` reached N instead of the masked count, and every bin came out scaled by exactly that
 factor while the SDFG validated and the numerator stayed correct.
-"""
-import copy
 
+``LowerInterstateConditionalAssignmentsToTasklets`` now demotes such a binding to a scalar before
+the two ITE passes look at the arm, so the counter becomes a dataflow write that gets its own
+per-lane select. Both accumulators are predicated and the kernel vectorizes correctly, which is
+what the end-to-end test below pins -- on the emitted selects AND on the numbers.
+"""
 import pytest
 
 import dace
@@ -63,11 +66,14 @@ def test_invariant_accepts_a_scalar_guard():
 
 @pytest.mark.skipif(not any(c['name'] == 'azimint_naive' for c in npbench.collect()),
                     reason='azimint_naive is not in the npbench corpus')
-def test_azimint_naive_masked_counter_is_not_vectorized_per_tile():
-    """End-to-end: the kernel that produced the miscompile must come back numerically correct.
+def test_azimint_naive_masked_counter_is_predicated_per_lane():
+    """End-to-end: the kernel that produced the miscompile must vectorize, and come back correct.
 
-    Without the gate the counter is widened away and every bin is scaled by N; the assertion below
-    is on the values, so it fails on numbers, not on structure.
+    Two assertions, because either alone is passable for the wrong reason. The NUMBERS catch a lost
+    predicate, but they also pass if the vectorizer simply refused the kernel and handed the input
+    back untouched. The STRUCTURE catches that: the kernel really is tiled, with a per-lane select
+    for EACH of the two masked accumulators. Before the demotion only the float accumulator got
+    one -- the counter reached its reduction buffer through an unmasked constant broadcast.
     """
     corpus = {c['name']: c for c in npbench.collect()}['azimint_naive']
     arrays, params = npbench.make_inputs(corpus)
@@ -75,20 +81,42 @@ def test_azimint_naive_masked_counter_is_not_vectorized_per_tile():
 
     sdfg = npbench.fresh_sdfg(corpus)
     canonicalize(sdfg, validate=True)
-    canon = copy.deepcopy(sdfg)
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=WIDTHS, target_isa='AVX512', remainder_strategy='full_mask',
                         branch_mode='merge')).apply_pass(sdfg, {})
 
     assert no_conditional_interstate_assign_on_widened_data(sdfg, WIDTHS) is None
-    # Refused, so the pass handed back the canonicalized input: no tile lib node was introduced.
-    tile_nodes = [
-        n for sd in sdfg.all_sdfgs_recursive() for state in sd.states() for n in state.nodes()
-        if isinstance(n, nodes.LibraryNode) and type(n).__name__.startswith('Tile')
-    ]
-    assert not tile_nodes, f"the refused kernel still carries tile nodes: {tile_nodes}"
-    assert sum(len(sd.states()) for sd in sdfg.all_sdfgs_recursive()) == sum(
-        len(sd.states()) for sd in canon.all_sdfgs_recursive()), 'the refusal did not restore the input'
+
+    # One reduction buffer per accumulator, and one per-lane select per accumulator. The counter
+    # used to reach its buffer through an unmasked constant broadcast and no select at all, so it
+    # is the SECOND select that this pins -- a count of one is the old miscompile.
+    assert len(_tile_nodes(sdfg, 'TileStore', into='_red_buf')) == 2, 'expected two reduction buffers'
+    selects = _tile_nodes(sdfg, 'TileITE')
+    assert len(selects) == 2, (f"expected a per-lane select for the float accumulator AND the counter, "
+                               f"got {[n.label for n in selects]}")
 
     got = npbench.run_outputs(corpus, sdfg, arrays, params)
     assert npbench.outputs_match(reference, got), "the masked counter lost its predicate"
+
+
+def _tile_nodes(sdfg: dace.SDFG, kind: str, into: str = None) -> list:
+    """Every tile library node of type ``kind``; with ``into``, only those writing that prefix.
+
+    Matched on the class name rather than by importing each tile node type: the test is about how
+    many selects and stores the pipeline emitted, not about their classes.
+    """
+    found = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for n in state.nodes():
+                if not (isinstance(n, nodes.LibraryNode) and type(n).__name__ == kind):
+                    continue
+                if into is not None and not any(e.data.data is not None and e.data.data.startswith(into)
+                                                for e in state.out_edges(n)):
+                    continue
+                found.append(n)
+    return found
+
+
+if __name__ == '__main__':
+    pytest.main([__file__, '-v'])
