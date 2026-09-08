@@ -657,3 +657,75 @@ def test_rmw_chain_in_map_body_drains_only_the_final_hop(k: int):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+def _build_flat_nsdfg_offset_chain(name: str) -> dace.SDFG:
+    """``a[0] = a[0] + 1; a[1] = a[1] * 2`` inside a NESTED SDFG under a parent Map.
+
+    The shape a hand-unrolled group canonicalizes to (TSVC s353): one access node of ``a``
+    carries statement 0's WRITE and statement 1's READ, and the two name DIFFERENT elements. The
+    nesting is what matters -- the bridge's state has no enclosing Map chain of its own, so the
+    pass takes its flat NSDFG-internal path.
+    """
+    inner = dace.SDFG(name + "_inner")
+    inner.add_array("a", (4, ), dace.float64, transient=False)
+    istate = inner.add_state("body", is_start_block=True)
+
+    a_in = istate.add_access("a")
+    bridge = istate.add_access("a")
+    a_out = istate.add_access("a")
+    t0 = istate.add_tasklet("t0", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    t1 = istate.add_tasklet("t1", {"_in"}, {"_out"}, "_out = _in * 2.0")
+    istate.add_edge(a_in, None, t0, "_in", dace.Memlet("a[0]"))
+    istate.add_edge(t0, "_out", bridge, None, dace.Memlet("a[0]"))
+    istate.add_edge(bridge, None, t1, "_in", dace.Memlet("a[1]"))
+    istate.add_edge(t1, "_out", a_out, None, dace.Memlet("a[1]"))
+
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", (4, ), dace.float64, transient=False)
+    state = sdfg.add_state("main", is_start_block=True)
+    me, mx = state.add_map("outer", dict(_i="0:1"))
+    nested = state.add_nested_sdfg(inner, {"a"}, {"a"})
+    state.add_memlet_path(state.add_access("a"), me, nested, dst_conn="a", memlet=dace.Memlet("a[0:4]"))
+    state.add_memlet_path(nested, mx, state.add_access("a"), src_conn="a", memlet=dace.Memlet("a[0:4]"))
+    sdfg.validate()
+    return sdfg
+
+
+def _unsourced_staged_scalars(sdfg: dace.SDFG):
+    """Staged transient scalars that a tasklet READS but nothing ever WRITES."""
+    unsourced = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for st in sd.states():
+            for node in st.nodes():
+                if not isinstance(node, dace.nodes.AccessNode):
+                    continue
+                desc = sd.arrays.get(node.data)
+                if desc is None or not desc.transient or not isinstance(desc, dt.Scalar):
+                    continue
+                reads = [e for e in st.out_edges(node) if not e.data.is_empty()]
+                writes = [e for e in st.in_edges(node) if not e.data.is_empty()]
+                if reads and not writes:
+                    unsourced.append(f"{sd.label}/{st.label}:{node.data}")
+    return unsourced
+
+
+def test_a_flat_nsdfg_read_only_subset_keeps_a_source():
+    """A read subset the bridge does not also write must still be sourced.
+
+    The enclosing-Map branch sources it from the outer access node; the flat NSDFG-internal path
+    published the writes and gave the reads nothing, so the staged scalar reached the compiler
+    DECLARED AND NEVER ASSIGNED -- every statement after the first in a hand-unrolled group read
+    uninitialized storage. TSVC s353 and reroll_gather both got exactly six of every seven
+    elements wrong that way, silently.
+    """
+    sdfg = _build_flat_nsdfg_offset_chain("flat_nsdfg_offset")
+    StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert not _unsourced_staged_scalars(sdfg), (f"staged scalars are read but never written: "
+                                                 f"{_unsourced_staged_scalars(sdfg)}")
+
+    a = numpy.array([1.0, 2.0, 3.0, 4.0])
+    sdfg(a=a)
+    numpy.testing.assert_allclose(a, [2.0, 4.0, 3.0, 4.0], rtol=RTOL, atol=ATOL)
