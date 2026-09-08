@@ -152,6 +152,19 @@ def strip_mined_pair(state: SDFGState, entry: nodes.MapEntry) -> Optional[nodes.
     return inner if str(inner.map.range[0][0]) == entry.map.params[0] else None
 
 
+def block_threads(entry: nodes.MapEntry, inner: nodes.MapEntry) -> Optional[int]:
+    """Threads per block of the strip-mined pair ``(entry, inner)``, or ``None`` when it is not one.
+
+    The outer step counts index units, the inner step says how many of them one thread covers, so
+    the thread count is their quotient. A remainder means the two maps are not a strip-mining of one
+    another and the pair is left alone.
+    """
+    outer_step, inner_step = as_int(entry.map.range[0][2]), as_int(inner.map.range[0][2])
+    if outer_step is None or inner_step is None or inner_step <= 0:
+        return None
+    return outer_step // inner_step if outer_step % inner_step == 0 else None
+
+
 def contended_accumulator(state: SDFGState, entry: nodes.MapEntry) -> bool:
     """``True`` iff every block of this kernel updates ONE address with a conflict resolution.
 
@@ -225,11 +238,14 @@ class GridStrideKernels(ppl.Pass):
         if enclosing_loops(sdfg, state, entry):
             return 0
         from dace.transformation.dataflow.gpu_grid_stride_tiling import GPUGridStridedTiling
-        # The block width is the outer map's step, because the pair above is a strip-mining by
-        # exactly one block. Handed straight back so the rewrite keeps the thread block it was
-        # given: block size is ``select_gpu_device_block_size``'s decision, and this pass only
+        # The block width in THREADS, which is what the tiling means by ``block_dim``: it emits a
+        # thread-block map of ``(0, block_dim - 1, 1)``. Strip-mining a map of step ``s`` by ``t``
+        # threads leaves the outer stepping ``s * t``, so the outer step alone over-reports the
+        # block by a factor of ``s`` -- 2048 threads for the step-4 ``s31111`` at 512, past the
+        # 1024 every device allows. Handed straight back so the rewrite keeps the thread block it
+        # was given: block size is ``select_gpu_device_block_size``'s decision, and this pass only
         # changes the grid.
-        block_dim = as_int(entry.map.range[0][2])
+        block_dim = block_threads(entry, inner)
         if block_dim is None:
             return 0
         where = {'outer_map_entry': entry, 'inner_map_entry': inner}
