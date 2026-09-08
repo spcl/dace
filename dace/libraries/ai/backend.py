@@ -82,9 +82,13 @@ RESPONSE_SCHEMA: Dict[str, Any] = {
             'description': 'Why the code is written this way, and any assumption it relies on.'
         },
         'language': {
-            'type': 'string',
+            'type':
+            'string',
             'enum': ['CPP', 'Python'],
-            'description': 'Language of the tasklet body. Use CPP unless the body is a trivial assignment.'
+            'description': ('Language of the tasklet body. Use CPP: the whole contract above -- code_global, '
+                            'include placement, state_fields, the ban on "return" -- describes a C++ tasklet, and '
+                            'anything but a bare Python assignment expression needs it. Choose Python only for a '
+                            'body that is a single assignment of a Python expression and needs none of those.')
         },
         'code': {
             'type': 'string',

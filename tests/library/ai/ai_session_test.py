@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Tests for the on-disk record of an expansion and for its progress printouts.
+Tests for the per-slot session record and for the progress printouts.
 
 An expansion is a paid, non-reproducible call whose result is baked into the SDFG, so what the
-model was told and what it answered has to survive the run -- especially when generated code passes
-the probe and then fails the real build, which is only explicable by comparing the probe's
-translation unit against what DaCe generates.
+model was told and what it answered has to survive the run -- both to explain a tasklet that passes
+the probe and then fails the real build, and because the next round of work on that slot resumes
+this conversation rather than starting a new one.
 """
 
 import json
@@ -17,7 +17,7 @@ import pytest
 
 import dace
 from dace import nodes
-from dace.libraries.ai import transcript
+from dace.libraries.ai import session as ai_session
 from dace.libraries.ai.backend import TaskletSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 from dace.libraries.ai.nodes import AINode
@@ -36,10 +36,10 @@ def _sdfg_and_node(name: str = 'double'):
     """
     Builds a one-element SDFG around an :class:`AINode`.
 
-    :param name: Name of the node, which also names the transcript directory.
+    :param name: Name of the node, which also names the session.
     :return: A tuple of (SDFG, state, node).
     """
-    sdfg = dace.SDFG('ai_transcript')
+    sdfg = dace.SDFG('ai_session')
     sdfg.add_array('A', [1], dace.float64)
     sdfg.add_array('B', [1], dace.float64)
     state = sdfg.add_state()
@@ -50,17 +50,17 @@ def _sdfg_and_node(name: str = 'double'):
     return sdfg, state, node
 
 
-def _only_transcript(root):
+def _only_session(root):
     """
-    Returns the single transcript directory written under a root.
+    Returns the single session directory written under a root.
 
-    :param root: The configured transcript directory.
-    :return: A tuple of (path, decoded transcript.json).
+    :param root: The configured session directory.
+    :return: A tuple of (path, decoded session.json).
     """
     entries = sorted(os.listdir(root))
     assert len(entries) == 1, entries
     path = os.path.join(root, entries[0])
-    with open(os.path.join(path, transcript.INDEX_NAME)) as fp:
+    with open(os.path.join(path, ai_session.INDEX_NAME)) as fp:
         return path, json.load(fp)
 
 
@@ -68,82 +68,88 @@ def test_a_successful_expansion_is_recorded_in_full(tmp_path):
     sdfg, state, node = _sdfg_and_node()
     spec = TaskletSpec(code=GOOD, notes='because', raw_response='{"code": "verbatim from the model"}')
 
-    with dace.config.set_temporary('ai', 'transcripts', value=True):
-        with dace.config.set_temporary('ai', 'transcript_dir', value=str(tmp_path)):
+    with dace.config.set_temporary('ai', 'sessions', value=True):
+        with dace.config.set_temporary('ai', 'session_dir', value=str(tmp_path)):
             with dace.config.set_temporary('ai', 'verify', value=False):
                 with stub_provider(spec) as provider:
                     node.expand(state, 'ai')
 
-    path, index = _only_transcript(tmp_path)
-    assert index['outcome'] == 'expanded'
-    assert index['node_type'] == 'AINode' and index['node'] == 'double'
-    assert index['sdfg'] == 'ai_transcript'
+    path, index = _only_session(tmp_path)
+    assert index['id'] == 'ai_session.double', 'the session id must be derived from the SDFG and node names'
+    assert index['node_type'] == 'AINode' and index['node_name'] == 'double'
+    assert len(index['rounds']) == 1 and index['rounds'][0]['outcome'] == 'expanded'
 
     # The prompts are kept verbatim, and separately from the index, so they can just be read
-    with open(os.path.join(path, 'system_prompt.md')) as fp:
+    with open(os.path.join(path, 'round_1', 'system_prompt.md')) as fp:
         assert fp.read() == provider.system
-    with open(os.path.join(path, 'attempt_1_prompt.md')) as fp:
+    with open(os.path.join(path, 'round_1', 'prompt.md')) as fp:
         assert fp.read() == provider.calls[0][0]['content']
 
     # The answer is stored exactly as the provider received it, not as it was re-serialized: a
     # response that parses into something unexpected is only explicable from the text that arrived
-    with open(os.path.join(path, 'attempt_1_answer.json')) as fp:
+    with open(os.path.join(path, 'round_1', 'answer.json')) as fp:
         assert fp.read() == spec.raw_response
-    assert index['attempts'][0]['answer']['code'] == GOOD
-    assert index['attempts'][0]['answer']['notes'] == 'because'
+    assert index['rounds'][0]['attempts'][0]['answer']['code'] == GOOD
+
+    # The accepted specification is kept whole, which is what makes rollback free
+    with open(os.path.join(path, 'round_1', 'tasklet.json')) as fp:
+        assert json.load(fp)['code'] == GOOD
+
+    # And the conversation is left in a state the next round can resume from
+    with open(os.path.join(path, ai_session.CONVERSATION_NAME)) as fp:
+        conversation = json.load(fp)
+    assert [m['role'] for m in conversation] == ['user', 'assistant']
 
 
 @needs_compiler
-def test_every_repair_round_is_recorded(tmp_path):
+def test_every_repair_attempt_is_recorded(tmp_path):
     sdfg, state, node = _sdfg_and_node()
 
-    with dace.config.set_temporary('ai', 'transcripts', value=True):
-        with dace.config.set_temporary('ai', 'transcript_dir', value=str(tmp_path)):
+    with dace.config.set_temporary('ai', 'sessions', value=True):
+        with dace.config.set_temporary('ai', 'session_dir', value=str(tmp_path)):
             with stub_provider_sequence([TaskletSpec(code=BAD), TaskletSpec(code=GOOD)]):
                 node.expand(state, 'ai')
 
-    path, index = _only_transcript(tmp_path)
-    assert index['outcome'] == 'expanded'
-    assert len(index['attempts']) == 2
-
-    failed, repaired = index['attempts']
-    assert failed['verification']['ok'] is False
-    assert 'this_symbol_does_not_exist' in failed['verification']['diagnostics']
-    assert repaired['verification']['ok'] is True
-    # The repair round records the prompt that carried the diagnostics back to the model
-    assert 'does not compile' in repaired['prompt']
+    path, index = _only_session(tmp_path)
+    # A probe failure is answered within the same round: it is one question, asked again
+    assert len(index['rounds']) == 1
+    attempts = index['rounds'][0]['attempts']
+    assert len(attempts) == 2
+    assert attempts[0]['verification']['ok'] is False
+    assert 'this_symbol_does_not_exist' in attempts[0]['verification']['diagnostics']
+    assert attempts[1]['verification']['ok'] is True
+    assert 'does not compile' in attempts[1]['prompt']
 
     # The probe's translation unit is what a tasklet that compiles here and fails in the real
     # build has to be compared against, so it is written out rather than only summarized
-    for attempt, code in ((1, BAD), (2, GOOD)):
-        with open(os.path.join(path, f'attempt_{attempt}_probe.cpp')) as fp:
-            assert code in fp.read()
-    assert os.path.exists(os.path.join(path, 'attempt_1_probe.log'))
+    with open(os.path.join(path, 'round_1', 'probe.cpp')) as fp:
+        assert BAD in fp.read()
+    assert os.path.exists(os.path.join(path, 'round_1', 'probe.log'))
 
 
 @needs_compiler
-def test_a_failed_expansion_keeps_its_transcript_and_says_where(tmp_path):
+def test_a_failed_expansion_keeps_its_session_and_says_where(tmp_path):
     sdfg, state, node = _sdfg_and_node()
 
-    with dace.config.set_temporary('ai', 'transcripts', value=True):
-        with dace.config.set_temporary('ai', 'transcript_dir', value=str(tmp_path)):
+    with dace.config.set_temporary('ai', 'sessions', value=True):
+        with dace.config.set_temporary('ai', 'session_dir', value=str(tmp_path)):
             with dace.config.set_temporary('ai', 'max_repair_attempts', value=0):
                 with stub_provider(TaskletSpec(code=BAD)):
                     with pytest.raises(AIExpansionError) as info:
                         node.expand(state, 'ai')
 
-    path, index = _only_transcript(tmp_path)
-    assert index['outcome'] == 'failed'
-    assert 'this_symbol_does_not_exist' in index['error']
+    path, index = _only_session(tmp_path)
+    assert index['rounds'][0]['outcome'] == 'failed'
+    assert 'this_symbol_does_not_exist' in index['rounds'][0]['error']
     # The run cost a model call, so the error must lead back to what it produced
     assert path in str(info.value)
 
 
-def test_transcripts_can_be_turned_off(tmp_path):
+def test_sessions_can_be_turned_off(tmp_path):
     sdfg, state, node = _sdfg_and_node()
 
-    with dace.config.set_temporary('ai', 'transcripts', value=False):
-        with dace.config.set_temporary('ai', 'transcript_dir', value=str(tmp_path)):
+    with dace.config.set_temporary('ai', 'sessions', value=False):
+        with dace.config.set_temporary('ai', 'session_dir', value=str(tmp_path)):
             with dace.config.set_temporary('ai', 'verify', value=False):
                 with stub_provider(TaskletSpec(code=GOOD)):
                     node.expand(state, 'ai')

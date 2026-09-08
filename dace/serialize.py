@@ -3,6 +3,7 @@ import copy
 from dataclasses import is_dataclass
 import enum
 import json
+import pydoc
 import numpy as np
 import sympy
 import warnings
@@ -143,6 +144,35 @@ def to_json(obj):
         return str(obj)
 
 
+def _resolve_serializer(typename, obj):
+    """
+    Finds the class that can deserialize ``obj``, importing its module if necessary.
+
+    Serializable types register themselves when their module is imported, which leaves anything
+    defined outside the modules ``import dace`` pulls in -- a node type from ``dace.libraries``, or
+    from a downstream project -- unresolvable in a fresh process. Such a type may record its own
+    location in a ``classpath`` field, and this resolves it the way
+    :meth:`dace.sdfg.nodes.LibraryNode.from_json` already resolves library nodes.
+
+    :param typename: The value of the object's ``type`` field.
+    :param obj: The serialized object, consulted for a ``classpath`` fallback.
+    :return: The registered serializer.
+    :raises KeyError: If the type is unknown and no importable ``classpath`` names it.
+    """
+    try:
+        return get_serializer(typename)
+    except KeyError:
+        classpath = obj.get('classpath') if isinstance(obj, dict) else None
+        if not classpath:
+            raise
+        located = pydoc.locate(classpath)
+        if located is None:
+            raise
+        # Importing the module registers the type, so look it up again rather than trusting the
+        # located object to be the serializer for this name
+        return get_serializer(typename)
+
+
 def from_json(obj, context=None, known_type=None):
     if not isinstance(obj, dict):
         if known_type is not None:
@@ -183,7 +213,7 @@ def from_json(obj, context=None, known_type=None):
 
     if t:
         try:
-            serializer = get_serializer(t)
+            serializer = _resolve_serializer(t, obj)
             if is_dataclass(serializer):
                 # Special case for dataclasses
                 field_values = {}

@@ -72,7 +72,10 @@ class ExpandAI(ExpandTransformation):
         :param node: The library node to replace.
         :param parent_state: The state containing the node.
         :param parent_sdfg: The SDFG containing the state.
-        :param kwargs: Ignored; accepted so that the expansion can be invoked like any other.
+        :param kwargs: ``feedback`` -- a critique of the code generated for this slot last time,
+                       which turns this expansion into the next round of an existing conversation;
+                       ``session`` -- the identifier of that conversation. Both are supplied by
+                       :func:`dace.libraries.ai.iterate.refine`. Anything else is ignored.
         :return: The generated tasklet.
         :raises AIExpansionError: If no tasklet could be generated.
         """
@@ -81,16 +84,19 @@ class ExpandAI(ExpandTransformation):
         from dace.config import Config
         from dace.libraries.ai import cache as ai_cache
         from dace.libraries.ai import environments as ai_environments
-        from dace.libraries.ai import prompts, transcript, verify
+        from dace.libraries.ai import prompts, session as ai_session, verify
         from dace.libraries.ai.backend import get_provider
         from dace.libraries.ai.context import collect_context
         from dace.libraries.ai.exceptions import AIExpansionError
 
+        feedback = kwargs.get('feedback') or ''
         described = f'{type(node).__name__} "{node.name}"'
         ctx = collect_context(node, parent_state, parent_sdfg)
-        record = transcript.begin(node, parent_state, parent_sdfg)
+        record = ai_session.begin(node, parent_state, parent_sdfg, session_id=kwargs.get('session'))
+        record.record_node(node.to_json(parent_state))
+        record.begin_round(feedback)
         if record.path:
-            _status(f'{described}: transcript in {record.path}')
+            _status(f'{described}: session {record.id}, round {record.number} ({record.path})')
 
         # Resolved on first use rather than up front, so that an expansion answered entirely from
         # the cache needs neither a provider SDK nor an API key
@@ -99,8 +105,17 @@ class ExpandAI(ExpandTransformation):
         record.record_system_prompt(system)
         _detail('system prompt', system)
 
-        prompt = prompts.build_user_prompt(ctx)
-        messages: List[Dict[str, str]] = [{'role': 'user', 'content': prompt}]
+        # A round with feedback continues the conversation: the model sees the code it wrote and
+        # the critique of it, rather than being asked the original question again from scratch.
+        if feedback and record.conversation:
+            messages: List[Dict[str, str]] = list(record.conversation)
+            prompt = prompts.build_feedback_prompt(feedback, prompts.build_user_prompt(ctx))
+        else:
+            messages = []
+            prompt = prompts.build_user_prompt(ctx)
+            if feedback:
+                prompt = prompts.build_feedback_prompt(feedback, prompt, standalone=True)
+        messages.append({'role': 'user', 'content': prompt})
 
         attempts = max(0, int(Config.get('ai', 'max_repair_attempts'))) + 1
         should_verify = Config.get_bool('ai', 'verify')
@@ -112,7 +127,11 @@ class ExpandAI(ExpandTransformation):
                 entry = record.begin_attempt(attempt + 1, prompt)
                 _detail('user prompt' if attempt == 0 else 'repair prompt', prompt)
 
-                cache_key = ai_cache.key(system, messages)
+                # Feedback changes the conversation and therefore the key on its own. A round with
+                # no feedback -- "just try again" -- would otherwise hash identically to the round
+                # before it and be handed back the very answer it is trying to replace.
+                salt = str(record.number) if not feedback and record.number > 1 else ''
+                cache_key = ai_cache.key(system, messages, salt=salt)
                 spec = ai_cache.lookup(cache_key)
                 cached = spec is not None
                 if cached:
@@ -158,21 +177,31 @@ class ExpandAI(ExpandTransformation):
             if record.path is None:
                 raise
             # Named in the message rather than only logged: the run that produced this cost a model
-            # call, and the transcript is the only copy of what it said.
+            # call, and the session is the only copy of what it said.
             if isinstance(e, AIExpansionError):
                 raise AIExpansionError(f'{e}\n\nThe full prompts and answers are in {record.path}') from e
             logger.warning('AI expansion of %s failed; the prompts and answers are in %s', described, record.path)
             raise
 
         cls.environments = list(environments)
-        record.record_outcome(
-            'expanded', environments=[env.full_class_path() for env in environments if hasattr(env, 'full_class_path')])
+        env_paths = [env.full_class_path() for env in environments if hasattr(env, 'full_class_path')]
+        record.record_outcome('expanded', spec=spec, environments=env_paths)
+
+        # Persist the conversation *including* this answer, so the next round resumes from a
+        # complete exchange rather than from a question with no reply
+        record.conversation = messages + [{'role': 'assistant', 'content': _echo(spec)}]
+        record.flush()
+
         _status(f'{described}: expanded into a tasklet' +
                 (f' using {len(environments)} environment(s)' if environments else ''))
-        return ExpandAI._make_tasklet(node, spec, ctx)
+        return ExpandAI._make_tasklet(node, spec, ctx, parent_state, record)
 
     @staticmethod
-    def _make_tasklet(node: nodes.LibraryNode, spec: Any, ctx: Any) -> nodes.Tasklet:
+    def _make_tasklet(node: nodes.LibraryNode,
+                      spec: Any,
+                      ctx: Any,
+                      state: SDFGState = None,
+                      record: Any = None) -> nodes.Tasklet:
         """
         Turns a generated specification into a tasklet.
 
@@ -184,11 +213,19 @@ class ExpandAI(ExpandTransformation):
         inference would turn a GPU operand the model was told to treat as a pointer into a value
         that the host loads directly out of device memory.
 
+        The library node itself is serialized onto the result. Expansion otherwise destroys it, and
+        with it every trace of what this code was asked to do -- which would leave no way to ask
+        for a better version short of rebuilding the SDFG.
+
         :param node: The library node being replaced.
         :param spec: The generated tasklet specification.
         :param ctx: The context the tasklet was generated for.
+        :param state: The state containing the node, needed to serialize it.
+        :param record: The session this round belongs to.
         :return: The tasklet that replaces the library node.
         """
+        from dace.libraries.ai.nodes import AITasklet
+
         inputs = dict(node.in_connectors)
         outputs = dict(node.out_connectors)
         for conn in ctx.connectors:
@@ -196,17 +233,21 @@ class ExpandAI(ExpandTransformation):
                 (inputs if conn.direction == 'in' else outputs)[conn.name] = conn.conntype
 
         language = dtypes.Language.Python if spec.language.upper() == 'PYTHON' else dtypes.Language.CPP
-        tasklet = nodes.Tasklet(node.name,
-                                inputs=inputs,
-                                outputs=outputs,
-                                code=spec.code,
-                                language=language,
-                                state_fields=list(spec.state_fields),
-                                code_global=spec.code_global,
-                                code_init=spec.code_init,
-                                code_exit=spec.code_exit,
-                                side_effects=spec.side_effects or None,
-                                ignored_symbols=set(spec.ignored_symbols))
+        tasklet = AITasklet(node.name,
+                            inputs=inputs,
+                            outputs=outputs,
+                            code=spec.code,
+                            language=language,
+                            state_fields=list(spec.state_fields),
+                            code_global=spec.code_global,
+                            code_init=spec.code_init,
+                            code_exit=spec.code_exit,
+                            side_effects=spec.side_effects or None,
+                            ignored_symbols=set(spec.ignored_symbols))
+        if record is not None and state is not None:
+            from dace.libraries.ai import iterate
+
+            iterate.stamp(tasklet, session=record.id, round_number=record.number, node_json=node.to_json(state))
         if spec.notes:
             logger.info('AI expansion of %s "%s": %s', type(node).__name__, node.name, spec.notes)
         return tasklet

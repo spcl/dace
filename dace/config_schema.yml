@@ -691,24 +691,25 @@ required:
                     Deleting the directory, or any file in it, only forces the question to be
                     asked again.
 
-            transcripts:
+            sessions:
                 type: bool
                 default: true
-                title: Record expansion transcripts
+                title: Record generation sessions
                 description: >
                     Write the prompts, the model's answers, and the source and diagnostics of every
-                    probe compilation to disk, one directory per expansion. An expansion is a paid
-                    and non-reproducible call whose result is baked into the SDFG, so the material
-                    that produced it is kept by default. Set DACE_debugprint=verbose to see the
-                    same material on the terminal as it happens.
+                    probe compilation to disk, one directory per generated slot. An expansion is a
+                    paid and non-reproducible call whose result is baked into the SDFG, so the
+                    material that produced it is kept by default. It is also what a later round
+                    resumes: refining a tasklet replays this conversation rather than starting
+                    over. Set DACE_debugprint=verbose to see the same material as it happens.
 
-            transcript_dir:
+            session_dir:
                 type: str
                 default: ''
-                title: Transcript directory
+                title: Session directory
                 description: >
-                    Where expansion transcripts are written. Defaults to ~/.dace/ai_transcripts
-                    when empty.
+                    Where generation sessions are written. Defaults to ~/.dace/ai_sessions when
+                    empty.
 
             extra_instructions:
                 type: str

@@ -36,10 +36,10 @@ two `///////////////////` delimiter comments. Consequences:
 Each connector of the library node is already declared as a C++ variable whose name is **exactly \
 the connector name**. There are two shapes, and the context below tells you which is which:
 
-- **Scalar connector** (`is_pointer: false`). An input is a value already loaded for you \
+- **Scalar connector** (shown below as `kind: scalar value`). An input is a value already loaded for you \
 (`float _a = A[i * N + j];`). An *output* is an **uninitialized local** (`float _c;`) that you \
 must assign; DaCe writes it back to memory after your body runs. Assign it on every path.
-- **Pointer connector** (`is_pointer: true`). An input is a pointer aimed at the **first element \
+- **Pointer connector** (shown below as `kind: pointer`). An input is a pointer aimed at the **first element \
 of its own memlet subset** -- every enclosing map index in that subset is already folded into the \
 offset. An *output* is likewise a pointer aimed at its destination -- write **through** it; there \
 is no write-back for pointer outputs, so anything you do not store is lost.
@@ -58,8 +58,9 @@ of a 64x64 row-major array has a row stride of 64, not 8.
 - Each connector is offset by **its own** subset. Two connectors of the same tasklet routinely \
 have different offsets, and the map indices may appear in a different order in each.
 
-Every connector below states `points at`, whether the view is contiguous, and an explicit \
-`address element (i0, ...) as` formula. Use that formula rather than deriving indexing yourself.
+Every **pointer** connector below states `points at`, whether the view is contiguous, and an \
+explicit `address element (i0, ...) as` formula. Use that formula rather than deriving indexing \
+yourself. A scalar connector carries none of those lines, because there is nothing to address.
 
 # Symbols
 
@@ -74,8 +75,11 @@ collisions in `ignored_symbols`.
 - `code_global` -- file scope of the generated translation unit, before any function. This is \
 where `#include` directives, helper functions, `__device__` helpers, and type definitions go. \
 System and library headers are always fine here -- put `#include <immintrin.h>` and the like in \
-this block, never in the body. It is emitted **once per generated tasklet node**, so any function \
-or type *you* define needs a unique name or `static` linkage to survive being emitted twice.
+this block, never in the body. Every tasklet's `code_global` is emitted into the **same** \
+translation unit, so a name you define can collide with one another generated tasklet defines. \
+Guard against it with a name unlikely to clash, or with an include guard \
+(`#ifndef MY_HELPER_H` / `#define` / `#endif`) around the definition. `static` does **not** help \
+here: it prevents collisions between separate translation units, and there is only one.
 - `code_init` -- the body of the program's `__dace_init_*` function, run once at program \
 initialization. `__state` is in scope here.
 - `code_exit` -- the body of `__dace_exit_*`, run once at finalization, for releasing whatever \
@@ -179,7 +183,8 @@ def _render_connector(conn: ConnectorInfo) -> str:
         ('container', f'{conn.container_kind} "{conn.data}"' if conn.data else None),
         ('container shape', ' x '.join(conn.shape) if conn.shape else None),
         ('container strides, in elements', ', '.join(conn.strides) if conn.strides else None),
-        ('storage', conn.storage),
+        ('storage',
+         f'{conn.storage} (resolved from {conn.storage_declared})' if conn.storage_declared else conn.storage),
         ('memlet subset', conn.subset),
         ('points at', points_at),
         ('view', layout),
@@ -329,3 +334,36 @@ def build_repair_prompt(stderr: str, command: str) -> str:
             f'Diagnostics:\n\n{textwrap.indent(stderr.strip(), "    ")}\n\n'
             'Fix the problem and return the complete JSON object again, including any parts that '
             'did not change. Do not remove functionality to make it compile.')
+
+
+def build_feedback_prompt(feedback: str, context: str, standalone: bool = False) -> str:
+    """
+    Builds the message that opens a new round on an already-generated tasklet.
+
+    The compile-and-repair loop and this are the same mechanism with different critics: one carries
+    a compiler's complaint, the other a person's. What differs is that a compile failure is
+    self-evidently a defect, while this feedback is about code that already works -- so the message
+    has to say that the previous answer was accepted and is being improved, not rejected, or the
+    model is liable to start over and lose what was already right.
+
+    :param feedback: The critique: a performance measurement, a missed requirement, a preference.
+    :param context: The rendered slot context, unchanged since the previous round or not.
+    :param standalone: True when the previous conversation could not be recovered, so the context
+                       has to be restated in full rather than referred back to.
+    :return: The rendered prompt.
+    """
+    if standalone:
+        return (f'{context}\n\n# Feedback on an earlier version\n\n'
+                'You have written code for this slot before. That version is not shown here -- the '
+                'conversation could not be recovered -- but this is the feedback on it:\n\n'
+                f'{textwrap.indent(feedback.strip(), "    ")}\n\n'
+                'Write the tasklet again, addressing that feedback. Return the complete JSON object.')
+
+    return ('The tasklet you wrote above was accepted and used. This is feedback on it:\n\n'
+            f'{textwrap.indent(feedback.strip(), "    ")}\n\n'
+            'Revise it accordingly. Keep everything that was already correct -- this is an '
+            'improvement to working code, not a fresh start, and losing behavior that the feedback '
+            'did not ask you to change is a regression. The slot has not moved; the context you '
+            'were given still holds. If the feedback asks for something the contract in the system '
+            'prompt forbids, say so in `notes` and do the closest thing that is allowed.\n\n'
+            'Return the complete JSON object, including any parts that did not change.')

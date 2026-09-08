@@ -53,7 +53,7 @@ def cache_dir(create: bool = False) -> str:
     return path
 
 
-def key(system: str, messages: List[Dict[str, str]]) -> str:
+def key(system: str, messages: List[Dict[str, str]], salt: str = '') -> str:
     """
     Computes the cache key of one request.
 
@@ -63,6 +63,9 @@ def key(system: str, messages: List[Dict[str, str]]) -> str:
 
     :param system: The system prompt.
     :param messages: The conversation being sent.
+    :param salt: Extra material that deliberately misses the cache. Used when the caller wants a
+                 *different* answer to a question it has already asked -- asking again with no new
+                 feedback would otherwise be handed back the very answer it is trying to replace.
     :return: A hexadecimal key.
     """
     material = json.dumps(
@@ -72,6 +75,7 @@ def key(system: str, messages: List[Dict[str, str]]) -> str:
             'effort': Config.get('ai', 'effort'),
             'system': system,
             'messages': messages,
+            'salt': salt,
         },
         sort_keys=True)
     return hashlib.sha256(material.encode('utf-8')).hexdigest()
