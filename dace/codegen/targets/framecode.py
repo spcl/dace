@@ -283,11 +283,19 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
 
 ''', sdfg)
 
+        # Global code is hand-written expansion C++ exactly as a native tasklet body is -- a device
+        # library expansion puts its launch wrapper here rather than in the tasklet, because the
+        # ``<<<>>>`` is device-compiler syntax -- so it needs the same re-spelling. Without it the
+        # ``dace::`` names in a wrapper reach ``dace.codegen.cpf.verify`` unlowered and the whole
+        # rendering is refused for a symbol CPF does define.
         for sd in sdfg.all_sdfgs_recursive():
-            if None in sd.global_code:
-                global_stream.write(codeblock_to_cpp(sd.global_code[None]), sd)
-            if backend in sd.global_code:
-                global_stream.write(codeblock_to_cpp(sd.global_code[backend]), sd)
+            for key in (None, backend):
+                if key not in sd.global_code:
+                    continue
+                code = codeblock_to_cpp(sd.global_code[key])
+                if standalone:
+                    code = cpf_lowering.rewrite_native_code(code)
+                global_stream.write(code, sd)
 
     def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Generate the header of the frame-code. Code exists in a separate
@@ -520,6 +528,11 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         # itself. One with initialization code, a state field or a link dependency is a different
         # thing: it needs a handshake or a library that a single self-contained unit does not have.
         for env in self.environments:
+            # An environment CPF supplies for itself is not a hole in the rendering: see
+            # :data:`~dace.cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS` for what each one is and what
+            # replaces it.
+            if cpf_lowering.device() and env.__name__ in cpf_lowering.DEVICE_PROVIDED_ENVIRONMENTS:
+                continue
             needs = [
                 kind for kind, value in (('initialization code', getattr(env, 'init_code', '')),
                                          ('finalization code', getattr(env, 'finalize_code', '')),

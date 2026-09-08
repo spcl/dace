@@ -12,10 +12,12 @@ Run as a script for the full canon / auto-opt comparison tables:
 """
 import os
 
-# Pin a deterministic, single-threaded run before DaCe/OpenMP initialize, so the
-# value-preserving assertions don't flake on thread races (established at OMP=1).
-# Set at import time, before the compiled kernels load.
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+# No thread pin here: ``tests/conftest.py`` has already set OMP_NUM_THREADS (to at least four,
+# deliberately, so a race in a generated kernel is visible), which made the ``setdefault("1")``
+# that used to stand here a no-op under pytest -- and had it ever fired it would have hidden the
+# very failures this file exists to catch. BandCarriedLoops gave each thread a whole stencil sweep
+# with no barrier between the body's two maps, and adi / jacobi_1d / jacobi_2d came out wrong by
+# ~1e-2 relative at four threads while staying bit-exact at one.
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")

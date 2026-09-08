@@ -63,6 +63,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             DemoteKernelInternalArraysToScalars)
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
         from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
+        from dace.transformation.passes.gpu_specialization.grid_stride_kernels import GridStrideKernels
         # Order constraints (why each pass sits where it does):
         #   * ``NestedGPUDeviceMapLowering`` first: flattens nested ``GPU_Device`` maps into one
         #     kernel; every downstream pass assumes one-level kernels.
@@ -73,6 +74,9 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #     way must not then be given a second one.
         #   * ``AddThreadBlockMaps`` after the transient hoist in ``InsertExplicitGPUGlobalMemoryCopies``:
         #     tiling first leaks the inner-map outer-loop symbol into host-side ``cudaMalloc`` sizes.
+        #   * ``GridStrideKernels`` immediately after ``AddThreadBlockMaps``: the grid-stride tiling
+        #     matches a ``(GPU_Device, GPU_ThreadBlock)`` pair, which is exactly what that pass just
+        #     built, and it reads the block extent from it rather than choosing a new one.
         #   * ``DemoteKernelInternalArraysToScalars`` after structure is final and before
         #     ``ReinferConnectorTypes``: it scalarizes length-1 arrays and resets connectors, which
         #     re-inference then re-derives as scalar references.
@@ -103,6 +107,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             LiftSharedOutOfNestedSDFG(),
             PromoteWarpTiles(),
             AddThreadBlockMaps(),
+            GridStrideKernels(),
             DemoteKernelInternalArraysToScalars(),
             ReinferConnectorTypes(),
         ])

@@ -165,6 +165,17 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             if param_mapping is None:
                 return False
 
+            # Condition: every producer parameter is SOLVED from the consumer's read. Fusion re-executes
+            # the producer body once per consumer iteration, so a parameter the read cannot pin down is
+            # one the copied body still names with nothing left to bind it -- the fused graph then reads
+            # a free symbol (or, worse, the same name a surviving sibling map defines, which validates
+            # and computes the wrong element). A producer whose body is a nested SDFG is exactly this
+            # case: it writes its whole output range ``t[0:N]`` from every iteration, which ``solve``
+            # answers with a constant-interval entry that binds no parameter at all.
+            solved = {str(param) for param in param_mapping if not isinstance(param, tuple)}
+            if not solved.issuperset(first_map_entry.map.params):
+                return False
+
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
@@ -518,8 +529,22 @@ def advanced_replace(subgraph: StateSubgraphView, s: str, s_: str) -> None:
             params = [s_ if p == s else p for p in node.map.params]
             node.map.params = params
         elif isinstance(node, nodes.NestedSDFG):
+            # A nested SDFG is its own symbol namespace, joined to this one only by ``symbol_mapping``
+            # (callee name -> caller expression). ``subgraph.replace`` already rewrote the values, which
+            # is the whole of an outer rename; descending renames the CALLEE's symbol instead, so the key
+            # binding it has to move with it -- and substituting an EXPRESSION (a solved index such as
+            # ``_i0 -> j - 1``) has no callee name to rename, so it must not descend at all.
+            if not dtypes.validate_name(s_):
+                continue
             for nsdfg in node.sdfg.all_sdfgs_recursive():
                 nsdfg.replace(s, s_)
+                nested_node = nsdfg.parent_nsdfg_node
+                if nested_node is not None and s in nested_node.symbol_mapping:
+                    # Rebuilt, not popped: mapping order is the order codegen defines the symbols in.
+                    nested_node.symbol_mapping = {
+                        (s_ if k == s else k): v
+                        for k, v in nested_node.symbol_mapping.items()
+                    }
                 for cfg in nsdfg.all_control_flow_regions():
                     cfg.replace(s, s_)
                     for nblock in cfg.nodes():

@@ -42,6 +42,16 @@ def _trivial_cond_check_cached(code_string: str, val: bool) -> bool:
         tokens = re.split(r'(\s+|[()\[\]])', code_string)
         replacements = {"True": "1", "False": "0", "and": "*", "or": "+"}
         rewritten = " ".join(replacements.get(t.strip(), t.strip()) for t in tokens).strip()
+        # Cheap screen before the sledgehammer. ``evaluate`` below only ever returns a verdict for a
+        # symbol-FREE expression, and ``sympy.simplify`` of a relational routes through
+        # ``equals``/``is_constant``, which samples numerically via mpmath PSLQ -- on CLOUDSC that is
+        # seconds spent proving that ``zqx_index_9 < yrecldp_rlmin`` is not a constant, once per
+        # truth value per distinct guard. ``expand`` settles the cancellations an SDFG guard can
+        # actually contain (polynomials over integer symbols, which sympy's own constructors already
+        # fold most of) for a fraction of the cost; whatever it leaves holding a free symbol cannot
+        # come back a literal, so there is nothing for the expensive path to find.
+        if sympy.expand(symbolic.pystr_to_symbolic(rewritten)).free_symbols:
+            return False
         simplified = dace.symbolic.SymExpr(rewritten).simplify()
         # symstr, not sympy's printer: this string is re-parsed by SymExpr, so it must stay in
         # DaCe's own vocabulary -- and sympy raises outright on int_floor/int_ceil, which the

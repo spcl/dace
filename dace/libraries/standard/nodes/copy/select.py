@@ -43,7 +43,6 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
         return 'Tasklet' if single_elt else 'MappedTasklet'
 
     # GPU_Shared: SharedMemoryCollective, unless thread-level (Register endpoint or in a map).
-    # TODO: replace dace::CopyND with a vectorized 128-bit collective load.
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
         thread_level = (inp.storage == dtypes.StorageType.Register or out.storage == dtypes.StorageType.Register
                         or is_in_scope(parent_state.sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock]))

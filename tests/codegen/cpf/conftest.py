@@ -129,6 +129,30 @@ BANNED_PATTERNS_C = BANNED_PATTERNS + (
     (re.compile(r'\bdelete\b'), 'C++ delete-expression'),
 )
 
+#: What a DEVICE rendering must not contain. The two entries dropped from :data:`BANNED_PATTERNS`
+#: are dropped because the unit DEFINES them rather than borrowing them: the ``DACE_*`` annotation
+#: macros and the state struct carrying the stream both come out of CPF's own device preamble. A
+#: ``dace/`` header or a ``dace::`` symbol still says the unit needs the runtime, and both are still
+#: refused. Stated here as well as in ``dace.codegen.cpf.BANNED_DEVICE`` for the same reason the
+#: other two tables are: this file is the acceptance spec, written from outside.
+BANNED_PATTERNS_DEVICE = tuple(entry for entry in BANNED_PATTERNS
+                               if entry[1] not in ('DaCe preprocessor macro', 'DaCe state-struct dereference'))
+
+
+def assert_standalone_device(code: str, label: str = 'cpf') -> None:
+    """Assert a DEVICE rendering carries none of the banned tokens.
+
+    Separate from :func:`assert_standalone` rather than another ``language`` value, because the
+    unqualified-runtime check does not apply: a device unit legitimately calls ``int_ceil`` and the
+    other names in :data:`UNQUALIFIED_RUNTIME_FUNCTIONS` out of CPF's own inline definitions, which
+    reach it through the same preamble.
+    """
+    for pattern, meaning in BANNED_PATTERNS_DEVICE:
+        match = pattern.search(code)
+        assert match is None, (f'{label}: CPF device output contains {meaning} -- {match.group(0)!r} at offset '
+                               f'{match.start()}\n{_context(code, match.start())}')
+    assert_no_unqualified_runtime_calls(code, label)
+
 
 def host_compiler(language: str = 'c++') -> str:
     """The compiler CPF output for ``language`` is built with.

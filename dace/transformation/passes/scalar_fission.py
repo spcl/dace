@@ -250,6 +250,14 @@ class ScalarFission(ppl.Pass):
 
         The tree STOPS at another AccessNode of ``old``: a staging copy puts two separate
         accesses of the same container in one tree, versioned separately by the shadow analysis.
+
+        ``_is_data_src`` is re-derived from the endpoints, not carried over. It records which SIDE
+        of the copy ``data`` names, and versioning a staging copy is exactly the case where the two
+        sides stop sharing a name: the outer access becomes ``c2_1`` and the inner ``c2_0``, so a
+        flag inherited from the shared name now points at the other container. ``align_memlet``
+        reads it to decide a boundary memlet is already aligned, and a stale one makes memlet
+        propagation stamp the INNER name onto the edge that leaves the OUTER access node -- an edge
+        naming neither of its endpoints, which validation rejects.
         """
         for pe in state.memlet_tree(edge):
             if pe.data is None or pe.data.data != old:
@@ -257,6 +265,10 @@ class ScalarFission(ppl.Pass):
             if any(n is not node and isinstance(n, nd.AccessNode) and n.data == old for n in (pe.src, pe.dst)):
                 continue
             pe.data.data = new
+            if isinstance(pe.src, nd.AccessNode) and pe.src.data == new:
+                pe.data._is_data_src = True
+            elif isinstance(pe.dst, nd.AccessNode) and pe.dst.data == new:
+                pe.data._is_data_src = False
 
     # ------------------------------------------------------------------ #
     #  Privatization of undominated (None-scope) loop-local scalars

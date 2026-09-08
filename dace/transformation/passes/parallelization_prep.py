@@ -41,6 +41,8 @@ DEFAULT_PEEL_LIMIT = Config.get('optimizer', 'canonicalization', 'peel_limit')
 #: and the equivalent helper-function spellings -- so it folds a wrap-around access
 #: regardless of which representation introduced it.
 _MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'Modulo', 'mod', 'floor_mod'})
+#: "not built yet", distinct from a built-but-absent value.
+_UNBUILT = object()
 
 
 def _loops(sdfg: SDFG):
@@ -1620,7 +1622,6 @@ class BestEffortLoopPeeling(ppl.Pass):
           by construction, with no dependence proven about it, so counting it scores every split
           that merely carves out a singleton as a win -- and a split that adds a residual sequential
           loop while parallelizing nothing would then be accepted."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.analysis import loop_analysis
         from dace.transformation.passes.constant_propagation import ConstantPropagation
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
@@ -1630,6 +1631,10 @@ class BestEffortLoopPeeling(ppl.Pass):
         SymbolPropagation().apply_pass(candidate, {})
         ConstantPropagation().apply_pass(candidate, {})
         UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(candidate, {})
+        # Built on the first loop that actually needs a probe, then shared by the rest (see
+        # :meth:`_loop_to_map_prober`). Nothing here APPLIES a lift, so the graph the context
+        # describes never changes under it.
+        prober = _UNBUILT
         count = 0
         for loop in _loops(candidate):
             if loop_analysis.loop_provably_at_most_one_iteration(loop):
@@ -1642,14 +1647,54 @@ class BestEffortLoopPeeling(ppl.Pass):
             if verdicts is not None and loop.label in verdicts:
                 count += verdicts[loop.label]
                 continue
+            if prober is _UNBUILT:
+                prober = self._loop_to_map_prober(candidate)
             try:
-                mappable = bool(LoopToMap.can_be_applied_to(candidate, loop=loop))
+                mappable = bool(prober(loop))
             except Exception:
                 mappable = False
             if verdicts is not None:
                 verdicts[loop.label] = mappable
             count += mappable
         return count
+
+    @staticmethod
+    def _loop_to_map_prober(candidate: SDFG):
+        """``loop -> LoopToMap.can_be_applied(loop)`` over ``candidate``, sharing ONE
+        :class:`~dace.transformation.interstate.loop_to_map.LiftContext` across every call.
+
+        ``LoopToMap.can_be_applied_to`` builds a fresh match per call, so each probe re-derives the
+        same whole-SDFG facts: the access-state index, the block topological order, ``sdfg``'s free
+        symbols, and every block's own free-symbol set. :meth:`_mappable_loop_count` scores EVERY
+        loop of the isolated nest -- 106 of them for CloudSC's biggest -- so that is the same walk a
+        hundred times over one unchanging graph. ``lift_context`` is the interface ``LoopToMap``
+        documents for exactly this ("a pass probing many loops of one SDFG builds this ONCE"), the
+        way ``parallelize_loops`` already drives its sweep; the verdict is the one the context-free
+        path returns, only without the repeated derivation.
+
+        Valid for the whole count because the count APPLIES nothing -- a context is invalidated by a
+        lift, and there is none here. Falls back to the per-call form if the context cannot be built,
+        so a graph the analysis chokes on is scored exactly as before rather than not at all."""
+        from dace.transformation.interstate.loop_to_map import LoopToMap, build_lift_context, build_lift_invariants
+        try:
+            ctx = build_lift_context(candidate, build_lift_invariants(candidate))
+        except Exception:
+            return lambda loop: LoopToMap.can_be_applied_to(candidate, loop=loop)
+        # One instance, reused: ``setup_match`` overwrites every field a probe reads.
+        xform = LoopToMap()
+        xform.lift_context = ctx
+
+        def probe(loop: LoopRegion) -> bool:
+            graph = loop.parent_graph
+            # ``override=True`` with the loop OBJECT resolves the match by identity, skipping the
+            # two linear scans (``graph.node_id`` and ``cfg_list.index``) a per-call match pays.
+            cfg_id = ctx.cfg_ids.get(graph)
+            if cfg_id is None:
+                cfg_id = graph.cfg_id  # a region the context predates; fall back to the scan
+            xform.setup_match(candidate, cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+            return xform.can_be_applied(graph, 0, candidate, permissive=False)
+
+        return probe
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Unblock stuck loops, splitting or peeling each at a point taken from its body.

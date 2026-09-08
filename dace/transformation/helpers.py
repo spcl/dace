@@ -760,12 +760,16 @@ def nest_state_subgraph(sdfg: SDFG,
                 continue
             edge.data.data = new_edge.data.data
             # A whole-array / scalar access carries ``subset is None`` (a legal memlet
-            # representation, e.g. a bare scalar accumulator ``Memlet('delta')``). There is
-            # nothing to re-base into the nested SDFG's coordinate space in that case -- the
-            # nested descriptor is the whole array too -- so skip the offset instead of
-            # dereferencing ``None`` (the ``subset is not None`` guard is the idiom used for
-            # the same case throughout ``propagation.py`` / the memlet helpers below).
-            if not full_data and edge.data.subset is not None:
+            # representation, e.g. a bare scalar accumulator ``Memlet('delta')``). Spell it out
+            # against the NESTED descriptor, which is the whole array too, so there is nothing to
+            # re-base -- and every dimension is stated, which is what an edge landing on an access
+            # node has to carry. Outside a nested SDFG the bare form only ever sat between a tasklet
+            # and a scope node, where validation does not look at the subset at all; nesting moves it
+            # onto an access node, and a ``None`` there is dereferenced rather than tolerated.
+            if edge.data.subset is None:
+                edge.data.subset = subsets.Range.from_array(nsdfg.arrays[edge.data.data])
+                continue
+            if not full_data:
                 edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 

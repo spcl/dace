@@ -113,17 +113,24 @@ class MarkConstInit(ppl.Pass):
         return found
 
     def _inlinable_containers(self, sdfg: SDFG) -> Set[str]:
-        """The containers ``InlineTaskletConnectors`` will actually inline, cached per SDFG.
+        """The containers ``InlineTaskletConnectors`` will actually inline, cached per SDFG tree.
+
+        Planned over the ROOT, because that is the SDFG the inlining pass is applied to and its plan
+        is decided per container NAME over the whole tree: a name a nested SDFG could inline on its
+        own is still left classic when a same-named container elsewhere in the tree cannot be. Asking
+        the nested SDFG instead promises an inlining the pass then declines, and the caller skips a
+        declaration on the strength of that promise -- the name reaches the compiler undeclared.
 
         The plan walks the whole graph, and the classifier asks about one writer at a time, so
-        computing it per question would make this pass quadratic in the tasklet count. The cache is
-        keyed by identity and lives for one ``apply_pass``: the classifier only reads the graph, and
-        the marks it writes are descriptor flags the plan does not depend on.
+        computing it per question would make this pass quadratic in the tasklet count. The cache
+        lives for one ``apply_pass``: the classifier only reads the graph, and the marks it writes
+        are descriptor flags the plan does not depend on.
         """
-        cached = self._inlinable_cache.get(id(sdfg))
+        root = sdfg.root_sdfg
+        cached = self._inlinable_cache.get(id(root))
         if cached is None:
-            _plans, cached = InlineTaskletConnectors().plan(sdfg)
-            self._inlinable_cache[id(sdfg)] = cached
+            _plans, cached = InlineTaskletConnectors().plan(root)
+            self._inlinable_cache[id(root)] = cached
         return cached
 
     def _classify_probe(self, probe: SDFG) -> PayingTargets:
@@ -621,13 +628,13 @@ class MarkConstInit(ppl.Pass):
                                     if isinstance(inner.src, nd.Tasklet) and inner.src_conn is not None:
                                         if not any(oe.src_conn == inner.src_conn for oe in state.out_edges(inner.src)):
                                             inner.src.remove_out_connector(inner.src_conn)
-                                    self._prune_dead(state, inner.src)
+                                    self._prune_dead(state, inner.src, scope_anchors)
                                 if in_conn in src.in_connectors:
                                     src.remove_in_connector(in_conn)
-                    self._prune_dead(state, src)
+                    self._prune_dead(state, src, scope_anchors)
                     if isinstance(src, nd.MapExit):
                         for end in [n for n in list(state.nodes()) if isinstance(n, nd.MapEntry) and n.map is src.map]:
-                            self._prune_dead(state, end)
+                            self._prune_dead(state, end, scope_anchors)
                 if node not in state.nodes():
                     continue
                 if state.out_degree(node) > 0:
@@ -637,28 +644,40 @@ class MarkConstInit(ppl.Pass):
                 elif state.in_degree(node) == 0:
                     state.remove_node(node)
 
-    def _prune_dead(self, state: SDFGState, node: nd.Node) -> None:
+    def _prune_dead(self, state: SDFGState, node: nd.Node, anchors: Optional[OrderedSet] = None) -> None:
         """Recursively removes a dead producer node: a consumerless tasklet, a map scope whose last
         data output was taken, and any access node either orphans.
 
         The map case exists because a UNIFORM fill is now classified where it stands
         (:meth:`_uniform_fill_value`) rather than being unrolled into tasklets first -- so the dead
-        producer left behind by the promotion is a whole scope, not a single node."""
+        producer left behind by the promotion is a whole scope, not a single node.
+
+        :param anchors: collects the nodes whose ordering edges held a removed scope, so the caller
+                        can re-attach them to the data the promotion left behind.
+        """
         if node not in state.nodes():
             return
         if isinstance(node, (nd.MapEntry, nd.MapExit)):
-            # Both ends of an emptied scope, taken together. Removing the write took the exit's
-            # connectors and pruning took the body, which leaves the entry and exit with no edges
-            # at all -- and an isolated scope node fails validation. Matched by the shared ``map``
-            # object rather than by ``entry_node``, whose scope lookup no longer resolves once the
-            # two ends are disconnected. Only FULLY isolated nodes are touched, so a scope still
-            # carrying anything is left alone.
-            if state.degree(node) != 0:
+            # Both ends of an emptied scope, taken TOGETHER: an entry without its exit is a scope
+            # that never closes, and ``scope_dict`` refuses to walk it. Isolation is the wrong test
+            # for deadness here -- an enclosing map holds the entry by an empty ordering edge, so
+            # the exit reaches degree zero while the entry never does, and testing each end alone
+            # takes the exit and leaves the entry behind.
+            #
+            # Matched by the shared ``map`` object rather than by ``entry_node``, whose scope lookup
+            # no longer resolves once the two ends are disconnected.
+            ends = [n for n in state.nodes() if isinstance(n, (nd.MapEntry, nd.MapExit)) and n.map is node.map]
+            incident = [e for end in ends for e in state.all_edges(end)]
+            # Data still crossing an end, or a body node still sitting between them, means alive.
+            if any(not e.data.is_empty() for e in incident):
                 return
-            for end in [
-                    n for n in list(state.nodes())
-                    if isinstance(n, (nd.MapEntry, nd.MapExit)) and n.map is node.map and state.degree(n) == 0
-            ]:
+            if any(e.dst not in ends for end in ends if isinstance(end, nd.MapEntry) for e in state.out_edges(end)):
+                return
+            if any(e.src not in ends for end in ends if isinstance(end, nd.MapExit) for e in state.in_edges(end)):
+                return
+            if anchors is not None:
+                anchors.update(e.src for e in incident if e.dst in ends and e.src not in ends)
+            for end in ends:
                 state.remove_node(end)
         elif isinstance(node, nd.Tasklet):
             if state.out_degree(node) != 0:
@@ -666,7 +685,7 @@ class MarkConstInit(ppl.Pass):
             external_srcs = [ie.src for ie in state.in_edges(node)]
             state.remove_node(node)
             for src in external_srcs:
-                self._prune_dead(state, src)
+                self._prune_dead(state, src, anchors)
         elif isinstance(node, nd.AccessNode):
             if (state.in_degree(node) + state.out_degree(node)) == 0:
                 state.remove_node(node)

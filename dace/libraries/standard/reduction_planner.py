@@ -299,14 +299,18 @@ def get_reduction_schedule(in_array: Array,
     else:
         # we are reducing a non-contiguous dimension
 
+        # One lane per output value, so a block covers a whole warp's worth of outputs: the expansion
+        # indexes both the shared-memory buffer and the reduced dimension as ``_g * warp_size + _b``,
+        # which runs past a 32-wide tile on a 64-lane (HIP) warp. The other 512 / warp_size threads of
+        # the block cooperate on each output.
         schedule.grid = shape[:axes[0]]  # add all leading dimensions into the grid
-        grid_dim = symbolic.int_ceil(shape[contiguous_dimension], 32)  # each block computes 32 output values
+        grid_dim = symbolic.int_ceil(shape[contiguous_dimension], warp_size)
         schedule.grid.append(grid_dim)
 
-        schedule.block = [16, 32]  # we use 16 threads per output value (could be any value in {1, ... , 32})
+        schedule.block = [512 // warp_size, warp_size]
 
-        schedule.shared_mem_size = 32  # each block uses 32 shared memory locations
-        schedule.sequential = [shape[axes[0]]]  # the 16 threads sum up the whole axis
+        schedule.shared_mem_size = warp_size  # one shared memory location per output value
+        schedule.sequential = [shape[axes[0]]]  # the schedule.block[0] threads sum up the whole axis
 
         if use_mini_warps and (shape[contiguous_dimension] <= 16) == True:
             # we turn on mini_warps

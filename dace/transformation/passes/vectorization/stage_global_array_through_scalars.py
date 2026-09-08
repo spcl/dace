@@ -483,6 +483,23 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             # any other (an isolated access node fails ``no_isolated_access_nodes``).
             bridge_is_out_connector = bool(write_keys - superseded_keys)
 
+        if not entries and read_only_keys:
+            # A read subset this bridge does not also WRITE still needs a source. The
+            # enclosing-chain branch above gives it one (``outer_source -> entries -> scalar``);
+            # the flat NSDFG-internal case gave it none at all, and the scalar reached the
+            # compiler declared and never assigned. Every statement after the first in a
+            # hand-unrolled group read uninitialized storage that way -- TSVC s353's
+            # ``a[i+1] .. a[i+6]``, whose group leader ``a[i]`` was the one read that happened to
+            # be staged as a tile.
+            #
+            # The bridge IS this array's node in this state, so reading it back is exactly what
+            # the original ``a -> tasklet`` edge did. A read-only key is by construction not one
+            # of this bridge's write keys, so the publish edges added above cannot feed it a
+            # value it should not see.
+            for k in sorted(read_only_keys):
+                state.add_edge(bridge, None, scalar_nodes[k], None,
+                               Memlet(data=array_name, subset=reads_by_key[k]["subset"]))
+
         # W x R cross-product dep edges (empty memlets) -- enforce
         # all-writes-before-all-reads ordering for cross-subset hops.
         # Shared scalars don't need dep edges (natural serialization

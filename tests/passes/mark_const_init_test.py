@@ -845,3 +845,108 @@ def test_a_brace_free_prediction_is_never_broken_by_the_inliner():
         if said_yes:
             assert label in actually_inlined, (f'{label}: predicted brace-free, but the inliner left it classic -- '
                                                'the declaration MarkConstInit skipped is never replaced')
+
+
+def _fill_map_inside_an_outer_map_sdfg(name: str = 'held_fill') -> dace.SDFG:
+    """A constant fill map whose entry is held by an ENCLOSING map's ordering edge.
+
+    This is what inlining a nested SDFG into a map scope leaves behind (``lift_transients``), and
+    the shape that separates the two ends of the fill scope: the exit reaches degree zero when the
+    promotion takes its write, while the entry never does.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('B', [8, 4], dace.float64)
+    sdfg.add_array('t', [8], dace.float64, transient=True)
+    state = sdfg.add_state('block')
+
+    outer_me, outer_mx = state.add_map('outer', {'jb': '0:4'})
+    fill_me, fill_mx = state.add_map('fill', {'k': '0:8'})
+    seed = state.add_tasklet('set', {}, {'o'}, 'o = 1.0')
+    t_acc = state.add_access('t')
+    b_write = state.add_write('B')
+
+    state.add_nedge(outer_me, fill_me, dace.Memlet())
+    state.add_nedge(fill_me, seed, dace.Memlet())
+    state.add_edge(seed, 'o', fill_mx, 'IN_t', dace.Memlet('t[k]'))
+    fill_mx.add_in_connector('IN_t')
+    fill_mx.add_out_connector('OUT_t')
+    state.add_edge(fill_mx, 'OUT_t', t_acc, None, dace.Memlet('t[0:8]'))
+    state.add_edge(t_acc, None, outer_mx, 'IN_B', dace.Memlet(data='t', subset='0:8', other_subset='0:8, jb'))
+    outer_mx.add_in_connector('IN_B')
+    outer_mx.add_out_connector('OUT_B')
+    state.add_edge(outer_mx, 'OUT_B', b_write, None, dace.Memlet('B[0:8, 0:4]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_promoting_a_held_fill_removes_both_ends_of_its_scope():
+    """Taking a fill's write must remove its map entry too, not only its exit.
+
+    Deadness was tested per node as full isolation, which the two ends do not reach together: the
+    enclosing map holds the entry by an empty ordering edge, so the exit hits degree zero and the
+    entry never does. Taking only the exit leaves a scope that never closes -- ``scope_dict``
+    refuses to walk it, and every SDFG holding one fails validation on the next pass that asks.
+    """
+    sdfg = _fill_map_inside_an_outer_map_sdfg()
+    _run(sdfg)
+    sdfg.validate()
+
+    state = sdfg.states()[0]
+    entries = {n.map for n in state.nodes() if isinstance(n, nd.MapEntry)}
+    exits = {n.map for n in state.nodes() if isinstance(n, nd.MapExit)}
+    assert entries == exits, f'unpaired scope ends: {sorted(m.label for m in entries ^ exits)}'
+
+    out = np.zeros((8, 4), dtype=np.float64, order='F')
+    sdfg(B=out)
+    assert np.array_equal(out, np.ones((8, 4))), f'got {out}'
+
+
+def test_the_container_rule_is_read_over_the_root_not_the_nested_sdfg():
+    """The verdict the mark spends is the ROOT's, so it must be asked of the root.
+
+    ``InlineTaskletConnectors.plan`` walks ``all_nodes_recursive`` and keys its answer on the
+    container NAME alone, and the pass that spends the verdict runs on the root -- so a name a
+    nested SDFG shares with its parent is decided once, for both. Asking the nested SDFG instead
+    answers a narrower question: the toucher that keeps the container classic lives upstairs and is
+    invisible from down here, the write is marked ``const_runtime`` on a promise the root never
+    keeps, ``allocate_array`` skips the declaration, and the name reaches the compiler undeclared
+    (``a_min`` in every outlined translation unit of npbench's ``azimint_hist``).
+    """
+    inner = dace.SDFG('inner_unit')
+    inner.add_array('a', [8], dace.float64)
+    inner.add_array('out', [8], dace.float64)
+    inner.add_scalar('seed', dace.float64, transient=True)
+    istate = inner.add_state('body')
+    copy = istate.add_tasklet('take_seed', {'_in'}, {'_out'}, '_out = _in')
+    istate.add_edge(istate.add_read('a'), None, copy, '_in', dace.Memlet('a[0]'))
+    istate.add_edge(copy, '_out', istate.add_access('seed'), None, dace.Memlet('seed[0]'))
+    reader = istate.add_tasklet('use_seed', {'_s'}, {'_o'}, '_o = _s + 1.0')
+    istate.add_edge(istate.add_read('seed'), None, reader, '_s', dace.Memlet('seed[0]'))
+    istate.add_edge(reader, '_o', istate.add_write('out'), None, dace.Memlet('out[0]'))
+
+    sdfg = dace.SDFG('root_owns_the_verdict')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    state = sdfg.add_state('main')
+    nested = state.add_nested_sdfg(inner, {'a'}, {'out'})
+    state.add_edge(state.add_read('a'), None, nested, 'a', dace.Memlet('a[0:8]'))
+    state.add_edge(nested, 'out', state.add_write('out'), None, dace.Memlet('out[0:8]'))
+
+    # The toucher that keeps ``a`` classic, in the PARENT: a whole-array connector is not the
+    # single-element access ``_connector_access`` requires.
+    keeps_a_classic = state.add_tasklet('whole_array', {'_in'}, {'_out'}, '_out = _in[1]')
+    state.add_edge(state.add_read('a'), None, keeps_a_classic, '_in', dace.Memlet('a[0:8]'))
+    state.add_edge(keeps_a_classic, '_out', state.add_write('out'), None, dace.Memlet('out[1]'))
+
+    from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+
+    root_safe = InlineTaskletConnectors().plan(sdfg)[1]
+    nested_safe = InlineTaskletConnectors().plan(inner)[1]
+    assert 'a' in nested_safe and 'a' not in root_safe, (
+        'fixture no longer discriminates: the two plans must disagree about ``a``')
+
+    marker = MarkConstInit()
+    Pipeline([marker]).apply_pass(sdfg, {})
+    assert marker._inlinable_containers(inner) == root_safe, (
+        'the nested SDFG was classified against its own plan, which cannot see the parent toucher '
+        'that keeps ``a`` classic for the whole root')

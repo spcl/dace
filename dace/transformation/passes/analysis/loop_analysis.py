@@ -327,6 +327,17 @@ def affine_in_iv(
             cand_scale_free = {str(s) for s in cand_scale.free_symbols}
             cand_offset_free = {str(s) for s in cand_offset.free_symbols}
             if cand_scale_free & iv_names or iv_name in cand_offset_free or cand_offset_free & iv_names:
+                # An IV the expression mentions inside a function application -- an array subscript
+                # ``ztp1[i - 1, j - 1]``, an ``int_floor`` -- differentiates to an UNEVALUATED
+                # ``Subs``/``Derivative`` node, which is sympy's way of saying it has no derivative
+                # to give. ``simplify`` cannot turn that into an IV-free scale (its ``doit`` only
+                # rewrites ``Subs(Derivative(f(x), x), x, a)`` to ``Derivative(f(a), a)``, still
+                # naming the IV), so the refusal above is already final and the second round is dead
+                # work on the most expensive input there is. CLOUDSC: 615 of these reach the round
+                # and not one ever produced a split ``expand`` had not already refused.
+                if normalize is sympy.expand and (cand_scale.has(sympy.Subs, sympy.Derivative)
+                                                  or cand_offset.has(sympy.Subs, sympy.Derivative)):
+                    break
                 continue
             scale, offset = cand_scale, cand_offset
             screened_by_expand = normalize is sympy.expand

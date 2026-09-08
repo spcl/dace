@@ -160,9 +160,11 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     sdfg = getattr(mod, kernel).to_sdfg(simplify=True)
+    forced = 0
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, nodes.NestedSDFG):
             n.no_inline = True
+            forced += 1
     total_helpers = 0
     with use_implementation(EXPERIMENTAL):
         for co in sdfg.generate_code():
@@ -174,9 +176,12 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
             total_helpers += sum(counts.values())
             dups = {k: v for k, v in counts.items() if v > 1}
             assert not dups, f"{kernel}/{co.name}: duplicate index helpers in one TU: {dups}"
-    # Guard against a silently-vacuous run: a solver kernel that lowers to BLAS must emit >=1 helper,
-    # so a regex that stopped matching (e.g. the emitted integer ctype changed) fails loudly here.
-    assert total_helpers > 0, f"{kernel}: no ``<name>_idx`` helpers matched -- HELPER_DEF regex is stale"
+    # Guard against a silently-vacuous run: a regex that stopped matching (e.g. the emitted integer
+    # ctype changed) would make this test pass on anything. Held to the kernels that actually have a
+    # boundary to duplicate across -- ``lu`` simplifies to a single flat SDFG over one array, so it
+    # forces no nested SDFG, emits no helper, and has no ODR question to answer.
+    if forced:
+        assert total_helpers > 0, f"{kernel}: no ``<name>_idx`` helpers matched -- HELPER_DEF regex is stale"
 
 
 def test_pass_returns_rename_count():

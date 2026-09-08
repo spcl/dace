@@ -144,9 +144,18 @@ class SymbolSSA(ppl.Pass):
                 defs_by_symbol[name].append(edge)
 
         owner = region if isinstance(region, SDFG) else region.sdfg
+        if not any(len(defs) > 1 for defs in defs_by_symbol.values()):
+            return renamed
+        # A descriptor's extent symbols live in ``owner.arrays``, which belongs to no block:
+        # ``ControlFlowBlock.replace`` rewrites the block's own graph and leaves the shape naming the
+        # old symbol. Versioning a definition that reaches such a use therefore strands the extent on
+        # a name only some other definition still writes.
+        descriptor_symbols = {str(sym) for desc in owner.arrays.values() for sym in desc.used_symbols(True)}
         for name, defs in defs_by_symbol.items():
             if len(defs) < 2:
                 continue  # a single definition is already its own version
+            if name in descriptor_symbols:
+                continue
             reaching = self.reaching_definitions(region, name)
             blocked = OrderedSet()
 

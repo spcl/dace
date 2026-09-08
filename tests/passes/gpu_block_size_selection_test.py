@@ -300,4 +300,8 @@ def test_the_contiguous_dimension_is_never_narrower_than_a_warp():
                            (['i', 'j'], [(0, 1023, 1), (0, 7, 1)]), (['i', 'j'], [(0, 7, 1), (0, 1023, 1)])):
         block = pick_gpu_block_size(make_device_map(params, ranges))
         assert block[0] % WARP == 0, f'{block} puts {block[0]} lanes on x, which is not whole warps'
-        assert 256 <= block[0] * block[1] * block[2] <= 512, f'{block} leaves the occupancy band'
+        # The band is stated in WARPS, like the table it checks: four warps for a plain block,
+        # eight for a skewed one. A thread count says 256-512 on a 64-lane wavefront and
+        # 128-256 on a 32-lane warp -- the same occupancy, read as two different contracts.
+        warps = (block[0] * block[1] * block[2]) / WARP
+        assert 4 <= warps <= 8, f'{block} is {warps} warps, outside the occupancy band'
