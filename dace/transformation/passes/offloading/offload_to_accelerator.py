@@ -1337,6 +1337,15 @@ class OffloadToAccelerator(ppl.Pass):
         gpu_set: OrderedSet[str] = OrderedSet()
         cpu_set: OrderedSet[str] = OrderedSet()
 
+        # An interstate assignment is host code, and only a LoopRegion's or a ConditionalBlock's own
+        # meta reads are reported by the blocks below -- a plain state-to-state edge is reported by
+        # nobody. Left unclaimed, a taskloop hands the array down to its body as device memory that
+        # the body then reads from the host (npbench spmv's ``start = A_row[i]``).
+        for edge in cfr.edges():
+            for data_name in edge.data.used_arrays(sdfg.arrays):
+                if self._is_array(data_name, sdfg):
+                    cpu_set.add(data_name)
+
         for block in cfr.bfs_nodes():
             g, c = self.get_data_locations_of_cfblock(sdfg, block)
             gpu_set |= g
