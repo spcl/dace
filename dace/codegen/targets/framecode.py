@@ -31,6 +31,27 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
     return func
 
 
+def _interstate_assigned_symbols(sdfg: SDFG) -> Set[str]:
+    """
+    The symbols ``sdfg`` gives a value to itself, on one of its own interstate
+    edges or as a loop variable, rather than receiving one at entry.
+
+    Such a symbol holds nothing where the SDFG's transients are allocated, so a
+    transient whose shape depends on it cannot be allocated at SDFG scope.
+
+    :param sdfg: The SDFG to inspect. Nested SDFGs are not descended into --
+                 each has its own symbol scope.
+    :return: The set of symbol names assigned inside ``sdfg``.
+    """
+    assigned = set()
+    for edge in sdfg.all_interstate_edges():
+        assigned |= set(edge.data.assignments.keys())
+    for cfg in sdfg.all_control_flow_regions():
+        if isinstance(cfg, LoopRegion) and cfg.loop_variable:
+            assigned.add(cfg.loop_variable)
+    return assigned
+
+
 class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
@@ -68,7 +89,14 @@ class DaCeCodeGenerator(object):
                 result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
 
                 parent_constants = self._symbols_and_constants[nsdfg.parent_sdfg.cfg_id]
-                result |= parent_constants
+                # A symbol this nested SDFG assigns on an interstate edge of
+                # its own shadows whatever the parent holds under that name,
+                # and only takes its value once the state machine reaches that
+                # edge. Inheriting the parent's entry for it would make a
+                # transient whose shape depends on it look allocatable at this
+                # SDFG's entry -- emitting the ``new[]`` above the assignment,
+                # against a symbol not yet declared there.
+                result |= parent_constants - _interstate_assigned_symbols(nsdfg)
 
                 # check for constant inputs
                 for edge in state.in_edges(nested):

@@ -106,6 +106,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._nviews_deferred_removal: dict[int, list[tn.NView]] = {}
         """"Mapping of id(SDFG) -> list of NView nodes to be removed once we exit this nested SDFG."""
 
+        self._staged_scope_copies: set[nodes.AccessNode] = set()
+        """Transient access nodes :meth:`_copy_out_of_scope` interposed between
+        a copy inside a dataflow scope and the scope exit. They must survive as
+        nodes -- see the collapse guard in :meth:`_connect_scope_exit`."""
+
         self._own_nested_sdfgs: list[tuple[SDFGState, nodes.NestedSDFG]] = []
         """Nested SDFG nodes THIS conversion created (map bodies, SDFG calls),
         with the state holding each. Their outer memlets are placeholders to be
@@ -637,13 +642,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 assert isinstance(access_node, nodes.AccessNode)
                 edges = self._current_state.in_edges(access_node)
                 if (self._current_state.out_degree(access_node) == 0 and edges
+                        and access_node not in self._staged_scope_copies
                         and not any(isinstance(edge.src, nodes.EntryNode) for edge in edges)):
                     # this access_node is not used for anything else.
                     # let's remove it and add a direct connection instead --
-                    # unless it is fed by the scope entry itself (a copy staged
-                    # by _copy_out_of_scope), since collapsing that leaves an
-                    # entry-to-exit data edge, which code generation cannot
-                    # dispatch: neither end is a data node to copy between.
+                    # unless it is a copy staged by _copy_out_of_scope. Fed by
+                    # the scope entry, collapsing it leaves an entry-to-exit
+                    # data edge, which code generation cannot dispatch: neither
+                    # end is a data node to copy between. Fed by a node inside
+                    # the scope (a view of the enclosing map's parameters, say)
+                    # it is the staging buffer that RESHAPES the copy, so the
+                    # incoming memlet describes the source and the staging
+                    # subset, not the target the exit connector writes.
                     #
                     # All of its writers, not just a single one: one node may
                     # write several elements of one container through separate
@@ -1048,6 +1058,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                                                             source_descriptor.dtype,
                                                             find_new_name=True)
         staged = self._current_state.add_access(staged_name)
+        self._staged_scope_copies.add(staged)
         staged_subset = subsets.Range.from_array(staged_descriptor)
 
         read = Memlet(data=source_name, subset=node.memlet.subset, other_subset=copy.deepcopy(staged_subset))
@@ -1136,6 +1147,63 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if existing is not None and (existing.source != node.source or str(existing.memlet) != str(node.memlet)):
             raise NotImplementedError(f"Re-binding view '{node.target}' to a different subset is not supported yet.")
         self._view_bindings[node.target] = node
+        self._materialize_scope_local_view(node, sdfg)
+
+    def _scope_parameters(self) -> Set[str]:
+        """The symbols the currently open dataflow scopes define."""
+        parameters: Set[str] = set()
+        for scope_node, _ in self._dataflow_stack:
+            if isinstance(scope_node, nodes.MapEntry):
+                parameters.update(scope_node.map.params)
+            elif isinstance(scope_node, nodes.ConsumeEntry):
+                if scope_node.consume.pe_index:
+                    parameters.add(scope_node.consume.pe_index)
+        return parameters
+
+    def _materialize_scope_local_view(self, node: tn.ViewNode, sdfg: SDFG) -> None:
+        """
+        Place a view whose subset depends on an enclosing map's parameters
+        inside that map's scope, rather than leaving it to the state-level
+        post-pass.
+
+        ``tmp = A[:, i, j]`` inside ``dace.map[0:3, 0:4]`` names a *different*
+        window per iteration, so its viewing edge is only meaningful where
+        ``i`` and ``j`` exist. :func:`_connect_view_edges` attaches bindings at
+        state level -- right for a scope-invariant view, but for this one it
+        emits ``tmp = &A[4 * i + j]`` ahead of the map, referring to parameters
+        that are not in scope yet. So build the access node here, inside the
+        scope, and route the viewed SOURCE in through the entry's pass-through
+        connectors; the post-pass then skips it, since it is no longer a
+        state-level node.
+
+        :param node: The view binding being lowered.
+        :param sdfg: The SDFG the enclosing scope lives in.
+        """
+        if not self._dataflow_stack:
+            return
+        scope_node, _ = self._dataflow_stack[-1]
+        if not isinstance(scope_node, nodes.EntryNode):
+            return
+        parameters = self._scope_parameters()
+        if not parameters or not ({str(s) for s in node.memlet.free_symbols} & parameters):
+            return
+        if node.target not in sdfg.arrays or node.source not in sdfg.arrays:
+            return
+
+        cache_key = (self._current_state, id(self._ctx.current_scope))
+        cache = self._ctx.access_cache.setdefault(cache_key, {})
+        if node.target in cache:
+            # Already materialized (a re-binding to the same subset).
+            return
+
+        out_connector = f"{PREFIX_PASSTHROUGH_OUT}{node.source}"
+        if out_connector not in scope_node.out_connectors:
+            added_in = scope_node.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{node.source}")
+            added_out = scope_node.add_out_connector(out_connector)
+            assert added_in and added_out
+        view_node = self._current_state.add_access(node.target)
+        self._current_state.add_edge(scope_node, out_connector, view_node, 'views', copy.deepcopy(node.memlet))
+        cache[node.target] = view_node
 
     def visit_NView(self, node: tn.NView, sdfg: SDFG) -> None:
         # Basic working principle:
