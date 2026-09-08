@@ -1287,6 +1287,29 @@ class CPPUnparser:
         "Or": ast.Or,
     }
 
+    # Bitwise and shift functions arriving as a CALL rather than an operator. ``dace.symbolic``
+    # models every Python bitwise operator as a function (``a & b`` parses to ``__bitwise_and``),
+    # and a producer that writes a tasklet body with ``str()`` instead of ``symstr`` keeps that
+    # call spelling -- ``__bitwise_and(c, 1)``. C++ has no such function, so the body reached the
+    # compiler as a call to an undeclared name. Both spellings are listed: the ``__``-prefixed
+    # variants come from a parsed operator, the bare ones from the frontend's own replacements.
+    callbinops = {
+        "bitwise_and": ast.BitAnd,
+        "__bitwise_and": ast.BitAnd,
+        "bitwise_or": ast.BitOr,
+        "__bitwise_or": ast.BitOr,
+        "bitwise_xor": ast.BitXor,
+        "__bitwise_xor": ast.BitXor,
+        "left_shift": ast.LShift,
+        "__left_shift": ast.LShift,
+        "right_shift": ast.RShift,
+        "__right_shift": ast.RShift,
+    }
+    callunaryops = {
+        "bitwise_invert": ast.Invert,
+        "__bitwise_invert": ast.Invert,
+    }
+
     # First-grade numeric typecast functions (``int32(x)`` / ``float64(x)``
     # ...) -- the canonical spelling the Fortran frontend emits for a kind
     # coercion, used uniformly in tasklet bodies AND symbolic expressions
@@ -1337,6 +1360,15 @@ class CPPUnparser:
             elif t.func.id in self.callbools:
                 op = self.callbools[t.func.id]()
                 self.dispatch(ast.BoolOp(op=op, values=t.args))
+                return
+            elif t.func.id in self.callbinops and len(t.args) == 2:
+                # Dispatched as the operator rather than written out here, so it picks up
+                # everything ``_BinOp`` does -- the parentheses, and the literal typing that a
+                # class-typed operand needs.
+                self.dispatch(ast.BinOp(left=t.args[0], op=self.callbinops[t.func.id](), right=t.args[1]))
+                return
+            elif t.func.id in self.callunaryops and len(t.args) == 1:
+                self.dispatch(ast.UnaryOp(op=self.callunaryops[t.func.id](), operand=t.args[0]))
                 return
             elif t.func.id in _typecast_func_to_cpp:
                 # A bare DaCe typeclass cast (``float64(x)`` / ``int32(x)``):
