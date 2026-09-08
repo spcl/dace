@@ -536,8 +536,10 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> 
     bridge). Per user example 2026-06-12: all non-scalar non-gather dims widened.
     """
     import dace.data as _dd
-    for _state, nsdfg_node, _map_entry in _tile_tagged_bodies(sdfg, K):
+    from dace.transformation.passes.vectorization.utils.tile_access import data_is_lane_indexed
+    for _state, nsdfg_node, map_entry in _tile_tagged_bodies(sdfg, K):
         inner_sdfg = nsdfg_node.sdfg
+        iter_vars = tuple(map_entry.map.params[-K:])
         for name, desc in inner_sdfg.arrays.items():
             if not desc.transient:
                 continue
@@ -557,6 +559,11 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> 
                     continue
             except Exception:  # noqa: BLE001
                 pass
+            # A transient the memlets index BY a tile iter-var carries the lane axis in its own
+            # shape, so ``widths`` is not the shape to expect -- WidenAccesses deliberately leaves
+            # it alone, and flagging it here would contradict the pass this invariant guards.
+            if data_is_lane_indexed(inner_sdfg, name, iter_vars):
+                continue
             return (f"{inner_sdfg.name}: lane-dep transient ``{name}`` has shape {shape} "
                     f"!= widths {tuple(widths)} (expected widened or Scalar bridge)")
     return None

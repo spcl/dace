@@ -44,7 +44,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
                                                                             no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, build_symbol_definition_map,
-                                                                        classify_tile_access)
+                                                                        classify_tile_access, data_is_lane_indexed)
 from dace.ordered import OrderedSet
 
 
@@ -226,8 +226,16 @@ class WidenAccesses(ppl.Pass):
                 if not isinstance(an, AccessNode):
                     continue
                 desc = inner_sdfg.arrays.get(an.data)
-                if desc is None or (desc.transient and not isinstance(desc, dd.View)):
+                if desc is None:
                     continue
+                # A View is an ALIAS, and a LANE-INDEXED transient carries the lane axis in its own
+                # shape (CloudSC's ``zsolqa[jm, jn, jl]``): both are widened in place here rather
+                # than descriptor-swapped, so both are seeded like a non-transient. Skipping them
+                # left their memlets one element wide while their consumers became tiles -- the
+                # ``kind_a='Tile', kind_b='Scalar'`` refusal in ``_AssertTileOpsLowered``.
+                if desc.transient and not isinstance(desc, dd.View):
+                    if not data_is_lane_indexed(inner_sdfg, an.data, iter_vars):
+                        continue
                 if an.data in lane_dep:
                     continue
                 for edge in list(state.out_edges(an)) + list(state.in_edges(an)):
@@ -477,6 +485,7 @@ class WidenAccesses(ppl.Pass):
         state_defs: Dict[int, Dict[str, Any]] = {}
         edge_lane_dep: Dict[int, bool] = {}
         narrowed: Dict[str, bool] = {}
+        lane_indexed: Dict[str, bool] = {}
         changed = True
         max_iters = 32
         while changed and max_iters > 0:
@@ -520,6 +529,8 @@ class WidenAccesses(ppl.Pass):
                     desc = inner_sdfg.arrays.get(dst_name)
                     if desc is None or not desc.transient or isinstance(desc, dd.View):
                         continue
+                    if self._accesses_bind_a_tile_var(inner_sdfg, dst_name, iter_vars, lane_indexed):
+                        continue  # lane axis is in the data: step 2 widened its memlets in place
                     if dst_name in index_symbols:
                         continue  # index/address symbol -> stays scalar
                     if self._is_narrowed_constant_transient(inner_sdfg, dst_name, narrowed):
@@ -549,6 +560,8 @@ class WidenAccesses(ppl.Pass):
                             desc = inner_sdfg.arrays.get(nm)
                             if desc is None or not desc.transient or isinstance(desc, dd.View):
                                 continue
+                            if self._accesses_bind_a_tile_var(inner_sdfg, nm, iter_vars, lane_indexed):
+                                continue  # lane axis is in the data: step 2 widened its memlets
                             if nm in index_symbols:
                                 continue  # index/address symbol -> stays scalar
                             if self._is_narrowed_constant_transient(inner_sdfg, nm, narrowed):
@@ -651,6 +664,15 @@ class WidenAccesses(ppl.Pass):
         return not all(k == PerDimKind.CONSTANT for k in record.per_dim_kind)
 
     # --- Step 4: widen lane-dep transient descriptors -----------------------
+    def _accesses_bind_a_tile_var(self, inner_sdfg: SDFG, name: str, iter_vars: Tuple[str, ...],
+                                  memo: Dict[str, bool]) -> bool:
+        """:func:`data_is_lane_indexed`, memoized for the duration of one fixpoint."""
+        hit = memo.get(name)
+        if hit is None:
+            hit = data_is_lane_indexed(inner_sdfg, name, iter_vars)
+            memo[name] = hit
+        return hit
+
     @staticmethod
     def _is_widenable(desc) -> bool:
         """``Scalar`` or any length-1 ``Array`` transient -> widenable to tile.

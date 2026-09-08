@@ -62,6 +62,7 @@ import sympy
 from dace import symbolic
 from dace.sdfg import SDFG, nodes
 from dace.subsets import Range
+from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
 
 
@@ -1163,3 +1164,48 @@ def classify_tile_access(subset: Range,
         diagonal=diagonal,
         transpose=transpose,
     )
+
+
+def data_is_lane_indexed(inner_sdfg: SDFG, name: str, iter_vars: Sequence[str]) -> bool:
+    """True iff some memlet indexes ``name`` BY a tile iter-var.
+
+    Such a transient carries the lane axis in its OWN indexing -- CloudSC's ``zsolqa[jm, jn, jl]``,
+    shape ``(nclv, nclv, klon)`` -- so it holds a whole lane DIMENSION, not one value per lane. It
+    is already the shape the tile machinery reads: widening it to ``(W, ...)`` would add a second
+    lane axis. A genuine per-lane buffer (a sliding window ``tmp[0:2] = a[i:i+2]``) indexes ``tmp``
+    by constants and is NOT lane-indexed by this test.
+
+    :param inner_sdfg: the body SDFG whose memlets are inspected.
+    :param name: the data name to test.
+    :param iter_vars: the K tile iter-var names.
+    :returns: whether the lane axis is part of the data's own indexing.
+    """
+    only = set(iter_vars)
+    for state in inner_sdfg.states():
+        for edge in state.edges():
+            if edge.data is None or edge.data.subset is None:
+                continue
+            if edge.data.data == name:
+                sub = edge.data.subset
+            else:
+                # An AN-to-AN copy holds one endpoint's region in ``subset`` and the other's in
+                # ``other_subset``, and WHICH end ``subset`` names is the memlet's orientation, not
+                # the endpoint being asked about. A copy built from the source names the SOURCE, so
+                # matching on ``edge.data.data`` alone finds no access at all to a lane-indexed
+                # transient that a source-oriented copy writes -- ``WidenAccesses`` then refuses it
+                # as an unwidenable per-lane buffer (CloudSC's ``loop_body_zsolqa``, shape
+                # ``(5, 5, klon)``, written by exactly such a copy). ``an_side_subset`` resolves the
+                # orientation and returns this name's own side.
+                sub = None
+                for endpoint in (edge.src, edge.dst):
+                    if isinstance(endpoint, nodes.AccessNode) and endpoint.data == name:
+                        try:
+                            sub = an_side_subset(edge, endpoint, inner_sdfg, state)
+                        except Exception:  # noqa: BLE001 -- helper may refuse exotic edges
+                            sub = None
+                        break
+                if sub is None:
+                    continue
+            if only & {str(s) for s in sub.free_symbols}:
+                return True
+    return False
