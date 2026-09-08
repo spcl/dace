@@ -18,6 +18,7 @@ from dace.frontend.python.nextgen.canonical.passes import default_passes
 from dace.frontend.python.nextgen.common import (CanonicalViolationError, FrontendError, TreeVerificationError,
                                                  UnsupportedFeatureError)
 from dace.frontend.python.nextgen.lowering.emitter import TreeEmitter
+from dace.frontend.python.nextgen.lowering.mechanisms.dead_temporaries import drop_unread_symbolic_temporaries
 from dace.frontend.python.nextgen.lowering.mechanisms.return_elision import elide_return_copies
 from dace.frontend.python.nextgen.lowering.mechanisms.thread_local import serialize_thread_local_scopes
 from dace.frontend.python.nextgen.lowering.parse_cache import warm_nested_parses
@@ -111,6 +112,10 @@ def build_schedule_tree(name: str,
     # instead of being copied into it. Done on the finished tree, where every
     # use of the container is visible.
     elide_return_copies(root)
+
+    # A recorded compile-time scalar every consumer took the record of instead
+    # of reading back leaves a tasklet computing a number no one looks at.
+    drop_unread_symbolic_temporaries(root, context.symbolic_scalar_values)
 
     # Per-thread storage makes every map that touches it single-threaded. Also
     # done on the finished tree: an inline ``@ StorageType`` hint moves a
