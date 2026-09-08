@@ -2956,7 +2956,9 @@ def specialize_symbols(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, st
                 node.symbol_mapping.pop(name, None)
 
 
-def symbol_demotes_to_transient_scalar(sdfg: 'dace.SDFG', symbol_str: str) -> bool:
+def symbol_demotes_to_transient_scalar(sdfg: 'dace.SDFG',
+                                       symbol_str: str,
+                                       free_symbols: Optional[Set[str]] = None) -> bool:
     """Whether demoting ``symbol_str`` would produce a TRANSIENT scalar of ``sdfg``.
 
     False for a symbol that enters ``sdfg`` from outside -- a top-level argument (shape,
@@ -2968,14 +2970,43 @@ def symbol_demotes_to_transient_scalar(sdfg: 'dace.SDFG', symbol_str: str) -> bo
 
     :param sdfg: The SDFG holding the symbol.
     :param symbol_str: Name of the symbol.
+    :param free_symbols: ``sdfg.free_symbols``, when the caller already holds it for an UNMUTATED
+        span. That property is uncached and re-parses every interstate assignment, so asking it per
+        candidate symbol re-walks the whole SDFG per symbol. ``None`` reads it here, as before.
     :return: ``True`` if the demoted scalar would be transient.
     """
     if sdfg.parent_nsdfg_node is None:
-        return symbol_str not in sdfg.free_symbols
+        return symbol_str not in (sdfg.free_symbols if free_symbols is None else free_symbols)
     return symbol_str not in sdfg.parent_nsdfg_node.symbol_mapping
 
 
-def symbol_carries_graph_structure(sdfg: 'dace.SDFG', symbol_str: str) -> bool:
+def structural_symbols(sdfg: 'dace.SDFG') -> Set[str]:
+    """Every symbol :func:`symbol_carries_graph_structure` would refuse, collected in ONE scan.
+
+    That predicate walks the whole SDFG per symbol, so a selection loop over many candidates is
+    quadratic in the graph. Build this once for a span during which ``sdfg`` is NOT mutated and
+    answer every candidate by membership instead.
+
+    :param sdfg: The SDFG to scan, at the depth :func:`demote_symbol_to_scalar` rewrites (this
+        SDFG's own blocks, not the bodies of nested SDFGs).
+    :return: Names with a structural (non-tasklet) use.
+    """
+    structural: Set[str] = set()
+    for desc in sdfg.arrays.values():
+        structural.update(str(s) for s in desc.free_symbols)
+    for cfr in sdfg.all_control_flow_regions():
+        if isinstance(cfr, LoopRegion) and cfr.loop_variable:
+            structural.add(str(cfr.loop_variable))
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry):
+                structural.update(str(s) for s in node.map.range.free_symbols)
+        for edge in state.edges():
+            structural.update(str(s) for s in edge.data.free_symbols)
+    return structural
+
+
+def symbol_carries_graph_structure(sdfg: 'dace.SDFG', symbol_str: str, structural: Optional[Set[str]] = None) -> bool:
     """Whether ``symbol_str`` is load-bearing anywhere outside tasklet code in ``sdfg``.
 
     A demoted symbol becomes a scalar container of the demotion dtype, so any use that
@@ -2989,8 +3020,12 @@ def symbol_carries_graph_structure(sdfg: 'dace.SDFG', symbol_str: str) -> bool:
 
     :param sdfg: The SDFG to scan.
     :param symbol_str: Name of the symbol.
+    :param structural: :func:`structural_symbols` for ``sdfg``, when the caller already holds it for
+        an UNMUTATED span; answered by membership then. ``None`` runs the scan here, as before.
     :return: ``True`` if some structural use would break under demotion.
     """
+    if structural is not None:
+        return symbol_str in structural
     for desc in sdfg.arrays.values():
         if symbol_str in (str(s) for s in desc.free_symbols):
             return True

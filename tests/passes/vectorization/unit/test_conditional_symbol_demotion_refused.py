@@ -16,6 +16,8 @@ Both are uniform across lanes, so the condition stays valid with them left symbo
 over-refusal control is ``v``, bound by an interstate-edge assignment from data and read
 only by the tasklet: it MUST still be demoted.
 """
+import pytest
+
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
@@ -26,16 +28,17 @@ from dace.transformation.passes.vectorization.lower_interstate_conditional_assig
 N = dace.symbol("N", nonnegative=True)
 
 
-def _build_sdfg() -> dace.SDFG:
+def _build_sdfg(v_dtype: dace.dtypes.typeclass = dace.float64) -> dace.SDFG:
     """``for i in range(N): v = a[i]; if True: b[i] = v + i + N`` with the arm's tasklet
     carrying the ``condition_symbol_to_scalar`` prefix the pass keys on.
 
+    :param v_dtype: declared dtype of the demotable symbol ``v``.
     :returns: the constructed SDFG.
     """
     sdfg = dace.SDFG("conditional_symbol_demotion")
     sdfg.add_array("a", shape=(N, ), dtype=dace.float64)
     sdfg.add_array("b", shape=(N, ), dtype=dace.float64)
-    sdfg.add_symbol("v", dace.float64)
+    sdfg.add_symbol("v", v_dtype)
 
     loop = LoopRegion("loop", loop_var="i", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
@@ -91,3 +94,25 @@ def test_demotion_guards_classify_the_three_symbols():
     assert sdutil.symbol_carries_graph_structure(sdfg, "i"), "a loop variable indexing a memlet is structural"
     assert sdutil.symbol_demotes_to_transient_scalar(sdfg, "v")
     assert not sdutil.symbol_carries_graph_structure(sdfg, "v")
+
+
+@pytest.mark.parametrize("declared", [dace.int64, dace.int32, dace.float32, dace.float64])
+def test_demotion_keeps_the_declared_dtype(declared):
+    """The demoted scalar carries the symbol's OWN dtype, not a hardcoded fp64.
+
+    The pass used to overwrite ``sdfg.symbols[v]`` with fp64 before demoting -- and that entry
+    is exactly what :func:`~dace.sdfg.utils.demote_symbol_to_scalar` reads for the scalar's
+    dtype, so every demoted symbol came out a double. An integer accumulator then stopped
+    compiling the moment anything shifted or masked it::
+
+        error: invalid operands of types 'double' and 'int' to binary 'operator>>'
+
+    The rest of the graph already read the symbol at its declared dtype, so fp64 was the odd
+    one out, not the safe default.
+    """
+    sdfg = _build_sdfg(v_dtype=declared)
+    LowerInterstateConditionalAssignmentsToTasklets().apply_pass(sdfg, {})
+
+    assert "v" in sdfg.arrays, "the data-bound symbol must still be demoted"
+    assert sdfg.arrays["v"].dtype == declared, \
+        f"demotion changed the dtype: declared {declared}, scalar is {sdfg.arrays['v'].dtype}"

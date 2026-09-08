@@ -7,7 +7,7 @@ The mask lives directly in the parent state (between ``MapEntry`` and
 the body) as a register transient, so downstream :class:`ConvertTaskletsToTileOps`
 can wire it into every lib node without crossing a NestedSDFG boundary.
 """
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties, symbolic
@@ -189,10 +189,14 @@ class GenerateTileIterationMask(ppl.Pass):
             specs = pipeline_results["MarkTileDims"]
         attached = 0
         K = len(self.widths)
+        # Shared across the maps this loop REFUSES -- the gate's whole-SDFG body scan is what makes a
+        # per-map selection loop quadratic, and a refusal never mutates. Dropped below the moment a
+        # mask is attached, so no candidate is ever gated on a stale scan.
+        scan_cache: Dict[int, Any] = {}
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n, len(self.widths)):
+            if not is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache):
                 continue
             if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: no mask
                 continue
@@ -212,6 +216,7 @@ class GenerateTileIterationMask(ppl.Pass):
             spec = specs[n] if specs is not None and n in specs else self._spec_for(n)
             if self._attach_mask(g.sdfg, g, n, spec):
                 attached += 1
+            scan_cache.clear()  # ``_attach_mask`` rewrote the body; every cached body scan is stale
         assert_invariant(no_memlet_dim_mismatch(sdfg), "GenerateTileIterationMask",
                          "memlet subset and other_subset have matching dimensionality")
         assert_invariant(tile_mask_gen_dominates_consumers(sdfg), "GenerateTileIterationMask",

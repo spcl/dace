@@ -1240,7 +1240,10 @@ class VectorizeMultiDim(ppl.Pipeline):
         except VectorizeUnsupported as unsupported:
             warnings.warn(f"VectorizeMultiDim: refusing to vectorize {sdfg.name!r}; leaving it "
                           f"un-tiled (correct, un-optimized): {unsupported}")
-            restore_sdfg_in_place(sdfg, copy.deepcopy(snapshot))
+            # ``snapshot`` is already the throwaway ``restore_sdfg_in_place`` asks for -- it is
+            # never read again on this path -- so hand it over directly rather than paying for a
+            # second whole-SDFG deepcopy of it.
+            restore_sdfg_in_place(sdfg, snapshot)
             return None
         # Stamp ``target_isa`` + the concrete implementation on every tile lib node
         # UNCONDITIONALLY, even when expansion is deferred: a deferred SDFG

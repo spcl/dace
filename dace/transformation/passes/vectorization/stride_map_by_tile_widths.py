@@ -6,7 +6,7 @@ Rewrites ``map.range`` in place so the K innermost dims step by ``widths[k]``
 (one tile per iteration). Masked iteration handles partial tiles at the trip
 boundary; no main + remainder split.
 """
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import dace
 from dace import properties, subsets, symbolic
@@ -106,10 +106,14 @@ class StrideMapByTileWidths(ppl.Pass):
         if pipeline_results and "MarkTileDims" in pipeline_results:
             specs = pipeline_results["MarkTileDims"]
         rewritten = 0
+        # Shared across the maps this loop REFUSES -- the gate's whole-SDFG body scan is what makes a
+        # per-map selection loop quadratic, and a refusal never mutates. Dropped below the moment a
+        # rewrite fires, so no candidate is ever gated on a stale scan.
+        scan_cache: Dict[int, Any] = {}
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n, len(self.widths)):
+            if not is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache):
                 continue
             if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: keep step 1
                 continue
@@ -120,6 +124,7 @@ class StrideMapByTileWidths(ppl.Pass):
                 continue
             if self._stride_one(n):
                 rewritten += 1
+            scan_cache.clear()  # ``_stride_one`` rewrote the map; every cached body scan is stale
         K = len(self.widths)
         assert_invariant(no_memlet_dim_mismatch(sdfg), "StrideMapByTileWidths",
                          "memlet subset and other_subset have matching dimensionality")
