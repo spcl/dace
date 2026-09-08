@@ -733,6 +733,7 @@ using gpuStream_t = hipStream_t;
 using gpuEvent_t = hipEvent_t;
 using gpuError_t = hipError_t;
 static constexpr gpuError_t gpuSuccess = hipSuccess;
+static constexpr gpuError_t gpuErrorMemoryAllocation = hipErrorOutOfMemory;
 #define DACE_GPU_CHECK(expr) do {                                                             \\
         gpuError_t __cpf_status = (expr);                                                     \\
         if (__cpf_status != gpuSuccess) {                                                     \\
@@ -758,6 +759,39 @@ struct cpf_gpu_context {
     gpuEvent_t events[1];
     gpuError_t lasterror;
 };
+
+//: The backend cub, under the name the code generator writes -- what gpucub.cuh aliases.
+namespace gpucub = hipcub;
+
+//: The cub binary-operator functors a DeviceScan / DeviceReduce expansion passes by macro, in the
+//: spelling cub_compat.cuh selects for HIP. Only that arm applies: hipCUB keeps the functor structs
+//: CCCL 3 dropped, and a unit built by hipcc is never built against CCCL.
+#define DACE_CUB_SUM_OP ::gpucub::Sum()
+#define DACE_CUB_MIN_OP ::gpucub::Min()
+#define DACE_CUB_MAX_OP ::gpucub::Max()
+#define DACE_CUB_MUL_OP [] __device__(auto __cpf_a, auto __cpf_b) { return __cpf_a * __cpf_b; }
+
+//: A conflicting accumulation, applied atomically under any binary operator.
+//:
+//: HIP spells only a few operator/type pairs as an intrinsic (atomicAdd on the arithmetic types,
+//: atomicMin/atomicMax on the integers), and an SDFG's write-conflict resolution is any of nine
+//: reductions over any element type, so one CAS loop covers the set where a table of intrinsics
+//: would leave holes. On a tree-reduced accumulator this runs ONCE PER BLOCK, after
+//: gpucub::BlockReduce has folded the block's partials, so the loop is off the per-element path.
+template <typename T, typename V, typename Op>
+__device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
+    using cpf_atomic_word =
+        typename std::conditional<sizeof(T) == sizeof(unsigned int), unsigned int, unsigned long long>::type;
+    static_assert(sizeof(T) == sizeof(cpf_atomic_word), "no atomic word as wide as the accumulator");
+    cpf_atomic_word *word = reinterpret_cast<cpf_atomic_word *>(address);
+    cpf_atomic_word old = *word;
+    cpf_atomic_word assumed;
+    do {
+        assumed = old;
+        T updated = op(__builtin_bit_cast(T, assumed), static_cast<T>(value));
+        old = atomicCAS(word, assumed, __builtin_bit_cast(cpf_atomic_word, updated));
+    } while (assumed != old);
+}
 """
 
 
@@ -1705,6 +1739,12 @@ class Tables(NamedTuple):
     known: Set[str]
 
 
+#: An OPTIONAL explicit template-argument list between a helper's name and its call parentheses
+#: (``get_scratch<ScanTag>(...)``). Deliberately narrow -- no parentheses, no nesting, one line --
+#: so a comparison chain (``a < b && c > (d)``) cannot read as one.
+_EXPLICIT_TEMPLATE_ARGUMENTS = r'(?:<[^<>();{}\n]*>\s*)?'
+
+
 def _tables(std_renames, rewrites, inline_definitions, minmax, unsupported, ctype_renames, base_headers, dependencies,
             definition_headers) -> Tables:
     return Tables(std_renames=std_renames,
@@ -1717,9 +1757,199 @@ def _tables(std_renames, rewrites, inline_definitions, minmax, unsupported, ctyp
                   definition_dependencies=dependencies,
                   definition_headers=definition_headers,
                   helper_call=re.compile(r'(?<![\w:.])(' + '|'.join(sorted(inline_definitions, key=len, reverse=True)) +
-                                         r')\s*\('),
+                                         r')\s*' + _EXPLICIT_TEMPLATE_ARGUMENTS + r'\('),
                   known=(set(std_renames) | set(rewrites) | set(inline_definitions) | set(minmax) | set(unsupported)))
 
+
+#: What a DEVICE unit adds to :data:`INLINE_DEFINITIONS`: the runtime functions a device library
+#: expansion calls, written out the same way the host ones are. Device-only, so they are NOT in the
+#: shared table -- every body here holds a kernel launch or ``__global__``, which a host compiler
+#: cannot parse.
+#:
+#: They are reached the same way too. A ``FindFirst`` or ``Scan`` on a device graph expands to a
+#: HOST tasklet plus a wrapper in the device unit, and the wrapper calls one of these; CPF's own
+#: definition stands in for the runtime header the wrapper would otherwise include, exactly as
+#: ``find_first_index`` and ``scan_incl_sum`` stand in for ``dace/scan.hpp`` on the host.
+HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
+    'get_scratch':
+    '//: The CUB scratch pool, as much of it as one entry point can hold: one buffer per tag,\n'
+    '//: allocated on first use and grown, never shrunk, so a repeated call pays no allocation.\n'
+    '//: The runtime pre-allocates and releases it from the entry points a repeated invocation\n'
+    '//: shares; one self-contained call has neither, so the buffer owns itself and frees at\n'
+    '//: static destruction. It is also not keyed by stream, as the runtime pool is: a CPF unit\n'
+    '//: issues every launch on the one stream (see cpf_gpu_context), so its calls are ordered.\n'
+    'struct ScanTag {};\n'
+    'struct DetectFlagTag {};\n'
+    'struct cpf_scratch_block {\n'
+    '    void *ptr = nullptr;\n'
+    '    size_t capacity = 0;\n'
+    '    ~cpf_scratch_block() { if (ptr != nullptr) { (void)hipFree(ptr); } }\n'
+    '};\n'
+    'template <typename Tag>\n'
+    'static inline void *get_scratch(size_t bytes, gpuStream_t stream, gpuError_t *status) {\n'
+    '    static cpf_scratch_block block;\n'
+    '    *status = gpuSuccess;\n'
+    '    if (bytes <= block.capacity) return block.ptr;\n'
+    '    if (block.ptr != nullptr) {\n'
+    '        // In flight work may still be reading the old buffer.\n'
+    '        *status = hipStreamSynchronize(stream);\n'
+    '        if (*status != gpuSuccess) return nullptr;\n'
+    '        *status = hipFree(block.ptr);\n'
+    '        block.ptr = nullptr;\n'
+    '        block.capacity = 0;\n'
+    '        if (*status != gpuSuccess) return nullptr;\n'
+    '    }\n'
+    '    *status = hipMalloc(&block.ptr, bytes);\n'
+    '    if (*status != gpuSuccess) { block.ptr = nullptr; return nullptr; }\n'
+    '    block.capacity = bytes;\n'
+    '    return block.ptr;\n'
+    '}',
+    'find_first_index_device':
+    '//: The device find-first: the smallest index in [begin, end) at which ``pred`` fires, or\n'
+    '//: ``end``. The answer is an atomic min over the firing indices and is exact; the read of it\n'
+    '//: at the top of each step races by design, and every value it can take is a real firing\n'
+    '//: index, so a stale one costs pruning and never correctness.\n'
+    '//:\n'
+    '//: ``pred`` is a FUNCTOR and not a lambda so no caller needs --extended-lambda: the\n'
+    '//: expansion appends the struct to the device code beside the wrapper that instantiates it.\n'
+    'template <typename Pred>\n'
+    '__global__ void find_first_kernel(long long begin, long long end, Pred pred,\n'
+    '                                  unsigned long long *result) {\n'
+    '    const long long stride = (long long)gridDim.x * (long long)blockDim.x;\n'
+    '    long long i = begin + (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n'
+    '    for (; i < end; i += stride) {\n'
+    '        // Every index below this thread\'s next one is another thread\'s, so the first hit it\n'
+    '        // finds walking upwards is the smallest it can contribute: it is done either way.\n'
+    '        if (i >= (long long)*(volatile unsigned long long *)result) return;\n'
+    '        if (pred(i)) { atomicMin(result, (unsigned long long)i); return; }\n'
+    '    }\n'
+    '}\n'
+    'template <typename Pred>\n'
+    'static inline gpuError_t find_first_index_device(long long begin, long long end, Pred pred, long long *out,\n'
+    '                                                gpuStream_t stream) {\n'
+    '    constexpr int block_threads = 256;\n'
+    '    constexpr long long max_blocks = 1024;\n'
+    '    *out = end;\n'
+    '    if (begin >= end) return gpuSuccess;\n'
+    '    gpuError_t status = gpuSuccess;\n'
+    '    unsigned long long *result = (unsigned long long *)get_scratch<DetectFlagTag>(\n'
+    '        sizeof(unsigned long long), stream, &status);\n'
+    '    if (result == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n'
+    '    const unsigned long long sentinel = (unsigned long long)end;\n'
+    '    status = hipMemcpyAsync(result, &sentinel, sizeof(sentinel), hipMemcpyHostToDevice, stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    // ``sentinel`` is a local, so the copy has to be done before this frame goes away.\n'
+    '    status = hipStreamSynchronize(stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    long long blocks = (end - begin + block_threads - 1) / block_threads;\n'
+    '    if (blocks > max_blocks) blocks = max_blocks;\n'
+    '    find_first_kernel<<<(unsigned)blocks, block_threads, 0, stream>>>(begin, end, pred, result);\n'
+    '    status = hipGetLastError();\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    unsigned long long found = sentinel;\n'
+    '    status = hipMemcpyAsync(&found, result, sizeof(found), hipMemcpyDeviceToHost, stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    status = hipStreamSynchronize(stream);\n'
+    '    *out = (long long)found;\n'
+    '    return status;\n'
+    '}',
+    'inclusive_affine':
+    '//: The first-order linear recurrence out[k] = c[k]*out[k-1] + d[k], entered at out[-1] = seed.\n'
+    '//: The carry is the affine MAP x -> a*x + b rather than a value, and map composition is\n'
+    '//: associative, so a plain prefix scan over the maps computes the recurrence.\n'
+    '//:\n'
+    '//: The seed is folded into element 0 rather than handed to cub as an init value, and that is\n'
+    '//: numerically load-bearing: element 0 comes out as the CONSTANT map {0, c[0]*seed + d[0]},\n'
+    '//: so every prefix including it carries a == 0 and the coefficient product never spans more\n'
+    '//: than one composed segment -- which is what keeps it off the overflow the closed form hits.\n'
+    'template <typename E>\n'
+    'struct cpf_affine_map { E a; E b; };\n'
+    'template <typename E>\n'
+    'struct cpf_affine_compose {\n'
+    '    __device__ __forceinline__ cpf_affine_map<E> operator()(const cpf_affine_map<E> &x,\n'
+    '                                                            const cpf_affine_map<E> &y) const {\n'
+    '        return cpf_affine_map<E>{y.a * x.a, y.a * x.b + y.b};\n'
+    '    }\n'
+    '};\n'
+    'template <typename E, typename C, typename D, typename S>\n'
+    '__global__ void cpf_affine_pack_kernel(const C *__restrict__ c, const D *__restrict__ d,\n'
+    '                                       cpf_affine_map<E> *__restrict__ m, const S *__restrict__ seed_ptr,\n'
+    '                                       E seed_val, long long n) {\n'
+    '    const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n'
+    '    if (k >= n) return;\n'
+    '    const E ck = (E)c[k];\n'
+    '    const E dk = (E)d[k];\n'
+    '    // A device-resident seed arrives as a pointer; a host-readable one by value.\n'
+    '    if (k == 0) {\n'
+    '        const E s = (seed_ptr != nullptr) ? (E)(*seed_ptr) : seed_val;\n'
+    '        m[0] = cpf_affine_map<E>{(E)0, ck * s + dk};\n'
+    '    } else {\n'
+    '        m[k] = cpf_affine_map<E>{ck, dk};\n'
+    '    }\n'
+    '}\n'
+    'template <typename E>\n'
+    '__global__ void cpf_affine_unpack_kernel(const cpf_affine_map<E> *__restrict__ m, E *__restrict__ out,\n'
+    '                                         long long n) {\n'
+    '    const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n'
+    '    if (k < n) out[k] = m[k].b;  // every composed prefix is constant, so b IS the value\n'
+    '}\n'
+    'template <typename E, typename C, typename D, typename S>\n'
+    'static inline gpuError_t inclusive_affine(const C *coef, const D *delta, const S *seed_ptr, E seed_val,\n'
+    '                                          E *out, long long n, gpuStream_t stream) {\n'
+    '    using M = cpf_affine_map<E>;\n'
+    '    constexpr int block_threads = 256;\n'
+    '    if (n <= 0) return gpuSuccess;\n'
+    '    cpf_affine_compose<E> op;\n'
+    '    size_t cub_bytes = 0;\n'
+    '    gpuError_t status = gpucub::DeviceScan::InclusiveScan(nullptr, cub_bytes, (M *)nullptr, (M *)nullptr,\n'
+    '                                                         op, n, stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    // 256-byte alignment for the workspace that follows: cub assumes an allocation at least as\n'
+    '    // aligned as hipMalloc gives, and the maps sit in front of it in the one block.\n'
+    '    const size_t map_bytes = (((size_t)n * sizeof(M)) + 255u) & ~(size_t)255u;\n'
+    '    void *scratch = get_scratch<ScanTag>(map_bytes + cub_bytes, stream, &status);\n'
+    '    if (scratch == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n'
+    '    M *maps = (M *)scratch;\n'
+    '    void *workspace = (char *)scratch + map_bytes;\n'
+    '    const unsigned blocks = (unsigned)((n + block_threads - 1) / block_threads);\n'
+    '    cpf_affine_pack_kernel<E, C, D, S><<<blocks, block_threads, 0, stream>>>(coef, delta, maps, seed_ptr,\n'
+    '                                                                            seed_val, n);\n'
+    '    status = hipGetLastError();\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    status = gpucub::DeviceScan::InclusiveScan(workspace, cub_bytes, maps, maps, op, n, stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    cpf_affine_unpack_kernel<E><<<blocks, block_threads, 0, stream>>>(maps, out, n);\n'
+    '    return hipGetLastError();\n'
+    '}',
+}
+
+HIP_INLINE_DEFINITIONS: Dict[str, str] = {**INLINE_DEFINITIONS, **HIP_DEVICE_INLINE_DEFINITIONS}
+
+HIP_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
+    **DEFINITION_DEPENDENCIES,
+    'find_first_index_device': ('get_scratch', ),
+    'inclusive_affine': ('get_scratch', ),
+}
+
+#: The CUB scratch pool's tag types, which reach the text as template ARGUMENTS rather than as
+#: calls. Renamed here, with the type table, because that is what runs over the whole unit -- a
+#: name table entry would need a call to fire on.
+HIP_CTYPE_RENAMES: Dict[str, str] = {
+    **CTYPE_RENAMES,
+    'dace::cub::ScanTag': 'ScanTag',
+    'dace::cub::DetectFlagTag': 'DetectFlagTag',
+}
+
+#: Environments a DEVICE rendering supplies for itself, so that
+#: ``framecode.generate_standalone_footer`` does not refuse them. Everything else with code to run
+#: or a library to link is still refused: a single entry point has nowhere to run an initializer.
+#:
+#: ``CUDA`` declares the toolkit as a CMake package. A device dialect is BUILT by that toolkit's
+#: compiler, so the package is there by construction, and there is nothing to find and nothing to
+#: link. ``ScanScratch`` and ``DetectScratch`` pre-allocate and release the CUB scratch pool;
+#: :data:`HIP_DEVICE_INLINE_DEFINITIONS`'s ``get_scratch`` allocates on first use and frees at
+#: static destruction, so both halves of that handshake are inside the unit.
+DEVICE_PROVIDED_ENVIRONMENTS: FrozenSet[str] = frozenset({'CUDA', 'ScanScratch', 'DetectScratch'})
 
 #: Dialect -> its vocabulary. ``RUNTIME`` has none: a runtime rendering emits ``dace::`` names and
 #: never consults these tables at all, so asking for its bundle is a bug worth a ``KeyError``.
@@ -1730,11 +1960,12 @@ TABLES: Dict[Dialect, Tables] = {
     Dialect.STANDALONE_C:
     _tables(C_STD_RENAMES, C_REWRITES, C_INLINE_DEFINITIONS, C_VARIADIC_MINMAX, C_UNSUPPORTED, C_CTYPE_RENAMES,
             C_BASE_HEADERS, C_DEFINITION_DEPENDENCIES, {}),
-    # The HIP unit is C++, so it takes the C++ vocabulary unchanged and differs only in its
-    # headers: the ROCm toolkit's own, which ship with the compiler that builds the unit.
+    # The HIP unit is C++, so it takes the C++ vocabulary and adds to it: the ROCm toolkit's own
+    # headers, which ship with the compiler that builds the unit, and the device counterparts of
+    # the runtime functions a DEVICE library expansion calls (:data:`HIP_INLINE_DEFINITIONS`).
     Dialect.STANDALONE_HIP:
-    _tables(STD_RENAMES, REWRITES, INLINE_DEFINITIONS, VARIADIC_MINMAX, UNSUPPORTED, CTYPE_RENAMES,
-            BASE_HEADERS + HIP_BASE_HEADERS, DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
+    _tables(STD_RENAMES, REWRITES, HIP_INLINE_DEFINITIONS, VARIADIC_MINMAX, UNSUPPORTED, HIP_CTYPE_RENAMES,
+            BASE_HEADERS + HIP_BASE_HEADERS, HIP_DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
 }
 
 #: Every runtime function the C dialect knows about, in any lane.

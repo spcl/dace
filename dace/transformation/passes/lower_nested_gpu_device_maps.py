@@ -151,6 +151,13 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 copydesc.transient = False
                 inner_sdfg.add_datadesc(data_name, copydesc)
 
+        # A transient the map body allocates for itself crosses no map edge, so neither ``inputs``
+        # nor ``outputs`` names it -- and the clone below still copies its access nodes, leaving the
+        # inner SDFG referencing data it does not hold (polybench symm's fused product scalar).
+        for node in map_inner_nodes:
+            if isinstance(node, dace.nodes.AccessNode) and node.data not in inner_sdfg.arrays:
+                inner_sdfg.add_datadesc(node.data, copy.deepcopy(state.sdfg.arrays[node.data]))
+
         for sym, symtype in state.symbols_defined_at(map_entry).items():
             if sym not in inner_sdfg.symbols:
                 inner_sdfg.add_symbol(sym, symtype)

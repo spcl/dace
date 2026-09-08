@@ -308,6 +308,10 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
             'partial': partial,
             'ctype': ctype,
             'credtype': 'dace::ReductionType::' + str(redtype).split('.')[-1],
+            # Kept alongside the runtime's spelling of it because CPF has to write the same
+            # operator without ``dace::_wcr_fixed``; Custom never reaches here (filtered above), so
+            # standalone_wcr_expression always has a spelling for it.
+            'redtype': redtype,
             'identity': identity_literal,
             'block_x': block_x,
             'block_y': block_y,
@@ -336,29 +340,87 @@ def register_gpu_block_reduction(red: dict, covered: dict) -> str:
             f"for (int __bi = 0; __bi < {red['m']}; ++__bi) {red['partial']}[__bi] = {red['identity']};")
 
 
+def standalone_wcr_expression(redtype, lhs: str, rhs: str) -> Optional[str]:
+    """The CPF expression combining ``lhs`` and ``rhs`` under ``redtype``, or ``None``.
+
+    ``None`` means the resolution has no fixed operator spelling -- it is ``Custom``, or one no
+    dialect covers -- and the caller decides between unparsing the SDFG's own lambda and refusing.
+
+    ``Exchange`` and ``Logical_Xor`` are here rather than in :data:`_REDUCTION_TO_OMP_OP` because no
+    OpenMP clause spells either; both are still a plain expression in every dialect, and both match
+    the runtime functor exactly (``reduction.h``: Logical_Xor is ``a != b``, Exchange is ``b``).
+
+    :param lhs: the accumulator operand, spelled as the caller wants to read it. Not parenthesized
+                here -- the caller passes a primary expression, and adding parentheses would change
+                text the emission tests pin.
+    :param rhs: the incoming value.
+    """
+    if redtype is dtypes.ReductionType.Exchange:
+        return f'({rhs})'
+    if redtype is dtypes.ReductionType.Logical_Xor:
+        return f'({lhs} != ({rhs}))'
+    operator = _REDUCTION_TO_OMP_OP.get(redtype)
+    if operator in ('+', '*', '&', '|', '^', '&&', '||'):
+        return f'{lhs} {operator} ({rhs})'
+    if operator in ('min', 'max'):
+        # C has no ``std::min``; CPF emits its own typed pair (see cpf_lowering.C_MINMAX_TYPES).
+        spelling = f'cpf_{operator}' if cpf_lowering.standalone_c() else f'std::{operator}'
+        return f'{spelling}({lhs}, {rhs})'
+    return None
+
+
+def standalone_gpu_atomic(operator: str, ptr: str, value: str) -> str:
+    """One atomic read-modify-write on the device, in CPF's own spelling.
+
+    ``cpf_gpu_atomic`` comes from :data:`~dace.cpf_lowering.HIP_DEVICE_PREAMBLE` and takes the
+    combination as a functor, so ONE helper covers every reduction an SDFG can carry -- HIP itself
+    spells only a few operator/type pairs as an intrinsic.
+
+    :param operator: the binary functor, from :meth:`CPUCodeGen.standalone_wcr_operator`.
+    :param ptr: the pointer expression for the accumulated element.
+    :param value: the value to fold in.
+    """
+    return f'cpf_gpu_atomic({ptr}, {value}, {operator})'
+
+
 def drain_gpu_block_reduction(red: dict, idstr: str, covered: dict) -> str:
     """For each of the ``m`` reduced elements, ``gpucub::BlockReduce`` over each thread's register partial,
-    then one ``reduce_atomic`` from thread 0 into that accumulator element; then un-cover it. Emit the
+    then ONE atomic from thread 0 into that accumulator element (``reduce_atomic`` against the runtime,
+    ``cpf_gpu_atomic`` standalone); then un-cover it. Emit the
     returned C after the bounds guard closes so every thread reaches the barrier-using cub call; the
     ``__syncthreads`` between iterations lets the single shared ``TempStorage`` be reused. Caveman: fold
     block, one atomic.
     """
     covered.pop(red['data'], None)
-    functor = 'dace::_wcr_fixed<{credtype}, {ctype}>'.format(**red)
     base_cpp = sym2cpp(red['base'])
+    if cpf_lowering.standalone():
+        # Same fold, none of the runtime: the reduction functor becomes a lambda, and the one atomic
+        # per block becomes the preamble's CAS loop, which covers every operator rather than the few
+        # HIP spells as an intrinsic. ``gpucub`` is aliased to hipcub by HIP_DEVICE_PREAMBLE, as
+        # ``gpucub.cuh`` aliases it in an ordinary build.
+        operator = '[] (const {ctype} &__cpf_acc, const {ctype} &__cpf_val) {{ return {expression}; }}'.format(
+            ctype=red['ctype'], expression=standalone_wcr_expression(red['redtype'], '__cpf_acc', '__cpf_val'))
+        fold, commit = operator, standalone_gpu_atomic(
+            operator, '{acc_ptr} + (({base_cpp}) + __bk_{id})'.format(id=idstr, base_cpp=base_cpp, **red),
+            f'__bres_{idstr}')
+    else:
+        functor = 'dace::_wcr_fixed<{credtype}, {ctype}>'.format(**red)
+        fold = f'{functor}()'
+        commit = ('{functor}::reduce_atomic({acc_ptr} + (({base_cpp}) + __bk_{id}), __bres_{id})'.format(
+            id=idstr, functor=functor, base_cpp=base_cpp, **red))
     return ('{{\n'
             'typedef gpucub::BlockReduce<{ctype}, {block_x}, gpucub::BLOCK_REDUCE_WARP_REDUCTIONS, '
             '{block_y}, {block_z}> '
             '__brt_{id};\n'
             '__shared__ typename __brt_{id}::TempStorage __brs_{id};\n'
             'for (int __bk_{id} = 0; __bk_{id} < {m}; ++__bk_{id}) {{\n'
-            '    {ctype} __bres_{id} = __brt_{id}(__brs_{id}).Reduce({partial}[__bk_{id}], {functor}());\n'
+            '    {ctype} __bres_{id} = __brt_{id}(__brs_{id}).Reduce({partial}[__bk_{id}], {fold});\n'
             '    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {{\n'
-            '        {functor}::reduce_atomic({acc_ptr} + (({base_cpp}) + __bk_{id}), __bres_{id});\n'
+            '        {commit};\n'
             '    }}\n'
             '    __syncthreads();\n'
             '}}\n'
-            '}}'.format(id=idstr, functor=functor, base_cpp=base_cpp, **red))
+            '}}'.format(id=idstr, fold=fold, commit=commit, **red))
 
 
 def replace_float_literals(expr: str) -> str:
@@ -1664,8 +1726,19 @@ class CPUCodeGen(TargetCodeGenerator):
                 lhs = f"{cover['partial']}[{sym2cpp(slot)}]"
                 # Vector value, scalar partial: horizontal fold first, as the atomic path below does.
                 if isinstance(dtype, dtypes.vector):
+                    if cpf_lowering.standalone():
+                        raise NotImplementedError(f'CPF cannot render the vector WCR on {memlet.data}: the '
+                                                  'horizontal fold is the DaCe runtime template dace::wcr_fixed. '
+                                                  'Scalarize the map before rendering.')
                     return (f"dace::wcr_fixed<{cover['credtype']}, {cover['ctype']}>::"
                             f"vreduce<{dtype.veclen}>(&{lhs}, {inname})")
+                if cpf_lowering.standalone():
+                    # The partial is this thread's own REGISTER slot, so the write cannot conflict:
+                    # the plain read-modify-write is the whole of it, and the one atomic the fold
+                    # needs is emitted by drain_gpu_block_reduction at the map exit.
+                    value = self.standalone_wcr_value(sdfg, memlet, redtype, lhs, inname,
+                                                      f'{memlet.data}[{memlet.subset}]')
+                    return f'{lhs} = {value}'
                 return f"{lhs} = dace::_wcr_fixed<{cover['credtype']}, {cover['ctype']}>()({lhs}, {inname})"
         # Skip the atomic call entirely when an enclosing OMP map has put this
         # target in a ``reduction(...)`` clause -- the OMP runtime privatizes
@@ -1751,12 +1824,19 @@ class CPUCodeGen(TargetCodeGenerator):
     _CPF_ATOMIC_OPS = ('+', '*', '&', '|', '^')
 
     def standalone_atomic_wcr(self, sdfg: SDFG, memlet, redtype, ptr: str, inname: str, dtype, target: str) -> str:
-        """A conflicting accumulation, in OpenMP's vocabulary and with the hint that says so.
+        """A conflicting accumulation, in the target's own vocabulary and with the hint that says so.
 
         See :meth:`standalone_wcr` for why this is rendered rather than refused. The comment is not
         decoration: an atomic accumulation is the shape a program has when its parallelization was
         NOT resolved into a tree reduction, and a reader comparing CPF output across kernels needs
         to see which ones are in that shape.
+
+        On the HOST that vocabulary is OpenMP's. On a DEVICE it cannot be: an ``omp atomic update``
+        inside a ``__global__`` function is ignored by the device compiler, so the pragma would
+        render a plain racing read-modify-write that still compiles and still produces numbers --
+        the exact failure mode CPF's gate exists to prevent. The device spelling is
+        :data:`~dace.cpf_lowering.HIP_DEVICE_PREAMBLE`'s ``cpf_gpu_atomic``, which applies the same
+        combination through one ``atomicCAS`` loop.
 
         :raises NotImplementedError: for a vector-typed WCR, which has no scalar location to lock.
         """
@@ -1766,12 +1846,55 @@ class CPUCodeGen(TargetCodeGenerator):
         hint = (f'// conflicting accumulation on {target} -- NOT parallel-reduced: the writers can collide, so '
                 'this serializes.\n'
                 '// Reducing it into a tree is an optimization the canonicalization did not find.\n')
+        if cpf_lowering.device():
+            return hint + standalone_gpu_atomic(self.standalone_wcr_operator(sdfg, memlet, redtype, dtype, target), ptr,
+                                                inname)
         body = self.standalone_wcr(sdfg, memlet, redtype, ptr, inname, dtype, atomic=False)
         if _REDUCTION_TO_OMP_OP.get(redtype) in self._CPF_ATOMIC_OPS:
             return f'{hint}_Pragma("omp atomic update")\n{body}'
         # No atomic form for this operator; a critical section is the portable one. The trailing
         # semicolon the caller appends lands after the block, where it is an empty statement.
         return f'{hint}_Pragma("omp critical (cpf_wcr)")\n{{ {body}; }}'
+
+    def standalone_wcr_value(self, sdfg: SDFG, memlet, redtype, lhs: str, rhs: str, target: str) -> str:
+        """The CPF expression folding ``rhs`` into ``lhs``, whatever the two operands are.
+
+        Split out of :meth:`standalone_wcr` because the same combination is needed in three places
+        that share no pointer: the read-modify-write below, the register partial a GPU block fold
+        accumulates into, and the binary operator that fold and its atomic take as an argument.
+
+        :param sdfg: the SDFG owning the memlet, for unparsing a custom resolution.
+        :param memlet: the memlet carrying the WCR.
+        :param redtype: the detected reduction type.
+        :param lhs: the accumulator operand, already spelled as the caller wants to read it.
+        :param rhs: the incoming value.
+        :param target: the accumulated location, for the message.
+        :raises NotImplementedError: for a resolution no standalone spelling covers.
+        """
+        expression = standalone_wcr_expression(redtype, lhs, rhs)
+        if expression is not None:
+            return expression
+        if redtype is dtypes.ReductionType.Custom:
+            # Not conflicting by here, so the runtime would take ``wcr_custom<T>::reduce``, which is
+            # ``*ptr = wcr(*ptr, value)`` with no critical section. Inlining the body reproduces that
+            # without a lambda, which the C dialect could not spell. ``Sub`` and ``Div`` arrive here
+            # too: no OpenMP clause names them, so they detect as Custom.
+            return cpp.unparse_cr_inline(sdfg, memlet.wcr, (lhs, f'({rhs})'))
+        raise NotImplementedError(f'CPF has no standalone spelling for the {redtype} write-conflict resolution '
+                                  f'on {target}; it is provided by the DaCe reduction runtime.')
+
+    def standalone_wcr_operator(self, sdfg: SDFG, memlet, redtype, dtype, target: str) -> str:
+        """The resolution as a C++ BINARY FUNCTOR, for a device fold that takes one as an argument.
+
+        ``gpucub::BlockReduce::Reduce`` and ``cpf_gpu_atomic`` both want an operator object where
+        the runtime passes ``dace::_wcr_fixed<...>()``; a lambda over
+        :meth:`standalone_wcr_value` is that object with no runtime template behind it.
+
+        :param dtype: the element type, which names the lambda's parameters.
+        :returns: the lambda expression.
+        """
+        value = self.standalone_wcr_value(sdfg, memlet, redtype, '__cpf_acc', '__cpf_val', target)
+        return f'[] (const {dtype.ctype} &__cpf_acc, const {dtype.ctype} &__cpf_val) {{ return {value}; }}'
 
     def standalone_wcr(self, sdfg: SDFG, memlet, redtype, ptr: str, inname: str, dtype, atomic: bool) -> str:
         """The CPF spelling of a conflict resolution, or a refusal.
@@ -1805,28 +1928,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(dtype, dtypes.vector):
             raise NotImplementedError(f'CPF cannot render the vector WCR on {target}: the vector type is a DaCe '
                                       'runtime template. Scalarize the map before rendering.')
-        # No OpenMP clause spells these two, so they never reach the fold above -- but both are a
-        # plain expression in either dialect, and both match the runtime functor exactly
-        # (``reduction.h``: Logical_Xor is ``a != b``, Exchange is ``b``).
-        if redtype is dtypes.ReductionType.Exchange:
-            return f'*({ptr}) = ({inname})'
-        if redtype is dtypes.ReductionType.Logical_Xor:
-            return f'*({ptr}) = (*({ptr}) != ({inname}))'
-        operator = _REDUCTION_TO_OMP_OP.get(redtype)
-        if operator in ('+', '*', '&', '|', '^', '&&', '||'):
-            return f'*({ptr}) = *({ptr}) {operator} ({inname})'
-        if operator in ('min', 'max'):
-            # C has no ``std::min``; CPF emits its own typed pair (see cpf_lowering.C_MINMAX_TYPES).
-            spelling = f'cpf_{operator}' if cpf_lowering.standalone_c() else f'std::{operator}'
-            return f'*({ptr}) = {spelling}(*({ptr}), {inname})'
-        if redtype is dtypes.ReductionType.Custom:
-            # Not conflicting by here, so the runtime would take ``wcr_custom<T>::reduce``, which is
-            # ``*ptr = wcr(*ptr, value)`` with no critical section. Inlining the body reproduces that
-            # without a lambda, which the C dialect could not spell. ``Sub`` and ``Div`` arrive here
-            # too: no OpenMP clause names them, so they detect as Custom.
-            return f'*({ptr}) = {cpp.unparse_cr_inline(sdfg, memlet.wcr, (f"*({ptr})", f"({inname})"))}'
-        raise NotImplementedError(f'CPF has no standalone spelling for the {redtype} write-conflict resolution '
-                                  f'on {target}; it is provided by the DaCe reduction runtime.')
+        return f'*({ptr}) = {self.standalone_wcr_value(sdfg, memlet, redtype, f"*({ptr})", inname, target)}'
 
     def process_out_memlets(self,
                             sdfg: SDFG,

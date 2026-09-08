@@ -18,8 +18,9 @@ class CopyLibraryNode(nodes.LibraryNode):
     path), ``Tasklet`` (bare assignment, no map), ``MemcpyCPU`` (single ``std::memcpy``),
     ``MemcpyCUDA1D``/``2D`` (``gpuMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
     (Sequential map of ``gpuMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
-    ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` or ``dace::CopyND`` fallback +
-    optional ``__syncthreads()`` barriers controlled by ``sync``).
+    ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` for a static 1-D transfer, else
+    ``dace::BlockCollective3D`` for rank 1-3, with a trailing ``__syncthreads()`` controlled
+    by ``sync``).
 
     Does NOT accept dynamic (Scalar) input connectors -- subset expressions must use symbols
     already in scope at construction time, so the auto selector reasons purely from static
@@ -34,8 +35,9 @@ class CopyLibraryNode(nodes.LibraryNode):
 
     sync = properties.Property(dtype=bool,
                                default=True,
-                               desc='Emit __syncthreads() barriers around the SharedMemoryCollective '
-                               'copy (default True).')
+                               desc='Emit the trailing __syncthreads() after the SharedMemoryCollective '
+                               'copy (default True). A pass chaining several staged copies clears it on '
+                               'all but the last so the chain costs one barrier.')
 
     def __init__(self, name, *args, sync=True, **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)

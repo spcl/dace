@@ -54,10 +54,7 @@ class MarkConstInit(ppl.Pass):
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Dict[str, str]]]:
         """:return: ``{cfg_id: {descriptor name: classification}}`` for marked descriptors, or ``None`` if none."""
-        # Per-run, because the unrolling below rewrites the graph the plan is taken over. Keyed on
-        # the ROOT: the plan pools container names across the whole recursive walk, so it is the
-        # root that has to be asked -- see _inlinable_containers.
-        self._plan_root = top_sdfg
+        # Per-run, because the unrolling below rewrites the graph the plan is taken over.
         self._inlinable_cache: Dict[int, Set[str]] = {}
         # Unroll static-extent constant-fill maps into per-element writes (only those that pay off --
         # see _paying_fill_targets) so the classifier sees a uniform element-wise tasklet pattern.
@@ -116,22 +113,20 @@ class MarkConstInit(ppl.Pass):
         return found
 
     def _inlinable_containers(self, sdfg: SDFG) -> Set[str]:
-        """The containers ``InlineTaskletConnectors`` will actually inline, cached per run.
+        """The containers ``InlineTaskletConnectors`` will actually inline, cached per SDFG tree.
 
-        Taken over the ROOT rather than over ``sdfg``. The plan walks ``all_nodes_recursive`` and
-        keys its verdict on the container NAME alone, so a name a nested SDFG shares with its parent
-        is decided once for both -- and the pass that spends the verdict runs on the root. Planning
-        over the nested SDFG instead answers a narrower question than the one codegen will ask: a
-        transient the parent keeps classic reads as inlinable down here, the write is marked
-        ``const_runtime`` on the strength of it, ``allocate_array`` skips the declaration, and no
-        binding replaces it (azimint_hist's ``a_min`` in every outlined translation unit).
+        Planned over the ROOT, because that is the SDFG the inlining pass is applied to and its plan
+        is decided per container NAME over the whole tree: a name a nested SDFG could inline on its
+        own is still left classic when a same-named container elsewhere in the tree cannot be. Asking
+        the nested SDFG instead promises an inlining the pass then declines, and the caller skips a
+        declaration on the strength of that promise -- the name reaches the compiler undeclared.
 
         The plan walks the whole graph, and the classifier asks about one writer at a time, so
         computing it per question would make this pass quadratic in the tasklet count. The cache
         lives for one ``apply_pass``: the classifier only reads the graph, and the marks it writes
         are descriptor flags the plan does not depend on.
         """
-        root = self._plan_root
+        root = sdfg.root_sdfg
         cached = self._inlinable_cache.get(id(root))
         if cached is None:
             _plans, cached = InlineTaskletConnectors().plan(root)

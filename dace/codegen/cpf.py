@@ -231,6 +231,25 @@ RENDERABLE_IMPLEMENTATIONS = ('Auto', 'pure', 'pure-seq', 'MappedTasklet')
 #: measured 9-11x over numpy in the parallel form and rendered with no ``omp`` at all.
 RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {'ArgReduce': ('OpenMP', )}
 
+#: Per-node-type implementations tried ahead of everything else when a DEVICE dialect renders a
+#: node that READS OR WRITES DEVICE MEMORY from host level. The criterion is the same one the two
+#: tables above use -- "expands to something this unit can compile" -- with the machine added: a
+#: host expansion over device pointers compiles and then reads the wrong memory.
+#:
+#: Only the node types whose host expansion is a FREE TASKLET are here. That is the shape that
+#: cannot survive: a tasklet holding ``scan_incl_sum(...)`` or the cancelling OpenMP search stays
+#: host code and dereferences a device pointer, and ``FindFirst`` refuses outright rather than let
+#: it. A ``pure`` expansion made of MAPS (``Reduce``, ``ArgReduce``, the copy and fill nodes) is not
+#: in that shape: the maps inherit the library node's GPU schedule and become a kernel, which is
+#: both correct and the rendering CPF wants -- so ``Reduce`` is deliberately ABSENT, its ``GPUAuto``
+#: being a ``dace::`` cub call where its ``pure`` is loops.
+#:
+#: The device expansions named here reach the runtime the same way the host ones do, and CPF spells
+#: what they reach: ``get_scratch``, ``find_first_index_device`` and ``inclusive_affine`` are
+#: inline definitions in :mod:`dace.cpf_lowering`, exactly as ``find_first_index`` and the scans are
+#: for the host.
+RENDERABLE_BY_NODE_DEVICE: Dict[str, Tuple[str, ...]] = {'FindFirst': ('CUDA', ), 'Scan': ('CUDA', )}
+
 #: Slack in the expand-and-reselect loop of :func:`force_renderable_expansions`, on top of the one
 #: round
 #: per library node a single state holds. A node may expand into further library nodes (``MatMul``
@@ -314,6 +333,34 @@ def subtree_guids(node, state) -> Set[str]:
     return guids
 
 
+def on_device_at_host_level(node: nodes.LibraryNode, state) -> bool:
+    """Whether ``node`` issues a DEVICE library call: device operands, host level.
+
+    Both halves matter. Device operands are what makes a host expansion wrong -- it would
+    dereference a device pointer -- and host level is what makes a device call POSSIBLE: a node
+    already inside a kernel has no launch to issue and must lower to device code instead, which is
+    the split :func:`~dace.transformation.passes.canonicalize.finalize.libnode_is_device_code`
+    makes for the GPU pipeline and this reuses so the two cannot drift apart.
+    """
+    from dace.transformation.passes.canonicalize.finalize import libnode_is_device_code
+    owner = state.sdfg
+    touches = any(owner.arrays[edge.data.data].storage in DEVICE_STORAGE for edge in state.all_edges(node)
+                  if edge.data is not None and edge.data.data in owner.arrays)
+    return touches and not libnode_is_device_code(node, state, owner)
+
+
+def renderable_implementations(node: nodes.LibraryNode, state) -> Tuple[str, ...]:
+    """The implementations to try for ``node``, best first.
+
+    :seealso: :data:`RENDERABLE_BY_NODE_DEVICE`, :data:`RENDERABLE_BY_NODE`,
+              :data:`RENDERABLE_IMPLEMENTATIONS`.
+    """
+    preferred = RENDERABLE_BY_NODE.get(type(node).__name__, ())
+    if cpf_lowering.device() and on_device_at_host_level(node, state):
+        preferred = RENDERABLE_BY_NODE_DEVICE.get(type(node).__name__, ()) + preferred
+    return preferred + RENDERABLE_IMPLEMENTATIONS
+
+
 def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
     """Expand every library node in ``sdfg`` through a renderable implementation, in place.
 
@@ -359,7 +406,7 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
         described: Dict[int, Tuple[str, str, set]] = {}
         for node, state in chosen:
             available = type(node).implementations
-            for candidate in RENDERABLE_BY_NODE.get(type(node).__name__, ()) + RENDERABLE_IMPLEMENTATIONS:
+            for candidate in renderable_implementations(node, state):
                 if candidate in available:
                     node.implementation = candidate
                     break
@@ -536,11 +583,29 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
             desc.lifetime = demoted
 
 
+#: The qualifier run a generated helper is declared with, in any order and any subset: ``static
+#: constexpr inline`` for an ``<array>_idx`` index map, ``static consteval inline`` for an
+#: ``<array>_size`` extent, ``static DACE_HDFI constexpr`` for a device-callable one.
+_HELPER_QUALIFIERS = r'static(?:\s+(?:DACE_HDFI|constexpr|consteval|inline))+'
+
 #: A complete function definition on one line, which is the shape every generated helper has: the
-#: ``<array>_idx`` index maps and the constants. Anchored on the closing brace so a PROTOTYPE
-#: (same prefix, ending in ``;``) never matches -- dropping a repeated declaration could remove the
-#: only one that precedes a use.
-ONE_LINE_DEFINITION = re.compile(r'^static\s+(?:DACE_HDFI|constexpr|inline|DACE_HDFI\s+constexpr)\b.*\}\s*$')
+#: ``<array>_idx`` index maps and the ``<array>_size`` extents. Anchored on the closing brace so a
+#: PROTOTYPE (same prefix, ending in ``;``) never matches -- dropping a repeated declaration could
+#: remove the only one that precedes a use.
+ONE_LINE_DEFINITION = re.compile(_HELPER_QUALIFIERS + r'\b.*\}\s*$')
+
+#: An SDFG constant, which CPF emits as a namespace-scope ``constexpr`` OBJECT rather than a
+#: function -- so it ends in ``;`` and the closing-brace anchor above cannot see it. An initializer
+#: is required in the pattern because that is what distinguishes a definition from the declaration
+#: ``extern constexpr T name;``, which may repeat.
+CONSTANT_DEFINITION = re.compile(r'(?:static\s+)?constexpr\s+[\w:<>,\s*&]+\b\w+\s*=.*;\s*$')
+
+#: The definitions :func:`merged_object` may drop a repeat of. Matched against the line as WRITTEN,
+#: with no leading whitespace allowed: generated code indents everything inside a function body, so
+#: column zero is what says a definition is at namespace scope. Without that anchor a ``constexpr``
+#: local declared in two different kernels would look like one repeated definition, and dropping
+#: the second copy would delete the second kernel's own constant.
+DUPLICABLE_DEFINITIONS = (ONE_LINE_DEFINITION, CONSTANT_DEFINITION)
 
 
 def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
@@ -578,13 +643,16 @@ def merged_object(frame: CodeObject, rest: List[CodeObject]) -> CodeObject:
     """One code object holding the frame and the device objects, with the shared text emitted once.
 
     Every object repeats what it needs of the others, because separate compilation gives each unit
-    only what it declares itself: the ``<array>_idx`` helpers are emitted into both. Concatenated,
-    a repeated DEFINITION is a redefinition error, so the second copy is dropped and the first
-    stands. Repeated DECLARATIONS are left alone -- a prototype may appear any number of times, and
-    dropping one risks removing the only declaration before a use.
+    only what it declares itself: the ``<array>_idx`` and ``<array>_size`` helpers and the SDFG
+    constants are emitted into both. Concatenated, a repeated DEFINITION is a redefinition error, so
+    the second copy is dropped and the first stands. Repeated DECLARATIONS are left alone -- a
+    prototype may appear any number of times, and dropping one risks removing the only declaration
+    before a use, which is why ``DACE_EXPORTED void __dace_runkernel_*(...);`` survives in both.
 
-    The helpers are one-liners by construction (``static DACE_HDFI constexpr T name(...) {{ ... }}``),
-    which is why a line is the unit here rather than a parsed definition.
+    Everything duplicated is a one-liner by construction -- a helper is
+    ``static <qualifiers> T name(...) {{ ... }}`` and a constant ``constexpr T name = ...;`` -- which
+    is why a line is the unit here rather than a parsed definition. Dropping the LATER copy keeps
+    every use preceded by a definition: the frame goes first and already uses the helpers it shares.
 
     :param frame: the frame object, which goes first; it declares every launcher it calls.
     :param rest: the device objects, which define them.
@@ -595,11 +663,10 @@ def merged_object(frame: CodeObject, rest: List[CodeObject]) -> CodeObject:
     for obj in [frame] + list(rest):
         kept: List[str] = []
         for line in obj.clean_code.splitlines():
-            stripped = line.strip()
-            if ONE_LINE_DEFINITION.match(stripped):
-                if stripped in seen:
+            if any(pattern.match(line) for pattern in DUPLICABLE_DEFINITIONS):
+                if line in seen:
                     continue
-                seen.add(stripped)
+                seen.add(line)
             kept.append(line)
         chunks.append('\n'.join(kept))
     merged = copy.copy(frame)

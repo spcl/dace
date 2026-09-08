@@ -99,6 +99,21 @@ def is_array_stored_on_GPU(sdfg: SDFG, array_name: str) -> bool:
     return storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES
 
 
+def containers_written(sdfg: SDFG) -> OrderedSet:
+    """Every container this SDFG writes, read off the graph rather than off the placement IR.
+
+    An incoming edge is the write, whichever node carries it: a tasklet, a map exit and a nested
+    SDFG's output connector all reach the container the same way. What is never written keeps the
+    contents it was called with, so its home copy stays valid for the whole run.
+    """
+    written: OrderedSet[str] = OrderedSet()
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if state.in_degree(node) > 0:
+                written.add(node.data)
+    return written
+
+
 def is_unoffloadable(data_name: str, sdfg: SDFG) -> bool:
     """A descriptor this pass does not place: a structure, or a container of containers.
 

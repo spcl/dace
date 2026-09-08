@@ -6,6 +6,9 @@ import numpy as np
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.transformation.dataflow import GPUTransformMap
+from dace.transformation.optimizer import Optimizer
+from dace.transformation.passes.offloading import offloading_helpers as helpers
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
 
@@ -759,6 +762,154 @@ def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():
     seeded_at = next(index for index, state in enumerate(order) if state.label == "seed_b")
     copied_at = next(index for index, state in enumerate(order) if writes_container(state, "B_gpu"))
     assert copied_at > seeded_at, f"B was copied to the device before the host wrote it: {labels}"
+
+
+def read_only_input_sdfg() -> dace.SDFG:
+    """``A`` is read and never written, ``B`` is written -- the two halves of the copy-back rule.
+
+    ``C`` is touched by nothing at all, the case that must not be placed anywhere.
+    """
+    sdfg = dace.SDFG("read_only_input")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [20], dace.float64)
+    sdfg.add_array("C", [20], dace.float64)
+
+    state = sdfg.add_state("scale", is_start_block=True)
+    entry, exit_ = state.add_map("scale", dict(i="0:20"))
+    scale = state.add_tasklet("scale", {"x"}, {"y"}, "y = x * 2.0")
+    state.add_memlet_path(state.add_read("A"), entry, scale, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(scale, exit_, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+
+    sdfg.fill_scope_connectors()
+    sdfg.validate()
+    return sdfg
+
+
+N = dace.symbol("N")
+
+
+@dace.program
+def laplace_program(A: dace.float64[N], T: dace.int64):
+    tmp = np.zeros_like(A)
+    for _ in range(T):
+        for i in dace.map[1:N - 1]:
+            tmp[i] = A[i - 1] - 2 * A[i] + A[i + 1]
+        for i in dace.map[1:N - 1]:
+            A[i] = tmp[i - 1] - 2 * tmp[i] + tmp[i + 1]
+
+
+def test_a_never_written_input_is_not_copied_back_to_the_host():
+    """Only a container something wrote is restored; the twin that makes it readable still stands.
+
+    A container never moves -- a twin is staged on the other side and the accesses are pointed at
+    it -- so its home copy goes stale only once something writes the twin. Restoring a read-only
+    one copies bytes already in place, and that write is what a nested SDFG's input-only connector
+    refuses.
+    """
+    sdfg = read_only_input_sdfg()
+    OtA().apply_pass(sdfg, {})
+
+    states = list(sdfg.states())
+    labels = [state.label for state in states]
+    assert any(writes_container(state, "A_gpu") for state in states), \
+        f"the read-only array was not staged onto the device at all: {labels}"
+    assert any(writes_container(state, "B") for state in states), \
+        f"the written array was not copied back: {labels}"
+    assert not any(writes_container(state, "A") for state in states), \
+        f"the read-only array was copied back: {labels}"
+
+
+def test_a_container_nothing_touches_is_left_where_it_started():
+    """An array no state reads or writes is not staged, not copied, and grows no twin."""
+    sdfg = read_only_input_sdfg()
+    OtA().apply_pass(sdfg, {})
+
+    assert "C_gpu" not in sdfg.arrays, f"an untouched array was given a device twin: {sorted(sdfg.arrays)}"
+    assert sdfg.arrays["C"].storage == dace.StorageType.Default, \
+        f"an untouched array was moved off the host: {sdfg.arrays['C'].storage}"
+    assert not any(writes_container(state, "C") for state in sdfg.states()), \
+        "an untouched array was copied"
+
+
+def test_a_map_over_a_read_only_container_survives_being_nested():
+    """``GPUTransformMap`` nests one map and offloads it, so each container reaches it one-way.
+
+    laplace is the shape that exposes it: one map reads ``A`` and writes ``tmp``, the next reads
+    ``tmp`` and writes ``A``, so whichever map is nested holds one container it never writes.
+    Copying that one back writes through a connector the nested SDFG only has as an input, which
+    validation refuses: "Data descriptor A is written to, but only given to nested SDFG as an
+    input connector".
+    """
+    sdfg = laplace_program.to_sdfg()
+    matches = list(Optimizer(sdfg).get_pattern_matches(patterns=[GPUTransformMap]))
+    assert matches, "no map to offload -- the fixture no longer exercises the transformation"
+
+    for match in matches:
+        candidate = deepcopy(sdfg)
+        cfg = candidate.cfg_list[match.cfg_id]
+        target = cfg.sdfg if not isinstance(cfg, dace.SDFG) else cfg
+        graph = cfg.node(match.state_id) if match.state_id >= 0 else cfg
+        match._sdfg = target
+        match.apply(graph, target)
+        candidate.validate()
+
+
+def view_on_both_sides_sdfg() -> dace.SDFG:
+    """``C_view`` aliases ``C``, and the two are read on different sides of the machine.
+
+    npbench mandelbrot2 has this shape: one state reads the view inside a kernel, another reads it
+    from host code, and a view carries one storage.
+    """
+    sdfg = dace.SDFG("view_on_both_sides")
+    sdfg.add_array("C", [4, 5], dace.float64)
+    sdfg.add_array("out", [20], dace.float64)
+    sdfg.add_array("total", [1], dace.float64)
+    sdfg.add_view("C_view", [20], dace.float64)
+
+    device = sdfg.add_state("on_the_device", is_start_block=True)
+    flat = device.add_access("C_view")
+    device.add_edge(device.add_read("C"), None, flat, "views", dace.Memlet("C[0:4, 0:5]"))
+    entry, exit_ = device.add_map("scale", dict(i="0:20"))
+    scale = device.add_tasklet("scale", {"x"}, {"y"}, "y = x * 2.0")
+    device.add_memlet_path(flat, entry, scale, dst_conn="x", memlet=dace.Memlet("C_view[i]"))
+    device.add_memlet_path(scale, exit_, device.add_write("out"), src_conn="y", memlet=dace.Memlet("out[i]"))
+
+    host = sdfg.add_state("on_the_host")
+    sdfg.add_edge(device, host, dace.InterstateEdge())
+    host_flat = host.add_access("C_view")
+    host.add_edge(host.add_read("C"), None, host_flat, "views", dace.Memlet("C[0:4, 0:5]"))
+    pick = host.add_tasklet("pick", {"x"}, {"y"}, "y = x")
+    host.add_edge(host_flat, None, pick, "x", dace.Memlet("C_view[0]"))
+    host.add_edge(pick, "y", host.add_write("total"), None, dace.Memlet("total[0]"))
+
+    sdfg.fill_scope_connectors()
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_view_of_a_staged_container_is_staged_with_it():
+    """A view follows the container it aliases onto whichever side that container was staged to.
+
+    Left behind, the alias names a buffer on the other side and the dispatcher refuses the access it
+    cannot make ("Illegal copy!"), because one descriptor carries one storage and the view is read
+    from a kernel in one state and from host code in another.
+    """
+    sdfg = view_on_both_sides_sdfg()
+    OtA().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    views = {name: desc for name, desc in sdfg.arrays.items() if isinstance(desc, dace.data.View)}
+    assert len(views) > 1, f"the view was not staged with its container: {sorted(views)}"
+
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if node.data not in views:
+                continue
+            origin = helpers.view_origin(state, node)
+            assert origin is not None, f"{node.data} in {state.label} aliases nothing"
+            assert views[node.data].storage == sdfg.arrays[origin].storage, (
+                f"{node.data} ({views[node.data].storage}) does not live where "
+                f"{origin} ({sdfg.arrays[origin].storage}) does")
 
 
 if __name__ == "__main__":
