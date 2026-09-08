@@ -7,6 +7,7 @@ import sympy
 
 import dace
 from dace import dtypes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.move_array_out_of_kernel import (_prepend_subscript_indices, _tile_extent,
                                                                  MoveArrayOutOfKernel)
 
@@ -207,6 +208,115 @@ def test_lifted_scratch_below_a_nested_sdfg_computes_the_right_values():
     assert np.allclose(cupy.asnumpy(out), expected)
 
 
+def kernel_over_k_beside_a_nested_k_loop() -> dace.SDFG:
+    """Two kernels in one SDFG: one whose map parameter is ``k``, one whose body OWNS a ``k`` loop.
+
+    ``mid[i, k] = 2 * a[NX - 1 - i, k]`` through a per-iteration ``tmp[NX]`` defined one level
+    down, then ``out[i, k] = mid[i, k] + 1`` in a sequential sweep. The scratch buffer's extent is
+    symbolic, so it is lifted and the lift propagates the first kernel's ``k`` into every nest of
+    the SDFG -- including the sweep, which assigns ``k`` itself.
+    """
+    scratch_body = dace.SDFG('scratch_body')
+    scratch_body.add_array('a', [NX, NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    scratch_body.add_array('mid', [NX, NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    # Symbolic extent: no device-local form (a VLA in device code), so it takes the lift rather
+    # than the register demotion.
+    scratch_body.add_array('tmp', [NX], dace.float64, transient=True, storage=dtypes.StorageType.Register)
+    fill = scratch_body.add_state('fill', is_start_block=True)
+    fill.add_mapped_tasklet('scale', {'i': '0:NX'}, {'__in': dace.Memlet('a[i, k]')},
+                            '__out = __in * 2.0', {'__out': dace.Memlet('tmp[i]')},
+                            schedule=dtypes.ScheduleType.Sequential,
+                            external_edges=True)
+    drain = scratch_body.add_state_after(fill, 'drain')
+    # The reversed read keeps the buffer alive; a straight-through copy is recomputed away.
+    drain.add_mapped_tasklet('shift', {'i': '0:NX'}, {'__in': dace.Memlet('tmp[NX - 1 - i]')},
+                             '__out = __in', {'__out': dace.Memlet('mid[i, k]')},
+                             schedule=dtypes.ScheduleType.Sequential,
+                             external_edges=True)
+
+    sweep = dace.SDFG('sweep')
+    sweep.add_array('mid', [NX, NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sweep.add_array('out', [NX, NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    loop = LoopRegion('k_sweep',
+                      condition_expr='k < NZ',
+                      loop_var='k',
+                      initialize_expr='k = 0',
+                      update_expr='k = k + 1')
+    sweep.add_node(loop, is_start_block=True)
+    step = loop.add_state('step', is_start_block=True)
+    bump = step.add_tasklet('bump', {'__in'}, {'__out'}, '__out = __in + 1.0')
+    step.add_edge(step.add_read('mid'), None, bump, '__in', dace.Memlet('mid[i, k]'))
+    step.add_edge(bump, '__out', step.add_write('out'), None, dace.Memlet('out[i, k]'))
+
+    sdfg = dace.SDFG('kernel_over_k_beside_a_nested_k_loop')
+    sdfg.add_array('a', [NX, NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('mid', [NX, NZ], dace.float64, transient=True, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('out', [NX, NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+
+    scratch = sdfg.add_state('scratch', is_start_block=True)
+    entry, exit_node = scratch.add_map('kernel_k', dict(k='0:NZ'), schedule=dtypes.ScheduleType.GPU_Device)
+    scratch_nsdfg = scratch.add_nested_sdfg(scratch_body, {'a'}, {'mid'}, symbol_mapping=dict(k='k', NX=NX, NZ=NZ))
+    scratch.add_memlet_path(scratch.add_read('a'),
+                            entry,
+                            scratch_nsdfg,
+                            dst_conn='a',
+                            memlet=dace.Memlet('a[0:NX, 0:NZ]'))
+    scratch.add_memlet_path(scratch_nsdfg,
+                            exit_node,
+                            scratch.add_write('mid'),
+                            src_conn='mid',
+                            memlet=dace.Memlet('mid[0:NX, 0:NZ]'))
+
+    sweep_state = sdfg.add_state_after(scratch, 'sweep')
+    sentry, sexit = sweep_state.add_map('kernel_i', dict(i='0:NX'), schedule=dtypes.ScheduleType.GPU_Device)
+    sweep_nsdfg = sweep_state.add_nested_sdfg(sweep, {'mid'}, {'out'}, symbol_mapping=dict(i='i', NX=NX, NZ=NZ))
+    sweep_state.add_memlet_path(sweep_state.add_read('mid'),
+                                sentry,
+                                sweep_nsdfg,
+                                dst_conn='mid',
+                                memlet=dace.Memlet('mid[0:NX, 0:NZ]'))
+    sweep_state.add_memlet_path(sweep_nsdfg,
+                                sexit,
+                                sweep_state.add_write('out'),
+                                src_conn='out',
+                                memlet=dace.Memlet('out[0:NX, 0:NZ]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_lift_does_not_bind_a_name_the_nest_assigns_itself():
+    """The lift must not hand a nest a binding for a symbol that nest gives its own value.
+
+    Codegen filters a nested function's symbol parameters through ``used_symbols`` with
+    ``keep_defined_in_mapping``, which drops a name the nest assigns, while the frame skips the
+    hoisted ``int64_t k;`` declaration precisely because the name IS in ``symbol_mapping``. The
+    sweep's counter then reaches the C++ neither as a parameter nor as a declaration and the
+    emitted ``for (k = ...)`` names nothing, which is a hard compile error.
+    """
+    from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
+
+    sdfg = kernel_over_k_beside_a_nested_k_loop()
+    GPUCodegenPreprocessPipeline().apply_pass(sdfg, {})
+
+    sweeps = [
+        node for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.NestedSDFG) and node.sdfg.name.startswith('sweep')
+    ]
+    assert sweeps, 'the sweep nest vanished, so this no longer covers the case'
+    for nest in sweeps:
+        assert 'k' not in nest.symbol_mapping, f'{nest.label} was bound to the counter it assigns itself'
+    sdfg.validate()
+
+
+def test_lifted_kernel_declares_a_nested_loop_counter():
+    """End to end: the emitted device code must declare the sweep's counter, not just name it."""
+    device_code = ''.join(obj.clean_code for obj in kernel_over_k_beside_a_nested_k_loop().generate_code())
+    assert 'for (k = ' not in device_code, 'the loop counter is used without a declaration in scope'
+    assert 'k = ' in device_code, 'the sweep loop disappeared, so this no longer covers the case'
+
+
 if __name__ == '__main__':
     test_lift_leaves_descendant_nested_sdfgs_at_their_own_rank()
     test_lifted_scratch_below_a_nested_sdfg_computes_the_right_values()
+    test_lift_does_not_bind_a_name_the_nest_assigns_itself()
+    test_lifted_kernel_declares_a_nested_loop_counter()

@@ -73,10 +73,15 @@ def generated_for(build, name, implementation, gpu=False):
         return '\n'.join((obj.clean_code or obj.code) for obj in sdfg.generate_code())
 
 
-def tasklet_body_line(code):
-    """The single emitted line that stores into ``C`` through the index functions."""
-    lines = [ln.strip() for ln in code.splitlines() if 'C_idx(' in ln and 'A_idx(' in ln and 'B_idx(' in ln]
-    assert lines, 'no C[C_idx(..)] = A[A_idx(..)] + B[B_idx(..)] line found:\n' + code
+def tasklet_body_line(code, suffix=''):
+    """The single emitted line that stores into ``C`` through the index functions.
+
+    ``suffix`` is appended to each array name: ``apply_gpu_transformations`` renames the arrays to
+    ``A_gpu``/``B_gpu``/``C_gpu``, and the index helpers follow the container they index.
+    """
+    names = ['%s%s_idx(' % (n, suffix) for n in ('A', 'B', 'C')]
+    lines = [ln.strip() for ln in code.splitlines() if all(name in ln for name in names)]
+    assert lines, 'no C[C%s_idx(..)] = A[..] + B[..] line found:\n%s' % (suffix, code)
     return lines[0]
 
 
@@ -161,7 +166,7 @@ def test_single_line_inside_kernel(require_experimental, require_gpu):
     generator, so the readable form flows into device code too."""
     code = generated_for(add_2d_sdfg, 'sl_gpu_inspect', EXPERIMENTAL, gpu=True)
     assert '__global__' in code, 'no CUDA kernel emitted'
-    body = tasklet_body_line(code)
+    body = tasklet_body_line(code, suffix='_gpu')
     assert '{' not in body and '}' not in body, body
     assert LEGACY_SEPARATOR not in code
 

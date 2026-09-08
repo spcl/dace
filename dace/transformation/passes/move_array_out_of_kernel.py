@@ -10,6 +10,7 @@ import sympy
 import dace
 from dace import SDFG, SDFGState, dtypes, data as dt
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.properties import CodeBlock, make_properties
 from dace.transformation import transformation, helpers
 from dace.transformation.pass_pipeline import Pass
@@ -61,6 +62,14 @@ def _prepend_subscript_indices(body: str, array_name: str, prefix: List[str]) ->
         return None
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
+
+
+def _assigns_symbol(sdfg: SDFG, name: str) -> bool:
+    """Whether ``sdfg`` gives ``name`` its own value, rather than reading one from its caller."""
+    for cfr in sdfg.all_control_flow_regions():
+        if isinstance(cfr, LoopRegion) and cfr.loop_variable == name and cfr.init_statement is not None:
+            return True
+    return any(name in edge.data.assignments for edge in sdfg.all_interstate_edges())
 
 
 def _tile_extent(max_elem, min_elem):
@@ -529,6 +538,14 @@ class MoveArrayOutOfKernel(Pass):
 
             for sym in all_symbols:
                 name = str(sym)
+                # A nest that assigns the name itself must not also be BOUND to it. Codegen filters a
+                # nested function's symbol parameters through ``used_symbols(keep_defined_in_mapping=
+                # True)``, which drops a name the nest defines, while the frame skips the hoisted
+                # ``int64_t k;`` declaration precisely BECAUSE the name is in ``symbol_mapping``. The
+                # counter then ends up neither parameter nor declaration and the emitted
+                # ``for (k = ...)`` names nothing.
+                if _assigns_symbol(sdfg, name):
+                    continue
                 if name not in sdfg.symbols:
                     sdfg.add_symbol(name, dace.dtypes.int32)
                 if name not in nsdfg_node.symbol_mapping:

@@ -62,11 +62,12 @@ class InlineTaskletConnectors(ppl.Pass):
             if not isinstance(node, nodes.Tasklet):
                 continue
             state = parent
-            for edge in state.in_edges(node):
-                if edge.data is not None and edge.data.data:
-                    touched[edge.data.data] = touched.get(edge.data.data, 0) + 1
-            for edge in state.out_edges(node):
-                if edge.data is not None and edge.data.data:
+            for is_output, edges in ((False, state.in_edges(node)), (True, state.out_edges(node))):
+                for edge in edges:
+                    if edge.data is None or not edge.data.data:
+                        continue
+                    if _binds_base_pointer(node, edge, is_output):
+                        continue
                     touched[edge.data.data] = touched.get(edge.data.data, 0) + 1
             try:
                 accesses = self._plan_tasklet(state.sdfg, state, node)
@@ -220,6 +221,25 @@ class InlineTaskletConnectors(ppl.Pass):
         new_tree = inliner.visit(tree)
         ast.fix_missing_locations(new_tree)
         return ast.unparse(new_tree), inliner.inlined
+
+
+def _binds_base_pointer(node: nodes.Tasklet, edge, is_output: bool) -> bool:
+    """True when ``edge``'s connector is bound to the container's base pointer.
+
+    Such a connector is never inlined, but it does not make its container unsafe either. The
+    per-container rule exists for a container whose only declaration is the fused binding an
+    inlined write emits; a pointer connector's classic binding (``double* _cpy_in = A;``) already
+    spells the container's name, so the container is declared no matter what the other tasklets do.
+
+    Counting one as a toucher declined inlining for every other tasklet on the same container. On
+    GPU that is every device array -- the host/device memcpy tasklets take them by pointer -- so
+    kernel bodies came out in classic connector form.
+    """
+    conn = edge.src_conn if is_output else edge.dst_conn
+    if not conn:
+        return False
+    conntype = node.out_connectors.get(conn) if is_output else node.in_connectors.get(conn)
+    return isinstance(conntype, dtypes.pointer)
 
 
 def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet, safe: Optional[Set[str]] = None) -> bool:

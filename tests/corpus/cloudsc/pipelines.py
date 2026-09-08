@@ -303,6 +303,10 @@ def _stage_pass_names(unit) -> set:
 #: dependency and rides along inside its Pipeline.
 _PARALLELIZE_PHASE: Dict[str, str] = {
     'ShortLoopUnroll': 'unroll',
+    # Runs immediately after the unroll and repairs it (one name carrying N values), so it
+    # belongs to that phase rather than opening one of its own. A pure renaming: bit-exact
+    # side of the tolerance boundary.
+    'SymbolSSA': 'unroll',
     'UniqueLoopIterators': 'unique_iterators',
     'SimplifyPass': 'simplify',
     'PrivatizeScalars': 'privatize',
