@@ -636,12 +636,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         if parent_sdfg.arrays[name].transient:
                             sdfg.arrays[name].transient = False
 
-                    # Dev not: name and nview.target are identical
-                    outer_to_connect["outputs"].add(name)
-
-                # Add out_connector in case of write after read
-                if name in outer_to_connect["inputs"]:
-                    outer_to_connect["outputs"].add(name)
+                # Add out connector in any case because we don't know who (if anyone)
+                # is gonna read from it down the line.
+                # Dev not: name and nview.target are identical
+                outer_to_connect["outputs"].add(name)
 
             # connect "outside the map"
             # only re-use cached write-only nodes, e.g. don't create a cycle for
@@ -768,12 +766,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         if parent_sdfg.arrays[memlet.data].transient:
                             sdfg.arrays[memlet.data].transient = False
 
-                    # Dev note: memlet.data and nview.target are identical
-                    to_connect["outputs"].add(memlet.data)
-
-                # Add out_connector in case case of write after read
-                if memlet.data in to_connect["inputs"]:
-                    to_connect["outputs"].add(memlet.data)
+                # Add out connector in any case because we don't know who (if anyone)
+                # is gonna read from it down the line.
+                # Dev note: memlet.data and nview.target are identical
+                to_connect["outputs"].add(memlet.data)
             else:
                 assert scope_node is None
 
