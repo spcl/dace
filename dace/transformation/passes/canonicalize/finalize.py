@@ -24,7 +24,7 @@ import os
 from dace import SDFG, dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import infer_types, nodes
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.libraries.blas.environments import openblas
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage, find_fast_library,
                                                     libnode_is_sequential, make_transients_persistent,
@@ -231,6 +231,24 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
             node.implementation = 'rowwise'
 
 
+def allocated_unconditionally(sdfg: SDFG, name: str) -> bool:
+    """Whether ``name`` is accessed anywhere outside every :class:`ConditionalBlock` of ``sdfg``.
+
+    :param sdfg: SDFG owning the descriptor.
+    :param name: Descriptor name.
+    :returns: ``True`` when at least one access is reached whatever the branch conditions say.
+    """
+    for state in sdfg.states():
+        if not any(node.data == name for node in state.data_nodes()):
+            continue
+        block = state
+        while block is not None and not isinstance(block, ConditionalBlock):
+            block = block.parent_graph
+        if block is None:
+            return True
+    return False
+
+
 def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     """Finalize the storage of a canonicalized (or vectorized) SDFG's transients, in place.
 
@@ -278,6 +296,14 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
             if desc.total_size == 1:
                 desc.lifetime = dtypes.AllocationLifetime.State
                 desc.storage = dtypes.StorageType.Register
+                continue
+            # Hoisting into ``__dace_init`` is sound only where the program would have made the
+            # allocation anyway, or where the extent holds for every value the boundary admits: a
+            # buffer sized by the very quantity its guard tests (LoopToScan's carry distance) is
+            # positive inside the branch and negative outside it, and ``new T[negative]`` aborts.
+            if not (allocated_unconditionally(sd, name)
+                    or all(symbolic.provably_nonnegative(dim, assume_symbols_nonnegative=True) for dim in desc.shape)):
+                desc.lifetime = dtypes.AllocationLifetime.State
                 continue
             # A shape naming a RUNTIME-SUPPLIED symbol cannot be allocated in ``__dace_init``:
             # that runs before any state, and ``__dace_num_threads`` is defined by a graph tasklet
