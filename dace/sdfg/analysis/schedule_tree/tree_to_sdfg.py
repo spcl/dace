@@ -1795,12 +1795,27 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         return not sdfg.arrays[name].transient
 
     def _import_nested_datadesc(self, name: str, sdfg: SDFG) -> None:
-        """Clone a container from the closest enclosing SDFG that has it into
-        ``sdfg``, as the non-transient a nested-SDFG connector requires."""
+        """
+        Clone a container from the closest enclosing SDFG that has it into
+        ``sdfg``, as the non-transient a nested-SDFG connector requires.
+
+        A VIEW arrives as plain storage. A view is an aliasing relationship, and
+        its other end stays outside: what crosses the boundary is the memory the
+        view already selected, which the connector hands over whole. Cloned as a
+        view it would be an access node with no viewing edge to bind it -- an
+        "ambiguous or invalid edge to/from a View access node" -- while a view
+        rebuilt inside from it (``_ensure_nested_container``) treats it as its
+        source, which is exactly what an array is.
+
+        :param name: The container to import.
+        :param sdfg: The nested SDFG to import it into.
+        """
         if name in sdfg.arrays:
             return
         parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
         descriptor = parent_sdfg.arrays[name].clone()
+        if isinstance(descriptor, data.View):
+            descriptor = descriptor.as_array()
         descriptor.transient = False
         sdfg.add_datadesc(name, descriptor)
 
