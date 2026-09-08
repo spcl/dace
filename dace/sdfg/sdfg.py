@@ -1613,17 +1613,19 @@ class SDFG(ControlFlowRegion):
             per_array_extents = {}
             all_extents = set()
             for name in array_names:
-                syms = {
-                    s.name if isinstance(s, sympy.Symbol) else str(s)
-                    for s in self.arrays[name].used_symbols(all_symbols)
-                }
+                desc = self.arrays[name]
+                # A Structure / Tensor member can be a SYMBOL rather than a descriptor -- a Tensor
+                # carries its ``value_count`` that way -- and a symbol has no extents of its own.
+                if not isinstance(desc, dt.Data):
+                    continue
+                syms = {s.name if isinstance(s, sympy.Symbol) else str(s) for s in desc.used_symbols(all_symbols)}
                 per_array_extents[name] = syms
                 all_extents |= syms
             extents = set()
             if all_extents - res_free:
                 read_set, write_set = self.read_and_write_sets()
                 for name in (read_set | write_set) & array_names:
-                    extents |= per_array_extents[name]
+                    extents |= per_array_extents.get(name, set())
                 extents -= res_free
             if extents:
                 # A transient sized by its enclosing map parameter (``t[_loop_it_0]`` under ``map
