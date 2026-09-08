@@ -132,8 +132,10 @@ EXPECTED: dict[str, Form] = {
         "two parallel maps and nothing carried"),
     "s231_d_single":
     Form(
-        1, 0, 1, (), None, "aa[j, i] = aa[j - 1, i] + bb[j, i] carries DOWN a column, so the j sweep is a genuine "
-        "recurrence; the columns i are independent and are what the threads split"),
+        1, 1, 1, (), None, "aa[j, i] = aa[j - 1, i] + bb[j, i] carries DOWN a column, so the j sweep is a genuine "
+        "recurrence; the columns i are independent and are what the threads split -- cut into per-thread "
+        "bands, so the band the carry is given to rides along as a Sequential map (one barrier for "
+        "the nest instead of one per trip)"),
     "s232_d_single":
     Form(
         1, 0, 1, (), None,
@@ -141,13 +143,17 @@ EXPECTED: dict[str, Form] = {
         "and the rows j are free -- the mirror image of s231"),
     "s233_d_single":
     Form(
-        1, 0, 1, (), None, "two inner nests, one carried down columns (aa[j - 1, i]) and one carried across rows "
-        "(bb[j, i - 1]); the dimension free in both parallelizes and one recurrence keeps its loop"),
+        1, 1, 1, (), None, "two inner nests, one carried down columns (aa[j - 1, i]) and one carried across rows "
+        "(bb[j, i - 1]); the dimension free in both parallelizes and one recurrence keeps its loop, and "
+        "the band the carry is given to rides along as a Sequential map (one barrier for the nest "
+        "instead of one per trip)"),
     "s235_d_single":
     Form(
-        2, 0, 1, (), None,
+        2, 1, 1, (), None,
         "a[i] += b[i] * c[i] is elementwise while aa[j, i] = aa[j - 1, i] + bb[j, i] * a[i] carries down "
-        "j; distribution frees the a statement and the column recurrence keeps its loop"),
+        "j; distribution frees the a statement and the column recurrence keeps its loop, and the band "
+        "the carry is given to rides along as a Sequential map (one barrier for the nest instead of "
+        "one per trip)"),
     "s252_d_single":
     Form(
         1, 0, 0, (), None,
