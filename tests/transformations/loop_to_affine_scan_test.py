@@ -80,8 +80,14 @@ def test_linear_recurrence_lifts_to_an_affine_scan():
         for blk in loops[0].all_control_flow_blocks() if isinstance(blk, dace.SDFGState) for n in blk.data_nodes()
     }
     assert 'x' not in body_reads
-    assert any(name.startswith('_scan_coef_') for name in body_reads)
-    assert any(name.startswith('_scan_in_') for name in body_reads)
+    # Both operands here are bare slices -- ``c[i]`` and ``d[i]`` -- so the rewrite wires the scan
+    # straight to them and the body is left with nothing to build at all. It used to fill two
+    # buffers, which is why this asserted their names; the buffer survives only for a COMPUTED
+    # operand now (``loop_to_scan_test.test_a_computed_affine_operand_still_gets_its_buffer``).
+    assert not body_reads, f'the body still carries data after the lift: {sorted(body_reads)}'
+    scan_state = next(st for n, st in sdfg.all_nodes_recursive() if n is nodes[0])
+    operands = {e.data.data for e in scan_state.in_edges(nodes[0]) if e.data.data is not None}
+    assert {'c', 'd'} <= operands, f'the scan does not read its operands where they lie: {sorted(operands)}'
 
 
 @pytest.mark.parametrize('n', [1, 2, 4, 129, 20011])
