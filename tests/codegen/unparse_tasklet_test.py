@@ -108,7 +108,12 @@ def test_bitwise_call_spelling_lowers_to_operators():
     assert np.array_equal(b, ((a >> 1) ^ 33800) | (a & 1))
 
 
+@pytest.mark.gpu
 def test_tasklets_with_same_local_name():
+    # A GPU_Device map over GPU_Global data, compiled: it needs nvcc, so it belongs to the GPU
+    # selection. Unmarked it also ran in the CPU matrix, where cmake failed to find a CUDA
+    # toolkit -- and, sharing the ``tester`` build directory with the other SDFGs of that name on
+    # the same xdist worker, left its .cu in the file list for whichever test compiled there next.
     sdfg = dace.SDFG('tester')
     sdfg.add_array('A', [4], dace.float32, dace.StorageType.GPU_Global)
     state = sdfg.add_state()
