@@ -3175,19 +3175,28 @@ class CPUCodeGen(TargetCodeGenerator):
         distinct, in lockstep across the child's own translation units (definition and every internal
         caller). The child's PUBLIC ``__dace_init_<child>`` -- the only entry the parent calls -- is left
         untouched, so the cross-program handle call still resolves.
+
+        The two GPU error helpers get the same treatment. They are named after neither the target nor
+        the SDFG, so every ``.cu`` in the binary defines ``__dace_gpu_drain_error`` and
+        ``__dace_gpu_last_error`` and every frame calls its own -- one definition each is fine for a
+        program that is a single translation unit, and a multiple-definition link error the moment a
+        child is added. They cannot share the parent's copy either: ``__dace_gpu_last_error`` reads
+        ``__state->gpu_context``, and each program has its own state struct. Only the CHILD's objects
+        are rewritten, so the parent keeps the canonical spelling -- the one ``compiled_sdfg`` looks
+        up on the loaded library.
         """
         module_targets = set()
         finder = re.compile(r'__dace_(?:init|exit)_(\w+)')
         for obj in objects:
             module_targets.update(m.group(1) for m in finder.finditer(obj.code) if m.group(1) != child_name)
-        if not module_targets:
-            return
         for obj in objects:
             code = obj.code
             for target in module_targets:
                 for kind in ('init', 'exit'):
                     code = re.sub(r'\b__dace_%s_%s\b' % (kind, re.escape(target)),
                                   '__dace_%s_%s_%s' % (kind, target, child_name), code)
+            for helper in ('__dace_gpu_drain_error', '__dace_gpu_last_error'):
+                code = re.sub(r'\b%s\b' % re.escape(helper), '%s_%s' % (helper, child_name), code)
             obj.code = code
 
     def _collect_sequential_accumulators(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
