@@ -9,7 +9,9 @@ This library provides two things:
    given the node's context in the SDFG and on the local machine. See
    :mod:`dace.libraries.ai.expansion`.
 2. :class:`~dace.libraries.ai.nodes.ai_node.AINode`, a library node that carries only a
-   natural-language description, for microkernels that have no library node of their own.
+   natural-language description, for microkernels that have no library node of their own. In the
+   Python frontend it is written as ``dace.ai('...', a=A, b=B)`` -- see
+   :func:`dace.frontend.python.interface.ai` and ``samples/ai``.
 
 The model is reached through a provider selected by the ``ai.provider`` configuration entry; its
 SDK is imported lazily, so nothing here requires one to be installed until an expansion actually

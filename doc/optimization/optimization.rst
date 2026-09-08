@@ -28,6 +28,11 @@ transformations, for example :class:`~dace.transformation.dataflow.tiling.MapTil
 When working with specific platforms, be sure to read the **Best Practices** documentation entries linked below. It is also
 recommended to read vendor-provided documentation on how to maximize performance on that platform.
 
+Where the code that a slot needs is neither in a library nor worth writing by hand -- a vectorized microkernel, a
+sequence of vendor intrinsics -- :ref:`AI-generated implementations <ai>` let it be described in natural language
+instead: every library node can be expanded into a tasklet written by a language model, and ``dace.ai`` places such a
+node directly from a Python program. The result is an ordinary tasklet in the SDFG, generated once and saved with it.
+
 Finally, our experimental auto-tuning API allows for automatic optimization of SDFGs by searching over the set of possible
 configurations. This is done by evaluating the performance of each configuration and selecting the best one.
 For example, :class:`~dace.optimization.map_permutation_tuner.MapPermutationTuner` automatically tunes the order of
@@ -39,6 +44,7 @@ The following resources are available to help you optimize your SDFG:
   * Using transformations: `Using and Creating Transformations <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/transformations.ipynb>`_
   * Creating optimized schedules that can match optimized libraries: `Matrix multiplication CPU and GPU optimization example <https://github.com/spcl/dace/blob/main/samples/optimization/matmul.py>`_
   * Auto-tuning and instrumentation: `Tuning data layouts sample <https://github.com/spcl/dace/blob/main/samples/optimization/tuning.py>`_
+  * Describing a microkernel instead of writing it: `AI-generated matrix multiplication sample <https://github.com/spcl/dace/blob/main/samples/optimization/ai_generated_matmul.py>`_
 
 The following subsections provide more information on the different types of optimization methods:
 
@@ -47,6 +53,7 @@ The following subsections provide more information on the different types of opt
 
     profiling
     blas
+    ai
     vscode
     gpu
     interactive
