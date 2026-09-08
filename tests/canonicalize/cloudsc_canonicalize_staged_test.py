@@ -6,18 +6,24 @@ stops at ``parallelize``. This one goes the whole way and, at every phase bounda
 
 * **validates** the SDFG (``validate_all``-equivalent: a full ``sdfg.validate()`` after every phase, which
   is what ``validate_all`` amounts to at phase granularity);
-* **numerically verifies** it against the un-canonicalized reference on identical physical inputs, at the
-  IEEE tolerance the CloudSC harness already established as bit-for-bit
-  (``generate_data_for_cloudsc.compare_outputs``, ``1e-15``, under ``IEEE_CPU_ARGS``);
+* **numerically verifies** it against the un-canonicalized reference on identical physical inputs, run
+  MULTICORE -- the way the kernel is actually executed -- at the parallel tolerance the CloudSC
+  harness already established (``1e-10``, under ``IEEE_CPU_ARGS``);
 * **times** every individual stage, so an expensive stage other than ``LoopToMap`` is visible;
 * **caches** the SDFG once a phase is both valid and numerically correct, so a re-run resumes from the
   last good phase instead of repeating hours of work.
 
-Determinism: verification runs on a **deep copy** that ``make_sequential`` rewrites to sequential
-schedules -- CloudSC's OpenMP maps reorder FP reductions run-to-run, which is noise, not signal. The
-copy is what gets run; the **pipeline SDFG itself is never made sequential**, because that would bake
-Sequential schedules into the cached artifact and destroy the parallelism the pipeline exists to
-produce. Run the process single-core to keep even the sequential build quiet::
+Why multicore: canonicalization's job is to EXPOSE parallelism, so the mistake it can make is a Map
+over a loop that carries a dependence. Such a phase is bit-exact the moment the copy is rewritten to
+sequential schedules, and wrong as soon as the same graph runs on more than one thread -- a
+sequential check calls it correct. The parallel tolerance bounds the reassociation that running
+OpenMP reductions in a different order costs, and nothing else.
+
+A mismatch is then re-run sequentially, which names the cause instead of starting a second hunt:
+bit-exact with one thread means the phase parallelized a dependence, still wrong means it changed
+the values. Every run is on a **deep copy**; the **pipeline SDFG itself is never made sequential**,
+because that would bake Sequential schedules into the cached artifact and destroy the parallelism
+the pipeline exists to produce::
 
     taskset -c 0 env OMP_NUM_THREADS=1 PYTHONPATH=/path/to/dace \\
         python tests/canonicalize/cloudsc_canonicalize_staged_test.py
@@ -47,10 +53,22 @@ from dace.transformation.passes.canonicalize.pipeline import _build_stages
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
                                                             generate_cloudsc_inputs, make_sequential)
 
-#: Machine-precision tolerance. Canonicalization is value-preserving and the IEEE build forbids
-#: reassociation and FP contraction, so the reference is reproduced bit-for-bit; this is the harness's
-#: own established criterion, not a tolerance invented to hide a discrepancy.
-RTOL = ATOL = 1e-15
+#: Tolerance for the MULTICORE check, taken from the ``parallel`` arm of ``cloudsc_canonicalize_test``
+#: and from ``cloudsc_target_pipelines_test``. The candidate runs its Maps as OpenMP regions, so its
+#: reductions and WCR accumulations fold in a different ORDER than the sequential reference; this
+#: bounds reassociation and nothing else, with the IEEE build strict on both sides.
+RTOL = ATOL = 1e-10
+
+#: CloudSC's species PARAMETER constants, the same set the sibling canonicalize / target-pipeline
+#: tests bake in. ``canonicalize`` specializes them BEFORE it builds its stages, so a walk that
+#: leaves them symbolic walks a different graph: the species and LU loops are constant-trip only
+#: once these are in, and a phase that is wrong on the constant-trip form need not misbehave on the
+#: symbolic one. ``klev`` / ``klon`` / ``kidia`` / ``kfdia`` stay symbolic.
+SPECIES_CONSTANTS = {'nclv': 5, 'ncldql': 1, 'ncldqi': 2, 'ncldqr': 3, 'ncldqs': 4, 'ncldqv': 5}
+
+#: Tolerance for the sequential re-check. Same schedules as the reference and the same fold order, so
+#: canonicalization -- being value-preserving -- reproduces it bit-for-bit.
+SEQUENTIAL_RTOL = SEQUENTIAL_ATOL = 1e-15
 
 
 @contextlib.contextmanager
@@ -103,34 +121,65 @@ def build_reference() -> Tuple[dace.SDFG, Dict, Dict]:
     return reference, pristine, reference_outputs
 
 
-def verify(candidate: dace.SDFG, pristine: Dict, reference_outputs: Dict) -> Tuple[bool, str]:
-    """Run a COPY of ``candidate`` on the reference's inputs and compare every shared output array.
+def drive(candidate: dace.SDFG, pristine: Dict, reference_outputs: Dict, rtol: float, atol: float,
+          sequential: bool) -> Dict[str, Tuple[float, float]]:
+    """Run a COPY of ``candidate`` on the reference's inputs; return the arrays that disagree.
 
-    The copy is what ``make_sequential`` mutates, so the caller's SDFG keeps its real schedules.
+    The copy is what ``make_sequential`` may mutate, so the caller's SDFG keeps its real schedules.
+
+    :param sequential: rewrite the copy to sequential schedules before running it.
+    :returns: ``{array: (max_abs, max_rel)}`` for the arrays outside tolerance, empty when all agree.
     """
     probe = copy.deepcopy(candidate)
-    make_sequential(probe)
+    if sequential:
+        make_sequential(probe)
     candidate_outputs = copy.deepcopy(pristine)
     with ieee_build():
         probe(**candidate_outputs)
-    report = compare_outputs(reference_outputs, candidate_outputs, rtol=RTOL, atol=ATOL)
-    bad = {name: (abs_err, rel_err) for name, (abs_err, rel_err, ok) in report.items() if not ok}
-    if bad:
-        worst = sorted(bad.items(), key=lambda kv: -kv[1][1])[:4]
-        return False, 'mismatched: ' + ', '.join(f'{n} (abs={a:.3e} rel={r:.3e})' for n, (a, r) in worst)
-    return True, f'{len(report)} arrays bit-exact'
+    report = compare_outputs(reference_outputs, candidate_outputs, rtol=rtol, atol=atol)
+    return {name: (abs_err, rel_err) for name, (abs_err, rel_err, ok) in report.items() if not ok}
+
+
+def verify(candidate: dace.SDFG, pristine: Dict, reference_outputs: Dict) -> Tuple[bool, str]:
+    """Check the phase the way the kernel is actually RUN: Maps as OpenMP regions, multicore.
+
+    A sequential check cannot see the failure that matters most here. Canonicalization's whole job
+    is to expose parallelism, and a Map it created over a loop that carries a dependence is
+    bit-exact when the copy is rewritten to sequential schedules and wrong the moment the same
+    graph runs on more than one thread. Verifying sequentially declares such a phase correct.
+
+    On a mismatch the phase is re-run SEQUENTIALLY, which separates the two causes without a second
+    hunt: still wrong with one thread = the phase changed the values; correct with one thread =
+    the phase parallelized something it may not.
+    """
+    bad = drive(candidate, pristine, reference_outputs, RTOL, ATOL, sequential=False)
+    if not bad:
+        return True, 'multicore: every shared array within tolerance'
+    worst = sorted(bad.items(), key=lambda kv: -kv[1][1])[:4]
+    detail = 'multicore mismatch: ' + ', '.join(f'{n} (abs={a:.3e} rel={r:.3e})' for n, (a, r) in worst)
+    seq_bad = drive(candidate, pristine, reference_outputs, SEQUENTIAL_RTOL, SEQUENTIAL_ATOL, sequential=True)
+    detail += ('; sequential is bit-exact -> the phase parallelized a dependence'
+               if not seq_bad else f'; sequential also wrong ({len(seq_bad)} arrays) -> the phase changed values')
+    return False, detail
 
 
 def run_staged(cache_dir: str,
                verify_numerics: bool = True,
                stop_after: Optional[str] = None,
-               resume: bool = True) -> List[Dict]:
+               resume: bool = True,
+               specialize_constants: Optional[Dict[str, int]] = None) -> List[Dict]:
     """Apply the pipeline phase by phase, validating / verifying / timing / caching each.
 
     :param cache_dir: Directory holding ``phase-<NN>-<label>.sdfgz`` snapshots and ``timings.json``.
     :param verify_numerics: Compile+run+compare after each phase. Off = timing-only sweep.
     :param stop_after: Stop once this phase label completes.
     :param resume: Load the newest cached snapshot and skip the phases it already covers.
+    :param specialize_constants: ``{symbol: value}`` baked into the CANDIDATE before the first
+        phase, exactly where ``canonicalize`` bakes them in. The reference stays symbolic -- it is
+        driven with those same values as arguments, so the two agree unless a phase is wrong.
+        Walking without the map the real pipeline uses walks a DIFFERENT graph: CloudSC's species
+        loops are constant-trip only once ``nclv`` and friends are baked in, so the phases see
+        different loops and a divergence need not reproduce.
     :returns: One record per phase.
     """
     os.makedirs(cache_dir, exist_ok=True)
@@ -155,6 +204,10 @@ def run_staged(cache_dir: str,
                 break
     if sdfg is None:
         sdfg = build_cloudsc_sdfg(simplify=False)
+        if specialize_constants:
+            # Only on a fresh build: a resumed snapshot already carries them.
+            from dace.sdfg.utils import specialize_symbols
+            specialize_symbols(sdfg, specialize_constants)
         sdfg.validate()
 
     records: List[Dict] = []
@@ -253,12 +306,15 @@ def report(records: List[Dict]) -> str:
 
 @pytest.mark.integration
 def test_cloudsc_canonicalize_staged_is_valid_and_numerically_faithful(tmp_path):
-    """Every canonicalization phase keeps CloudSC valid AND bit-exact against the reference.
+    """Every canonicalization phase keeps CloudSC valid AND numerically correct when run multicore.
 
     Marked ``integration``: it needs a working C++ compiler and takes hours. It is not skipped -- on a
     box with a toolchain it runs and must pass.
     """
-    records = run_staged(str(tmp_path / 'cache'), verify_numerics=True, resume=False)
+    records = run_staged(str(tmp_path / 'cache'),
+                         verify_numerics=True,
+                         resume=False,
+                         specialize_constants=SPECIES_CONSTANTS)
     print(report(records))
 
     broken = [r for r in records if r['apply_error'] or not r['valid'] or r['numerically_correct'] is False]
