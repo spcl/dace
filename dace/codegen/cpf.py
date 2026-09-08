@@ -607,8 +607,25 @@ CONSTANT_DEFINITION = re.compile(r'(?:static\s+)?constexpr\s+[\w:<>,\s*&]+\b\w+\
 #: the second copy would delete the second kernel's own constant.
 DUPLICABLE_DEFINITIONS = (ONE_LINE_DEFINITION, CONSTANT_DEFINITION)
 
-#: Source languages a GPU target emits its own translation unit in.
+#: Source languages a GPU target emits its own translation unit in. CUDA emits ``cu``; HIP emits
+#: plain ``cpp``, because hipcc compiles ``.cpp`` -- the SAME language the frame carries. So the
+#: language alone cannot tell the two apart there, and :data:`DEVICE_TARGET_TYPES` is what does.
 DEVICE_LANGUAGES = ('cu', 'hip', 'hip.cpp')
+
+#: Build subdirectories a GPU target emits into. MEASURED on gfx942: generate_code returns the
+#: frame at ``target_type=''`` and the device object at ``target_type='hip'``, both carrying
+#: ``language='cpp'``.
+DEVICE_TARGET_TYPES = ('cuda', 'hip')
+
+
+def is_device_object(obj: CodeObject) -> bool:
+    """Whether ``obj`` is the unit a GPU target emitted, rather than the frame that calls it.
+
+    Either label is enough, and neither is enough alone: a HIP device object shares the frame's
+    ``language``, while a target that leaves ``target_type`` at its default is separated only by
+    the language. Answering to EITHER covers both backends; the frame answers to neither.
+    """
+    return obj.target_type in DEVICE_TARGET_TYPES or obj.language in DEVICE_LANGUAGES
 
 
 def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
@@ -633,12 +650,12 @@ def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
     # compiler builds both, so they are one unit here -- concatenated frame-first, since the frame
     # already forward-declares every kernel launcher it calls.
     if cpf_lowering.device():
-        # What separates the two is the LANGUAGE: a device object is the one the GPU target emits
-        # into a source file of its own. ``target_type`` does not -- it is the build subdirectory,
-        # and both the frame and the device object leave it at the empty default, so a filter on it
-        # matched both, found no single frame, and refused every device rendering.
-        frame = [obj for obj in linkable if obj.language not in DEVICE_LANGUAGES]
-        rest = [obj for obj in linkable if obj.language in DEVICE_LANGUAGES]
+        # Neither label separates the two on every backend, so is_device_object takes either. A
+        # language-only filter refused every HIP rendering: hipcc compiles .cpp, so both objects
+        # came back ``language='cpp'``, both were classified as the frame, and no single frame was
+        # found.
+        frame = [obj for obj in linkable if not is_device_object(obj)]
+        rest = [obj for obj in linkable if is_device_object(obj)]
         if len(frame) == 1:
             return merged_object(frame[0], rest)
     extra = ', '.join(f'{obj.name}.{obj.language}' for obj in linkable)

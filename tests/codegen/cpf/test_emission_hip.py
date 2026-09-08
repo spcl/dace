@@ -24,6 +24,7 @@ import pytest
 import dace
 from dace import cpf_lowering
 from dace.codegen import cpf
+from dace.codegen.codeobject import CodeObject
 from dace.codegen.cpf import render as render_sdfg
 from dace.libraries.standard.nodes import FindFirst, Scan
 from dace.libraries.standard.nodes.scan import ScanOp
@@ -253,3 +254,51 @@ def test_the_host_dialects_do_not_see_the_device_selection(language):
     with cpf_lowering.dialect_scope(cpf.LANGUAGES[language]):
         assert not cpf.on_device_at_host_level(node, state)
         assert cpf.renderable_implementations(node, state) == cpf.RENDERABLE_IMPLEMENTATIONS
+
+
+def code_object(name: str, language: str, target_type: str, linkable: bool = True) -> CodeObject:
+    """A CodeObject carrying only the labels :func:`~dace.codegen.cpf.frame_object` reads."""
+    return CodeObject(name, '', language, None, 'title', target_type=target_type, linkable=linkable)
+
+
+@pytest.mark.parametrize(
+    'device_language,device_target_type',
+    (
+        ('cpp', 'hip'),  # MEASURED on gfx942: hipcc compiles .cpp, so the device unit is not 'hip'
+        ('cu', 'cuda'),
+        ('cu', ''),  # a target that labels only the language
+        ('cpp', 'cuda'),
+    ),
+)
+def test_the_device_object_is_found_however_the_backend_labels_it(device_language, device_target_type):
+    """A GPU rendering arrives as frame + device object, and the two are merged rather than refused.
+
+    Selecting the device object by LANGUAGE alone refused every HIP rendering: hipcc compiles
+    ``.cpp``, so both objects came back ``language='cpp'``, both looked like the frame, and no
+    single frame was found. Selecting by ``target_type`` alone fails the mirrored way on a target
+    that leaves it at the default. Either label has to be enough.
+    """
+    frame = code_object('kern', 'cpp', '')
+    device = code_object('kern_cuda', device_language, device_target_type)
+    with cpf_lowering.dialect_scope(cpf.LANGUAGES['hip']):
+        assert cpf.frame_object([frame, device], 'kern') is not None
+
+
+def test_a_split_that_is_not_a_device_object_is_still_refused():
+    """The merge is for the device pair only. Two host units are the split-translation-unit case
+    the single-file contract cannot express, and it must keep saying so."""
+    units = [code_object('kern', 'cpp', ''), code_object('kern_part2', 'cpp', '')]
+    with cpf_lowering.dialect_scope(cpf.LANGUAGES['hip']):
+        with pytest.raises(NotImplementedError, match='one translation unit'):
+            cpf.frame_object(units, 'kern')
+
+
+def test_non_linkable_objects_do_not_count_as_a_split():
+    """The header and the sample ``main`` are generated for every SDFG and are not built, so a
+    lone frame beside them is one translation unit, not three."""
+    frame = code_object('kern', 'cpp', '')
+    extras = [
+        code_object('kern', 'h', '../../include', linkable=False),
+        code_object('kern_main', 'cpp', '../../sample', linkable=False)
+    ]
+    assert cpf.frame_object([frame] + extras, 'kern') is frame
