@@ -2959,10 +2959,10 @@ class SDFG(ControlFlowRegion):
             Examples::
 
                       # Applies MapTiling, then MapFusionVertical, followed by
-                      # GPUTransformSDFG, specifying parameters only for the
+                      # MapCollapse, specifying parameters only for the
                       # first transformation.
                       sdfg.apply_transformations(
-                        [MapTiling, MapFusionVertical, GPUTransformSDFG],
+                        [MapTiling, MapFusionVertical, MapCollapse],
                         options=[{'tile_size': 16}, {}, {}])
         """
         from dace.transformation.passes.pattern_matching import PatternMatchAndApply  # Avoid import loops
@@ -3083,39 +3083,30 @@ class SDFG(ControlFlowRegion):
             return 0
         return sum(len(v) for v in results.values())
 
-    def apply_gpu_transformations(self,
-                                  states=None,
-                                  validate=True,
-                                  validate_all=False,
-                                  permissive=False,
-                                  sequential_innermaps=True,
-                                  register_transients=True,
-                                  simplify=True,
-                                  host_maps=None,
-                                  host_data=None):
-        """ Applies a series of transformations on the SDFG for it to
-            generate GPU code.
+    def apply_gpu_transformations(self, states=None, validate=True, validate_all=False, simplify=True, host_maps=False):
+        """ Offloads the SDFG to the accelerator, inserting the copies that decision implies.
 
-            :param sequential_innermaps: Make all internal maps Sequential.
-            :param register_transients: Make all transients inside GPU maps registers.
-            :note: It is recommended to apply redundant array removal
-                   transformation after this transformation. Alternatively,
-                   you can ``simplify()`` after this transformation.
+            :param states: unused; kept so a caller passing it keeps working.
+            :param validate: validate the SDFG afterwards.
+            :param validate_all: as ``validate``.
+            :param simplify: simplify afterwards, folding the copy states the offloading inserted.
+            :param host_maps: which maps keep a HOST schedule, so the maps under them become the
+                              kernels. ``False`` (the default), ``None`` and ``[]`` name none and run
+                              no heuristics; ``True`` derives them; a list names them outright, each
+                              as a map label or as the ``MapEntry`` itself. A map holding a callback
+                              stays on the host whatever this says -- a kernel cannot issue one.
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
-        from dace.transformation.interstate import GPUTransformSDFG
+        from dace.transformation.passes.offloading import OffloadToAccelerator
 
-        self.apply_transformations(GPUTransformSDFG,
-                                   options=dict(sequential_innermaps=sequential_innermaps,
-                                                register_trans=register_transients,
-                                                simplify=simplify,
-                                                host_maps=host_maps,
-                                                host_data=host_data),
-                                   validate=validate,
-                                   validate_all=validate_all,
-                                   permissive=permissive,
-                                   states=states)
+        OffloadToAccelerator(host_maps=host_maps).apply_pass(self, {})
+        # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
+        # unfused, so a caller that asked for a simplified graph has to get one.
+        if simplify:
+            self.simplify()
+        if validate or validate_all:
+            self.validate()
 
     def expand_library_nodes(self, recursive=True):
         """

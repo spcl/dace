@@ -70,7 +70,7 @@ sdfg.fill_scope_connectors()
 # Validate the correctness of the SDFG
 sdfg.validate()
 
-# NOTE: If GPUTransformSDFG is applied, boundary kernels will run on separate streams.
+# NOTE: If the SDFG is offloaded, boundary kernels will run on separate streams.
 if __name__ == '__main__':
     H, W = 24, 24
 
