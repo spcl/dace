@@ -15,6 +15,7 @@ import re
 import shutil
 import shlex
 import subprocess
+import sysconfig
 import tempfile
 from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
@@ -315,6 +316,22 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _python_include_flags() -> List[str]:
+    """The include flags CMake contributes through ``Python::Python``.
+
+    ``dace/dace.h`` pulls in ``pyinterop.h``, which includes ``Python.h``, so the
+    precompiled header does not build at all without them -- and a header that
+    does not exist is silently skipped, which is how a missing include path shows
+    up: as a build that never gets faster. They also have to be ON the header's
+    command line rather than merely reachable, since a precompiled header is
+    honored only when its flags match the translation unit's.
+
+    :return: ``-isystem <dir>`` for the interpreter's include directory.
+    """
+    include = sysconfig.get_config_var('INCLUDEPY') or sysconfig.get_paths().get('include')
+    return ['-isystem', include] if include and os.path.isdir(include) else []
+
+
 def prepare_precompiled_header(targets) -> Optional[str]:
     """Precompile ``<dace/dace.h>`` once per (runtime, compiler, flags), returning its dir or ``None``.
 
@@ -332,7 +349,7 @@ def prepare_precompiled_header(targets) -> Optional[str]:
     runtime = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'runtime', 'include')
     cxx = make_absolute(compiler_family.host_compiler())
     flags = ([f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
-             shlex.split(compiler_family.cpu_args() or '') + build_type_flags())
+             shlex.split(compiler_family.cpu_args() or '') + build_type_flags() + _python_include_flags())
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
     pch = os.path.join(build_cache_root(), 'pch', cache_key(runtime, cxx, *flags))
