@@ -186,6 +186,37 @@ def test_boundary_corners_survive_canonicalize_vectorize(target_isa):
     np.testing.assert_allclose(u, expected, rtol=0, atol=0)
 
 
+def test_a_folded_write_hands_its_ordering_to_the_node_that_absorbed_it():
+    """The unit behind the end-to-end test: an ordering edge must never outlive its producer.
+
+    ``nest_state_subgraph`` gives the nested SDFG one connector per data name, so two writes to the
+    same array fold onto one and the loser's outer access node is left with nothing writing it.
+    Any happens-before anchored there then constrains nothing -- the ordered scope is free to run
+    before the write it was waiting on, which is the lid/column race. The constraint has not gone
+    away, it has moved to whichever node absorbed the write, so the edges must move with it.
+
+    Asserted on the canonicalized-then-vectorized graph rather than on the helper in isolation,
+    because the property is about what the pipeline leaves behind: no access node may carry an
+    outgoing ordering edge while having no incoming writes.
+    """
+    sdfg = _canonical()
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, ), target_isa="SCALAR", remainder_strategy="masked_tail",
+                        branch_mode="merge")).apply_pass(sdfg, {})
+
+    stranded = []
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.all_states():
+            for node in state.nodes():
+                if not isinstance(node, nd.AccessNode):
+                    continue
+                orders = [e for e in state.out_edges(node) if e.data.is_empty()]
+                if orders and not state.in_edges(node):
+                    stranded.append((state.label, node.data, [str(e.dst) for e in orders]))
+    assert not stranded, (f"ordering edges anchored on unwritten access nodes: {stranded}. "
+                          f"Whatever they order is free to run before the write they stand for.")
+
+
 def test_boundary_corners_match_canonical_only():
     """The canon-only path is the control: same numbers, no vectorization involved."""
     sdfg = copy.deepcopy(_canonical())

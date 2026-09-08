@@ -395,6 +395,14 @@ def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnector
     flow's lid assignment ended up racing the column zeroing it must follow. Re-state the constraint
     as an ordering edge instead.
 
+    A folded WRITE goes further: its outer access node is left with no producer at all, because the
+    write it received is now covered by ``kept``'s widened memlet on a DIFFERENT node. Anything
+    ordered after the stranded node is then ordered after nothing. The constraint has not gone away,
+    it has moved -- to whichever node absorbed the write -- so the ordering edges move with it.
+    ``u[:, 0] = 0; u[:, -1] = 0; u[-1, :] = 1`` is the case: both column writes fold onto one node,
+    and the lid's ordering edges are left hanging off the other, so the lid ran first and zeroed
+    corners came out where ones belong.
+
     :param sdfg: SDFG holding the descriptors the union falls back to.
     :param state: State holding both edges.
     :param edge: Boundary edge being folded away.
@@ -410,7 +418,15 @@ def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnector
             kept_memlet.subset = widened if widened is not None else Range.from_array(sdfg.arrays[kept_memlet.data])
         kept_level, level = kept_level.parent, level.parent
     outer = edge.src if is_input else edge.dst
+    # The far end of the memlet PATH, not the immediate endpoint: a boundary edge of a nested map
+    # body ends at the enclosing MapExit, while the access node the write lands on -- and whose
+    # ordering edges are what go stale -- sits beyond it. Taken before the removal, which is what
+    # strands it.
+    path_end = state.memlet_path(edge)[0].src if is_input else state.memlet_path(edge)[-1].dst
+    kept_end = state.memlet_path(kept)[0].src if is_input else state.memlet_path(kept)[-1].dst
     utils.remove_edge_and_dangling_path(state, edge)
+    if utils.reanchor_stranded_ordering(state, path_end, kept_end, is_input):
+        return
     # A dropped path can take its own root with it, and an endpoint nothing else uses carries no
     # constraint worth restating.
     if outer not in state.nodes() or state.degree(outer) == 0:
