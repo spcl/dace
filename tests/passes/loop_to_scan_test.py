@@ -2402,3 +2402,28 @@ def test_a_computed_affine_operand_still_gets_its_buffer():
     assert LoopToScan().apply_pass(sdfg, {})
 
     assert any(name.startswith('_scan_in') for name in sdfg.arrays), 'the computed delta needs a buffer'
+
+
+def test_a_read_ahead_is_refused_rather_than_guarded():
+    """``a[i] = a[i + N // 2] + b[i]`` is an anti-dependence, not a carry, and must be refused.
+
+    The classifier decides by the SIGN of ``k_w - k_r``, and two things hid it. ``int_floor`` is
+    dace's own function, which sympy has no sign rule for, so ``-int_floor(N, 2)`` had no sign at
+    all; and a bare dace symbol carries integrality but nothing about its sign, so even spelled as
+    ``floor`` the divisor could be zero. Undecided reads as ``'guard'`` -- the runtime
+    specialization -- which buries an ordinary parallel loop in three branches that the
+    anti-dependence pass can no longer reach, and leaves the sequential fallback pinned.
+    """
+    from dace import symbolic
+    from dace.transformation.passes.loop_to_scan import carry_distance_kind
+
+    N, M, K = (symbolic.symbol(s) for s in ('N', 'M', 'K'))
+    for distance in (-symbolic.int_floor(N, 2), -symbolic.int_floor(N, M), -N, -K, 0, -1):
+        assert carry_distance_kind(distance) is None, f'{distance} is not a carry, but was not refused'
+
+    # The converse must survive: a distance whose sign is genuinely unknown still owes its guard,
+    # and a known positive one is a scan outright.
+    assert carry_distance_kind(K) == 'guard'
+    assert carry_distance_kind(symbolic.int_floor(N, M)) == 'guard'
+    assert carry_distance_kind(1) == 'scan'
+    assert carry_distance_kind(5) == 'scan'

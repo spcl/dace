@@ -39,7 +39,7 @@ on any other carried writes to non-transient arrays.
 """
 import ast
 import copy
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Set, Tuple
 
 import sympy
 
@@ -4498,11 +4498,43 @@ def carry_distance_kind(distance: Any) -> Optional[str]:
     simplified = symbolic.simplify(distance)
     if isinstance(simplified, sympy.Basic) and simplified.is_Integer or isinstance(simplified, int):
         return 'scan' if int(simplified) >= 1 else None
-    if getattr(simplified, 'is_positive', None) is True:
+    positive = symbolic.ask('positive', *_sign_query(simplified))
+    if positive is True:
         return 'scan'
-    if getattr(simplified, 'is_positive', None) is False:
+    if positive is False:
         return None
     return 'guard'
+
+
+def _sign_query(expr) -> Tuple[Any, Dict[str, FrozenSet[str]]]:
+    """``expr`` and the facts to ask its SIGN under.
+
+    Two things stand between a distance and its sign, and a read-AHEAD needs both cleared. Its
+    distance is minus a trip count, so leaving it undecided sends an ordinary parallel loop through
+    the runtime specialization -- three branches the anti-dependence pass can no longer reach --
+    instead of refusing it as the anti-dependence it is.
+
+    ``int_floor`` is opaque: it is dace's own function, and sympy has no sign rule for it, so
+    ``-int_floor(N, 2)`` has no sign at all. Spelled as ``floor(N / 2)`` it does. And a bare dace
+    symbol carries integrality but nothing about its sign, so the facts say what dace's
+    canonicalization already assumes -- every symbol NONNEGATIVE, and a symbol under a DIVISOR
+    positive, since a divisor left merely nonnegative may be zero and ``floor(N / M)`` is then
+    undefined. The stronger fact stays confined to divisors: declaring every symbol positive would
+    decide a bare carry distance ``K`` to be a scan without the runtime test that establishes it.
+
+    :param expr: the distance.
+    :returns: the expression to ask about, and the per-symbol-name facts to ask it under.
+    """
+    expr = expr.replace(symbolic.int_floor, lambda x, y: sympy.floor(x / y))
+    divisors: Set[str] = set()
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, sympy.Pow) and node.exp.is_negative:
+            divisors.update(sym.name for sym in node.base.free_symbols)
+    facts = {
+        sym.name: frozenset({'integer', 'positive'} if sym.name in divisors else {'integer', 'nonnegative'})
+        for sym in expr.free_symbols
+    }
+    return expr, facts
 
 
 def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, loop_var: str, k_w: Any):

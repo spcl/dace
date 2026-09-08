@@ -1227,143 +1227,22 @@ class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
 
 @dace.library.expansion
 class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
-    """ Implements the ExpandReduceCUDABlockAll transformation.
-        Takes a cuda block reduce node, transforms it to a block reduce node,
-         wraps it in outer maps and outputs from the root thread
-        to a newly created shared memory container
+    """One thread block reduces a slice, and every lane in the block ends up holding the result.
+
+    Lowered through :class:`ExpandReduceCUDABlockStrided`, which is the only reduce lowering here
+    whose CUB width is a constant AND is the width of the thread-block map it builds. The wrapper
+    this expansion used to build put one thread per reduced element, so the kernel was launched with
+    the reduced extent as its block width while the collective was instantiated at
+    ``compiler.cuda.default_block_size`` -- and a CUB block collective is only defined when the
+    block really holds that many threads.
     """
     runs_inside_kernel = True
 
     environments = [CUDA]
 
     @staticmethod
-    def redirect_edge(graph, edge, new_src=None, new_src_conn=None, new_dst=None, new_dst_conn=None, new_data=None):
-
-        data = new_data if new_data else edge.data
-        if new_src and new_dst:
-            ret = graph.add_edge(new_src, new_src_conn, new_dst, new_dst_conn, data)
-            graph.remove_edge(edge)
-        elif new_src:
-            ret = graph.add_edge(new_src, new_src_conn, edge.dst, edge.dst_conn, data)
-            graph.remove_edge(edge)
-        elif new_dst:
-            ret = graph.add_edge(edge.src, edge.src_conn, new_dst, new_dst_conn, data)
-            graph.remove_edge(edge)
-        else:
-            pass
-        return ret
-
-    @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
-        """ Create a map around the BlockReduce node
-            with in and out transients in registers
-            and an if tasklet that redirects the output
-            of thread 0 to a shared memory transient
-        """
-        ### define some useful vars
-        graph = state
-        reduce_node = node
-        in_edge = graph.in_edges(reduce_node)[0]
-        out_edge = graph.out_edges(reduce_node)[0]
-
-        axes = reduce_node.axes
-        ### add a map that encloses the reduce node
-        (new_entry, new_exit) = graph.add_map(
-                      name = 'inner_reduce_block',
-                      ndrange = {'i'+str(i): f'{rng[0]}:{rng[1]+1}:{rng[2]}'  \
-                                for (i,rng) in enumerate(in_edge.data.subset) \
-                                if i in axes},
-                      schedule = dtypes.ScheduleType.Default)
-
-        map = new_entry.map
-        ExpandReduceCUDABlockAll.redirect_edge(graph, in_edge, new_dst=new_entry)
-        ExpandReduceCUDABlockAll.redirect_edge(graph, out_edge, new_src=new_exit)
-
-        subset_in = subsets.Range([
-            in_edge.data.subset[i] if i not in axes else (new_entry.map.params[0], new_entry.map.params[0], 1)
-            for i in range(len(in_edge.data.subset))
-        ])
-        memlet_in = dace.Memlet(data=in_edge.data.data, volume=1, subset=subset_in)
-        memlet_out = dcpy(out_edge.data)
-        graph.add_edge(u=new_entry, u_connector=None, v=reduce_node, v_connector=INPUT_CONNECTOR_NAME, memlet=memlet_in)
-        graph.add_edge(u=reduce_node,
-                       u_connector=OUTPUT_CONNECTOR_NAME,
-                       v=new_exit,
-                       v_connector=None,
-                       memlet=memlet_out)
-
-        ### add in and out local storage
-        from dace.transformation.dataflow.local_storage import LocalStorage, InLocalStorage, OutLocalStorage
-
-        in_local_storage_subgraph = {
-            LocalStorage.node_a: graph.nodes().index(new_entry),
-            LocalStorage.node_b: graph.nodes().index(reduce_node)
-        }
-        out_local_storage_subgraph = {
-            LocalStorage.node_a: graph.nodes().index(reduce_node),
-            LocalStorage.node_b: graph.nodes().index(new_exit)
-        }
-
-        local_storage = InLocalStorage()
-        state_id = state.block_id
-        local_storage.setup_match(sdfg, state.parent_graph.cfg_id, state_id, in_local_storage_subgraph, 0)
-
-        local_storage.array = in_edge.data.data
-        local_storage.apply(graph, sdfg)
-        in_transient = local_storage._data_node
-        sdfg.data(in_transient.data).storage = dtypes.StorageType.Register
-
-        local_storage = OutLocalStorage()
-        local_storage.setup_match(sdfg, state.parent_graph.cfg_id, state_id, out_local_storage_subgraph, 0)
-        local_storage.array = out_edge.data.data
-        local_storage.apply(graph, sdfg)
-        out_transient = local_storage._data_node
-        sdfg.data(out_transient.data).storage = dtypes.StorageType.Register
-
-        # hack: swap edges as local_storage does not work correctly here
-        # as subsets and data get assigned wrongly (should be swapped)
-        # NOTE: If local_storage ever changes, this will not work any more
-        e1 = graph.in_edges(out_transient)[0]
-        e2 = graph.out_edges(out_transient)[0]
-        e1.data.data = dcpy(e2.data.data)
-        e1.data.subset = dcpy(e2.data.subset)
-
-        ### add an if tasket and diverge
-        code = 'if '
-        for (i, param) in enumerate(new_entry.map.params):
-            code += (param + '== 0')
-            if i < len(axes) - 1:
-                code += ' and '
-        code += ':\n'
-        code += '\tout=inp'
-
-        tasklet_node = graph.add_tasklet(name='block_reduce_write', inputs=['inp'], outputs=['out'], code=code)
-
-        edge_out_outtrans = graph.out_edges(out_transient)[0]
-        edge_out_innerexit = graph.out_edges(new_exit)[0]
-        ExpandReduceCUDABlockAll.redirect_edge(graph, edge_out_outtrans, new_dst=tasklet_node, new_dst_conn='inp')
-        e = graph.add_edge(u=tasklet_node,
-                           u_connector='out',
-                           v=new_exit,
-                           v_connector=None,
-                           memlet=dcpy(edge_out_innerexit.data))
-        # set dynamic with volume 0 FORNOW
-        e.data.volume = 0
-        e.data.dynamic = True
-
-        ### set reduce_node axes to all (needed)
-        reduce_node.axes = None
-
-        # fill scope connectors, done.
-        sdfg.fill_scope_connectors()
-
-        # finally, change the implementation to cuda (block)
-        # itself and expand again.
-        reduce_node.implementation = 'CUDA (block)'
-        sub_expansion = ExpandReduceCUDABlock()
-        sub_expansion.setup_match(sdfg, state.parent_graph.cfg_id, state_id, {}, 0)
-        return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
-        #return reduce_node.expand(state)
+        return ExpandReduceCUDABlockStrided.expansion(node, state, sdfg)
 
 
 def storage_behind_views(state: SDFGState, node, declared: dtypes.StorageType) -> dtypes.StorageType:
