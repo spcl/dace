@@ -1861,6 +1861,18 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # neither does anything that reads the serialized SDFG.
     s += [('end', PruneUnreferencedTransients())]
 
+    # interchange (terminal re-run): the mid-pipeline ``interchange`` stage sees the graph as it
+    # stands then, and the stages after it -- fission, the loop lifts, the inlines -- go on
+    # producing fresh ``for(seq) { map }`` nests that it has already walked past. MEASURED on TSVC
+    # s2233 at LEN_2D=12354: after the whole recipe the graph still held one, and re-running this
+    # very pass by hand interchanged it, so the opportunity was there and only the ordering hid it.
+    # On GPU each such nest costs one kernel launch PER outer iteration -- 12,346 of them for that
+    # kernel -- which is why the re-run earns its place rather than being left to the next recipe.
+    # Same pass, same target gate: on CPU it still declines unless the interchange lowers the
+    # innermost stride, so nothing moves on a host graph that the first run already settled.
+    s += [('end', MoveLoopIntoMapGated(target=target))]
+    s += _inline_single_state('end')
+
     # cleanup (terminal): inline the plain control-flow regions the middle stages leave standing.
     # ``rotate`` splits a block and no ``clean`` stage runs after it, so the recipe can finish
     # holding regions that carry a single body each (tsvc s255 ends with two). They are not a state
