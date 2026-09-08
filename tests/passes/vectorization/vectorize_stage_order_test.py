@@ -8,10 +8,11 @@ their subject no longer exists, which is a test that passes by skipping.
 """
 import pytest
 
+from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
-from dace.transformation.passes.vectorization.vectorize_multi_dim import (ENTRY_CANONICALIZE_KWARGS,
-                                                                          VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.vectorize_multi_dim import (VectorizeCPUMultiDim,
+                                                                          vectorization_prep_units)
 
 
 def _pass_names(**knobs) -> list:
@@ -44,16 +45,35 @@ def test_merge_mode_has_no_fp_factor_lowering():
     assert 'LowerITEToFpFactor' not in _pass_names(branch_mode=BranchMode.MERGE)
 
 
-def test_entry_canonicalization_skips_the_semantic_lifts():
-    """The vectorizer canonicalizes at its own entry, and must do so with
-    ``semantic_lifting=False``.
+def _prep_pass_names() -> list:
+    """Every pass the entry prep runs, composites expanded to their members."""
+    names = []
+    for unit in vectorization_prep_units():
+        names.append(type(unit).__name__)
+        members = unit.round_units() if isinstance(unit, IvSubstitutionFissionFixpoint) else unit.units()
+        names += [type(m).__name__ for m in members]
+    return names
 
-    Two reasons, both hard requirements. A lifted ``Einsum`` / ``Copy`` / ``Memset`` library node
-    has no per-lane body for the tiler to widen. And ``LiftInv`` -- one of the lifts -- matches the
-    ``1 if i == j else 0`` identity tasklet that this pipeline's ``LowerITEToFpFactor`` rewrites
-    into arithmetic; running the lift from inside the vectorizer would put it on the wrong side of
-    that rewrite, the exact ordering the canonicalize recipe documents."""
-    assert ENTRY_CANONICALIZE_KWARGS['semantic_lifting'] is False
+
+def test_the_entry_prep_substitutes_induction_variables():
+    """The prep must close induction variables. While an IV is live every statement in the body
+    reads the same counter, so the body is one dependence component: the statement fission the
+    tile emitter needs is illegal and no per-lane widening can proceed. Asserted as presence --
+    a caller arriving from a bare ``LoopToMap`` + ``simplify`` has run no such pass."""
+    assert 'InductionVariableSubstitution' in _prep_pass_names()
+
+
+def test_the_entry_prep_does_not_canonicalize():
+    """The prep is STRUCTURAL, not the canonicalize recipe. The documented order is canonicalize
+    (or ParallelizeLoops) -> vectorize, so re-deriving the canonical shape here pays for it twice.
+
+    Two members of the recipe would additionally be wrong to run: a semantic lift hands the tiler
+    a library node with no per-lane body to widen, and ``ShortLoopUnroll`` straight-lines a short
+    constant-trip loop, deleting the very map the tiler was called to widen."""
+    names = _prep_pass_names()
+    for recipe_only in ('ShortLoopUnroll', 'LiftInv', 'LoopToSymm', 'ParallelizeLoops',
+                        'AssignmentAndCopyKernelToMemsetAndMemcpy'):
+        assert recipe_only not in names, f'{recipe_only} is the caller\'s recipe, not the entry prep'
 
 
 def test_the_semantic_lifts_do_not_run_inside_the_vectorizer():
