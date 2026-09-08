@@ -133,8 +133,12 @@ ufuncs = dict(
               code="__out = cpp_mod(__in1, __in2)",
               reduce="lambda a, b: cpp_mod(a, b)",
               initial=np.fmod.identity),
+    # ``FloorDiv``, not ``Div``: divmod's outputs are the floor quotient and the
+    # remainder, so they carry the operand type (NumPy gives uint32 for two
+    # uint32 arrays). Under true-division typing both came back float64, which
+    # disagreed with what the frontend's own NumPy-oracle inference declared.
     divmod=dict(name="_numpy_divmod_",
-                operator="Div",
+                operator="FloorDiv",
                 inputs=["__in1", "__in2"],
                 outputs=["__out1", "__out2"],
                 code="py_divmod(__in1, __in2, __out1, __out2)",

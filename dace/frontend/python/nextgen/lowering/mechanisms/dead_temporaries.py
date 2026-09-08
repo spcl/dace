@@ -50,8 +50,14 @@ def drop_unread_symbolic_temporaries(root: tn.ScheduleTreeRoot, symbolic_values:
 
 def _read_names(root: tn.ScheduleTreeRoot, candidates: Set[str]) -> Set[str]:
     """
-    Which of ``candidates`` the tree reads anywhere -- through a memlet, or by
-    name in a code block a scope evaluates (a loop header, a branch condition).
+    Which of ``candidates`` the tree reads anywhere: as the data of a memlet, as
+    a symbol inside one's subset, or by name in a code block a scope evaluates
+    (a loop header, a branch condition).
+
+    Subsets matter as much as memlet data. An indirect write spells its index
+    with the container's own name (``a(dyn) [0:20, k] = ...``), so a scalar can
+    be "read" without ever being an input memlet -- and deleting it there left
+    a subset naming something no longer in the program.
 
     :param root: The lowered tree.
     :param candidates: The container names to look for.
@@ -63,6 +69,11 @@ def _read_names(root: tn.ScheduleTreeRoot, candidates: Set[str]) -> Set[str]:
             # A scope's memlets are its children's, which the traversal reaches
             # in turn; asking the scope would propagate them for nothing.
             read.update(memlet.data for memlet in node.input_memlets())
+            for memlet in (*node.input_memlets(), *node.output_memlets()):
+                # The name a memlet WRITES is not a read of it; the symbols in
+                # its subset are, whichever direction the memlet goes.
+                symbols = {str(symbol) for symbol in memlet.free_symbols} - {memlet.data}
+                read.update(symbols & candidates)
         for text in _code_strings(node):
             read.update(_names_in(text) & candidates)
     return read

@@ -106,6 +106,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._nviews_deferred_removal: dict[int, list[tn.NView]] = {}
         """"Mapping of id(SDFG) -> list of NView nodes to be removed once we exit this nested SDFG."""
 
+        self._scope_local_sinks: dict[int, list[nodes.AccessNode]] = {}
+        """Access nodes a dataflow scope writes but does not export, keyed by
+        id(entry node). Used only as the fallback in :meth:`visit_MapScope` when
+        nothing else reaches the scope exit."""
+
         self._staged_scope_copies: set[nodes.AccessNode] = set()
         """Transient access nodes :meth:`_copy_out_of_scope` interposed between
         a copy inside a dataflow scope and the scope exit. They must survive as
@@ -816,9 +821,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._connect_scope_exit(map_exit, to_connect, outer_map_entry, outer_to_connect, access_cache, sdfg)
 
-        # TODO If nothing is connected at this point, figure out what's the last thing that
-        #      we should connect to. Then, add an empty memlet from that last thing to this
-        #      map_exit.
+        # A body whose every write stays inside the scope reaches the exit through
+        # nothing at all, and a map exit with in-degree zero is not a scope the
+        # graph can read back (scope_dict pairs entries with exits through their
+        # edges). Tie its in-scope sinks to it with control-only memlets.
+        local_sinks = self._scope_local_sinks.pop(id(map_entry), [])
+        if not self._current_state.in_edges(map_exit):
+            for sink in local_sinks:
+                if self._current_state.out_degree(sink) == 0:
+                    self._current_state.add_nedge(sink, map_exit, Memlet())
         assert len(self._current_state.in_edges(map_exit)) > 0
 
     def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
@@ -981,6 +992,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     # copy the memlet since we already used it in the memlet path above
                     to_connect[memlet.data] = (access_node,
                                                _combined_scope_write(to_connect.get(memlet.data), memlet))
+                else:
+                    # It stays inside, so nothing carries it to the exit. Remember
+                    # it in case it is ALL this scope writes (``for i: a =
+                    # numpy.zeros([i])``), which would leave the exit with no
+                    # incoming edge at all -- see visit_MapScope.
+                    self._scope_local_sinks.setdefault(id(scope_node), []).append(access_node)
                 continue
 
             if isinstance(scope_node, SDFG):
