@@ -215,8 +215,13 @@ class StripMining(transformation.SingleStateTransformation):
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
+            # The approximation must span the same INDEX extent as the exact bound: ``tile_size``
+            # iterations of a step-``td_step`` map cover ``tile_size * td_step`` indices. Dropping
+            # the step under-approximated a strided tile by a factor of ``td_step``, so
+            # ``InferGPUGridAndBlockSize`` read half the threads a step-2 thread-block map holds
+            # and rejected it as conflicting with the kernel's declared ``gpu_block_size``.
             td_to_new = dace.symbolic.SymExpr(sympy.Min(dimsym + tile_size * td_step - 1, td_to),
-                                              dimsym + tile_size - 1)
+                                              dimsym + tile_size * td_step - 1)
         td_step_new = td_step
 
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
