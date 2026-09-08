@@ -13,7 +13,7 @@ import dace.sdfg.utils as sdutil
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
-    """Demote to fp64 scalars the symbols a conditional binds, so branch lowering can predicate them.
+    """Demote to scalars the symbols a conditional binds, so branch lowering can predicate them.
 
     Two sources, both of which leave a symbol whose value depends on which branch ran:
 
@@ -109,8 +109,14 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                 if (not sdutil.symbol_demotes_to_transient_scalar(sd, name, free_symbols=free_syms)
                         or sdutil.symbol_carries_graph_structure(sd, name, structural=structural)):
                     continue
-                sd.symbols[name] = dace.float64
-                sdutil.demote_symbol_to_scalar(sd, name, dace.float64, None)
+                # The symbol's OWN dtype. Overwriting it with fp64 first -- which is what
+                # ``demote_symbol_to_scalar`` reads -- turned an integer accumulator into a
+                # double, and every body that shifts or masks it stopped compiling:
+                # ``invalid operands of types 'double' and 'int' to binary 'operator>>'``.
+                # Nothing downstream wants a float: the ITE rewrite gates the write it finds,
+                # whatever its dtype, and the rest of the graph already read this symbol at the
+                # dtype it was declared with.
+                sdutil.demote_symbol_to_scalar(sd, name, sd.symbols[name], None)
                 demoted += 1
                 structural = free_syms = None  # the demotion rewrote ``sd``; rebuild before the next ask
         return demoted
@@ -170,9 +176,11 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                 if (not sdutil.symbol_demotes_to_transient_scalar(sdfg, conditional_sym)
                         or sdutil.symbol_carries_graph_structure(sdfg, conditional_sym)):
                     continue
-                # Cast all symbols to fp64
-                sdfg.symbols[conditional_sym] = dace.float64
-                sdutil.demote_symbol_to_scalar(sdfg, conditional_sym, dace.float64, None)
+                # Declared dtype where there is one, for the reason above. A symbol read only
+                # by a lifted guard need not be declared at all, and fp64 stays the fallback for
+                # that case -- it is the one the condition tasklet's operands promote to.
+                sym_dtype = sdfg.symbols[conditional_sym] if conditional_sym in sdfg.symbols else dace.float64
+                sdutil.demote_symbol_to_scalar(sdfg, conditional_sym, sym_dtype, None)
                 # Set-zero all of them
                 assert conditional_sym not in sdfg.symbols
                 self._applied += 1
