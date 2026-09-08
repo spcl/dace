@@ -73,6 +73,7 @@ Conditions (H) and (T) of ``HoistParallelRegion`` are inherited unchanged: this 
 loop the same way and wraps it in a map the same way, so the same replication and privatization
 rules apply. Only the wrapping map's extent and the inner map's range differ.
 """
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set
 
 from dace import SDFG, dtypes, properties, subsets, symbolic
@@ -92,6 +93,18 @@ BAND_PARAM = '__dace_band'
 #: too expensive to repeat per map, per dimension, per candidate loop.
 BAND_SYMBOL = symbolic.symbol(BAND_PARAM, NUM_THREADS_DTYPE)
 THREADS_SYMBOL = symbolic.symbol(symbolic.NUM_THREADS_SYMBOL, NUM_THREADS_DTYPE)
+
+
+@lru_cache(maxsize=None, typed=True)
+def axis_symbol(position: int):
+    """The stand-in for a banded map's parameter ``position`` places out from its innermost.
+
+    Every map of one loop body is cut the same way, so its parameter at a given position denotes
+    the same band as another map's at that position. The two maps spell it with different names
+    (``_loop_it_1`` against ``_loop_it_4``), and comparing the spellings would read one location as
+    two unrelated ones, which is how a cross-map dependence goes unseen.
+    """
+    return symbolic.symbol(f'__dace_band_axis{position}', NUM_THREADS_DTYPE)
 
 
 def index_expressions(subset) -> List[Any]:
@@ -243,8 +256,13 @@ def substituted(subset, substitution: Dict[str, Any]) -> List:
     assumptions -- ``subs`` matches on identity, and a key minted from the name need not be the
     instance in the expression.
     """
+    return rewritten(index_expressions(subset), substitution)
+
+
+def rewritten(expressions: List, substitution: Dict[str, Any]) -> List:
+    """``expressions`` rewritten through ``substitution``, keyed by NAME; see :func:`substituted`."""
     out = []
-    for expr in index_expressions(subset):
+    for expr in expressions:
         if not symbolic.issymbolic(expr):
             out.append(expr)
             continue
@@ -253,20 +271,42 @@ def substituted(subset, substitution: Dict[str, Any]) -> List:
     return out
 
 
-def band_local_map(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit) -> bool:
-    """Whether every loop-carried dependence of ``map_entry``'s scope stays inside one band.
+def collect_band_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, reads: Dict,
+                          writes: Dict) -> bool:
+    """Add ``map_entry``'s per-element accesses to ``reads`` / ``writes``, on the band's own axes.
+
+    The map's parameters are rewritten to the positional stand-ins (:func:`axis_symbol`) so that the
+    accesses of two DIFFERENT maps of one body land in the same coordinates and can be compared.
 
     :param state: the state holding the map.
     :param map_entry: the worksharing map whose axis would be cut.
     :param map_exit: ``map_entry``'s exit, passed in because resolving it costs a scope walk.
+    :param reads: ``name -> [index expression lists]``, extended in place.
+    :param writes: ``name -> [index expression lists]``, extended in place.
+    :returns: ``False`` if something in the scope cannot be analysed.
+    """
+    local_reads: Dict[str, List] = {}
+    local_writes: Dict[str, List] = {}
+    if not collect_accesses(state, map_entry, boundary_names(state, map_entry, map_exit), local_reads, local_writes):
+        return False
+    # Counted from the INNERMOST parameter, because that is the one ``cut_into_bands`` slices: two
+    # maps of different rank still have to agree on which axis the band owns.
+    depth = len(map_entry.map.params)
+    renaming = {param: axis_symbol(depth - 1 - position) for position, param in enumerate(map_entry.map.params)}
+    for source, target in ((local_reads, reads), (local_writes, writes)):
+        for name, index_lists in source.items():
+            target.setdefault(name, []).extend(rewritten(indices, renaming) for indices in index_lists)
+    return True
+
+
+def band_local(reads: Dict, writes: Dict, params: Set[str]) -> bool:
+    """Whether every dependence among ``reads`` / ``writes`` stays inside one band.
+
+    :param reads: ``name -> [index expression lists]``, on the band's own axes.
+    :param writes: the same for the writes.
+    :param params: the stand-in axis names the indices may mention.
     :returns: ``True`` if no dependence crosses a band boundary.
     """
-    params = set(map_entry.map.params)
-    reads: Dict[str, List] = {}
-    writes: Dict[str, List] = {}
-    if not collect_accesses(state, map_entry, boundary_names(state, map_entry, map_exit), reads, writes):
-        return False
-
     for name, write_list in writes.items():
         if name not in reads:
             continue  # written but never read back: no carry to keep inside a band
@@ -297,6 +337,10 @@ def bandable_maps(loop: LoopRegion) -> Optional[List]:
     :returns: ``(state, map_entry)`` pairs to band, or ``None``.
     """
     found = []
+    reads: Dict[str, List] = {}
+    writes: Dict[str, List] = {}
+    params: Set[str] = set()
+    cut_ranges: List[Any] = []
     for block in loop.all_control_flow_blocks():
         if not isinstance(block, SDFGState):
             continue
@@ -323,10 +367,24 @@ def bandable_maps(loop: LoopRegion) -> Optional[List]:
             if any(step != 1 for _, _, step in node.map.range.ranges):
                 return None
             map_exit = next(n for n in children[node] if isinstance(n, nodes.MapExit))
-            if not band_local_map(block, node, map_exit):
+            if not collect_band_accesses(block, node, map_exit, reads, writes):
                 return None
+            params |= {str(axis_symbol(position)) for position in range(len(node.map.params))}
+            cut_ranges.append(node.map.range.ranges[-1])
             found.append((block, node))
-    return found or None
+    # Banding drops the barrier BETWEEN two worksharing maps of the body as well as the one per
+    # trip, so what one map writes and the next reads at a neighbouring index is a cross-band
+    # dependence exactly as a loop-carried one is -- and a per-map test never compares two maps
+    # against each other. The jacobi stencils are that shape: ``B[i+1] = f(A[i..i+2])`` then
+    # ``A[i+1] = f(B[i..i+2])``. Hence ONE test over every map that would be banded.
+    # ``cut_into_bands`` slices each map's OWN cut axis, so two maps own the same elements per band
+    # only where that axis carries the same range in both; otherwise alike-printing indices name
+    # different bands and the test below would read a real dependence as a local one.
+    if any(str(cut) != str(cut_ranges[0]) for cut in cut_ranges[1:]):
+        return None
+    if not found or not band_local(reads, writes, params):
+        return None
+    return found
 
 
 def cut_into_bands(map_entry: nodes.MapEntry, band: Any) -> None:

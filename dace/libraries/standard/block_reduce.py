@@ -36,6 +36,9 @@ def block_reduce_code(idstr: str, ctype: str, lanes: int, count_expr: str, eleme
                      below, which carries a barrier.
     :param out_expr: The C++ lvalue the result is written to.
     """
+    # ``redop`` is called UNPARENTHESISED. Wrapping it, as ``(redop)(a, b)``, is read as a C-style
+    # cast of the comma expression ``(a, b)`` to the function type ``redop``, and the fold never
+    # compiles -- which is what kept every ``CUDA (block strided)`` reduce off the device.
     return f'''{{
     typedef gpucub::BlockReduce<{ctype}, {lanes}> BlockReduceT_{idstr};
     __shared__ typename BlockReduceT_{idstr}::TempStorage tmp_{idstr};
@@ -43,7 +46,7 @@ def block_reduce_code(idstr: str, ctype: str, lanes: int, count_expr: str, eleme
     const long __brn_{idstr} = (long)({count_expr});
     {ctype} __bracc_{idstr} = {identity};
     for (long __bri = (long)threadIdx.x; __bri < __brn_{idstr}; __bri += {lanes}) {{
-        __bracc_{idstr} = ({redop})(__bracc_{idstr}, ({element_expr}));
+        __bracc_{idstr} = {redop}(__bracc_{idstr}, ({element_expr}));
     }}
     {ctype} __brtot_{idstr} = BlockReduceT_{idstr}(tmp_{idstr}).Reduce(__bracc_{idstr}, {redop});
     // BlockReduce leaves the total on thread 0 ONLY. Everything downstream in this block reads the
