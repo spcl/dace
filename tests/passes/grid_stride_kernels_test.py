@@ -23,6 +23,7 @@ import dace
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.transformation.dataflow.add_threadblock_map import to_3d_dims, validate_block_size_limits
 from dace.transformation.passes.gpu_specialization import grid_stride_kernels
 from dace.transformation.passes.gpu_specialization.grid_stride_kernels import (DEVICE_GRID_BLOCKS,
                                                                                PERSISTENT_KERNEL_LEAD,
@@ -33,16 +34,20 @@ BLOCK = 256
 SUM = 'lambda x, y: x + y'
 
 
-def tiled_kernel(state, extent, block: int = BLOCK, accumulate: str = 'acc[0]'):
+def tiled_kernel(state, extent, block: int = BLOCK, accumulate: str = 'acc[0]', step: int = 1):
     """A ``(GPU_Device, GPU_ThreadBlock)`` pair in the shape ``AddThreadBlockMaps`` leaves behind.
 
     The outer map strides by exactly one block and the inner map covers one block, which is what
-    lets the pass read the block extent off the outer step instead of choosing a new one.
+    lets the pass read the block extent off the pair instead of choosing a new one.
     ``accumulate`` is where the body writes: an ``acc`` subset with a conflict resolution is the
     contention the pass gates on, and ``'b[i]'`` is the plain streaming write that is not.
+
+    ``step`` is the step of the map BEFORE strip-mining, which one thread still covers afterwards:
+    the outer then strides ``block * step`` index units for ``block`` threads.
     """
-    outer_e, outer_x = state.add_map('grid', {'bi': f'0:{extent}:{block}'}, schedule=dtypes.ScheduleType.GPU_Device)
-    inner_e, inner_x = state.add_map('block', {'i': f'bi:Min({extent} - 1, bi + {block - 1}) + 1'},
+    span = block * step
+    outer_e, outer_x = state.add_map('grid', {'bi': f'0:{extent}:{span}'}, schedule=dtypes.ScheduleType.GPU_Device)
+    inner_e, inner_x = state.add_map('block', {'i': f'bi:Min({extent} - 1, bi + {span - 1}) + 1:{step}'},
                                      schedule=dtypes.ScheduleType.GPU_ThreadBlock)
     tasklet = state.add_tasklet('t', {'__in'}, {'__out'}, '__out = __in * 2.0')
     state.add_memlet_path(state.add_read('a'), outer_e, inner_e, tasklet, dst_conn='__in', memlet=dace.Memlet('a[i]'))
@@ -52,14 +57,14 @@ def tiled_kernel(state, extent, block: int = BLOCK, accumulate: str = 'acc[0]'):
     return outer_e
 
 
-def straight_line(extent, block: int = BLOCK, accumulate: str = 'acc[0]') -> dace.SDFG:
+def straight_line(extent, block: int = BLOCK, accumulate: str = 'acc[0]', step: int = 1) -> dace.SDFG:
     """One tiled kernel in a single state, nothing around it."""
     sdfg = dace.SDFG('gs_straight')
     for name in ('a', 'b'):
         sdfg.add_array(name, [extent], dace.float64)
     sdfg.add_array('acc', [BLOCK], dace.float64)
     state = sdfg.add_state('s', is_start_block=True)
-    tiled_kernel(state, extent, block, accumulate)
+    tiled_kernel(state, extent, block, accumulate, step)
     sdfg.validate()
     return sdfg
 
@@ -157,6 +162,37 @@ def test_the_block_extent_survives_the_fold():
     block = next(n for n, _ in sdfg.all_nodes_recursive()
                  if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock)
     assert dace.symbolic.evaluate(block.map.range.num_elements(), {}) == 512
+
+
+def test_a_stepped_kernel_map_keeps_its_thread_count():
+    """A map of step ``s`` strip-mined by ``t`` threads leaves the outer stepping ``s * t``, so the
+    outer step is the block's span in index units and NOT its thread count.
+
+    Reading it as a thread count gave the step-4 ``tsvc/s31111`` a block of 2048 at 512 threads, and
+    codegen refused the launch: past the 1024 threads per block every device allows.
+    """
+    sdfg = straight_line(N, block=512, step=4)
+    assert GridStrideKernels().apply_pass(sdfg, {}) == (1, 0)
+    block = next(n for n, _ in sdfg.all_nodes_recursive()
+                 if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock)
+    assert dace.symbolic.evaluate(block.map.range.num_elements(), {}) == 512
+    validate_block_size_limits(block, to_3d_dims(list(block.map.range.size())))
+    # The fold is only a schedule change, so the strided loop under the thread block must still
+    # advance a whole block's SPAN -- 512 threads four elements apart -- or elements go unvisited.
+    strided = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)
+                   and n.map.schedule == dtypes.ScheduleType.Sequential and n.map.label == 'block')
+    assert dace.symbolic.evaluate(strided.map.range[0][2], {}) == 512 * 4
+    sdfg.validate()
+
+
+def test_a_pair_that_is_not_a_strip_mining_of_one_step_is_left_alone():
+    """An outer step that is not a whole number of inner steps is not a strip-mining, and the
+    quotient that would be the thread count does not exist. Left alone rather than rounded."""
+    sdfg = straight_line(N, block=512, step=4)
+    kernels(sdfg)[0].map.range = dace.subsets.Range([(0, N - 1, 2050)])
+    before = str(kernels(sdfg)[0].map.range)
+    assert GridStrideKernels().apply_pass(sdfg, {}) is None
+    assert str(kernels(sdfg)[0].map.range) == before
 
 
 def test_a_library_expansion_that_chose_its_own_block_shape_is_left_alone():
@@ -316,6 +352,34 @@ def test_the_folded_kernel_computes_the_same_thing():
             out[0] += a[i]
 
     sdfg = total.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations()
+    sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
+    assert GridStrideKernels().apply_pass(sdfg, {})[0] == 1
+    sdfg.validate()
+
+    a = np.random.rand(size)
+    out = np.zeros(1)
+    sdfg(a=a, out=out)
+    assert np.allclose(out[0], a.sum())
+
+
+@pytest.mark.gpu
+def test_the_folded_stepped_kernel_computes_the_same_thing():
+    """The ``s31111`` shape: a map of step 4 whose body reads the four elements the step covers.
+
+    Strip-mining leaves the outer stepping ``4 * block``, and the thread count read off it was four
+    times too large. This is the same assertion as above with a step, because a block width that is
+    wrong by a factor of the step is either rejected by codegen or visits the wrong elements.
+    """
+    from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
+    size = DEVICE_GRID_BLOCKS * BLOCK * 4 + 20  # whole strides of a step-4 block, then a ragged tail
+
+    @dace.program
+    def total4(a: dace.float64[size], out: dace.float64[1]):
+        for i in dace.map[0:size:4]:
+            out[0] += a[i] + a[i + 1] + a[i + 2] + a[i + 3]
+
+    sdfg = total4.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations()
     sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
     assert GridStrideKernels().apply_pass(sdfg, {})[0] == 1
