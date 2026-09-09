@@ -64,12 +64,7 @@ def test_transients_and_nested_sdfg() -> None:
             state = sdfg.add_state("my_state", is_start_block=True)
             read = state.add_read("B")
             write = state.add_write("tmp_condition")
-            tasklet = state.add_tasklet(
-                "masklet",
-                {"B0"},  # inputs
-                {"out"},  # outputs
-                "out = B0 < 0",
-            )
+            tasklet = state.add_tasklet("masklet", inputs={"B0"}, outputs={"out"}, code="out = B0 < 0")
             state.add_edge(read, None, tasklet, "B0", dace.Memlet("B[0]"))
             state.add_edge(tasklet, "out", write, None, dace.Memlet("tmp_condition[0]"))
             return state
@@ -121,14 +116,12 @@ def test_transients_and_nested_sdfg() -> None:
     _, B_desc = sdfg.add_array("B", [60], dace.float32)
     state = sdfg.add_state("state")
     access_A = state.add_access("A")
-    state.add_mapped_tasklet(
-        "fill",
-        {"i": dace.subsets.Range.from_string("0:60")},
-        {},  # inputs
-        "out = 42.42",
-        {"out": dace.Memlet("A[i]")},  # outputs
-        external_edges=True,
-        output_nodes={"A": access_A})
+    state.add_mapped_tasklet("fill", {"i": dace.subsets.Range.from_string("0:60")},
+                             inputs={},
+                             code="out = 42.42",
+                             outputs={"out": dace.Memlet("A[i]")},
+                             external_edges=True,
+                             output_nodes={"A": access_A})
 
     read_B = state.add_read("B")
     map_entry, map_exit = state.add_map("second_map", {"i": dace.subsets.Range.from_string("0:2")})
@@ -145,14 +138,14 @@ def test_transients_and_nested_sdfg() -> None:
     nsdfg = nestedSDFG()
     nsdfg_node = state.add_nested_sdfg(
         nsdfg,
-        {
+        inputs={
             "A": None,
             "B": None
-        },  # inputs
-        {
+        },
+        outputs={
             "A": None,
             "B": None
-        },  # outputs
+        },
         name="nested_sdfg",
     )
     state.add_edge(map_entry, "OUT_A", nsdfg_node, "A", dace.Memlet.from_array("A", A_desc))
@@ -176,7 +169,14 @@ def test_transients_and_nested_sdfg() -> None:
     stree = sdfg.as_schedule_tree()
     roundtrip_sdfg = stree.as_sdfg(validate=True)
 
-    assert roundtrip_sdfg
+    assert roundtrip_sdfg.arrays["A"].transient
+    assert not roundtrip_sdfg.arrays["B"].transient
+
+    roundtrip_nested: dace.SDFG = list(filter(lambda node: node.label == "nested_sdfg", roundtrip_sdfg.cfg_list))[0]
+    assert not roundtrip_nested.arrays["A"].transient
+
+    tmp_condition = roundtrip_nested.symbols.get("tmp_condition", None)
+    assert tmp_condition == dace.bool
 
 
 if __name__ == '__main__':
