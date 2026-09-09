@@ -7,12 +7,9 @@ loud-failure helper stays available. Removing them shifts silent corruption into
 import ast
 from typing import Any, Dict, Optional, Tuple
 
-import sympy
-
 import dace
 from dace import SDFGState, symbolic
-from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
-from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbols
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 
 
 def has_maps(sdfg: dace.SDFG) -> bool:
@@ -581,35 +578,6 @@ def get_single_nsdfg_inside_map(graph: dace.SDFGState, map_entry: dace.nodes.Map
     return None
 
 
-def has_only_states(sdfg: dace.SDFG) -> bool:
-    """True if every top-level node of an SDFG is a plain SDFGState (no control-flow regions).
-
-    :param sdfg: The SDFG to inspect.
-    :returns: ``True`` if no control-flow regions are present.
-    """
-    return all({isinstance(n, dace.SDFGState) for n in sdfg.nodes()})
-
-
-def has_only_states_or_single_block_with_break_only(sdfg: dace.SDFG) -> bool:
-    """True if an SDFG has only states, or only conditional blocks whose sole branch is a break.
-
-    :param sdfg: The SDFG to inspect.
-    :returns: ``True`` if the SDFG matches either shape.
-    """
-    ifs = {n for n in sdfg.nodes() if isinstance(n, ConditionalBlock)}
-    all_ifs_are_only_break = all({
-        len(ifb.branches) == 1 and len(ifb.branches[0][1].nodes()) == 1
-        and isinstance(ifb.branches[0][1].nodes()[0], BreakBlock)
-        for ifb in ifs
-    })
-    non_ifs_non_states = {
-        n
-        for n in sdfg.nodes() if not isinstance(n, ConditionalBlock) and not isinstance(n, SDFGState)
-    }
-    return (all({isinstance(n, dace.SDFGState)
-                 for n in sdfg.nodes()}) or (all_ifs_are_only_break and len(non_ifs_non_states) == 0))
-
-
 def _no_edge_attr_state(state, attr: str, recursive: bool) -> bool:
     """True iff no edge in ``state`` has the attribute set. ``recursive=True`` descends into NSDFGs."""
     for edge in state.edges():
@@ -632,177 +600,9 @@ def _no_edge_attr_sdfg(sdfg: dace.SDFG, attr: str, recursive: bool) -> bool:
     return True
 
 
-def no_other_subset(state, recursive: bool = True) -> bool:
-    """True iff no edge in ``state`` has ``other_subset`` set; recurses into NSDFGs by default."""
-    return _no_edge_attr_state(state, "other_subset", recursive)
-
-
 def no_wcr(state, recursive: bool = True) -> bool:
     """True iff no edge in ``state`` has WCR set; recurses into NSDFGs by default."""
     return _no_edge_attr_state(state, "wcr", recursive)
-
-
-def last_dim_of_map_is_contiguous_accesses(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
-    """True if the last dimension of a map performs contiguous accesses.
-
-    :param state: The state containing the map.
-    :param map_entry: The map entry to check.
-    :returns: ``True`` if every memlet's unit-stride dim involves the last map parameter.
-    """
-    nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
-    edges = state.all_edges(*nodes)
-    # TODO: requires the map param to appear literally in the memlet; misses indirected
-    # forms (``_s2 = map_param + 1; A[_s2]``). Needs richer analysis.
-    for edge in edges:
-        memlet: dace.memlet.Memlet = edge.data
-        if memlet.subset is None:
-            continue
-        stride_one_idx = [i for i, s in enumerate(state.sdfg.arrays[edge.data.data].strides) if s == 1][0]
-        b, e, s = memlet.subset[stride_one_idx]
-        b_free_syms = free_symbols(b)
-        e_free_syms = free_symbols(e)
-        all_syms = {str(s) for s in b_free_syms.union(e_free_syms)}
-        last_param = str(list(map_entry.map.params)[-1])
-        if last_param not in all_syms and all_syms != set():
-            return False
-    return True
-
-
-def count_param_in_expr(expr, param_str: str):
-    """Count occurrences of a parameter in a SymPy expression, including function-call args.
-
-    Matches by symbol name (not SymPy ``==``): DaCe symbols with the same name but different
-    metadata can compare unequal.
-
-    :param expr: The SymPy expression to scan.
-    :param param_str: The parameter name to count.
-    :returns: Number of occurrences.
-    """
-    if not isinstance(expr, sympy.Basic):
-        return 0
-
-    count = 0
-    # standalone symbol occurrences (match by name)
-    for atom in expr.atoms(sympy.Symbol):
-        if str(atom) == param_str:
-            count += 1
-
-    # nested function-call argument occurrences
-    for node in sympy.preorder_traversal(expr):
-        if isinstance(node, sympy.FunctionClass):
-            continue  # function name, not an arg
-        if isinstance(node, sympy.Function):
-            for arg in node.args:
-                count += count_param_in_expr(arg, param_str)
-
-    return count
-
-
-def map_param_appears_in_multiple_dimensions(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
-    """True if the last map parameter appears across multiple subset dimensions.
-
-    :param state: The containing state.
-    :param map_entry: The map entry node.
-    :returns: ``True`` if the last parameter appears in more than one dimension.
-    """
-
-    last_param = str(map_entry.map.params[-1])
-
-    nodes_between = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
-    edges = state.all_edges(*nodes_between)
-
-    for edge in edges:
-        memlet: dace.memlet.Memlet = edge.data
-
-        # flag if last param appears >1 across this memlet's subset dims
-        if memlet.subset is not None:
-            subset_appearances = 0
-            for (b, e, s) in memlet.subset:
-                if free_symbols(b):
-                    subset_appearances += count_param_in_expr(b, last_param)
-
-            if subset_appearances >= 2:
-                return True
-
-    return False
-
-
-def is_linear_in_param(expr, param_str: str) -> bool:
-    """True if ``expr`` is linear in ``param_str`` (form ``c*p + d``, ``c``/``d`` constant in ``p``).
-
-    A bare int/float literal counts as linear (coefficient 0).
-
-    :param expr: The expression to classify.
-    :param param_str: The parameter symbol name.
-    :returns: ``True`` if ``expr`` is linear in the parameter.
-    """
-    if not isinstance(expr, sympy.Basic):
-        return True  # plain int/float literal
-    # Use the parameter symbol AS IT APPEARS in ``expr`` (carrying its real assumptions), not a
-    # freshly fabricated bare ``sympy.Symbol`` -- a same-name symbol with mismatched assumptions is
-    # a DISTINCT sympy object, so ``in expr.free_symbols`` / ``Poly`` would miss it and the
-    # expression would look spuriously constant in the parameter (the ``i - i`` canonicalization
-    # class: mismatched-assumption same-name symbols never cancel).
-    param_sym = next((s for s in expr.free_symbols if s.name == param_str), None)
-    if param_sym is None:
-        return True  # expr is constant in the parameter -> linear
-    try:
-        poly = sympy.Poly(expr, param_sym)
-    except (sympy.PolynomialError, sympy.GeneratorsNeeded):
-        return False
-    if poly.degree() > 1:
-        return False
-    # coefficients must not themselves contain ``param_sym``
-    for c in poly.all_coeffs():
-        if param_sym in free_symbols(c):
-            return False
-    return True
-
-
-def map_param_dim_usage_is_linear_combo(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
-    """True if multi-dimension uses of the last map parameter are all linear in it (strided-lowerable).
-
-    For every memlet where the last param appears in >1 dim, each such dim must be a point access
-    whose begin expr is linear in the param. Memlets where the param is absent or used in one dim
-    do not block the classification.
-
-    :param state: The containing state.
-    :param map_entry: The map entry to inspect.
-    :returns: ``True`` if all multi-dim uses are linear (strided-lowerable).
-    """
-    last_param = str(map_entry.map.params[-1])
-    nodes_between = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
-    edges = state.all_edges(*nodes_between)
-    for edge in edges:
-        memlet: dace.memlet.Memlet = edge.data
-        if memlet.subset is None:
-            continue
-        dims_with_param = []
-        for d, (b, e, _) in enumerate(memlet.subset):
-            if free_symbols(b) and count_param_in_expr(b, last_param) > 0:
-                dims_with_param.append((d, b, e))
-        if len(dims_with_param) < 2:
-            continue
-        for _, b, e in dims_with_param:
-            if b != e:
-                return False
-            if not is_linear_in_param(b, last_param):
-                return False
-    return True
-
-
-def map_has_branching_memlets(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
-    """True if any map-entry out-connector feeds more than one edge.
-
-    :param state: The state containing the map.
-    :param map_entry: The map entry to inspect.
-    :returns: ``True`` if a single out-connector branches to multiple edges.
-    """
-    for out_conn in map_entry.out_connectors:
-        out_egdges_of_out_conn = set(state.out_edges_by_connector(map_entry, out_conn))
-        if len(out_egdges_of_out_conn) > 1:
-            return True
-    return False
 
 
 def sdfg_has_nested_sdfgs(sdfg: dace.SDFG):
@@ -814,19 +614,5 @@ def sdfg_has_nested_sdfgs(sdfg: dace.SDFG):
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
-                return True
-    return False
-
-
-def has_nsdfg_depth_more_than_one(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
-    """True if a map body contains a NestedSDFG that itself contains a NestedSDFG.
-
-    :param state: The state containing the map.
-    :param map_entry: The map entry to inspect.
-    :returns: ``True`` if nested-SDFG depth exceeds one.
-    """
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
-        if isinstance(node, dace.nodes.NestedSDFG):
-            if sdfg_has_nested_sdfgs(node.sdfg):
                 return True
     return False
