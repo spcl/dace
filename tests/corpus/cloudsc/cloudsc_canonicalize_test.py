@@ -65,23 +65,42 @@ _ARMS = {
 }
 
 #: Structural end-state of ``canonicalize`` on CloudSC, pinned exactly so both a coverage
-#: regression and an unreviewed improvement are a test failure. Every Map is outermost in
-#: its state and every one reaches the backend as a ``#pragma omp parallel for``, so the
-#: three numbers move together; a change means the parallelization decision changed.
+#: regression and an unreviewed improvement are a test failure.
 #:
-#: The 27 loops that stay sequential are NOT arbitrary: one is the vertical ``jk`` sweep
-#: carrying ``zcovptot[0:klon]`` down the column, one is the ``pfsq*`` / ``pfcq*`` flux
-#: prefix sum (a genuine scan), and the other 25 are column ``jl`` loops that
-#: ``LoopToMap`` refuses on
-#: an unprivatized per-iteration scalar (``zevap`` / ``zmelt`` / ``zzratio`` /
-#: ``zexplicit_1_2`` written at ``dst_subset=0``).
-_EXPECTED_MAPS = 234
-_EXPECTED_SEQUENTIAL_LOOPS = 27
-_EXPECTED_OMP_PARALLEL_FOR = 234
+#: These numbers do NOT move together, and pinning them as though they did is what let them go
+#: stale unnoticed. ``omp_parallel_for`` counts pragmas in the GENERATED CODE, and the code has two
+#: sources for them: every OUTERMOST Map, and the loop each ``Fill`` / ``Copy`` library node expands
+#: into. A Map nested inside another Map's scope correctly gets no pragma of its own. Measured at
+#: this pin: 496 Maps = 493 outermost + 3 nested, and 584 pragmas = those 493 + 91 from the 100
+#: library nodes (96 ``Fill`` + 4 ``Copy``; the rest collapse to a plain ``memset``).
+#:
+#: ``_EXPECTED_OUTERMOST_MAPS`` is therefore pinned separately. It is what keeps "a Map codegen
+#: declines to emit a pragma for is a silent serialization" a real check -- against the total Map
+#: count that check only ever held by arithmetic coincidence, and it broke the moment canonicalize
+#: started nesting Maps or lifting library nodes.
+#:
+#: The loops that stay sequential are dominated by four unrolled families -- ``for_608_*``,
+#: ``for_1015_*``, ``for_1215_*_for_1227`` and ``for_1244_*_for_1245`` -- plus the ``for_767`` ICE
+#: slot and the ``for_1327_fis*`` fission remnants. Retargeting a per-iteration scratch slot as if
+#: it were a loop-carried accumulator is exactly the mistake that would parallelize some of these,
+#: and it is refused deliberately; see ``RetargetWCRAccumulator``'s guards.
+_EXPECTED_MAPS = 496
+_EXPECTED_OUTERMOST_MAPS = 493
+_EXPECTED_SEQUENTIAL_LOOPS = 31
+_EXPECTED_OMP_PARALLEL_FOR = 584
 
 
 def _map_entries(sdfg: dace.SDFG):
     return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+
+
+def _outermost_map_entries(sdfg: dace.SDFG):
+    """MapEntries not enclosed by another Map -- the ones codegen emits a pragma for."""
+    found = []
+    for state in sdfg.all_states():
+        scope = state.scope_dict()
+        found += [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and scope[n] is None]
+    return found
 
 
 def _loop_regions(sdfg: dace.SDFG):
@@ -151,13 +170,19 @@ def test_cloudsc_canonicalize_structure(canonical_sdfg_file):
     """Canonicalize expressed the kernel as parallel Maps, and said so in the generated code."""
     sdfg = dace.SDFG.from_file(canonical_sdfg_file)
     maps = _map_entries(sdfg)
+    outermost = _outermost_map_entries(sdfg)
     loops = _loop_regions(sdfg)
     schedules = collections.Counter(m.map.schedule for m in maps)
     n_omp = _omp_parallel_for_count(sdfg)
-    print(f'canonicalize: maps={len(maps)} sequential_loops={len(loops)} omp_parallel_for={n_omp}')
+    print(f'canonicalize: maps={len(maps)} outermost={len(outermost)} sequential_loops={len(loops)} '
+          f'omp_parallel_for={n_omp}')
     print(f'canonicalize: map schedules={dict(schedules)}')
 
     assert len(maps) == _EXPECTED_MAPS, f'{len(maps)} maps, expected {_EXPECTED_MAPS}'
+    # Only an outermost Map gets its own pragma, so this is the count the backend check below is
+    # really about; against the total it would pass on a Map that codegen quietly nested away.
+    assert len(outermost) == _EXPECTED_OUTERMOST_MAPS, (f'{len(outermost)} outermost maps, '
+                                                        f'expected {_EXPECTED_OUTERMOST_MAPS}')
     assert len(loops) == _EXPECTED_SEQUENTIAL_LOOPS, (f'{len(loops)} loops stayed sequential, '
                                                       f'expected {_EXPECTED_SEQUENTIAL_LOOPS}')
     # Canonicalize leaves every Map on ``ScheduleType.Default``; codegen's default-schedule
@@ -165,7 +190,9 @@ def test_cloudsc_canonicalize_structure(canonical_sdfg_file):
     # future pipeline that starts assigning schedules from doing so silently.
     assert set(schedules) == {dtypes.ScheduleType.Default}, f'unexpected map schedules: {dict(schedules)}'
     # The Map count alone does not prove parallelism reached the backend -- a Map that codegen
-    # declines to emit a pragma for is a silent serialization.
+    # declines to emit a pragma for is a silent serialization. The total also covers the loops the
+    # Fill / Copy library nodes expand into, so it moves when memset lifting changes too; the
+    # outermost-Map pin above is what isolates the Map half.
     assert n_omp == _EXPECTED_OMP_PARALLEL_FOR, (f'{n_omp} "#pragma omp parallel for" in the generated code, '
                                                  f'expected {_EXPECTED_OMP_PARALLEL_FOR}')
 
