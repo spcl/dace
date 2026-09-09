@@ -534,7 +534,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     dst_conn=connector,
                     memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]),
                 )
-                if isinstance(outer_map_entry, SDFG) and memlet_data in outer_to_connect["outputs"]:
+                if isinstance(outer_map_entry, SDFG) and memlet_data in self._known_data_outside_nestedSDFG:
                     # in case of read after write of memory that comes from an "outside" SDFG,
                     # make sure that we register the read in the nested SDFG.
                     outer_to_connect["inputs"].add(memlet_data)
