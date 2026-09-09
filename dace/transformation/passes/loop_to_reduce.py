@@ -1334,6 +1334,87 @@ def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_s
         parent.add_edge(wb_state, e.dst, e.data)
 
 
+def _slot_accumulated_more_than_once(loop: LoopRegion, accum_name: str, accum_subset) -> bool:
+    """True iff more than one body state accumulates into ``accum_name[accum_subset]``.
+
+    The retarget privatizes ONE chain: it drops that tasklet's carry input and puts the WCR on its
+    write. Every other chain on the same slot keeps reading and writing the original accumulator, so
+    the two halves of the iteration accumulate into different places and the result is neither sum.
+
+    A short constant-bounded inner reduction is exactly how a body ends up with several: once
+    ``ShortLoopUnroll`` flattens it, each unrolled term becomes its own accumulate state in the
+    parent body. Summing them IS a reduction, just not one this pass can express by claiming a
+    single chain, so refuse and leave the loop to the passes that can.
+
+    :param loop: the loop being considered for retargeting.
+    :param accum_name: the accumulator's data name.
+    :param accum_subset: the slot the chain reads and writes.
+    """
+    want = str(accum_subset)
+    seen = 0
+    for state in loop.all_states():
+        if _state_in_nested_loop(state, loop):
+            continue
+        reads = writes = False
+        for node in state.nodes():
+            if not isinstance(node, nodes.AccessNode) or node.data != accum_name:
+                continue
+            if state.in_degree(node) == 0 and state.out_degree(node) >= 1:
+                reads = any(e.data is not None and e.data.subset is not None and str(e.data.subset) == want
+                            for e in state.out_edges(node)) or reads
+            if state.in_degree(node) >= 1 and state.out_degree(node) == 0:
+                writes = any(e.data is not None and e.data.subset is not None and str(e.data.subset) == want
+                             for e in state.in_edges(node)) or writes
+        if reads and writes:
+            seen += 1
+            if seen > 1:
+                return True
+    return False
+
+
+def _slot_overwritten_in_body(loop: LoopRegion, accum_name: str, accum_subset) -> bool:
+    """True iff the loop body OVERWRITES ``accum_name[accum_subset]`` without reading it back.
+
+    A slot re-initialized inside the body is per-iteration scratch, not a loop-carried accumulator,
+    so there is nothing to retarget: privatizing it hoists the initialization out of the loop and
+    the value then accumulates across every iteration. CloudSC's ``zexplicit`` is exactly that --
+
+    .. code-block:: python
+
+        for jl in range(kidia, kfdia + 1):
+            zexplicit = 0.0
+            for jn in range(1, nclv + 1):
+                zexplicit = zexplicit + zsolqa[jn - 1, jm - 1, jl - 1]
+            zqxn[jm - 1, jl - 1] = zqx[jm - 1, jk - 1, jl - 1] + zexplicit
+
+    -- and with ``nclv`` specialized the ``jn`` reduction unrolls into the ``jl`` body, so the
+    read-accumulate-write chain sits there in plain sight while ``zexplicit = 0.0`` sits beside it.
+    Retargeting it summed ``zsolqa`` over every ``jl`` into one scalar and every ``zqxn[jm, jl]``
+    read a running total, which reached the outputs as ``tendency_loc_q`` off by three orders.
+
+    :param loop: the loop being considered for retargeting.
+    :param accum_name: the accumulator's data name.
+    :param accum_subset: the slot the chain reads and writes.
+    """
+    want = str(accum_subset)
+    for state in loop.all_states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.AccessNode) or node.data != accum_name:
+                continue
+            for edge in state.in_edges(node):
+                if edge.data is None or edge.data.subset is None or str(edge.data.subset) != want:
+                    continue
+                producer = edge.src
+                if not isinstance(producer, nodes.Tasklet):
+                    continue
+                # A producer that reads the slot back is the accumulate itself, not an overwrite --
+                # which is what excludes the chain's own write in ``chain_state``.
+                if any(e.data is not None and e.data.data == accum_name for e in state.in_edges(producer)):
+                    continue
+                return True
+    return False
+
+
 def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
     """Find a body state with a ``read-accum -> op-tasklet -> (transient passthrough)* ->
     write-accum`` chain on the SAME constant slot, beyond ``AugAssignToWCR``'s reach (an
@@ -1458,6 +1539,16 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             # into a WCR turns a copy into an accumulation and drops ``y`` from the sum, silently
             # computing ``(b[i] + b[i-1]) * 0.333``.
             if first_write_edge is not data_out[0]:
+                continue
+
+            # Last, because it is the only check here that walks the whole body: a slot the body
+            # re-initializes is per-iteration scratch and carries nothing across the loop.
+            if _slot_overwritten_in_body(loop, data_name, carry_subset):
+                continue
+
+            # Same reason, other failure mode: the retarget rewrites ONE chain, so a second chain on
+            # the slot is left accumulating into the original.
+            if _slot_accumulated_more_than_once(loop, data_name, carry_subset):
                 continue
 
             return (state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge, last_write_edge, src_an,

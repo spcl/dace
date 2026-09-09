@@ -1698,3 +1698,182 @@ def test_guarded_scatter_histogram_keeps_every_bin():
     sdfg(radius=radius, out=out, lo=lo, hi=hi, N=n, M=m)
 
     assert np.allclose(out, expected)
+
+
+# ---- what the retarget must NOT claim ------------------------------------
+#
+# Two shapes, one origin. A short constant-bounded inner reduction, once ``ShortLoopUnroll``
+# flattens it, leaves its accumulate steps sitting directly in the parent body -- one state per
+# unrolled term, each carrying the ``read slot -> tasklet -> transient -> write slot`` chain
+# ``_extract_multi_state_chain`` claims. Neither shape is a reduction over the OUTER loop, and both
+# reached CloudSC's outputs as wrong numbers with nothing raised.
+#
+# Fixtures are hand-built because this is a shape a PASS leaves behind, not one the frontend emits:
+# going through the frontend would let simplify fuse the states into something the matcher never
+# sees, and the tests would be green whatever the matcher decided.
+
+
+def _add_zero_init(cfg, label: str, is_start_block: bool = False):
+    """A state whose only job is ``acc = 0.0``, added to ``cfg``."""
+    state = cfg.add_state(label, is_start_block=is_start_block)
+    task = state.add_tasklet('zero', {}, {'__out'}, '__out = 0.0')
+    state.add_edge(task, '__out', state.add_write('acc'), None, mm.Memlet('acc[0]'))
+    return state
+
+
+def _add_accumulate_states(loop: LoopRegion, terms: int, first: bool):
+    """``terms`` states, each one ``read acc -> add -> tmp -> write acc``.
+
+    The transient passthrough is what puts the chain past ``AugAssignToWCR``'s 5-node pattern and
+    into ``_extract_multi_state_chain``'s reach.
+
+    :param terms: how many accumulate states to chain -- the unrolled inner reduction's extent.
+    :param first: whether the first state added starts the loop body.
+    :returns: ``(first_state, last_state)`` of the chain.
+    """
+    head = None
+    prev = None
+    for k in range(terms):
+        state = loop.add_state(f'accumulate_{k}', is_start_block=first and prev is None)
+        task = state.add_tasklet('add', {'in_a', 'in_b'}, {'__out'}, '__out = in_a + in_b')
+        state.add_edge(state.add_read('acc'), None, task, 'in_a', mm.Memlet('acc[0]'))
+        state.add_edge(state.add_read('src'), None, task, 'in_b', mm.Memlet(f'src[{k}, jl]'))
+        through = state.add_access('tmp')
+        state.add_edge(task, '__out', through, None, mm.Memlet('tmp[0]'))
+        state.add_edge(through, None, state.add_write('acc'), None, mm.Memlet('acc[0]'))
+        if prev is not None:
+            loop.add_edge(prev, state, dace.InterstateEdge())
+        head = head or state
+        prev = state
+    return head, prev
+
+
+def _chain_scaffold(label: str, terms: int):
+    """The arrays, a ``pre`` state, and an empty ``jl`` loop -- shared by both shapes below."""
+    sdfg = dace.SDFG(label)
+    sdfg.add_array('src', [terms, N], dace.float64)
+    sdfg.add_array('base', [N], dace.float64)
+    sdfg.add_array('out', [N], dace.float64)
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+    sdfg.add_scalar('tmp', dace.float64, transient=True)
+    pre = sdfg.add_state('pre', is_start_block=True)
+    loop = LoopRegion('jl_loop',
+                      condition_expr='jl < N',
+                      loop_var='jl',
+                      initialize_expr='jl = 0',
+                      update_expr='jl = jl + 1')
+    sdfg.add_node(loop)
+    return sdfg, pre, loop
+
+
+def _scratch_slot_loop(terms: int = 1) -> dace.SDFG:
+    """CloudSC's ``zexplicit``: ``for jl: acc = 0; acc += src[k, jl]; out[jl] = base[jl] + acc``.
+
+    The init sits IN the body, so the slot is per-iteration scratch and ``jl`` carries nothing.
+    """
+    sdfg, pre, loop = _chain_scaffold(f'chain_scratch_slot_{terms}', terms)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+
+    init = _add_zero_init(loop, 'body_init', is_start_block=True)
+    first, last = _add_accumulate_states(loop, terms, first=False)
+    loop.add_edge(init, first, dace.InterstateEdge())
+
+    tail = loop.add_state('store')
+    task = tail.add_tasklet('store', {'in_a', 'in_b'}, {'__out'}, '__out = in_a + in_b')
+    tail.add_edge(tail.add_read('base'), None, task, 'in_a', mm.Memlet('base[jl]'))
+    tail.add_edge(tail.add_read('acc'), None, task, 'in_b', mm.Memlet('acc[0]'))
+    tail.add_edge(task, '__out', tail.add_write('out'), None, mm.Memlet('out[jl]'))
+    loop.add_edge(last, tail, dace.InterstateEdge())
+
+    sdfg.validate()
+    return sdfg
+
+
+def _carried_accumulator_loop(terms: int = 1) -> dace.SDFG:
+    """TSVC s4115's ``s``: ``acc = 0; for jl: acc += src[k, jl]; out[0] = acc``.
+
+    The same in-body chain with the init ahead of the loop and the store after it -- a genuine
+    loop-carried accumulator, which is what the matcher exists to claim.
+    """
+    sdfg, pre, loop = _chain_scaffold(f'chain_carried_accumulator_{terms}', terms)
+    init = _add_zero_init(sdfg, 'init')
+    sdfg.add_edge(pre, init, dace.InterstateEdge())
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+
+    _add_accumulate_states(loop, terms, first=True)
+
+    post = sdfg.add_state('store')
+    post.add_edge(post.add_read('acc'), None, post.add_write('out'), None, mm.Memlet('acc[0] -> [0]'))
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+
+    sdfg.validate()
+    return sdfg
+
+
+def _run_chain(sdfg: dace.SDFG, terms: int, seed: int):
+    """Compile and run a chain fixture on random data.
+
+    :returns: ``(out, src, base)`` so the caller states its own oracle.
+    """
+    n = 64
+    rng = np.random.default_rng(seed)
+    src = rng.standard_normal((terms, n))
+    base = rng.standard_normal(n)
+    out = np.zeros(n)
+    sdfg(src=src, base=base, out=out, N=n)
+    return out, src, base
+
+
+def test_body_reinitialized_accumulator_is_not_retargeted():
+    """A slot the body overwrites carries nothing across the loop, so there is nothing to retarget.
+
+    CloudSC's ``zexplicit``. To a matcher that looks only at the chain this is indistinguishable
+    from a ``jl``-carried reduction; it is not one, because ``acc = 0.0`` sits beside it in the same
+    body and ``jl`` is the parallel axis.
+
+    Retargeting hoists that initialization out of the loop, so ``acc`` accumulates ``src`` over
+    every ``jl`` and each ``out[jl]`` reads a running total -- on CloudSC, ``tendency_loc_q`` off by
+    three orders of magnitude with nothing raised, hence the value assertion.
+
+    ONE term, so the multi-chain refusal cannot stand in for this one.
+    """
+    sdfg = _scratch_slot_loop(terms=1)
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, 'per-iteration scratch must not be retargeted'
+    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    sdfg.validate()
+
+    out, src, base = _run_chain(sdfg, terms=1, seed=4115)
+    assert np.allclose(out, base + src.sum(axis=0)), 'the scratch slot became a loop-carried sum'
+
+
+def test_slot_accumulated_twice_per_iteration_is_not_retargeted():
+    """Two chains on one slot: the retarget rewrites one and leaves the other on the original.
+
+    The unrolled inner reduction again, this time with a genuinely loop-carried accumulator, so the
+    init position cannot be what refuses it. Summing every term across every iteration IS a
+    reduction -- just not one expressible by claiming a single chain, so the matcher has to decline.
+    Before it did, three terms turned a sum of 1.077926 into 10.059380.
+    """
+    sdfg = _carried_accumulator_loop(terms=3)
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, 'a slot accumulated twice must not be retargeted'
+    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    sdfg.validate()
+
+    out, src, _base = _run_chain(sdfg, terms=3, seed=4117)
+    assert np.allclose(out[0], src.sum()), 'the multi-chain sum diverged from the sequential oracle'
+
+
+def test_accumulator_initialized_before_the_loop_is_still_retargeted():
+    """The positive control: the same chain IS claimed when it is a real loop-carried accumulator.
+
+    Without this the two refusals above could be had by disabling the matcher outright. Here ``acc``
+    is initialized ahead of the loop, read back after it, and touched once per iteration, so it must
+    still be privatized into the ``wcr-scalar`` shape ``LoopToMap`` lowers to ``reduction(+:scalar)``.
+    """
+    sdfg = _carried_accumulator_loop(terms=1)
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) == 1, 'a loop-carried accumulator must still be retargeted'
+    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') >= 1
+    sdfg.validate()
+
+    out, src, _base = _run_chain(sdfg, terms=1, seed=4116)
+    assert np.allclose(out[0], src.sum()), 'retargeting changed the carried sum'
