@@ -152,6 +152,36 @@ def assert_standalone_device(code: str, label: str = 'cpf') -> None:
         assert match is None, (f'{label}: CPF device output contains {meaning} -- {match.group(0)!r} at offset '
                                f'{match.start()}\n{_context(code, match.start())}')
     assert_no_unqualified_runtime_calls(code, label)
+    assert_device_preamble_covers_its_uses(code, label)
+
+
+#: Device preamble blocks that only some units carry, and the declaration each one must bring with
+#: it. The preamble is selected from the finished text, so a use the selector cannot see ships a
+#: unit that fails to compile on an undeclared name -- which is what happened to the scan forms:
+#: ``gpucub::DeviceScan`` is called from an INLINE DEFINITION emitted below the block, and gating on
+#: the frame text alone dropped the alias out from under it. The tests never noticed because none of
+#: them compiled that particular pairing, so the invariant is stated here instead of per test.
+DEVICE_PREAMBLE_USES = (
+    (re.compile(r'\bgpucub\s*::'), re.compile(r'^namespace gpucub\s*=', re.M), 'gpucub'),
+    (re.compile(r'\bcpf_gpu_atomic\s*\('), re.compile(r'void cpf_gpu_atomic\s*\(', re.M), 'cpf_gpu_atomic'),
+    (re.compile(r'\bDACE_KERNEL_LAUNCH_CHECK\s*\('), re.compile(r'^#define DACE_KERNEL_LAUNCH_CHECK',
+                                                                re.M), 'DACE_KERNEL_LAUNCH_CHECK'),
+)
+
+
+def assert_device_preamble_covers_its_uses(code: str, label: str = 'cpf') -> None:
+    """Assert every gated device-preamble block the unit USES is one the unit also DECLARES.
+
+    :param code: the finished device rendering.
+    :param label: what to call the unit in the failure message.
+    """
+    for use, declaration, name in DEVICE_PREAMBLE_USES:
+        hit = use.search(code)
+        if hit is None:
+            continue
+        assert declaration.search(code) is not None, (
+            f'{label}: the unit calls {name} at offset {hit.start()} but never declares it -- the '
+            f'device preamble was selected without seeing that use\n{_context(code, hit.start())}')
 
 
 def host_compiler(language: str = 'c++') -> str:

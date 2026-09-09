@@ -822,7 +822,10 @@ def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STA
     if dialect is cpf_lowering.Dialect.STANDALONE_HIP:
         lines.append('')
         lines.append('// What dace/dace.h would define for the device side.')
-        lines.append(cpf_lowering.hip_device_preamble(code))
+        # code PLUS the definitions: a scan expansion's inline helper is emitted BELOW this block
+        # and calls ``gpucub::DeviceScan`` itself, so gating on ``code`` alone dropped the namespace
+        # alias out from under it and the unit failed to compile on an undeclared ``gpucub``.
+        lines.append(cpf_lowering.hip_device_preamble(code + '\n'.join(definitions)))
     if definitions:
         lines.append('')
         lines.append('// Functions the DaCe runtime headers would otherwise provide.')
