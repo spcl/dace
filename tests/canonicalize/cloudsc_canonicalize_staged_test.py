@@ -25,8 +25,12 @@ the values. Every run is on a **deep copy**; the **pipeline SDFG itself is never
 because that would bake Sequential schedules into the cached artifact and destroy the parallelism
 the pipeline exists to produce::
 
-    taskset -c 0 env OMP_NUM_THREADS=1 PYTHONPATH=/path/to/dace \\
+    env OMP_NUM_THREADS=4 PYTHONPATH=/path/to/dace \\
         python tests/canonicalize/cloudsc_canonicalize_staged_test.py
+
+Pin a thread COUNT if the run should be reproducible, but never ``1``. Every claim above is about
+what more than one thread does: on one thread the multicore leg and its sequential re-run are the
+same run and the diagnosis collapses to "correct".
 
 This is a slow integration harness: building CloudSC (``simplify=False``) takes minutes and each verified
 phase compiles the whole kernel again. It is marked ``integration`` so the unit gate does not run it --
@@ -40,7 +44,6 @@ import os
 import time
 from typing import Dict, List, Optional, Tuple
 
-os.environ.setdefault('OMP_NUM_THREADS', '1')
 os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
 os.environ.setdefault('OMPI_MCA_pml', 'ob1')
 os.environ.setdefault('OMPI_MCA_btl', 'self,vader')

@@ -68,11 +68,15 @@ def _regime_params(regime: str) -> Tuple[str, bool, float, float]:
     path OUTSIDE the extended tests tree -- the dace-fortran matrix test imports pipelines.py directly
     and needs only ``run_pipeline``, never the python-variant numeric helpers, whose
     ``tests.corpus.cloudsc...`` imports would otherwise fail against another repo's ``tests`` package.
-    ``ieee`` (-O0, sequential) is bit-exact on value-preserving phases; ``o3`` runs parallel maps, so
-    reassociating phases get the looser bound."""
+    BOTH regimes run MULTITHREADED. A numerical-correctness check compares the shipped
+    configuration, and a sequential oracle does neither half of that job: it never exercises the
+    OpenMP path the candidate is compiled with, and it compares two different reduction orders, so a
+    difference in the report is as likely to be the schedule as the transform. ``ieee`` keeps -O0
+    ``-fno-fast-math -ffp-contract=off`` so the compiler contributes no reassociation of its own;
+    ``o3`` lets it, hence the looser reassociation bound."""
     from tests.corpus.cloudsc.generate_data_for_cloudsc import IEEE_CPU_ARGS, O3_CPU_ARGS
     return {
-        'ieee': (IEEE_CPU_ARGS, True, 1e-16, 1e-15),
+        'ieee': (IEEE_CPU_ARGS, False, 1e-16, 1e-15),
         'o3': (O3_CPU_ARGS, False, 1e-16, 1e-12),
     }[regime]
 

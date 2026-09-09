@@ -15,13 +15,18 @@ the two canonicalization variants as well.
 Slow: the ``simplify=False`` parse is minutes and each phase boundary compiles + runs CloudSC
 (``canon_*`` has many phases). Built once, shared across variants; the reference is run once.
 
-Manual run (single-core, IEEE, 8 GB cap -- see README)::
+Manual run (IEEE, 8 GB cap -- see README)::
 
-    OMP_NUM_THREADS=1 pytest tests/corpus/cloudsc/cloudsc_pipeline_e2e_test.py -v -s -m integration -n1
+    OMP_NUM_THREADS=4 pytest tests/corpus/cloudsc/cloudsc_pipeline_e2e_test.py -v -s -m integration -n1
 
     # one variant:
-    OMP_NUM_THREADS=1 pytest tests/corpus/cloudsc/cloudsc_pipeline_e2e_test.py -v -s -m integration \\
+    OMP_NUM_THREADS=4 pytest tests/corpus/cloudsc/cloudsc_pipeline_e2e_test.py -v -s -m integration \\
         -k parallelize
+
+Multithreaded on purpose -- a fixed count is fine, ``1`` is not. The phases under test are the ones
+that turn loops into Maps, so the mistake they can make is a Map over a loop that carries a
+dependence: right on one thread and wrong on many. Pinning the run to one thread grades a build
+nobody ships and passes through precisely the defect these assertions exist to catch.
 """
 import gc
 
