@@ -46,6 +46,8 @@ from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols imp
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
+from dace.transformation.passes.vectorization.demote_data_reading_interstate_symbols import (
+    DemoteDataReadingInterstateSymbols)
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
@@ -777,6 +779,13 @@ class VectorizeMultiDim(ppl.Pipeline):
             # ``py_mod`` for Python/NumPy modulo semantics (C ``%`` miscompiles negative
             # operands and is ill-formed for floats).
             RewriteModuloToPyMod(),
+            # An interstate edge that assigns a symbol FROM array data (``b_index = b[i]``) hides a
+            # per-lane read behind a name no map parameter appears in. Give it back its data flow
+            # here, BEFORE anything classifies operands: ``ConvertTaskletsToTileOps`` would
+            # otherwise either splat lane 0 across the tile or -- since it refuses rather than
+            # miscompile -- refuse the whole SDFG over one such assignment, which is what left
+            # CloudSC's 974 classified maps un-tiled.
+            DemoteDataReadingInterstateSymbols(),
             ConvertLengthOneArraysToScalars(recursive=True),
             NormalizeWCRSource(),
             BypassTrivialAssignTasklets(),
