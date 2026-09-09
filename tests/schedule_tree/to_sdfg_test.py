@@ -760,16 +760,21 @@ def test_read_after_write_nested_SDFG() -> None:
         ],
     )
 
-    sdfg = stree.as_sdfg(validate=True)
+    sdfg = stree.as_sdfg(validate=True, simplify=True)
 
     # Make sure we keep the initialization of A = 42.42
     assert len(
         list(
             filter(lambda node: isinstance(node, nodes.Tasklet) and node.label == "fill",
                    [node for node, _ in sdfg.all_nodes_recursive()]))) == 1
+
     # Ensure that A isn't transient in the nested SDFG
-    nested_sdfg = list(filter(lambda node: node.label == "nested_sdfg", sdfg.cfg_list))[0]
+    nested_sdfg: dace.SDFG = list(filter(lambda node: node.label == "nested_sdfg", sdfg.cfg_list))[0]
     assert not nested_sdfg.arrays["A"].transient
+
+    # Ensure that `tmp_condition` is a boolean symbol inside the nested SDFG
+    tmp_condition = nested_sdfg.symbols.get("tmp_condition", None)
+    assert tmp_condition == dace.bool
 
 
 def test_double_map_with_for_loop() -> None:
