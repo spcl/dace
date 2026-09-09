@@ -90,3 +90,64 @@ def test_the_resolved_conjunction_still_computes_the_same_values():
     after = np.zeros(N, dtype=np.bool_)
     resolved(flags=flags, vals=vals, out=after)
     assert np.array_equal(after, got)
+
+
+def int_condition_ite_sdfg() -> dace.SDFG:
+    """``out[i] = ITE(flags[i], hot[i], cold[i])`` with an INT condition -- a Fortran LOGICAL."""
+    sdfg = dace.SDFG('int_condition_ite')
+    sdfg.add_array('flags', (N, ), dace.int32)
+    sdfg.add_array('hot', (N, ), dace.float64)
+    sdfg.add_array('cold', (N, ), dace.float64)
+    sdfg.add_array('out', (N, ), dace.float64)
+    state = sdfg.add_state('body', is_start_block=True)
+
+    blend = state.add_tasklet('blend', {'_c', '_t', '_e'}, {'_o'}, '_o = _t if _c else _e')
+    state.add_edge(state.add_access('flags'), None, blend, '_c', dace.Memlet('flags[0]'))
+    state.add_edge(state.add_access('hot'), None, blend, '_t', dace.Memlet('hot[0]'))
+    state.add_edge(state.add_access('cold'), None, blend, '_e', dace.Memlet('cold[0]'))
+    state.add_edge(blend, '_o', state.add_access('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def test_an_int_ite_condition_is_cast_to_bool():
+    """``TileITE``'s ``_mask`` is bool by contract, and the converter asserts it.
+
+    A condition lifted from a bare value keeps that value's dtype, so CloudSC's ``if ldcum[jl]``
+    over an int LOGICAL reached the mask as ``int`` and failed the invariant -- aborting the whole
+    SDFG's vectorization, not just that one kernel.
+    """
+    sdfg = int_condition_ite_sdfg()
+    assert ResolveMixedDtypeBinops().apply_pass(sdfg, {}) is not None
+
+    state = next(iter(sdfg.all_states()))
+    blend = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == 'blend')
+    cond_edge = next(e for e in state.in_edges(blend) if e.dst_conn == '_c')
+    assert sdfg.arrays[cond_edge.data.data].dtype == dace.bool_, 'the int condition was left un-cast'
+    sdfg.validate()
+
+
+def test_a_bool_ite_condition_is_left_alone():
+    """The control: a bool condition already satisfies the contract, so nothing is inserted."""
+    sdfg = int_condition_ite_sdfg()
+    sdfg.arrays['flags'].dtype = dace.bool_
+    assert ResolveMixedDtypeBinops().apply_pass(sdfg, {}) is None
+
+
+def test_the_cast_condition_selects_the_same_lanes():
+    """Executable: casting the condition must not change which arm each lane takes."""
+    flags = np.array([0, 2, 0, 1, 5, 0, 1, 0], dtype=np.int32)
+    hot = np.full(N, 1.0)
+    cold = np.full(N, -1.0)
+
+    plain = int_condition_ite_sdfg()
+    before = np.zeros(N)
+    plain(flags=flags, hot=hot, cold=cold, out=before)
+
+    resolved = int_condition_ite_sdfg()
+    ResolveMixedDtypeBinops().apply_pass(resolved, {})
+    resolved.name = 'int_condition_ite_resolved'
+    after = np.zeros(N)
+    resolved(flags=flags, hot=hot, cold=cold, out=after)
+
+    assert before[0] == cold[0], 'the fixture stopped selecting on flags[0] == 0'
+    assert np.array_equal(after, before)

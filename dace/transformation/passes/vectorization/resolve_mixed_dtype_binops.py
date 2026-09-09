@@ -56,11 +56,12 @@ def _cast_name(dtype: dtypes.typeclass) -> str:
     return dtypes.TYPECLASS_TO_STRING[dtype].split("::")[-1]
 
 
-def ite_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, list]]:
+def ite_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, list, Optional[str]]]:
     """If ``tasklet`` is a ternary blend -- the Python ``_o = _t if _c else _e`` form or the
     ``_o = ITE(_c, _t, _e)`` call form ``SplitTasklets`` emits for a same-write-set if/else --
-    return ``(out_conn, arm_conns)`` where ``arm_conns`` lists the arms that are in-connectors
-    (a Symbol/literal arm has no edge, so nothing to cast). Else ``None``.
+    return ``(out_conn, arm_conns, cond_conn)`` where ``arm_conns`` lists the arms that are
+    in-connectors (a Symbol/literal arm has no edge, so nothing to cast) and ``cond_conn`` is the
+    condition when it, too, is an in-connector. Else ``None``.
     """
     if len(tasklet.out_connectors) != 1:
         return None
@@ -76,14 +77,15 @@ def ite_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, list]]:
     out_conn = assign.targets[0].id
     rhs = assign.value
     if isinstance(rhs, ast.IfExp):
-        arms = [rhs.body, rhs.orelse]
+        arms, cond = [rhs.body, rhs.orelse], rhs.test
     elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id == "ITE" and len(rhs.args) == 3):
-        arms = [rhs.args[1], rhs.args[2]]
+        arms, cond = [rhs.args[1], rhs.args[2]], rhs.args[0]
     else:
         return None
     in_conns = OrderedSet(tasklet.in_connectors)
     arm_conns = [a.id for a in arms if isinstance(a, ast.Name) and a.id in in_conns]
-    return out_conn, arm_conns
+    cond_conn = cond.id if isinstance(cond, ast.Name) and cond.id in in_conns else None
+    return out_conn, arm_conns, cond_conn
 
 
 def _ite_arm_slots(rhs: ast.expr) -> Optional[list]:
@@ -275,7 +277,7 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         detected = ite_operands(tasklet)
         if detected is None:
             return False
-        out_conn, arm_conns = detected
+        out_conn, arm_conns, cond_conn = detected
         sdfg = state.sdfg
         in_edges = {e.dst_conn: e for e in state.in_edges(tasklet) if e.data and e.data.data}
         out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
@@ -289,6 +291,17 @@ class ResolveMixedDtypeBinops(ppl.Pass):
                 continue
             if sdfg.arrays[edge.data.data].dtype != out_dt:
                 self._insert_operand_cast(state, tasklet, edge, conn, out_dt)
+                changed = True
+        # The condition is NOT an arm and does not follow the output dtype: ``TileITE``'s ``_mask``
+        # connector is bool by contract, and the converter asserts it. A condition lifted from a
+        # bare value keeps that value's dtype -- CloudSC's Fortran ``LOGICAL`` reaches DaCe as an
+        # int array, so ``if ldcum[jl]`` lifts to an int ``_cond_ldcum_index_0`` -- and wiring that
+        # into ``_mask`` failed the invariant, aborting the vectorization of the whole SDFG. Cast
+        # it, which is the ``x != 0`` the LOGICAL already means.
+        if cond_conn is not None:
+            cond_edge = in_edges.get(cond_conn)
+            if cond_edge is not None and sdfg.arrays[cond_edge.data.data].dtype != dtypes.bool_:
+                self._insert_operand_cast(state, tasklet, cond_edge, cond_conn, dtypes.bool_)
                 changed = True
         return changed
 
@@ -432,7 +445,7 @@ class CastScalarIteLiteralArms(ppl.Pass):
         detected = ite_operands(tasklet)
         if detected is None:
             return False
-        out_conn, _arm_conns = detected
+        out_conn, _arm_conns, _cond_conn = detected
         sdfg = state.sdfg
         out_edges = [e for e in state.out_edges(tasklet) if e.data and e.data.data]
         if len(out_edges) != 1:
