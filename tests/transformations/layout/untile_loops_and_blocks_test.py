@@ -21,7 +21,7 @@ os.environ.setdefault('OMPI_MCA_pml', 'ob1')
 os.environ.setdefault('OMPI_MCA_btl', 'self,vader')
 os.environ.setdefault('UCX_VFS_ENABLE', 'n')
 os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
-os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('OMP_NUM_THREADS', '4')
 
 import contextlib
 import tempfile

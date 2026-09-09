@@ -88,8 +88,12 @@ from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, O3_CP
 #: ieee, parallel schedules. The compiler is free to vectorise / unroll but
 #: cannot reassociate FP ops; bit-identical to the IEEE build for non-reducing
 #: stages. Reducing stages get a small tolerance bump for parallel-OMP order.
+#: ``(cpu_args, sequential, strict_tol, relaxed_tol)``. Both regimes run MULTITHREADED: the steps
+#: under test turn loops into Maps, so the mistake they can make is a Map over a loop that carries a
+#: dependence -- bit-exact on one thread, wrong on many. Rewriting the candidate to sequential
+#: schedules grades a build nobody ships and declares exactly that phase correct.
 _REGIMES = {
-    'ieee': (IEEE_CPU_ARGS, True, 1e-16, 1e-15),
+    'ieee': (IEEE_CPU_ARGS, False, 1e-16, 1e-15),
     'o3': (O3_CPU_ARGS, False, 1e-16, 1e-12),
 }
 

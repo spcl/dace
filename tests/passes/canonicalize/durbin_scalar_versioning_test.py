@@ -38,8 +38,10 @@ still asserted separately below.
 import copy
 import os
 
-# Pin a deterministic, single-threaded, no-MPI-init run before DaCe/OpenMP load.
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+# Four threads, not one: a reduction lowered onto a Map that carries a dependence is right on one
+# thread and wrong on many, so pinning to 1 hides exactly the defect these assertions exist to
+# catch. Four exposes it without oversubscribing the box under xdist.
+os.environ.setdefault("OMP_NUM_THREADS", "4")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")

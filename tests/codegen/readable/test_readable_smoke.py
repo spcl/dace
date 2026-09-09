@@ -8,7 +8,7 @@ inputs; the outputs must agree to the dtype's tolerance.
 Not bit-exact, because these run MULTITHREADED like the rest of the suite: a WCR
 reduction associates its partial sums by thread count, so ``red`` differed in the
 last ulp between the two generators the moment the step stopped pinning
-OMP_NUM_THREADS=1. The tolerance is the same one the corpus comparisons in this
+``OMP_NUM_THREADS=1``. The tolerance is the same one the corpus comparisons in this
 directory use -- 1e-9 relative for fp64 -- which is some seven orders tighter
 than any discrepancy a real codegen defect would produce.
 """

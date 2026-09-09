@@ -16,15 +16,12 @@ os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
-# Pin 1 OpenMP thread: reduction order must be deterministic for the bit-exact legacy-vs-experimental compare.
-# Forced, not setdefault: the root conftest sets a multi-thread count on purpose, and a live libgomp
-# team breaks the fork-based isolation this directory uses. A single thread means no worker team
-# exists to strand.
-# This write alone does NOT pin the count -- libgomp caches OMP_NUM_THREADS in its initialiser, so
-# once collection has mapped it (importing dace/numpy anywhere in the tree does) it never re-reads
-# the variable. ``run_isolated`` pins the loaded runtime directly; this write is what governs a
-# runtime the generated kernel dlopens later.
-os.environ["OMP_NUM_THREADS"] = "1"
+# No thread pin here. The compare is not bit-exact any more -- ``assert_outputs_equivalent`` grades
+# at the dtype tolerance, sized for the reassociation a threaded WCR costs -- so forcing the whole
+# worker to one thread buys nothing and grades a build nobody ships. ``run_isolated`` still pins its
+# CHILD, where the pin is load-bearing: libgomp caches OMP_NUM_THREADS in its initialiser, which a
+# full-tree collection has long since run, so only the child's direct ``set_openmp_thread_count``
+# actually takes. The root conftest's deliberate multi-thread count stands for everything else.
 
 import numpy as np
 import pytest

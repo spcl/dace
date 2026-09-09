@@ -21,7 +21,7 @@ accumulation and the vectorizer used to drop the WCR that made it safe).
 """
 import os
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 import copy
 

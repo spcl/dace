@@ -10,7 +10,7 @@ canonicalize pipeline.
 """
 import os
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
@@ -199,6 +199,8 @@ def test_guard_aborts_on_negative_symbol():
     """A negative symbol must abort the compiled program (SIGTRAP/SIGILL)."""
     script = textwrap.dedent(f"""
         import os
+        # openmp-pin-ok: the child asserts a SIGNAL, not values -- one thread keeps the abort a
+        # single report instead of a race between teammates all trapping at once.
         for k, v in dict(OMP_NUM_THREADS='1', MPI4PY_RC_INITIALIZE='0', OMPI_MCA_pml='ob1',
                          OMPI_MCA_btl='self,vader', UCX_VFS_ENABLE='n').items():
             os.environ.setdefault(k, v)

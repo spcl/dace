@@ -11,7 +11,7 @@ scalar connectors (``_alpha`` / ``_beta``); the vendor path is exercised on the 
 """
 import os
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 import numpy as np
 import pytest

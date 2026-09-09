@@ -13,7 +13,7 @@ round-trip. See ``dace/transformation/dataflow/wcr_conversion.py``.
 """
 import os
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 import numpy as np
 import pytest

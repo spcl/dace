@@ -35,8 +35,12 @@ from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build
                                                             generate_cloudsc_inputs, make_sequential)
 
 #: (ieee_build, sequential, rtol, atol) per regime.
+#: ``(ieee_build, sequential, strict_tol, relaxed_tol)``. Both regimes run MULTITHREADED -- see the
+#: sibling ``cloudsc_parallelize_chain_test``: a Map over a loop that carries a dependence is
+#: bit-exact once the candidate is rewritten to sequential schedules, so a sequential check is blind
+#: to the one mistake these steps can make.
 _REGIMES = {
-    'ieee': (True, True, 1e-15, 1e-15),
+    'ieee': (True, False, 1e-15, 1e-15),
     'release': (False, False, 1e-10, 1e-10),
 }
 
