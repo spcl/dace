@@ -72,7 +72,7 @@ from dace.transformation.dataflow.distribute_tasklet_into_map import DistributeT
 from dace.transformation.dataflow.mapreduce import MapReduceFusion, MapWCRFusion
 from dace.transformation.dataflow.redundant_array import RedundantArray
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
@@ -916,7 +916,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # an explicit RMW while maps are still maps; what stays WCR is a genuine reduction
     # that MapToForLoop then refuses to lower (kept parallel -> OMP reduction), so the
     # in-state producer->consumer edge is never severed by the map->loop round-trip.
-    s += [('lower', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
+    s += [('lower', RevertNonReductionWCR())]
     # lower: every map -> LoopRegion (MapToLoop = reuse MapToForLoop), then
     # structural cleanup (no SimplifyPass).
     lower_maps = MapToForLoop()
@@ -981,9 +981,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # AugAssignToWCR is intentionally NOT in this recipe: reductions are handled
     # via loop_to_reduce -> Reduce nodes, not WCR-on-Map. PrivatizeScalars is
     # adapted (_PrivatizeScalarsStage) so its analysis dependencies resolve.
-    s += [('reduce', PatternApplyOnceEverywhere([TrivialTaskletElimination()])),
-          ('reduce', PatternApplyOnceEverywhere([WCRToAugAssign()])), ('reduce', _PrivatizeScalarsStage()),
-          ('reduce', _PrivatizeArraysStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
+    s += [('reduce', PatternApplyOnceEverywhere([TrivialTaskletElimination()])), ('reduce', RevertNonReductionWCR()),
+          ('reduce', _PrivatizeScalarsStage()), ('reduce', _PrivatizeArraysStage()), ('reduce', SymbolPropagation()),
+          ('reduce', ConstantPropagation())]
     # UntileLoops (BEFORE ShortLoopUnroll): collapse manually-tiled two-level
     # nests (``for i in range(0, N, K): for ii in range(0, K): body[i+ii]`` or
     # ``for ii in range(i, i+K): body[ii]``) back to a single ``for k in
@@ -1312,8 +1312,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += _fold_scalar_slices('loop_to_x')
     if semantic_lifting and lift:
         s += [('loop_to_x', LoopToTranspose())]
-    s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', PatternApplyOnceEverywhere([WCRToAugAssign()])),
-          ('loop_to_x', LoopToReduce()), ('loop_to_x', LiftPreprocess()),
+    s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', RevertNonReductionWCR()), ('loop_to_x', LoopToReduce()),
+          ('loop_to_x', LiftPreprocess()),
           ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target)),
           ('loop_to_x', ArgMaxLift()), ('loop_to_x', LoopToConditionalReduce()),
           ('loop_to_x', LoopToStreamCompaction())]
@@ -1417,7 +1417,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``AccumulatorCopyChainToWCR`` destroys the augassign shape ``LoopToReduce`` claims and
     # creates the WCR shape ``RetargetWCRAccumulator`` claims, so it sits strictly between
     # them and ``LoopToReduce`` must not run again after it.
-    s += [('reduction_to_wcr_map', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
+    s += [('reduction_to_wcr_map', RevertNonReductionWCR())]
     # Re-use LoopToMap's dependence analysis to pin any top-level loop it refuses because of
     # a carried dependency; leave DOALL-eligible top-level loops untouched. Nesting alone pins
     # nothing: whether a reduction map inside a sequential loop earns its OpenMP region is a CPU
@@ -1492,7 +1492,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         # which WCRToAugAssign must refuse (a scalar aug-assign tasklet over an array memlet would
         # codegen ``double* + double*``); only after LoopToMap splits the slice into a per-element
         # map body is the write scalar and the spurious WCR revertible (polybench seidel_2d).
-        s += [('loop_fuse', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
+        s += [('loop_fuse', RevertNonReductionWCR())]
         # ...then tidy, because reverting the WCR is what makes the body inlinable at all: while the
         # RMW lives in the WCR, the body NestedSDFG's in/out connector for the destination has NO
         # read AccessNode inside, and ``InlineSDFG`` refuses a connector with no valid matching
@@ -1696,7 +1696,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # revert_nonreduction_wcr: WCRs that never became a genuine reduction (left in
     # sequential loops, or injective in-place updates) go back to explicit aug-assigns;
     # WCRToAugAssign's injectivity gate keeps real in-map reductions + scatters as WCR.
-    s += [('revert_nonreduction_wcr', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
+    s += [('revert_nonreduction_wcr', RevertNonReductionWCR())]
 
     # relax_powers: freeze a provable non-negative integer ``base ** exp`` to the exact integer
     # ``ipow`` on the size / subscript / bound sites WHILE the loop-iterator ranges that prove the
@@ -1881,7 +1881,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # so the map-exit WCR is a spurious atomic over a conflict-free store: WCRToAugAssign (expr 4)
     # drops it to a plain indexed write. The injectivity gate still keeps genuine reductions (a
     # real ``w[i] += ...`` k-reduction whose write does NOT vary with the map lane).
-    s += [('end', PatternApplyOnceEverywhere([WCRToAugAssign()]))]
+    s += [('end', RevertNonReductionWCR())]
 
     # cleanup (terminal): drop transients nothing names any more. The stages above delete a
     # temporary's last reader without deleting its descriptor, and ``ArrayElimination`` -- the only
