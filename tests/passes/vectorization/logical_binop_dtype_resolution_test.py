@@ -12,12 +12,15 @@ comparison's ``bool`` gives ``__t1 = _in_ldcum_0 and __t0`` over ``{int, bool}``
 of the whole ``VectorizeCPUMultiDim`` call, so a single tasklet cost the SDFG all of its tiling.
 """
 
+import ast
+
 import numpy as np
 
 import dace
 from dace import nodes
+from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import (ResolveMixedDtypeBinops,
-                                                                                 _binop_operands)
+                                                                                 _binop_operands, _is_logical)
 
 N = 8
 
@@ -153,4 +156,88 @@ def test_the_cast_condition_selects_the_same_lanes():
     resolved(flags=flags, hot=hot, cold=cold, out=after)
 
     assert before[0] == cold[0], 'the fixture stopped selecting on flags[0] == 0'
+    assert np.array_equal(after, before)
+
+
+def three_operand_conjunction_sdfg(flag_dtype) -> dace.SDFG:
+    """``out[i] = flags[i] and p[i] and q[i]`` -- ONE tasklet holding a three-value ``BoolOp``.
+
+    The shape CloudSC builds: ``SameWriteSetIfElseToITECFG`` lifts a whole guard into a single
+    ``lift_cond_expr`` tasklet, so a three-term Fortran condition arrives as one ``a and b and c``.
+    """
+    sdfg = dace.SDFG(f'conj3_{flag_dtype.to_string()}')
+    sdfg.add_array('flags', (N, ), flag_dtype)
+    sdfg.add_array('p', (N, ), dace.bool_)
+    sdfg.add_array('q', (N, ), dace.bool_)
+    sdfg.add_array('out', (N, ), dace.bool_)
+    state = sdfg.add_state('body', is_start_block=True)
+
+    conj = state.add_tasklet('conj3', {'_a', '_b', '_c'}, {'_o'}, '_o = _a and _b and _c')
+    state.add_edge(state.add_access('flags'), None, conj, '_a', dace.Memlet('flags[0]'))
+    state.add_edge(state.add_access('p'), None, conj, '_b', dace.Memlet('p[0]'))
+    state.add_edge(state.add_access('q'), None, conj, '_c', dace.Memlet('q[0]'))
+    state.add_edge(conj, '_o', state.add_access('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def logical_tasklets(sdfg: dace.SDFG):
+    """Every tasklet whose body is an ``and`` / ``or``, paired with its owning state."""
+    found = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.all_states():
+            for n in state.nodes():
+                if isinstance(n, nodes.Tasklet) and _is_logical(n):
+                    found.append((sd, state, n))
+    return found
+
+
+def test_a_three_operand_conjunction_splits_into_two_operand_ops():
+    """``SplitTasklets``' contract is ONE primitive op per tasklet, and ``a and b and c`` is two.
+
+    Emitted as a single statement it stays a three-value ``BoolOp``, which
+    ``_binop_operands`` declines (see ``test_a_three_operand_conjunction_is_left_alone``) -- so it
+    walks past the bool cast and reaches the converter as a ``&&`` ``TileBinop`` holding the raw
+    int operand, failing the ``logical_binops_are_bool`` invariant and aborting the whole SDFG.
+    """
+    sdfg = three_operand_conjunction_sdfg(dace.int32)
+    SplitTasklets().apply_pass(sdfg, {})
+
+    for _sd, _state, tasklet in logical_tasklets(sdfg):
+        tree = ast.parse(tasklet.code.as_string.strip())
+        rhs = tree.body[0].value
+        assert len(rhs.values) == 2, (f'{tasklet.label} still holds a {len(rhs.values)}-value BoolOp; '
+                                      'the split must leave two operands per logical tasklet')
+
+
+def test_every_logical_operand_of_a_three_term_conjunction_unifies_at_bool():
+    """The whole point: after split + resolve, no logical op is left holding an int operand."""
+    sdfg = three_operand_conjunction_sdfg(dace.int32)
+    SplitTasklets().apply_pass(sdfg, {})
+    ResolveMixedDtypeBinops().apply_pass(sdfg, {})
+
+    logical = logical_tasklets(sdfg)
+    assert logical, 'the fixture stopped producing a logical tasklet'
+    for sd, state, tasklet in logical:
+        dtypes_in = {sd.arrays[e.data.data].dtype for e in state.in_edges(tasklet) if e.data and e.data.data}
+        assert dtypes_in == {dace.bool_}, (f'{tasklet.label} operands must unify at bool, got {dtypes_in}')
+    sdfg.validate()
+
+
+def test_the_split_three_term_conjunction_computes_the_same_values():
+    """Executable: splitting and casting must not change which lanes come out true."""
+    flags = np.array([0, 2, 0, 1, 5, 0, 1, 0], dtype=np.int32)
+    p = np.array([True, True, False, True, True, False, True, False])
+    q = np.array([True, True, True, False, True, True, False, False])
+
+    plain = three_operand_conjunction_sdfg(dace.int32)
+    before = np.zeros(N, dtype=np.bool_)
+    plain(flags=flags, p=p, q=q, out=before)
+    assert before[0] == (bool(flags[0]) and p[0] and q[0]), 'the fixture stopped selecting on lane 0'
+
+    split = three_operand_conjunction_sdfg(dace.int32)
+    SplitTasklets().apply_pass(split, {})
+    ResolveMixedDtypeBinops().apply_pass(split, {})
+    split.name = 'conj3_resolved'
+    after = np.zeros(N, dtype=np.bool_)
+    split(flags=flags, p=p, q=q, out=after)
     assert np.array_equal(after, before)

@@ -40,6 +40,31 @@ class ASTSplitter:
         self.n += 1
         return t
 
+    def _chain_logical(self, operands, op: str) -> str:
+        """Emit ``operands`` combined by ``op`` as a LEFT-ASSOCIATIVE chain of two-operand
+        statements, returning the name holding the result.
+
+        One statement per primitive op is this pass's whole contract, and ``a and b and c`` written
+        as a single statement is two ops, not one. Nothing downstream re-splits it: the tile
+        converter lowers the n-ary form to ``&&`` lib nodes anyway, while
+        ``ResolveMixedDtypeBinops`` matches a TWO-value ``BoolOp`` only -- so an n-ary conjunction
+        walked past the bool cast its operands need and arrived as a ``&&`` ``TileBinop`` still
+        holding a Fortran ``LOGICAL``'s int operand. That fails the ``logical_binops_are_bool``
+        invariant, which aborts the whole SDFG's vectorization rather than that one kernel
+        (CloudSC's ``lift_cond_expr``). ``and`` / ``or`` are associative, so chaining left is
+        value-preserving.
+
+        :param operands: names of the already-visited operands, in source order.
+        :param op: the joining operator, spaced (``' and '`` / ``' or '``).
+        :returns: the name holding the combined result.
+        """
+        acc = operands[0]
+        for operand in operands[1:]:
+            t = self.temp()
+            self.stmts.append(f"{t} = {acc}{op}{operand}")
+            acc = t
+        return acc
+
     def visit(self, node: ast.AST) -> str:
         """
         Emit SSA statements for one AST node and return the name holding its value.
@@ -120,22 +145,16 @@ class ASTSplitter:
                 comparisons.append(t)
                 current = comp
 
-            # If multiple comparisons, combine with 'and'
+            # If multiple comparisons, combine with 'and' -- TWO at a time (see _chain_logical).
             if len(comparisons) > 1:
-                t = self.temp()
-                self.stmts.append(f"{t} = {' and '.join(comparisons)}")
-                return t
+                return self._chain_logical(comparisons, ' and ')
             return comparisons[0] if comparisons else left
 
         elif isinstance(node, ast.BoolOp):
             # Handle boolean operators (and, or)
             values = [self.visit(v) for v in node.values]
-            t = self.temp()
             op = ' and ' if isinstance(node.op, ast.And) else ' or '
-            if op == "or":
-                assert isinstance(node.op, ast.Or)
-            self.stmts.append(f"{t} = {op.join(values)}")
-            return t
+            return self._chain_logical(values, op)
 
         elif isinstance(node, ast.IfExp):
             # Lower ``body if test else orelse`` to a 3-input ``ITE(c,
