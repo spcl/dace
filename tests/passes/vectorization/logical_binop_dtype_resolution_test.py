@@ -241,3 +241,62 @@ def test_the_split_three_term_conjunction_computes_the_same_values():
     after = np.zeros(N, dtype=np.bool_)
     split(flags=flags, p=p, q=q, out=after)
     assert np.array_equal(after, before)
+
+
+def literal_operand_conjunction_sdfg(flag_dtype) -> dace.SDFG:
+    """``out[i] = flags[i] and True`` -- a logical op with only ONE data connector.
+
+    The other operand is a literal, so the two-operand detector declines it: it requires exactly
+    two input connectors. The int operand then reaches the ``&&`` lib node un-cast.
+    """
+    sdfg = dace.SDFG(f'conj_literal_{flag_dtype.to_string()}')
+    sdfg.add_array('flags', (N, ), flag_dtype)
+    sdfg.add_array('out', (N, ), dace.bool_)
+    state = sdfg.add_state('body', is_start_block=True)
+
+    conj = state.add_tasklet('conj_lit', {'_a'}, {'_o'}, '_o = _a and True')
+    state.add_edge(state.add_access('flags'), None, conj, '_a', dace.Memlet('flags[0]'))
+    state.add_edge(conj, '_o', state.add_access('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def test_a_one_connector_logical_is_declined_by_the_two_operand_detector():
+    """Pins WHY the broader branch is needed, not just that it works."""
+    tasklet = nodes.Tasklet('conj_lit', {'_a'}, {'_o'}, '_o = _a and True')
+    assert _binop_operands(tasklet) is None, 'the two-operand detector must not claim a one-connector logical'
+    assert _is_logical(tasklet), 'it is still an ``and``, so the logical contract still applies to it'
+
+
+def test_an_int_operand_of_a_literal_conjunction_is_cast_to_bool():
+    sdfg = literal_operand_conjunction_sdfg(dace.int32)
+    assert ResolveMixedDtypeBinops().apply_pass(sdfg, {}) is not None, 'the int operand was left un-cast'
+
+    state = next(iter(sdfg.all_states()))
+    conj = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == 'conj_lit')
+    operand_dtypes = {sdfg.arrays[e.data.data].dtype for e in state.in_edges(conj) if e.data and e.data.data}
+    assert operand_dtypes == {dace.bool_}, f'logical operands must unify at bool, got {operand_dtypes}'
+    sdfg.validate()
+
+
+def test_a_bool_literal_conjunction_is_left_alone():
+    """The control: a bool operand already satisfies the contract, so nothing is inserted."""
+    assert ResolveMixedDtypeBinops().apply_pass(literal_operand_conjunction_sdfg(dace.bool_), {}) is None
+
+
+def test_the_cast_literal_conjunction_computes_the_same_values():
+    """Executable, and it is NOT a formality: ``&&`` lowers to a bitwise ``&``, which disagrees
+    with logical ``and`` on any operand that is truthy but not 0/1 -- ``2 & 1 == 0``."""
+    flags = np.array([0, 2, 0, 1, 5, 0, 1, 0], dtype=np.int32)
+
+    plain = literal_operand_conjunction_sdfg(dace.int32)
+    before = np.zeros(N, dtype=np.bool_)
+    plain(flags=flags, out=before)
+
+    resolved = literal_operand_conjunction_sdfg(dace.int32)
+    ResolveMixedDtypeBinops().apply_pass(resolved, {})
+    resolved.name = 'conj_literal_resolved'
+    after = np.zeros(N, dtype=np.bool_)
+    resolved(flags=flags, out=after)
+
+    assert before[0] == bool(flags[0]), 'the fixture stopped selecting on flags[0]'
+    assert np.array_equal(after, before)

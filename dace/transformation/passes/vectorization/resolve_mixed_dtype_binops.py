@@ -268,11 +268,53 @@ class ResolveMixedDtypeBinops(ppl.Pass):
             if need_out:
                 self._insert_output_cast(state, tasklet, out_edge, out_conn, promoted, out_dt)
             return True
+        if self.resolve_logical_operands(state, tasklet):
+            return True
         if self.resolve_ite(state, tasklet):
             return True
         if self.resolve_masked_write(state, tasklet):
             return True
         return self._resolve_assign(state, tasklet)
+
+    def resolve_logical_operands(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+        """Cast to bool every operand of an ``and`` / ``or`` that the two-operand detector declined.
+
+        ``_binop_operands`` matches exactly two input connectors holding a two-value ``BoolOp``.
+        A logical tasklet outside that shape -- one whose other operand is a literal or a Symbol,
+        so only ONE connector carries data -- walks past it, and a Fortran ``LOGICAL`` arriving as
+        an int then reaches the ``&&`` ``TileBinop`` un-cast. That fails the
+        ``logical_binops_are_bool`` invariant, which aborts the whole SDFG's vectorization rather
+        than the one kernel (CloudSC's ``ldcum``).
+
+        Arity is not what decides the dtype here: bool in / bool out is the operator's contract
+        however many operands it has, and ``&&`` lowers to a BITWISE ``&`` (tile_binop.py), which
+        agrees with logical ``&&`` only on canonical 0/1 or all-ones operands. Casting is what
+        canonicalises them, so it is a correctness fix and not a formality.
+
+        :param state: the state owning ``tasklet``.
+        :param tasklet: the candidate.
+        :returns: True when a cast was inserted.
+        """
+        if not _is_logical(tasklet):
+            return False
+        sdfg = state.sdfg
+        changed = False
+        for edge in list(state.in_edges(tasklet)):
+            if edge.dst_conn is None or edge.data is None or edge.data.data is None:
+                continue
+            if sdfg.arrays[edge.data.data].dtype != dtypes.bool_:
+                self._insert_operand_cast(state, tasklet, edge, edge.dst_conn, dtypes.bool_)
+                changed = True
+        # The result is bool by the same contract; a destination of another dtype takes the store
+        # cast, which keeps the lib node's ``_c`` bool without changing what lands in memory.
+        for edge in list(state.out_edges(tasklet)):
+            if edge.src_conn is None or edge.data is None or edge.data.data is None:
+                continue
+            out_dt = sdfg.arrays[edge.data.data].dtype
+            if out_dt != dtypes.bool_:
+                self._insert_output_cast(state, tasklet, edge, edge.src_conn, dtypes.bool_, out_dt)
+                changed = True
+        return changed
 
     def resolve_ite(self, state: SDFGState, tasklet: nodes.Tasklet) -> bool:
         """A same-write-set-if/else blend ``_o = ITE(_c, _t, _e)`` / ``_o = _t if _c else _e``
