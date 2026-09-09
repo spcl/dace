@@ -43,7 +43,6 @@ from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
-from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -95,10 +94,17 @@ def _guarded_scan(out: dace.float64[LEN_1D], delta: dace.float64[LEN_1D], mask: 
 
 
 def _is_reclaim_stage(unit: ppl.Pass) -> bool:
-    """The stage under test: the reclaimers' fixpoint pipeline, never a ``SimplifyPass``."""
-    if not isinstance(unit, ppl.FixedPointPipeline) or isinstance(unit, SimplifyPass):
+    """A stage that reclaims arrays, never a ``SimplifyPass``.
+
+    Two of them now: the reclaimers' fixpoint pipeline, and the terminal ``ArrayElimination`` that
+    ends the recipe (it folds the views the inlines mint, which only become foldable once the last
+    stages register their symbol constraints). The A/B reference has to drop BOTH -- with only the
+    first dropped the terminal one still reclaims, and the reference stops carrying the residue
+    these tests are about.
+    """
+    if isinstance(unit, SimplifyPass) or not isinstance(unit, ppl.Pipeline):
         return False
-    return unit._pass_names == {DeadDataflowElimination.__name__, ArrayElimination.__name__}
+    return ArrayElimination.__name__ in unit._pass_names
 
 
 #: Unit types of :func:`_structural_cleanup`, taken from the helper itself rather than transcribed:
@@ -106,11 +112,16 @@ def _is_reclaim_stage(unit: ppl.Pass) -> bool:
 _CLEANUP_TYPES = frozenset(type(p).__name__ for _lbl, p in canon_pipeline._structural_cleanup('probe'))
 
 
-def _band_start() -> int:
-    """Index of the reclaim pipeline in the flat recipe -- the head of the terminal band."""
+def _reclaim_slots() -> List[int]:
+    """Recipe indices of every array-reclaiming stage, in order."""
     at = [i for i, (_lbl, p) in enumerate(canon_pipeline._build_stages()) if _is_reclaim_stage(p)]
-    assert len(at) == 1, f'expected exactly one reclaim stage, found {at}'
-    return at[0]
+    assert at, 'the recipe no longer reclaims arrays at all'
+    return at
+
+
+def _band_start() -> int:
+    """Index of the FIRST reclaim -- the head of the terminal band."""
+    return _reclaim_slots()[0]
 
 
 def _leads_a_cleanup(unit) -> bool:
@@ -154,14 +165,14 @@ def _canonicalize(sdfg: dace.SDFG,
                   with_cleanup: bool = True,
                   with_optional: bool = True) -> dace.SDFG:
     """Run the real recipe, optionally with one part of the terminal work skipped (the A/B
-    reference). ``with_reclaim`` drops the two reclaimers; ``with_cleanup`` drops the inline, the
+    reference). ``with_reclaim`` drops every reclaiming stage; ``with_cleanup`` drops the inline, the
     structural cleanup and the empty-arm prune that follow them; ``with_optional`` drops the
     terminal ``OptionalArrayInference``, which sits later, beside the symbol cleanups."""
     canon_pipeline.disable_openmp_sections(sdfg)
-    start = _band_start()
+    reclaim_slots = _reclaim_slots()
     cleanup_slots = _cleanup_slots()
     for index, (_label, unit) in enumerate(canon_pipeline._build_stages()):
-        if not with_reclaim and index == start:
+        if not with_reclaim and index in reclaim_slots:
             continue
         if not with_cleanup and index in cleanup_slots:
             continue
