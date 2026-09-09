@@ -655,21 +655,6 @@ def substitute_indirect_bindings(expr: str, bindings: Dict[str, Tuple[str, List[
     return astutils.unparse(Expand().visit(ast.parse(expr, mode='eval').body))
 
 
-def indirect_reads(expr: str, sdfg: SDFG) -> List[Tuple[str, str]]:
-    """``(array, index expression)`` for every data-array subscript appearing in ``expr``."""
-    reads: List[Tuple[str, str]] = []
-    for node in ast.walk(ast.parse(expr, mode='eval').body):
-        if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)):
-            continue
-        if node.value.id not in sdfg.arrays:
-            continue
-        idx = node.slice
-        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
-            idx = idx.value
-        reads.append((node.value.id, astutils.unparse(idx)))
-    return reads
-
-
 def region_assigned_symbols(region: LoopRegion) -> Set[str]:
     """Symbols an interstate edge inside ``region`` assigns, i.e. those that vary per iteration."""
     return {lhs for e in region.all_interstate_edges() for lhs in (e.data.assignments or {})}

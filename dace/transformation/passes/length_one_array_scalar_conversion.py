@@ -218,39 +218,12 @@ def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename
         mem.other_subset = subsets.Range.from_string('0')
 
 
-def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
-    """True if ``name`` is read anywhere in ``sdfg`` (some AccessNode of it has an out-edge)."""
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == name and state.out_degree(node) > 0:
-                return True
-    return False
-
-
 def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has an in-edge)."""
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data == name and state.in_degree(node) > 0:
                 return True
-    return False
-
-
-def descriptor_written_by_gpu_map(sdfg: SDFG, name: str) -> bool:
-    """True if a GPU-scheduled map writes ``name``.
-
-    :meth:`ConvertLengthOneArraysToScalars._blocked_descriptors` already refuses a
-    descriptor a GPU map reads or holds inside its body, so a kernel output is the only device
-    adjacency a staged descriptor can still have -- and the only reason its scalar must stay in
-    device memory.
-    """
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if not isinstance(node, nodes.AccessNode) or node.data != name:
-                continue
-            for edge in state.in_edges(node):
-                if isinstance(edge.src, nodes.MapExit) and edge.src.map.schedule in dtypes.GPU_SCHEDULES:
-                    return True
     return False
 
 

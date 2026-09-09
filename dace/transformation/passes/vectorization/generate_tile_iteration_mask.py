@@ -25,26 +25,6 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 
-def _mask_array_name_for(parent_sdfg: dace.SDFG) -> str:
-    """Build a per-map mask array name, unique within the SDFG.
-
-    Several inner maps can coexist in one state (e.g. jacobi2d's B-update and
-    A-update); each needs its OWN mask transient + access node in its OWN scope,
-    else ConvertTaskletsToTileOps would wire one map's mask into another's (disjoint) scope.
-
-    :param parent_sdfg: SDFG the mask array is added to.
-    :returns: ``"_tile_iter_mask"`` for the first map, then
-        ``"_tile_iter_mask_1"``, ... — the first name not in ``parent_sdfg.arrays``.
-    """
-    base = TileNameScheme.ITER_MASK
-    if base not in parent_sdfg.arrays:
-        return base
-    idx = 1
-    while f"{base}_{idx}" in parent_sdfg.arrays:
-        idx += 1
-    return f"{base}_{idx}"
-
-
 @properties.make_properties
 class GenerateTileIterationMask(ppl.Pass):
     """Attach a K-dim iteration mask to every K-dim eligible inner map.

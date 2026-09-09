@@ -1729,56 +1729,6 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> Optional[_CompositeBo
     return None
 
 
-def _mutate_carry_copy_to_zero(info: _CompositeBodyScan, sdfg: SDFG):
-    """Rewrite the carry-copy state so it writes ``0`` to the carrier instead of
-    the carrier's prior-iteration value. Handles both the with-tasklet shape
-    (primary is a ``Tasklet``) and the post-TTE pure-data-copy shape (primary
-    is an ``AccessNode`` -- the carrier read AN).
-    """
-    state = info.carry_copy_state
-    primary = info.carry_copy_tasklet
-    # Find the write AccessNode for the carrier in this state.
-    write_an = _find_carried_write_an(state, info.out_name)
-    if write_an is None:
-        return
-    write_in_edges = list(state.in_edges(write_an))
-    if len(write_in_edges) != 1:
-        return
-    write_in = write_in_edges[0]
-    if isinstance(primary, nodes.Tasklet):
-        # Tasklet primary: sever carry-input chain + rewrite body.
-        _disconnect_carry_chain(state, primary, info.carry_copy_in_conn, info.carry_copy_carry_anchor)
-        primary.code.as_string = f'{info.carry_copy_out_conn} = 0'
-        return
-    # AccessNode primary (post-TTE pure copy): the chain is
-    # ``carrier_read_AN -> transient_AN -> carrier_write_AN`` with no tasklet.
-    # Remove the in-edge into the write AN and prune any now-orphaned transient
-    # source ANs. Insert a fresh constant-emit tasklet feeding the write AN.
-    write_subset = write_in.data.subset
-    state.remove_edge(write_in)
-    src = write_in.src
-    # Prune the chain backward. Remove any transient AN with no remaining
-    # outgoing edges; also remove the non-transient source AN (the carrier-read
-    # end of the chain) if it ends up isolated.
-    while isinstance(src, nodes.AccessNode):
-        # If this node still has other in/out connections, leave it in place.
-        if state.out_degree(src) > 0:
-            break
-        ins = list(state.in_edges(src))
-        next_src = ins[0].src if len(ins) == 1 else None
-        for ie in ins:
-            state.remove_edge(ie)
-        # Remove the AN unconditionally now that its outgoing chain is gone
-        # and any incoming edges have been cleared. The carrier read AN is
-        # safe to drop here: the post-loop seed-add reads ``carrier`` from
-        # the parent state, not from this body state.
-        state.remove_node(src)
-        src = next_src
-    # Insert a constant-emit tasklet feeding the write AN.
-    zero_t = state.add_tasklet(state.label + '_zero', inputs=set(), outputs={'_o'}, code='_o = 0')
-    state.add_edge(zero_t, '_o', write_an, None, mm.Memlet(data=info.out_name, subset=write_subset))
-
-
 def _rewrite_composite_body(parent: ControlFlowRegion, loop: LoopRegion, info: _CompositeBodyScan, sdfg: SDFG) -> bool:
     """Rewrite a composite-body scan into a vector-scan-layout chain.
 
@@ -2896,25 +2846,6 @@ def _binop_literal_operand(rhs: ast.BinOp) -> Optional[str]:
         return left_lit
     if right_lit is not None and left_lit is None:
         return right_lit
-    return None
-
-
-def _trace_back_to_tasklet(state: SDFGState, node) -> Optional[nodes.Tasklet]:
-    """Walk back through a chain of in=1 transient AccessNodes (slice/copy holders)
-    to the upstream tasklet. Returns the tasklet, or ``None`` if the chain doesn't
-    terminate at one.
-    """
-    cur = node
-    while isinstance(cur, nodes.AccessNode):
-        desc = state.sdfg.arrays.get(cur.data)
-        if desc is None or not getattr(desc, 'transient', False):
-            return None
-        ins = list(state.in_edges(cur))
-        if len(ins) != 1:
-            return None
-        cur = ins[0].src
-    if isinstance(cur, nodes.Tasklet):
-        return cur
     return None
 
 
