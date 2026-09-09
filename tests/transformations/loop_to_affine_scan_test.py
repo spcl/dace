@@ -36,6 +36,12 @@ def constant_coefficient(x: dace.float64[N], d: dace.float64[N]):
 
 
 @dace.program
+def doubling_recurrence(z: dace.float64[N], b: dace.float64[N]):
+    for i in range(1, N):
+        z[i] = 2.0 * z[i - 1] + b[i]
+
+
+@dace.program
 def compound_coefficient(x: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
     for i in range(1, N):
         x[i] = (c[i] - d[i]) * x[i - 1] + c[i] * d[i]
@@ -140,6 +146,35 @@ def test_constant_coefficient_lifts_and_matches():
     got = x0.copy()
     sdfg(x=got, d=d, N=n)
     assert np.allclose(got, reference, rtol=0, atol=1e-11)
+
+
+def test_doubling_recurrence_lifts_and_is_exact():
+    """``z[i] = 2.0*z[i-1] + b[i]`` -- the coefficient ABOVE one.
+
+    Every other case in this file contracts, where a rounding difference between the sequential
+    order and the reassociated one decays away and a loose tolerance hides it. At ``a = 2`` it
+    doubles per step instead, so this is the shape that holds the affine monoid to its
+    associativity.
+
+    Asserted EXACTLY rather than with a tolerance. Doubling is exact in binary floating point and
+    the deltas are small integers, so every partial map the blocked lowering composes stays whole
+    while ``z`` is under ``2**53`` -- which pins ``n`` here, not the transformation.
+    """
+    n = 45
+    b = np.arange(n, dtype=np.float64) % 10.0
+    z0 = np.zeros(n, dtype=np.float64)
+    z0[0] = 1.0
+    reference = z0.copy()
+    for i in range(1, n):
+        reference[i] = 2.0 * reference[i - 1] + b[i]
+    assert reference[-1] < 2.0**53  # the premise the exact comparison below rests on
+
+    sdfg = doubling_recurrence.to_sdfg(simplify=True)
+    assert lift(sdfg) == 1
+    assert len(affine_nodes(sdfg)) == 1
+    got = z0.copy()
+    sdfg(z=got, b=b, N=n)
+    assert np.array_equal(got, reference)
 
 
 def test_compound_coefficient_is_split_symbolically():

@@ -94,6 +94,64 @@ def test_affine_scan_is_thread_count_stable_on_contracting_coefficients():
     assert np.allclose(results[0], results[1], rtol=0, atol=1e-11)
 
 
+def doubling_inputs(n: int):
+    """``a == 2`` everywhere, with integral deltas and seed.
+
+    Chosen so the recurrence is EXACT in float64: doubling is a binary exponent bump and the
+    deltas are whole, so every affine map the blocked lowering folds and composes is an integer
+    pair until ``out`` passes ``2**53``. That turns the block-boundary question into an equality
+    instead of a tolerance, which is the only way to see a composition that is slightly wrong.
+    """
+    coef = np.full(n, 2.0, dtype=np.float64)
+    delta = (np.arange(n, dtype=np.float64) % 10.0)
+    return coef, delta, np.array([1.0], dtype=np.float64)
+
+
+def test_affine_scan_is_exact_on_an_expanding_coefficient():
+    """The textbook parallelizable recurrence, over the monoid rather than around it.
+
+    ``contracting_inputs`` keeps every coefficient inside the unit circle, where a misplaced
+    composition decays out of the answer before the end of the array. At ``a = 2`` it is amplified
+    by ``2**(n-k)`` instead, so an associativity error cannot hide in the last digits.
+    """
+    n = 45
+    coef, delta, seed = doubling_inputs(n)
+    reference = affine_reference(coef, delta, float(seed[0]))
+    assert reference[-1] < 2.0**53  # the premise the exact comparison rests on
+
+    out = np.zeros(n, dtype=np.float64)
+    build_affine_sdfg()(coef=coef, delta=delta, seed=seed, out=out, N=n)
+    assert np.array_equal(out, reference)
+
+
+def test_affine_scan_is_thread_count_stable_on_an_expanding_coefficient():
+    """The blocked carry must not move the answer when the coefficient AMPLIFIES it.
+
+    The contracting sibling of this test cannot see a drift at a block boundary: whatever it
+    injects is multiplied by ``a < 1`` on every later step. Here the same drift is doubled per
+    step, and the answer is exact, so 1 thread and 8 must agree BIT FOR BIT.
+    """
+    import os
+    n = 45
+    coef, delta, seed = doubling_inputs(n)
+    reference = affine_reference(coef, delta, float(seed[0]))
+    results = []
+    for threads in ('1', '8'):
+        old = os.environ.get('OMP_NUM_THREADS')
+        os.environ['OMP_NUM_THREADS'] = threads
+        try:
+            out = np.zeros(n, dtype=np.float64)
+            build_affine_sdfg()(coef=coef, delta=delta, seed=seed, out=out, N=n)
+            results.append(out)
+        finally:
+            if old is None:
+                del os.environ['OMP_NUM_THREADS']
+            else:
+                os.environ['OMP_NUM_THREADS'] = old
+    assert np.array_equal(results[0], reference)
+    assert np.array_equal(results[0], results[1])
+
+
 def test_affine_scan_of_one_static_element():
     """A statically length-1 subset is scalar-typed by the codegen, so it takes its own shape."""
     sdfg = dace.SDFG('affine_one')
