@@ -603,16 +603,3 @@ def _no_edge_attr_sdfg(sdfg: dace.SDFG, attr: str, recursive: bool) -> bool:
 def no_wcr(state, recursive: bool = True) -> bool:
     """True iff no edge in ``state`` has WCR set; recurses into NSDFGs by default."""
     return _no_edge_attr_state(state, "wcr", recursive)
-
-
-def sdfg_has_nested_sdfgs(sdfg: dace.SDFG):
-    """True if an SDFG contains any NestedSDFG node.
-
-    :param sdfg: The SDFG to inspect.
-    :returns: ``True`` if a NestedSDFG node is present.
-    """
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.NestedSDFG):
-                return True
-    return False

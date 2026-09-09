@@ -433,32 +433,6 @@ def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> s
     return "\n".join(code_lines)
 
 
-def _set_template(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> None:
-    ctx.node.code = dace.properties.CodeBlock(
-        code=_generate_code(ctx, rhs1_, rhs2_, _roundtrip_constant(const1_), _roundtrip_constant(const2_), lhs_, op_),
-        language=dace.Language.CPP,
-    )
-
-
-def _binary_expr(l_op: str, op: str, r_op: str) -> str:
-    """Binary expression string for the scalar/symbol lane paths.
-
-    A named-function op (``int_floor``, ``int_ceil``, ``min``, ``max``, ...) ->
-    call syntax ``op(l, r)``; an operator symbol (``+``, ``<``, ...) -> infix
-    ``(l op r)``. Without this a function op was written infix
-    (``LEN_1D int_floor 2``) + later failed to sympify (TSVC s276's
-    ``int_floor(LEN_1D, 2)`` comparison RHS).
-
-    :param l_op: Left operand.
-    :param op: Operator symbol or function name.
-    :param r_op: Right operand.
-    :return: Expression string.
-    """
-    if op.isidentifier():
-        return f"{op}({l_op}, {r_op})"
-    return f"({l_op} {op} {r_op})"
-
-
 def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: str,
                                       vector_map_param: str) -> bool:
     """Whether input connector ``conn`` reads a lane-invariant value.
