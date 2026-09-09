@@ -78,7 +78,8 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (WAVEFRONT_DIAGONAL, WAVEFRONT_FRONT,
-                                                                         WAVEFRONT_TILE_COLUMN, WAVEFRONT_TILE_DIAGONAL,
+                                                                         skew_label, tile_label, WAVEFRONT_TILE_COLUMN,
+                                                                         WAVEFRONT_TILE_DIAGONAL,
                                                                          WAVEFRONT_TILE_INTERIOR)
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import (commit_guarded_fusion, plan_guarded_fusion)
 
@@ -1477,7 +1478,8 @@ class WavefrontSkew(ppl.Pass):
         # Labelled here because this pass is the only thing that knows the axis is a wavefront
         # diagonal: after the rewrite it is an ordinary sequential loop over an ordinary map, and
         # the terminal ``AnnotateLoopKinds`` would say only that LoopToMap refused it.
-        outer.specialization_hint = WAVEFRONT_DIAGONAL
+        skew = skew_label(a, b, u, v)
+        outer.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew)
 
         inner.loop_variable = p_var
         inner.init_statement = properties.CodeBlock(f"{p_var} = ({p_lo})")
@@ -1494,7 +1496,7 @@ class WavefrontSkew(ppl.Pass):
             v_expr = symbolic.symstr(b * (sym(t_var) - a * sym(p_var)))
             inner.replace_dict({u: p_var, v: v_expr})
 
-        self._convert_inner_to_map(outer, inner, sdfg, WAVEFRONT_FRONT)
+        self._convert_inner_to_map(outer, inner, sdfg, WAVEFRONT_FRONT.format(skew=skew))
 
     def _rewrite_tiled(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, ub: Tuple[object, object],
                        vb: Tuple[object, object], tau: Tuple[int, int], plan: TilePlan) -> None:
@@ -1548,7 +1550,8 @@ class WavefrontSkew(ppl.Pass):
         # The tile diagonal carries every wavefront dependence by construction; pin it
         # so a downstream LoopToMap / LoopToReduce never races it into a parallel map.
         outer.pinned_sequential = True
-        outer.specialization_hint = WAVEFRONT_TILE_DIAGONAL
+        skew, tile = skew_label(a, b, u, 'j'), tile_label(plan.bi, plan.bj)
+        outer.specialization_hint = WAVEFRONT_TILE_DIAGONAL.format(skew=skew, tile=tile)
 
         t_sym, p_sym = sym(t_var), sym(p_var)
         if abs(a) == 1:
@@ -1567,7 +1570,7 @@ class WavefrontSkew(ppl.Pass):
         # The intra-tile loops carry the dependences the diagonal spreads apart, so
         # they stay sequential for the same reason the diagonal does.
         i_loop.pinned_sequential = True
-        i_loop.specialization_hint = WAVEFRONT_TILE_INTERIOR
+        i_loop.specialization_hint = WAVEFRONT_TILE_INTERIOR.format(tile=tile)
 
         # Re-parent: ``inner`` becomes the innermost unit-stride ``v`` loop, wrapped by
         # the new row loop, wrapped by the tile-column loop that replaces it in ``outer``.
@@ -1588,7 +1591,7 @@ class WavefrontSkew(ppl.Pass):
             f"{v} <= (min({symbolic.symstr(vb[1])}, {symbolic.symstr(j_lo + plan.bj - 1)}))")
         inner.update_statement = properties.CodeBlock(f"{v} = {v} + 1")
         inner.pinned_sequential = True
-        inner.specialization_hint = WAVEFRONT_TILE_INTERIOR
+        inner.specialization_hint = WAVEFRONT_TILE_INTERIOR.format(tile=tile)
 
         # On a GPU the tile INTERIOR is the thread block, so it is skewed too (see
         # :meth:`_skew_within_tile`). Done before the tile-column lift because both steps run
@@ -1596,7 +1599,7 @@ class WavefrontSkew(ppl.Pass):
         if self.target == 'gpu':
             self._skew_within_tile(i_loop, inner, sdfg, u, v, tau, plan, i_lo, j_lo, ub, vb)
 
-        self._convert_inner_to_map(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN)
+        self._convert_inner_to_map(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN.format(tile=tile))
 
     def _skew_within_tile(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
                           plan: TilePlan, i_lo, j_lo, ub: Tuple[object, object], vb: Tuple[object, object]) -> None:
@@ -1693,7 +1696,7 @@ class WavefrontSkew(ppl.Pass):
         i_loop.update_statement = properties.CodeBlock(f'{d_var} = {d_var} + 1')
         i_loop.pinned_sequential = True
         # No longer the verbatim interior order: the tile's own anti-diagonal.
-        i_loop.specialization_hint = WAVEFRONT_DIAGONAL
+        i_loop.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(a, b, u, 'j'))
 
         # ``k`` indexes the block's threads: 0 .. width-1, the tile extent on the parallel axis.
         width = plan.bj if abs(a) == 1 else plan.bi
@@ -1712,7 +1715,7 @@ class WavefrontSkew(ppl.Pass):
 
         here = symbolic.symstr(coord)
         self._guard_body(inner, sdfg, f'({here}) >= ({p_lo}) and ({here}) <= ({p_hi})')
-        self._convert_inner_to_map(i_loop, inner, sdfg, WAVEFRONT_FRONT)
+        self._convert_inner_to_map(i_loop, inner, sdfg, WAVEFRONT_FRONT.format(skew=skew_label(a, b, u, 'j')))
         for node, _ in i_loop.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry):
                 node.map.is_warp_tile = True

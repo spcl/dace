@@ -287,7 +287,7 @@ def test_the_note_keeps_what_the_loop_already_said():
     """``AnnotateLoopKinds`` says what KIND of loop this is; that is a different fact, not a stale
     version of this one, so it must survive."""
     sdfg = inside_loop(N)
-    kind = 'sequential -- a loop-carried dependence was PROVEN, so this iteration order is required.'
+    kind = 'sequential -- carried: RAW on a[i - 1]'
     loops(sdfg)[0].specialization_hint = kind
     GridStrideKernels().apply_pass(sdfg, {})
     hint = loops(sdfg)[0].specialization_hint
