@@ -833,6 +833,41 @@ HIP_DEVICE_BLOCK_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     'cpf_gpu_atomic': ('gpucub', ),
 }
 
+#: Backend-neutral ``gpu*`` spellings the CUDA/HIP code generator emits, and the HIP name each one
+#: stands for. ``dace/dace.h`` supplies these through its own compatibility header; a self-contained
+#: unit has to carry them itself.
+#:
+#: The core preamble declared five of them and the generator can emit all of these, so a form that
+#: reached for any of the rest failed to compile on an undeclared name -- ``tsvc_2_s323`` on
+#: ``gpuMemcpyDeviceToHost``. Emitted per USE like the blocks above rather than as a fixed wall of
+#: aliases, so a form that copies nothing still carries nothing.
+GPU_ALIASES: Dict[str, str] = {
+    'gpuDeviceSynchronize': 'hipDeviceSynchronize',
+    'gpuEventSynchronize': 'hipEventSynchronize',
+    'gpuFree': 'hipFree',
+    'gpuFreeAsync': 'hipFreeAsync',
+    'gpuFreeHost': 'hipHostFree',
+    'gpuGetErrorString': 'hipGetErrorString',
+    'gpuGetLastError': 'hipGetLastError',
+    'gpuLaunchKernel': 'hipLaunchKernel',
+    'gpuMalloc': 'hipMalloc',
+    'gpuMallocAsync': 'hipMallocAsync',
+    'gpuMallocHost': 'hipHostMalloc',
+    'gpuMemcpy': 'hipMemcpy',
+    'gpuMemcpyAsync': 'hipMemcpyAsync',
+    'gpuMemcpyDeviceToDevice': 'hipMemcpyDeviceToDevice',
+    'gpuMemcpyDeviceToHost': 'hipMemcpyDeviceToHost',
+    'gpuMemcpyHostToDevice': 'hipMemcpyHostToDevice',
+    'gpuMemset': 'hipMemset',
+    'gpuMemsetAsync': 'hipMemsetAsync',
+    'gpuPeekAtLastError': 'hipPeekAtLastError',
+    'gpuStreamSynchronize': 'hipStreamSynchronize',
+}
+
+#: Emission order for :data:`GPU_ALIASES` -- stated, not inherited from set iteration, so two runs
+#: of the same SDFG render byte-identical.
+GPU_ALIAS_ORDER: Tuple[str, ...] = tuple(GPU_ALIASES)
+
 
 def hip_device_preamble(code: str) -> str:
     """:data:`HIP_DEVICE_CORE` plus the blocks ``code`` actually reaches for.
@@ -850,6 +885,11 @@ def hip_device_preamble(code: str) -> str:
         needed.add(name)
         pending.extend(dep for dep in HIP_DEVICE_BLOCK_DEPENDENCIES.get(name, ()) if dep not in needed)
     parts = [HIP_DEVICE_CORE]
+    aliases = [
+        f'#define {name} {GPU_ALIASES[name]}' for name in GPU_ALIAS_ORDER if re.search(rf'\b{re.escape(name)}\b', code)
+    ]
+    if aliases:
+        parts.append('//: Backend-neutral spellings the generator emits, in HIP terms.\n' + '\n'.join(aliases) + '\n')
     parts += [HIP_DEVICE_BLOCKS[name] for name in HIP_DEVICE_BLOCK_ORDER if name in needed]
     return '\n'.join(parts)
 

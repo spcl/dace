@@ -153,6 +153,7 @@ def assert_standalone_device(code: str, label: str = 'cpf') -> None:
                                f'{match.start()}\n{_context(code, match.start())}')
     assert_no_unqualified_runtime_calls(code, label)
     assert_device_preamble_covers_its_uses(code, label)
+    assert_every_gpu_name_is_declared(code, label)
 
 
 #: Device preamble blocks that only some units carry, and the declaration each one must bring with
@@ -167,6 +168,31 @@ DEVICE_PREAMBLE_USES = (
     (re.compile(r'\bDACE_KERNEL_LAUNCH_CHECK\s*\('), re.compile(r'^#define DACE_KERNEL_LAUNCH_CHECK',
                                                                 re.M), 'DACE_KERNEL_LAUNCH_CHECK'),
 )
+
+#: Every backend-neutral ``gpu*`` name is either declared by the core preamble or aliased per use.
+#: Anything else the generator emits is an undeclared identifier, which is what ``tsvc_2_s323`` hit
+#: on ``gpuMemcpyDeviceToHost`` while the whole suite stayed green.
+GPU_NAME = re.compile(r'\bgpu[A-Z]\w*')
+
+
+def assert_every_gpu_name_is_declared(code: str, label: str = 'cpf') -> None:
+    """Assert each ``gpu*`` spelling the unit uses is one the unit also declares.
+
+    :param code: the finished device rendering.
+    :param label: what to call the unit in the failure message.
+    """
+    declared = set()
+    for line in code.splitlines():
+        text = line.strip()
+        for lead in ('using ', 'static constexpr gpuError_t ', '#define '):
+            if text.startswith(lead):
+                rest = text[len(lead):].split('=')[0].split()[0].strip()
+                declared.add(rest)
+    for hit in GPU_NAME.finditer(code):
+        name = hit.group(0)
+        assert name in declared, (f'{label}: the unit uses {name} but never declares it -- the '
+                                  f'generator emits the backend-neutral spelling and a self-contained '
+                                  f'unit has to alias it\n{_context(code, hit.start())}')
 
 
 def assert_device_preamble_covers_its_uses(code: str, label: str = 'cpf') -> None:
