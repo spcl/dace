@@ -366,10 +366,16 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             # const value, per ``compiler.cpu.const_scalar_abi`` -- see const_scalar_by_value().
             ref = '' if (is_write is False and const_scalar_by_value()) else '&'
         else:
-            # constexpr arrays
+            # constexpr arrays. The pointer belongs in ``typedef``, NOT in ``ref``: the two are
+            # concatenated for the returned declaration, so either spelling declares the same
+            # ``const T*``, but only ``typedef`` is what gets registered in ``defined_vars`` below.
+            # Leaving the ``*`` in ``ref`` registered this operand as ``const T`` -- a SCALAR -- and
+            # the next consumer to read that ctype back emitted a scalar parameter for an array it
+            # then indexed (``const float _cpy_in`` taking ``&a_0[0]``, which does not compile).
+            # Reachable through a view of a constant-folded array, so it needs ``simplify=0`` to
+            # survive: np.vstack of two np.zeros/np.ones rows (tests/numpy/concat_test.py).
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
-                ref = '*'
-                typedef = make_const(typedef)
+                typedef = make_const(typedef) + '*'
             elif is_write is False and const_read_only_array:
                 # Read-only array reference -> pointer-to-const, mirroring the read-only
                 # scalar branch above (a device function that only reads its array input
