@@ -43,6 +43,20 @@ _SUPPORTED_BINOPS = {
 #: keeps its own infix case below.
 _FUNCTION_FORM_BINOPS = ("min", "max", "py_mod", "atan2", "hypot", "fmod", "pow", "ipow")
 
+#: Call spellings a function-form binop can carry in a tasklet body. ``Min`` / ``Max`` are
+#: CAPITALIZED by the symbolic printer -- sympy derives them from ``Application`` rather than
+#: ``Function``, and the printer emits the DaCe runtime's variadic ``Min`` / ``Max`` -- so a body
+#: reaching the converter spells them that way while the op label stays lowercase. CloudSC's
+#: ``Min(1.0, __t0)`` matched none of the lowercase forms and stayed a scalar tasklet, which the
+#: orchestrator can only answer by refusing the whole SDFG.
+_CALL_ALIASES = {"min": ("min", "Min"), "max": ("max", "Max")}
+
+
+def _call_spellings(op: str) -> Tuple[str, ...]:
+    """Every name ``op`` can appear under in a function-form call body."""
+    return _CALL_ALIASES.get(op, (op, ))
+
+
 #: Comparison ops: result dtype ``bool`` regardless of operand dtype (``double > double
 #: → bool``). :meth:`_convert_binop`'s mixed-dtype guard excludes output dtype from
 #: operand-uniformity for these.
@@ -544,7 +558,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         for op in _SUPPORTED_BINOPS:
             for a, b in (in_conns, list(reversed(in_conns))):
                 if op in _FUNCTION_FORM_BINOPS:
-                    forms = (f"{out_conn} = {op}({a}, {b})", f"{out_conn} = ({op}({a}, {b}))")
+                    forms = tuple(f"{out_conn} = {name}({a}, {b})" for name in _call_spellings(op))
+                    forms += tuple(f"{out_conn} = ({name}({a}, {b}))" for name in _call_spellings(op))
                 elif op == "**":
                     forms = (f"{out_conn} = {a} ** {b}", f"{out_conn} = ({a} ** {b})")
                 else:
@@ -601,17 +616,18 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # For each op, split the rhs into ``<a_conn> <op> <expr>`` or ``<expr> <op> <a_conn>``.
         for op in _SUPPORTED_BINOPS:
             if op in _FUNCTION_FORM_BINOPS:
-                # min(_a, expr) / min(expr, _a) -- both orderings.
-                for sym_side in ("b", "a"):
-                    if sym_side == "b":
-                        prefix, sep = f"{op}({a_conn}, ", ")"
-                    else:
-                        prefix, sep = f"{op}(", f", {a_conn})"
-                    if rhs.startswith(prefix) and rhs.endswith(sep):
-                        expr = rhs[len(prefix):-len(sep)] if sep else rhs[len(prefix):]
-                        expr = expr.strip()
-                        if expr and a_conn not in expr.split():
-                            return out_conn, a_conn, op, sym_side, expr
+                # min(_a, expr) / min(expr, _a) -- both orderings, every accepted spelling.
+                for name in _call_spellings(op):
+                    for sym_side in ("b", "a"):
+                        if sym_side == "b":
+                            prefix, sep = f"{name}({a_conn}, ", ")"
+                        else:
+                            prefix, sep = f"{name}(", f", {a_conn})"
+                        if rhs.startswith(prefix) and rhs.endswith(sep):
+                            expr = rhs[len(prefix):-len(sep)] if sep else rhs[len(prefix):]
+                            expr = expr.strip()
+                            if expr and a_conn not in expr.split():
+                                return out_conn, a_conn, op, sym_side, expr
             else:
                 sep = f" {op} "
                 if sep not in rhs:
@@ -872,8 +888,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             rhs = rhs[1:-1].strip()
         for op in _SUPPORTED_BINOPS:
             if op in _FUNCTION_FORM_BINOPS:
-                prefix = f"{op}("
-                if rhs.startswith(prefix) and rhs.endswith(")"):
+                for prefix in tuple(f"{name}(" for name in _call_spellings(op)):
+                    if not (rhs.startswith(prefix) and rhs.endswith(")")):
+                        continue
                     inner = rhs[len(prefix):-1]
                     # Split on the top-level comma (both exprs paren/identifier-shaped).
                     depth = 0
@@ -1007,12 +1024,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         body = body.strip().rstrip(";").strip()
         for op in _SUPPORTED_REDUCE_OPS:
             if op in _FUNCTION_FORM_BINOPS:
-                forms = (
-                    f"{out_conn} = {op}({out_conn}, {other_conn})",
-                    f"{out_conn} = ({op}({out_conn}, {other_conn}))",
-                    f"{out_conn} = {op}({other_conn}, {out_conn})",
-                    f"{out_conn} = ({op}({other_conn}, {out_conn}))",
-                )
+                forms = tuple(f"{out_conn} = {name}({x}, {y})" for name in _call_spellings(op)
+                              for x, y in ((out_conn, other_conn), (other_conn, out_conn)))
+                forms += tuple(f"{out_conn} = ({name}({x}, {y}))" for name in _call_spellings(op)
+                               for x, y in ((out_conn, other_conn), (other_conn, out_conn)))
+                forms += ()
             else:
                 forms = (
                     f"{out_conn} = {out_conn} {op} {other_conn}",
@@ -1049,8 +1065,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         matched_op = None
         for op in _SUPPORTED_REDUCE_OPS:
             if op in _FUNCTION_FORM_BINOPS:
-                forms = (f"{out_conn} = {op}({a}, {b})", f"{out_conn} = ({op}({a}, {b}))",
-                         f"{out_conn} = {op}({b}, {a})", f"{out_conn} = ({op}({b}, {a}))")
+                forms = tuple(f"{out_conn} = {name}({x}, {y})" for name in _call_spellings(op)
+                              for x, y in ((a, b), (b, a)))
+                forms += tuple(f"{out_conn} = ({name}({x}, {y}))" for name in _call_spellings(op)
+                               for x, y in ((a, b), (b, a)))
             else:
                 forms = (f"{out_conn} = {a} {op} {b}", f"{out_conn} = ({a} {op} {b})", f"{out_conn} = {b} {op} {a}",
                          f"{out_conn} = ({b} {op} {a})")
