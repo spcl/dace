@@ -287,7 +287,12 @@ class StructuralCleanup(ppl.Pass):
         ``(b, c)`` where taking ``(b, c)`` first would have allowed ``(a, bc)`` -- and it cannot be
         undone, so whichever runs first fixes the order for good. The matcher's enumeration finds
         the better one (channel_flow settles at 11 states against the walk's 12); putting the walk
-        first costs that and buys nothing, because the matcher behind it can no longer reach it."""
+        first costs that and buys nothing, because the matcher behind it can no longer reach it.
+
+        ``PruneUnreferencedTransients`` is LAST, after the state deletions above have taken the
+        readers with them, so it decides against the block's own final graph. It pays for itself:
+        on CloudSC the terminal band alone collects 3857 dead descriptors in 0.53 s, and every
+        stage between two cleanups was walking them."""
         fuse = PatternApplyOnceEverywhere([StateFusionExtended()])
         fuse.progress = False
         walk_fuse = FuseStates()
@@ -303,6 +308,7 @@ class StructuralCleanup(ppl.Pass):
             EmptyStateElimination(),
             DeadStateElimination(),
             RedundantOrderingEdgeElimination(),
+            PruneUnreferencedTransients(),
         ]
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
@@ -432,6 +438,15 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
 #: the fixpoint converges at one round, which is exactly what the second round is here to confirm;
 #: it is not a reason to stop confirming it. The cost is one no-op round on 23% of compiles.
 _IV_SPLIT_MAX_ROUNDS = 2
+
+#: Rounds of the terminal ``end`` symbol cleanup (``SymbolDedup`` -> ``SymbolPropagation`` ->
+#: ``ConstantPropagation``). Two, so a merge that only the folded spelling exposes is still caught
+#: -- ``end`` has no later boundary to catch it. The second round is a guard, NOT a measured
+#: reduction: on the two graphs probed for it (canonicalize's own CloudSC output, and the
+#: ``scatter_accum_dup`` canary where round 1 merges 2 symbols) round 2 found nothing left to do.
+#: It costs three no-op whole-graph walks per compile. Raise the pin only against a case that
+#: shows a second round doing work.
+_TERMINAL_SYMBOL_ROUNDS = 2
 
 
 @properties.make_properties
@@ -911,13 +926,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('lower', PatternApplyOnceEverywhere([PruneConnectors()]))]
     s += [('lower', InlineSDFGs())]
     s += _fold_scalar_slices('lower')
+    # Splices out the empty *_pre_state / *_post_state boundary states MapToForLoop leaves: inside a
+    # guard branch they make the body look like a heterogeneous [empty, empty, loop] chain and send
+    # MoveIfIntoLoop down its imperfect path to wrap *empty* states. ``EmptyStateElimination`` is a
+    # member of the cleanup block, so the block alone is what does it -- a standalone copy of it
+    # stood here and ran on a graph the block had just swept.
     s += _structural_cleanup('lower')
-    # MapToForLoop leaves empty *_pre_state / *_post_state boundary states;
-    # inside a guard branch they make the body look like a heterogeneous
-    # [empty, empty, loop] chain and send MoveIfIntoLoop down its imperfect
-    # path to wrap *empty* states. Splice them out so the guarded body is the
-    # bare loop -> MoveIfIntoLoop's clean single-loop path applies.
-    s += [('lower', EmptyStateElimination())]
 
     # NormalizeNegativeStride again, now that every map is a LoopRegion. The
     # pass only ever rewrites LoopRegions, so the earlier 'clean' invocation
@@ -1815,17 +1829,33 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # PruneUnreferencedTransients) rather than after it, so those still observe the final graph.
     s += _structural_cleanup('end')
 
-    # Terminal symbol cleanup: after fusion, a fused gather-map body carries
-    # duplicate index symbols that map fusion introduced -- ``idx_index`` and
-    # ``idx_index_0`` both ``idx[i]`` (``idx[i]`` computed twice). ``SymbolDedup``
-    # merges provably-equal interstate-edge symbols; the following
-    # ``SymbolPropagation`` + ``ConstantPropagation`` then re-fold the survivors
-    # (the merge can expose fresh constant/symbol chains). BEFORE
-    # AssumeSymbolConstraints, which must stay the terminal stage.
-    s += [('end', SymbolDedup()), ('end', SymbolPropagation()), ('end', ConstantPropagation())]
-    # SymbolPropagation above folds symbols out of interstate edges but leaves the
-    # now-unreferenced entries in sdfg.symbols. No SimplifyPass runs past the ``reduce``
-    # stage, so this is the ONLY thing that prunes them -- it is load-bearing, not a top-up.
+    # Terminal symbol cleanup, and NOT a repeat of the cleanup block above. The block runs its
+    # symbol phase FIRST and its state machine second, so its own tail -- the two fusions, then
+    # empty- and dead-state elimination -- all run after the last SymbolDedup it does. Fusion
+    # unions the interstate assignments of the states it merges, which is exactly what mints a
+    # duplicate (a fused gather-map body carries ``idx_index`` and ``idx_index_0``, both
+    # ``idx[i]``), and elsewhere such a duplicate is cleaned by the symbol phase of the NEXT
+    # boundary. ``end`` has no next boundary, so this IS that phase.
+    #
+    # It has to be here rather than nowhere because a syntactic-comparison consumer still runs
+    # behind it: ``revert_nonreduction_wcr`` below asks WCRToAugAssign whether two subsets name the
+    # same slot, and two names for one address answer "different slots" -- the failure that turned
+    # an indirect accumulate into a guarded scatter and ``std::abort()``ed at run time
+    # (``scatter_accum_dup``). Silent and severe, against three passes on a settled graph.
+    #
+    # TWO rounds, because the round can feed itself: ``SymbolDedup`` merges only definitions that
+    # are already syntactically equal, and the folding behind it rewrites those definitions into
+    # the spelling that can make the NEXT pair equal. The cleanup block settles its own symbol
+    # phase the same way (its ``SymbolDedup`` runs twice), and ``PropagateAndPrune`` is the same
+    # two-round shape for dataflow.
+    #
+    # ``RemoveUnusedSymbols`` last for the same tail reason: fusion and dead-state elimination
+    # delete the interstate edges carrying a symbol's last reference, and propagation substitutes a
+    # value while leaving its defining name behind. No SimplifyPass runs past the ``reduce`` stage,
+    # so this is the ONLY thing that prunes those. BEFORE AssumeSymbolConstraints, which must stay
+    # the terminal stage.
+    for _ in range(_TERMINAL_SYMBOL_ROUNDS):
+        s += [('end', SymbolDedup()), ('end', SymbolPropagation()), ('end', ConstantPropagation())]
     s += [('end', RemoveUnusedSymbols())]
 
     # OptionalArrayInference: ``optional`` is a DERIVED annotation on every array descriptor, and the
@@ -1858,7 +1888,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # reclaimer that erases a descriptor -- runs well before them and skips ``Scalar`` outright, so
     # the frontend's per-expression scalars (``b_index``, ``a_slice_times_b_slice``) survive a full
     # canonicalize with no node left referring to them. Codegen ignores them; a re-run does not, and
-    # neither does anything that reads the serialized SDFG.
+    # neither does anything that reads the serialized SDFG. The cleanup block runs the same pass at
+    # every splice point; this occurrence is what covers the stages that follow the last one.
     s += [('end', PruneUnreferencedTransients())]
 
     # interchange (terminal re-run): the mid-pipeline ``interchange`` stage sees the graph as it
