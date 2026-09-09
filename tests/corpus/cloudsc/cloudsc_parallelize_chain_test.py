@@ -97,7 +97,11 @@ _REGIMES = {
     'o3': (O3_CPU_ARGS, False, 1e-16, 1e-12),
 }
 
-#: Steps that reassociate/parallelize accumulations -> use the relaxed tolerance.
+#: Steps that reassociate/parallelize accumulations. The relaxed tolerance is LATCHED, not applied
+#: to these labels alone: reassociation error is carried forward in the values, so every stage after
+#: the first of these inherits it and grading the next one bit-exact just re-reports the previous
+#: stage's rounding as a new failure. On sequential schedules the error was exactly zero and the
+#: distinction never showed; multithreaded it does.
 #: ``loop_to_scan`` reassociates the carry; ``loop_to_map`` may reorder fold operations.
 _RELAXED_STEPS = {'loop_to_map', 'loop_to_scan', 'loop_to_reduce'}
 
@@ -380,6 +384,8 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path, clouds
     rt_dir = str(tmp_path / 'roundtrips')
     os.makedirs(rt_dir, exist_ok=True)
 
+    # Latches on the first reassociating stage; see ``_RELAXED_STEPS``.
+    reassociated = False
     for stage_idx, (label, apply_fn) in enumerate(_chain(), start=1):
         # The loop transforms log every refused loop; keep the test output readable.
         with contextlib.redirect_stdout(open(os.devnull, 'w')):
@@ -417,7 +423,8 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path, clouds
                 f'{regime}/{label}: {n_loops} loops stayed sequential, expected {_EXPECTED_SEQUENTIAL_LOOPS}')
 
         out = _run(candidate, inputs, cpu_args, sequential, tag=f'{regime}_{label}')
-        tol = relaxed_tol if label in _RELAXED_STEPS else strict_tol
+        reassociated = reassociated or label in _RELAXED_STEPS
+        tol = relaxed_tol if reassociated else strict_tol
         report = compare_outputs(out, reference_out, rtol=tol, atol=tol)
         worst = max(((ma, mr) for ma, mr, _ in report.values()), default=(0.0, 0.0))
         print(f'{regime}/{label}: worst |abs|={worst[0]:.3e} |rel|={worst[1]:.3e} (tol={tol:.0e})')
@@ -436,10 +443,14 @@ def test_cloudsc_parallelize_chain(reference_sdfg_file, regime, tmp_path, clouds
         if label in _ROUNDTRIP_CHECKPOINTS:
             rt = _roundtrip(candidate, rt_dir, f'{regime}_{label}')
             rt_out = _run(rt, inputs, cpu_args, sequential, tag=f'{regime}_{label}_rt')
-            rt_report = compare_outputs(rt_out, out, rtol=strict_tol, atol=strict_tol)
+            # Same latch: past a reassociating stage these are two PARALLEL runs of the same SDFG, and
+            # libgomp combines a reduction in thread-completion order, so they need not agree to the last
+            # bit. A roundtrip that actually lost a descriptor or a memlet misses by far more than this.
+            rt_tol = relaxed_tol if reassociated else strict_tol
+            rt_report = compare_outputs(rt_out, out, rtol=rt_tol, atol=rt_tol)
             rt_bad = {name: (ma, mr) for name, (ma, mr, ok) in rt_report.items() if not ok}
             assert not rt_bad, (f'{regime}/{label}: serialize/deserialize roundtrip changed the result '
-                                f'(strict_tol={strict_tol:.0e}): {rt_bad}')
+                                f'(tol={rt_tol:.0e}): {rt_bad}')
 
 
 if __name__ == '__main__':
