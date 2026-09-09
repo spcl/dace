@@ -9,7 +9,10 @@
 #include <new>  // Used for the in-memory ctor call in the move assignment operator below
 #include <vector>
 
-#ifdef __HIPCC__
+// Same condition as cudainterop.h and cudacommon.cuh: on HIP's NVIDIA platform the compiler is nvcc,
+// so __HIPCC__ is unset and only WITH_HIP says which runtime this build uses. Testing __HIPCC__
+// alone selected the CUDA calls here while gpuError_t stayed hipError_t.
+#if defined(__HIPCC__) || defined(WITH_HIP)
 #include <hip/hip_cooperative_groups.h>
 #include <hip/hip_runtime.h>
 #define gpuLaunchKernel hipLaunchKernel
@@ -30,7 +33,8 @@
 namespace dace {
 // Adapted from
 // https://devblogs.nvidia.com/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics/
-#ifndef __HIPCC__
+// Not __HIPCC__: it is set on HIP's NVIDIA platform, which has no __shfl/__ballot.
+#if defined(__CUDACC__)
 __inline__ __device__ uint32_t atomicAggInc(uint32_t *ctr) {
   auto g = cooperative_groups::coalesced_threads();
   uint32_t warp_res;
@@ -183,8 +187,9 @@ __global__ void ResetGPUStream_kernel(GPUStream<T, IS_POW2> stream) {
 template <typename T, bool IS_POW2>
 void ResetGPUStream(GPUStream<T, IS_POW2> &stream) {
   void *args_reset[1] = {&stream};
-  gpuLaunchKernel((void *)&ResetGPUStream_kernel<T, IS_POW2>, dim3(1, 1, 1),
-                  dim3(1, 1, 1), args_reset, 0, (gpuStream_t)0);
+  DACE_GPU_CHECK_NO_STATE(
+      gpuLaunchKernel((void *)&ResetGPUStream_kernel<T, IS_POW2>, dim3(1, 1, 1),
+                      dim3(1, 1, 1), args_reset, 0, (gpuStream_t)0));
 }
 
 template <typename T, bool IS_POW2>
@@ -195,9 +200,12 @@ __global__ void PushToGPUStream_kernel(GPUStream<T, IS_POW2> stream, T item) {
 
 template <typename T, bool IS_POW2>
 void PushToGPUStream(GPUStream<T, IS_POW2> &stream, const T &item) {
-  void *args_push[2] = {&stream, &item};
-  gpuLaunchKernel((void *)&PushToGPUStream_kernel<T, IS_POW2>, dim3(1, 1, 1),
-                  dim3(1, 1, 1), args_push, 0, (gpuStream_t)0);
+  // The launch argument array is void*, which a const item has no address to fill.
+  T value = item;
+  void *args_push[2] = {&stream, &value};
+  DACE_GPU_CHECK_NO_STATE(
+      gpuLaunchKernel((void *)&PushToGPUStream_kernel<T, IS_POW2>, dim3(1, 1, 1),
+                      dim3(1, 1, 1), args_push, 0, (gpuStream_t)0));
 }
 
 ////////////////////////////////////////////////////////////
@@ -206,33 +214,33 @@ void PushToGPUStream(GPUStream<T, IS_POW2> &stream, const T &item) {
 template <typename T, bool IS_POW2>
 GPUStream<T, IS_POW2> AllocGPUArrayStreamView(T *ptr, uint32_t capacity) {
   uint32_t *gStart, *gEnd, *gPending;
-  gpuMalloc(&gStart, sizeof(uint32_t));
-  gpuMalloc(&gEnd, sizeof(uint32_t));
-  gpuMalloc(&gPending, sizeof(uint32_t));
-  gpuMemset(gStart, 0, sizeof(uint32_t));
-  gpuMemset(gEnd, 0, sizeof(uint32_t));
-  gpuMemset(gPending, 0, sizeof(uint32_t));
+  DACE_GPU_CHECK_NO_STATE(gpuMalloc(&gStart, sizeof(uint32_t)));
+  DACE_GPU_CHECK_NO_STATE(gpuMalloc(&gEnd, sizeof(uint32_t)));
+  DACE_GPU_CHECK_NO_STATE(gpuMalloc(&gPending, sizeof(uint32_t)));
+  DACE_GPU_CHECK_NO_STATE(gpuMemset(gStart, 0, sizeof(uint32_t)));
+  DACE_GPU_CHECK_NO_STATE(gpuMemset(gEnd, 0, sizeof(uint32_t)));
+  DACE_GPU_CHECK_NO_STATE(gpuMemset(gPending, 0, sizeof(uint32_t)));
   return GPUStream<T, IS_POW2>(ptr, capacity, gStart, gEnd, gPending);
 }
 
 template <typename T, bool IS_POW2>
 GPUStream<T, IS_POW2> AllocGPUStream(uint32_t capacity) {
   T *gData;
-  gpuMalloc(&gData, capacity * sizeof(T));
+  DACE_GPU_CHECK_NO_STATE(gpuMalloc(&gData, capacity * sizeof(T)));
   return AllocGPUArrayStreamView<T, IS_POW2>(gData, capacity);
 }
 
 template <typename T, bool IS_POW2>
 void FreeGPUArrayStreamView(GPUStream<T, IS_POW2> &stream) {
-  gpuFree(stream.m_start);
-  gpuFree(stream.m_end);
-  gpuFree(stream.m_pending);
+  DACE_GPU_CHECK_NO_STATE(gpuFree(stream.m_start));
+  DACE_GPU_CHECK_NO_STATE(gpuFree(stream.m_end));
+  DACE_GPU_CHECK_NO_STATE(gpuFree(stream.m_pending));
 }
 
 template <typename T, bool IS_POW2>
 void FreeGPUStream(GPUStream<T, IS_POW2> &stream) {
   FreeGPUArrayStreamView(stream);
-  gpuFree(stream.m_data);
+  DACE_GPU_CHECK_NO_STATE(gpuFree(stream.m_data));
 }
 
 }  // namespace dace

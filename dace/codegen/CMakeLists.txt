@@ -237,6 +237,14 @@ if(DACE_ENABLE_HIP)
   set(CMAKE_HIP_STANDARD ${DACE_CPP_STANDARD})
   set(CMAKE_HIP_STANDARD_REQUIRED ON)
 
+  # HIP does not need this flag; nvcc does. With HIP_PLATFORM=nvidia the HIP language's compiler is
+  # nvcc, which then applies its own rule against device code calling host constexpr functions --
+  # the same rule the CUDA branch above works around. Keyed on the compiler rather than the
+  # platform: clang-based hipcc permits those calls already and rejects the flag as unknown.
+  if(CMAKE_HIP_COMPILER_ID STREQUAL "NVIDIA")
+    string(APPEND CMAKE_HIP_FLAGS " --expt-relaxed-constexpr")
+  endif()
+
   # Get local AMD architectures
   if (DEFINED LOCAL_HIP_ARCHITECTURES)
     message(STATUS "Use cached HIP architectures: '${DACE_HIP_ARCHITECTURES_DEFAULT}'")
@@ -278,6 +286,16 @@ if(DACE_ENABLE_HIP)
 
   # Add include directories for other files
   set(DACE_LIBS ${DACE_LIBS} hip::host)
+
+  # On the NVIDIA platform hip::host carries the ROCm include directory and nothing else, so a host
+  # translation unit that reaches hip_runtime.h lands in nvidia_detail/ and fails to find
+  # cuda_runtime.h. nvcc adds the toolkit implicitly; the host compiler has to be told.
+  # nvtx3 for the same reason: this platform has no roctracer, so the TX-marker instrumentation
+  # emits NVTX here. The target is header-only, so it costs nothing when nothing is instrumented.
+  if(CMAKE_HIP_PLATFORM STREQUAL "nvidia")
+    find_package(CUDAToolkit REQUIRED)
+    set(DACE_LIBS ${DACE_LIBS} CUDA::cudart CUDA::nvtx3)
+  endif()
 
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES LANGUAGE HIP)

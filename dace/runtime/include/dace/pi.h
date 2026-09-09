@@ -54,8 +54,11 @@ namespace dace
             DACE_CONSTEXPR DACE_HDFI operator double() const noexcept
             { return mult * M_PI; }
 
+#if !( defined(__CUDACC__) || defined(__HIPCC__) )
+            //There is no long double on the GPU
             DACE_CONSTEXPR DACE_HDFI operator long double() const noexcept
             { return (long double)(mult * M_PI); }
+#endif
 
             DACE_CONSTEXPR DACE_HDFI typeless_pi_mult operator+() const noexcept
             { return *this; }
@@ -88,8 +91,11 @@ namespace dace
             DACE_CONSTEXPR DACE_HDFI operator double() const noexcept
             { return M_PI; }
 
+#if !( defined(__CUDACC__) || defined(__HIPCC__) )
+            //There is no long double on the GPU
             DACE_CONSTEXPR DACE_HDFI operator long double() const noexcept
             { return (long double)(M_PI); }
+#endif
 
             DACE_CONSTEXPR DACE_HDFI typeless_pi operator+() const noexcept
             { return *this; }

@@ -41,6 +41,12 @@ if TYPE_CHECKING:
 #: and position-independent code, which CMake already adds itself for a shared library.
 HOST_FLAGS_NOT_FORWARDED = frozenset({'-Wall', '-Wextra', '-fPIC'})
 
+#: Pinned-host allocation is not a backend-prefixed spelling of one name. HIP does carry
+#: ``hipMallocHost``/``hipFreeHost``, but they are deprecated aliases and, unlike CUDA's, are
+#: declared to take a plain ``void**`` rather than a template parameter.
+PINNED_ALLOC = {'cuda': 'cudaMallocHost', 'hip': 'hipHostMalloc'}
+PINNED_FREE = {'cuda': 'cudaFreeHost', 'hip': 'hipHostFree'}
+
 
 def forwarded_host_args() -> List[str]:
     """The host flags a ``.cu`` or ``.hip`` translation unit has to be built with as well.
@@ -729,7 +735,8 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('DACE_GPU_CHECK(%sMallocHost(&%s, %s));\n' % (self.backend, dataname, arrsize_malloc))
+            result_alloc.write('DACE_GPU_CHECK(%s((void**)&%s, %s));\n' %
+                               (PINNED_ALLOC[self.backend], dataname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('memset(%s, 0, %s);\n' % (dataname, arrsize_malloc))
             if nodedesc.start_offset != 0:
@@ -863,7 +870,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             else:
                 callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)
+            callsite_stream.write('DACE_GPU_CHECK(%s(%s));\n' % (PINNED_FREE[self.backend], dataname), cfg, state_id,
+                                  node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
              nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
@@ -1901,12 +1909,18 @@ void __dace_runkernel_{fname}({fargs})
             node)
 
         if is_persistent:
+            # The attribute enumerator is not a backend-prefixed spelling of one name: CUDA calls it
+            # cudaDevAttrMultiProcessorCount, HIP calls it hipDeviceAttributeMultiprocessorCount.
+            # Concatenating the backend gives an identifier HIP does not declare.
+            sm_count_attr = ('hipDeviceAttributeMultiprocessorCount'
+                             if self.backend == 'hip' else 'cudaDevAttrMultiProcessorCount')
             self._localcode.write('''
 int dace_number_SMs;
-DACE_GPU_CHECK({backend}DeviceGetAttribute(&dace_number_SMs, {backend}DevAttrMultiProcessorCount, 0));
+DACE_GPU_CHECK({backend}DeviceGetAttribute(&dace_number_SMs, {sm_count_attr}, 0));
 int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy};
                 '''.format(fraction=Config.get('compiler', 'cuda', 'persistent_map_SM_fraction'),
                            occupancy=Config.get('compiler', 'cuda', 'persistent_map_occupancy'),
+                           sm_count_attr=sm_count_attr,
                            backend=self.backend))
 
         if create_grid_barrier:
@@ -2468,8 +2482,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         callsite_stream.write('{', cfg, state_id, scope_entry)
 
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
-            if self.backend == 'hip':
-                raise NotImplementedError('Dynamic thread-block maps on HIP are currently unsupported')
+            # The platform, not the backend: what this lowering needs is the CUDA warp intrinsics,
+            # which HIP's NVIDIA platform has (nvcc compiles it, so __CUDACC__ is set and
+            # cooperative_groups is available). Only the AMD platform is actually unsupported.
+            if self.backend == 'hip' and common.get_hip_platform() == 'amd':
+                raise NotImplementedError('Dynamic thread-block maps on the HIP AMD platform are '
+                                          'currently unsupported')
             if len(scope_map.params) > 1:
                 raise ValueError('Only one-dimensional maps are supported for dynamic block map schedule (got %d)' %
                                  len(scope_map.params))
