@@ -23,9 +23,11 @@ os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
-# NOT pinned to one thread: these cases assert numbers, and a reduction lowered onto a Map that
-# carries a dependence is right on one thread and wrong on many. Pinning hides exactly the defect
-# the assertions exist to catch; the tolerances below already cover OpenMP fold order.
+# Four threads, not one: these cases assert numbers, and a reduction lowered onto a Map that carries
+# a dependence is right on one thread and wrong on many -- pinning to 1 hides exactly the defect the
+# assertions exist to catch. Four is enough to expose that and small enough not to oversubscribe the
+# box under xdist. The tolerances below already cover the fold order OpenMP costs.
+os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 from unittest import mock
 
