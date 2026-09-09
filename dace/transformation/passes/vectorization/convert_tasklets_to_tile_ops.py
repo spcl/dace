@@ -1108,7 +1108,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _detect_ite(self, tasklet: Tasklet) -> Optional[Tuple[str, ...]]:
         """If ``tasklet`` is a ternary if-then-else, return
-        ``(out_conn, cond, t, e, has_t_sym, has_e_sym)``; else ``None``.
+        ``(out_conn, cond, t, e, has_t_sym, has_e_sym, has_cond_sym)``; else ``None``.
 
         Recognised forms:
 
@@ -1133,7 +1133,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             for t, cond, e in permutations(in_conns, 3):
                 for form in (f"{out_conn} = {t} if {cond} else {e}", f"{out_conn} = ({t} if {cond} else {e})"):
                     if body == form:
-                        return out_conn, cond, t, e, False, False
+                        return out_conn, cond, t, e, False, False, False
         # ITE(cond, t, e) function form: 3-in-conn and the 2-in-conn-with-symbol cases.
         rhs = body[len(f"{out_conn} = "):].strip()
         if rhs.startswith("(") and rhs.endswith(")"):
@@ -1149,18 +1149,16 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 is_cond_conn = cond_arg in in_conns
                 is_t_conn = t_arg in in_conns
                 is_e_conn = e_arg in in_conns
-                # cond is always a connector (it's the comparison result), but t / e may be Symbol.
-                if is_cond_conn:
-                    if is_t_conn and is_e_conn:
-                        return out_conn, cond_arg, t_arg, e_arg, False, False
-                    if is_t_conn and not is_e_conn:
-                        return out_conn, cond_arg, t_arg, e_arg, False, True
-                    if not is_t_conn and is_e_conn:
-                        return out_conn, cond_arg, t_arg, e_arg, True, False
-                    # BOTH arms Symbol/literal — find-first phi ``ITE(cond, _loop_it_0,
-                    # LEN_1D)`` (lane-id index vs sentinel). ``_convert_ite`` lowers each
-                    # arm via ``_plan_arm`` (lane-id → per-lane tile, invariant → inline).
-                    return out_conn, cond_arg, t_arg, e_arg, True, True
+                # cond is USUALLY a connector (the comparison result), but it can be a Symbol
+                # too: CloudSC reads a Fortran LOGICAL at a constant index into an interstate
+                # symbol (``llfall_index_2_0 = llfall[0]``), so the arm select comes out as
+                # ``ITE(llfall_index_2_0, _new, _old)``. Declining that left the tasklet scalar
+                # beside widened arms, which the orchestrator can only answer by refusing the
+                # whole SDFG -- while ``TileITE`` has carried ``kind_mask='Symbol'`` (predicate
+                # inlined, no ``_mask`` connector) for exactly this shape all along.
+                # ``_convert_ite`` still refuses a per-lane symbol; only a loop-invariant one
+                # may be inlined, or lane 0 would decide for the tile.
+                return (out_conn, cond_arg, t_arg, e_arg, not is_t_conn, not is_e_conn, not is_cond_conn)
         return None
 
     def _split_top_level_commas(self, s: str, expected_parts: int) -> Optional[list]:
@@ -1468,17 +1466,31 @@ class ConvertTaskletsToTileOps(ppl.Pass):
     def _convert_ite(self, inner_state: SDFGState, tasklet: Tasklet, detected, iter_vars: Tuple[str, ...]) -> bool:
         """Convert a ternary tasklet to a TileITE lib node.
 
-        ``detected`` = ``(out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym)``; a
-        ``*_is_sym`` arm is a Symbol / literal expr, not an in-connector. Arm lowering
+        ``detected`` = ``(out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym, cond_is_sym)``; a
+        ``*_is_sym`` operand is a Symbol / literal expr, not an in-connector. Arm lowering
         (user 2026-06-15): invariant Symbol → embedded inline (``kind_*='Symbol'`` +
         ``expr_*``, no connector, broadcast at expansion); lane-id-dependent Symbol →
         per-lane tile; connector reading a Scalar / length-1 source → broadcast full tile.
+        A Symbol CONDITION takes the same inline route (``kind_mask='Symbol'``), and only when
+        it is loop-invariant -- see the refusal below.
         """
-        out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym = detected
+        out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym, cond_is_sym = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
-        if not out_edges or cond_arg not in in_edges:
+        if not out_edges:
             return False
+        if not cond_is_sym and cond_arg not in in_edges:
+            return False
+        if cond_is_sym:
+            # Inlining a per-lane predicate would splat lane 0's answer across the tile. The
+            # spelled-out iter_var case and the one an interstate assignment hides both count.
+            if self._is_lane_id_dependent(cond_arg, iter_vars):
+                return False
+            hidden = lane_dependent_through_interstate_assignment(inner_state, cond_arg, iter_vars)
+            if hidden is not None:
+                raise VectorizeUnsupported(f"ITE condition {cond_arg!r} varies per lane through the interstate "
+                                           f"assignment defining {hidden!r}; inlining it as an invariant "
+                                           f"predicate would broadcast lane 0 across the tile")
         if not t_is_sym and t_arg not in in_edges:
             return False
         if not e_is_sym and e_arg not in in_edges:
@@ -1513,25 +1525,30 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                       kind_t=kind_t,
                       kind_e=kind_e,
                       expr_t=expr_t,
-                      expr_e=expr_e)
+                      expr_e=expr_e,
+                      kind_mask="Symbol" if cond_is_sym else "Tile",
+                      expr_mask=cond_arg if cond_is_sym else None)
         inner_state.add_node(ite)
-        # cond is always a connector (the upstream comparison result). A Scalar cond (from
-        # an all-Symbol comparison like ``FLAG > 0``) is broadcast to a full bool tile
-        # (design 7.5) — TileITE's pure expansion expects one.
-        cond_edge = in_edges[cond_arg]
-        if self._is_scalar_or_len1_source(inner_state, cond_edge):
-            broadcast_name = self._broadcast_scalar_to_tile(inner_state, cond_edge, dtype=dace.bool_)
-            from dace.sdfg.nodes import AccessNode
-            existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == broadcast_name),
-                            None)
-            cond_an = existing if existing is not None else inner_state.add_access(broadcast_name)
-            self._lock_mask_storage(inner_state.sdfg, broadcast_name)
-            inner_state.add_edge(cond_an, None, ite, "_mask", dace.Memlet(f"{broadcast_name}[{subset}]"))
-        else:
-            if cond_edge.data is not None and cond_edge.data.data:
-                self._lock_mask_storage(inner_state.sdfg, cond_edge.data.data)
-            inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_mask",
-                                 dace.Memlet.from_memlet(cond_edge.data))
+        # A Symbol condition carries no ``_mask`` connector -- the predicate is embedded in the
+        # rendered select -- so there is nothing to wire for it.
+        if not cond_is_sym:
+            # A connector cond (the upstream comparison result). A Scalar cond (from an all-Symbol
+            # comparison like ``FLAG > 0``) is broadcast to a full bool tile (design 7.5) --
+            # TileITE's pure expansion expects one.
+            cond_edge = in_edges[cond_arg]
+            if self._is_scalar_or_len1_source(inner_state, cond_edge):
+                broadcast_name = self._broadcast_scalar_to_tile(inner_state, cond_edge, dtype=dace.bool_)
+                from dace.sdfg.nodes import AccessNode
+                existing = next(
+                    (n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == broadcast_name), None)
+                cond_an = existing if existing is not None else inner_state.add_access(broadcast_name)
+                self._lock_mask_storage(inner_state.sdfg, broadcast_name)
+                inner_state.add_edge(cond_an, None, ite, "_mask", dace.Memlet(f"{broadcast_name}[{subset}]"))
+            else:
+                if cond_edge.data is not None and cond_edge.data.data:
+                    self._lock_mask_storage(inner_state.sdfg, cond_edge.data.data)
+                inner_state.add_edge(cond_edge.src, cond_edge.src_conn, ite, "_mask",
+                                     dace.Memlet.from_memlet(cond_edge.data))
         # Wire the materialised arms (an inline Symbol arm carries no connector).
         if wire_t is not None:
             inner_state.add_edge(wire_t[0], wire_t[1], ite, "_t", wire_t[2])
