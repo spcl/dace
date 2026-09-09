@@ -88,6 +88,20 @@ def ite_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, list, Optional[s
     return out_conn, arm_conns, cond_conn
 
 
+def _is_logical(tasklet: nodes.Tasklet) -> bool:
+    """True when ``tasklet``'s body is ``_o = _a and _b`` / ``_o = _a or _b``.
+
+    Its operands and result are bool by contract, so it takes no part in numeric promotion.
+    """
+    try:
+        tree = ast.parse(tasklet.code.as_string.strip())
+    except SyntaxError:
+        return False
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+        return False
+    return isinstance(tree.body[0].value, ast.BoolOp)
+
+
 def _ite_arm_slots(rhs: ast.expr) -> Optional[list]:
     """The two ``(node, setter)`` pairs addressing an ITE ``rhs``'s then/else arm slots --
     ``IfExp.body`` / ``IfExp.orelse``, or ``Call.args[1]`` / ``Call.args[2]`` for the
@@ -174,8 +188,10 @@ def _binop_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str, str, boo
     elif isinstance(rhs, ast.Compare) and len(rhs.ops) == 1 and isinstance(rhs.ops[0], _COMPARISON_AST):
         left, right, is_cmp = rhs.left, rhs.comparators[0], True
     elif isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
-        # ``a and b`` / ``a or b``. NOT a comparison: the converter checks the OUTPUT dtype too for
-        # these, so the destination gets its cast like any arithmetic result.
+        # ``a and b`` / ``a or b``: a LOGICAL binop, whose operands AND output are bool by contract
+        # (``ConvertTaskletsToTileOps`` asserts it of the ``&&`` / ``||`` TileBinop). Reported as an
+        # arithmetic binop, not a comparison, so a destination that is not bool still gets its
+        # store cast; what differs is that the common dtype is fixed at bool rather than promoted.
         left, right, is_cmp = rhs.values[0], rhs.values[1], False
     else:
         return None
@@ -230,7 +246,10 @@ class ResolveMixedDtypeBinops(ppl.Pass):
             a_dt = sdfg.arrays[a_edge.data.data].dtype
             b_dt = sdfg.arrays[b_edge.data.data].dtype
             out_dt = sdfg.arrays[out_edge.data.data].dtype
-            promoted = dtypes.result_type_of(a_dt, b_dt)
+            # A logical ``and`` / ``or`` is bool in and bool out, whatever its operands are: numpy
+            # promotion answers ``int`` for CloudSC's ``ldcum and <cmp>`` -- a Fortran LOGICAL
+            # arrives as an int array -- and the ``&&`` TileBinop rejects an int operand outright.
+            promoted = dtypes.bool_ if _is_logical(tasklet) else dtypes.result_type_of(a_dt, b_dt)
 
             need_a = a_dt != promoted
             need_b = b_dt != promoted

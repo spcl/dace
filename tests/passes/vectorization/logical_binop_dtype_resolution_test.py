@@ -64,7 +64,10 @@ def test_mixed_int_and_bool_operands_get_a_cast():
     state = next(iter(sdfg.all_states()))
     conj = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == 'conj')
     operand_dtypes = {sdfg.arrays[e.data.data].dtype for e in state.in_edges(conj) if e.data and e.data.data}
-    assert len(operand_dtypes) == 1, f'operands still disagree: {operand_dtypes}'
+    # BOOL specifically, not merely "the same": numpy promotion answers ``int`` for int + bool, and
+    # ``ConvertTaskletsToTileOps`` asserts that a ``&&`` / ``||`` TileBinop has bool inputs -- an
+    # int operand fails that invariant, which aborts the whole SDFG's vectorization.
+    assert operand_dtypes == {dace.bool_}, f'logical operands must unify at bool, got {operand_dtypes}'
     sdfg.validate()
 
 
