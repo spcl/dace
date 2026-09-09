@@ -5,7 +5,7 @@ Contains replacements for the Discrete Fourier Transform numpy package (numpy.ff
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor
-from dace import dtypes, symbolic, Memlet, SDFG, SDFGState
+from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 from typing import Optional
 
@@ -76,7 +76,18 @@ def _fft_core(pv: 'ProgramVisitor',
         raise TypeError(f'Inverse FFT only accepts complex inputs, got {desc.dtype}')
     dtype = _real_to_complex(desc.dtype)
 
-    name, odesc = sdfg.add_temp_transient_like(desc, dtype, name=pv.get_target_name())
+    # NOT add_temp_transient_like when the input is a View: that clones the descriptor, so an fft
+    # of a reshape or a slice produced a View output with nothing viewing it -- an invalid node
+    # ("Ambiguous or invalid edge to/from a View access node"). The transform writes a fresh dense
+    # buffer whatever it read, so the output is a plain Array with that shape.
+    if isinstance(desc, data.View):
+        name, odesc = sdfg.add_transient(pv.get_target_name(),
+                                         desc.shape,
+                                         dtype,
+                                         storage=desc.storage,
+                                         find_new_name=True)
+    else:
+        name, odesc = sdfg.add_temp_transient_like(desc, dtype, name=pv.get_target_name())
     r = state.add_read(a)
     w = state.add_write(name)
     state.add_edge(r, None, libnode, '_inp', Memlet.from_array(a, desc))
@@ -166,7 +177,15 @@ def _fftn_core(pv: 'ProgramVisitor',
         raise TypeError(f'Inverse FFT only accepts complex inputs, got {desc.dtype}')
     dtype = _real_to_complex(desc.dtype)
 
-    name, odesc = sdfg.add_temp_transient_like(desc, dtype, name=pv.get_target_name())
+    # See _fft_core: an fft of a View must not clone it, or the output is a View nothing views.
+    if isinstance(desc, data.View):
+        name, odesc = sdfg.add_transient(pv.get_target_name(),
+                                         desc.shape,
+                                         dtype,
+                                         storage=desc.storage,
+                                         find_new_name=True)
+    else:
+        name, odesc = sdfg.add_temp_transient_like(desc, dtype, name=pv.get_target_name())
     r = state.add_read(a)
     w = state.add_write(name)
     state.add_edge(r, None, libnode, '_inp', Memlet.from_array(a, desc))

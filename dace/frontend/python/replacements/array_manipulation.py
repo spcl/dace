@@ -565,6 +565,21 @@ def diag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k: int = 0)
     return out
 
 
+def _pad_extent(value):
+    """One ``np.pad`` width as an extent the rest of :func:`pad` can already carry.
+
+    A Python integer stays an integer; anything else stays SYMBOLIC. ``int()`` here is what
+    refused a pad width computed from a parameter (``np.pad(v, ((0, 0), (0, 0), (p, p)))`` with
+    ``p = k // 2`` raised ``invalid literal for int() with base 10``), while the output shape and
+    the interior subset it feeds are symbolic expressions either way.
+    """
+    if isinstance(value, Integral):
+        return int(value)
+    if symbolic.issymbolic(value):
+        return value
+    return symbolic.pystr_to_symbolic(value)
+
+
 @oprepo.replaces('numpy.pad')
 def pad(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, pad_width, mode='constant', **kwargs) -> str:
     """``np.pad`` in constant mode: fill the padded shape, then copy the original into the interior.
@@ -583,12 +598,14 @@ def pad(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, pad_width, m
     ndim = len(desc.shape)
 
     widths = pad_width
-    if isinstance(widths, Integral):
-        widths = [(int(widths), int(widths))] * ndim
-    elif isinstance(widths, (list, tuple)) and widths and isinstance(widths[0], Integral):
-        widths = [(int(widths[0]), int(widths[-1]))] * ndim
+    if isinstance(widths, (list, tuple)) and widths and isinstance(widths[0], (list, tuple)):
+        widths = [(_pad_extent(lo), _pad_extent(hi)) for lo, hi in widths]
+    elif isinstance(widths, (list, tuple)):
+        lo, hi = (widths[0], widths[-1]) if widths else (0, 0)
+        widths = [(_pad_extent(lo), _pad_extent(hi))] * ndim
     else:
-        widths = [(int(lo), int(hi)) for lo, hi in widths]
+        both = _pad_extent(widths)
+        widths = [(both, both)] * ndim
     if len(widths) != ndim:
         raise ValueError(f'numpy.pad: {len(widths)} pad widths for a rank-{ndim} array')
 
@@ -597,7 +614,10 @@ def pad(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, pad_width, m
     # The fill and the interior copy are two writes to one array; the state boundary the fill
     # opened is what orders them.
     state = pv.last_block
-    interior = ', '.join(f'{lo}:{lo} + {extent}' for extent, (lo, _) in zip(desc.shape, widths))
+    # symstr, not str: a width like ``k // 2`` prints as sympy's ``floor(k/2)`` under str and
+    # comes back a rational, where the subset parser wants ``int_floor``.
+    interior = ', '.join(f'{symbolic.symstr(lo)}:{symbolic.symstr(lo + extent)}'
+                         for extent, (lo, _) in zip(desc.shape, widths))
     state.add_edge(
         state.add_read(arr), None, state.add_write(out), None,
         Memlet(data=arr, subset=subsets.Range.from_array(desc), other_subset=subsets.Range.from_string(interior)))
@@ -800,7 +820,10 @@ def reshape(pv: ProgramVisitor,
     order = str(order)
     fortran_strides = order == 'F' or (order == 'A' and desc.is_packed_fortran_strides())
 
-    # New shape and strides as symbolic expressions
+    # New shape and strides as symbolic expressions. A scalar is a rank-1 shape, which is what
+    # ``np.reshape(a, n)`` and ``a.reshape(n)`` both mean.
+    if not isinstance(newshape, (list, tuple)):
+        newshape = [newshape]
     newshape = [symbolic.pystr_to_symbolic(s) for s in newshape]
     undecided = False
     if strides is None:
@@ -858,7 +881,11 @@ def _ndarray_reshape(
 ) -> str:
     if len(newshape) == 0:
         raise TypeError('reshape() takes at least 1 argument (0 given)')
-    if len(newshape) == 1 and isinstance(newshape, (list, tuple)):
+    # newshape[0], not newshape: ``*newshape`` is ALWAYS a tuple, so the old spelling unwrapped
+    # every one-argument call -- ``a.reshape(n)`` and ``a.reshape(-1)`` handed ``reshape`` a bare
+    # scalar, which it then iterated ("'symbol' object is not iterable"). Unwrap only when the one
+    # argument is itself the shape sequence, as in ``a.reshape((nr1, nr2))``.
+    if len(newshape) == 1 and isinstance(newshape[0], (list, tuple)):
         newshape = newshape[0]
     return reshape(pv, sdfg, state, arr, newshape, order)
 
