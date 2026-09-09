@@ -372,7 +372,7 @@ def standalone_wcr_expression(redtype, lhs: str, rhs: str) -> Optional[str]:
 def standalone_gpu_atomic(operator: str, ptr: str, value: str) -> str:
     """One atomic read-modify-write on the device, in CPF's own spelling.
 
-    ``cpf_gpu_atomic`` comes from :data:`~dace.cpf_lowering.HIP_DEVICE_PREAMBLE` and takes the
+    ``cpf_gpu_atomic`` comes from :data:`~dace.cpf_lowering.HIP_DEVICE_BLOCKS` and takes the
     combination as a functor, so ONE helper covers every reduction an SDFG can carry -- HIP itself
     spells only a few operator/type pairs as an intrinsic.
 
@@ -396,7 +396,7 @@ def drain_gpu_block_reduction(red: dict, idstr: str, covered: dict) -> str:
     if cpf_lowering.standalone():
         # Same fold, none of the runtime: the reduction functor becomes a lambda, and the one atomic
         # per block becomes the preamble's CAS loop, which covers every operator rather than the few
-        # HIP spells as an intrinsic. ``gpucub`` is aliased to hipcub by HIP_DEVICE_PREAMBLE, as
+        # HIP spells as an intrinsic. ``gpucub`` is aliased to hipcub by HIP_DEVICE_BLOCKS, as
         # ``gpucub.cuh`` aliases it in an ordinary build.
         operator = '[] (const {ctype} &__cpf_acc, const {ctype} &__cpf_val) {{ return {expression}; }}'.format(
             ctype=red['ctype'], expression=standalone_wcr_expression(red['redtype'], '__cpf_acc', '__cpf_val'))
@@ -1835,7 +1835,7 @@ class CPUCodeGen(TargetCodeGenerator):
         inside a ``__global__`` function is ignored by the device compiler, so the pragma would
         render a plain racing read-modify-write that still compiles and still produces numbers --
         the exact failure mode CPF's gate exists to prevent. The device spelling is
-        :data:`~dace.cpf_lowering.HIP_DEVICE_PREAMBLE`'s ``cpf_gpu_atomic``, which applies the same
+        :data:`~dace.cpf_lowering.HIP_DEVICE_BLOCKS`'s ``cpf_gpu_atomic``, which applies the same
         combination through one ``atomicCAS`` loop.
 
         :raises NotImplementedError: for a vector-typed WCR, which has no scalar location to lock.

@@ -724,7 +724,10 @@ HIP_BASE_HEADERS: Tuple[str, ...] = ('<hip/hip_runtime.h>', '<hipcub/hipcub.hpp>
 #: it as ``__state->gpu_context->streams``, so keeping that SHAPE is what lets the device code
 #: stand unaltered. One stream, because canon offloads onto the default stream
 #: (``max_concurrent_streams = -1``); the array is what the emitted indexing expects.
-HIP_DEVICE_PREAMBLE: str = """\
+#:
+#: This is the part EVERY device unit needs. What only some need is in
+#: :data:`HIP_DEVICE_BLOCKS`, selected the same way the C helpers are -- from the finished text.
+HIP_DEVICE_CORE: str = """\
 #define DACE_EXPORTED
 #define DACE_HDFI __host__ __device__ __forceinline__
 #define DACE_HFI __host__ __forceinline__
@@ -743,6 +746,25 @@ static constexpr gpuError_t gpuErrorMemoryAllocation = hipErrorOutOfMemory;
         }                                                                                     \\
     } while (0)
 
+//: The one stream canon offloads onto, in the shape the generated frame indexes.
+struct cpf_gpu_context {
+    gpuStream_t streams[1];
+    gpuEvent_t events[1];
+    gpuError_t lasterror;
+};
+"""
+
+#: Device preamble blocks only SOME units need, keyed by the identifier that pulls each one in.
+#:
+#: Same principle as :func:`helpers_used`, and for the same reason: what a unit needs is a property
+#: of the finished text, not of the SDFG. Emitting the lot unconditionally cost every GPU form the
+#: 30-line atomic template and the cub aliases whether or not it reduced anything -- measured over
+#: the 40-kernel corpus, the atomic block was dead in 33 of 40 and the cub aliases in 32, about 40
+#: lines of a 200-line form. The form is read by an agent under a token budget, so text it has no
+#: use for is not free.
+HIP_DEVICE_BLOCKS: Dict[str, str] = {
+    'DACE_KERNEL_LAUNCH_CHECK':
+    """\
 #define DACE_KERNEL_LAUNCH_CHECK(err, name, gx, gy, gz, bx, by, bz)                            \\
     do {                                                                                      \\
         if ((err) != gpuSuccess) {                                                            \\
@@ -752,25 +774,26 @@ static constexpr gpuError_t gpuErrorMemoryAllocation = hipErrorOutOfMemory;
             abort();                                                                          \\
         }                                                                                     \\
     } while (0)
-
-//: The one stream canon offloads onto, in the shape the generated frame indexes.
-struct cpf_gpu_context {
-    gpuStream_t streams[1];
-    gpuEvent_t events[1];
-    gpuError_t lasterror;
-};
-
-//: The backend cub, under the name the code generator writes -- what gpucub.cuh aliases.
+""",
+    'gpucub':
+    """\
+//: The backend cub, under the name the code generator writes -- what gpucub.cuh aliases. The
+//: DACE_CUB_*_OP macros below are the binary-operator functors a DeviceScan / DeviceReduce
+//: expansion passes by macro, in the spelling cub_compat.cuh selects for HIP. Only that arm
+//: applies: hipCUB keeps the functor structs CCCL 3 dropped, and a unit built by hipcc is never
+//: built against CCCL.
 namespace gpucub = hipcub;
-
-//: The cub binary-operator functors a DeviceScan / DeviceReduce expansion passes by macro, in the
-//: spelling cub_compat.cuh selects for HIP. Only that arm applies: hipCUB keeps the functor structs
-//: CCCL 3 dropped, and a unit built by hipcc is never built against CCCL.
-#define DACE_CUB_SUM_OP ::gpucub::Sum()
-#define DACE_CUB_MIN_OP ::gpucub::Min()
-#define DACE_CUB_MAX_OP ::gpucub::Max()
-#define DACE_CUB_MUL_OP [] __device__(auto __cpf_a, auto __cpf_b) { return __cpf_a * __cpf_b; }
-
+""",
+    'DACE_CUB_SUM_OP':
+    '#define DACE_CUB_SUM_OP ::gpucub::Sum()\n',
+    'DACE_CUB_MIN_OP':
+    '#define DACE_CUB_MIN_OP ::gpucub::Min()\n',
+    'DACE_CUB_MAX_OP':
+    '#define DACE_CUB_MAX_OP ::gpucub::Max()\n',
+    'DACE_CUB_MUL_OP':
+    '#define DACE_CUB_MUL_OP [] __device__(auto __cpf_a, auto __cpf_b) { return __cpf_a * __cpf_b; }\n',
+    'cpf_gpu_atomic':
+    """\
 //: A conflicting accumulation, applied atomically under any binary operator.
 //:
 //: HIP spells only a few operator/type pairs as an intrinsic (atomicAdd on the arithmetic types,
@@ -792,7 +815,43 @@ __device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
         old = atomicCAS(word, assumed, __builtin_bit_cast(cpf_atomic_word, updated));
     } while (assumed != old);
 }
-"""
+""",
+}
+
+#: Emission order for :data:`HIP_DEVICE_BLOCKS`. A dict preserves insertion order, but the blocks
+#: are selected into a set, so the order a unit gets them in has to be stated rather than inherited
+#: from however the set happened to iterate -- two runs of the same SDFG must render byte-identical.
+HIP_DEVICE_BLOCK_ORDER: Tuple[str, ...] = tuple(HIP_DEVICE_BLOCKS)
+
+#: What each block needs in turn. The cub operator macros expand to ``::gpucub::`` names, so a unit
+#: that mentions one needs the namespace alias even when it never writes ``gpucub`` itself.
+HIP_DEVICE_BLOCK_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
+    'DACE_CUB_SUM_OP': ('gpucub', ),
+    'DACE_CUB_MIN_OP': ('gpucub', ),
+    'DACE_CUB_MAX_OP': ('gpucub', ),
+    'DACE_CUB_MUL_OP': ('gpucub', ),
+    'cpf_gpu_atomic': ('gpucub', ),
+}
+
+
+def hip_device_preamble(code: str) -> str:
+    """:data:`HIP_DEVICE_CORE` plus the blocks ``code`` actually reaches for.
+
+    :param code: the emitted translation unit, WITHOUT its preamble -- so a block's own definition
+                 never counts as a use of it.
+    :returns: the device preamble, core first and blocks in :data:`HIP_DEVICE_BLOCK_ORDER`.
+    """
+    needed: Set[str] = set()
+    pending = [name for name in HIP_DEVICE_BLOCKS if re.search(rf'\b{re.escape(name)}\b', code)]
+    while pending:
+        name = pending.pop()
+        if name in needed:
+            continue
+        needed.add(name)
+        pending.extend(dep for dep in HIP_DEVICE_BLOCK_DEPENDENCIES.get(name, ()) if dep not in needed)
+    parts = [HIP_DEVICE_CORE]
+    parts += [HIP_DEVICE_BLOCKS[name] for name in HIP_DEVICE_BLOCK_ORDER if name in needed]
+    return '\n'.join(parts)
 
 
 def device_entry_prologue(state_struct: str) -> str:

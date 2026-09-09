@@ -822,7 +822,7 @@ def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STA
     if dialect is cpf_lowering.Dialect.STANDALONE_HIP:
         lines.append('')
         lines.append('// What dace/dace.h would define for the device side.')
-        lines.append(cpf_lowering.HIP_DEVICE_PREAMBLE)
+        lines.append(cpf_lowering.hip_device_preamble(code))
     if definitions:
         lines.append('')
         lines.append('// Functions the DaCe runtime headers would otherwise provide.')
@@ -864,7 +864,7 @@ _C_DECLARED_TYPES = (r'(?:const\s+)?(?:unsigned\s+|signed\s+)?'
 #: What a finished DEVICE rendering must not contain. The two entries dropped from :data:`BANNED`
 #: are dropped because the unit DEFINES them rather than borrowing them: the ``DACE_*`` annotation
 #: macros and the state struct carrying the stream both come from
-#: :data:`~dace.cpf_lowering.HIP_DEVICE_PREAMBLE`. A ``dace/`` header or a ``dace::`` symbol is
+#: :data:`~dace.cpf_lowering.HIP_DEVICE_CORE`. A ``dace/`` header or a ``dace::`` symbol is
 #: still a leak, and those are the two that say the unit needs the runtime.
 BANNED_DEVICE: Tuple[Tuple[re.Pattern, str],
                      ...] = tuple(entry for entry in BANNED
