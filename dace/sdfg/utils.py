@@ -3099,13 +3099,19 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                 assert isinstance(g, dace.SDFGState)
                 if tutil.tasklet_has_symbol(n, symbol_str):
                     # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
-                    # Sanity check no tasklet should assign to a symbol
-                    lhs, rhs = n.code.as_string.split(" = ", 2)
-                    tasklet_lhs = lhs.strip()
-                    assert symbol_str != tasklet_lhs
+                    # Sanity check no tasklet should assign to a symbol. Read off the statements, not
+                    # off a ``" = "`` split of the source: a body need not be a single assignment, or
+                    # any assignment at all -- a C++ guard tasklet is ``if (s > 0) { std::abort(); }``
+                    # and splitting that crashed here instead of checking anything.
+                    assert not tutil.tasklet_assigns_name(n, symbol_str)
                     assert symbol_str != "True"
                     assert symbol_str != "False"
-                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
+                    # ``py_only=False``: a non-Python body must be rewritten too, or the tasklet
+                    # keeps reading a symbol this call is removing from the SDFG. For a Python
+                    # tasklet the flag is not consulted at all (the symbolic path takes it), so
+                    # this only opens the C++ case -- token replacement over the whole body, which
+                    # is what a guard tasklet like ``if (s > 0) { std::abort(); }`` needs.
+                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"}, py_only=False)
                     n.add_in_connector(f"_in_{symbol_str}")
                     if sdict is None:
                         sdict = g.scope_dict()

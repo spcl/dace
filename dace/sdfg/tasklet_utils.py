@@ -174,6 +174,49 @@ def token_split_variable_names(string_to_check: str) -> Set[str]:
     return tokens
 
 
+#: A name being assigned in a non-Python body: ``x =``, ``x +=``, ``x <<=``, but not ``x ==`` /
+#: ``x !=`` / ``x <=`` / ``x >=``. Used where the body cannot be parsed, so it is deliberately
+#: over-eager: reporting an assignment that is not one only trips a sanity check.
+_NON_PYTHON_ASSIGNMENT = r'(?<![\w.]){name}\s*(?:[+\-*/%&|^]|<<|>>)?=(?!=)'
+
+
+def tasklet_assigns_name(tasklet: dace.nodes.Tasklet, name: str) -> bool:
+    """Report whether ``tasklet``'s body assigns to ``name``.
+
+    A tasklet body is not necessarily a single assignment -- it can hold several statements, or
+    none at all (a C++ guard tasklet is ``if (s > 0) {{ std::abort(); }}``) -- so this reads the
+    statements rather than splitting the source on ``" = "``.
+
+    :param tasklet: The tasklet whose body to inspect.
+    :param name: The name to look for on the left-hand side of an assignment.
+    :returns: ``True`` if the body assigns ``name``.
+    """
+    code = tasklet.code.as_string
+    if name not in code:
+        return False
+
+    if tasklet.code.language != dace.dtypes.Language.Python:
+        return re.search(_NON_PYTHON_ASSIGNMENT.format(name=re.escape(name)), code) is not None
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        # Not parseable as Python despite the language tag: fall back to the textual rule rather
+        # than claiming the body assigns nothing.
+        return re.search(_NON_PYTHON_ASSIGNMENT.format(name=re.escape(name)), code) is not None
+
+    for node in ast.walk(tree):
+        targets = ()
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.For, ast.NamedExpr)):
+            targets = (node.target, )
+        for target in targets:
+            if any(isinstance(sub, ast.Name) and sub.id == name for sub in ast.walk(target)):
+                return True
+    return False
+
+
 def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
     """
     Checks if a symbol is present in a tasklet's code. Uses symbolic analysis of sympy.

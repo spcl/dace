@@ -142,3 +142,58 @@ if __name__ == "__main__":
     for iset in input_sets:
         test_single_edge(iset)
     test_complex_expr_and_connector_names()
+
+
+def test_a_cpp_guard_tasklet_reading_the_symbol_is_rewritten():
+    """A tasklet body is not necessarily one Python assignment.
+
+    ``demote_symbol_to_scalar`` used to sanity-check "no tasklet assigns the symbol" by splitting
+    the body on ``" = "``, and to rewrite the body ``py_only``. A C++ guard tasklet --
+    ``if (s > 0) { std::abort(); }``, which canonicalization emits for a scatter-guard assumption
+    -- has no assignment at all: the split crashed with ``not enough values to unpack``, and the
+    rewrite behind it asserted. Both are the same mistake, that every body is ``lhs = rhs``.
+
+    The tasklet must come out reading the new scalar through a connector, with the symbol gone
+    from the SDFG.
+    """
+    sdfg = dace.SDFG('cpp_guard_demotion')
+    sdfg.add_array('data', [4], dace.int64)
+    sdfg.add_symbol('guard_count', dace.int64)
+    start = sdfg.add_state('start', is_start_block=True)
+    body = sdfg.add_state('body')
+    sdfg.add_edge(start, body, dace.InterstateEdge(assignments={'guard_count': 'data[0]'}))
+    guard = body.add_tasklet('check_assumption', {}, {},
+                             'if (guard_count > 0) { std::abort(); }',
+                             language=dace.dtypes.Language.CPP)
+
+    sdutil.demote_symbol_to_scalar(sdfg, 'guard_count', dace.int64, None)
+
+    assert 'guard_count' not in sdfg.symbols, 'the symbol is gone from the SDFG'
+    assert 'guard_count' in sdfg.arrays, 'and is now a scalar'
+    assert '_in_guard_count' in guard.in_connectors, 'the guard reads the scalar through a connector'
+    code = guard.code.as_string
+    assert '_in_guard_count' in code and 'std::abort()' in code, f'the C++ body must survive intact: {code!r}'
+    assert 'if (guard_count' not in code, f'the bare symbol must be gone from the body: {code!r}'
+
+
+def test_tasklet_assigns_name_reads_the_statements_not_the_source_text():
+    """The sanity check behind the demotion: it must answer for a body with no assignment, with
+    several, and for a non-Python body, without assuming any shape."""
+    from dace.sdfg import tasklet_utils as tutil
+
+    sdfg = dace.SDFG('assigns_name')
+    state = sdfg.add_state()
+
+    def tasklet(code, language=dace.dtypes.Language.Python):
+        return state.add_tasklet(f't{len(state.nodes())}', {'a': None}, {'b': None}, code, language=language)
+
+    assert tutil.tasklet_assigns_name(tasklet('b = a'), 'b')
+    assert not tutil.tasklet_assigns_name(tasklet('b = a'), 'a')
+    assert tutil.tasklet_assigns_name(tasklet('tmp = a\nb = tmp * 2'), 'tmp'), 'a later statement counts'
+    assert tutil.tasklet_assigns_name(tasklet('b = a\nb += 1'), 'b'), 'an augmented assignment counts'
+    assert not tutil.tasklet_assigns_name(tasklet('b = a == 2'), 'a'), 'a comparison is not an assignment'
+    cpp = tasklet('if (a > 0) { std::abort(); }', dace.dtypes.Language.CPP)
+    assert not tutil.tasklet_assigns_name(cpp, 'a'), 'a body with no assignment assigns nothing'
+    assert tutil.tasklet_assigns_name(tasklet('b = a;', dace.dtypes.Language.CPP), 'b'), 'C++ assignment counts'
+    assert tutil.tasklet_assigns_name(tasklet('b += a;', dace.dtypes.Language.CPP), 'b'), 'so does C++ +='
+    assert not tutil.tasklet_assigns_name(tasklet('if (b >= a) { }', dace.dtypes.Language.CPP), 'b'), '>= is not ='
