@@ -142,9 +142,17 @@ def masked_write_operand(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str]]:
 
 
 def _binop_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str, str, bool]]:
-    """If ``tasklet`` is a single ``_o = _a <op> _b`` (arithmetic or comparison) whose two
+    """If ``tasklet`` is a single ``_o = _a <op> _b`` (arithmetic, comparison or logical) whose two
     operands are input connectors, return ``(out_conn, a_conn, b_conn, is_comparison)``;
     else ``None``.
+
+    ``and`` / ``or`` are ``ast.BoolOp``, neither ``BinOp`` nor ``Compare``, so they were skipped
+    here and reached the tile converter unresolved -- where they are ordinary binops subject to the
+    single-dtype rule. CloudSC combines a Fortran ``LOGICAL`` (an int array) with a comparison's
+    ``bool`` in ``__t1 = _in_ldcum_0 and __t0``, and the unresolved pair raised the converter's
+    mixed-dtype ``NotImplementedError``, aborting the whole vectorization. Treated as an arithmetic
+    binop: the operands promote to a common dtype and the result is cast back to the destination's,
+    which is what the converter's own gate asks the caller to arrange.
     """
     if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 2:
         return None
@@ -163,6 +171,10 @@ def _binop_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str, str, boo
         left, right, is_cmp = rhs.left, rhs.right, False
     elif isinstance(rhs, ast.Compare) and len(rhs.ops) == 1 and isinstance(rhs.ops[0], _COMPARISON_AST):
         left, right, is_cmp = rhs.left, rhs.comparators[0], True
+    elif isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
+        # ``a and b`` / ``a or b``. NOT a comparison: the converter checks the OUTPUT dtype too for
+        # these, so the destination gets its cast like any arithmetic result.
+        left, right, is_cmp = rhs.values[0], rhs.values[1], False
     else:
         return None
     if not (isinstance(left, ast.Name) and isinstance(right, ast.Name)):
