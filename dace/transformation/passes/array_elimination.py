@@ -84,9 +84,12 @@ class ArrayElimination(ppl.Pass):
             if removed_nodes:
                 result.update({n.data for n in removed_nodes})
 
+        # Data that is only referenced by memlets between two tasklets has no access node
+        memlet_data = {e.data.data for state in sdfg.states() for e in state.edges() if e.data.data is not None}
+
         # If node is completely removed from graph, erase data descriptor
         for aname, desc in list(sdfg.arrays.items()):
-            if not desc.transient:
+            if not desc.transient or aname in memlet_data:
                 continue
             if isinstance(desc, data.Structure) and len(desc.members) > 0:
                 continue
