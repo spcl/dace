@@ -430,6 +430,15 @@ def make_unop_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
         a_ptr = "_bc_a"
         pre.append(f"const {out_dtype} {a_ptr}[1] = {{ {val} }};")
         a_bcast = "true"
+    # An op with no per-ISA character: the backend headers' ``tile_unop`` templates on a single
+    # char, and only twelve of the seventeen ops the converter lowers have one -- ``tan``, ``asin``,
+    # ``acos``, ``atan``, ``sinh``, ``cosh`` and the ``sign`` CloudSC needs do not. The lookup below
+    # is a bare subscript, so reaching it without a char is a KeyError out of codegen rather than a
+    # refusal or a fallback. The pure per-lane expansion renders every op ``_UNOP_CPP`` knows, so
+    # delegate to it -- the same escape the cast-op, scalar-output and mixed-dtype cases above take.
+    if node.op not in _UNOP_TO_CHAR:
+        from dace.libraries.tileops.nodes.tile_unop import ExpandTileUnopPure
+        return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
     op_char = _UNOP_TO_CHAR[node.op]
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"

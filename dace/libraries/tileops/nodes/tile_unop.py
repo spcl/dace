@@ -55,6 +55,10 @@ _UNOP_CPP = {
     "floor": ("std::floor(", ")"),
     "ceil": ("std::ceil(", ")"),
     "tanh": ("std::tanh(", ")"),
+    # numpy>=2 ``sign``: ``(0 < x) - (x < 0)``. The runtime already carries the template, at global
+    # scope rather than in ``dace::math``, and the op label is the runtime's own name so the
+    # converter matches the tasklet body the frontend emits verbatim.
+    "sign_numpy_2": ("sign_numpy_2(", ")"),
 }
 
 # op -> the cuTile-Python expression (operand placeholder ``{a}``).

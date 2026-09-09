@@ -72,6 +72,9 @@ _SUPPORTED_UNOPS = {
     "floor",
     "ceil",
     "tanh",
+    # numpy>=2 ``sign``, under the runtime's own function name -- which is what the frontend puts
+    # in the tasklet body, so the call-form matcher below finds it without an alias table.
+    "sign_numpy_2",
 }
 
 #: Registered dtype-cast call names (``float64`` / ``int32`` / ...), from the dtype
