@@ -557,6 +557,12 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                     continue
                 replacement = copy.deepcopy(_as_container(new_desc))
                 replacement.transient = False
+                # ``offset`` names the origin of the index space the memlets below are written in --
+                # the Fortran frontend uses it to keep one-based indices -- and equivalence
+                # deliberately does not compare it. Adopting the one from above would silently move
+                # every one of those memlets by the difference. Only arrays carry a settable one.
+                if isinstance(inner_desc, data.Array) and isinstance(replacement, data.Array):
+                    replacement.offset = copy.deepcopy(inner_desc.offset)
                 node.sdfg.arrays[connector] = replacement
                 rebase_descendants(node.sdfg, connector, inner_desc, replacement)
 
