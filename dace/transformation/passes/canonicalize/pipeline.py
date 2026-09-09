@@ -71,7 +71,7 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.distribute_tasklet_into_map import DistributeTaskletIntoMap
 from dace.transformation.dataflow.mapreduce import MapReduceFusion, MapWCRFusion
 from dace.transformation.dataflow.redundant_array import RedundantArray
-from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
 from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
@@ -981,7 +981,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # AugAssignToWCR is intentionally NOT in this recipe: reductions are handled
     # via loop_to_reduce -> Reduce nodes, not WCR-on-Map. PrivatizeScalars is
     # adapted (_PrivatizeScalarsStage) so its analysis dependencies resolve.
-    s += [('reduce', PatternApplyOnceEverywhere([TrivialTaskletElimination()])), ('reduce', RevertNonReductionWCR()),
+    s += [('reduce', EliminateTrivialTasklets()), ('reduce', RevertNonReductionWCR()),
           ('reduce', _PrivatizeScalarsStage()), ('reduce', _PrivatizeArraysStage()), ('reduce', SymbolPropagation()),
           ('reduce', ConstantPropagation())]
     # UntileLoops (BEFORE ShortLoopUnroll): collapse manually-tiled two-level
