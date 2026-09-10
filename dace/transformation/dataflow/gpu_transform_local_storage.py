@@ -6,7 +6,7 @@ import copy
 import collections
 
 from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
-from dace.sdfg import nodes, SDFGState
+from dace.sdfg import dealias, nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.properties import Property, make_properties
@@ -337,6 +337,11 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
 
             out_cloned_arraynodes[array_node.data] = cloned_node
 
+        # How each cloned container relates to the one it stands for: where its origin sits in the
+        # original's coordinates, and which of the original's dimensions it does not have. A nested
+        # SDFG connected to it is restated with the same recipe (see the note further below).
+        clone_windows = {}
+
         # Third, connect the cloned arrays to the originals
         for array_name, node in in_cloned_arraynodes.items():
             graph.add_node(node)
@@ -371,6 +376,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                             newmemlet.subset = type(edge.data.subset)([lost_ranges[-1]])
                         else:
                             newmemlet.subset = type(edge.data.subset)([r for r in newsubset if r is not None])
+                        clone_windows[node.data] = (sbs.Range.from_indices(offset), list(lost_dims))
 
                     graph.add_edge(node, None, edge.dst, edge.dst_conn, newmemlet)
 
@@ -448,6 +454,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                             newmemlet.subset = type(edge.data.subset)([lost_ranges[-1]])
                         else:
                             newmemlet.subset = type(edge.data.subset)([r for r in newsubset if r is not None])
+                        clone_windows[node.data] = (sbs.Range.from_indices(offset), list(lost_dims))
 
                     graph.add_edge(edge.src, edge.src_conn, node, None, newmemlet)
 
@@ -500,3 +507,17 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             for edge in scope_subgraph.edges():
                 if edge.data.data is not None and edge.data.data in cloned_arrays:
                     edge.data.data = cloned_arrays[edge.data.data]
+
+            # Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) a
+            # connector is the container it is connected to, and the memlets inside are written in
+            # that container's coordinates. A connector inside the scope now reads the copy on the
+            # device, so it and everything below it move to the copy's origin and lose the
+            # dimensions the copy does not have.
+            for scope_node in scope_subgraph.nodes():
+                if not isinstance(scope_node, nodes.NestedSDFG):
+                    continue
+                for edge in graph.all_edges(scope_node):
+                    window = clone_windows.get(edge.data.data)
+                    connector = edge.dst_conn if edge.dst is scope_node else edge.src_conn
+                    if window is not None and connector:
+                        dealias.rebase_connector(scope_node, connector, *window)

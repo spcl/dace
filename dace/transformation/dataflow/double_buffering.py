@@ -191,6 +191,17 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         del nsdfg_node.sdfg.symbols['__dace_db_param']
         del nsdfg_node.symbol_mapping['__dace_db_param']
 
+        # A transient that gained a buffer dimension is no longer the container a nested SDFG below
+        # was connected to: under the nested SDFG contract (see
+        # ``dace.sdfg.dealias.integrate_nested_sdfg``) the connector has to become a view of the
+        # buffer its memlet selects. This happens once the buffer index is in its final form, so
+        # that the view is written the way the loop reads it.
+        for state in nsdfg_node.sdfg.states():
+            for node in state.nodes():
+                if (isinstance(node, nodes.NestedSDFG)
+                        and any(edge.data.data in transients_to_modify for edge in state.all_edges(node))):
+                    node.integrate_into_parent()
+
         return nsdfg_node
 
     @staticmethod

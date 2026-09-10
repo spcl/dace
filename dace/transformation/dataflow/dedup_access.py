@@ -7,7 +7,7 @@ from typing import List
 
 from dace import sdfg as sd, subsets
 from dace.memlet import Memlet
-from dace.sdfg import nodes, graph as gr
+from dace.sdfg import dealias, nodes, graph as gr
 from dace.transformation import transformation as xf
 import dace.transformation.helpers as helpers
 
@@ -135,8 +135,15 @@ class DeduplicateAccess(xf.SingleStateTransformation):
                 graph.remove_edge(e)
                 new_memlet = copy.deepcopy(e.data)
                 new_edge = graph.add_edge(anode, None, e.dst, e.dst_conn, new_memlet)
-                for pe in graph.memlet_tree(new_edge):
+                moved = list(graph.memlet_tree(new_edge))
+                for pe in moved:
                     # Rename data on memlet
                     pe.data.data = name
                     # Offset memlets to match new transient
                     pe.data.subset.offset(subset, True)
+
+                # Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) a
+                # connector is the container it is connected to, and the memlets inside are written
+                # in that container's coordinates. A consumer that is a nested SDFG now reads the
+                # deduplicated transient, so it and everything below it move to its origin as well.
+                dealias.rebase_reconnected_edges(moved, subset)

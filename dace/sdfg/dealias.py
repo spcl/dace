@@ -764,6 +764,203 @@ def _widen_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.
                 _widen_container(node.sdfg, conn, inner, replacement, inner_window, symbol_types)
 
 
+def _rebase_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data, offset: Optional[subsets.Range],
+                      squeeze: Optional[List[int]], symbol_types: Dict[str, dtypes.typeclass]) -> None:
+    """
+    Restates container ``name`` as ``new_desc`` and subtracts the new container's origin from every
+    access of it.
+
+    Memlets on edges, memlets in meta code (conditions, assignments, loop headers) and the
+    connectors of the nested SDFGs below that describe the same container all follow; the latter
+    recursively.
+
+    :param sdfg: The SDFG the container belongs to.
+    :param name: The name of the container.
+    :param old_desc: The descriptor of the container as written before the swap.
+    :param new_desc: The descriptor it is restated as.
+    :param offset: Where the new container's origin sits in the old container's coordinates, one
+                   index per dimension, or None if the two share an origin.
+    :param squeeze: The dimensions of the old container the new one does not have, or None if it
+                    kept every one of them.
+    :param symbol_types: The types of the symbols the offset and the new descriptor are written in.
+    :note: This function operates in-place.
+    """
+    # Avoid import loops
+    from dace.frontend.python import astutils
+    from dace.sdfg.memlet_utils import MemletReplacer
+
+    def rebase(memlet: Memlet) -> Memlet:
+        result = copy.deepcopy(memlet)
+        result.data = name
+        if offset is not None:
+            result.subset.offset(offset, True)
+        if squeeze:
+            result.subset.pop(squeeze)
+        return result
+
+    # Meta accesses are parsed against the descriptor they were written for, so they go first
+    replacer = MemletReplacer(sdfg.arrays, rebase, {name})
+    for edge in sdfg.all_interstate_edges():
+        if not edge.data.is_unconditional():
+            for stmt in edge.data.condition.code:
+                replacer.visit(stmt)
+        for aname, assignment in list(edge.data.assignments.items()):
+            edge.data.assignments[aname] = astutils.unparse(replacer.visit(ast.parse(assignment)))
+    for region in sdfg.all_control_flow_regions():
+        for code in region.get_meta_codeblocks():
+            if code.code is None or isinstance(code.code, str):
+                continue
+            for stmt in code.code:
+                replacer.visit(stmt)
+
+    for state in sdfg.all_states():
+        for edge in state.edges():
+            memlet = edge.data
+            if memlet.data == name:
+                if memlet.subset is not None:
+                    other = memlet.other_subset
+                    edge.data = rebase(memlet)
+                    edge.data.other_subset = other
+            elif memlet.other_subset is not None and any(
+                    isinstance(n, nd.AccessNode) and n.data == name for n in (edge.src, edge.dst)):
+                stand_in = Memlet(data=name, subset=copy.deepcopy(memlet.other_subset))
+                memlet.other_subset = rebase(stand_in).subset
+
+    sdfg.arrays[name] = new_desc
+
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, nd.NestedSDFG) or node.sdfg is None:
+                continue
+            seen: Set[str] = set()
+            for edge in state.all_edges(node):
+                if edge.data.data != name:
+                    continue
+                conn = edge.dst_conn if edge.dst is node else edge.src_conn
+                if conn is None or '.' in conn or conn not in node.sdfg.arrays or conn in seen:
+                    continue
+                inner = node.sdfg.arrays[conn]
+                if inner.transient or not _same_container(old_desc, inner, set(node.sdfg.symbols.keys()), node):
+                    continue
+                seen.add(conn)
+                # The nested SDFG has to know the symbols the offset memlets and the adopted
+                # descriptor are written in: they are the parent's, passed down unchanged.
+                symbols = set(map(str, new_desc.free_symbols))
+                if offset is not None:
+                    symbols |= set(map(str, offset.free_symbols))
+                for sym in symbols:
+                    if sym not in node.sdfg.symbols:
+                        node.sdfg.add_symbol(sym, symbol_types.get(sym, dtypes.int64))
+                    if sym not in node.symbol_mapping:
+                        node.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
+                replacement = copy.deepcopy(new_desc)
+                replacement.transient = False
+                _rebase_container(node.sdfg, conn, inner, replacement, offset, squeeze, symbol_types)
+
+
+def rebase_connector(node: nd.NestedSDFG,
+                     connector: str,
+                     offset: Optional[subsets.Range] = None,
+                     squeeze: Optional[List[int]] = None) -> bool:
+    """
+    Restates a connector as the container it is now connected to, moving the memlets inside with it.
+
+    A transformation may put a different container behind a connector: a copy of the part the edge
+    selects (local storage, a copy on a device), or the same data laid out differently (one block of
+    a distributed array). Under the nested SDFG contract (see ``integrate_nested_sdfg``) a connector
+    is the container it is connected to and the memlets inside are written in that container's
+    coordinates, so both have to follow the swap -- the connector adopts the new descriptor, and
+    every memlet on it, here and in the nested SDFGs below, moves to the new container's origin.
+
+    Use this where the new container holds the same elements as the part of the old one the edge
+    selected. Where it holds more -- a container the connector only reads a window of -- the
+    connector becomes a view of it instead; that is ``integrate_nested_sdfg``.
+
+    :param node: The nested SDFG node whose connector was reconnected.
+    :param connector: The name of the connector.
+    :param offset: Where the new container's origin sits in the old container's coordinates, one
+                   index per dimension of the old container; None if the two share an origin.
+    :param squeeze: The dimensions of the old container the new one does not have -- a copy of one
+                    row of a matrix is a vector -- or None if it kept every one of them.
+    :return: True if the connector was restated, False if it already describes the container it is
+             connected to or cannot be restated this way.
+    :note: This function operates in-place.
+    """
+    sdfg = node.sdfg
+    if sdfg is None or sdfg.parent is None:
+        return False
+    if '.' in connector or connector not in sdfg.arrays:
+        return False
+    old_desc = sdfg.arrays[connector]
+    if old_desc.transient:
+        return False
+
+    parent_sdfg = sdfg.parent_sdfg
+    parent_state = sdfg.parent
+    outer_name: Optional[str] = None
+    for edge in parent_state.all_edges(node):
+        conn = edge.dst_conn if edge.dst is node else edge.src_conn
+        if conn != connector or edge.data.data not in parent_sdfg.arrays:
+            continue
+        if outer_name is not None and edge.data.data != outer_name:
+            # Read and written through different containers: not one container to adopt
+            return False
+        outer_name = edge.data.data
+    if outer_name is None:
+        return False
+
+    symbol_types = parent_state.symbols_defined_at(node)
+    available_symbols = set(sdfg.symbols.keys()) | set(symbol_types.keys())
+    outer_desc = parent_sdfg.arrays[outer_name]
+    if _same_container(outer_desc, old_desc, available_symbols, node):
+        return False
+    new_desc = copy.deepcopy(_as_container(outer_desc))
+    new_desc.transient = False
+    if len(new_desc.shape) != len(old_desc.shape) - len(squeeze or []):
+        # A container of a different rank is a reinterpretation, not a swap: leave it to integration
+        return False
+    if offset is not None and len(offset) != len(old_desc.shape):
+        return False
+
+    # The offset and the adopted descriptor are written in the parent's symbols, which the nested
+    # SDFG has to be able to name: a symbol that means something else inside -- a container, a
+    # constant, or a symbol of its own bound to a different expression -- cannot be brought in.
+    passed_symbols = set(map(str, new_desc.free_symbols))
+    if offset is not None:
+        passed_symbols |= set(map(str, offset.free_symbols))
+    if any(sym in sdfg.arrays or sym in sdfg.constants_prop for sym in passed_symbols):
+        return False
+    if any(sym in sdfg.symbols and str(node.symbol_mapping.get(sym, sym)) != sym for sym in passed_symbols):
+        return False
+    for sym in passed_symbols:
+        if sym not in sdfg.symbols:
+            sdfg.add_symbol(sym, symbol_types.get(sym, dtypes.int64))
+        if sym not in node.symbol_mapping:
+            node.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
+
+    _rebase_container(sdfg, connector, old_desc, new_desc, offset, squeeze, symbol_types)
+    return True
+
+
+def rebase_reconnected_edges(edges, offset: Optional[subsets.Range] = None, squeeze: Optional[List[int]] = None):
+    """
+    Restates the connectors of the nested SDFGs the given edges reach, after their container changed.
+
+    A transformation that puts a different container behind part of a memlet tree reconnects the
+    edges of that tree; the ones that end on a nested SDFG carry the swap into it (see
+    ``rebase_connector``).
+
+    :param edges: The edges whose memlets were re-pointed at the new container.
+    :param offset: Where the new container's origin sits in the old container's coordinates.
+    :param squeeze: The dimensions of the old container the new one does not have.
+    :note: This function operates in-place.
+    """
+    for edge in edges:
+        for node, connector in ((edge.dst, edge.dst_conn), (edge.src, edge.src_conn)):
+            if isinstance(node, nd.NestedSDFG) and connector:
+                rebase_connector(node, connector, offset, squeeze)
+
+
 def windowed_connectors(sdfg: SDFG) -> Dict[str, str]:
     """
     Collects the connectors of a nested SDFG that describe a window of the container they are

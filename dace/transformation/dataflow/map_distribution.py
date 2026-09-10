@@ -6,7 +6,7 @@ from numbers import Number
 import dace
 import sympy
 from dace import data, subsets, symbolic
-from dace.sdfg import nodes
+from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
@@ -407,6 +407,11 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                 for e in graph.out_edges(map_entry):
                     if e.data.data == inp.data:
                         e.data.data = local_name
+                        # Under the nested SDFG contract (see
+                        # ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector is the container
+                        # it is connected to. The map now walks this rank's block of the array, so a
+                        # connector reading it describes the block rather than the whole array.
+                        dealias.rebase_reconnected_edges([e])
 
             else:
                 raise NotImplementedError
@@ -464,6 +469,8 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                 for e in graph.in_edges(map_exit):
                     if e.data.data == out.data:
                         e.data.data = local_name
+                        # A connector writing it describes the block as well; see the note above.
+                        dealias.rebase_reconnected_edges([e])
             else:
                 raise NotImplementedError
 

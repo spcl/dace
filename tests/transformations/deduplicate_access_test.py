@@ -215,6 +215,69 @@ def test_dedup_access_contiguous():
     assert nodes_after == nodes_before + 3
 
 
+LEN = 8
+
+
+def _window_reader(name, code, offset):
+    """A map body reading ``a[i + offset]`` and ``a[i + offset + 1]``, as a nested SDFG.
+
+    Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) the connector
+    is the whole container and the memlets inside are written in its coordinates.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [LEN], dace.float64)
+    sdfg.add_array('o', [LEN], dace.float64)
+    sdfg.add_symbol('i', dace.int64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('t', {'x', 'y'}, {'z'}, 'z = %s' % code)
+    state.add_edge(state.add_read('a'), None, tasklet, 'x', dace.Memlet('a[i + %d]' % offset))
+    state.add_edge(state.add_read('a'), None, tasklet, 'y', dace.Memlet('a[i + %d]' % (offset + 1)))
+    state.add_edge(tasklet, 'z', state.add_write('o'), None, dace.Memlet('o[i]'))
+    return sdfg
+
+
+def _two_overlapping_readers():
+    """One map connector feeding two nested SDFGs that read overlapping windows of ``A``."""
+    sdfg = dace.SDFG('dedup_nested')
+    for name in ('A', 'B', 'C'):
+        sdfg.add_array(name, [LEN], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('m', dict(i='0:%d' % (LEN - 2)))
+    entry.add_in_connector('IN_A')
+    entry.add_out_connector('OUT_A')
+    first = state.add_nested_sdfg(_window_reader('sum', 'x + y', 0), {'a'}, {'o'}, {'i': 'i'})
+    second = state.add_nested_sdfg(_window_reader('product', 'x * y', 1), {'a'}, {'o'}, {'i': 'i'})
+    state.add_edge(state.add_read('A'), None, entry, 'IN_A', dace.Memlet('A[0:%d]' % LEN))
+    state.add_edge(entry, 'OUT_A', first, 'a', dace.Memlet('A[i:i + 2]'))
+    state.add_edge(entry, 'OUT_A', second, 'a', dace.Memlet('A[i + 1:i + 3]'))
+    state.add_memlet_path(first, exit_, state.add_write('B'), src_conn='o', memlet=dace.Memlet('B[i]'))
+    state.add_memlet_path(second, exit_, state.add_write('C'), src_conn='o', memlet=dace.Memlet('C[i]'))
+    return sdfg, state, entry, first, second
+
+
+def test_dedup_access_into_nested_sdfgs():
+    """The consumers read the deduplicated transient, so their connectors follow it."""
+    A = np.arange(LEN, dtype=np.float64)
+    expected_b = A[:LEN - 2] + A[1:LEN - 1]
+    expected_c = A[1:LEN - 1] * A[2:LEN]
+
+    sdfg, state, entry, first, second = _two_overlapping_readers()
+    sdfg.validate()
+
+    DeduplicateAccess.apply_to(sdfg, map_entry=entry, node1=first, node2=second, verify=False, save=False)
+
+    for node in (first, second):
+        edge = next(e for e in state.in_edges(node) if e.dst_conn == 'a')
+        assert node.sdfg.arrays['a'].is_equivalent(sdfg.arrays[edge.data.data])
+    sdfg.validate()
+
+    B = np.zeros(LEN)
+    C = np.zeros(LEN)
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(B[:LEN - 2], expected_b)
+    assert np.allclose(C[:LEN - 2], expected_c)
+
+
 if __name__ == '__main__':
     test_find_contiguous_subsets()
     test_find_contiguous_subsets_nonsquare()
@@ -222,3 +285,4 @@ if __name__ == '__main__':
     test_dedup_access_plus()
     test_dedup_access_square()
     test_dedup_access_contiguous()
+    test_dedup_access_into_nested_sdfgs()

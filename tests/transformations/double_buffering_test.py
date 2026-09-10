@@ -55,5 +55,63 @@ def test_double_buffering():
     assert (diff <= 1e-5 and diff2 <= 1e-5)
 
 
+ROWS, COLS = 4, 3
+
+
+def _row_sum_body():
+    """Sums the tile it is given into ``o[k]``, as a nested SDFG over the whole containers."""
+    sdfg = dace.SDFG('row_sum')
+    sdfg.add_array('t', [COLS], dace.float64)
+    sdfg.add_array('o', [ROWS], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('r', dict(q='0:%d' % COLS))
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = x')
+    state.add_memlet_path(state.add_read('t'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('t[q]'))
+    state.add_memlet_path(tasklet,
+                          exit_,
+                          state.add_write('o'),
+                          src_conn='y',
+                          memlet=dace.Memlet('o[k]', wcr='lambda a, b: a + b'))
+    return sdfg
+
+
+def _tiled_row_sum():
+    """A one-dimensional map staging ``A[k, :]`` in a transient tile read by a nested SDFG."""
+    sdfg = dace.SDFG('double_buffered_nested')
+    sdfg.add_array('A', [ROWS, COLS], dace.float64)
+    sdfg.add_array('B', [ROWS], dace.float64)
+    sdfg.add_transient('tile', [COLS], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('m', dict(k='0:%d' % ROWS))
+    tile = state.add_access('tile')
+    node = state.add_nested_sdfg(_row_sum_body(), {'t'}, {'o'}, {'k': 'k'})
+    state.add_memlet_path(state.add_read('A'), entry, tile, memlet=dace.Memlet('A[k, 0:%d]' % COLS))
+    state.add_edge(tile, None, node, 't', dace.Memlet('tile[0:%d]' % COLS))
+    state.add_memlet_path(node,
+                          exit_,
+                          state.add_write('B'),
+                          src_conn='o',
+                          memlet=dace.Memlet('B[k]', wcr='lambda a, b: a + b'))
+    return sdfg, state, entry, tile
+
+
+def test_double_buffering_of_a_nested_sdfg_input():
+    """The tile gains a buffer dimension, so the connector reading it becomes a view of one buffer."""
+    A = np.arange(ROWS * COLS, dtype=np.float64).reshape(ROWS, COLS).copy()
+    expected = A.sum(axis=1)
+
+    sdfg, state, entry, tile = _tiled_row_sum()
+    sdfg.validate()
+
+    DoubleBuffering.apply_to(sdfg, map_entry=entry, transient=tile, verify=True, save=False)
+    sdfg.validate()
+
+    B = np.zeros(ROWS)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, expected)
+
+
 if __name__ == '__main__':
     test_double_buffering()
+    test_double_buffering_of_a_nested_sdfg_input()

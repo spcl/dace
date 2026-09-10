@@ -655,6 +655,16 @@ class MapFission(transformation.SingleStateTransformation):
                                     else:
                                         e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
 
+        # A container that was augmented with the map's dimensions is no longer the container the
+        # nested SDFGs below were connected to: under the nested SDFG contract (see
+        # ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector that now selects one element of
+        # it has to become a view of that element.
+        for state in parent.states():
+            for node in state.nodes():
+                if (isinstance(node, nodes.NestedSDFG)
+                        and any(e.data.data in modified_arrays for e in state.all_edges(node))):
+                    node.integrate_into_parent()
+
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
             for edge in graph.in_edges(map_entry):
