@@ -708,6 +708,11 @@ connected to it in the parent SDFG. In the figure, the input array is externally
 that go into the nested SDFG, and the volume is the sum of all the volumes of the internal memlets.
 See more in :ref:`memprop`.
 
+Nested SDFGs built under the earlier semantics, in which a connector describes the window the outer memlet
+selects out of the container and the memlets inside are written relative to that window, can be brought to
+this form with :func:`dace.sdfg.dealias.convert_legacy_nested_sdfgs`. Inlining such a nested SDFG without
+converting it first raises an error, since inlining would silently drop the window.
+
 To pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mapping` is a dictionary mapping from internal
 symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
 this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).

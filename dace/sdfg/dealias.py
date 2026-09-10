@@ -764,6 +764,46 @@ def _widen_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.
                 _widen_container(node.sdfg, conn, inner, replacement, inner_window, symbol_types)
 
 
+def windowed_connectors(sdfg: SDFG) -> Dict[str, str]:
+    """
+    Collects the connectors of a nested SDFG that describe a window of the container they are
+    connected to rather than the container itself.
+
+    Under the nested SDFG contract (see ``integrate_nested_sdfg``) a connector's descriptor is the
+    descriptor of the container the parent connects to it, and the memlets inside address it the way
+    the parent does. A nested SDFG assembled under the earlier semantics describes a connector as
+    the part of the container the edge memlet selects, with the memlets inside written relative to
+    that window; such connectors are the ones reported here.
+
+    :param sdfg: The nested SDFG to inspect. A top-level SDFG has no connectors, and yields nothing.
+    :return: A mapping from connector name to the name of the container in the parent it is
+             connected to, for every connector that does not follow the contract.
+    """
+    if sdfg.parent is None:
+        return {}
+
+    parent_sdfg = sdfg.parent_sdfg
+    parent_state = sdfg.parent
+    parent_node = sdfg.parent_nsdfg_node
+    available_symbols = set(sdfg.symbols.keys()) | set(parent_state.symbols_defined_at(parent_node).keys())
+
+    result: Dict[str, str] = {}
+    for edge in parent_state.all_edges(parent_node):
+        if edge.data.data not in parent_sdfg.arrays:
+            continue
+        connector = edge.dst_conn if edge.dst is parent_node else edge.src_conn
+        if not connector or '.' in connector or connector not in sdfg.arrays:
+            continue
+        inner = sdfg.arrays[connector]
+        if inner.transient:
+            continue
+        outer = parent_sdfg.arrays[edge.data.data]
+        if _same_container(outer, inner, available_symbols, parent_node):
+            continue
+        result[connector] = edge.data.data
+    return result
+
+
 def widen_windowed_connectors(sdfg: SDFG) -> Set[str]:
     """
     Restates connectors that describe only the window their edge memlet selects as the whole
@@ -1104,6 +1144,44 @@ def integrate_nested_sdfg(sdfg: SDFG):
     # Containers read only by meta code never receive a ``views`` edge above, so redirect those
     # accesses to the parent container they alias.
     redirect_meta_accesses(sdfg, to_add_and_view)
+
+
+def convert_legacy_nested_sdfgs(sdfg: SDFG) -> List[Tuple[nd.NestedSDFG, str]]:
+    """
+    Restates the nested SDFGs below ``sdfg`` that were assembled under the earlier semantics so that
+    they follow the nested SDFG contract.
+
+    Under the earlier (DaCe 1.x) semantics a connector described the window its edge memlet selects
+    out of the parent's container, and the memlets inside were written relative to that window. Under
+    the contract (see ``integrate_nested_sdfg``) a connector's descriptor is the parent's container
+    itself, and the memlets inside address it the way the parent does. A window that is a plain slice
+    is removed by offsetting the memlets inside by its origin (``widen_windowed_connectors``); any
+    other window is kept as a view of the parent's container (``integrate_nested_sdfg``).
+
+    The whole tree below ``sdfg`` is processed top-down: widening a connector pushes the parent's
+    container down into the nested SDFGs that describe the same container, and a nested SDFG that is
+    windowed relative to its own parent is then handled when that parent is reached. A tree that
+    already follows the contract is left unchanged.
+
+    External tools that still assemble nested SDFGs under the earlier semantics should call this once
+    on the SDFG before inlining or simplifying it -- both take the memlets inside at their word and
+    would otherwise lose the window.
+
+    :param sdfg: The SDFG at the root of the tree to convert.
+    :return: The ``(nested SDFG node, connector)`` pairs that did not follow the contract.
+    :note: This function operates in-place.
+    """
+    converted: List[Tuple[nd.NestedSDFG, str]] = []
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not isinstance(node, nd.NestedSDFG) or node.sdfg is None:
+                continue
+            before = windowed_connectors(node.sdfg)
+            widen_windowed_connectors(node.sdfg)
+            integrate_nested_sdfg(node.sdfg)
+            converted.extend((node, connector) for connector in before)
+            converted.extend(convert_legacy_nested_sdfgs(node.sdfg))
+    return converted
 
 
 def redirect_meta_accesses(sdfg: SDFG, integrated: Dict[str, Tuple[str, data.Data, Memlet]]) -> Set[str]:

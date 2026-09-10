@@ -263,13 +263,18 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # Inlining takes the memlets inside at their word: under the nested SDFG contract (see
         # ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector is the container it is connected
-        # to, and a memlet inside addresses it as the parent does. A nested SDFG assembled by hand or
-        # by an external tool may still describe a connector as the window the edge memlet selects,
-        # with the memlets inside written relative to it. Such a window is removed first -- by
-        # offsetting the memlets when it is a plain slice, and as a view of the parent's container
-        # otherwise -- so that it is not lost. For a nested SDFG that already follows the contract
-        # neither step changes anything.
-        dealias.widen_windowed_connectors(nsdfg)
+        # to, and a memlet inside addresses it as the parent does. A connector that instead describes
+        # the window its edge memlet selects has its memlets written relative to that window, and
+        # moving them into the parent as they stand would silently drop the window.
+        windowed = dealias.windowed_connectors(nsdfg)
+        if windowed:
+            raise ValueError('\n'.join(
+                f'Cannot inline nested SDFG "{nsdfg.label}": connector "{conn}" describes a window of the '
+                f'container "{container}" it is connected to rather than the container itself (see the nested '
+                'SDFG contract in dace.sdfg.dealias.integrate_nested_sdfg). Inlining would lose the window. '
+                'Nested SDFGs assembled under the earlier semantics have to be converted first with '
+                'dace.sdfg.dealias.convert_legacy_nested_sdfgs.' for conn, container in windowed.items()))
+
         dealias.integrate_nested_sdfg(nsdfg)
 
         nstate: SDFGState = nsdfg.nodes()[0]
