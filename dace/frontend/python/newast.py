@@ -1258,6 +1258,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Scalars already promoted to symbols in this SDFG, so that a second promotion of the same
         # scalar reuses its symbol rather than minting another name for it.
         self.promoted_scalars: Dict[str, symbolic.symbol] = dict()
+        # Where a single-element temporary was read from, so that a use which only needs the value
+        # -- a data-dependent map range -- can read the element itself instead of the copy of it.
+        self.element_reads: Dict[str, Memlet] = dict()
 
     @classmethod
     def progress_count(cls) -> int:
@@ -2113,7 +2116,15 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                and self.sdfg.arrays[candidate].shape == (1, ))):
                             newvar = '__%s_%s%d' % (name, vid, ctr)
                             repldict[atomstr] = newvar
-                            map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
+                            # A temporary that only holds one element read out of an array is a copy
+                            # of that element. The range needs the value, so it reads the element
+                            # itself and leaves the copy for dead-code elimination -- a scalar in
+                            # between would sit in the enclosing scope and keep the two maps from
+                            # being seen as nested one directly inside the other.
+                            if candidate in self.element_reads:
+                                map_inputs[newvar] = copy.deepcopy(self.element_reads[candidate])
+                            else:
+                                map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
                             ctr += 1
                         elif candidate not in self.sdfg.symbols:
                             self.sdfg.add_symbol(atomstr, self.defined[candidate].dtype)
@@ -5436,7 +5447,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if is_index:
             tmp = self.get_target_name(default=f'{array}_index')
-            tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True, find_new_name=True)
+            # The temporary holds one element's VALUE, not a piece of the array's memory: it does
+            # not belong in the array's memory space. ``Default`` lets the scope it ends up in
+            # decide -- a register inside a kernel, host memory outside one -- whereas the array's
+            # own storage would ask for a device allocation wherever the read happens to sit.
+            tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, transient=True, find_new_name=True)
         else:
             for i in range(len(other_subset.ranges)):
                 rb, re, rs = other_subset.ranges[i]
@@ -5481,6 +5496,8 @@ class ProgramVisitor(ExtNodeVisitor):
                        other_subset=str(other_subset),
                        volume=expr.accesses,
                        wcr=expr.wcr))
+            if is_index and expr.wcr is None:
+                self.element_reads[tmp] = Memlet(data=array, subset=str(expr.subset), volume=expr.accesses)
         return tmp
 
     def _parse_subscript_slice(self,

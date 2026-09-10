@@ -950,6 +950,10 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         input_data.transient = False
         input_data.shape = schedule.in_shape
         input_data.strides = schedule.in_strides
+        # The schedule collapses the reduced axes, so the origin the container was written in no
+        # longer has one entry per dimension. A descriptor whose offset is a different length than
+        # its shape is malformed -- making a view of it fails on the spot.
+        input_data.offset = [0] * len(schedule.in_shape)
         nsdfg.add_datadesc('_in', input_data)
 
         output_data = dcpy(raw_output_data)
@@ -1287,8 +1291,6 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
 
             real_state.add_memlet_path(inner_in, ime, id, dst_conn='b', memlet=dace.Memlet('_in[_i]'))
 
-            dealias.integrate_nested_sdfg(nested_sdfg)
-
             if mini_warps:
                 cond_tasklet = nstate.add_tasklet(
                     'cond_write', {'_input'}, {'_output'},
@@ -1311,6 +1313,11 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                                        final_inner_smem,
                                        src_conn='o',
                                        memlet=dace.Memlet('s_mem[0]', wcr=node.wcr))
+
+            # Only now, with every access node inside wired up, does integration see them: it gives
+            # each one the view edge that ties it to the container the connector stands for, and an
+            # access node that was still isolated would be passed over.
+            dealias.integrate_nested_sdfg(nested_sdfg)
 
             if mini_warps:
                 bme3, bmx3 = nstate.add_map('block', {

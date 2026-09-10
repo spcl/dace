@@ -1700,6 +1700,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # Create grid barrier only if there is a synchronization requirement on nested GPU_Device maps
                 if any(p is not scope_entry for p in dfg_scope.predecessors(node)):
                     create_grid_barrier = True
+            elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
+                # A device map inside a nested SDFG below this kernel synchronizes the grid the
+                # same way, and the scope subgraph does not show it. Without the barrier object
+                # the code generated for that map names one that was never declared.
+                if self._nested_grid_barrier_required(node.sdfg):
+                    create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
         kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry))
@@ -2451,6 +2457,36 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # TODO: Fix to include *next* scopes, without concurrent scopes
 
         return all_scopes[all_scopes.index(scope_entry) + 1:]
+
+    def _emits_grid_barrier(self, state: SDFGState, scope_entry: nodes.EntryNode) -> bool:
+        """Whether the scope generator will end this device map with a grid-wide barrier.
+
+        Mirrors the condition in ``generate_devicelevel_scope``.
+
+        :param state: the state holding the map.
+        :param scope_entry: entry node of a ``GPU_Device`` map below a kernel.
+        :return: True if a barrier is emitted for it.
+        """
+        if self.get_next_scope_entries(state, scope_entry):
+            return True
+        parent = xfh.get_parent_map(state, scope_entry)
+        return parent is not None and parent[0].schedule == dtypes.ScheduleType.Sequential
+
+    def _nested_grid_barrier_required(self, nsdfg: SDFG) -> bool:
+        """Whether any device map below ``nsdfg`` ends with a grid-wide barrier.
+
+        :param nsdfg: a nested SDFG generated inside a kernel.
+        :return: True if the kernel has to declare a grid barrier for it.
+        """
+        for state in nsdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+                    if self._emits_grid_barrier(state, node):
+                        return True
+                elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
+                    if self._nested_grid_barrier_required(node.sdfg):
+                        return True
+        return False
 
     def generate_devicelevel_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView,
                                    state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:

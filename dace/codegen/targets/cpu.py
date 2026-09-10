@@ -1739,6 +1739,12 @@ class CPUCodeGen(TargetCodeGenerator):
             ptrname = cpp.ptr(aname, adesc, node.sdfg, self._frame)
             if self._dispatcher.defined_vars.has(ptrname):
                 continue
+            # The calling generator may hand this container down itself -- the CUDA generator
+            # passes a kernel's hoisted containers to every nested SDFG below it, typed the way
+            # device code needs them (a stream travels as a ``GPUStream``, not as a pointer).
+            # Adding it here as well would name the parameter twice.
+            if any(ptrname == extra for _, extra, _ in getattr(self.calling_codegen, 'extra_nsdfg_args', ())):
+                continue
             try:  # The allocation defined it in the scope the frame chose for it
                 defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, ancestor=1)
             except KeyError:
