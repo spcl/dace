@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the results of a kernel whose thread-blocks are distributed over the chiplets of a GPU. """
 
+import math
+
 import numpy as np
 import pytest
 
@@ -128,9 +130,15 @@ def test_cloudsc_tidy_branch_gpu_chiplet_distribution():
             auto_optimize(sdfg, dace.DeviceType.GPU)
 
             # The kernel has to remain one that the distribution applies to, otherwise the results
-            # below are those of a kernel that was never distributed
+            # below are those of a kernel that was never distributed. These mirror the assertions in
+            # gpu_chiplet_grid_test.py: the first grid dimension (KLON / 32 thread-blocks) is padded to
+            # a multiple of the number of chiplets, and permuted so that every chiplet owns a
+            # contiguous chunk of it.
             if chiplets > 1:
-                assert f'dim3({chiplets}, ' in sdfg.generate_code()[1].code
+                code = sdfg.generate_code()[1].code
+                chunk = math.ceil((KLON // 32) / chiplets)
+                assert f'dim3({chunk * chiplets}, {KLEV}, 1)' in code
+                assert f'((blockIdx.x % {chiplets}) * {chunk} + blockIdx.x / {chiplets})' in code
 
             sdfg(**args)
 
