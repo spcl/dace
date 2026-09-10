@@ -260,6 +260,18 @@ class InlineSDFG(transformation.SingleStateTransformation):
     def apply(self, state: SDFGState, sdfg: SDFG):
         nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
+
+        # Inlining takes the memlets inside at their word: under the nested SDFG contract (see
+        # ``dace.sdfg.dealias.integrate_nested_sdfg``) a connector is the container it is connected
+        # to, and a memlet inside addresses it as the parent does. A nested SDFG assembled by hand or
+        # by an external tool may still describe a connector as the window the edge memlet selects,
+        # with the memlets inside written relative to it. Such a window is removed first -- by
+        # offsetting the memlets when it is a plain slice, and as a view of the parent's container
+        # otherwise -- so that it is not lost. For a nested SDFG that already follows the contract
+        # neither step changes anything.
+        dealias.widen_windowed_connectors(nsdfg)
+        dealias.integrate_nested_sdfg(nsdfg)
+
         nstate: SDFGState = nsdfg.nodes()[0]
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
