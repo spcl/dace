@@ -2077,6 +2077,23 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return (iterator, ranges, ast_ranges, schedule)
 
+    def _element_read_memlet(self, name: str) -> Optional[Memlet]:
+        """The element a single-element temporary was copied from, if reading it again is the same read.
+
+        :param name: Name of the temporary.
+        :return: A memlet reading the element the temporary holds, or None if it has none or the
+                 element may no longer hold what was copied.
+        :note: A write to the container in between would make the second read see a different value,
+               so any write to it that the program has produced so far rules the shortcut out.
+        """
+        memlet = self.element_reads.get(name)
+        if memlet is None:
+            return None
+        for state in self.sdfg.states():
+            if any(node.data == memlet.data and state.in_degree(node) > 0 for node in state.data_nodes()):
+                return None
+        return copy.deepcopy(memlet)
+
     def _parse_map_inputs(self, name: str, params: List[Tuple[str, str]],
                           node: ast.AST) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
         """ Parse map parameters for data-dependent inputs, modifying the
@@ -2121,8 +2138,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             # itself and leaves the copy for dead-code elimination -- a scalar in
                             # between would sit in the enclosing scope and keep the two maps from
                             # being seen as nested one directly inside the other.
-                            if candidate in self.element_reads:
-                                map_inputs[newvar] = copy.deepcopy(self.element_reads[candidate])
+                            element_read = self._element_read_memlet(candidate)
+                            if element_read is not None:
+                                map_inputs[newvar] = element_read
                             else:
                                 map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
                             ctr += 1
