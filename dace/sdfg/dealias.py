@@ -984,11 +984,15 @@ def integrate_nested_sdfg(sdfg: SDFG):
 
         # ``remove_symbol_aliases`` renames the containers inside the nested SDFG. A connector among
         # them is also the name of a connector on the node and of the edges reaching it, so those
-        # have to follow it.
-        conn_renames = {old: new for old, new in renamed.items() if old in to_add_and_view}
+        # have to follow it. Every connector counts, not only the ones about to be replaced by a
+        # view: a connector whose descriptor was adopted from the parent above still names the
+        # container that was just renamed under it.
+        connectors = set(parent_node.in_connectors) | set(parent_node.out_connectors)
+        conn_renames = {old: new for old, new in renamed.items() if old in to_add_and_view or old in connectors}
         if conn_renames:
             for old, new in conn_renames.items():
-                to_add_and_view[new] = to_add_and_view.pop(old)
+                if old in to_add_and_view:
+                    to_add_and_view[new] = to_add_and_view.pop(old)
             parent_node.in_connectors = {conn_renames.get(c, c): t for c, t in parent_node.in_connectors.items()}
             parent_node.out_connectors = {conn_renames.get(c, c): t for c, t in parent_node.out_connectors.items()}
             for edge in parent_state.all_edges(parent_node):

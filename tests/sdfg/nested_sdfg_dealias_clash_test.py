@@ -489,6 +489,41 @@ def test_connector_clash_with_enclosing_map_parameter():
     assert np.allclose(C, A * 2)
 
 
+def test_adopted_connector_follows_a_rename():
+    """A connector whose descriptor is kept as-is still has to follow its container's rename.
+
+    The parent's ``A`` is added to the nested SDFG for the windowed connector, so an inner container
+    of that name is renamed out of the way. A connector standing on that container -- one that was
+    equivalent to the parent's and therefore adopted rather than replaced by a view -- names it just
+    the same, and is left pointing at nothing if it does not follow.
+    """
+    sdfg = dace.SDFG('parent')
+    sdfg.add_array('A', [10], dace.float64)
+    state = sdfg.add_state()
+
+    inner = dace.SDFG('inner')
+    inner.add_array('A', [10], dace.float64)  # Equivalent to the parent's A: adopted as it is
+    inner.add_array('w', [4], dace.float64)  # A window of that same A: integrated behind a view
+    istate = inner.add_state()
+    t = istate.add_tasklet('t', {'a'}, {'b'}, 'b = a * 2')
+    istate.add_edge(istate.add_read('w'), None, t, 'a', dace.Memlet('w[0]'))
+    istate.add_edge(t, 'b', istate.add_write('A'), None, dace.Memlet('A[0]'))
+
+    node = state.add_nested_sdfg(inner, {'w'}, {'A'}, {})
+    state.add_edge(state.add_read('A'), None, node, 'w', dace.Memlet('A[0:4]'))
+    state.add_edge(node, 'A', state.add_write('A'), None, dace.Memlet('A[0:10]'))
+    node.integrate_into_parent()
+
+    assert set(node.in_connectors) | set(node.out_connectors) <= inner.arrays.keys()
+    sdfg.validate()
+
+    A = np.arange(10, dtype=np.float64)
+    expected = A.copy()
+    expected[0] = A[0] * 2
+    sdfg(A=A)
+    assert np.allclose(A, expected)
+
+
 def _mapped_symbol_sdfg(value):
     """Nested SDFG using symbol ``s``, added to a parent with a scalar ``X`` and a symbol ``M``."""
     inner = dace.SDFG('inner')
