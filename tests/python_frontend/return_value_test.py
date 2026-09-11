@@ -2,6 +2,8 @@
 import dace
 import numpy as np
 
+from dace.sdfg import nodes
+
 
 def test_return_scalar():
 
@@ -137,6 +139,172 @@ def test_return_void_in_for():
     assert np.allclose(a, ref)
 
 
+def test_a_trailing_return_in_a_nested_program_does_not_end_the_caller():
+
+    @dace.program
+    def callee(x: dace.float64[20], o: dace.float64[20]):
+        o[:] = x * 2.0
+        return
+
+    @dace.program
+    def caller(x: dace.float64[20], o: dace.float64[20], marker: dace.float64[20]):
+        callee(x, o)
+        marker[:] = 7.0
+
+    x = np.random.rand(20)
+    o = np.zeros(20)
+    marker = np.zeros(20)
+    caller(x, o, marker)
+    assert np.allclose(o, x * 2.0, rtol=0, atol=1e-14)
+    assert np.allclose(marker, 7.0, rtol=0, atol=0)
+
+
+def test_an_early_return_in_a_nested_program_does_not_end_the_caller():
+
+    @dace.program
+    def callee(a: dace.float64[20]):
+        if a[0] > 0.0:
+            a[1] = 1.0
+            return
+        a[2] = 2.0
+
+    @dace.program
+    def caller(a: dace.float64[20]):
+        callee(a)
+        a[5] = 5.0
+
+    a = np.zeros(20)
+    a[0] = 1.0
+    ref = np.zeros(20)
+    ref[0] = 1.0
+    ref[1] = 1.0
+    ref[5] = 5.0
+    caller(a)
+    assert np.allclose(a, ref, rtol=0, atol=0)
+
+    a = np.zeros(20)
+    ref = np.zeros(20)
+    ref[2] = 2.0
+    ref[5] = 5.0
+    caller(a)
+    assert np.allclose(a, ref, rtol=0, atol=0)
+
+
+def test_a_return_inside_a_loop_in_a_nested_program_does_not_end_the_caller():
+
+    @dace.program
+    def callee(a: dace.float64[20]):
+        for i in range(20):
+            if a[i] > 0.0:
+                a[0] = 7.0
+                return
+        a[1] = 1.0
+
+    @dace.program
+    def caller(a: dace.float64[20]):
+        callee(a)
+        a[5] = 5.0
+
+    a = np.zeros(20)
+    a[3] = 1.0
+    ref = np.zeros(20)
+    ref[0] = 7.0
+    ref[3] = 1.0
+    ref[5] = 5.0
+    caller(a)
+    assert np.allclose(a, ref, rtol=0, atol=0)
+
+    a = np.zeros(20)
+    ref = np.zeros(20)
+    ref[1] = 1.0
+    ref[5] = 5.0
+    caller(a)
+    assert np.allclose(a, ref, rtol=0, atol=0)
+
+
+def test_a_return_two_call_levels_down_does_not_end_the_outermost_caller():
+
+    @dace.program
+    def innermost(a: dace.float64[20]):
+        if a[0] > 0.0:
+            a[1] = 1.0
+            return
+        a[2] = 2.0
+
+    @dace.program
+    def middle(a: dace.float64[20]):
+        innermost(a)
+        a[3] = 3.0
+
+    @dace.program
+    def outermost(a: dace.float64[20]):
+        middle(a)
+        a[4] = 4.0
+
+    a = np.zeros(20)
+    a[0] = 1.0
+    ref = np.zeros(20)
+    ref[0] = 1.0
+    ref[1] = 1.0
+    ref[3] = 3.0
+    ref[4] = 4.0
+    outermost(a)
+    assert np.allclose(a, ref, rtol=0, atol=0)
+
+
+def test_a_return_beside_a_break_in_a_nested_program_does_not_end_the_caller():
+
+    @dace.program
+    def callee(a: dace.float64[20]):
+        for i in range(20):
+            if a[i] > 1.5:
+                a[0] = 3.0
+                return
+            if a[i] > 0.5:
+                break
+        a[1] = 1.0
+
+    @dace.program
+    def caller(a: dace.float64[20]):
+        callee(a)
+        a[5] = 5.0
+
+    a = np.zeros(20)
+    a[2] = 1.0
+    ref = np.zeros(20)
+    ref[1] = 1.0
+    ref[2] = 1.0
+    ref[5] = 5.0
+    caller(a)
+    assert np.allclose(a, ref, rtol=0, atol=0)
+
+    a = np.zeros(20)
+    a[2] = 2.0
+    ref = np.zeros(20)
+    ref[0] = 3.0
+    ref[2] = 2.0
+    ref[5] = 5.0
+    caller(a)
+    assert np.allclose(a, ref, rtol=0, atol=0)
+
+
+def test_a_trailing_return_does_not_keep_the_nested_program_nested():
+
+    @dace.program
+    def callee(x: dace.float64[20], o: dace.float64[20]):
+        o[:] = x * 2.0
+        return
+
+    @dace.program
+    def caller(x: dace.float64[20], o: dace.float64[20], marker: dace.float64[20]):
+        callee(x, o)
+        marker[:] = 7.0
+
+    sdfg = caller.to_sdfg(simplify=True)
+    nested = [n for state in sdfg.all_states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+    assert not nested
+
+
 if __name__ == '__main__':
     test_return_scalar()
     test_return_scalar_in_nested_function()
@@ -146,3 +314,9 @@ if __name__ == '__main__':
     test_return_void()
     test_return_void_in_if()
     test_return_void_in_for()
+    test_a_trailing_return_in_a_nested_program_does_not_end_the_caller()
+    test_an_early_return_in_a_nested_program_does_not_end_the_caller()
+    test_a_return_inside_a_loop_in_a_nested_program_does_not_end_the_caller()
+    test_a_return_two_call_levels_down_does_not_end_the_outermost_caller()
+    test_a_return_beside_a_break_in_a_nested_program_does_not_end_the_caller()
+    test_a_trailing_return_does_not_keep_the_nested_program_nested()

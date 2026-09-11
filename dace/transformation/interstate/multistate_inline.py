@@ -29,6 +29,14 @@ def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
             and symbolic.same_value(tuple(outer_desc.strides), tuple(inner_desc.strides)))
 
 
+def _trailing_returns(nsdfg: SDFG) -> List[ReturnBlock]:
+    # A sink of the callee's own top-level graph: control leaves the callee there anyway.
+    start = nsdfg.start_block
+    return [
+        blk for blk in nsdfg.nodes() if isinstance(blk, ReturnBlock) and nsdfg.out_degree(blk) == 0 and blk is not start
+    ]
+
+
 def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None:
     """Rename tasklet connectors that clash with outer-scope names.
 
@@ -136,6 +144,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         if state.entry_node(nested_sdfg) is not None:
             return False
 
+        # A return spliced into the caller becomes a return OF the caller, killing the code after the
+        # call site. `apply` drops a trailing return; any other one stays nested, where code
+        # generation gives the callee its own exit.
+        returns = [blk for blk in nested_sdfg.sdfg.all_control_flow_blocks() if isinstance(blk, ReturnBlock)]
+        if returns and set(returns) - set(_trailing_returns(nested_sdfg.sdfg)):
+            return False
+
         # Must be
         # - connected to access nodes only
         # - read full subsets
@@ -189,13 +204,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
 
-        # If the nested SDFG contains returns, ensure they are inlined first.
-        has_return = False
-        for blk in nsdfg.all_control_flow_blocks():
-            if isinstance(blk, ReturnBlock):
-                has_return = True
-        if has_return:
-            sdutil.inline_control_flow_regions(nsdfg, lower_returns=True)
+        # Says nothing the caller's state machine needs.
+        for blk in _trailing_returns(nsdfg):
+            nsdfg.remove_node(blk)
 
         #######################################################
         # Collect and update top-level SDFG metadata
