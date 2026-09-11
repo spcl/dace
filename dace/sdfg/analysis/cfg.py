@@ -377,7 +377,14 @@ def branch_merges(
 
     # Annotate branches
     result: Dict[SDFGState, SDFGState] = {}
-    adf = acyclic_dominance_frontier(cfg)
+    # Reuse idom if the caller already computed it, instead of a second nx.immediate_dominators
+    # pass over the same graph. block_immediate_dominators() maps every block unreachable from
+    # start to itself as a placeholder root (see its docstring), and acyclic_dominance_frontier's
+    # walk assumes a single-rooted tree: a second root never reaches idom[u] and spins forever.
+    # Strip those placeholders so the reused map has exactly the entries a fresh
+    # nx.immediate_dominators(cfg.nx, cfg.start_block) call would produce.
+    adf_idom = {k: v for k, v in idom.items() if k is cfg.start_block or v is not k} if idom else None
+    adf = acyclic_dominance_frontier(cfg, adf_idom)
     # ipostdom = sdutil.postdominators(cfg)
     for block in cfg.nodes():
         oedges = cfg.out_edges(block)
