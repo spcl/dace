@@ -23,6 +23,12 @@ from dace.sdfg.type_inference import infer_types, infer_expr_type
 import pydoc
 import warnings
 
+#: Reserved implementation name available on every library node, which expands it into a tasklet
+#: written by a language model (see :mod:`dace.libraries.ai`). It is deliberately not registered
+#: into any ``implementations`` dictionary, so that library nodes defined outside DaCe -- which
+#: never pass through its decorators -- provide it as well.
+AI_IMPLEMENTATION_NAME = 'ai'
+
 # -----------------------------------------------------------------------------
 
 
@@ -1470,9 +1476,16 @@ class LibraryNode(CodeNode):
                     # Otherwise we don't know how to expand
                     if target_implementation is None:
                         raise ValueError("No implementation or default implementation specified.")
-        if target_implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, target_implementation))
-        transformation_type = type(self).implementations[target_implementation]
+        if target_implementation == AI_IMPLEMENTATION_NAME:
+            # 'ai' is reserved rather than registered, so that library nodes defined outside DaCe
+            # gain it as well. Imported here to avoid a cyclic dependency.
+            from dace.libraries.ai.expansion import ExpandAI
+            transformation_type = ExpandAI.for_node_class(type(self))
+        elif target_implementation not in self.implementations.keys():
+            raise KeyError("Unknown implementation for node {}: {}. Available implementations: {}".format(
+                type(self).__name__, target_implementation, ', '.join(sorted(self.available_implementations()))))
+        else:
+            transformation_type = type(self).implementations[target_implementation]
         cfg_id = actual_state.parent_graph.cfg_id
         state_id = actual_state.block_id
         subgraph = {transformation_type._match_node: actual_state.node_id(self)}
@@ -1486,9 +1499,32 @@ class LibraryNode(CodeNode):
 
     @classmethod
     def register_implementation(cls, name, transformation_type):
-        """Register an implementation to belong to this library node type."""
+        """
+        Register an implementation to belong to this library node type.
+
+        :param name: Name of the implementation. Must not be ``'ai'``, which every library node
+                     already provides.
+        :param transformation_type: The ``ExpandTransformation`` subclass implementing it.
+        :raises ValueError: If ``name`` is the reserved AI implementation name.
+        """
+        if name == AI_IMPLEMENTATION_NAME:
+            raise ValueError(f'"{AI_IMPLEMENTATION_NAME}" is a reserved implementation name: every DaCe library '
+                             f'node can already be expanded with it into an AI-generated tasklet. Register '
+                             f'{transformation_type.__name__} for {cls.__name__} under a different name.')
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+
+    @classmethod
+    def available_implementations(cls) -> Set[str]:
+        """
+        Returns every implementation this library node can be expanded with.
+
+        This is the registered implementations plus the reserved ``'ai'`` implementation, which is
+        resolved by :meth:`expand` rather than stored in ``implementations``.
+
+        :return: The names of the available implementations.
+        """
+        return set(cls.implementations.keys()) | {AI_IMPLEMENTATION_NAME}
 
     @property
     def free_symbols(self) -> Set[str]:
