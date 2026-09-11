@@ -7,11 +7,14 @@ parallelize the enclosing ``k`` loop as a reduction. It must lift only genuine
 reductions -- a pure accumulator read at a loop-invariant subset -- and refuse
 recurrences (accumulator read for the increment, or a loop-indexed write).
 """
+import os
+
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
+from dace.transformation.layout.isolation import set_openmp_thread_count
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
 from dace.transformation.interstate import LoopToMap
@@ -257,12 +260,18 @@ def test_refuses_symbolic_sizes():
     assert _residual_loops(sym) >= 1, 'symbolic-size reduction axis must stay sequential (lift refused)'
 
 
+def restore_omp_threads(previous: str | None) -> None:
+    """Put ``OMP_NUM_THREADS`` -- and the loaded runtime's own count -- back as they were."""
+    if previous is None:
+        os.environ.pop('OMP_NUM_THREADS', None)
+    elif previous.isdigit():
+        set_openmp_thread_count(int(previous))
+    else:
+        os.environ['OMP_NUM_THREADS'] = previous
+
+
 def test_contour_pattern_thread_safe_reduction():
-    """The nested WCR (inner element map's WCR under the PARALLEL outer map) must
-    reduce correctly under real multithreading -- an OMP=1-only check would miss a
-    cross-iteration race. Runs the two-accumulator kernel several times with
-    OMP_NUM_THREADS>1 and requires every run to match the reference."""
-    import os
+    """The nested WCR under the parallel outer map reduces correctly on a real 4-thread team."""
     kk, nr, nm = 8, 6, 5
     sdfg = _canon_full(_contour_two, KK=kk, NR=nr, NM=nm)
     assert _residual_loops(sdfg) == 0
@@ -272,7 +281,10 @@ def test_contour_pattern_thread_safe_reduction():
     ref0 = X.sum(axis=0)
     ref1 = (2.0 * X).sum(axis=0)
     prev = os.environ.get('OMP_NUM_THREADS')
-    os.environ['OMP_NUM_THREADS'] = '4'
+    # libgomp parses OMP_NUM_THREADS in its initialiser and caches it, so writing os.environ
+    # after ``import dace`` reaches nobody: ask the loaded runtime itself, and refuse to report
+    # green on a team of one, where the race this test exists to catch cannot happen.
+    assert set_openmp_thread_count(4), 'the cross-iteration race needs a real multi-thread team'
     try:
         csdfg = sdfg.compile()
         for _ in range(6):
@@ -282,10 +294,7 @@ def test_contour_pattern_thread_safe_reduction():
             assert np.allclose(P0, ref0), f"P0 race: maxdiff {np.abs(P0 - ref0).max():.2e}"
             assert np.allclose(P1, ref1), f"P1 race: maxdiff {np.abs(P1 - ref1).max():.2e}"
     finally:
-        if prev is None:
-            os.environ.pop('OMP_NUM_THREADS', None)
-        else:
-            os.environ['OMP_NUM_THREADS'] = prev
+        restore_omp_threads(prev)
 
 
 def test_contour_pattern_indexed_write_is_injective_not_reduction():

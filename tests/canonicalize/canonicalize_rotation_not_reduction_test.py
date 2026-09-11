@@ -16,8 +16,11 @@ treat the tasklet as the producer. TSVC s255's two-deep rotation reaches it exac
 looks like ``y = y + <sum>``. Folding that into a WCR turns the copy into an accumulation AND drops
 ``y`` from the sum, silently computing ``(b[i] + b[i-1]) * 0.333`` -- every element wrong, with no
 error anywhere.
+
+The numbers are pinned by ``canonicalize_rotation_substitution_test.py``, which canonicalizes the
+byte-identical kernel at the same ``peel_limit`` and the same length against the same sequential
+oracle; what only lives here is the WCR refusal.
 """
-import numpy as np
 import pytest
 
 import dace
@@ -34,33 +37,6 @@ def rotate_two_deep(a: dace.float64[N], b: dace.float64[N]):
         a[i] = (b[i] + x + y) * 0.333
         y = x
         x = b[i]
-
-
-def reference(b):
-    """``x`` trails one iteration, ``y`` two, both seeded from the end of ``b``."""
-    n = len(b)
-    out = np.empty(n)
-    x, y = b[n - 1], b[n - 2]
-    for i in range(n):
-        out[i] = (b[i] + x + y) * 0.333
-        y = x
-        x = b[i]
-    return out
-
-
-def test_rotation_keeps_both_carried_values():
-    n = 64
-    rng = np.random.default_rng(1234)
-    b = rng.random(n)
-    want = reference(b)
-
-    sdfg = rotate_two_deep.to_sdfg(simplify=True)
-    sdfg.name = 'rotate_two_deep_canon'
-    canonicalize(sdfg, validate=True, peel_limit=4)
-
-    got = np.zeros(n)
-    sdfg.compile()(a=got, b=b.copy(), N=n)
-    assert np.allclose(got, want, rtol=0, atol=0), 'a carried value was dropped from the sum'
 
 
 def test_the_rotation_is_not_turned_into_an_accumulation():

@@ -34,7 +34,7 @@ Design contract: this pass DOES NOT collapse contiguous per-lane symbol chains
 into direct slice loads (the peephole optimisation mentioned in the design doc).
 That's a separate follow-up slice; this pass is only the structural sweep.
 """
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 import sympy
 
@@ -47,7 +47,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
-def _symbols_in_code_block(code_block) -> Set[str]:
+def _symbols_in_code_block(code_block: CodeBlock | str | None) -> set[str]:
     """Wrap :func:`dace.symbolic.symbols_in_code` for an SDFG ``CodeBlock``-like value.
 
     Accepts ``None`` (returns empty set), a ``CodeBlock`` instance (reads
@@ -59,7 +59,7 @@ def _symbols_in_code_block(code_block) -> Set[str]:
     return symbolic.symbols_in_code(src)
 
 
-def _collect_referenced_symbols(sdfg: SDFG) -> Set[str]:
+def _collect_referenced_symbols(sdfg: SDFG) -> set[str]:
     """Walk every place a symbol can appear in ``sdfg`` and return the union.
 
     Uses :meth:`dace.data.Data.free_symbols`, :meth:`dace.memlet.Memlet.used_symbols`,
@@ -71,7 +71,7 @@ def _collect_referenced_symbols(sdfg: SDFG) -> Set[str]:
     the symbol alive, which is safe; under-reporting would delete a still-live
     symbol and break the SDFG.
     """
-    referenced: Set[str] = set()
+    referenced: set[str] = set()
     # Array descriptors (shape / strides / offset / start_offset).
     for desc in sdfg.arrays.values():
         referenced.update(str(s) for s in desc.free_symbols)
@@ -146,7 +146,7 @@ class RemoveUnusedPerLaneSymbols(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
     def _sweep(self, sdfg: SDFG) -> int:
@@ -169,7 +169,7 @@ class RemoveUnusedPerLaneSymbols(ppl.Pass):
             removed += 1
         return removed
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Optional[Dict[str, Any]]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any] | None) -> int | None:
         """Apply the sweep recursively to every NSDFG in ``sdfg``. Returns the
         total number of removed symbols, or ``None`` if zero."""
         total = self._sweep(sdfg)

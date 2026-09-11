@@ -65,8 +65,6 @@ def test_invariant_accepts_a_scalar_guard():
     assert no_conditional_interstate_assign_on_widened_data(guarded_assign_sdfg((1, )), WIDTHS) is None
 
 
-@pytest.mark.skipif(not any(c['name'] == 'azimint_naive' for c in npbench.collect()),
-                    reason='azimint_naive is not in the npbench corpus')
 def test_azimint_naive_masked_counter_is_predicated_per_lane():
     """End-to-end: the kernel that produced the miscompile must vectorize, and come back correct.
 
@@ -76,7 +74,10 @@ def test_azimint_naive_masked_counter_is_predicated_per_lane():
     for EACH of the two masked accumulators. Before the demotion only the float accumulator got
     one -- the counter reached its reduction buffer through an unmasked constant broadcast.
     """
-    corpus = {c['name']: c for c in npbench.collect()}['azimint_naive']
+    by_name = {c['name']: c for c in npbench.collect()}
+    assert 'azimint_naive' in by_name, ('azimint_naive left the npbench corpus; it is the kernel this '
+                                        'whole file exists for, so a rename must fail loudly here')
+    corpus = by_name['azimint_naive']
     arrays, params = npbench.make_inputs(corpus)
     reference = npbench.reference_outputs(corpus, arrays, params)
 

@@ -21,7 +21,8 @@ Every other combo → ``NotImplementedError``.
 """
 import copy
 import warnings
-from typing import Optional, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import sympy
 
@@ -33,6 +34,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, coerce_remainder_strategy
 from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.transformation import PatternTransformation
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
@@ -84,10 +86,7 @@ from dace.transformation.passes.vectorization.remove_empty_states import RemoveE
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
-try:
-    from dace.transformation.passes.normalize_wcr import NormalizeWCR
-except ImportError:  # transition: canonicalize's shared reduction-normalize still lives in normalize_nested_reduction
-    from dace.transformation.passes.normalize_nested_reduction import NormalizeWCR
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
 from dace.transformation.passes.vectorization.predicate_masked_reduction import PredicateMaskedReduction
 from dace.transformation.passes.vectorization.reduction_scalar_local_prep import PrepareReductionForWidening
@@ -104,8 +103,8 @@ from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepe
 from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import (NormalizeMaskedWriteTasklets,
                                                                                       NormalizeTernaryTasklets)
-from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore,
-                                          TileUnop)
+from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA,
+                                          TileReduce, TileStore, TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
@@ -113,8 +112,12 @@ from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsup
 #: Tile lib-node types -- all of them, used by the implementation selector.
 _TILE_NODE_TYPES = (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
 
+#: Every node the emit stage can produce, including the two the selector above does not stamp.
+#: Used ONLY by the empty-emit audit, which must not report a kernel that did tile.
+EMITTABLE_TILE_NODE_TYPES = _TILE_NODE_TYPES + (TileIota, TileMMA)
 
-def vectorization_prep_units() -> Tuple[ppl.Pass, ...]:
+
+def vectorization_prep_units() -> tuple[ppl.Pass, ...]:
     """The structural passes the tile pipeline requires of its input, in order.
 
     A function rather than a literal inside :func:`prepare_for_vectorization` so the prep says what
@@ -193,7 +196,7 @@ def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
     FixNestedSDFGReferences().apply_pass(target, {})
 
 
-def _expandable_during_vectorization(node) -> bool:
+def _expandable_during_vectorization(node: dace.nodes.Node) -> bool:
     """Library nodes the vectorizer's ``expand_library_nodes`` may lower: ONLY its own tile-op
     nodes (:data:`_TILE_NODE_TYPES`), nothing else (user 2026-07-09).
 
@@ -208,7 +211,8 @@ def _expandable_during_vectorization(node) -> bool:
     return isinstance(node, _TILE_NODE_TYPES)
 
 
-def _wcr_output_is_injective_rmw(graph, map_exit, array: str, params) -> bool:
+def _wcr_output_is_injective_rmw(graph: dace.SDFGState, map_exit: dace.nodes.MapExit, array: str,
+                                 params: Sequence[str]) -> bool:
     """True iff every inner per-element write of ``array`` into ``map_exit`` indexes with
     EVERY enclosing map param -- an injective per-element read-modify-write (s212
     ``a[i] *= c[i]``) that writes each element exactly once, NOT a cross-iteration reduction.
@@ -250,7 +254,7 @@ class _MultiOutputReductionMapFission(MapFission):
     maps, undoing base ``MapFusion`` + tripping a copy-scope codegen bug.
     """
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False) -> bool:
         # Base ``MapFission.can_be_applied`` can raise (KeyError seen on adi) on a map it can't
         # handle. Can't decide → DECLINE, don't propagate: ``apply_transformations_repeated``
         # downgrades the raise to a warning, leaving the map un-fissioned → opaque codegen error later.
@@ -322,10 +326,10 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Widen body-NSDFG boundary memlets, then repair the widened connectors.
 
         :returns: The number of widenings applied; ``0`` when nothing widened but the two
@@ -412,10 +416,10 @@ class _RunWCRToAugAssign(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         applied = sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
         # Post/pre-condition: no WCR survives inside any body NSDFG (the tile emitters would
         # silently drop it). The allowed scalar-reduction-out form is on the NSDFG → MapExit
@@ -452,10 +456,10 @@ class _AssertNoBodyWCR(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         for violation in (no_wcr_in_map_body(sdfg), no_wcr_inside_nested_sdfgs(sdfg)):
             if violation is not None:
                 raise VectorizeUnsupported(f"loose WCR in the region to be tiled: {violation}")
@@ -475,7 +479,7 @@ class _AssertTileOpsLowered(ppl.Pass):
 
     CATEGORY: str = "Vectorization"
 
-    def __init__(self, widths):
+    def __init__(self, widths: Sequence[int]) -> None:
         super().__init__()
         self._widths = tuple(widths)
 
@@ -485,10 +489,10 @@ class _AssertTileOpsLowered(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         violation = no_widened_scalar_tasklets(sdfg, len(self._widths), self._widths)
         if violation is not None:
             raise VectorizeUnsupported(f"tasklet not lowered to a tile op: {violation}")
@@ -580,10 +584,10 @@ class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Fuse, promote, then inline the branch-lowered body NestedSDFGs.
 
         :returns: The number of inlines applied; ``0`` when nothing inlined but the state
@@ -609,7 +613,7 @@ def _is_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
 
 
-def _validate_knobs(widths: Tuple[int, ...], target_isa: str, remainder_strategy: str, branch_mode: str,
+def _validate_knobs(widths: tuple[int, ...], target_isa: str, remainder_strategy: str, branch_mode: str,
                     scalar_remainder_emit: str) -> None:
     """Reject unsupported knob combinations with one ``NotImplementedError``.
 
@@ -732,7 +736,7 @@ class VectorizeMultiDim(ppl.Pipeline):
 
     CATEGORY: str = "Vectorization"
 
-    def __init__(self, config: VectorizeConfig):
+    def __init__(self, config: VectorizeConfig) -> None:
         """Build the orchestrator from a :class:`VectorizeConfig`.
 
         :param config: Every vectorizer knob bundled into one dataclass -- tile ``widths``,
@@ -1066,7 +1070,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         self._validate_all = validate_all
         self._assume_even = assume_even
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
 
         The K-dim tile is taken over the last ``K`` params of one innermost map. A realistic
@@ -1254,6 +1258,17 @@ class VectorizeMultiDim(ppl.Pipeline):
             # second whole-SDFG deepcopy of it.
             restore_sdfg_in_place(sdfg, snapshot)
             return None
+        # An empty emit is not a success, and silence there reads exactly like a tiled run. Every
+        # tile pass selects through ``is_vectorizable_map`` and SKIPS what it refuses, so a map that
+        # never passes that gate (an opaque library node in the body -- canonicalize's ``lift_copy``
+        # ``FillLibraryNode`` is the common one) produces nothing with no ``VectorizeUnsupported``
+        # to report. Counted HERE, before ``expand_library_nodes`` lowers the tile nodes away. Not
+        # worded as a refusal: nothing was restored, and callers grep ``refusing to vectorize``.
+        if not any(isinstance(node, EMITTABLE_TILE_NODE_TYPES) for node, _ in sdfg.all_nodes_recursive()):
+            warnings.warn(
+                f"VectorizeMultiDim: tiled nothing in {sdfg.name!r} -- no map passed the tile-candidate "
+                f"gate, so the SDFG is correct but un-vectorized",
+                stacklevel=2)
         # Stamp ``target_isa`` + the concrete implementation on every tile lib node
         # UNCONDITIONALLY, even when expansion is deferred: a deferred SDFG
         # (``expand_tile_nodes=False``) is expanded later by the caller / ``compile()``, so its
@@ -1310,7 +1325,8 @@ class VectorizeMultiDim(ppl.Pipeline):
     #: it leaves a VALID SDFG. The final ``sdfg.validate()`` re-checks the end state.
     _SKIP_VALIDATE_AFTER = (WidenAccesses, GenerateTileIterationMask, InsertTileLoadStore, ConvertTaskletsToTileOps)
 
-    def apply_subpass(self, sdfg: dace.SDFG, p, state):
+    # ``Any``: a subpass result is whatever that pass returns; the base declares ``Optional[Any]``.
+    def apply_subpass(self, sdfg: dace.SDFG, p: ppl.Pass, state: dict[str, Any]) -> Any:
         """Run a pipeline subpass, then ``sdfg.validate()`` for the cleaning / structural
         passes that leave a valid SDFG.
 
@@ -1342,7 +1358,8 @@ class VectorizeMultiDim(ppl.Pipeline):
         from dace.sdfg import infer_types
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG, loop_to_map, refine_nested_access) -> None:
+    def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG, loop_to_map: type[PatternTransformation],
+                                   refine_nested_access: type[PatternTransformation]) -> None:
         """Parallelise data-parallel loops with ``LoopToMap``.
 
         ``RefineNestedAccess`` is intentionally NOT run here (see body): under the
@@ -1511,7 +1528,7 @@ class VectorizeCPUMultiDim(VectorizeMultiDim):
     corpus harness and tests use.
     """
 
-    def __init__(self, config: VectorizeConfig):
+    def __init__(self, config: VectorizeConfig) -> None:
         super().__init__(dataclasses.replace(config, device=DeviceType.CPU))
 
 
@@ -1546,7 +1563,7 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
     finds no GPU-resident innermost map and no-ops.
     """
 
-    def __init__(self, config: VectorizeConfig):
+    def __init__(self, config: VectorizeConfig) -> None:
         """Build the GPU orchestrator from a :class:`VectorizeConfig`.
 
         The GPU row pins ``device=GPU`` and ``target_isa=CUDA``. The K=1 default remainder

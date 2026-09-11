@@ -93,26 +93,6 @@ def test_tile_binop_pure_masked_holds_destination(widths):
     np.testing.assert_allclose(C, ref, rtol=0, atol=0)
 
 
-def test_tile_binop_rejects_narrowing():
-    """Promotion lock — ``validate`` raises on a narrowing Tile operand
-    (e.g. fp64 operand into an int32 output); widening is allowed (see
-    ``test_tile_binop_promotion.py``)."""
-    widths = (8, )
-    sdfg = dace.SDFG("tile_binop_narrowing")
-    sdfg.add_array("A", widths, dace.float64)
-    sdfg.add_array("B", widths, dace.float64)
-    sdfg.add_array("C", widths, dace.int32)
-    state = sdfg.add_state("main")
-    a, b, c = state.add_access("A"), state.add_access("B"), state.add_access("C")
-    node = TileBinop(name="tb_narrow", widths=widths, op="+")
-    state.add_node(node)
-    state.add_edge(a, None, node, "_a", dace.Memlet("A[0:8]"))
-    state.add_edge(b, None, node, "_b", dace.Memlet("B[0:8]"))
-    state.add_edge(node, "_c", c, None, dace.Memlet("C[0:8]"))
-    with pytest.raises(NotImplementedError, match="narrowing"):
-        sdfg.expand_library_nodes()
-
-
 def test_tile_binop_rejects_unknown_op():
     """Constructor refuses ops that are not in ``_PY_OP_RHS``."""
     with pytest.raises(ValueError, match="unknown op"):

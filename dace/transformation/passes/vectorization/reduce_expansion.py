@@ -28,6 +28,7 @@ from dace.libraries.standard.nodes.reduce import (
     ExpandReducePure,
     Reduce,
 )
+from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import symstr
 from dace.transformation import transformation as pm
 
@@ -77,7 +78,7 @@ _OP_IDENTITY_CXX = {
 _VEC_W = 8
 
 
-def _build_vectorized_full_reduction(node: Reduce, state, sdfg, opname: str):
+def _build_vectorized_full_reduction(node: Reduce, state: SDFGState, sdfg: SDFG, opname: str) -> SDFG | None:
     """Vectorized 1-D full-reduction nested SDFG, or ``None`` if out of scope.
 
     Scope: full reduction (every axis reduced) of a contiguous 1-D input to a
@@ -176,7 +177,7 @@ class ExpandReduceVectorized(pm.ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node: Reduce, state, sdfg):
+    def expansion(node: Reduce, state: SDFGState, sdfg: SDFG) -> SDFG:
         """Dispatch the reduction by operator and schedule.
 
         :param node: the ``Reduce`` library node.

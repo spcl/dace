@@ -32,6 +32,8 @@ from dace.transformation.passes.vectorization.enums import BranchMode
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
+from tests.passes.vectorization.tile_assertions import assert_tiled
+
 N = dace.symbol('N')
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
 #: would SIGILL-refuse on an AVX2-only or ARM host.
@@ -114,6 +116,7 @@ def test_masked_const_write_matches_numpy(isa, remainder):
                         remainder_strategy=remainder,
                         branch_mode=BranchMode.MERGE,
                         validate_all=True)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _base(masked_zero))
     rng = np.random.default_rng(0)
     Nval = 37
     A = rng.random(Nval)
@@ -138,6 +141,7 @@ def test_masked_value_write_matches_numpy(isa, remainder):
                         remainder_strategy=remainder,
                         branch_mode=BranchMode.MERGE,
                         validate_all=True)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _base(masked_val))
     rng = np.random.default_rng(1)
     Nval = 37
     A = rng.random(Nval)

@@ -118,7 +118,7 @@ def _search_for(fname: str, roots: List[str]) -> Optional[str]:
     return None
 
 
-@functools.lru_cache(maxsize=None)
+@functools.lru_cache(maxsize=None, typed=True)
 def _cuda_paths_cached(root: Optional[str], path_env: str) -> tuple:
     """Filesystem search for the CUDA toolkit. Cached because the toolkit does not move within a run;
     the inputs that determine the result (the config/env root hint and ``$PATH`` used by ``which``)
@@ -161,7 +161,7 @@ def _cuda_paths() -> tuple:
     return _cuda_paths_cached(root, os.environ.get('PATH', ''))
 
 
-@functools.lru_cache(maxsize=None)
+@functools.lru_cache(maxsize=None, typed=True)
 def _mpi_flags(mpicxx: str, path_env: str) -> tuple:
     """Query the MPI wrapper compiler for its include/lib flags, as
     ``(includes, libdirs, libs, compile_flags, link_flags)`` tuples (or raise).
@@ -288,7 +288,7 @@ def _resolve_environment(env, spec: _LinkSpec) -> None:
 # ---------------------------------------------------------------------------
 
 
-@functools.lru_cache(maxsize=None)
+@functools.lru_cache(maxsize=None, typed=True)
 def _nvcc_supported_arches(nvcc: str) -> Optional[frozenset]:
     """The set of ``sm_XX`` numbers ``nvcc`` can target, from ``--list-gpu-arch``; ``None`` if the
     probe fails (then no filtering is applied). Lets us drop archs a newer toolkit dropped -- e.g.
@@ -310,7 +310,7 @@ def _nvcc_supported_arches(nvcc: str) -> Optional[frozenset]:
 _NO_NATIVE_GPU = 'Cannot find valid GPU'
 
 
-@functools.lru_cache(maxsize=None)
+@functools.lru_cache(maxsize=None, typed=True)
 def _can_use_arch_native(nvcc: str) -> bool:
     """Whether ``nvcc -arch=native`` resolves a local GPU rather than substituting its own default.
 

@@ -26,10 +26,7 @@ import pytest
 from tests.corpus.polybench import polybench
 from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline
 
-try:
-    from dace.transformation.passes.normalize_wcr import NormalizeWCR
-except ImportError:  # pre-rename fallback (same pass, older module name)
-    from dace.transformation.passes.normalize_nested_reduction import NormalizeWCR
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
 _KERNELS = [k.name for k in polybench.collect()]
 _PIPELINES = ("simplify", "simplify_l2m_mapfusion")

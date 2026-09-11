@@ -64,7 +64,8 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
-from typing import Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import dace
 from dace import symbolic
@@ -117,7 +118,7 @@ def canonical_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def evaluated(expr) -> int:
+def evaluated(expr: Any) -> int:
     """``expr`` with every free symbol pinned to :data:`N`, as an int.
 
     A data-dependent bound is as much a whole-array pass as a static one -- the search that
@@ -263,3 +264,26 @@ def test_s319_accumulates_in_the_map_that_writes():
     """
     reads = full_length_reads(canonical_sdfg("s319_d_single"))
     assert reads == ["c", "d", "e"], reads
+
+
+def test_s482_search_should_not_restream_the_body_arrays():
+    """``s482`` reads each array once: no array is streamed by both a search and the body.
+
+    Holds because the break stays sequential. The withdrawn lowering matched on the break's shape
+    alone and put a ``FindFirst`` pass over ``b`` and ``c`` in front of a map reading ``b`` and
+    ``c`` again; the overlap condition that would have refused it is exact, since the predicate
+    reads ``b`` and ``c`` while the body reads ``a``, ``b`` and ``c``, and ``s481``'s predicate
+    reads only ``d``. A read-set refusal was still the wrong fix: the re-stream is a CPU cost paid
+    in a DEVICE-NEUTRAL stage, canonicalization takes the maximally parallel form wherever the
+    choice is open, and on a GPU the break is divergent control flow whose removal is the whole
+    point -- which is why ``FindFirst`` keeps its CUDA expansion over
+    ``dace::find_first_index_device``. Handing the parallelism back belongs in the
+    ``cpu_specialize`` band, and no pass there reverts a ``FindFirst`` lift to the sequential break
+    loop; that band only re-schedules Maps.
+
+    Pinned rather than retired: a break lowering that returns without a cost model re-reads these
+    arrays and fails here first.
+    """
+    sdfg = canonical_sdfg("ext_break_post_body")
+    reads = full_length_reads(sdfg)
+    assert len(reads) == len(set(reads)), reads

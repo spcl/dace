@@ -353,6 +353,14 @@ def _disallow_stmt(visitor, node):
 ###############################################################
 
 
+def _rescale_by_outer_steps(irng: subsets.Range, orng: subsets.Range):
+    for n, ostep in enumerate(orng.strides()):
+        if ostep == 1:
+            continue
+        rb, re, rs = irng.ranges[n]
+        irng.ranges[n] = (symbolic.int_floor(rb, ostep), symbolic.int_floor(re, ostep), symbolic.int_floor(rs, ostep))
+
+
 def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
     for dim in subset:
         if not isinstance(dim, tuple):
@@ -2386,6 +2394,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         irng.pop(outer_indices)
                         orng.pop(outer_indices)
                         irng.offset(orng, True)
+                        _rescale_by_outer_steps(irng, orng)
                     if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
                         memlet = Memlet.simple(vname, str(irng))
@@ -2405,6 +2414,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         orig_shape = orng.size()
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
                         strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                        strides = [s * st for s, st in zip(strides, orng.strides())]
                         strides = [
                             s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
                         ]
@@ -2477,6 +2487,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         irng.pop(outer_indices)
                         orng.pop(outer_indices)
                         irng.offset(orng, True)
+                        _rescale_by_outer_steps(irng, orng)
                     if self._find_access(memlet.data, scope_memlet.subset, 'w'):
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
                         inner_memlet = Memlet.simple(vname, str(irng))
@@ -2496,6 +2507,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         shape = [d for d in orig_shape if d != 1]
                         shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
                         strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                        strides = [s * st for s, st in zip(strides, orng.strides())]
                         strides = [
                             s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
                         ]

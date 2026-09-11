@@ -16,7 +16,7 @@ is a shape the tile pipeline already widens. Nothing here is vectorization-speci
 read that ``AccessNode`` analysis cannot see -- but it runs in the vectorizer because that is where
 the invisible read turns into a refusal.
 """
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from dace import SDFG
 from dace import properties
@@ -61,18 +61,18 @@ class DemoteDataReadingInterstateSymbols(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
         return {}
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: how many symbols were demoted, or ``None`` when none was."""
         demoted = 0
         for sd in sdfg.all_sdfgs_recursive():
             # Both gates answer from a whole-SDFG scan that depends on ``sd`` alone, so ask each
             # once per unmutated span rather than once per candidate -- the same accounting
             # ``LowerInterstateConditionalAssignmentsToTasklets`` makes, and for the same reason.
-            structural: Optional[Set[str]] = None
-            free_syms: Optional[Set[str]] = None
+            structural: set[str] | None = None
+            free_syms: set[str] | None = None
             for name in data_reading_assigned_symbols(sd):
                 if name not in sd.symbols:
                     continue

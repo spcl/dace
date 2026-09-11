@@ -5,14 +5,12 @@ Read-only query helpers used by the vectorization pipeline.
 These helpers do not mutate the SDFG; they extract access subsets used by the
 emission and prep passes.
 """
-from typing import Dict, Optional
-
 import dace
 
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 
 
-def collect_element_write_subsets(state: dace.SDFGState) -> Optional[Dict[str, dace.subsets.Range]]:
+def collect_element_write_subsets(state: dace.SDFGState) -> dict[str, dace.subsets.Range] | None:
     """Return ``{arr_name: subset}`` for every element-wise write in ``state``.
 
     A write is element-wise iff the subset written on the AccessNode's side has
@@ -30,7 +28,7 @@ def collect_element_write_subsets(state: dace.SDFGState) -> Optional[Dict[str, d
     :returns: Mapping of array name to its element-wise write subset, or
         ``None`` if any in-edge to an AccessNode is not element-wise.
     """
-    out: Dict[str, dace.subsets.Range] = {}
+    out: dict[str, dace.subsets.Range] = {}
     for n in state.nodes():
         if not isinstance(n, dace.nodes.AccessNode):
             continue

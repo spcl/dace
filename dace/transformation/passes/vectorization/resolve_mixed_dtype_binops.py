@@ -31,13 +31,17 @@ frontend's implicit per-arm assignment cast -- these two forms are NOT ``ast.Bin
 ``ast.Compare``, so they need their own detector rather than reusing the binop one.
 """
 import ast
-from typing import Optional, Tuple
+
+from collections.abc import Callable
+from typing import Any
 
 from dace.ordered import OrderedSet
 
 import dace
 from dace import dtypes
+from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import CodeBlock
@@ -56,7 +60,7 @@ def _cast_name(dtype: dtypes.typeclass) -> str:
     return dtypes.TYPECLASS_TO_STRING[dtype].split("::")[-1]
 
 
-def ite_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, list, Optional[str]]]:
+def ite_operands(tasklet: nodes.Tasklet) -> tuple[str, list[str], str | None] | None:
     """If ``tasklet`` is a ternary blend -- the Python ``_o = _t if _c else _e`` form or the
     ``_o = ITE(_c, _t, _e)`` call form ``SplitTasklets`` emits for a same-write-set if/else --
     return ``(out_conn, arm_conns, cond_conn)`` where ``arm_conns`` lists the arms that are
@@ -102,7 +106,7 @@ def _is_logical(tasklet: nodes.Tasklet) -> bool:
     return isinstance(tree.body[0].value, ast.BoolOp)
 
 
-def _ite_arm_slots(rhs: ast.expr) -> Optional[list]:
+def _ite_arm_slots(rhs: ast.expr) -> list[tuple[ast.expr, Callable[[ast.expr], None]]] | None:
     """The two ``(node, setter)`` pairs addressing an ITE ``rhs``'s then/else arm slots --
     ``IfExp.body`` / ``IfExp.orelse``, or ``Call.args[1]`` / ``Call.args[2]`` for the
     ``ITE(cond, t, e)`` form -- so a caller can read the current arm node and, for a
@@ -130,7 +134,7 @@ def _ite_arm_slots(rhs: ast.expr) -> Optional[list]:
     return None
 
 
-def masked_write_operand(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str]]:
+def masked_write_operand(tasklet: nodes.Tasklet) -> tuple[str, str] | None:
     """If ``tasklet`` is the masked write ``_o = IT(_cond, _val)`` (the first-class conditional
     write ``NormalizeMaskedWriteTasklets`` emits), return ``(out_conn, val_conn)`` when ``_val``
     is an in-connector; else ``None`` (a constant value arm has no edge to cast).
@@ -157,7 +161,7 @@ def masked_write_operand(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str]]:
     return out_conn, val.id
 
 
-def _binop_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, str, str, bool]]:
+def _binop_operands(tasklet: nodes.Tasklet) -> tuple[str, str, str, bool] | None:
     """If ``tasklet`` is a single ``_o = _a <op> _b`` (arithmetic, comparison or logical) whose two
     operands are input connectors, return ``(out_conn, a_conn, b_conn, is_comparison)``;
     else ``None``.
@@ -215,7 +219,7 @@ class ResolveMixedDtypeBinops(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         count = 0
         # Recurse into nested SDFGs: a map body is often a NestedSDFG (frontend ``loop_body`` /
         # ``NestInnermostMapBodyIntoNSDFG``), so the split arithmetic + comparison tasklets that
@@ -429,8 +433,8 @@ class ResolveMixedDtypeBinops(ppl.Pass):
                                   find_new_name=True)
         return name
 
-    def _insert_operand_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge, conn: str,
-                             promoted: dtypes.typeclass) -> None:
+    def _insert_operand_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge: MultiConnectorEdge[Memlet],
+                             conn: str, promoted: dtypes.typeclass) -> None:
         """Route operand ``edge`` through ``_co = dace.<promoted>(_ci)`` so ``tasklet``'s
         ``conn`` reads a promoted-dtype transient instead of the narrower source."""
         sdfg = state.sdfg
@@ -443,8 +447,8 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         state.add_edge(tmp_an, None, tasklet, conn, dace.Memlet(tmp))
         state.remove_edge(edge)
 
-    def _insert_output_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge, conn: str, promoted: dtypes.typeclass,
-                            out_dt: dtypes.typeclass) -> None:
+    def _insert_output_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge: MultiConnectorEdge[Memlet], conn: str,
+                            promoted: dtypes.typeclass, out_dt: dtypes.typeclass) -> None:
         """Compute at ``promoted`` into a fresh transient, then ``_co = dace.<out_dt>(_ci)``
         stores the result into the original destination, casting to its dtype (a downcast
         when it is narrower than ``promoted``, a widening store when it is wider)."""
@@ -489,7 +493,7 @@ class CastScalarIteLiteralArms(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         count = 0
         for nested in sdfg.all_sdfgs_recursive():
             for state in nested.all_states():

@@ -51,6 +51,7 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -381,9 +382,10 @@ def test_cloudsc_iphase_shape_structure():
     ``loop_to_reduce`` recognises only single-statement accumulator loops, so it
     cannot lift this reduction without loop fission first isolating it -- and the
     front-loaded recipe runs ``loop_to_reduce`` before fission. So ``JM`` remains
-    a ``LoopRegion`` and the four inner ``JL`` statements become Maps. The two
-    per-``JM`` phase guards (``iphase[jm] == 1`` / ``== 2``) survive as
-    ``ConditionalBlock`` s (their condition reads a per-iteration array).
+    a ``LoopRegion`` and the four inner ``JL`` statements become three Maps (the
+    two phase-guarded accumulations share one). The two per-``JM`` phase guards
+    (``iphase[jm] == 1`` / ``== 2``) survive as ``ConditionalBlock`` s (their
+    condition reads a per-iteration array).
     Correctness is pinned numerically by ``test_cloudsc_iphase_shape_e2e``.
     """
     sdfg = cloudsc_iphase_shape.to_sdfg(simplify=True)
@@ -393,7 +395,8 @@ def test_cloudsc_iphase_shape_structure():
                                 f'pre-fission); got {_nloops(sdfg)} loops')
     assert _ncond_blocks(sdfg) == 2, (f'both IPHASE phase guards must survive (correct refusal); '
                                       f'got {_ncond_blocks(sdfg)} conditionals')
-    assert _nmaps(sdfg) <= 4, f'too many residual maps for the 4 JL statements: {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 3, (f'the four JL statements must land in exactly three maps -- the two '
+                               f'phase-guarded accumulations share one; got {_nmaps(sdfg)}')
 
 
 def test_cloudsc_iphase_shape_e2e():
@@ -524,17 +527,15 @@ def test_zqtmst_invariant_scalar_shape_structure():
     sdfg.validate()
     assert _nmaps(sdfg) == 1, f'expected one collapsed 2D map, got {_nmaps(sdfg)}'
     assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
-    # No tasklet inside a Map scope should compute ``1.0 / ptsphy`` --
-    # the reciprocal should live in the outer state. Conservative test:
-    # search every tasklet's code for the division literal.
-    for n, parent in sdfg.all_nodes_recursive():
-        if isinstance(n, nodes.Tasklet):
-            code = getattr(n.code, 'as_string', '')
-            # Tasklets inside Map scope are reachable from a MapEntry.
-            # Heuristic: any tasklet whose code computes ``1.0 / ptsphy``
-            # OR ``1 / ptsphy`` is the buggy per-iteration reciprocal.
-            assert '1.0 / ptsphy' not in code and '1 / ptsphy' not in code, \
-                f'per-iteration reciprocal leaked into tasklet: {code}'
+    # Whoever reads ``ptsphy`` is the reciprocal, whatever the division is spelled like. A
+    # per-iteration recompute puts that reader under a MapEntry; the hoisted one sits at top level.
+    readers = [(state, node) for state in sdfg.all_states() for node in state.nodes()
+               if isinstance(node, nodes.Tasklet) for e in state.in_edges(node)
+               if e.data is not None and e.data.data == 'ptsphy']
+    assert readers, 'no tasklet reads ptsphy at all -- the reciprocal vanished'
+    for state, tasklet in readers:
+        assert state.entry_node(tasklet) is None, \
+            f'the reciprocal runs per iteration: {tasklet.label} is inside {state.entry_node(tasklet)}'
 
 
 def test_zqtmst_invariant_scalar_shape_e2e():
@@ -656,23 +657,36 @@ def cloudsc_nssopt_config_chain_shape(arr: dace.float64[N, M], out: dace.float64
                 out[jl, jk] = arr[jl, jk] + 1.0
 
 
-def test_cloudsc_nssopt_config_chain_shape_e2e():
+def nssopt_oracle(arr, nssopt):
+    """The if/elif/else ladder, evaluated once per configuration."""
+    return {0: arr.copy(), 1: arr * 2.0, 2: arr + 1.0}[nssopt]
+
+
+def test_cloudsc_nssopt_config_chain_shape_hoists_the_invariant_guard():
+    """The ``nssopt`` ladder is loop-invariant, so it hoists OUT of the JK/JL nest to the SDFG top
+    level and each of its three arms keeps its own parallel nest."""
+    sdfg = cloudsc_nssopt_config_chain_shape.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    top_level = [b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)]
+    assert len(top_level) == 1, f'the invariant ladder did not reach the top level: {sdfg.nodes()}'
+    assert len(top_level[0].branches) == 3, f'the three-arm ladder lost an arm: {len(top_level[0].branches)}'
+    assert _ncond_blocks(sdfg) == 1, 'a per-iteration copy of the guard survived inside the nest'
+    assert _nmaps(sdfg) == 3, f'each arm must keep its own collapsed 2D map; got {_nmaps(sdfg)}'
+    assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
+
+
+@pytest.mark.parametrize('nssopt', [0, 1, 2])
+def test_cloudsc_nssopt_config_chain_shape_e2e(nssopt):
     n, m = 8, 6
     rng = np.random.default_rng(108)
     arr = rng.standard_normal((n, m))
-    for nssopt in (0, 1, 2):
-        sdfg = cloudsc_nssopt_config_chain_shape.to_sdfg(simplify=True)
-        canonicalize(sdfg, validate=True)
-        sdfg.validate()
-        out = np.zeros_like(arr)
-        sdfg(arr=arr, out=out, nssopt=np.int32(nssopt), N=n, M=m)
-        if nssopt == 0:
-            exp = arr.copy()
-        elif nssopt == 1:
-            exp = arr * 2.0
-        else:
-            exp = arr + 1.0
-        assert np.allclose(out, exp), f'nssopt={nssopt}'
+    sdfg = cloudsc_nssopt_config_chain_shape.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    out = np.zeros_like(arr)
+    sdfg(arr=arr, out=out, nssopt=np.int32(nssopt), N=n, M=m)
+    assert np.allclose(out, nssopt_oracle(arr, nssopt))
 
 
 # ----------------------------------------------------------------------
@@ -693,14 +707,11 @@ def _run_canonicalize_pre_parallelize(kernel):
     post-fission one. Stop before the LAST: the early ``LoopToMap`` has already
     turned the fully-parallel inner nests into Maps, leaving the per-``jb`` loop
     with its still-invariant ``istep`` guard for MLIU to hoist."""
-    from dace.transformation.passes.canonicalize.pipeline import _build_stages
     sdfg = kernel.to_sdfg(simplify=True)
-    stages = _build_stages()
-    last_parallelize = max(i for i, (label, _) in enumerate(stages) if label == 'parallelize')
-    for i, (label, unit) in enumerate(stages):
-        if i == last_parallelize:
-            break
-        unit.apply_pass(sdfg, {})
+    last_parallelize = max(i for i, (label, _) in enumerate(CANONICALIZE_STAGES) if label == 'parallelize')
+    for _label, factory in CANONICALIZE_STAGES[:last_parallelize]:
+        for unit in factory():
+            unit.apply_pass(sdfg, {})
     return sdfg
 
 

@@ -36,9 +36,12 @@ def _canonicalize_and_check(name):
     got = {n: a.copy() for n, a in arrays.items()}
     sdfg.compile()(**got, **call_kwargs)
     for n, arr in arrays.items():
+        # Integer outputs are the argmax INDICES, so they compare exactly; a tolerance on them would
+        # let a neighbouring index through, which is the one thing an ArgReduce lift can get wrong.
         if np.issubdtype(arr.dtype, np.integer):
-            continue
-        assert np.allclose(ref[n], got[n], equal_nan=True), f"{name}: value mismatch on {n}"
+            assert np.array_equal(ref[n], got[n]), f"{name}: index mismatch on {n}"
+        else:
+            assert np.allclose(ref[n], got[n], equal_nan=True), f"{name}: value mismatch on {n}"
 
     nloops = sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
     types = {}

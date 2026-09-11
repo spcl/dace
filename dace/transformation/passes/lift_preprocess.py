@@ -41,22 +41,19 @@ class LiftPreprocess(ppl.Pass):
         :returns: The number of normalization rewrites, or ``None`` if the SDFG was
                   left untouched.
         """
-        from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-        from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+        from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
         from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
+        from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
         from dace.transformation.passes.loop_to_scan import _collect_loops, _fuse_body_states
-        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         from dace.transformation.passes.symbol_propagation import SymbolPropagation
 
         count = 0
         # Reductions written as WCR edges -> in-body augmented assignment, so the matchers
-        # see one uniform tasklet shape. No-op on already-augassign bodies.
-        applied = PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
-        count += sum(len(v) for v in applied.values()) if applied else 0
+        # see one uniform tasklet shape (no-op if already augassign); avoids the matcher's per-call VF2.
+        count += RevertNonReductionWCR().apply_pass(sdfg, {}) or 0
         # Strip frontend ``__out = __inp`` copy tasklets so the matcher sees the bare
         # ``out[i+1] = out[i] + delta[i]`` shape instead of an ``assign_NN`` copy node.
-        applied = PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
-        count += sum(len(v) for v in applied.values()) if applied else 0
+        count += EliminateTrivialTasklets().apply_pass(sdfg, {}) or 0
 
         # NOTE: D4 (CleanAccessNode + CleanTasklet) is deliberately NOT applied here.
         # ``LoopToScan``'s matcher already handles the frontend's scalar-slice intermediates

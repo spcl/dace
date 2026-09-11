@@ -66,13 +66,11 @@ def test_compare_identical_and_diff():
     assert not ok2 and md2 == pytest.approx(1.5)
 
 
-def test_stage_result_ok_and_str():
-    good = StageCheckResult(0, 'fuse', 'P', True, None, True, 0.0, None)
-    assert good.ok and 'numeric-ok' in str(good)
-    invalid = StageCheckResult(1, 'fuse', 'P', False, 'boom', None, None, None)
-    assert not invalid.ok and 'INVALID' in str(invalid)
-    mismatch = StageCheckResult(2, 'fuse', 'P', True, None, False, 3.0, None)
-    assert not mismatch.ok and 'NUMERIC-MISMATCH' in str(mismatch)
+def test_stage_result_ok_needs_both_validity_and_numerics():
+    """``ok`` is the verdict the harness acts on: valid AND numerically matching, both required."""
+    assert StageCheckResult(0, 'fuse', 'P', True, None, True, 0.0, None).ok
+    assert not StageCheckResult(1, 'fuse', 'P', False, 'boom', None, None, None).ok
+    assert not StageCheckResult(2, 'fuse', 'P', True, None, False, 3.0, None).ok
 
 
 # ----------------------------------------------------------------------

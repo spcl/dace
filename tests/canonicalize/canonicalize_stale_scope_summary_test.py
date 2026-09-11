@@ -14,7 +14,6 @@ must be rebuilt (``PropagateMemlets``), and the mirrored ragged writes must then
 disjoint -- so the assertion here is on the pipeline, not on either piece.
 """
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes
@@ -22,6 +21,11 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.propagate_memlets import PropagateMemlets
+
+#: ``z3-solver`` is a hard dependency of this branch (``pyproject.toml`` marks it "Not optional":
+#: LoopToMap and the canonicalize parallelization band query the oracle), so an absent solver is a
+#: broken install, not a reason to report green.
+assert smt_dependence.has_z3(), 'z3-solver is a required dependency but the SMT oracle is unavailable'
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -50,7 +54,6 @@ def scope_summaries(sdfg: dace.SDFG):
     }
 
 
-@pytest.mark.skipif(not smt_dependence.has_z3(), reason='the ragged-write certificate is SMT-backed')
 def test_the_mirrored_column_loop_parallelizes():
     sdfg = covariance_columns.to_sdfg(simplify=True)
     sdfg.simplify()

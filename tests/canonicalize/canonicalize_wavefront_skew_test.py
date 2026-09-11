@@ -1,7 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`WavefrontSkew`. Classical 2-D wavefront pattern (TSVC s2111)."""
-import itertools
-import random
 import sys
 from fractions import Fraction
 
@@ -102,8 +100,12 @@ def test_wavefront_skew_then_l2m_parallelises_inner():
     n_maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     n_loops = len(_loops(sdfg))
     assert n_maps >= 1, f"expected at least one parallel Map after skewing + LoopToMap; got maps={n_maps}"
-    # The outer ``t`` loop stays sequential.
-    assert n_loops <= 1
+    # The diagonal ``t`` loop stays sequential -- and stays, full stop: zero loops here would mean
+    # ``LoopToMap`` lifted the sequential diagonal, which is the race this test exists to forbid.
+    loops = _loops(sdfg)
+    assert n_loops == 1, f"the diagonal t-loop must survive LoopToMap; got {[c.loop_variable for c in loops]}"
+    assert loops[0].loop_variable.startswith(_SKEW_T_PREFIX), \
+        f"the surviving loop should be the diagonal ``t``; got {loops[0].loop_variable}"
 
 
 @dace.program
@@ -303,7 +305,10 @@ def test_wavefront_skew_steep_then_l2m_keeps_one_sequential_loop():
     sdfg.validate()
     n_maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     assert n_maps >= 1
-    assert len(_loops(sdfg)) <= 1
+    loops = _loops(sdfg)
+    assert len(loops) == 1, f"the diagonal t-loop must survive LoopToMap; got {[c.loop_variable for c in loops]}"
+    assert loops[0].loop_variable.startswith(_SKEW_T_PREFIX), \
+        f"the surviving loop should be the diagonal ``t``; got {loops[0].loop_variable}"
 
 
 def test_dependence_kind_classifies_backward_flow_forward_anti():
@@ -910,29 +915,23 @@ def test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable):
 
 
 # =========================================================================== #
-#  Wavefronts the corpora carry that the pipeline does NOT find today.        #
+#  Wavefronts the corpora carry, found through the full pipeline.             #
 # =========================================================================== #
 #
 # A kernel can only hide a wavefront where TWO sequential axes survive canonicalize. Over the four
-# corpora that is a short list, and on it are four nests whose diagonals are genuinely parallel and
-# that the pass nevertheless refuses. Each one gets a PAIR of tests:
+# corpora that is a short list, and on it are four nests whose diagonals are genuinely parallel.
+# Each ``..._is_detected`` test canonicalizes the kernel, asserts the diagonal is there, and then
+# RUNS the result against the sequential meaning of the same kernel: a structural count alone is
+# also satisfied by a rewrite that parallelised something unsound, and the failure mode of a wrong
+# skew is a silent miscompile rather than an exception.
 #
-#   * ``..._is_a_genuine_wavefront``  -- a PASSING test carrying the evidence: the dependence
-#     distances taken from the index sets the kernel actually touches, which schedules those
-#     distances admit, and an EXACT-RATIONAL re-run of the kernel on the legal diagonal with the
-#     iterations SHUFFLED inside each diagonal. A shuffle cannot change the answer if the diagonal
-#     is parallel, so equality with the sequential reference is a direct executable proof rather
-#     than an appeal to the reader's dependence intuition. These must always pass: they are claims
-#     about the KERNEL, not about DaCe.
-#   * ``..._is_detected``            -- the tripwire, ``xfail(strict=True)``. It asserts the state
-#     we want (the nest is skewed) and therefore fails today. ``strict`` is load-bearing: the day
-#     someone extends the refusing guard, the xfail turns into a FAILURE and forces this file to be
-#     revisited, so the gap cannot rot into a silently-passing no-op.
-
-#: Skews probed by the evidence tests: ``wavefront_skew._SKEW_CANDIDATES`` plus the two
-#: axis-aligned schedules. A nest is a GENUINE wavefront exactly when ``(1, 0)`` and ``(0, 1)`` are
-#: both illegal (neither loop parallelises on its own) and some diagonal is legal.
-CANDIDATE_TAUS = ((1, 0), (0, 1), (1, 1), (1, -1), (2, 1), (2, -1), (1, 2), (1, -2))
+# That the diagonals are legal is a property of the KERNELS, argued once here rather than re-derived
+# per test. seidel_2d's (i, j) nest and row_sweep's (t, i) nest both carry distances on both axes --
+# (0, 1) forbids tau = (1, 0) and (1, -1) forbids tau = (0, 1) -- leaving only the steep
+# tau = (2, 1); lu / ludcmp read A[i, k] for k < j and A[k, j] for k < i, so every distance is
+# non-negative in both components and the anti-diagonal tau = (1, 1) is free. An earlier revision
+# carried three exact-rational simulations of those claims; they re-implemented the kernels a second
+# time in the test file and no change to DaCe could redden them.
 
 #: The CPU knob set the corpus parallelism gate uses (``tests/corpus/measure_parallelization.py``).
 CPU_PARAMS = dict(target='cpu',
@@ -942,54 +941,11 @@ CPU_PARAMS = dict(target='cpu',
                   scatter_to_guarded_maps=True)
 
 
-def dependence_distances(iters, write_set, read_set):
-    """``{(d_outer, d_inner): {kinds}}`` for a nest, from the cells its iterations actually touch.
-
-    ``iters`` must be in EXECUTION order, so for ``p`` before ``q`` a hit of ``write(p)`` against
-    ``read(q)`` is a flow dependence, ``read(p)`` against ``write(q)`` an anti dependence, and
-    ``write(p)`` against ``write(q)`` an output dependence. The index sets are only ever asked
-    whether an intersection is EMPTY, so no answer here depends on set iteration order.
-    """
-    out = {}
-    for p, q in itertools.combinations(iters, 2):
-        for kind, hit in (('flow', write_set(p) & read_set(q)), ('anti', read_set(p) & write_set(q)),
-                          ('output', write_set(p) & write_set(q))):
-            if hit:
-                out.setdefault((q[0] - p[0], q[1] - p[1]), set()).add(kind)
-    return out
-
-
-def tau_legal(tau, dists):
-    """Lamport's condition: ``tau`` orders every dependence strictly on the sequential axis."""
-    return all(tau[0] * a + tau[1] * b > 0 for (a, b) in dists)
-
-
-def legal_taus(dists):
-    return [t for t in CANDIDATE_TAUS if tau_legal(t, dists)]
-
-
 def run_sequentially(iters, body, make):
     state = make()
     for p in iters:
         body(state, p)
     return state
-
-
-def run_on_diagonals(iters, tau, body, make, seed):
-    """``(result, diagonals)`` from executing ``body`` diagonal by diagonal under ``tau``, with the
-    iterations SHUFFLED inside each diagonal -- the shuffle is what makes a match evidence of
-    parallelism rather than of a coincidentally compatible order."""
-    rng = random.Random(seed)
-    diagonals = {}
-    for p in iters:
-        diagonals.setdefault(tau[0] * p[0] + tau[1] * p[1], []).append(p)
-    state = make()
-    for level in sorted(diagonals):
-        points = list(diagonals[level])
-        rng.shuffle(points)
-        for p in points:
-            body(state, p)
-    return state, diagonals
 
 
 def residual_loops(sdfg):
@@ -1035,94 +991,6 @@ def seidel_reference(A, nsteps, n):
     return A
 
 
-def test_seidel_2d_ij_is_a_genuine_wavefront():
-    """seidel_2d's ``(i, j)`` nest is the classical Gauss-Seidel wavefront, ``tau = (2, 1)``.
-
-    Three things are established in EXACT RATIONALS, so no float rounding can be mistaken for a
-    difference in algorithm:
-
-    1. the corpus's npbench formulation computes the same values as the textbook element-wise
-       9-point Gauss-Seidel triple loop;
-    2. so does the FUSED point nest -- the slice statement distributed into the scan's ``j`` loop,
-       which is the single perfectly-nested ``LoopRegion`` :class:`WavefrontSkew` requires;
-    3. that fused nest run on the ``t = 2i + j`` diagonals, shuffled within each diagonal,
-       reproduces the sequential answer.
-
-    Together they say the wavefront is a property of the KERNEL, not of any particular way of
-    writing it -- which is why refusing to skew the corpus spelling is a miss and not a verdict.
-    """
-    n, steps = 9, 3
-
-    def make():
-        return [[Fraction(i * (j + 2) + 2, n) for j in range(n)] for i in range(n)]
-
-    def classic(A):
-        for _t in range(steps - 1):
-            for i in range(1, n - 1):
-                for j in range(1, n - 1):
-                    A[i][j] = (A[i - 1][j - 1] + A[i - 1][j] + A[i - 1][j + 1] + A[i][j - 1] + A[i][j] + A[i][j + 1] +
-                               A[i + 1][j - 1] + A[i + 1][j] + A[i + 1][j + 1]) / 9
-        return A
-
-    def npbench(A):
-        for _t in range(steps - 1):
-            for i in range(1, n - 1):
-                # numpy slice semantics: the whole right-hand side is evaluated before assignment.
-                row = [
-                    A[i][j] + (A[i - 1][j - 1] + A[i - 1][j] + A[i - 1][j + 1] + A[i][j + 1] + A[i + 1][j - 1] +
-                               A[i + 1][j] + A[i + 1][j + 1]) for j in range(1, n - 1)
-                ]
-                for j in range(1, n - 1):
-                    A[i][j] = row[j - 1]
-                for j in range(1, n - 1):
-                    A[i][j] = (A[i][j] + A[i][j - 1]) / 9
-        return A
-
-    def point_body(A, p):
-        """The slice statement and the scan statement for ONE point, in program order."""
-        i, j = p
-        A[i][j] = A[i][j] + (A[i - 1][j - 1] + A[i - 1][j] + A[i - 1][j + 1] + A[i][j + 1] + A[i + 1][j - 1] +
-                             A[i + 1][j] + A[i + 1][j + 1])
-        A[i][j] = (A[i][j] + A[i][j - 1]) / 9
-
-    reference = classic(make())
-    assert npbench(make()) == reference, 'the corpus formulation is the classic 9-point kernel'
-
-    iters = [(i, j) for i in range(1, n - 1) for j in range(1, n - 1)]
-
-    def write_set(p):
-        return {p}
-
-    def read_set(p):
-        return {(p[0] + di, p[1] + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)}
-
-    dists = dependence_distances(iters, write_set, read_set)
-    assert sorted(dists) == [(0, 1), (1, -1), (1, 0), (1, 1)], f'unexpected distances {sorted(dists)}'
-    assert legal_taus(dists) == [(2, 1)], 'only the steep Gauss-Seidel diagonal is legal'
-    assert not tau_legal((1, 0), dists) and not tau_legal((0, 1), dists), \
-        'neither axis parallelises on its own -- this is what makes it a wavefront and not a scan'
-
-    # Per time step the fused nest is the classic kernel, and its (2, 1) diagonals are parallel.
-    fused = make()
-    for _t in range(steps - 1):
-        for p in iters:
-            point_body(fused, p)
-    assert fused == reference, 'the fused point nest is the same kernel'
-
-    shuffled = make()
-    for _t in range(steps - 1):
-        level_of = {}
-        for p in iters:
-            level_of.setdefault(2 * p[0] + p[1], []).append(p)
-        rng = random.Random(17)
-        for level in sorted(level_of):
-            points = list(level_of[level])
-            rng.shuffle(points)
-            for p in points:
-                point_body(shuffled, p)
-    assert shuffled == reference, 'shuffling within each t = 2i + j diagonal must not change the answer'
-
-
 def test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs():
     """seidel_2d's ``(i, j)`` wavefront IS reachable today -- but only with two non-default knobs.
 
@@ -1130,10 +998,10 @@ def test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs():
     beside the scan ``LoopRegion``) into the single ``LoopRegion`` the skew requires, and
     ``normalize_loop_and_map_origin`` rebases both to a 0-based begin so their ranges line up.
     With both on, ``WavefrontSkew`` fires and the diagonal is ``_skew_t_ in [0 .. 3*N - 9]`` --
-    exactly ``t = 2i + j`` over the rebased ``[0, N-3]`` box, the ``tau = (2, 1)`` proved legal in
-    :func:`test_seidel_2d_ij_is_a_genuine_wavefront`.
+    exactly ``t = 2i + j`` over the rebased ``[0, N-3]`` box, i.e. the ``tau = (2, 1)`` the section
+    header above argues is the only legal schedule for this nest.
 
-    **This falsifies a comment in the pipeline.** ``pipeline.py`` lines 366-374 justify the
+    **This falsifies a comment in the pipeline.** ``pipeline.py`` lines 632-639 justify the
     ``reconstruct_wavefront_nest=False`` default with: "on the corpus kernel it targets, the Map's
     slice-normalized range and the scan's direct-index range do not line up (a real offset, not
     just a DOALL refusal), so the reconstruction never actually fires there yet -- ON is safe
@@ -1191,53 +1059,12 @@ def row_sweep_3pt(A: dace.float64[N, N], tsteps: dace.int32):
             A[i, 1:-1] = (A[i - 1, 1:-1] + A[i, 1:-1] + A[i + 1, 1:-1]) / 3.0
 
 
-def row_sweep_iteration_space(n, steps):
-    """``(iters, write_set, read_set, body, make)`` for :func:`row_sweep_3pt` at ROW granularity --
-    one iteration is one ``(t, i)`` pair, writing a whole row and reading three."""
-    cols = list(range(1, n - 1))
-    iters = [(t, i) for t in range(steps - 1) for i in range(1, n - 1)]
-
-    def make():
-        return [[Fraction(i * (j + 2) + 2, n) for j in range(n)] for i in range(n)]
-
-    def body(A, p):
-        i = p[1]
-        # The whole right-hand side is evaluated before the row is written back (slice semantics).
-        updated = [(A[i - 1][j] + A[i][j] + A[i + 1][j]) / 3 for j in cols]
-        for at, j in enumerate(cols):
-            A[i][j] = updated[at]
-
-    def write_set(p):
-        return {(p[1], j) for j in cols}
-
-    def read_set(p):
-        return {(p[1] + d, j) for d in (-1, 0, 1) for j in cols}
-
-    return iters, write_set, read_set, body, make
-
-
-def test_row_sweep_ti_is_a_genuine_wavefront():
-    """The ``(t, i)`` nest of :func:`row_sweep_3pt` is a wavefront with ``tau = (2, 1)``.
-
-    Row ``i`` reads row ``i-1`` (written earlier in the same time step) and row ``i+1`` (written in
-    the previous one), which puts distances on BOTH axes: ``(0, 1)`` forbids ``tau = (1, 0)`` and
-    ``(1, -1)`` forbids ``tau = (0, 1)``, so neither the time loop nor the row loop parallelises.
-    Of the whole candidate family only the steep ``t = 2t + i`` diagonal survives, and running the
-    rows of each diagonal in shuffled order in exact rationals reproduces the sequential answer.
-    """
-    n, steps = 9, 4
-    iters, write_set, read_set, body, make = row_sweep_iteration_space(n, steps)
-
-    dists = dependence_distances(iters, write_set, read_set)
-    assert sorted(dists) == [(0, 1), (1, -1), (1, 0), (1, 1), (2, -1), (2, 0), (2, 1)], \
-        f'unexpected row-granularity distances {sorted(dists)}'
-    assert legal_taus(dists) == [(2, 1)], f'only tau=(2, 1) should be legal; got {legal_taus(dists)}'
-    assert not tau_legal((1, 0), dists) and not tau_legal((0, 1), dists), 'neither axis is parallel on its own'
-
-    reference = run_sequentially(iters, body, make)
-    got, diagonals = run_on_diagonals(iters, (2, 1), body, make, seed=11)
-    assert len(diagonals) == 11 and max(len(v) for v in diagonals.values()) == 3
-    assert got == reference, 'shuffling the rows within a 2t + i diagonal must not change the answer'
+def row_sweep_reference(A, nsteps, n):
+    """:func:`row_sweep_3pt` in numpy -- the sequential meaning the skewed SDFG has to reproduce."""
+    for _t in range(nsteps - 1):
+        for i in range(1, n - 1):
+            A[i, 1:-1] = (A[i - 1, 1:-1] + A[i, 1:-1] + A[i + 1, 1:-1]) / 3.0
+    return A
 
 
 def test_row_sweep_ti_wavefront_is_detected():
@@ -1251,12 +1078,25 @@ def test_row_sweep_ti_wavefront_is_detected():
     repeated per-step write becomes an output dependence that is what keeps ``t`` sequential.
     Memlet consolidation had also folded the three neighbour reads into the single
     ``A[i-1 : i+2, ...]``; expanding that constant-width range back into its three points is what
-    recovers ``(0, -1)``, ``(-1, 0)`` and ``(-1, 1)``, hence ``tau = (2, 1)`` -- the schedule
-    :func:`test_row_sweep_ti_is_a_genuine_wavefront` proves correct by execution."""
+    recovers ``(0, -1)``, ``(-1, 0)`` and ``(-1, 1)``, hence ``tau = (2, 1)``.
+
+    Finding the diagonal is only half of it: the rewrite is a reschedule, so its failure mode is
+    wrong numbers and not an exception. The finalized kernel is therefore RUN, multithreaded,
+    against the sequential reference."""
+    n, steps = 12, 4
+    rng = np.random.default_rng(2026)
+    a0 = rng.standard_normal((n, n))
+
     sdfg = row_sweep_3pt.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=False, **CPU_PARAMS)
+    canonicalize(sdfg, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \
         f'(t, i) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}'
+
+    finalized = finalize_for_target(sdfg, 'cpu')
+    finalized.name = 'row_sweep_3pt_wavefront'
+    got = a0.copy()
+    finalized(A=got, tsteps=steps, N=n)
+    assert np.allclose(got, row_sweep_reference(a0.copy(), steps, n)), 'the (t, i) skew is not value-preserving'
 
 
 # --------------------------------------------------------------------------- #
@@ -1298,10 +1138,12 @@ def ludcmp_factorization(A: dace.float64[N, N]):
 
 
 def lu_iteration_space(n, with_scalar_accumulator):
-    """``(iters, write_set, read_set, body, make)`` for the merged ``(i, j)`` space of lu /
-    ludcmp. ``with_scalar_accumulator`` models ludcmp's ``w`` as the per-iteration temporary it is
-    (i.e. after privatisation); it cannot change the dependences on ``A``, and the test asserts
-    that both variants give the same distances."""
+    """``(iters, body, make)`` for the merged ``(i, j)`` space of lu / ludcmp, in exact rationals.
+
+    ``with_scalar_accumulator`` picks ludcmp's spelling: it accumulates into the scalar ``w`` and
+    stores once where lu updates ``A[i, j]`` in place. Both are run here in their own right, since
+    it is a genuinely different program and not a restatement of the other.
+    """
     iters = [(i, j) for i in range(n) for j in range(n)]
 
     def make():
@@ -1311,9 +1153,6 @@ def lu_iteration_space(n, with_scalar_accumulator):
                 for i in range(n)]
 
     def body(A, p):
-        """The two spellings are genuinely different programs -- ``lu`` accumulates IN PLACE into
-        ``A[i, j]``, ``ludcmp`` into the scalar ``w`` and stores once -- so asserting that both
-        yield the same distances is a real check, not a restatement."""
         i, j = p
         limit = j if j < i else i
         if with_scalar_accumulator:
@@ -1327,74 +1166,48 @@ def lu_iteration_space(n, with_scalar_accumulator):
             if j < i:
                 A[i][j] = A[i][j] / A[j][j]
 
-    def write_set(p):
-        return {p}
-
-    def read_set(p):
-        i, j = p
-        limit = j if j < i else i
-        cells = {(i, j)}
-        for k in range(0, limit):
-            cells.add((i, k))
-            cells.add((k, j))
-        if j < i:
-            cells.add((j, j))
-        return cells
-
-    return iters, write_set, read_set, body, make
+    return iters, body, make
 
 
-@pytest.mark.parametrize('with_scalar_accumulator, label', [(False, 'lu'), (True, 'ludcmp')])
-def test_lu_family_ij_is_a_genuine_wavefront(with_scalar_accumulator, label):
-    """The merged ``(i, j)`` space of lu / ludcmp is a wavefront with ``tau = (1, 1)``.
+def lu_family_matrices(n, with_scalar_accumulator):
+    """``(start, reference)`` as float64 arrays: the fixture matrix and the sequential answer.
 
-    ``A[i, j]`` reads ``A[i, k]`` for ``k < j`` (same row, earlier column -> distances ``(0, d)``)
-    and ``A[k, j]`` for ``k < i`` (earlier row, same column -> distances ``(d, 0)``). Both axes
-    therefore carry, so neither loop is parallel, but every distance is non-negative in both
-    components -- which is exactly the condition that makes the anti-diagonal free.
-
-    ludcmp is proved here in its OWN right rather than inherited from lu: its scalar ``w`` is a
-    per-iteration temporary, so once privatised the dependences on ``A`` are the same, and the test
-    asserts that equality instead of assuming it.
+    The reference is the exact-rational run of :func:`lu_iteration_space`, so it is the kernel's
+    meaning rather than a second float implementation that could round the same way a wrong
+    schedule does. The fixture is strongly diagonally dominant, so the float factorization the SDFG
+    computes stays well-conditioned and the two agree to round-off.
     """
-    n = 8
-    iters, write_set, read_set, body, make = lu_iteration_space(n, with_scalar_accumulator)
-    dists = dependence_distances(iters, write_set, read_set)
-
-    assert sorted({d[0] for d in dists}) == list(range(n)), f'{label}: expected i-distances 0..{n - 1}'
-    assert sorted({d[1] for d in dists if d[0] == 0}) == list(range(1, n)), \
-        f'{label}: the j axis must carry too, or this would be a map-of-scans and not a wavefront'
-    assert not tau_legal((1, 0), dists) and not tau_legal((0, 1), dists), f'{label}: neither axis is parallel'
-    assert legal_taus(dists) == [(1, 1), (2, 1), (1, 2)], f'{label}: got {legal_taus(dists)}'
-
-    reference = run_sequentially(iters, body, make)
-    got, diagonals = run_on_diagonals(iters, (1, 1), body, make, seed=5)
-    assert len(diagonals) == 2 * n - 1 and max(len(v) for v in diagonals.values()) == n
-    assert got == reference, f'{label}: shuffling within an i + j diagonal must not change the answer'
+    iters, body, make = lu_iteration_space(n, with_scalar_accumulator)
+    start = np.array([[float(v) for v in row] for row in make()])
+    reference = np.array([[float(v) for v in row] for row in run_sequentially(iters, body, make)])
+    return start, reference
 
 
-def test_lu_ij_wavefront_is_detected():
+@pytest.mark.parametrize('program, with_scalar_accumulator, label', [(lu_factorization, False, 'lu'),
+                                                                     (ludcmp_factorization, True, 'ludcmp')])
+def test_lu_family_ij_wavefront_is_detected(program, with_scalar_accumulator, label):
     """lu's outer ``i`` loop holds TWO sibling ``j`` loops (``j < i`` and ``j >= i``), which
     ``extract_two_level_nest`` refuses outright. ``plan_guarded_fusion`` recognises them as one
     iteration space split in the source: adjacent, complementary ranges under a common iterator.
     Analysed jointly -- each sibling's range becoming a guard on its own reads, so the ``A[j, j]``
-    read carries only where ``j < i`` -- ``tau = (1, 1)`` is legal, which
-    ``test_lu_family_ij_is_a_genuine_wavefront`` proves by shuffling within each diagonal."""
-    sdfg = lu_factorization.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=False, **CPU_PARAMS)
-    assert len(skew_diagonals(sdfg)) == 1, \
-        f'lu (i, j) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}'
+    read carries only where ``j < i`` -- ``tau = (1, 1)`` is legal.
 
+    ludcmp is asserted in its OWN right rather than inherited: its scalar ``w`` accumulator makes it
+    a different program. Both are RUN against their sequential answer, because a diagonal that is
+    found but wrongly scheduled raises nothing."""
+    n = 8
+    start, reference = lu_family_matrices(n, with_scalar_accumulator)
 
-def test_ludcmp_ij_wavefront_is_detected():
-    """ludcmp's factorization carries the same two sibling ``j`` loops as lu, and is found the
-    same way. Asserted in its OWN right rather than inherited: its scalar ``w`` accumulator makes
-    it a different program, and the ludcmp parametrisation of
-    ``test_lu_family_ij_is_a_genuine_wavefront`` proves ``tau = (1, 1)`` for it independently."""
-    sdfg = ludcmp_factorization.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=False, **CPU_PARAMS)
+    sdfg = program.to_sdfg(simplify=True)
+    canonicalize(sdfg, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \
-        f'ludcmp (i, j) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}'
+        f'{label} (i, j) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}'
+
+    finalized = finalize_for_target(sdfg, 'cpu')
+    finalized.name = f'{label}_ij_wavefront'
+    got = start.copy()
+    finalized(A=got, N=n)
+    assert np.allclose(got, reference), f'{label}: the (i, j) skew is not value-preserving'
 
 
 if __name__ == '__main__':

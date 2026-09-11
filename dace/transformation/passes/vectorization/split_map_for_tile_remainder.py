@@ -33,7 +33,7 @@ original) and on step-1 maps (before :class:`StrideMapByTileWidths`). A dim
 provably divisible by ``W`` is not split -> a fully-divisible map yields just
 the mask-free interior, no remainder.
 """
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import properties, symbolic
@@ -85,7 +85,7 @@ STRIDE_GUARD_PREFIX = "tile_stride_div_"
 _DEVICE_STORAGE = (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Pinned)
 
 
-def guarded_stride_divisors(sdfg: dace.SDFG) -> Dict[str, int]:
+def guarded_stride_divisors(sdfg: dace.SDFG) -> dict[str, int]:
     """``{symbol: modulus}`` for every stride-divisibility fact ``sdfg`` CHECKS before it runs.
 
     Read off the guard tasklets themselves, not off a parallel bookkeeping structure: the fact and
@@ -96,7 +96,7 @@ def guarded_stride_divisors(sdfg: dace.SDFG) -> Dict[str, int]:
     :param sdfg: SDFG to read the guards of (this level only, not nested ones).
     :returns: Symbol name -> the modulus its value is checked to be a nonzero multiple of.
     """
-    facts: Dict[str, int] = {}
+    facts: dict[str, int] = {}
     for state in sdfg.states():
         # ``add_state_before`` uniquifies a duplicate label, hence the prefix test.
         if not state.label.startswith(TILE_GUARD_STATE_LABEL):
@@ -159,10 +159,10 @@ class SplitMapForTileRemainder(ppl.Pass):
     )
 
     def __init__(self,
-                 widths: Tuple[int, ...] = (8, ),
+                 widths: tuple[int, ...] = (8, ),
                  tail_mode: str = "masked",
                  assume_even: bool = False,
-                 range_check: bool = True):
+                 range_check: bool = True) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -191,6 +191,10 @@ class SplitMapForTileRemainder(ppl.Pass):
         self.tail_mode = tail_mode
         self.assume_even = assume_even
         self.range_check = range_check
+        # Guard collectors, declared here so they exist before any ``_split`` call; ``apply_pass``
+        # resets both at the top of every run.
+        self._range_checks: list[tuple[dace.SDFG, symbolic.SymbolicType, int]] = []
+        self._stride_checks: list[tuple[dace.SDFG, str, int]] = []
 
     def modifies(self) -> ppl.Modifies:
         """Pass replicates scopes and retightens ranges.
@@ -207,7 +211,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         """
         return False
 
-    def _provably_divisible(self, lb, ub, W: int) -> bool:
+    def _provably_divisible(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int) -> bool:
         """Whether dim ``[lb:ub]`` is provably a whole number of tiles.
 
         Only a provably-divisible dim needs no split (all no-mask interior,
@@ -227,7 +231,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         except Exception:  # noqa: BLE001 - non-decidable symbolic trip -> split
             return False
 
-    def _trip_class(self, lb, ub, W: int) -> str:
+    def _trip_class(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int) -> str:
         """Classify a tiled dim's extent against width ``W``.
 
         ``'divisible'``   -- provably a whole number of tiles (constant OR symbolic like ``4*M``).
@@ -335,7 +339,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
         return True
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Split every eligible innermost K-dim map into interior + remainders.
 
         :param sdfg: The SDFG to transform in place.
@@ -345,12 +349,12 @@ class SplitMapForTileRemainder(ppl.Pass):
         K = len(self.widths)
         applied = 0
         # Collectors for the runtime guards, filled below and drained by ``_emit_range_checks``.
-        self._range_checks = []
-        self._stride_checks = []
+        self._range_checks.clear()
+        self._stride_checks.clear()
         # Snapshot up front: splitting mutates the graph; must not re-split a
         # freshly replicated remainder map.
         # Safe: the comprehension is fully evaluated before the first ``_split`` mutates anything.
-        scan_cache: Dict[int, Any] = {}
+        scan_cache: dict[int, Any] = {}
         eligible = [(n, g) for n, g in sdfg.all_nodes_recursive()
                     if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState)
                     and is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache) and len(n.map.params) >= K

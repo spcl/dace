@@ -25,10 +25,7 @@ import pytest
 from tests.corpus.npbench import npbench
 from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline
 
-try:
-    from dace.transformation.passes.normalize_wcr import NormalizeWCR
-except ImportError:  # pre-rename fallback (same pass, older module name)
-    from dace.transformation.passes.normalize_nested_reduction import NormalizeWCR
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
 _CORPUS = {c["name"]: c for c in npbench.collect()}
 _KERNELS = sorted(_CORPUS)

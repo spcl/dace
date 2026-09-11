@@ -14,7 +14,8 @@ therefore OFF by default and enabled only through ``VectorizeConfig.fuse_multipl
 opts into the fused numerics for the throughput win.
 """
 import ast
-from typing import List, Optional, Tuple
+
+from typing import Any
 
 import dace
 from dace import properties
@@ -25,7 +26,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.ordered import OrderedSet
 
 
-def _binop_tasklet(tasklet: nodes.Tasklet, op: str) -> Optional[Tuple[str, List[str]]]:
+def _binop_tasklet(tasklet: nodes.Tasklet, op: str) -> tuple[str, list[str]] | None:
     """If ``tasklet`` is a two-input ``__out = __a <op> __b`` body, return ``(out_conn, [a, b])``.
 
     Matches the parenthesised (``__out = (__a + __b)``) and bare forms the frontend / tasklet
@@ -120,7 +121,8 @@ class FuseMultiplyAdd(ppl.Pass):
             fused += 1
         return fused
 
-    def _rewrite(self, sdfg, state, mul, mul_ins, prod, add, add_out_conn, addend_conn) -> None:
+    def _rewrite(self, sdfg: dace.SDFG, state: SDFGState, mul: nodes.Tasklet, mul_ins: list[str],
+                 prod: nodes.AccessNode, add: nodes.Tasklet, add_out_conn: str, addend_conn: str) -> None:
         """Replace the ``mul -> prod -> add`` chain with one ``fma`` tasklet."""
         # Source edges to preserve: the two multiplicands (into ``mul``) and the addend (into ``add``).
         a_edge = next(e for e in state.in_edges(mul) if e.dst_conn == mul_ins[0])
@@ -147,7 +149,7 @@ class FuseMultiplyAdd(ppl.Pass):
             except (KeyError, ValueError):
                 pass
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         total = 0
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():

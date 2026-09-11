@@ -9,7 +9,7 @@ and uses :func:`tile_offset` to flatten the tile transient's index
 (register tiles are always row-major-contiguous).
 """
 import numbers
-from typing import Sequence
+from collections.abc import Sequence
 
 import sympy
 
@@ -21,7 +21,7 @@ import dace
 GATHER_INDEX_DTYPES = (dace.int32, dace.int64, dace.uint32, dace.uint64)
 
 
-def constant_trip_count(width) -> bool:
+def constant_trip_count(width: int | sympy.Basic) -> bool:
     """True iff ``width`` is a compile-time-constant integer loop bound.
 
     A per-lane tile loop with a constant trip count (the register-tile /
@@ -210,7 +210,7 @@ def offset_via_strides(
     return " + ".join(parts)
 
 
-def resolve_gather_deps(idx_shape, widths):
+def resolve_gather_deps(idx_shape: Sequence[int | sympy.Basic], widths: Sequence[int]) -> tuple[int, ...] | None:
     """Find the sorted subset of tile dims an ``_idx_<d>`` index tile depends on.
 
     Implements the design section 9.2 lane-dependency lookup: given an
@@ -247,7 +247,7 @@ def resolve_gather_deps(idx_shape, widths):
     # index-tile rank aligned with the data tile (cuTile-faithful broadcast dims).
     from dace.symbolic import has_one_marker
 
-    def _extent_eq(a, b):
+    def _extent_eq(a: int | sympy.Basic, b: int | sympy.Basic) -> bool:
         """Symbolic-safe extent equality."""
         try:
             return bool(dace.symbolic.simplify(a - b) == 0)
@@ -275,7 +275,7 @@ def resolve_gather_deps(idx_shape, widths):
     return tuple(deps)
 
 
-def _strides_match_packed(shape, strides, order):
+def _strides_match_packed(shape: Sequence[int | sympy.Basic], strides: Sequence[int | sympy.Basic], order: str) -> bool:
     """True when ``strides`` is the packed contiguous form for ``shape`` in
     ``order`` ("C" -- innermost-last, stride 1 on the last dim; or "F" --
     innermost-first, stride 1 on the first dim) with NO padding between dims.
@@ -314,7 +314,7 @@ def _strides_match_packed(shape, strides, order):
     return True
 
 
-def validate_packed_layout(node_label, conn_name, desc):
+def validate_packed_layout(node_label: str, conn_name: str, desc: dace.data.Data) -> None:
     """Refuse any source / dest array whose stride pattern is neither packed C
     nor packed Fortran (design section 2.3).
 
@@ -356,7 +356,7 @@ def validate_packed_layout(node_label, conn_name, desc):
                                   f"NotImplementedError until codegen lands.")
 
 
-def validate_mask_descriptor_lock(node_label, conn_name, desc, widths):
+def validate_mask_descriptor_lock(node_label: str, conn_name: str, desc: dace.data.Data, widths: Sequence[int]) -> None:
     """Refuse any mask descriptor that breaks the design section 10.2 lock.
 
     The locked shape: ``Array(shape=widths, dtype=bool_, storage=Register,
@@ -389,7 +389,7 @@ def validate_mask_descriptor_lock(node_label, conn_name, desc, widths):
         raise ValueError(f"{node_label}: {conn_name!r} mask must be transient (section 10.2)")
 
 
-def gather_lane_offset(deps, widths, conn):
+def gather_lane_offset(deps: Sequence[int], widths: Sequence[int], conn: str) -> str:
     """Build the row-major flat lane offset C expression into an ``_idx_<d>`` tile.
 
     Given ``deps = (p_0, ..., p_{n-1})`` (the tile dims the gather expression

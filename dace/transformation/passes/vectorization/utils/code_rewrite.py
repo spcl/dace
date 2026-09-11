@@ -4,8 +4,6 @@
 Manipulate Python expression / statement strings (CodeBlock bodies, interstate-edge assignment
 RHSs, loop and conditional-block conditions), round-tripped through ``ast.unparse``.
 """
-from typing import Optional, Set
-
 import dace
 from dace.symbolic import DaceSympyPrinter
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
@@ -14,7 +12,7 @@ from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdSc
 def offset_symbol_in_expression(expr_str: str,
                                 symbol_to_offset: str,
                                 offset: int,
-                                arrays: Optional[Set[str]] = None) -> str:
+                                arrays: set[str] | None = None) -> str:
     """Return a new expression string with a symbol incremented by an offset.
 
     :param expr_str: The original expression as a string.
@@ -45,7 +43,7 @@ def use_laneid_symbol_in_expression(expr_str: str,
                                     symbol_to_offset: str,
                                     offset: int,
                                     vector_map_param: str = None,
-                                    arrays: Optional[Set[str]] = None) -> str:
+                                    arrays: set[str] | None = None) -> str:
     """Return a new expression string with a symbol replaced by its lane-id variant.
 
     ``sym1`` -> ``sym1_laneid_<offset>``, except ``vector_map_param`` -> ``(sym + offset)``.

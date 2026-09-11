@@ -49,7 +49,8 @@ post-pipeline shape); any other shape is left as two maps (correct, un-fused)
 rather than mis-fused.
 """
 import copy
-from typing import Dict, List, Optional, Tuple
+
+from typing import Any
 
 import dace
 from dace import properties, symbolic
@@ -81,7 +82,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         desc="Per-dim tile widths, innermost-last. This strategy supports K=1 (a single tiled dim).",
     )
 
-    def __init__(self, widths: Tuple[int, ...] = (8, )):
+    def __init__(self, widths: tuple[int, ...] = (8, )) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last. Only K=1 (one tiled dim) is
@@ -114,7 +115,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         return label[:-len(marker)] if label.endswith(marker) else label
 
     @staticmethod
-    def _tail_marker(label: str) -> Optional[str]:
+    def _tail_marker(label: str) -> str | None:
         """The remainder marker ``label`` carries, or ``None`` if it is not a fusable tail."""
         return next((m for m in _TAIL_MARKERS if label.endswith(m)), None)
 
@@ -137,7 +138,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
             return False
         return symbolic.simplify(rem_ranges[-1][0] - main_ranges[-1][1] - 1) == 0
 
-    def _find_pairs(self, state: dace.SDFGState) -> List[Tuple[MapEntry, MapEntry]]:
+    def _find_pairs(self, state: dace.SDFGState) -> list[tuple[MapEntry, MapEntry]]:
         """Pair every top-level ``__tile_main`` map with the remainder sibling it split from.
 
         A tail is consumed by at most one main, and a main with no structural sibling is left
@@ -148,8 +149,8 @@ class FuseBranchedTailRemainder(ppl.Pass):
         :returns: ``[(main_entry, remainder_entry), ...]`` for pairs in ``state``.
         """
         scope = state.scope_dict()
-        mains: Dict[str, List[MapEntry]] = {}
-        tails: Dict[str, List[MapEntry]] = {}
+        mains: dict[str, list[MapEntry]] = {}
+        tails: dict[str, list[MapEntry]] = {}
         for node in state.nodes():
             if not isinstance(node, MapEntry) or scope[node] is not None:
                 continue  # only top-level (kernel-level) maps
@@ -160,7 +161,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
             if marker is not None:
                 tails.setdefault(self._base_label(node.map.label, marker), []).append(node)
 
-        pairs: List[Tuple[MapEntry, MapEntry]] = []
+        pairs: list[tuple[MapEntry, MapEntry]] = []
         for base, main_entries in mains.items():
             available = list(tails.get(base, []))
             for main_entry in main_entries:
@@ -171,7 +172,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         return pairs
 
     @staticmethod
-    def _sole_body_nsdfg(state: dace.SDFGState, entry: MapEntry) -> Optional[NestedSDFG]:
+    def _sole_body_nsdfg(state: dace.SDFGState, entry: MapEntry) -> NestedSDFG | None:
         """Return the single nested SDFG forming ``entry``'s body, or ``None`` if not that shape."""
         exit_node = state.exit_node(entry)
         body = [n for n in state.all_nodes_between(entry, exit_node)]
@@ -180,12 +181,12 @@ class FuseBranchedTailRemainder(ppl.Pass):
             return nsdfgs[0]
         return None
 
-    def _symbol_dtype(self, sdfg: dace.SDFG, sym: str):
+    def _symbol_dtype(self, sdfg: dace.SDFG, sym: str) -> dace.dtypes.typeclass:
         """Best-effort dtype for a symbol: the SDFG's declared type, else ``int64``."""
         declared = sdfg.symbols
         return declared[sym] if sym in declared else dace.int64
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Fuse every ``(__tile_main, tail)`` sibling pair in the SDFG.
 
         :param sdfg: SDFG to transform in place.
@@ -271,7 +272,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         return True
 
     def _build_fused_body(self, sd: dace.SDFG, main_entry: MapEntry, main_nsdfg: NestedSDFG, rem_nsdfg: NestedSDFG,
-                          W: int, tiled_param: str, tail_ub, masked_tail: bool) -> dace.SDFG:
+                          W: int, tiled_param: str, tail_ub: symbolic.SymbolicType, masked_tail: bool) -> dace.SDFG:
         """Construct the fused-body SDFG: one ``ConditionalBlock`` over the two reused bodies.
 
         :param masked_tail: ``True`` when the tail is a ``__masked_tail`` TILE body (placed as is,
@@ -327,7 +328,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         return body
 
     @staticmethod
-    def _full_tile_condition(tiled_param: str, W: int, ub) -> str:
+    def _full_tile_condition(tiled_param: str, W: int, ub: symbolic.SymbolicType) -> str:
         """Clean ``if``-branch predicate: a W-tile at start ``i`` is fully inside the extent.
 
         ``i + W - 1 <= ub`` <=> ``i <= ub - W + 1``; the right-hand side is a pure expression in
@@ -358,7 +359,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
 
     @staticmethod
     def _populate_scalar_branch(body: dace.SDFG, region: ControlFlowRegion, rem_nsdfg: NestedSDFG, tiled_param: str,
-                                tail_ub) -> None:
+                                tail_ub: symbolic.SymbolicType) -> None:
         """Place the reused scalar body (remainder NSDFG) into the ``else`` branch, wrapped in a
         Sequential loop over this partial tile's lanes ``[i : ub]`` of the innermost dim.
 

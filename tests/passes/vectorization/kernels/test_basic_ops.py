@@ -5,11 +5,9 @@ import pytest
 # are stripped from log/exp/pow tests since the walker-primary pipeline handles log/exp/pow
 # directly (TileUnop("log") -> std::log, TileBinop("**") -> std::pow). Some failures expected
 # while we iterate.
-# pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration")
 import math
 import dace
 import numpy
-import pytest
 # Walker-primary path handles log / exp / pow directly via TileUnop / TileBinop;
 # ReplaceSTD* legacy passes are intentionally NOT applied in this file.
 from math import log, exp, pow  # noqa: A004 — used inside @dace.program bodies
@@ -142,6 +140,7 @@ def test_memset_4d(remainder_strategy):
                            },
                            vector_width=8,
                            sdfg_name="memset_4d",
+                           canon_lift_copy=False,
                            remainder_strategy=remainder_strategy)
 
 
@@ -269,6 +268,7 @@ def test_memset(remainder_strategy):
                            vector_width=8,
                            sdfg_name="memset",
                            exact=0.0,
+                           canon_lift_copy=False,
                            remainder_strategy=remainder_strategy)
 
 
@@ -283,8 +283,8 @@ def test_memset_with_fuse_and_copyin_enabled(remainder_strategy):
                            params={'N': N},
                            vector_width=8,
                            sdfg_name="memset_with_fuse_and_copy_in_enabled",
-                           insert_copies=True,
                            exact=0.0,
+                           canon_lift_copy=False,
                            remainder_strategy=remainder_strategy)
 
 
@@ -299,9 +299,9 @@ def test_nested_memset_with_fuse_and_copyin_enabled(remainder_strategy):
                            params={'N': N},
                            vector_width=8,
                            sdfg_name="nested_memset_with_fuse_and_copy_in_enabled",
-                           insert_copies=True,
                            simplify=False,
                            exact=0.0,
+                           canon_lift_copy=False,
                            remainder_strategy=remainder_strategy)
 
 
@@ -474,8 +474,8 @@ def test_vadd_with_scalar_scalar_cpu(remainder_strategy):
 # Overlaps test_vadd_with_scalars_int (harder; scalar broadcast)
 def test_vadd_int(remainder_strategy):
     N = 64
-    A = numpy.random.random((N, N)).astype(numpy.int64)
-    B = numpy.random.random((N, N)).astype(numpy.int64)
+    A = numpy.random.randint(-1000, 1000, (N, N), dtype=numpy.int64)
+    B = numpy.random.randint(-1000, 1000, (N, N), dtype=numpy.int64)
 
     run_vectorization_test(dace_func=add_int,
                            arrays={
@@ -510,8 +510,8 @@ def test_vadd_with_different_types(remainder_strategy):
 
 def test_vadd_with_scalars_int(remainder_strategy):
     N = 64
-    A = numpy.random.random((N, N)).astype(numpy.int64)
-    B = numpy.random.random((N, N)).astype(numpy.int64)
+    A = numpy.random.randint(-1000, 1000, (N, N), dtype=numpy.int64)
+    B = numpy.random.randint(-1000, 1000, (N, N), dtype=numpy.int64)
     c1 = numpy.int64(5)
     c2 = numpy.int64(7)
 
@@ -565,7 +565,7 @@ def test_log(remainder_strategy, emission_style):
                            },
                            params={"S": _S},
                            vector_width=8,
-                           sdfg_name=f"test_log",
+                           sdfg_name="test_log",
                            from_sdfg=True,
                            remainder_strategy=remainder_strategy,
                            emission_style=emission_style)
@@ -588,7 +588,7 @@ def test_exp(remainder_strategy, emission_style):
                            },
                            params={"S": _S},
                            vector_width=8,
-                           sdfg_name=f"test_exp",
+                           sdfg_name="test_exp",
                            from_sdfg=True,
                            remainder_strategy=remainder_strategy,
                            emission_style=emission_style)
@@ -611,7 +611,7 @@ def test_pow(remainder_strategy, emission_style):
                            },
                            params={"S": _S},
                            vector_width=8,
-                           sdfg_name=f"test_pow",
+                           sdfg_name="test_pow",
                            from_sdfg=True,
                            remainder_strategy=remainder_strategy,
                            emission_style=emission_style)

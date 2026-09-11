@@ -71,7 +71,7 @@ class ExpandTileITEPure(ExpandTransformation):
         out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_o").data.data].dtype.ctype
 
-        def _ref(kind, conn, expr, cast):
+        def _ref(kind: str, conn: str, expr: str | None, cast: str | None) -> str:
             """Per-lane C++ reference for one operand (a select arm or the cond).
 
             A ``Symbol`` operand embeds its loop-invariant expression inline,

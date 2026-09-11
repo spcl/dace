@@ -22,6 +22,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.vectorization.utils.map_predicates import (is_vectorizable_map, map_body_has_inner_loop,
                                                                            map_body_has_tiled_param_dependent_branch)
 import tests.corpus.measure_parallelization as mp
+from tests.passes.vectorization.tile_assertions import TILE_NODE_TYPES
 
 N = 16
 
@@ -143,15 +144,29 @@ def test_conditional_over_the_tiled_param_is_refused_by_the_branch_gate():
 
 @pytest.mark.parametrize('name', ['adi', 'deriche', 'lu'])
 def test_real_kernels_are_refused_and_correct(name):
-    """End-to-end: the three polybench kernels this gate catches stay value-correct.
-
-    Skipped if the corpus harness is unavailable in this environment.
-    """
+    """End-to-end: the three polybench kernels this gate catches stay scalar and value-correct."""
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
     base, checker = mp.CORPORA['poly'][1](name)
     sd = copy.deepcopy(base)
     mp.apply_config(sd, 'canon+vec', mp.cpu_params(4))
+
+    # The refusal itself, not just its numbers: a carried sweep that came back tiled would still
+    # be value-correct on THIS input while W lanes shared one counter and one carry. Scoped to the
+    # sweeps -- deriche's non-recurrent maps DO tile, and 22 tile ops there are the pass working.
+    tiled_sweeps = []
+    for sub in sd.all_sdfgs_recursive():
+        for state in sub.states():
+            for entry in state.nodes():
+                if not (isinstance(entry, dace.nodes.MapEntry) and map_body_has_inner_loop(state, entry)):
+                    continue
+                inside = state.all_nodes_between(entry, state.exit_node(entry)) or set()
+                tiled_sweeps += [n for n in inside if isinstance(n, TILE_NODE_TYPES)]
+    assert not tiled_sweeps, (f'{name}: the gate let {len(tiled_sweeps)} tile op(s) into a map whose body still '
+                              f'sweeps sequentially: {sorted({type(n).__name__ for n in tiled_sweeps})}')
+    assert any(isinstance(b, LoopRegion) for b, _ in sd.all_nodes_recursive()), \
+        f'{name}: the carried sweep this gate exists to protect was flattened into dataflow'
+
     fin = finalize_for_target(copy.deepcopy(sd), 'cpu')
     fin.name = f'{name}_inner_loop_gate_test'
     assert bool(checker(fin)), f'{name} must be value-correct after the refusal'

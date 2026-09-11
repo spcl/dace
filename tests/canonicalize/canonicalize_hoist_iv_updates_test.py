@@ -59,21 +59,19 @@ def compound_iv_and_perelem(a: dace.float64[1], b: dace.float64[N]):
 
 
 def test_hoist_iv_updates_splits_compound_body():
+    """The IV statement fissions into its own loop, moving no tasklet and minting none."""
     sdfg = _setup(compound_iv_and_perelem)
     n_loops_before = _nloops(sdfg)
     n_tasklets_before = _ntasklets_in_loop_bodies(sdfg)
     res = HoistInductionVariableUpdates().apply_pass(sdfg, {})
     sdfg.validate()
-    # Either nothing matched (and the result is None) or at least one loop was
-    # fissioned -- in the latter case there's now one more loop and one fewer
-    # tasklet per body (the IV statement moved out).
     n_loops_after = _nloops(sdfg)
     n_tasklets_after = _ntasklets_in_loop_bodies(sdfg)
+    assert res >= 1, 'the IV-eligible statement must be fissioned out, not left in the compound body'
     assert res == n_loops_after - n_loops_before, (f"reported {res} hoists, but "
                                                    f"loop count went {n_loops_before} -> {n_loops_after}")
-    if res:
-        assert n_tasklets_after == n_tasklets_before, ("split should not duplicate or drop tasklets; "
-                                                       f"{n_tasklets_before} -> {n_tasklets_after}")
+    assert n_tasklets_after == n_tasklets_before, ("split should not duplicate or drop tasklets; "
+                                                   f"{n_tasklets_before} -> {n_tasklets_after}")
 
 
 def test_hoist_iv_updates_value_preserving():

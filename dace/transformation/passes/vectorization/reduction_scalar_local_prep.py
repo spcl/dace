@@ -36,12 +36,14 @@ increment) is NOT expressed as a map-exit WCR -- it is a read+write pair -- so i
 and the rewrite is value-preserving (the scalar seed is the slot's pre-map value; the writeback is
 unconditional, hence correct for zero map iterations too).
 """
-from typing import Optional
+from typing import Any
 
 from dace import SDFG, data
 from dace.dtypes import ReductionType
 from dace.frontend.operations import detect_reduction_type
+from dace.memlet import Memlet
 from dace.sdfg import SDFGState, nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
@@ -68,7 +70,7 @@ class PrepareReductionForWidening(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """Scalar-localize every array-slot WCR reduction that gates widening.
 
         :param sdfg: The SDFG to transform in place (recursively over all states).
@@ -101,7 +103,8 @@ class PrepareReductionForWidening(ppl.Pass):
             return False
         return all(str(step) == "1" for _, _, step in map_entry.map.range)
 
-    def _is_array_slot_reduction(self, state: SDFGState, map_exit: nodes.MapExit, iedge) -> bool:
+    def _is_array_slot_reduction(self, state: SDFGState, map_exit: nodes.MapExit,
+                                 iedge: MultiConnectorEdge[Memlet]) -> bool:
         """True iff ``iedge`` is a foldable WCR reduction into a genuine multi-element array slot --
         the shape the widener bails on and this pass privatizes.
 

@@ -31,7 +31,7 @@ from tests.codegen.readable.conftest import (LEGACY, EXPERIMENTAL, use_implement
 N = dace.symbol("N")
 
 
-@functools.lru_cache(maxsize=1)
+@functools.lru_cache(maxsize=1, typed=True)
 def openmp_reduce_available():
     """True iff the OpenMP reduce expansion generates AND compiles in this build (an extended-only
     feature; the CPU-only PR branch off main lacks the full lowering, so these reduction cases skip

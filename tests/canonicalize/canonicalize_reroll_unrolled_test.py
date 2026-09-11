@@ -9,11 +9,10 @@ forms are covered:
 * **dense** -- ``a[i+k] += alpha * b[i+k]``
 * **indirect** (TSVC ``s353``) -- ``a[i+k] += alpha * b[ip[i+k]]`` (gather)
 
-Canonicalize is value-correct on both today (the value tests pass). The
-re-roll-to-a-parallel-map step is a documented gap (CORE_BUGFIXES.md L-E):
-canonicalize normalizes the step-``S`` loop to step 1 but keeps the ``S`` lanes
-(``a[S*i + k]``), and ``LoopToMap`` then refuses on the multi-lane read-write
-pattern. The structural tests are strict xfails pinning that target.
+Canonicalize is value-correct on both, and the re-roll now reaches a parallel
+Map: the step-``S`` loop is normalized to step 1, the ``S`` lanes are merged onto
+lane 0, and ``LoopToMap`` lifts the result. The structural tests below assert
+that end state directly.
 """
 import numpy as np
 import pytest
@@ -162,8 +161,12 @@ def unrolled_dot_product(a: dace.float64[N], b: dace.float64[N], c: dace.float64
     c[0] = dot
 
 
-def test_unrolled_dot_product_value_preserving():
-    n = 25
+@pytest.mark.parametrize('n', [25, 27])
+def test_unrolled_dot_product_covers_exactly_the_source_positions(n):
+    """``n=25`` is a whole number of 5-lane groups; ``n=27`` is not, so ``range(0, 23, 5)`` stops at
+    20 and positions 25, 26 are never visited. The re-rolled step-1 loop must cover the same set --
+    a naive ``end + m*g`` bound would run over the skipped tail and add spurious reduction terms
+    (the s352 corpus miscompile)."""
     rng = np.random.default_rng(7)
     a, b = rng.standard_normal(n), rng.standard_normal(n)
     sdfg = unrolled_dot_product.to_sdfg(simplify=True)
@@ -171,9 +174,10 @@ def test_unrolled_dot_product_value_preserving():
     sdfg.validate()
     c = np.zeros(2)
     sdfg(a=a.copy(), b=b.copy(), c=c, N=n)
-    # The rerolled loop computes ``sum(a[0:n] * b[0:n])`` -- the same value as
-    # the original lane-summed form, even though the access pattern changed.
-    assert np.isclose(c[0], float(np.dot(a, b)))
+    ref = 0.0
+    for i in range(0, n - 4, 5):
+        ref += sum(a[i + k] * b[i + k] for k in range(5))
+    assert np.isclose(c[0], ref), f'got {c[0]} expected {ref} (the re-roll changed which positions contribute)'
 
 
 def test_unrolled_dot_product_becomes_map_or_reduce():
@@ -188,35 +192,6 @@ def test_unrolled_dot_product_becomes_map_or_reduce():
     n_loops = sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
     assert (n_maps + n_reduces) >= 1 and n_loops == 0, (
         f'expected a map or reduce, got maps={n_maps}, reduces={n_reduces}, loops={n_loops}')
-
-
-@dace.program
-def unrolled_dot_nonaligned(a: dace.float64[N], b: dace.float64[N], c: dace.float64[2]):
-    """Step-5 dot whose iteration range is NOT a multiple of the step, so the
-    source loop skips the final partial group. Pins the re-roll bound: the
-    re-rolled step-1 loop must cover exactly the original positions (alignment-
-    aware ``last_i``). A naive ``end + m*g`` bound would extend over the skipped
-    tail and add spurious reduction terms (the s352 corpus miscompile)."""
-    dot = 0.0
-    for i in range(0, N - 4, 5):
-        dot = dot + (a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] +
-                     a[i + 4] * b[i + 4])
-    c[0] = dot
-
-
-def test_unrolled_dot_nonaligned_skips_tail():
-    n = 27  # range(0, 23, 5) = {0,5,10,15,20} -> covers 0..24; positions 25,26 skipped
-    rng = np.random.default_rng(11)
-    a, b = rng.standard_normal(n), rng.standard_normal(n)
-    sdfg = unrolled_dot_nonaligned.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True)
-    c = np.zeros(2)
-    sdfg(a=a.copy(), b=b.copy(), c=c, N=n)
-    # Faithful reference: grouped-by-5, the unaligned tail (25, 26) skipped.
-    ref = 0.0
-    for i in range(0, n - 4, 5):
-        ref += sum(a[i + k] * b[i + k] for k in range(5))
-    assert np.isclose(c[0], ref), f'got {c[0]} expected {ref} (re-roll must skip the unaligned tail)'
 
 
 # --------------------------------------------------------------------------
@@ -587,9 +562,6 @@ def test_lanes_writing_different_arrays_are_not_rerolled():
     assert np.allclose(got_e, exp_e), f'the second lane\'s destination was dropped: {got_e} != {exp_e}'
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
-
 # --------------------------------------------------------------------------
 # Read-ahead lane chains (TSVC ``s116``): lane ``k`` STORES at ``i + k`` and
 # READS at ``i + k + 1``, so the lane offsets a per-edge classifier sees are
@@ -734,3 +706,7 @@ def test_read_ahead_gap_value_preserving():
     got = a0.copy()
     sdfg(a=got, N=n)
     assert np.allclose(got, _read_ahead_ref(a0, n, 8, (0, 1, 2, 3), (1, 2, 3, 4)))
+
+
+if __name__ == '__main__':
+    pytest.main([__file__, '-v'])

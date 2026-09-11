@@ -13,15 +13,15 @@ Both arms must match the unvectorized scalar reference bit-equally
 """
 
 import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import numpy as np
-import pytest
 
 import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
+
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 
 def _k1_axpy_sdfg(name="e2e_k1_axpy"):
@@ -85,6 +85,7 @@ def test_k1_axpy_aligned_trip_matches_numpy():
     on a trip aligned to ``W=8``."""
     sdfg = _k1_axpy_sdfg("e2e_k1_axpy_aligned_trip")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k1_axpy_sdfg())
     sdfg.validate()
     rng = np.random.default_rng(seed=101)
     n = 64
@@ -100,6 +101,7 @@ def test_k1_axpy_aligned_sizes(n):
     """K=1 axpy across several aligned sizes."""
     sdfg = _k1_axpy_sdfg(f"e2e_k1_axpy_aligned_{n}")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k1_axpy_sdfg())
     rng = np.random.default_rng(seed=n)
     A = rng.random(n)
     B = rng.random(n)
@@ -113,6 +115,7 @@ def test_k2_axpy_aligned_trip_matches_numpy():
     numpy on aligned ``M x N``."""
     sdfg = _k2_axpy_sdfg("e2e_k2_axpy_aligned_trip")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k2_axpy_sdfg())
     sdfg.validate()
     rng = np.random.default_rng(seed=202)
     m, n = 16, 32
@@ -134,6 +137,7 @@ def test_k2_axpy_scalar_postamble_matches_numpy(m, n):
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR,
                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k2_axpy_sdfg())
     sdfg.validate()
     rng = np.random.default_rng(seed=m * 100 + n)
     A = rng.random((m, n))
@@ -153,6 +157,7 @@ def test_k1_axpy_unaligned_trip_matches_numpy():
     """
     sdfg = _k1_axpy_sdfg("e2e_k1_axpy_unaligned_trip")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, _k1_axpy_sdfg())
     rng = np.random.default_rng(seed=303)
     n = 17  # 17 // 8 = 2 full tiles + 1 tail
     A = rng.random(n)

@@ -3,12 +3,13 @@
 power expansion, type-cast removal, math-prefix stripping, and STD-to-DaCe
 math replacement."""
 import dace
-from typing import Any, Callable, Dict, Optional
+from typing import Any
+from collections.abc import Callable
 import ast
 import math
 import re
 import sympy
-from dace import SDFG, properties, transformation
+from dace import SDFG, properties, symbolic, transformation
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import CodeBlock
@@ -17,7 +18,7 @@ from dace.transformation.helpers import CodeBlock
 def _rewrite_python_tasklet_bodies(
         sdfg: SDFG,
         rewrite: Callable[[str], str],
-        filter_node: Optional[Callable[[Any, "dace.SDFGState", "dace.sdfg.nodes.Tasklet"], bool]] = None) -> int:
+        filter_node: Callable[[Any, "dace.SDFGState", "dace.sdfg.nodes.Tasklet"], bool] | None = None) -> int:
     """Apply ``rewrite`` to every Python tasklet body in ``sdfg`` recursively.
 
     :param sdfg: the SDFG whose Python tasklets are rewritten in place.
@@ -108,7 +109,7 @@ class PowerOperatorExpander(ast.NodeTransformer):
         # ``_OP_CPP["**"]``) so it vectorizes via libmvec.
         return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
 
-    def visit_BinOp(self, node):
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
         """Expand a ``**`` binary operation, recursing into children first.
 
         :param node: the binary-operation node.
@@ -119,7 +120,7 @@ class PowerOperatorExpander(ast.NodeTransformer):
             return self._expand_pow(node.left, node.right, node)
         return node
 
-    def visit_Call(self, node):
+    def visit_Call(self, node: ast.Call) -> ast.AST:
         """Expand a ``pow``/``math.pow`` call, recursing into children first.
 
         :param node: the call node.
@@ -134,7 +135,7 @@ class PowerOperatorExpander(ast.NodeTransformer):
 class DaceCastRemover(ast.NodeTransformer):
     """Strips ``dace.floatNN(...)`` / ``dace.intNN(...)`` casts, keeping the cast value."""
 
-    def __init__(self, call_name: str):
+    def __init__(self, call_name: str) -> None:
         self.call_name = call_name
         # Match exactly the cast names: ``call_name`` optionally followed by a
         # bit-width (``int``, ``int8``, ``int32``, ``float64``, ...). A bare
@@ -144,7 +145,7 @@ class DaceCastRemover(ast.NodeTransformer):
         # became ``LEN_1D``).
         self._is_cast_name = re.compile(rf"{re.escape(call_name)}\d*$").fullmatch
 
-    def visit_Call(self, node):
+    def visit_Call(self, node: ast.Call) -> ast.expr:
         """Drop a matching dace cast call, returning its first argument.
 
         :param node: the call node.
@@ -188,7 +189,7 @@ class RemoveMathPrefix(ast.NodeTransformer):
     """Rewrites ``math.xxx(...)`` calls to ``xxx(...)`` (stripping the prefix) and ``math.pi`` /
     ``math.e`` / ``math.tau`` numeric constants to their fp64 literals."""
 
-    def visit_Attribute(self, node):
+    def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
         """Replace a ``math.<const>`` numeric constant with its fp64 literal.
 
         A ``math.`` call's function attribute (``math.sqrt``) is left alone here -- ``sqrt`` is
@@ -202,7 +203,7 @@ class RemoveMathPrefix(ast.NodeTransformer):
             return ast.copy_location(ast.Constant(value=_MATH_CONSTANTS[node.attr]), node)
         return node
 
-    def visit_Call(self, node):
+    def visit_Call(self, node: ast.Call) -> ast.expr:
         """Strip the ``math.`` prefix from a call, recursing into children first.
 
         :param node: the call node.
@@ -221,7 +222,7 @@ class RemoveMathPrefix(ast.NodeTransformer):
         return node
 
 
-def _expand_pow(src: str):
+def _expand_pow(src: str) -> str:
     """Expand power operators/calls in Python source.
 
     :param src: Python source string.
@@ -233,7 +234,7 @@ def _expand_pow(src: str):
     return ast.unparse(tree)
 
 
-def _remove_dace_float_casts(src: str):
+def _remove_dace_float_casts(src: str) -> str:
     """Remove ``dace.floatNN(...)`` casts from Python source.
 
     :param src: Python source string.
@@ -245,7 +246,7 @@ def _remove_dace_float_casts(src: str):
     return ast.unparse(tree)
 
 
-def _remove_dace_int_casts(src: str):
+def _remove_dace_int_casts(src: str) -> str:
     """Remove ``dace.intNN(...)`` casts from Python source.
 
     :param src: Python source string.
@@ -377,7 +378,7 @@ def _rewrite_modulo(src: str) -> str:
 _PY_MOD = sympy.Function("py_mod")
 
 
-def _subs_py_mod_symbolic(expr):
+def _subs_py_mod_symbolic(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
     """Rewrite every sympy ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``.
 
     Used for the symbolic sites a tasklet rewrite cannot reach: memlet subsets
@@ -394,7 +395,7 @@ def _subs_py_mod_symbolic(expr):
     return expr.replace(sympy.Mod, _PY_MOD)
 
 
-def _subset_has_mod(subset) -> bool:
+def _subset_has_mod(subset: dace.subsets.Subset | None) -> bool:
     """Whether any component expression of ``subset`` contains a sympy ``Mod``."""
     if isinstance(subset, dace.subsets.Range):
         exprs = [x for rng in subset.ranges for x in rng]
@@ -405,7 +406,7 @@ def _subset_has_mod(subset) -> bool:
     return any(isinstance(x, sympy.Basic) and x.has(sympy.Mod) for x in exprs)
 
 
-def _rewrite_subset_modulo(subset):
+def _rewrite_subset_modulo(subset: dace.subsets.Subset) -> dace.subsets.Subset:
     """Return a copy of ``subset`` with every ``Mod`` rewritten to ``py_mod``.
 
     :param subset: a :class:`~dace.subsets.Range` or :class:`~dace.subsets.Indices`.
@@ -431,16 +432,16 @@ class _BodyRewritePass(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets
 
-    def should_reapply(self, modified: ppl.Modifies):
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
         return {}
 
     def _rewrite(self, src: str) -> str:
         raise NotImplementedError
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Apply the subclass rewrite to all Python tasklet bodies.
 
         :param sdfg: the SDFG rewritten in place.
@@ -503,7 +504,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
         return _rewrite_modulo(src)
 
     @staticmethod
-    def _rewritten_codeblock(cb):
+    def _rewritten_codeblock(cb: CodeBlock | None) -> CodeBlock | None:
         """Return a CodeBlock with ``%`` -> ``py_mod``; the original if unchanged.
 
         :param cb: a :class:`CodeBlock` or ``None``.
@@ -579,7 +580,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
                     rewritten += 1
         return rewritten
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Rewrite ``%`` -> ``py_mod`` across every location of ``sdfg``.
 
         :param sdfg: the SDFG rewritten in place.
@@ -607,13 +608,13 @@ class RemoveMathCall(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets
 
-    def should_reapply(self, modified: ppl.Modifies):
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
         return {}
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Strip ``math.`` from the RHS of every Python assignment tasklet.
 
         :param sdfg: the SDFG rewritten in place.

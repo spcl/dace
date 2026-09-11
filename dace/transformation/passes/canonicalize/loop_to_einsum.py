@@ -317,14 +317,14 @@ def _run_probe_pipeline(probe: SDFG) -> None:
     """Parallelize + lift the disposable copy so a contraction collapses to one
     ``Einsum`` and a transpose to one clean 2-D copy map. See the module docstring
     for why each step is present (and why ``MapFission`` is not)."""
+    from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
+    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
     from dace.transformation.passes.simplify import SimplifyPass
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
     from dace.transformation.dataflow.lift_einsum import LiftEinsum
     from dace.transformation.dataflow.map_collapse import MapCollapse
     from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
-    from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
     from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-    from dace.transformation.interstate.loop_to_map import LoopToMap
     from dace.transformation.interstate.sdfg_nesting import InlineSDFG
     from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
@@ -342,15 +342,16 @@ def _run_probe_pipeline(probe: SDFG) -> None:
     # prod`` into one ``y = y + a*b`` tasklet whose inputs are all AccessNodes,
     # which AugAssignToWCR then WCR-ifies; the second fusion mops up any tasklet
     # pair the WCR rewrite newly exposed.
-    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(probe, {})
+    EliminateTrivialTasklets().apply_pass(probe, {})
     probe.apply_transformations_repeated(TaskletFusion, validate=False, validate_all=False)
     probe.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=False)
     probe.apply_transformations_repeated(TaskletFusion, validate=False, validate_all=False)
-    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(probe, {})
+    EliminateTrivialTasklets().apply_pass(probe, {})
     SimplifyPass().apply_pass(probe, {})
     # Parallelize: every loop (including the WCR reduction axis) becomes a map;
     # flatten the resulting nested SDFGs and merge the perfect nest into one map.
-    probe.apply_transformations_repeated(LoopToMap, validate=False, validate_all=False)
+    # ParallelizeLoops, not LoopToMap: shares one probe context; propagates itself, so SimplifyPass follows.
+    ParallelizeLoops(propagate=False).apply_pass(probe, {})
     probe.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG], validate=False, validate_all=False)
     SimplifyPass().apply_pass(probe, {})
     probe.apply_transformations_repeated(MapCollapse, validate=False, validate_all=False)

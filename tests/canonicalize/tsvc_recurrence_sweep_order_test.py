@@ -200,12 +200,18 @@ def test_gate_declines_when_the_map_axis_is_the_contiguous_one():
 
 
 @pytest.mark.xfail(strict=True,
-                   reason='LoopStridePermutation._perfect_nests requires each level to hold exactly ONE block, and '
-                   "s275's i-loop holds two: the guard prep aa_index = aa[0, i] and the j-loop. MoveIfIntoLoop "
-                   'sinks the guard itself into the j-loop but leaves the i-dependent prep behind, so the nest '
-                   'never becomes perfect and the interchange is never offered. Needs the prep hoisted to a mask '
-                   'materialized once (legal here because aa[0, i] is read before any write -- j starts at 1), '
-                   'which is a transformation that does not exist yet.')
+                   reason='MoveIfIntoLoop sinks the guard into the j-loop but leaves the guard prep '
+                   'aa_index = aa[0, i] on the i-loop body chain: _move only relocates blocks of the guarded '
+                   'region, and the prep sits on the PARENT loop edge. The i-loop therefore holds two blocks -- '
+                   'an empty boundary state and the j-loop, with the prep on the edge between them -- so '
+                   'LoopStridePermutation._perfect_nests finds no chain and the interchange is never offered. '
+                   'MEASURED 2026-09-11: sinking that one assignment onto the j-loop body entry edge and '
+                   'dropping the emptied boundary state makes the chain perfect, the interchange fires, the '
+                   'order becomes j-outer / i-inner and aa, bb, cc all match the numpy reference; the following '
+                   'cascade_iedges_up stage does not lift the prep back out. No mask array is needed -- the '
+                   'prep is invariant in j because aa[0, i] is read-only throughout the nest (the body writes '
+                   'aa[j, i] and j starts at 1). The fix belongs in MoveIfIntoLoop, which carries the guard '
+                   'without its prep.')
 def test_s275_guarded_sweep_gets_the_same_order():
     """``if aa[0, i] > 0: for j: aa[j, i] = aa[j-1, i] + ...`` -- same sweep, behind a guard.
 

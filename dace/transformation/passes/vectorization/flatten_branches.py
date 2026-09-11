@@ -24,7 +24,7 @@ accumulated condition becomes a per-lane mask. Two-arm ``if/else`` is LEFT for
 ``SameWriteSetIfElseToITECFG`` / ``BranchNormalization`` (a tighter ``ITE(c, t, e)``
 blend); this pass only fires where those give up.
 """
-from typing import List, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import properties
@@ -46,7 +46,7 @@ class FlattenBranches(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Flatten every eligible ``ConditionalBlock`` to fixed point.
 
         :param sdfg: SDFG to transform in place.
@@ -77,7 +77,7 @@ class FlattenBranches(ppl.Pass):
         return False
 
     @staticmethod
-    def _cond_text(cond) -> str:
+    def _cond_text(cond: CodeBlock | str | None) -> str:
         return cond.as_string if isinstance(cond, CodeBlock) else str(cond)
 
     def _flatten(self, cb: ConditionalBlock) -> None:
@@ -85,15 +85,15 @@ class FlattenBranches(ppl.Pass):
         parent = cb.parent_graph
         # Snapshot the arms in order, then detach every body from ``cb`` so each
         # can be re-parented onto its own single-arm block.
-        arms: List[Tuple[Optional[CodeBlock], ControlFlowRegion]] = list(cb.branches)
+        arms: list[tuple[CodeBlock | None, ControlFlowRegion]] = list(cb.branches)
         for _cond, body in arms:
             cb.remove_branch(body)
 
         in_edges = list(parent.in_edges(cb))
         out_edges = list(parent.out_edges(cb))
 
-        prior_neg: List[str] = []  # negations of earlier arms' conditions
-        new_blocks: List[ConditionalBlock] = []
+        prior_neg: list[str] = []  # negations of earlier arms' conditions
+        new_blocks: list[ConditionalBlock] = []
         for i, (cond, body) in enumerate(arms):
             terms = list(prior_neg)
             if cond is not None:

@@ -132,8 +132,8 @@ def test_tile_helper_uniquifies_transient_names():
     sdfg.add_array("A", (16, 32), dace.float64, transient=False)
     state = sdfg.add_state("s")
     an = state.add_access("A")
-    name_a, _ = stage_tile_access(state, an, widths=widths, src_subset=Memlet(f"A[i:i+4, j:j+8]"))
-    name_b, _ = stage_tile_access(state, an, widths=widths, src_subset=Memlet(f"A[i:i+4, j:j+8]"))
+    name_a, _ = stage_tile_access(state, an, widths=widths, src_subset=Memlet("A[i:i+4, j:j+8]"))
+    name_b, _ = stage_tile_access(state, an, widths=widths, src_subset=Memlet("A[i:i+4, j:j+8]"))
     assert name_a != name_b
 
 

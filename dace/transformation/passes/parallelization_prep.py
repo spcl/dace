@@ -26,6 +26,7 @@ import sympy
 
 from dace import properties, symbolic
 from dace.config import Config
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -229,28 +230,45 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
     from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
     fused = 0
     # Collected ONCE. State fusion merges two states inside a region; it neither creates nor
-    # removes a control-flow region, so this list stays valid across every fusion below. Rebuilding
-    # it per fusion re-walked the whole subtree, including nested SDFGs -- 3.5% of the CloudSC
-    # parallelize pipeline spent re-deriving a list that could not have changed.
+    # removes a control-flow region, so this list -- and each region's ``cfg_id`` below -- stays
+    # valid across every fusion in this call. Rebuilding it per fusion re-walked the whole subtree,
+    # including nested SDFGs -- 3.5% of the CloudSC parallelize pipeline spent re-deriving a list
+    # that could not have changed.
     cfrs = [region] + list(region.all_control_flow_regions(recursive=True))
-    changed = True
-    while changed:
-        changed = False
-        for cfr in cfrs:
+    # One instance, reused. ``setup_match(..., override=True)`` with the state OBJECTS resolves the
+    # match by identity (``PatternNode.__get__`` returns a non-int subgraph value as-is), so a probe
+    # pays neither the ``cfg_list.index(self)`` inside ``cfg_id`` nor the ``node_id`` linear scan
+    # that the classmethod entry points (``can_be_applied_to``/``apply_to``) redo per candidate.
+    # Mirrors ``sdutil.fuse_states``.
+    xform = StateFusionExtended()
+    for cfr in cfrs:
+        cfg_id = cfr.cfg_id
+        while True:
+            # A region-wide sweep, in the region's own edge order -- the same order a full restart
+            # would always re-arrive at, since an untouched pair's verdict cannot change. Once a
+            # pair fuses, both states are skipped for the REST of this sweep instead of restarting
+            # the scan: a pair ahead of the fusion point that this fusion did not touch needs no
+            # re-probe. A pair only newly exposed by this sweep's own fusions (e.g. a rewired
+            # successor edge) is picked up on the next sweep, which still runs whenever this one
+            # applied anything.
+            skip_nodes = OrderedSet()
+            applied = 0
             for edge in list(cfr.edges()):
                 u, v = edge.src, edge.dst
-                if (isinstance(u, SDFGState) and isinstance(v, SDFGState)
-                        and StateFusionExtended.can_be_applied_to(sdfg, first_state=u, second_state=v)):
-                    StateFusionExtended.apply_to(sdfg,
-                                                 first_state=u,
-                                                 second_state=v,
-                                                 verify=False,
-                                                 annotate=False,
-                                                 save=False)
-                    fused += 1
-                    changed = True
-                    break
-            if changed:
+                if u in skip_nodes or v in skip_nodes:
+                    continue
+                if not (isinstance(u, SDFGState) and isinstance(v, SDFGState)):
+                    continue
+                candidate = {StateFusionExtended.first_state: u, StateFusionExtended.second_state: v}
+                xform.setup_match(sdfg, cfg_id, -1, candidate, 0, override=True)
+                if not xform.can_be_applied(cfr, 0, sdfg, permissive=False):
+                    continue
+                xform.apply(cfr, sdfg)
+                fused += 1
+                applied += 1
+                skip_nodes.add(u)
+                skip_nodes.add(v)
+            if applied == 0:
                 break
     return fused
 

@@ -20,7 +20,7 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol('N')
@@ -28,6 +28,17 @@ N = dace.symbol('N')
 
 def _nmaps(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+
+
+def _wcr_edges(sdfg):
+    """Edges carrying a write-conflict resolution, i.e. the accumulations that are safe to run in
+    parallel. A bare write into a shared accumulator under a Map would have none."""
+    return [(st.label, e.data.data) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
+            if e.data is not None and e.data.wcr is not None]
+
+
+def _nconds(sdfg):
+    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock))
 
 
 def _nloops(sdfg):
@@ -56,6 +67,10 @@ def test_masked_conditional_reduction_value_preserving():
     sdfg(a=a.copy(), acc=got, N=16)
     assert np.allclose(got, ref)
     assert np.allclose(got[0], a[a > 0.5].sum())  # exactly the masked sum
+    assert _nloops(sdfg) == 0, f'the masked reduction stayed a sequential loop: {_nloops(sdfg)}'
+    assert _nmaps(sdfg) == 1, f'expected the one parallel accumulation map, got {_nmaps(sdfg)}'
+    assert _nconds(sdfg) == 0, 'the per-element guard became a ConditionalBlock instead of a masked value'
+    assert _wcr_edges(sdfg), 'the accumulator is written without a WCR -- a racy map, not a reduction'
 
 
 @dace.program
@@ -81,7 +96,10 @@ def test_two_pass_normalize_value_preserving():
     sdfg(a=a.copy(), b=got, N=16)
     assert np.allclose(got, ref)
     assert np.allclose(got, a / a.sum())
-    assert _nmaps(sdfg) >= 1  # the elementwise second pass parallelizes
+    assert _nmaps(sdfg) == 1, f'the elementwise second pass is the only map; got {_nmaps(sdfg)}'
+    assert _nloops(sdfg) == 0, f'neither pass may stay a sequential loop, got {_nloops(sdfg)}'
+    lifted = [type(n).__name__ for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
+    assert 'Reduce' in lifted, f'the summation pass did not lift to a Reduce: {lifted}'
 
 
 if __name__ == '__main__':

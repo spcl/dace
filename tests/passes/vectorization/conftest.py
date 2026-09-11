@@ -51,28 +51,6 @@ def branch_mode(request) -> str:
     return request.param
 
 
-@pytest.fixture(params=["no_copies", "copies"])
-def tile_emit_mode(request):
-    """Tile-arm boundary-copy emission toggle, opt-in.
-
-    Selects whether the tile arm emits boundary copies (``insert_copies``).
-    Tests opt in by taking ``tile_emit_mode`` in their signature; tests that
-    don't take it inherit the harness default (``insert_copies=False``).
-
-    - ``"no_copies"`` — ``insert_copies=False`` (default tile arm, no
-      boundary-copy emission).
-    - ``"copies"`` — ``insert_copies=True`` (boundary copy emission), used by
-      stencil tests that exercise the boundary-copy path.
-
-    :returns: the ``insert_copies`` bool — forward to
-        :func:`run_vectorization_test`.
-    """
-    return {
-        "no_copies": False,
-        "copies": True,
-    }[request.param]
-
-
 @pytest.fixture(params=["default"])
 def emission_style(request) -> str:
     """Emission model the K=1 tile path must support:
@@ -115,7 +93,7 @@ def pytest_addoption(parser):
         default=False,
         help="Hyper-thorough sweep mode: every test that goes through "
         "``run_vectorization_test`` is parametrised over the full knob "
-        "matrix (branch_mode x tile_emit_mode x emission_style x "
+        "matrix (branch_mode x emission_style x "
         "remainder_strategy), even when the test signature only declares "
         "a subset. The harness picks up the missing knobs from "
         "``request.getfixturevalue`` so tests don't need code changes. "
@@ -153,7 +131,6 @@ def pytest_generate_tests(metafunc):
         return
     knob_params = {
         "branch_mode": ["fp_factor", "merge"],
-        "tile_emit_mode": ["flat", "nested", "nested_copies"],
         "emission_style": ["default"],
         "remainder_strategy": ["scalar", "masked"],
     }
@@ -176,9 +153,7 @@ def vectorize_config(request) -> str:
       ``VectorizeCPUMultiDim``: K=1 and K>=2 both emit the tile lib nodes
       (TileBinop / TileLoad / TileStore / TileITE / TileLoad (gather) /
       TileStore (scatter)), expanded to the per-ISA backend (scalar reference in
-      the harness). Boundary-copy emission is controlled per-test via the
-      ``tile_emit_mode`` fixture (or an explicit ``insert_copies``
-      kwarg to :func:`run_vectorization_test`).
+      the harness).
 
     The tile arm must match the unvectorized scalar reference."""
     return request.param

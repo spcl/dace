@@ -16,6 +16,7 @@ import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 N_SYM = dace.symbol("N_REDUCE")
 
@@ -51,6 +52,7 @@ def test_k1_sum_matches_reference(N):
     vec = k1_sum.to_sdfg(simplify=True)
     vec.name = f"k1_sum_vec_{N}"
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    assert_tiled(vec, ref)
     ref.compile()(A=arr.copy(), acc=acc_ref, N_REDUCE=N)
     vec.compile()(A=arr.copy(), acc=acc_vec, N_REDUCE=N)
     np.testing.assert_allclose(acc_vec, acc_ref, rtol=1e-12, atol=1e-12)

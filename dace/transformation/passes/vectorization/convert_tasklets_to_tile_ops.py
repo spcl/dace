@@ -20,6 +20,7 @@ from dace.sdfg import SDFG
 from dace.sdfg.nodes import CodeBlock, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.utils.broadcast import (is_scalar_or_len1_source, splat_scalar_to_tile)
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, logical_binops_are_bool,
@@ -1243,13 +1244,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         dst_is_tile = isinstance(dst_desc, dace.data.Array) and tuple(dst_desc.shape) == widths
         if not (src_is_scalar and dst_is_tile):
             return False
-        tl = TileLoad(name=f"{tasklet.label}_bcast", widths=widths, src_kind="Scalar")
-        inner_state.add_node(tl)
         # ``_src`` <- the scalar source (keep its scalar memlet); ``_dst`` -> the full tile.
-        inner_state.add_edge(a_edge.src, a_edge.src_conn, tl, "_src", dace.Memlet.from_memlet(a_edge.data))
-        tile_subset = ", ".join(f"0:{w}" for w in widths)
-        inner_state.add_edge(tl, "_dst", out_edge.dst, out_edge.dst_conn,
-                             dace.Memlet(data=out_edge.data.data, subset=tile_subset))
+        tl = splat_scalar_to_tile(inner_state, f"{tasklet.label}_bcast", a_edge.src, a_edge.src_conn, a_edge.data,
+                                  out_edge.dst, out_edge.dst_conn, out_edge.data.data, widths)
         inner_state.remove_edge(a_edge)
         inner_state.remove_edge(out_edge)
         reanchor_order_edges(inner_state, tasklet, tl)
@@ -1672,21 +1669,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
     def _is_scalar_or_len1_source(self, inner_state: SDFGState, edge) -> bool:
         """Return True when ``edge.src`` reads a Scalar or length-1 Array (the "scalar"
         side of the transients-are-full-tile-or-scalar invariant)."""
-        from dace.sdfg.nodes import AccessNode
-        import dace.data as dd
-        if not isinstance(edge.src, AccessNode):
-            return False
-        desc = inner_state.sdfg.arrays.get(edge.src.data)
-        if desc is None:
-            return False
-        if isinstance(desc, dd.Scalar):
-            return True
-        if isinstance(desc, dd.Array):
-            try:
-                return all(bool(dace.symbolic.simplify(s - 1) == 0) for s in desc.shape)
-            except Exception:  # noqa: BLE001
-                return False
-        return False
+        return is_scalar_or_len1_source(inner_state, edge)
 
     def _broadcast_scalar_to_tile(self, inner_state: SDFGState, src_edge, dtype) -> str:
         """Mint a FULL-TILE transient with element type ``dtype`` and emit a tasklet that

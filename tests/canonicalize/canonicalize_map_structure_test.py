@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
@@ -26,6 +27,17 @@ M = dace.symbol('M')
 def _nmaps(sdfg):
     # all_nodes_recursive so maps inside NestedSDFGs are counted too.
     return len([n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)])
+
+
+def _map_ranges(sdfg):
+    """``str(range)`` of every MapEntry, as a set -- names the axes that parallelized."""
+    return {str(n.map.range) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)}
+
+
+def _wcr_signatures(sdfg):
+    """``(container, wcr lambda)`` for every WCR edge in the SDFG."""
+    return {(e.data.data, e.data.wcr)
+            for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, Memlet) and e.data.wcr is not None}
 
 
 def _nloops(sdfg):
@@ -210,7 +222,9 @@ def test_mixed_direct_indirect_stencil_value_preserving():
     idx = np.random.randint(0, n, size=n).astype(np.int32)
     sdfg = mixed_direct_indirect_stencil.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) >= 1
+    assert _nmaps(sdfg) == 1, f'the mixed stencil must stay one map, got {_nmaps(sdfg)}'
+    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert len(entry.map.params) == 2, f'the (i, j) nest must stay collapsed, got {entry.map.params}'
     out = np.zeros((n, m))
     sdfg(a=a.copy(), idx=idx.copy(), b=out, N=n, M=m)
     exp = np.zeros((n, m))
@@ -243,10 +257,13 @@ def test_two_ranges_share_arith_bound_no_symbol_duplication():
     # as two maps if dependency analysis keeps them apart; either is OK -- the
     # test's structural assertion is on symbol count, not map count.
     assert _nmaps(sdfg) in (1, 2)
-    # Bound by source-program arithmetic distinct expressions (``N - 1``,
-    # ``N``): at most a handful of promoted ``N_*`` symbols.
-    assert _count_promoted_arith_symbols(sdfg, 'N') <= 4, \
-        f"unexpected duplication of N_plus/minus symbols: {sorted(sdfg.symbols)}"
+    # Idempotence, not a hand-picked ceiling: a second canonicalize must mint no further
+    # ``N_plus/minus`` symbol. A ceiling has to be re-baselined on any frontend rename; this
+    # catches the actual defect (one fresh instance per pass) without pinning a magic number.
+    n_before = _count_promoted_arith_symbols(sdfg, 'N')
+    canonicalize(sdfg, validate=True)
+    assert _count_promoted_arith_symbols(sdfg, 'N') == n_before, \
+        f"canonicalize mints N_plus/minus symbols on every pass: {sorted(sdfg.symbols)}"
     ob, oc = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), b=ob, c=oc, N=n)
     exp_b, exp_c = np.zeros(n), np.zeros(n)
@@ -302,11 +319,11 @@ def stencil_reduction_mixed(a: dace.float64[N, M], b: dace.float64[N]):
     """Per-row reduction with stencil-style neighbour accesses: each row
     independently sums ``a[i, 1:M-1]`` plus the boundary contributions.
 
-    The accumulator ``s`` is a scalar carried across the inner ``for j``
-    loop, so the outer ``i`` iteration is a sequential ``range`` loop (scalars
-    are not map-local in DaCe; a shared ``s`` under a parallel map would race).
-    Canonicalize parallelizes the row-independent work (``i`` becomes a map)
-    and keeps the loop-carried ``j`` reduction sequential."""
+    The accumulator ``s`` is a scalar carried across the inner ``for j`` loop, so as
+    written both levels are sequential ``range`` loops. Canonicalize parallelizes the
+    row-independent work (``i`` becomes a map over ``0:N``) AND lifts the carried ``j``
+    accumulation to a WCR-sum map over ``1:M - 1`` -- reassociating a sum is licensed, so
+    the canonical form of a reduction is parallel, not a surviving sequential loop."""
     for i in range(0, N):
         s = a[i, 0] + a[i, M - 1]
         for j in range(1, M - 1):
@@ -319,11 +336,16 @@ def test_stencil_reduction_mixed_value_preserving():
     a = np.random.rand(n, m)
     sdfg = stencil_reduction_mixed.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) >= 1
-    # No duplicated ``M_*`` symbols even after canonicalize promoted
-    # ``M - 1`` for the inner loop bound.
-    assert _count_promoted_arith_symbols(sdfg, 'M') <= 2, \
-        f"unexpected M_plus/minus duplication: {sorted(sdfg.symbols)}"
+    assert _nmaps(sdfg) == 2, f'expected a row map and a reduction map, got {_nmaps(sdfg)}'
+    assert _map_ranges(sdfg) == {'0:N', '1:M - 1'}, \
+        f'the row axis and the reduction axis must each be a map, got {_map_ranges(sdfg)}'
+    assert _wcr_signatures(sdfg) == {('s', 'lambda a,b: a + b')}, \
+        f'the carried j accumulation must survive as a sum WCR, got {_wcr_signatures(sdfg)}'
+    # Idempotence, not a hand-picked ceiling (see the sibling test above).
+    m_before = _count_promoted_arith_symbols(sdfg, 'M')
+    canonicalize(sdfg, validate=True)
+    assert _count_promoted_arith_symbols(sdfg, 'M') == m_before, \
+        f"canonicalize mints M_plus/minus symbols on every pass: {sorted(sdfg.symbols)}"
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, N=n, M=m)
     exp = np.zeros(n)

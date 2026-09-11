@@ -30,5 +30,31 @@ def test_transients():
     assert (arr[scal[0]:] == 0).all()
 
 
+def test_transients_array():
+
+    @dace.program
+    def tester(
+            A: dace.data.Array(dace.float32, [60], transient=True),
+            B: dace.data.Array(dace.float32, [60]),
+    ) -> None:
+        A[:] = 42.42
+
+        for i in dace.map[0:2]:
+            tmp_condition = B[0] < 0
+            if tmp_condition:
+                B[0] = 0
+
+            for j in dace.map[0:10]:
+                A[15 * i + 3 * j] = 1.0
+
+            for k in dace.map[10:20]:
+                B[k] = A[k]
+
+    sdfg = tester.to_sdfg(simplify=False)
+    assert sdfg.is_valid()
+    assert not sdfg.arrays["B"].transient
+
+
 if __name__ == "__main__":
     test_transients()
+    test_transients_array()

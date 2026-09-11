@@ -7,14 +7,15 @@ affine classifier cannot decide, and each asserts the exact verdict rather than 
 a wrong verdict here is a miscompile (``RAW`` reported as ``none`` parallelizes a recurrence),
 not a missed optimization.
 """
-import pytest
-
 import sympy as sp
 
 from dace import symbolic
 from dace.transformation.passes.analysis import smt_dependence
 
-pytestmark = pytest.mark.skipif(not smt_dependence.has_z3(), reason='needs z3')
+#: ``z3-solver`` is a hard dependency of this branch (``pyproject.toml`` marks it "Not optional":
+#: LoopToMap and the canonicalize parallelization band query the oracle), so an absent solver is a
+#: broken install, not a reason to report green.
+assert smt_dependence.has_z3(), 'z3-solver is a required dependency but the SMT oracle is unavailable'
 
 I = symbolic.pystr_to_symbolic('i')
 N = symbolic.pystr_to_symbolic('N')

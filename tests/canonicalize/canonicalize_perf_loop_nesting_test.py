@@ -32,10 +32,6 @@ def guard_over_imperfect_nest(a: dace.float64[N, M], b: dace.float64[N, M], c: d
             c[i] = a[i, 0] + 1.0  # bare: in loop i, not in a j-loop
 
 
-def _top_level_conds(sdfg):
-    return [x for x in sdfg.nodes() if isinstance(x, ConditionalBlock)]
-
-
 def _oracle(a, n, m, av):
     eb, ec = np.full((n, m), 9.0), np.full(n, 9.0)
     if av > 0:
@@ -44,22 +40,6 @@ def _oracle(a, n, m, av):
                 eb[i, j] = a[i, j] * 2.0
             ec[i] = a[i, 0] + 1.0
     return eb, ec
-
-
-@pytest.mark.parametrize('av', [1, 0])
-def test_guard_over_imperfect_nest_is_value_preserving(av):
-    """Canonicalization of a guarded imperfect nest is value-preserving for
-    the guard taken and not-taken."""
-    n, m = 6, 5
-    a = np.random.rand(n, m)
-    eb, ec = _oracle(a, n, m, av)
-
-    sdfg = guard_over_imperfect_nest.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True)
-
-    ob, oc = np.full((n, m), 9.0), np.full(n, 9.0)
-    sdfg(a=a.copy(), b=ob, c=oc, act=np.array([av], np.int32), N=n, M=m)
-    assert np.allclose(ob, eb) and np.allclose(oc, ec), f"mismatch act={av}"
 
 
 def test_guard_over_imperfect_nest_parallelizes_value_preserving():

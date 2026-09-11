@@ -14,9 +14,7 @@ and emit at least one ``TileLoad`` (gather) AND at least one ``TileStore`` (scat
 """
 
 import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import dace
-import pytest
 
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
@@ -71,8 +69,12 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
                and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, _WIDTHS))
 
 
-def _count_lib(sdfg: dace.SDFG, cls) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, cls))
+def _count_tile_gathers(sdfg: dace.SDFG) -> int:
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if (isinstance(n, TileLoad) and tuple(n.gather_dims)))
+
+
+def _count_tile_scatters(sdfg: dace.SDFG) -> int:
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if (isinstance(n, TileStore) and tuple(n.gather_dims)))
 
 
 def test_icon_zekinh_gather_scatter_descent_to_tile_only():
@@ -93,8 +95,8 @@ def test_icon_zekinh_gather_scatter_descent_to_tile_only():
     sdfg.validate()
 
     n_tasklet = _count_tasklets(sdfg)
-    n_gather = _count_lib(sdfg, TileLoad)
-    n_scatter = _count_lib(sdfg, TileStore)
+    n_gather = _count_tile_gathers(sdfg)
+    n_scatter = _count_tile_scatters(sdfg)
     assert n_tasklet == 0, (f"icon_zekinh_gather_scatter must lower to tile lib nodes only at the K-dim "
                             f"layer; got {n_tasklet} raw Tasklet nodes after the descent.")
     assert n_gather >= 1, (f"The mixed-gather source must yield at least one TileLoad (gather); got {n_gather}.")

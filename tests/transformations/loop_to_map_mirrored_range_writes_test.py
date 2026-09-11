@@ -12,7 +12,6 @@ The write/write pair and the read/write pair are separate refusals in ``can_be_a
 file pins both plus the negative that keeps the certificate honest.
 """
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes
@@ -22,7 +21,10 @@ from dace.transformation.passes.analysis import smt_dependence
 
 M = dace.symbol('M')
 
-pytestmark = pytest.mark.skipif(not smt_dependence.has_z3(), reason='the range certificate is SMT-backed')
+#: ``z3-solver`` is a hard dependency of this branch (``pyproject.toml`` marks it "Not optional":
+#: LoopToMap and the canonicalize parallelization band query the oracle), so an absent solver is a
+#: broken install, not a reason to report green.
+assert smt_dependence.has_z3(), 'z3-solver is a required dependency but the SMT oracle is unavailable'
 
 
 def has_map(sdfg: dace.SDFG) -> bool:

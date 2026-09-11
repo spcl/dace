@@ -42,8 +42,9 @@ import numpy as np
 import pytest
 
 import dace
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol('N')
@@ -55,6 +56,35 @@ def _nmaps(sdfg):
 
 def _nloops(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+
+
+def iterator_names(sdfg) -> OrderedSet:
+    """Every iterator name canonicalize LEFT BEHIND. ``UniqueLoopIterators`` renames the source
+    ``i`` to ``_loop_it_<N>``, so a leaked per-``i`` bound is never spelled ``i`` afterwards."""
+    names = OrderedSet()
+    for r in sdfg.all_control_flow_regions(recursive=True):
+        if isinstance(r, LoopRegion) and r.loop_variable:
+            names.add(r.loop_variable)
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, nodes.MapEntry):
+            names.update(n.map.params)
+    return names
+
+
+def top_level_expressions(sdfg) -> list[tuple[str, set]]:
+    """``(label, free symbols)`` for every expression evaluated at SDFG scope: interstate-edge
+    assignments and the ranges of top-level maps. Both are outside every loop, so an iterator
+    name appearing here is a bound that escaped its loop."""
+    found = [(f'iedge {lhs} = {rhs}', {str(x)
+                                       for x in dace.symbolic.pystr_to_symbolic(rhs).free_symbols})
+             for e in sdfg.edges() for lhs, rhs in e.data.assignments.items()]
+    for blk in sdfg.nodes():
+        if not isinstance(blk, SDFGState):
+            continue
+        for n in blk.nodes():
+            if isinstance(n, nodes.MapEntry):
+                found.append((f'map {n.map.params} range {n.map.range}', {str(x) for x in n.map.range.free_symbols}))
+    return found
 
 
 # ----------------------------------------------------------------------
@@ -117,19 +147,19 @@ def test_compound_nest_loops_value_preserving():
 
 
 def test_compound_nest_loops_per_i_bounds_not_hoisted():
-    """Structural: the ``beg, end`` iedge assignments (their post-
-    promotion symbol forms) must NOT appear on iedges at the SDFG top
-    level -- they depend on ``i`` and must stay inside the ``i`` loop."""
+    """The per-``i`` inner bounds are absorbed into the nest, never evaluated at SDFG scope."""
     sdfg = compound_nest_loops.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    # Top-level iedge assignment RHSes must not reference 'i' (because
-    # if they did, they would be invalid at SDFG scope where 'i' is
-    # undeclared). Equivalently: no top-level iedge should carry a per-
-    # iteration bound expression.
-    for e in sdfg.edges():
-        for lhs, rhs in e.data.assignments.items():
-            assert 'i' not in {str(s) for s in dace.symbolic.pystr_to_symbolic(rhs).free_symbols}, \
-                f'per-i bound {lhs} = {rhs} leaked to SDFG top level'
+    iters = iterator_names(sdfg)
+    inspected = top_level_expressions(sdfg)
+    assert inspected, 'nothing evaluated at SDFG scope -- the leak check would pass on an empty SDFG'
+    leaked = [label for label, syms in inspected if syms & set(iters)]
+    assert not leaked, f'per-i bound leaked to SDFG top level: {leaked}'
+    # The inner ``beg:beg+2`` nests have a constant extent, so canonicalize unrolls them away:
+    # the outer ``i`` is the only iteration left and it carries no bound symbol of its own.
+    assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0, f'maps={_nmaps(sdfg)} loops={_nloops(sdfg)}'
+    outer = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert str(outer.map.range) == '0:N', f'the surviving map must span the i axis, got {outer.map.range}'
 
 
 # ----------------------------------------------------------------------
@@ -182,7 +212,24 @@ def test_compound_nest_maps_outer_map_survives():
     SDFG validates)."""
     sdfg = compound_nest_maps.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) >= 1, 'outer parallel i-map was lost during canonicalize'
+    # One outer i-map plus the five inner nests it distributes over: body1's (k, m), body3's k
+    # and, under the guard, body2's (k, m) and a second copy of each sibling.
+    assert _nmaps(sdfg) == 6, f'expected the outer i-map over five inner nests, got {_nmaps(sdfg)}'
+    top_maps = [
+        n for blk in sdfg.nodes() if isinstance(blk, SDFGState) for n in blk.nodes() if isinstance(n, nodes.MapEntry)
+    ]
+    assert len(top_maps) == 1, f'exactly one map at SDFG scope, got {len(top_maps)}'
+    assert str(top_maps[0].map.range) == '0:N', f'the outer map must span the i axis, got {top_maps[0].map.range}'
+    # The per-i bounds stay where they belong: the inner ranges read the outer iterator, and
+    # nothing at SDFG scope does.
+    inner_ranges = [
+        str(n.map.range) for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n is not top_maps[0]
+    ]
+    outer_it = top_maps[0].map.params[0]
+    assert all(outer_it in r for r in inner_ranges), f'inner bounds lost their per-i dependence: {inner_ranges}'
+    leaked = [label for label, syms in top_level_expressions(sdfg) if syms & set(iterator_names(sdfg))]
+    assert not leaked, f'per-i bound leaked to SDFG top level: {leaked}'
 
 
 # ----------------------------------------------------------------------

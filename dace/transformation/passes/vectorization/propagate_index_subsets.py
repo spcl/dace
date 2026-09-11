@@ -13,7 +13,7 @@ machinery. Run AFTER if-condition mask lowering (flat single-level body states -
 walk complete), BEFORE tiling passes (widening sees direct subset). Pairs: ``SymbolPropagation``
 (folds ``__sym`` layer) before, ``RemoveUnusedSymbols`` (sweeps dead promotion symbols) after.
 """
-from typing import Any, Dict, Optional
+from typing import Any
 
 import dace
 from dace.transformation import pass_pipeline as ppl
@@ -31,7 +31,7 @@ class PropagateIndexSubsets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Rewrite every memlet ``subset`` / ``other_subset`` in ``sdfg`` + nested SDFGs by
         inlining promoted index symbols. ``propagate_subset`` = best-effort no-op on
         unresolvable / data-dependent bound.
@@ -43,9 +43,9 @@ class PropagateIndexSubsets(ppl.Pass):
         for sd in sdfg.all_sdfgs_recursive():
             # Hoisted: the map depends on (sd, state) only, and this rewrites subsets, not the
             # assignments and tasklets it is built from. Was rebuilt per subset.
-            scan_cache: Dict[int, Any] = {}
+            scan_cache: dict[int, Any] = {}
             # Same span: the gather-scalar test reads structure and descriptors, never a subset.
-            dd_memo: Dict[str, bool] = {}
+            dd_memo: dict[str, bool] = {}
             for state in sd.states():
                 defs = build_symbol_definition_map(sd, state, scan_cache)
                 if not defs:

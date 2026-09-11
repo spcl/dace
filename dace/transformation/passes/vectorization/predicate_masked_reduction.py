@@ -28,7 +28,8 @@ as a ConditionalBlock in the CFG (afterwards the reduction is smeared across the
 nested-SDFG boundary and there is no single edge to gate).
 """
 import copy
-from typing import Dict, List, Optional, Set, Tuple
+
+from typing import Any, TypeAlias
 
 import numpy
 
@@ -36,10 +37,15 @@ from dace import SDFG, dtypes, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
 from dace.transformation.passes.vectorization.utils.tile_access import expr_is_data_dependent
+
+#: ``(cleaned_predicate, {array: connector}, {array: subset})`` -- the staging info
+#: :meth:`PredicateMaskedReduction._materializable_predicate` hands to ``_apply_one``.
+CondMaterialize: TypeAlias = tuple[str, dict[str, str], dict[str, str]]
 
 #: Reduction types this pass predicates, and their infix operator.
 _REDTYPE_OP = {
@@ -73,7 +79,7 @@ def _body_has_data_dependent_read(sd: SDFG, state: SDFGState) -> bool:
     lanes once the branch is dissolved to unconditional, so predication must
     refuse. Structured affine subsets (functions of iteration/scope symbols only)
     are in-bounds by construction and return False."""
-    dd_memo: Dict[str, bool] = {}  # one read-only query; nothing mutates ``sd`` under it
+    dd_memo: dict[str, bool] = {}  # one read-only query; nothing mutates ``sd`` under it
     for edge in state.edges():
         m = edge.data
         if m is None or m.data is None or m.subset is None:
@@ -97,10 +103,10 @@ class PredicateMaskedReduction(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         applied = 0
         for sd in sdfg.all_sdfgs_recursive():
             for cfg in list(sd.all_control_flow_regions(recursive=True)):
@@ -114,7 +120,9 @@ class PredicateMaskedReduction(ppl.Pass):
             sdfg.reset_cfg_list()
         return applied or None
 
-    def _match(self, sd: SDFG, cb: ConditionalBlock):
+    def _match(
+        self, sd: SDFG, cb: ConditionalBlock
+    ) -> tuple[str, SDFGState, list[tuple[MultiConnectorEdge[Memlet], str]], CondMaterialize | None] | None:
         """Return ``(cond_text, body_state, [(edge, op)], cond_materialize)`` if ``cb``
         is a predicable masked reduction, else None (leaving the graph untouched).
 
@@ -139,7 +147,7 @@ class PredicateMaskedReduction(ppl.Pass):
         state = states[0]
 
         # Reduction WCR edges: an associative op into a scalar target we can predicate.
-        reductions: List[Tuple] = []
+        reductions: list[tuple] = []
         for edge in state.edges():
             m = edge.data
             if m is None or m.data is None or m.wcr is None:
@@ -205,7 +213,7 @@ class PredicateMaskedReduction(ppl.Pass):
             return None
         return cond_text, state, reductions, cond_materialize
 
-    def _materializable_predicate(self, sd: SDFG, cond_text: str):
+    def _materializable_predicate(self, sd: SDFG, cond_text: str) -> CondMaterialize | None:
         """Return ``(cleaned, connectors, subsets)`` to stage a compound predicate
         ``(a[i] > K)`` into a bool mask scalar, or ``None`` if it is not a per-element
         array predicate we can eagerly evaluate on every lane.
@@ -239,8 +247,8 @@ class PredicateMaskedReduction(ppl.Pass):
                    cb: ConditionalBlock,
                    cond_text: str,
                    state: SDFGState,
-                   reductions: List[Tuple],
-                   cond_materialize=None):
+                   reductions: list[tuple[MultiConnectorEdge[Memlet], str]],
+                   cond_materialize: CondMaterialize | None = None) -> None:
         """Mutate the branch body in place (predicate each addend), then dissolve ``cb``."""
         if cond_materialize is not None:
             # Recipe 2: lower the compound predicate into a bool mask scalar the ITE reads.

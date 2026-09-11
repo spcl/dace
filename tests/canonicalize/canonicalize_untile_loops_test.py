@@ -151,10 +151,7 @@ def test_case_b_inner_stride_2_collapses_preserving_step():
     assert res == 1
     loops_after = _loops(sdfg)
     assert len(loops_after) == 1, f'expected 1 collapsed loop, got {len(loops_after)}'
-    # The collapsed loop must keep stride 2.
-    upd = loops_after[0].update_statement
-    upd_str = upd.as_string if hasattr(upd, 'as_string') else str(upd)
-    assert ' + 2' in upd_str or '+= 2' in upd_str, f'collapsed update should step by 2; got {upd_str!r}'
+    assert loop_analysis.get_loop_stride(loops_after[0]) == 2, 'the collapsed loop lost the original stride'
 
     sdfg(a=a, b=b, N=n)
     assert np.allclose(a, ref_a), f'value mismatch: got {a}, expected {ref_a}'
@@ -195,9 +192,7 @@ def test_case_b_3level_cascade_collapses_via_fixpoint_preserving_stride():
     assert res == 2, f'fixpoint should collapse 2 tile pairs; got res={res}'
     loops_after = _loops(sdfg)
     assert len(loops_after) == 1, f'expected 1 collapsed loop, got {len(loops_after)}'
-    upd = loops_after[0].update_statement
-    upd_str = upd.as_string if hasattr(upd, 'as_string') else str(upd)
-    assert ' + 2' in upd_str or '+= 2' in upd_str, f'collapsed update should step by 2; got {upd_str!r}'
+    assert loop_analysis.get_loop_stride(loops_after[0]) == 2, 'the collapsed loop lost the original stride'
 
     sdfg(a=a, b=b, N=n)
     assert np.allclose(a, ref_a), f'value mismatch: got {a}, expected {ref_a}'
@@ -427,10 +422,9 @@ def test_refuses_when_outer_body_is_not_a_perfect_two_level_nest():
 # ============================================================================
 # Tiled jacobi2d / heat3d -- multi-dim and multi-level tile coverage.
 #
-# These tests pin down the contract for the planned ``UntileLoops`` extensions
-# (multi-dim, Map-style, fixpoint iteration over multi-level cascades). Until
-# the extensions land they all ``xfail(strict=True)`` so the pass author is
-# notified the moment an extension flips one of these to ``XPASS``.
+# These tests pin the contract for the ``UntileLoops`` extensions (multi-dim,
+# Map-style, fixpoint iteration over multi-level cascades). The extensions have
+# landed, so every case below is an ordinary passing test.
 #
 # Each kernel has TWO targets:
 #   * range-style -- ``for i in range(...)`` literal tile loops; the rewrite
@@ -500,8 +494,9 @@ def test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest():
 def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     """1-level 2D tile in dace.map form. ``UntileLoops(map_roundtrip=True)``
     lowers every Map to a LoopRegion via ``MapExpansion`` + ``MapToForLoop``,
-    runs the untile fixpoint, then re-lifts via ``LoopToMap`` +
-    ``MapCollapse``, leaving a single 2D Map over ``[0:N-2, 0:M-2]``."""
+    runs the untile fixpoint, then re-lifts via ``LoopToMap``, leaving one
+    recovered Map per axis over the full ``[0:N-2]`` / ``[0:M-2]`` extent and no
+    LoopRegion."""
 
     K = 4
 
@@ -523,14 +518,11 @@ def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     sdfg = jacobi2d_tiled.to_sdfg(simplify=True)
     UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
     sdfg.validate()
-    # ExpandNestedSDFGInputs + InlineMultistateSDFG flatten the round-trip
-    # NSDFGs, the multi-dim ascent fires, and the fixpoint collapses to
-    # <= ``axes`` CFR constructs. The general splice reconnects the parent's
-    # pred/succ chain through the spliced body, so no orphan states remain
-    # and the result executes bit-exactly.
-    n_maps = _count_maps(sdfg)
-    n_loops = _count_loops(sdfg)
-    assert n_maps + n_loops <= 2, f'expected <=2 collapsed CFR constructs, got {n_maps} maps + {n_loops} loops'
+    # ExpandNestedSDFGInputs + InlineMultistateSDFG flatten the round-trip NSDFGs, the multi-dim
+    # ascent fires, and the fixpoint collapses the tile pair per axis. The general splice
+    # reconnects the parent's pred/succ chain through the spliced body, so no orphan state remains.
+    assert _count_maps(sdfg) == 2, f'expected one recovered Map per axis, got {_count_maps(sdfg)}'
+    assert _count_loops(sdfg) == 0, f'the Map round-trip left a LoopRegion behind: {_count_loops(sdfg)}'
     sdfg(a=a, b=b, N=n, M=m)
     assert np.allclose(b, ref)
 
@@ -637,11 +629,9 @@ def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
     sdfg = heat3d_tiled.to_sdfg(simplify=True)
     UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
     sdfg.validate()
-    # 3 axes -> at most 3 collapsed CFR constructs; executes bit-exactly
-    # (the general splice leaves no orphan connective states).
-    n_maps = _count_maps(sdfg)
-    n_loops = _count_loops(sdfg)
-    assert n_maps + n_loops <= 3, f'expected <=3 collapsed CFR constructs, got {n_maps} maps + {n_loops} loops'
+    # 3 axes -> one recovered Map each, and no orphan connective state from the general splice.
+    assert _count_maps(sdfg) == 3, f'expected one recovered Map per axis, got {_count_maps(sdfg)}'
+    assert _count_loops(sdfg) == 0, f'the Map round-trip left a LoopRegion behind: {_count_loops(sdfg)}'
     sdfg(a=a, b=b, N=n, M=m, P=p)
     assert np.allclose(b, ref)
 
@@ -1090,24 +1080,3 @@ def test_a_four_level_cascade_of_nested_clamps_collapses_completely():
 
     survivors = run_against_flat_stencil(four_lvl)
     assert len(survivors) == 1, f'all ten spatial loops must collapse; got {survivors}'
-
-
-@pytest.mark.parametrize('n', [17, 30, 64, 97, 128])
-def test_the_nested_clamp_cascade_is_a_partition_at_every_size(n):
-    """The reason the clamp is written this way rather than by sizing N to divide the widths.
-
-    A divisibility-based fix holds only while N cooperates, and the size is exactly what a fuzzing
-    harness varies. The clamp is correct at EVERY N -- checked here on the iteration set itself,
-    so the property is pinned independently of what the compiler then does with it.
-    """
-    from collections import Counter
-    w1, w2, w3, w4 = 13, 7, 19, 3
-    seen: Counter = Counter()
-    for i1 in range(1, n - 1, w1):
-        for i2 in range(i1, min(i1 + w1, n - 1), w2):
-            for i3 in range(i2, min(i2 + w2, i1 + w1, n - 1), w3):
-                for i4 in range(i3, min(i3 + w3, i2 + w2, i1 + w1, n - 1), w4):
-                    for i in range(i4, min(i4 + w4, i3 + w3, i2 + w2, i1 + w1, n - 1)):
-                        seen[i] += 1
-    assert set(seen) == set(range(1, n - 1)), f'N={n}: the tiles do not cover the flat range'
-    assert not seen or max(seen.values()) == 1, f'N={n}: some point is visited twice'

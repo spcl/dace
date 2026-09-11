@@ -5,6 +5,7 @@ The pure expansion emits a CPP tasklet whose body walks the K-fold
 nested index space using the source array's strides (which DaCe
 codegen passes via ``__<arr>_strides`` from the surrounding scope).
 """
+from collections.abc import Sequence
 from typing import List, Optional, Tuple
 
 import sympy
@@ -12,7 +13,7 @@ import sympy
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
-from dace.sdfg import nodes
+from dace.sdfg import graph, nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import (GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides,
@@ -50,8 +51,9 @@ def _enclosing_map_params(parent_state: dace.SDFGState, node: nodes.Node) -> Lis
     return params
 
 
-def _phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState, src_edge, dims: List[int],
-                            replicate: List) -> List[str]:
+def _phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
+                            src_edge: graph.MultiConnectorEdge[dace.Memlet], dims: List[int],
+                            replicate: Sequence[int | sympy.Basic]) -> List[str]:
     """Per-tile-dim per-lane source offset for non-dividing REPLICATE dims.
 
     For a REPLICATE dim whose factor ``D`` does not (provably) divide the tile

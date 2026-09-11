@@ -28,12 +28,14 @@ expectation depends on an unimplemented pass (e.g. the deferred
 the test is marked ``strict=True`` xfail with a precise reason linking to
 the design doc.
 """
+import re
+
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol('N')
@@ -45,6 +47,22 @@ def _nmaps(sdfg):
 
 def _ncond_blocks(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock))
+
+
+def outer_inner_loops(sdfg):
+    """The two LoopRegions of a single two-deep nest, outermost first."""
+    loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert len(loops) == 2, f'expected a two-deep nest, got {[r.label for r in loops]}'
+    first, second = loops
+    return (first, second) if second in first.all_control_flow_blocks() else (second, first)
+
+
+def branch_conditions(region):
+    """Condition strings of every ConditionalBlock anywhere inside ``region``."""
+    return [
+        cond.as_string for blk in region.all_control_flow_blocks() if isinstance(blk, ConditionalBlock)
+        for cond, _ in blk.branches if cond is not None
+    ]
 
 
 # ----------------------------------------------------------------------
@@ -91,6 +109,23 @@ def test_nussinov_boundary_guards_value_preserving():
     got = base.copy()
     sdfg(table=got, N=n)
     assert np.array_equal(got, exp)
+
+
+@pytest.mark.xfail(strict=True,
+                   reason='MoveLoopInvariantIfUp cannot reach this shape at all: _match and _split_guard_loop both '
+                   'require exactly ONE ConditionalBlock in the loop body and the source already has two, so '
+                   'the hoist refuses before ConditionFusion ever runs -- reordering them buys nothing. '
+                   'Splitting the two guards apart is illegal: A at j reads table[i, j - 1] that B writes at '
+                   'j - 1. The only value-preserving hoist is loop unswitching (replicate the j loop under '
+                   'both arms of i + 1 < N), which no pass in the tree implements.')
+def test_nussinov_invariant_boundary_guard_not_evaluated_per_j():
+    """``i + 1 < N`` is invariant over the inner ``j`` loop and must be hoisted above it."""
+    sdfg = nussinov_boundary_guards.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    outer, inner = outer_inner_loops(sdfg)
+    per_j = [c for c in branch_conditions(inner) if re.search(rf'\b{re.escape(outer.loop_variable)}\b', c)]
+    assert not per_j, f'the i-invariant boundary guard is re-evaluated per j iteration: {per_j}'
 
 
 # ----------------------------------------------------------------------

@@ -60,7 +60,7 @@ def generated_code(sdfg):
     return "\n".join((obj.clean_code or obj.code) for obj in sdfg.generate_code())
 
 
-@functools.lru_cache(maxsize=1)
+@functools.lru_cache(maxsize=1, typed=True)
 def experimental_available():
     """True iff the readable CPU generator is wired up and its output differs from legacy.
 
@@ -78,7 +78,7 @@ def experimental_available():
     return experimental_code != legacy_code
 
 
-@functools.lru_cache(maxsize=1)
+@functools.lru_cache(maxsize=1, typed=True)
 def gpu_available():
     """True iff a CUDA device is usable (cupy device count, else ``nvidia-smi -L``)."""
     try:

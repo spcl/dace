@@ -6,7 +6,7 @@ Rewrites ``map.range`` in place so the K innermost dims step by ``widths[k]``
 (one tile per iteration). Masked iteration handles partial tiles at the trip
 boundary; no main + remainder split.
 """
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import properties, subsets, symbolic
@@ -38,7 +38,7 @@ class StrideMapByTileWidths(ppl.Pass):
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
 
-    def __init__(self, widths: Tuple[int, ...] = (8, )):
+    def __init__(self, widths: tuple[int, ...] = (8, )) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -92,7 +92,7 @@ class StrideMapByTileWidths(ppl.Pass):
         map_entry.map.range = subsets.Range(prefix + new_inner)
         return True
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any] | None) -> int | None:
         """Walk every innermost map; stride those that MarkTileDims tagged.
 
         :param sdfg: SDFG to transform in place.
@@ -102,14 +102,14 @@ class StrideMapByTileWidths(ppl.Pass):
             innermost map with enough params is treated as eligible.
         :returns: Number of maps rewritten, or ``None`` if none.
         """
-        specs: Optional[Dict[MapEntry, TileDimSpec]] = None
+        specs: dict[MapEntry, TileDimSpec] | None = None
         if pipeline_results and "MarkTileDims" in pipeline_results:
             specs = pipeline_results["MarkTileDims"]
         rewritten = 0
         # Shared across the maps this loop REFUSES -- the gate's whole-SDFG body scan is what makes a
         # per-map selection loop quadratic, and a refusal never mutates. Dropped below the moment a
         # rewrite fires, so no candidate is ever gated on a stale scan.
-        scan_cache: Dict[int, Any] = {}
+        scan_cache: dict[int, Any] = {}
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue

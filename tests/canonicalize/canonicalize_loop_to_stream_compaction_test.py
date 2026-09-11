@@ -669,6 +669,8 @@ def test_refuse_non_unit_stride():
     loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
     assert loops
     assert LoopToStreamCompaction().loop_extent(loops[0]) == (None, None)
+    # The extent helper declining is the mechanism; the refusal itself is the contract.
+    assert not lifted(build(strided))
 
 
 def test_refuse_side_effecting_body():

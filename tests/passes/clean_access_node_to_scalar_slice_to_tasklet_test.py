@@ -334,6 +334,39 @@ def test_refuses_when_source_array_also_written_in_same_state():
         'B_slice should fold normally; only A_slice is protected by the same-state-write guard'
 
 
+def test_refuses_when_view_source_would_lose_its_only_data_binding():
+    """The fold must not retarget a View's only AccessNode-reaching edge (lda_xc_potential's shape)."""
+    sdfg = dace.SDFG('rmw_view_loses_binding')
+    sdfg.add_array('A', (16, ), dace.float64)
+    sdfg.add_view('V', [1], dace.float64)
+    sdfg.add_scalar('A_slice', dace.float64, transient=True)
+    sdfg.add_array('B', (10, ), dace.float64)
+
+    s = sdfg.add_state('rmw', is_start_block=True)
+    a_read = s.add_access('A')
+    v = s.add_access('V')
+    red = s.add_reduce('lambda a, b: a + b', axes=None, identity=0.0)
+    s.add_edge(a_read, None, red, '_in', dace.Memlet('A[0:16]'))
+    s.add_edge(red, '_out', v, None, dace.Memlet('V[0]'))
+    a_slice = s.add_access('A_slice')
+    s.add_edge(v, None, a_slice, None, dace.Memlet('V[0]'))
+    t = s.add_tasklet('dbl', {'_in'}, {'_o'}, '_o = _in * 2.0')
+    s.add_edge(a_slice, None, t, '_in', dace.Memlet('A_slice[0]'))
+    b_write = s.add_access('B')
+    s.add_edge(t, '_o', b_write, None, dace.Memlet('B[5]'))
+
+    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, None)
+
+    # Without the guard, validate() raises "Ambiguous or invalid edge to/from a View access node".
+    sdfg.validate()
+
+    # The fold must have been declined: V, A_slice, and the V -> A_slice edge all still there.
+    assert any(n is v and n.data == 'V' for n in s.data_nodes()), 'V must survive the declined fold'
+    assert any(n.data == 'A_slice' for n in s.data_nodes()), 'A_slice must survive the declined fold'
+    v_to_slice = [e for e in s.out_edges(v) if e.dst is a_slice]
+    assert len(v_to_slice) == 1, 'the V -> A_slice edge the fold would retarget must still be present'
+
+
 if __name__ == '__main__':
     test_scalar_slice_removed()
     test_scalar_reused_gets_assign_tasklet()
@@ -344,3 +377,4 @@ if __name__ == '__main__':
     test_refuses_when_slice_read_edge_has_wcr()
     test_refuses_when_other_subset_missing_and_source_is_not_an_accessnode()
     test_refuses_when_source_array_also_written_in_same_state()
+    test_refuses_when_view_source_would_lose_its_only_data_binding()

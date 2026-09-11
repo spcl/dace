@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.tileops import TileBinop, TileUnop
 from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy
@@ -68,6 +69,15 @@ def test_sin_squared_negative_base_vectorizes_without_nan(isa):
         VectorizeConfig(widths=(8, ), target_isa=isa,
                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
     sdfg.validate()
+    # A literal exponent (2) unrolls to a multiply (TileBinop '*'), never reaching a
+    # tile-level 'pow'/'ipow' -- so the structural proof is that BOTH the sin unop and
+    # the square binop reached the tile pipeline, not a bare op-name match. If the
+    # vectorizer refused, no tile node would exist at all and a scalar std::sin /
+    # std::pow fallback (which also has no NaN here) would pass the numeric check alone.
+    sin_ops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileUnop) and n.op == "sin"]
+    square_ops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileBinop) and n.op == "*"]
+    assert sin_ops, "np.sin did not reach the tile pipeline as a TileUnop"
+    assert square_ops, "the '**2' square did not reach the tile pipeline as a TileBinop"
     y = np.zeros(n)
     sdfg(x=x.copy(), y=y, N=n)
     assert not np.isnan(y).any(), f"{isa}: NaN in output (exp/log negative-base regression)"

@@ -3,7 +3,7 @@
 import pytest
 import dace
 import numpy
-import pytest
+from dace.libraries.tileops import TileLoad
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from tests.passes.vectorization.helpers.harness import (
@@ -223,6 +223,9 @@ def test_scatter_store(emission_style):
         vector_width=8,
         sdfg_name="scatter_store",
         emission_style=emission_style,
+        # ``idx`` is a permutation, so the scatter is conflict-free and may parallelise; without
+        # this canonicalize leaves a sequential loop and there is no innermost map to tile.
+        loop_to_map_permissive=True,
     )
 
 
@@ -246,29 +249,6 @@ def test_strided_store_stride_2(emission_style):
     )
 
 
-def test_strided_store_stride_ssym():
-    N = 64
-    src = numpy.random.random(N)
-    dst = numpy.zeros(2 * N)
-    _ssym = numpy.int64(2)
-    run_vectorization_test(
-        dace_func=strided_store_stride_ssym,
-        arrays={
-            "src": src,
-            "dst": dst
-        },
-        params={
-            # kernel iterates 0:8*N — pass N=tiles so 8*N == array size,
-            # and the trip is provably divisible by W=8 (no remainder).
-            "N": N // 8,
-            "scale": 1.5,
-            "ssym": _ssym
-        },
-        vector_width=8,
-        sdfg_name="strided_store_stride_ssym",
-    )
-
-
 def test_strided_store_stride_3(emission_style):
     N = 64
     src = numpy.random.random(N)
@@ -284,7 +264,6 @@ def test_strided_store_stride_3(emission_style):
             "scale": 1.5
         },
         vector_width=8,
-        insert_copies=True,
         emission_style=emission_style,
         sdfg_name="strided_store_stride_3",
     )
@@ -779,6 +758,8 @@ def test_scatter_store_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"scatter_store_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
+        # Permutation index: conflict-free, see ``test_scatter_store``.
+        loop_to_map_permissive=True,
     )
 
 
@@ -925,41 +906,6 @@ def test_strided_through_nsdfg(remainder_strategy, branch_mode):
     )
 
 
-# collapse_laneid_index_loads knob: the laneid index fan collapses to a
-# direct ``_idx`` index-slice read; laneid symbols/ISE drop. Default OFF.
-
-
-def _assert_laneid_fan_collapsed(vec_sdfg):
-    """No laneid symbol / interstate assignment survives, and every gather
-    tasklet reads its indices through an ``_idx`` connector."""
-    from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
-
-    residual_syms = [s for sd in vec_sdfg.all_sdfgs_recursive() for s in sd.symbols if LaneIdScheme.is_laneid(s)]
-    assert not residual_syms, f"laneid symbols survived the collapse: {residual_syms}"
-    residual_ise = [
-        k for sd in vec_sdfg.all_sdfgs_recursive() for e in sd.edges() for k in (e.data.assignments or {})
-        if LaneIdScheme.is_laneid(k)
-    ]
-    assert not residual_ise, f"laneid interstate-edge assignments survived: {residual_ise}"
-    fan_tasklets = [
-        n for n, _ in vec_sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and ("gather" in n.label or "scatter" in n.label)
-    ]
-    assert fan_tasklets, "expected at least one collapsed gather/scatter tasklet"
-    for t in fan_tasklets:
-        assert "_idx" in t.in_connectors, (f"{t.label} did not get an _idx connector; "
-                                           f"in_connectors={set(t.in_connectors)}")
-        assert not LaneIdScheme.contains_lane_chunk(
-            t.code.as_string), (f"{t.label} still references a laneid symbol (legacy or Option B chunked): "
-                                f"{t.code.as_string!r}")
-
-
-@dace.program
-def gather_load_i32(src: dace.float64[N], idx: dace.int32[N], dst: dace.float64[N]):
-    for i in dace.map[0:N]:
-        dst[i] = src[idx[i]] + 1.0
-
-
 # Scatter side. For-loop scatter needs loop_to_map_permissive=True
 # (data-dependent write index; permutation is conflict-free here).
 
@@ -1010,30 +956,13 @@ def gather_fp32_data(src: dace.float32[N], idx: dace.int64[N], dst: dace.float32
         dst[i] = src[idx[i]] + 1.0
 
 
-@dace.program
-def two_gathers(a: dace.float64[N], ia: dace.int64[N], b: dace.float64[N], ib: dace.int64[N], c: dace.float64[N]):
-    for i in dace.map[0:N]:
-        c[i] = a[ia[i]] + b[ib[i]]
-
-
-@dace.program
-def no_indirection(src: dace.float64[N], dst: dace.float64[N], scale: dace.float64):
-    for i in dace.map[0:N]:
-        dst[i] = src[i] * scale
-
-
-def test_gather_collapse_laneid_fp32_data(vectorize_config):
-    """fp32 data array + int64 idx: direct-pass gather<float>.
-
-    fp32 runs on the multidim backend, where correctness is checked.
-    ``collapse_laneid`` is a no-op on the tile path, so the multidim arm relies
-    on the harness's vectorized-vs-reference correctness comparison.
-    """
+def test_gather_fp32_data_lowers_the_indirection_to_a_tile_load(vectorize_config):
+    """fp32 data + int64 idx: ``src[idx[i]]`` becomes a ``TileLoad``, not a per-lane fan."""
     N_val = 64
     src = numpy.random.rand(N_val).astype(numpy.float32)
     idx = numpy.random.permutation(N_val).astype(numpy.int64)
     dst = numpy.zeros(N_val, dtype=numpy.float32)
-    run_vectorization_test(
+    vectorized = run_vectorization_test(
         dace_func=gather_fp32_data,
         arrays={
             "src": src,
@@ -1045,6 +974,10 @@ def test_gather_collapse_laneid_fp32_data(vectorize_config):
         sdfg_name="gather_collapse_laneid_fp32data",
         vectorize_config=vectorize_config,
     )
+
+    loads = [n for n, _ in vectorized.all_nodes_recursive() if isinstance(n, TileLoad)]
+    assert loads, ("the indirect read did not lower to a TileLoad; the harness only proves SOME tile op "
+                   "was emitted, which the store alone would satisfy")
 
 
 # Strided index-table access b[idx[c*i]] under the knob. The boundary

@@ -11,7 +11,7 @@ name and another parses it differently:
   ``_tile_iter_mask``, ``<base>_tile_cond_mask``).
 """
 import re
-from typing import Iterable, Iterator, List, Optional, Tuple
+from collections.abc import Iterable, Iterator
 
 import dace
 from dace.sdfg import SDFG
@@ -71,7 +71,7 @@ class LaneIdScheme:
         return f"{base}_lane{dim}id_{lane}"
 
     @staticmethod
-    def make_multi(base: str, chunks: Iterable[Tuple[int, int]]) -> str:
+    def make_multi(base: str, chunks: Iterable[tuple[int, int]]) -> str:
         """Build a multi-dim lane-encoded name with one chunk per dim.
 
         :param base: Un-encoded symbol base.
@@ -82,7 +82,7 @@ class LaneIdScheme:
         return base + "".join(f"_lane{d}id_{n}" for d, n in chunks)
 
     @staticmethod
-    def parse(name: str) -> Optional[Tuple[str, int]]:
+    def parse(name: str) -> tuple[str, int] | None:
         """Peel one trailing lane chunk off ``name`` (legacy 1D shape).
 
         Accepts canonical ``<base>_lane<d>id_<n>`` AND legacy ``<base>_laneid_<n>``; both return
@@ -102,7 +102,7 @@ class LaneIdScheme:
         return None
 
     @staticmethod
-    def parse_chunks(name: str) -> Optional[Tuple[str, Tuple[Tuple[int, int], ...]]]:
+    def parse_chunks(name: str) -> tuple[str, tuple[tuple[int, int], ...]] | None:
         """Strip every trailing lane chunk off ``name``.
 
         Walks the trailing-chunk shape repeatedly so ``a_lane0id_3_lane1id_5`` decomposes to
@@ -112,7 +112,7 @@ class LaneIdScheme:
         :returns: ``(base, chunks)`` where ``chunks`` = per-dim ``(dim, lane)`` tuple in source
             order; ``None`` if ``name`` carries no recognised chunk.
         """
-        peeled: List[Tuple[int, int]] = []
+        peeled: list[tuple[int, int]] = []
         remaining = name
         while True:
             m = LaneIdScheme._CHUNK_TAIL_RE.search(remaining)
@@ -165,7 +165,7 @@ class LaneIdScheme:
         return parsed[0] if parsed is not None else name
 
     @staticmethod
-    def peel_dim(name: str, dim: int) -> Optional[str]:
+    def peel_dim(name: str, dim: int) -> str | None:
         """Drop the chunk for tile dim ``dim`` from ``name``.
 
         Reassembles remaining chunks in source order (canonical form). Used when a downstream pass

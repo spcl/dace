@@ -25,6 +25,7 @@ from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import has_one_marker
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.utils.broadcast import (is_scalar_or_len1_source, splat_scalar_to_tile)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                             memlet_subset_matches_descriptor,
@@ -1225,12 +1226,26 @@ class InsertTileLoadStore(ppl.Pass):
         per rows 2-4.
         """
         bridge_memlet_template = self._bridge_memlet(inner_state.sdfg, bridge_name)
+        bridge_is_tile = (bridge_memlet_template.subset is not None
+                          and bridge_memlet_template.subset.num_elements() != 1)
         shared_bridge_an = self._find_existing_bridge_an(inner_state, bridge_name, side="write")
         from dace.sdfg.nodes import LibraryNode
         for old_edge in original_in_edges:
             if isinstance(old_edge.src, LibraryNode) and old_edge.src_conn == "_dst":
                 continue
             bridge_an = shared_bridge_an or inner_state.add_access(bridge_name)
+            if bridge_is_tile and is_scalar_or_len1_source(inner_state, old_edge):
+                # A single-element producer cannot fill W lanes. ``WidenAccesses`` leaves such an
+                # operand a Scalar on purpose (widen_accesses.py:514) because it reads identically
+                # across lanes; giving it the full-tile bridge memlet reads past its one element,
+                # and the TileStore then writes lanes 1..W-1 from uninitialized memory. Splat
+                # instead: ``scalar -> TileLoad(Scalar) -> bridge -> TileStore``.
+                src_memlet = Memlet(data=old_edge.src.data,
+                                    subset=an_side_subset(old_edge, old_edge.src, inner_state.sdfg, inner_state))
+                splat_scalar_to_tile(inner_state, f"{bridge_name}_bcast", old_edge.src, old_edge.src_conn, src_memlet,
+                                     bridge_an, old_edge.dst_conn, bridge_name, tuple(self.widths))
+                inner_state.remove_edge(old_edge)
+                continue
             new_memlet = Memlet.from_memlet(bridge_memlet_template)
             # Per 3.8.3 row 1: AN -> AN edges survive only when the destination is a
             # Scalar bridge (CONSTANT staging output). For Array tile bridges the

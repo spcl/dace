@@ -15,8 +15,6 @@ import pytest
 from dace import symbolic
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 
-pytestmark = pytest.mark.skipif(not poly.HAVE_ISL, reason="islpy not installed")
-
 #: ``0 <= u < N`` and ``0 <= v < M``.
 _DIMS = ("u", "v")
 _PARAMS = ("N", "M")

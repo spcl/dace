@@ -18,7 +18,11 @@ Pairs covered:
   fissions then re-fuses to a single map.
 
 Each test checks value preservation against the original (non-transformed)
-SDFG and a structural round-trip property.
+SDFG, the INTERMEDIATE structure after the first direction, and the structure
+after the second. Pinning the intermediate is what makes a round-trip test
+mean anything: when both directions no-op the input shape comes back
+unchanged, so the end state alone cannot tell a round trip from a pair of
+refusals.
 """
 import numpy as np
 import pytest
@@ -43,6 +47,13 @@ def _nloops(sdfg):
 
 def _top_conds(sdfg):
     return [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
+
+
+def conds_inside_loops(sdfg):
+    """ConditionalBlocks nested anywhere inside a LoopRegion."""
+    return sum(
+        sum(1 for b in r.all_control_flow_blocks() if isinstance(b, ConditionalBlock))
+        for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
 
 
 # ----------------------------------------------------------------------
@@ -76,16 +87,19 @@ def test_moveif_into_then_up_roundtrip(require_full_hoist):
     rng = np.random.default_rng(80)
     a = rng.standard_normal(n)
 
-    base = guard_over_loop.to_sdfg(simplify=True)
-
     sdfg = guard_over_loop.to_sdfg(simplify=True)
-    MoveIfIntoLoop().apply_pass(sdfg, {})
+    assert len(_top_conds(sdfg)) == 1, 'the fixture must start with the guard above the loop'
+
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) == 1, 'the down direction refused'
     sdfg.validate()
-    # Guard pushed inside: no top-level guard remains.
-    MoveLoopInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {})
+    assert not _top_conds(sdfg), 'the guard did not leave the top level'
+    assert conds_inside_loops(sdfg) == 1, 'the guard did not land inside the loop'
+
+    assert MoveLoopInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {}) == 1, \
+        'the up direction refused'
     sdfg.validate()
-    # Hoisted back out: the guard wraps the loop again at the top level.
     assert len(_top_conds(sdfg)) == 1, 'guard did not return to the top level after the round-trip'
+    assert conds_inside_loops(sdfg) == 0, 'a copy of the guard was left inside the loop'
 
     for act in (1, 0):
         exp = _guard_over_loop_oracle(a, act)
@@ -99,31 +113,45 @@ def test_moveif_into_then_up_roundtrip(require_full_hoist):
         assert np.allclose(got, ref), f'round-trip diverged from original act={act}'
 
 
-def test_moveif_up_then_into_roundtrip():
-    """The reverse order from ``for i: if act: ...``: hoist the invariant
-    guard out, then push it back in -- value-preserving both ways."""
+@dace.program
+def loop_over_guard(a: dace.float64[N], b: dace.float64[N], act: dace.int32[1]):
+    """``for i: if act: b[i] = a[i] + 1`` -- the guard starts inside the loop."""
+    for i in range(N):
+        if act[0] > 0:
+            b[i] = a[i] + 1.0
+
+
+def test_moveif_up_hoists_the_guard_out_of_the_loop():
+    """Hoisting the invariant guard out of the loop is value-preserving for both guard values."""
     n = 9
     rng = np.random.default_rng(81)
     a = rng.standard_normal(n)
 
-    @dace.program
-    def loop_over_guard(a: dace.float64[N], b: dace.float64[N], act: dace.int32[1]):
-        for i in range(N):
-            if act[0] > 0:
-                b[i] = a[i] + 1.0
-
     sdfg = loop_over_guard.to_sdfg(simplify=True)
-    MoveLoopInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {})
+    assert conds_inside_loops(sdfg) == 1, 'the fixture must start with the guard inside the loop'
+    assert MoveLoopInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {}) == 1, 'the up direction refused'
     sdfg.validate()
-    MoveIfIntoLoop().apply_pass(sdfg, {})
-    sdfg.validate()
+    assert len(_top_conds(sdfg)) == 1, 'the guard did not reach the top level'
+    assert conds_inside_loops(sdfg) == 0, 'a copy of the guard was left inside the loop'
+
     for act in (1, 0):
         got = np.zeros(n)
         sdfg(a=a, b=got, act=np.array([act], np.int32), N=n)
         ref = np.zeros(n)
         base = loop_over_guard.to_sdfg(simplify=True)
         base(a=a, b=ref, act=np.array([act], np.int32), N=n)
-        assert np.allclose(got, ref), f'round-trip diverged act={act}'
+        assert np.allclose(got, ref), f'hoist diverged act={act}'
+
+
+def test_moveif_up_then_into_completes_the_roundtrip():
+    """After the hoist, pushing the same guard back into the loop must fire again."""
+    sdfg = loop_over_guard.to_sdfg(simplify=True)
+    assert MoveLoopInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) == 1, 'the down direction refused on the hoisted form'
+    sdfg.validate()
+    assert not _top_conds(sdfg)
+    assert conds_inside_loops(sdfg) == 1
 
 
 # ----------------------------------------------------------------------
@@ -150,16 +178,18 @@ def test_looptomap_then_maptoloop_then_looptomap():
     exp = a * 3.0 + 1.0
 
     sdfg = parallel_loop.to_sdfg(simplify=True)
-    assert sdfg.apply_transformations_repeated(LoopToMap) >= 1, 'loop did not become a map'
+    assert _nmaps(sdfg) == 0 and _nloops(sdfg) == 1, 'the fixture must start as one sequential loop'
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, 'loop did not become a map'
     sdfg.validate()
-    assert _nmaps(sdfg) >= 1
-    # Map -> loop.
-    sdfg.apply_transformations_repeated(MapToForLoop)
+    assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0
+
+    assert sdfg.apply_transformations_repeated(MapToForLoop) == 1, 'map did not become a loop'
     sdfg.validate()
-    # Loop -> map again.
-    sdfg.apply_transformations_repeated(LoopToMap)
+    assert _nmaps(sdfg) == 0, 'the intermediate must carry no map at all'
+
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, 'the re-lift refused'
     sdfg.validate()
-    assert _nmaps(sdfg) >= 1, 'round-trip did not recover a parallel map'
+    assert _nmaps(sdfg) == 1, 'round-trip did not recover a parallel map'
     got = np.zeros(n)
     sdfg(a=a, b=got, N=n)
     assert np.allclose(got, exp), 'LoopToMap<->MapToForLoop round-trip changed values'
@@ -189,12 +219,13 @@ def test_mapfission_then_mapfusion_roundtrip():
     exp_c = exp_b + 1.0
 
     sdfg = two_stmt_map.to_sdfg(simplify=True)
+    assert _nmaps(sdfg) == 1, 'the fixture must start as a single two-statement map'
     nfis = sdfg.apply_transformations_repeated(MapFission)
     sdfg.validate()
-    if nfis:
-        assert _nmaps(sdfg) >= 2, 'fission did not split the map'
-    # Re-fuse.
-    sdfg.apply_transformations_repeated(MapFusionVertical)
+    assert nfis >= 1, 'fission refused'
+    assert _nmaps(sdfg) >= 2, 'fission did not split the map'
+
+    assert sdfg.apply_transformations_repeated(MapFusionVertical) >= 1, 'fusion refused'
     sdfg.validate()
     assert _nmaps(sdfg) == 1, f'fusion did not recombine to a single map, got {_nmaps(sdfg)}'
     got_b = np.zeros(n)

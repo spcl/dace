@@ -116,7 +116,7 @@ def test_back_peel_split_is_bit_exact_against_the_sequential_reference():
 
     got = a0.copy()
     sdfg.compile()(a=got, b=b.copy(), LEN_1D=n)
-    assert np.allclose(got, ref, rtol=1e-12, atol=1e-12), 'split form must match the sequential meaning'
+    assert np.array_equal(got, ref), 'split form must match the sequential meaning bit-exactly'
 
 
 if __name__ == '__main__':

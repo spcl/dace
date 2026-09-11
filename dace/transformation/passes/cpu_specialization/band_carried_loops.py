@@ -61,6 +61,12 @@ in the map's own parameters.
   parameter, so a band would read a neighbour's column. Refused.
 - ``s115`` reads a scalar every band needs but one band writes: its destination names no map
   parameter at all, so it is a location shared across bands. Refused.
+- The wavefront skew's diagonal writes ``A[t - 2*p]`` from a row assembled in a transient, so the
+  carried write leaves as a COPY through the map exit rather than as a tasklet store. The row one
+  band writes at diagonal ``t`` is read by the NEXT band at ``t + 1``, so the nest has to be
+  refused -- and it is, but only because the boundary edges are read as accesses too
+  (:func:`boundary_accesses`); a test that sees tasklet stores alone finds no write for ``A`` at
+  all and approves the nest vacuously.
 
 Correctness does NOT depend on how OpenMP distributes the band loop. A band's entire carry sits
 inside ONE iteration of the outer map, so whichever thread runs band ``t`` runs all of ``t``'s trips
@@ -271,6 +277,33 @@ def rewritten(expressions: List, substitution: Dict[str, Any]) -> List:
     return out
 
 
+def boundary_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, allowed: Set[str],
+                      reads: Dict[str, List[List[Any]]], writes: Dict[str, List[List[Any]]]) -> None:
+    """Add the accesses the scope BOUNDARY edges carry, whatever produced them.
+
+    :func:`collect_accesses` reads the subsets adjacent to code nodes, so a value assembled in a
+    transient and copied out through the map exit is recorded nowhere -- and a missing WRITE makes
+    :func:`band_local` vacuous: it iterates the writes, finds none for the array, and approves a
+    nest whose whole carry crosses every band. The wavefront skew emits exactly that shape -- a
+    diagonal's row is built in a transient and copied into ``A`` -- and the banded form raced at
+    four threads. Every value a band could carry crosses this boundary, and its subset is on the
+    boundary edge whatever assembled it, so reading these edges closes the hole for every copy
+    shape at once. It only ever ADDS accesses, and an added access can refuse a band, never
+    approve one.
+
+    :param state: the state holding the map.
+    :param map_entry: the worksharing map whose axis would be cut.
+    :param map_exit: ``map_entry``'s exit.
+    :param allowed: the arrays that cross the scope boundary.
+    :param reads: ``name -> [index expression lists]``, extended in place.
+    :param writes: ``name -> [index expression lists]``, extended in place.
+    """
+    for edges, target in ((state.out_edges(map_entry), reads), (state.in_edges(map_exit), writes)):
+        for edge in edges:
+            if edge.data is not None and edge.data.data in allowed and edge.data.subset is not None:
+                target.setdefault(edge.data.data, []).append(index_expressions(edge.data.subset))
+
+
 def collect_band_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, reads: Dict,
                           writes: Dict) -> bool:
     """Add ``map_entry``'s per-element accesses to ``reads`` / ``writes``, on the band's own axes.
@@ -287,8 +320,10 @@ def collect_band_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit:
     """
     local_reads: Dict[str, List] = {}
     local_writes: Dict[str, List] = {}
-    if not collect_accesses(state, map_entry, boundary_names(state, map_entry, map_exit), local_reads, local_writes):
+    allowed = boundary_names(state, map_entry, map_exit)
+    if not collect_accesses(state, map_entry, allowed, local_reads, local_writes):
         return False
+    boundary_accesses(state, map_entry, map_exit, allowed, local_reads, local_writes)
     # Counted from the INNERMOST parameter, because that is the one ``cut_into_bands`` slices: two
     # maps of different rank still have to agree on which axis the band owns.
     depth = len(map_entry.map.params)

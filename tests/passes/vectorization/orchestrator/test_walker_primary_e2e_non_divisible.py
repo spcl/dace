@@ -15,6 +15,7 @@ import pytest
 import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 
 def _build_k1_axpy(N):
@@ -67,6 +68,7 @@ def test_k1_axpy_non_divisible_matches_reference(N):
     vec = _build_k1_axpy(N)
     vec.name = f"k1_axpy_nd_vec_{N}"
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa="SCALAR")).apply_pass(vec, {})
+    assert_tiled(vec, ref)
     ref.compile()(A=a.copy(), C=c.copy(), B=b_ref)
     vec.compile()(A=a.copy(), C=c.copy(), B=b_vec)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -89,6 +91,7 @@ def test_k2_axpy_non_divisible_matches_reference(M, N):
     vec = _build_k2_axpy(M, N)
     vec.name = f"k2_axpy_nd_vec_{M}x{N}"
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR")).apply_pass(vec, {})
+    assert_tiled(vec, ref)
     ref.compile()(A=a.copy(), C=c.copy(), B=b_ref)
     vec.compile()(A=a.copy(), C=c.copy(), B=b_vec)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)

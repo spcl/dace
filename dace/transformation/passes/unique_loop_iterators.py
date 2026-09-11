@@ -15,7 +15,8 @@ programs leave the iterator at. ON by default as it does not affect
 Python/SDFG API inputs.
 """
 
-from typing import Optional, Set, Union
+from collections import Counter
+from typing import List, Optional, Set, Union
 
 import dace
 from dace.sdfg.replace import replace_properties_dict
@@ -231,7 +232,10 @@ class UniqueLoopIterators(ppl.Pass):
         loop_vars = [
             r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable
         ]
-        duplicated = {v for v in loop_vars if loop_vars.count(v) > 1}
+        duplicated = {v for v, count in Counter(loop_vars).items() if count > 1}
+        # Names to re-check for dead-declaration removal once every loop below is renamed
+        # (only populated when ``assign_loop_iterator_post_value`` is off, see below).
+        dead_symbol_candidates: List[str] = []
         for cfg in sdfg.all_control_flow_regions():
             if not isinstance(cfg, LoopRegion):
                 continue
@@ -268,24 +272,37 @@ class UniqueLoopIterators(ppl.Pass):
                             cfg.parent_graph.add_state_after(cfg,
                                                              f"{_POST_VALUE_STATE_PREFIX}_{self._next_id}",
                                                              assignments={old_name: f"({post_value_str})"})
-            elif old_name in sdfg.symbols and old_name not in sdfg.used_symbols(all_symbols=False):
-                # The rename was scoped to ``cfg`` so the LoopRegion's
-                # body, init/condition/update no longer reference
-                # ``old_name``. Without the post-value epilogue there is
-                # also no surviving inter-state assignment using it, so the
-                # SDFG-level declaration left behind by the frontend leaks
-                # as a phantom free symbol on the enclosing NestedSDFG
-                # boundary ("Missing symbols on nested SDFG: ['i']"). Drop
-                # the dead declaration so the symbol table reflects actual
-                # usage. The check uses ``used_symbols(all_symbols=False)``
-                # rather than ``sdfg.free_symbols`` because the latter
-                # unconditionally re-folds ``sdfg.symbols.keys()`` back in
-                # (see ``ControlFlowRegion._used_symbols_internal``), which
-                # would make the declaration appear "used" by virtue of
-                # being declared and prevent its own removal -- circular.
-                sdfg.remove_symbol(old_name)
+            else:
+                # Deferred to a single post-loop check (below): renaming ``cfg`` only
+                # substitutes occurrences of THIS ``old_name`` inside ``cfg``'s own subtree,
+                # so it cannot change whether any OTHER loop's iterator name is still used
+                # elsewhere in ``sdfg``. One whole-SDFG walk after every loop here is renamed
+                # sees exactly the same per-name verdicts a walk repeated after each rename
+                # would -- including the duplicated-name case, where the walk must wait for
+                # every sibling sharing that name to be renamed before the name reads as dead.
+                dead_symbol_candidates.append(old_name)
 
             self._next_id += 1
+
+        if dead_symbol_candidates:
+            used = sdfg.used_symbols(all_symbols=False)
+            for old_name in dead_symbol_candidates:
+                if old_name in sdfg.symbols and old_name not in used:
+                    # The rename scoped to each loop's own subtree left no
+                    # surviving reference to ``old_name`` anywhere in ``sdfg``.
+                    # Without the post-value epilogue there is also no surviving
+                    # inter-state assignment using it, so the SDFG-level
+                    # declaration left behind by the frontend leaks as a phantom
+                    # free symbol on the enclosing NestedSDFG boundary ("Missing
+                    # symbols on nested SDFG: ['i']"). Drop the dead declaration
+                    # so the symbol table reflects actual usage. The check uses
+                    # ``used_symbols(all_symbols=False)`` rather than
+                    # ``sdfg.free_symbols`` because the latter unconditionally
+                    # re-folds ``sdfg.symbols.keys()`` back in (see
+                    # ``ControlFlowRegion._used_symbols_internal``), which would
+                    # make the declaration appear "used" by virtue of being
+                    # declared and prevent its own removal -- circular.
+                    sdfg.remove_symbol(old_name)
 
         for state in sdfg.all_states():
             for node in state.nodes():

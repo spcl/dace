@@ -28,10 +28,13 @@ original ``init (op) fold``.
 """
 import ast
 import copy
-from typing import Optional
+
+from typing import Any
 
 import dace
 from dace import dtypes, nodes, symbolic
+from dace.memlet import Memlet
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.utils.reductions import (
     IDENTITY,
@@ -58,7 +61,7 @@ _WCR_LAMBDA = {
 }
 
 
-def _free_syms(expr) -> set:
+def _free_syms(expr: object) -> set[str]:
     """The free-symbol NAMES of ``expr``, or an empty set if it does not parse."""
     try:
         return {str(s) for s in symbolic.pystr_to_symbolic(str(expr)).free_symbols}
@@ -66,7 +69,8 @@ def _free_syms(expr) -> set:
         return set()
 
 
-def _trip_depends_on_enclosing_map(state, map_entry, trip) -> bool:
+def _trip_depends_on_enclosing_map(state: dace.SDFGState, map_entry: nodes.MapEntry,
+                                   trip: symbolic.SymbolicType) -> bool:
     """True if the reduction map's trip count is sized by a param of a map ENCLOSING it --
     following the scope tree out through nested-SDFG boundaries.
 
@@ -114,7 +118,7 @@ def _trip_depends_on_enclosing_map(state, map_entry, trip) -> bool:
     return False
 
 
-def _const_assign_value(code: str) -> Optional[float]:
+def _const_assign_value(code: str) -> float | None:
     """Numeric value of a ``_out = <number>`` tasklet, or ``None``.
 
     Accepts a bare constant or a unary ``+``/``-`` on a constant (the frontend
@@ -149,7 +153,8 @@ class PureWCRReductionInfo:
 
     __slots__ = ("map_entry", "map_exit", "body", "accumulator", "op", "write_edge")
 
-    def __init__(self, map_entry, map_exit, body, accumulator, op, write_edge):
+    def __init__(self, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, body: nodes.Node, accumulator: str, op: str,
+                 write_edge: MultiConnectorEdge[Memlet]) -> None:
         self.map_entry = map_entry
         self.map_exit = map_exit
         self.body = body
@@ -158,7 +163,8 @@ class PureWCRReductionInfo:
         self.write_edge = write_edge
 
 
-def _pure_wcr_map_ok(state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry"):
+def _pure_wcr_map_ok(state: "dace.SDFGState",
+                     map_entry: "dace.nodes.MapEntry") -> tuple[nodes.MapExit, set[nodes.Node], str] | None:
     """Shared map-level guards for a pure-WCR reduction: single-param, unit-step,
     top-level (within its state) map whose body holds no nested map.
 
@@ -182,7 +188,9 @@ def _pure_wcr_map_ok(state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry"):
     return map_exit, inner, map_entry.map.params[0]
 
 
-def _validate_pure_wcr_write(state, map_entry, map_exit, inner, param, write_edge) -> Optional[PureWCRReductionInfo]:
+def _validate_pure_wcr_write(state: dace.SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit,
+                             inner: set[nodes.Node], param: str,
+                             write_edge: MultiConnectorEdge[Memlet]) -> PureWCRReductionInfo | None:
     """Per-write guards: one scalar ``body -> map_exit`` WCR edge writing a FIXED
     (param-independent) scalar accumulator not read at map entry / aliased in scope.
 
@@ -213,7 +221,7 @@ def _validate_pure_wcr_write(state, map_entry, map_exit, inner, param, write_edg
     return PureWCRReductionInfo(map_entry, map_exit, body, acc, op, write_edge)
 
 
-def _scalar_wcr_writes(state, map_exit):
+def _scalar_wcr_writes(state: dace.SDFGState, map_exit: nodes.MapExit) -> list[MultiConnectorEdge[Memlet]]:
     """Every scalar-slot (single-element) WCR write edge into ``map_exit``."""
     return [
         e for e in state.in_edges(map_exit) if e.data is not None and e.data.data is not None
@@ -251,7 +259,7 @@ def _recognize_pure_wcr_reductions(state: "dace.SDFGState",
 
 
 def _recognize_pure_wcr_reduction(state: "dace.SDFGState",
-                                  map_entry: "dace.nodes.MapEntry") -> Optional[PureWCRReductionInfo]:
+                                  map_entry: "dace.nodes.MapEntry") -> PureWCRReductionInfo | None:
     """Recognise ``acc (op)= f(...)`` as a MapExit WCR with no carry-in.
 
     Canonical ``acc = sum(A)`` / ``dot += a[i]*b[i]``: single-param, unit-step,
@@ -286,7 +294,7 @@ class LiftMapReductionToReduce(ppl.Pass):
                  pure_wcr_only: bool = False,
                  rmw_only: bool = False,
                  nested_only: bool = False,
-                 wcr_free_output: bool = False):
+                 wcr_free_output: bool = False) -> None:
         super().__init__()
         self._vectorized = vectorized
         #: Lift ONLY pure-WCR boundary reductions (skip RMW recogniser). For the
@@ -324,7 +332,7 @@ class LiftMapReductionToReduce(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Lift every recognised map-carried reduction in ``sdfg`` (recursively).
 
         :param sdfg: The SDFG to transform in place.
@@ -448,7 +456,7 @@ class LiftMapReductionToReduce(ppl.Pass):
         return True
 
     @staticmethod
-    def _split_inout_connector(state: dace.SDFGState, info: MapReductionInfo):
+    def _split_inout_connector(state: dace.SDFGState, info: MapReductionInfo) -> MultiConnectorEdge[Memlet] | None:
         """Give the accumulator distinct in/out connectors on the body NSDFG.
 
         When the body reads+writes the accumulator through one *inout* connector

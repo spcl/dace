@@ -47,7 +47,7 @@ jobs:
         # backend-marked FFT/BLAS suites themselves run in the libnode job.
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev libfftw3-dev
           libpapi-dev papi-tools g++-aarch64-linux-gnu
         pip-packages: flake8 pytest-xdist coverage
         codecov: 'true'
@@ -135,7 +135,7 @@ jobs:
         python-version: '3.14'
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         pip-packages: pytest-xdist
         groups: testing
 
@@ -203,7 +203,7 @@ jobs:
         python-version: '3.14'
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
           g++-aarch64-linux-gnu
         pip-packages: pytest-xdist
         groups: testing
@@ -227,13 +227,13 @@ jobs:
         # phases land on one worker and share its memoized base SDFG instead of rebuilding per worker.
         pytest ${{ matrix.paths }} \
           -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
-          -m "vectorization and not gpu and not long and not sequential and not perf"
+          -m "vectorization and not gpu and not long and not sequential and not perf and not avx512 and not arm_cross"
         # The sequential members of this marker run here too, one at a time. General CI no longer
         # selects them (its own selection excludes this marker), so without this leg a test that is
         # both `vectorization` and `sequential` would run nowhere. Exit status 5 is pytest for
         # "nothing matched", which is the expected outcome while no such test exists.
         pytest ${{ matrix.paths }} -n 1 --tb=short --timeout_method thread --timeout=600 \
-          -m "vectorization and sequential and not gpu and not long and not perf" \
+          -m "vectorization and sequential and not gpu and not long and not perf and not avx512 and not arm_cross" \
           || [ $? -eq 5 ]
 
   # --- Corpus (was corpus-ci.yml) ---
@@ -251,7 +251,7 @@ jobs:
         python-version: '3.14'
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         pip-packages: pytest-xdist
         groups: testing
 
@@ -295,7 +295,7 @@ jobs:
         # -- without the package they are permanently red rather than skipped.
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev libfftw3-dev
         pip-packages: pytest-xdist
         groups: testing
 
@@ -401,7 +401,7 @@ jobs:
         # ``ninja -t compdb``, and dace/codegen/compiler.py only selects the Ninja generator when
         # ``ninja`` is on PATH. BLAS/LAPACK: the readable library-lowering test lowers BLAS library
         # nodes and the corpus kernels link against cBLAS/LAPACKE.
-        apt-packages: libyaml-dev cmake ninja-build libblas-dev libopenblas-dev liblapacke-dev
+        apt-packages: libyaml-dev cmake ninja-build libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         pip-packages: pytest-xdist rustworkx
         groups: testing
 
@@ -464,7 +464,7 @@ jobs:
         python-version: '3.14'
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         pip-packages: pytest-xdist
         groups: testing
 

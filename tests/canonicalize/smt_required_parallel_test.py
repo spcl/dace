@@ -14,8 +14,8 @@ Every case is asserted twice:
 * **parallelism** -- ``xfail(strict=True)`` while the analysis still refuses, which is the SOUND
   answer without a solver. When the oracle reaches a case it XPASSes and fails the suite, forcing
   the author to flip the case to a plain assertion rather than letting the new capability land
-  unnoticed. The quadratic scatter is flipped: the oracle proves it, and the case skips where z3
-  is absent.
+  unnoticed. The quadratic scatter is flipped: the oracle proves it, and ``z3-solver`` is a hard
+  project dependency, so the case runs unconditionally.
 
 The negative case must stay refused forever; it is marked as a normal (non-xfail) assertion
 because no solver should ever certify it.
@@ -40,7 +40,6 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol('N')
@@ -381,10 +380,9 @@ def test_quadratic_scatter_is_value_preserving():
 
 def test_quadratic_scatter_parallelizes():
     """The oracle discharges ``i1*i1 == i2*i2 AND 0 <= i1 < i2 < N`` as UNSAT, so the write is
-    injective and the loop lifts. Without z3 the affine classifier refuses and the loop stays."""
+    injective and the loop lifts. ``z3-solver`` is a hard project dependency (pyproject.toml),
+    never optional, so this runs unconditionally."""
     sdfg = cpu_canon(quadratic_scatter.to_sdfg(simplify=True))
-    if not smt_dependence.has_z3():
-        pytest.skip('needs z3: the affine classifier cannot reach a quadratic subscript')
     assert residual_loops(sdfg) == 0
 
 

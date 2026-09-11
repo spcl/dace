@@ -83,7 +83,9 @@ def test_no_positives_returns_zero():
         b[0] = sum_val
 
     sdfg = kernel.to_sdfg(simplify=True)
-    LoopToConditionalReduce().apply_pass(sdfg, {})
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1, 'the rewrite refused; the original loop also sums'
+    assert not any(
+        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions())
     sdfg.apply_transformations_repeated(LoopToMap, validate=False)
 
     a = -np.abs(np.random.default_rng(0).standard_normal(8))  # all negative
@@ -106,7 +108,9 @@ def test_all_positives_acts_like_unconditional_sum():
         b[0] = sum_val
 
     sdfg = kernel.to_sdfg(simplify=True)
-    LoopToConditionalReduce().apply_pass(sdfg, {})
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1, 'the rewrite refused; the original loop also sums'
+    assert not any(
+        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions())
     sdfg.apply_transformations_repeated(LoopToMap, validate=False)
 
     a = np.abs(np.random.default_rng(1).standard_normal(16))  # all positive

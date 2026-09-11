@@ -6,12 +6,12 @@ DaCe subset bounds and memlet expressions flow through the pipeline as a mix of
 ``free_symbols``, so every call site would otherwise have to test for it. These helpers
 centralise that one test, keyed on the type rather than on attribute presence.
 """
-from typing import Any, Set
+from typing import Any
 
 import sympy
 
 
-def free_symbols(expr: Any) -> Set[Any]:
+def free_symbols(expr: Any) -> set[Any]:
     """Free symbols of ``expr``, or an empty set for a non-symbolic operand.
 
     A Python numeric literal has no free symbols, so the empty set is the right identity
@@ -23,7 +23,7 @@ def free_symbols(expr: Any) -> Set[Any]:
     return expr.free_symbols if isinstance(expr, sympy.Basic) else set()
 
 
-def free_symbol_names(expr: Any) -> Set[str]:
+def free_symbol_names(expr: Any) -> set[str]:
     """Names of :func:`free_symbols` as strings -- the dominant call-site shape.
 
     :param expr: Operand to inspect.

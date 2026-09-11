@@ -12,13 +12,14 @@ contains no SDFG mutation — only analysis.
 """
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Tuple
 
-from dace import subsets
+import sympy
+
+from dace import subsets, symbolic
 from dace.symbolic import equalize_symbols_across, pystr_to_symbolic
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TileDimSpec:
     """Per-map tile specification.
 
@@ -33,11 +34,11 @@ class TileDimSpec:
         (string form so symbolic expressions survive serialization).
     """
 
-    iter_vars: Tuple[str, ...]
-    widths: Tuple[int, ...]
-    global_ubs: Tuple[str, ...]
+    iter_vars: tuple[str, ...]
+    widths: tuple[int, ...]
+    global_ubs: tuple[str, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not (1 <= len(self.widths) <= 3):
             raise ValueError(f"TileDimSpec: K must be in {{1, 2, 3}}, got {len(self.widths)}")
         if not (len(self.iter_vars) == len(self.widths) == len(self.global_ubs)):
@@ -90,7 +91,7 @@ class TileAccessKind(Enum):
     UNRECOGNIZED = "Unrecognized"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TileAccessClassification:
     """Output of :func:`classify_tile_access`.
 
@@ -111,11 +112,11 @@ class TileAccessClassification:
     """
 
     kind: TileAccessKind
-    dim_strides: Tuple[int, ...] = field(default_factory=tuple)
-    match_dims: Tuple[int, ...] = field(default_factory=tuple)
+    dim_strides: tuple[int, ...] = field(default_factory=tuple)
+    match_dims: tuple[int, ...] = field(default_factory=tuple)
 
 
-def _coeff_of(expr_sym, var_sym) -> Optional[int]:
+def _coeff_of(expr_sym: sympy.Basic, var_sym: sympy.Symbol) -> int | None:
     """Return the integer coefficient of ``var_sym`` in ``expr_sym``.
 
     :param expr_sym: Sympy expression.
@@ -143,7 +144,7 @@ def _coeff_of(expr_sym, var_sym) -> Optional[int]:
 _STRUCTURED_FN_NAMES = {"int_floor", "int_ceil"}
 
 
-def _structured_subtrees(expr):
+def _structured_subtrees(expr: sympy.Basic) -> list[sympy.Basic]:
     """Yield every ``int_floor`` / ``int_ceil`` sub-expression of ``expr``.
 
     :param expr: A sympy expression (from :func:`pystr_to_symbolic`).
@@ -157,7 +158,7 @@ def _structured_subtrees(expr):
     return out
 
 
-def _structured_coeff_in(b_sym, var_sym) -> Optional[int]:
+def _structured_coeff_in(b_sym: sympy.Basic, var_sym: sympy.Symbol) -> int | None:
     """Coefficient of ``var_sym`` when it appears ONLY inside ``int_floor`` /
     ``int_ceil`` with an affine argument (a deterministic replication index,
     e.g. ``int_floor(2*i + 1, 2)``), or ``None`` if not such a structured form.
@@ -195,7 +196,7 @@ def _structured_coeff_in(b_sym, var_sym) -> Optional[int]:
     return coeff
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DimIndex:
     """Per-array-dim summary of how one access dim's index depends on the
     tile iter-vars — the single analysis the box taxonomy projects from.
@@ -209,15 +210,15 @@ class DimIndex:
         replication, no data dependence).
     """
 
-    dep: Tuple[int, ...]
-    affine_coeffs: dict = field(default_factory=dict)
+    dep: tuple[int, ...]
+    affine_coeffs: dict[int, int] = field(default_factory=dict)
     structured: bool = False
 
 
 def build_dim_index_map(
     subset: subsets.Range,
-    tile_iter_vars: Tuple[str, ...],
-) -> Optional[List[DimIndex]]:
+    tile_iter_vars: tuple[str, ...],
+) -> list[DimIndex] | None:
     """Build the per-array-dim index map for ``subset`` under ``tile_iter_vars``.
 
     For each array dim, records which tile vars its begin expression depends on
@@ -233,7 +234,7 @@ def build_dim_index_map(
     """
     tile_syms = [pystr_to_symbolic(v) for v in tile_iter_vars]
     name_to_pos = {v: p for p, v in enumerate(tile_iter_vars)}
-    out: List[DimIndex] = []
+    out: list[DimIndex] = []
     for (b, _e, _s) in subset.ranges:
         try:
             b_sym = pystr_to_symbolic(str(b))
@@ -241,7 +242,7 @@ def build_dim_index_map(
             return None
         free = {str(s) for s in b_sym.free_symbols}
         dep = sorted(name_to_pos[v] for v in tile_iter_vars if v in free)
-        affine_coeffs: dict = {}
+        affine_coeffs: dict[int, int] = {}
         structured = False
         for p in dep:
             tsym = tile_syms[p]
@@ -256,8 +257,8 @@ def build_dim_index_map(
 
 def classify_tile_access(
     subset: subsets.Range,
-    array_strides: Tuple,
-    tile_iter_vars: Tuple[str, ...],
+    array_strides: tuple[symbolic.SymbolicType, ...],
+    tile_iter_vars: tuple[str, ...],
 ) -> TileAccessClassification:
     """Classify how a memlet subset depends on the tile iter-vars.
 
@@ -326,8 +327,8 @@ def classify_tile_access(
 
     # Perfect box (or partial box): per tile dim, classify affine vs structured
     # vs unbound vs neither.
-    match_dims: List[int] = []
-    per_tile_dim_strides: List[int] = []
+    match_dims: list[int] = []
+    per_tile_dim_strides: list[int] = []
     structured = False
     # First pick a fallback ``match_dims`` value for the unbound lanes (any
     # bound dim works; default to 0 when nothing is bound — but at K=1 a
