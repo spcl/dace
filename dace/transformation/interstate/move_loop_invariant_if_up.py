@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG
 from dace import properties, symbolic
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -172,6 +173,32 @@ def _reads_outside(loop: LoopRegion, cb: ConditionalBlock) -> Set[str]:
         except Exception:
             pass
     return reads
+
+
+def strippable_prep(loop: LoopRegion, hoisted: list[tuple[str, str]]) -> dict[str, str]:
+    """The hoisted prep assignments that may be deleted from the loop body.
+
+    Deleting the body copy is value-preserving exactly when the name has no OTHER definition
+    inside the loop -- no second interstate assignment with a different right-hand side, and no
+    data write to a container of that name. Then every read in the loop observed this one
+    invariant expression before and observes the identical outer binding after, because the
+    guard's entry edge dominates the whole loop.
+
+    :param loop: The loop the guard is leaving (still intact).
+    :param hoisted: The invariant ``(lhs, rhs)`` pairs moved onto the guard's entry edge.
+    :returns: The subset of ``hoisted``, as a ``lhs -> rhs`` map, safe to delete from the body.
+    """
+    defined: dict[str, str] = {}
+    conflicting: OrderedSet[str] = OrderedSet()
+    for e in loop.all_interstate_edges():
+        for lhs, rhs in e.data.assignments.items():
+            if defined.setdefault(lhs, rhs) != rhs:
+                conflicting.add(lhs)
+    for st in loop.all_states():
+        for n in st.nodes():
+            if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
+                conflicting.add(n.data)
+    return {lhs: rhs for lhs, rhs in hoisted if lhs not in conflicting}
 
 
 def _hoistable(sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock,
@@ -441,6 +468,13 @@ class MoveLoopInvariantIfUp(ppl.Pass):
                 new_loop.add_edge(sink, e.dst, copy.deepcopy(e.data))
         if cb_was_start:
             new_loop.start_block = new_loop.node_id(bstart)
+
+        # The prep that moved out with the guard must not stay behind: a body copy would make
+        # the loop define a name the hoisted condition reads.
+        for lhs, rhs in strippable_prep(loop, hoist_assignments).items():
+            for e in new_loop.edges():
+                if e.data.assignments.get(lhs) == rhs:
+                    del e.data.assignments[lhs]
 
         # Splice out empty boundary states left in ``new_loop`` (the
         # original loop may have had empty pre/post-cb states; with cb

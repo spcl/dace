@@ -143,12 +143,6 @@ def test_moveif_up_hoists_the_guard_out_of_the_loop():
         assert np.allclose(got, ref), f'hoist diverged act={act}'
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='MoveLoopInvariantIfUp leaves the condition prep (`act_index = act[0]`) on an '
-                   'interstate edge INSIDE the loop it just hoisted the guard out of. The condition then '
-                   'reads a name the loop body writes, so MoveIfIntoLoop can no longer prove it '
-                   'loop-invariant and refuses -- the pair is a one-way trip on this shape. The fix is for '
-                   'the up-pass to take the prep with the guard.')
 def test_moveif_up_then_into_completes_the_roundtrip():
     """After the hoist, pushing the same guard back into the loop must fire again."""
     sdfg = loop_over_guard.to_sdfg(simplify=True)
