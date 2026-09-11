@@ -35,11 +35,17 @@ import sympy
 
 import dace
 from dace import symbolic
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
+
+#: Per-SDFG context: data name -> states referencing an AccessNode for it. A merge deletes a
+#: whole body state, which changes this, so it is rebuilt once per sweep rather than cached
+#: across an ``apply`` (see ``apply_pass``); never rebuilt per candidate pair.
+ScratchIndex = dict[str, OrderedSet]
 
 #: Placeholder the iteration variable is normalised to when comparing two loop
 #: bodies, so ``a[_loop_it_0]`` and ``a[_loop_it_1]`` compare equal.
@@ -135,18 +141,32 @@ class FuseConsecutiveLoops(ppl.Pass):
             changed = True
             while changed:
                 changed = False
+                # Rebuilt once per sweep, not per candidate pair: a merge deletes a body
+                # state, which is exactly what this index tracks, so it goes stale the
+                # moment one fires -- the next sweep iteration rebuilds it fresh.
+                scratch_index = self._build_scratch_index(sd)
                 for cfg in list(sd.all_control_flow_regions(recursive=True)):
-                    if self._fuse_one(cfg):
+                    if self._fuse_one(cfg, scratch_index):
                         fused += 1
                         changed = True
                         break
         return fused or None
 
-    def _fuse_one(self, cfg: ControlFlowRegion) -> bool:
+    def _build_scratch_index(self, sd: ControlFlowRegion) -> ScratchIndex:
+        """Map every AccessNode data name in ``sd`` to the states referencing it."""
+        index: ScratchIndex = {}
+        for st in sd.all_states():
+            for n in st.nodes():
+                if isinstance(n, nodes.AccessNode):
+                    index.setdefault(n.data, OrderedSet()).add(st)
+        return index
+
+    def _fuse_one(self, cfg: ControlFlowRegion, scratch_index: ScratchIndex) -> bool:
         """Find and fuse one consecutive-loop pair inside ``cfg``.
 
         :param cfg: The control-flow region to search (one level; loops nested
                     deeper are reached via ``all_control_flow_regions``).
+        :param scratch_index: Current sweep's data-name -> states map (see ``apply_pass``).
         :returns: ``True`` if a pair was fused.
         """
         for first in cfg.nodes():
@@ -167,12 +187,12 @@ class FuseConsecutiveLoops(ppl.Pass):
                 continue
             if link.data.condition is not None and link.data.condition.as_string not in ('1', 'True'):
                 continue
-            if self._adjacent_identical(first, second):
+            if self._adjacent_identical(first, second, scratch_index):
                 self._merge(cfg, first, second, link)
                 return True
         return False
 
-    def _adjacent_identical(self, first: LoopRegion, second: LoopRegion) -> bool:
+    def _adjacent_identical(self, first: LoopRegion, second: LoopRegion, scratch_index: ScratchIndex) -> bool:
         """Whether ``first`` then ``second`` are unit-stride, structurally
         identical, and cover adjacent index ranges ``[A, B)`` and ``[B, C)``."""
         for loop in (first, second):
@@ -190,7 +210,7 @@ class FuseConsecutiveLoops(ppl.Pass):
         second_start = loop_analysis.get_init_assignment(second)
         if not _symbolically_equal(first_end_excl, second_start):
             return False
-        return self._bodies_match(first, second)
+        return self._bodies_match(first, second, scratch_index)
 
     def _single_body_state(self, loop: LoopRegion) -> Optional[SDFGState]:
         """The loop's one non-empty body state, or ``None`` if the body is not a
@@ -203,7 +223,7 @@ class FuseConsecutiveLoops(ppl.Pass):
             return None
         return non_empty[0]
 
-    def _bodies_match(self, first: LoopRegion, second: LoopRegion) -> bool:
+    def _bodies_match(self, first: LoopRegion, second: LoopRegion, scratch_index: ScratchIndex) -> bool:
         """Whether the two loops' single body states are identical up to their
         iteration variable and body-local scratch names (same nodes, same edges,
         same memlets)."""
@@ -211,11 +231,11 @@ class FuseConsecutiveLoops(ppl.Pass):
         s2 = self._single_body_state(second)
         if s1 is None or s2 is None:
             return False
-        sig1 = self._state_signature(s1, first.loop_variable, self._local_scratch(first, s1))
-        sig2 = self._state_signature(s2, second.loop_variable, self._local_scratch(second, s2))
+        sig1 = self._state_signature(s1, first.loop_variable, self._local_scratch(first, s1, scratch_index))
+        sig2 = self._state_signature(s2, second.loop_variable, self._local_scratch(second, s2, scratch_index))
         return sig1 == sig2
 
-    def _local_scratch(self, loop: LoopRegion, body_state: SDFGState) -> dict:
+    def _local_scratch(self, loop: LoopRegion, body_state: SDFGState, scratch_index: ScratchIndex) -> dict:
         """Transient data names used ONLY inside ``body_state`` -- i.e. not
         referenced by any other block of the owning SDFG (not carried across
         iterations, not read/written outside the loop). These are frontend
@@ -224,16 +244,9 @@ class FuseConsecutiveLoops(ppl.Pass):
         root = loop
         while root.parent_graph is not None:
             root = root.parent_graph
-        external: dict = {}
-        for st in root.all_states():
-            if st is body_state:
-                continue
-            for n in st.nodes():
-                if isinstance(n, nodes.AccessNode):
-                    external[n.data] = None
         local: dict = {}
         for n in body_state.nodes():
-            if isinstance(n, nodes.AccessNode) and n.data not in external:
+            if isinstance(n, nodes.AccessNode) and len(scratch_index.get(n.data, ())) == 1:
                 desc = root.arrays.get(n.data)
                 if desc is not None and desc.transient:
                     local[n.data] = None
