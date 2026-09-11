@@ -173,6 +173,59 @@ Note that if you are using CuPy, install its appropriate HIP/ROCm version.
     If you find a feature that is not supported in DaCe, please open an issue on GitHub.
 
 
+Distributing thread-blocks over chiplets
+----------------------------------------
+
+Multi-chiplet AMD GPUs, such as the MI300 series, are partitioned into chiplets (XCDs), each with its own L2 cache.
+Thread-blocks are dispatched to them in a round-robin fashion, so consecutive blocks of a kernel land on different
+chiplets and the data they share has to be replicated in every L2 cache.
+
+``compiler.cuda.chiplet_number``, the number of chiplets of the GPU (6 on MI300A), makes the code generator
+distribute the first dimension of the grid over the chiplets instead: that dimension is padded to a multiple of the
+number of chiplets, so the grid becomes ``(ceil(grid_x / chiplets) * chiplets, grid_y, grid_z)``. Since the flattened
+block index is ``blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y``, a ``gridDim.x`` that is a
+multiple of the number of chiplets reduces the chiplet a block is dispatched to to ``blockIdx.x % chiplets``, whatever
+its other two indices are. The blocks of the first dimension are then permuted to
+``(blockIdx.x % chiplets) * ceil(grid_x / chiplets) + blockIdx.x / chiplets``, so that every chiplet works on a
+contiguous chunk of that dimension, together with the whole of the other two. The blocks that the padding adds beyond
+the range of the map are masked out. Setting the entry to 1 leaves the grid untouched.
+
+The entry is left at 0 by default, which makes the code generator determine the number of chiplets of the GPU of this
+machine when targeting HIP, through the ``amdsmi`` module that ships with ROCm, so that the distribution applies to a
+multi-chiplet AMD GPU without any configuration. The number is that of the first GPU ``amdsmi`` reports, which is
+accurate on nodes whose GPUs are all of the same model. If it cannot be determined, when generating code on a machine
+without ROCm for instance, a warning is issued once and the grids are left untouched.
+
+The detected number can be overridden, which is what generating code for a GPU other than the one of this machine
+calls for:
+
+.. code-block:: yaml
+
+    compiler:
+      cuda:
+        chiplet_number: 6
+
+The setting can also be given through the environment, without changing ``.dace.conf``:
+
+.. code-block:: bash
+
+    $ DACE_compiler_cuda_chiplet_number=6 python my_program.py
+
+The distribution reshapes the first dimension of the grid only, and leaves the second and third ones on their own
+grid dimension, so it applies to kernels of any dimensionality. It is inapplicable to kernels using a persistent grid,
+a dynamic thread-block map, or nested device maps, whose block indices are not derived from the grid alone. Such
+kernels keep their original grid, and a warning naming the kernel is issued.
+
+The setting describes the GPU, and applies to every kernel that can use it. A single kernel can be excluded from the
+distribution by setting the :attr:`~dace.sdfg.nodes.Map.allow_chiplet_threadblock_distribution` attribute of its map
+to ``False``, in which case its grid is left untouched and no warning is issued for it:
+
+.. code-block:: python
+
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.label == 'my_kernel':
+            node.map.allow_chiplet_threadblock_distribution = False
+
 Optimizing GPU SDFGs
 --------------------
 
