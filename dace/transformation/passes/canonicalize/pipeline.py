@@ -131,7 +131,6 @@ from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvar
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.dataflow.prune_connectors import PruneConnectors
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
 def disable_openmp_sections(sdfg: SDFG) -> None:
@@ -280,21 +279,18 @@ class StructuralCleanup(ppl.Pass):
 
     def units(self) -> List[ppl.Pass]:
         """The block's members, in order. Symbols are folded before the state machine is rewritten,
-        then the states are fused twice over: the matcher applies once, and ``FuseStates`` walks the
-        region's edges behind it to settle what one pass could not reach.
+        then ``FuseStates`` walks the region's edges to fuse what it can.
 
-        The ORDER is load-bearing. State fusion is not confluent -- fusing ``(a, b)`` can block
-        ``(b, c)`` where taking ``(b, c)`` first would have allowed ``(a, bc)`` -- and it cannot be
-        undone, so whichever runs first fixes the order for good. The matcher's enumeration finds
-        the better one (channel_flow settles at 11 states against the walk's 12); putting the walk
-        first costs that and buys nothing, because the matcher behind it can no longer reach it.
+        ``FuseStates`` drives the SAME ``StateFusionExtended.can_be_applied`` over the same blocks a
+        ``PatternApplyOnceEverywhere`` matcher would, plus ``BlockFusion`` on non-state blocks, so
+        the matcher that used to run ahead of it re-derived every match through VF2 to reach a
+        fixpoint the walk reaches anyway. State fusion is not confluent, so the two orders can
+        settle differently (channel_flow: 11 states via the matcher, 12 via the walk).
 
         ``PruneUnreferencedTransients`` is LAST, after the state deletions above have taken the
         readers with them, so it decides against the block's own final graph. It pays for itself:
         on CloudSC the terminal band alone collects 3857 dead descriptors in 0.53 s, and every
         stage between two cleanups was walking them."""
-        fuse = PatternApplyOnceEverywhere([StateFusionExtended()])
-        fuse.progress = False
         walk_fuse = FuseStates()
         walk_fuse.progress = False
         return [
@@ -303,7 +299,6 @@ class StructuralCleanup(ppl.Pass):
             ConstantPropagation(),
             RemoveUnusedSymbols(),
             SymbolDedup(),
-            fuse,
             walk_fuse,
             EmptyStateElimination(),
             DeadStateElimination(),
@@ -516,9 +511,9 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
             for unit in units:
                 if unit.apply_pass(sdfg, {}):
                     changed = True
-            rounds += 1
             if not changed:
                 break
+            rounds += 1
         return rounds or None
 
 
@@ -557,7 +552,12 @@ class _PrivatizeScalarsStage(ppl.Pass):
         # then lets that reset reassign ``cfg_id`` under the cached ``FindAccessNodes``
         # result -> ``KeyError``. Refresh the list up front so both analyses agree.
         sdfg.reset_cfg_list()
-        return self.privatizer().apply_pass(sdfg, {})
+        privatizer = self.privatizer()
+        result = privatizer.apply_pass(sdfg, {})
+        if not result:
+            return None
+        # Report only the privatizer's own rewrites: its resolved analyses would read as a change.
+        return {k: v for k, v in result.items() if k in privatizer._pass_names} or None
 
 
 @properties.make_properties
@@ -2045,6 +2045,25 @@ def _assert_self_contained(unit: ppl.Pass):
                               f"Pipeline; wrap it so its depends_on() is satisfied.")
 
 
+def changed_the_graph(unit: ppl.Pass, result: Any) -> bool:
+    """Whether ``unit``'s ``result`` reports a rewrite rather than a resolved analysis.
+
+    A plain ``Pipeline`` returns its WHOLE results dict, analyses included, so a pipeline that
+    rewrote nothing still answers non-``None`` -- ``FixedPointPipeline`` filters those out by pass
+    name and plain ``Pipeline`` does not. Without the same filter the caller's dirty flag is pinned
+    true and the cleanup block can never be skipped.
+
+    :param unit: The pass that was applied.
+    :param result: What it returned.
+    :returns: ``True`` if the graph should be treated as modified.
+    """
+    if result is None:
+        return False
+    if type(unit) is ppl.Pipeline:
+        return any(name in unit._pass_names for name in result)
+    return True
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class CanonicalizationPipeline(ppl.Pass):
@@ -2304,7 +2323,7 @@ class CanonicalizationPipeline(ppl.Pass):
             result = unit.apply_pass(sdfg, {})
             if is_cleanup:
                 dirty = False
-            elif result is not None:
+            elif changed_the_graph(unit, result):
                 dirty = True
             # apply_pass returns non-None iff it modified the SDFG, so an unchanged SDFG needs no
             # re-validation -- that is what makes validate_all affordable by default.
