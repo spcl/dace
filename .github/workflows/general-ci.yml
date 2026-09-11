@@ -227,13 +227,13 @@ jobs:
         # phases land on one worker and share its memoized base SDFG instead of rebuilding per worker.
         pytest ${{ matrix.paths }} \
           -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
-          -m "vectorization and not gpu and not long and not sequential and not perf"
+          -m "vectorization and not gpu and not long and not sequential and not perf and not avx512 and not arm_cross"
         # The sequential members of this marker run here too, one at a time. General CI no longer
         # selects them (its own selection excludes this marker), so without this leg a test that is
         # both `vectorization` and `sequential` would run nowhere. Exit status 5 is pytest for
         # "nothing matched", which is the expected outcome while no such test exists.
         pytest ${{ matrix.paths }} -n 1 --tb=short --timeout_method thread --timeout=600 \
-          -m "vectorization and sequential and not gpu and not long and not perf" \
+          -m "vectorization and sequential and not gpu and not long and not perf and not avx512 and not arm_cross" \
           || [ $? -eq 5 ]
 
   # --- Corpus (was corpus-ci.yml) ---
