@@ -3,10 +3,11 @@ default_language_version:
 
 repos:
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.15.5
+  rev: v0.15.10
   hooks:
     - id: ruff-check
       args: [--fix]
+    - id: ruff-format
 - repo: https://github.com/pre-commit/pre-commit-hooks
   rev: v5.0.0
   hooks:
@@ -14,11 +15,3 @@ repos:
   - id: check-yaml
   - id: end-of-file-fixer
   - id: trailing-whitespace
-- repo: https://github.com/google/yapf
-  rev: v0.43.0
-  hooks:
-    - id: yapf
-      name: yapf
-      language: python
-      entry: yapf
-      types: [python]

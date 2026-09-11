@@ -1,0 +1,63 @@
+# TEMPORARY. Runs the one-time yapf -> ruff format migration so that the resulting
+# repository-wide reformat is authored and committed by github-actions[bot] rather than
+# by an individual contributor. Delete this file in the follow-up commit; it must not
+# reach main.
+#
+# This deliberately drives pre-commit rather than calling `ruff format .` directly. A
+# bare directory walk respects .gitignore, and tests/.gitignore lists `data/`, so three
+# tracked files under tests/sdfg/data/ would be skipped by the walk but picked up by the
+# hook -- the reformat would then fail the Code Quality gate it is meant to satisfy.
+# Running the same command as .github/workflows/linting.yml removes that mismatch and
+# takes the ruff version from .pre-commit-config.yaml instead of a second pin.
+name: Ruff Migration Formatter
+
+on:
+  push:
+    branches: [ruff-migration-run]
+
+env:
+  UV_FROZEN: 1
+  UV_NO_DEV: 1
+  UV_NO_EDITABLE: 1
+
+jobs:
+  format:
+    name: reformat and push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Check repository
+      uses: actions/checkout@v7
+      with:
+        # Check out the branch itself, not a detached HEAD, so the push below has an
+        # upstream to target. persist-credentials is set explicitly because checkout v5+
+        # defaults it to false.
+        ref: ${{ github.ref_name }}
+        persist-credentials: true
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: '3.10'
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
+
+    - name: Apply formatting
+      # pre-commit exits non-zero precisely because the hooks rewrote files, which is the
+      # expected outcome here.
+      run: uv run --only-group=linting pre-commit run --all-files || true
+
+    - name: Verify the tree is now clean
+      run: uv run --only-group=linting pre-commit run --all-files
+
+    - name: Commit and push
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git diff --cached --quiet && echo "Already formatted, nothing to commit." && exit 0
+        git commit -m "style: migrate formatting from yapf to ruff format"
+        git push

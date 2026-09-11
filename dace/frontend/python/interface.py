@@ -223,7 +223,7 @@ class MapGenerator(Generic[_MapT], Iterable[_MapT]):
 class MapMetaclass(type):
     """ Metaclass for map, to enable ``dace.map[0:N]`` syntax. """
 
-    # yapf: disable
+    # fmt: off
     # Type overloads for proper unpacking based on number of slices
     @overload
     def __getitem__(cls, rng: slice) -> MapGenerator[int]: ...
@@ -239,7 +239,7 @@ class MapMetaclass(type):
     def __getitem__(cls, rng: tuple[slice, slice, slice, slice, slice, slice]) -> MapGenerator[tuple[int, int, int, int, int, int]]: ...
     @overload
     def __getitem__(cls, rng: tuple[slice, ...]) -> MapGenerator[tuple[int, ...]]: ...
-    # yapf: enable
+    # fmt: on
 
     def __getitem__(cls, rng: Union[slice, tuple[slice, ...]]) -> MapGenerator[Any]:
         """

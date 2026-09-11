@@ -65,7 +65,6 @@ def test_mnist():
     output_size = 10
 
     # initialize modules
-    # yapf: disable
     model = nn.Sequential(nn.Linear(input_size, hidden_sizes[0]),
                           nn.ReLU(),
                           nn.Linear(hidden_sizes[0], hidden_sizes[1]),

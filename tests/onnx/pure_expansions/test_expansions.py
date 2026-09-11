@@ -151,7 +151,6 @@ def test_cast_float_to_long():
 
 
 @pytest.mark.onnx
-#+yapf: disable
 @pytest.mark.parametrize("reduce_type, keepdims, axes",
                          [('Sum',  True,  [0]),
                           ('Sum',  False, [-1]),
@@ -162,7 +161,6 @@ def test_cast_float_to_long():
                           ('Mean', True,  [-1]),
                           ('Mean', True,  [0, -1]),
                           ('Mean', False, [0])])
-#+yapf: enable
 def test_reduce(keepdims, reduce_type, axes):
 
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
