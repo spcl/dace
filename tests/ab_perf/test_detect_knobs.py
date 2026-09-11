@@ -20,12 +20,6 @@ Knob coverage:
 Knobs intentionally skipped:
 
 * ``peel_limit`` -- fixed at 4 (TSVC corpus coverage anchor); no AB.
-* break-parallelization (``EarlyExitToFindIndex``) -- blocked on a core
-  ``BreakBlock`` bug in ``dace/sdfg/utils.py:1731`` (pre-existing). The
-  variant-A baseline (sequential break-loop) doesn't compile.
-
-For break (when it unblocks): assume ``N/2`` firing position per user
-spec.
 
 Run with::
 

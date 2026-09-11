@@ -151,14 +151,10 @@ that stops at the first hit, so its carrier holds the value at the exit
 iteration, not the extreme over the whole range. Neither tie rule can express
 that -- a forward arg-reduce scans every element -- so any loop containing a
 :class:`~dace.sdfg.state.BreakBlock` is refused outright (see
-:meth:`ArgMaxLift._contains_break`), regardless of ``tie_break``. The break
-shape's parallel lift is
-:class:`~dace.transformation.passes.canonicalize.early_exit_to_find_index.EarlyExitToFindIndex`,
-which runs earlier in the canonicalize pipeline and rewrites the loop to a
-chunked parallel find-first search. A break loop still standing when ArgMaxLift runs is one
-that pass already refused, and no Reduce/ArgReduce this pass emits could lift it
-correctly either -- so the refusal costs no parallelism ArgMaxLift could have
-delivered.
+:meth:`ArgMaxLift._contains_break`), regardless of ``tie_break``. Nothing in the pipeline
+rewrites a break loop, so it reaches this pass as a sequential
+:class:`~dace.sdfg.state.LoopRegion` and stays one: no Reduce/ArgReduce this pass emits could
+lift it correctly, so the refusal costs no parallelism ArgMaxLift could have delivered.
 """
 import ast
 import copy
@@ -538,8 +534,7 @@ class ArgMaxLift(ppl.Pass):
         A break makes the loop a find-FIRST search, not a reduction: the carrier
         holds the value at the EXIT iteration, while any arg-reduce this pass emits
         scans the whole range (``x = a[0]; for i: if a[i] > x: x = a[i]; break``
-        would lift to ``max(a)`` -- a value miscompile, not merely a tie mismatch).
-        ``EarlyExitToFindIndex`` is the pass that parallelises that shape. The
+        would lift to ``max(a)`` -- a value miscompile, not merely a tie mismatch). The
         data-carrier path's true-branch check counts only non-empty SDFGStates, so
         it would otherwise let a BreakBlock through.
 

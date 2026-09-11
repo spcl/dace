@@ -591,11 +591,9 @@ def wavefront2d(a: dace.float64[LEN_2D, LEN_2D]):
 #  %O  Early-exit / find-first (break loops)
 # ==========================================================================
 #
-# ``for i: ... if cond(i): break; ...`` lowers to a sequential scan;
-# ``EarlyExitToFindIndex`` rewrites to a parallel find-first reduction + body
-# Maps clipped to the discovered bound. Base TSVC: ``s481`` (guard before body),
-# ``s482`` (guard after body), ``s332`` (find-first-above-threshold, index/value
-# capture).
+# ``for i: ... if cond(i): break; ...`` lowers to a sequential scan, and canonicalization
+# leaves it one: the trip count is data-dependent. Base TSVC: ``s481`` (guard before body),
+# ``s482`` (guard after body), ``s332`` (find-first-above-threshold, index/value capture).
 
 
 @dace.program
@@ -625,8 +623,8 @@ def ext_break_post_body(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dac
 @dace.program
 def ext_break_capture(a: dace.float64[LEN_1D], out_index: dace.int64[1], out_value: dace.float64[1]):
     """TSVC ``s332`` with symbolic threshold ``KFIND`` (double): find first ``i``
-    with ``a[i] > KFIND``, capture index + value, break. The exit-edge scalar rebind
-    is what ``EarlyExitToFindIndex`` reconstructs as an argmin-of-index."""
+    with ``a[i] > KFIND``, capture index + value, break. The whole loop body is the
+    break-conditional, so there is no per-iteration work beside the search."""
     out_index[0] = -1
     out_value[0] = -1.0
     for i in range(LEN_1D):

@@ -297,6 +297,15 @@ XFAIL: dict[str, str] = {
      "Canonicalization leaves one sequential LoopRegion and no parallel work anywhere."),
 }
 
+#: The three break kernels share one reason, so it is written once.
+BREAK_WITHDRAWN = ("no pass lifts an early exit any more. The lift that did matched on the break's SHAPE and "
+                   "never costed the rewrite: it put a whole FindFirst pass over the predicate arrays in front "
+                   "of the body map whether or not the body read them again, which on s482 is three extra "
+                   "streams for a form measuring 0.70x of the sequential loop. Canonicalization leaves one "
+                   "sequential LoopRegion; a lift that returns owes a cost model, and correcting this table is "
+                   "how it announces itself.")
+XFAIL.update({name: BREAK_WITHDRAWN for name in ("ext_break_capture", "ext_break_find_first", "ext_break_post_body")})
+
 
 def ext_program(name: str) -> DaceProgram:
     """The TSVC-2.5 corpus kernel called ``name``."""

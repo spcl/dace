@@ -194,7 +194,7 @@ def _reconstruct_body(sdfg: SDFG, outer: LoopRegion) -> bool:
 def _locate_loop(sdfg: SDFG, target: LoopRegion) -> Optional[LoopRegion]:
     """The ``LoopRegion`` in ``sdfg`` corresponding to ``target`` in the SDFG ``sdfg`` was
     deep-copied from -- matched by label, an id-stable locator that survives
-    ``copy.deepcopy`` (mirrors ``EarlyExitToFindIndex._locate_corresponding``)."""
+    ``copy.deepcopy``."""
     for region in sdfg.all_control_flow_regions():
         if isinstance(region, LoopRegion) and region.label == target.label:
             return region

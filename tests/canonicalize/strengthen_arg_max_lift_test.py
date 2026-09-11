@@ -410,8 +410,8 @@ def test_break_loop_is_not_lifted_to_a_whole_range_reduce():
     ``BreakBlock`` slipped through and the loop became ``max(a) == 5.0`` instead
     of the sequential ``1.0``. This is a wrong VALUE, not merely a wrong tie.
 
-    The break shape's parallel lift is ``EarlyExitToFindIndex``, which runs
-    earlier in the canonicalize pipeline; refusing here costs no parallelism.
+    Nothing in the pipeline rewrites a break loop, so refusing here costs no parallelism:
+    the loop reaches this pass sequential and stays sequential.
     """
     sdfg = _break_argmax_value_only.to_sdfg(simplify=True)
     assert any(isinstance(nd, BreakBlock) for nd, _ in sdfg.all_nodes_recursive()), 'the break must survive to the pass'

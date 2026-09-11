@@ -109,7 +109,6 @@ from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.reconstruct_wavefront_nest import ReconstructWavefrontNest
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
-from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import LoopToStreamCompaction
 from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
@@ -836,10 +835,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Idempotent, so the vectorizer can also run it standalone.
     s += [('normalize_reduction', NormalizeWCR())]
 
-    # A loop with a ``break`` / ``continue`` is not splittable and its induction variable
-    # is not closed-form (the trip count is data-dependent), so SplitStatements / IVS below
-    # cannot handle it. Lift the early exit to a find-first index + clipped range HERE --
-    # before those stages -- so they only ever see the resulting break-free, clipped loop.
+    # A loop with a ``continue`` is not splittable, so SplitStatements / IVS below cannot handle
+    # it. ``ContinueToCondition`` rewrites the skip into a guarded body HERE -- before those
+    # stages -- so they only ever see the resulting continue-free loop. A ``break`` loop has a
+    # data-dependent trip count and no closed-form induction variable, and nothing rewrites it:
+    # it reaches the later stages as a sequential LoopRegion and stays one.
     #
     # ``CollapseNoOpCast`` leads the block: a Fortran kind coercion / numpy ``astype`` lands as
     # ``__out = dace.float64(__inp)`` where ``__out`` ALREADY has that dtype. Every downstream
@@ -851,8 +851,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # assignment first is what lets that Simplify fold the copy away in the same block. A
     # genuine cast (differing dtypes) fails the pass's own equality check and is kept.
     s += [('clean', CollapseNoOpCast()), ('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()),
-          ('clean', _uniq), ('clean', ContinueToCondition()), ('clean', EarlyExitToFindIndex()),
-          ('clean', SimplifyPass())]
+          ('clean', _uniq), ('clean', ContinueToCondition()), ('clean', SimplifyPass())]
 
     # loop_to_syrk / loop_to_syr2k (semantic lift, gated like loop_to_symm): the
     # hand-written symmetric rank-k / rank-2k update nests (polybench syrk / syr2k) are
@@ -1258,12 +1257,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # LoopStridePermutation did NOT turn into a sequential-loop + parallel-map.
     # The reduce PREP (LICM / SimplifyPass / IV substitution / ...) already ran
     # above; these are the lifting passes only.
-    # EarlyExitToFindIndex is NOT re-run here: it runs once in the early 'clean'
-    # prep (before SplitStatements / IVS), which is the only place it is needed
-    # -- the break -> find-first-index + clipped-range lift must precede those
-    # stages, and re-running it in loop_to_x lifted nothing the early pass had
-    # not already handled. LoopToSymmetrize likewise runs earlier (its own stage,
-    # before break_antidep).
+    # LoopToSymmetrize runs earlier (its own stage, before break_antidep).
     # LoopToEinsum runs FIRST (before LoopToReduce): a contraction loop nest
     # (matvec / matmul / transpose) must be claimed as a single Einsum node before
     # LoopToReduce lifts its reduction axis to a Reduce. It probes on a throwaway

@@ -1395,7 +1395,7 @@ def test_predicate_index_refuses_extra_true_branch_write():
 
 
 def test_predicate_index_refuses_break():
-    """A break makes the loop a find-FIRST search; ``EarlyExitToFindIndex`` owns it."""
+    """A break makes the loop a find-FIRST search, which no arg-reduce can express."""
 
     @dace.program
     def with_break(a: dace.float64[N], b: dace.float64[2]):
@@ -1662,6 +1662,24 @@ def test_value_and_index_versus_index_only_lift_to_different_reductions():
     assert _num_loops(sdfg_io) == 0
     assert sum(1 for nd, _ in sdfg_io.all_nodes_recursive() if isinstance(nd, ArgReduce)) == 0
     assert _run_s331(sdfg_io, a, n) == _reference_last_index(a)
+
+
+def test_arg_max_lift_doesnt_lift_break_loop():
+    """The break refusal also holds for a loop whose body is an elementwise store, not a carrier.
+
+    ``_contains_break`` refuses ahead of every payload analysis, so the shape of the body never
+    gets a chance to matter: an early exit is a find-FIRST search whose body runs over a prefix
+    the pass cannot know."""
+
+    @dace.program
+    def s481(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+        for i in range(N):
+            if d[i] < 0.0:
+                break
+            a[i] = a[i] + b[i] * c[i]
+
+    res = ArgMaxLift().apply_pass(s481.to_sdfg(simplify=True), {})
+    assert res is None
 
 
 if __name__ == '__main__':

@@ -21,11 +21,10 @@ import os
 import pytest
 
 #: Threads every timed variant runs on unless ``--ab-threads`` says otherwise. These A/Bs compare a
-#: PARALLEL lowering against a sequential one -- ``test_break_parallelization_ab`` states its wall
-#: time tracks ``k / threads`` -- so at one thread the comparison measures nothing and reports a
-#: working parallelisation as no gain. Four is the same floor ``tests/conftest.py`` picked for
-#: making races visible. The count is PINNED rather than inherited: a perf number that depends on
-#: whatever the caller exported is not comparable across two runs, let alone two machines.
+#: PARALLEL lowering against a sequential one, so at one thread the comparison measures nothing and
+#: reports a working parallelisation as no gain. Four is the same floor ``tests/conftest.py`` picked
+#: for making races visible. The count is PINNED rather than inherited: a perf number that depends
+#: on whatever the caller exported is not comparable across two runs, let alone two machines.
 DEFAULT_AB_THREADS = 4
 
 

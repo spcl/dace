@@ -621,12 +621,10 @@ if __name__ == '__main__':
 
 
 def find_first_sdfg(name: str, implementation: str):
-    """An SDFG whose only node is the search an early-exit loop lifts to.
+    """An SDFG whose only node is the search an early-exit loop would lower to.
 
     Built from the library node rather than from a ``@dace.program`` with a ``break`` so that the
     test pins CPF against the node's own contract: which expansion ran, and what its C++ body says.
-    ``EarlyExitToFindIndex`` is what puts this node into a real kernel, and it is tested where it
-    lives.
     """
     sdfg = dace.SDFG(name)
     sdfg.add_array('a', [N], dace.float64)

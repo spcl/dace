@@ -1,10 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """:class:`FindFirst`: the smallest index in a range at which a predicate holds.
 
-The lowered form of an early-exit loop (``for i: if cond(i): break``), which
-:class:`~dace.transformation.passes.canonicalize.early_exit_to_find_index.EarlyExitToFindIndex`
-lifts. It is an argmin over the firing indices, but a SHORT-CIRCUITING one: the value of a
-find-first is that the range past the answer is never read, which a plain
+The lowered form of an early-exit loop (``for i: if cond(i): break``), built directly by a caller
+that already knows the predicate. It is an argmin over the firing indices, but a SHORT-CIRCUITING
+one: the value of a find-first is that the range past the answer is never read, which a plain
 :class:`~dace.libraries.standard.nodes.arg_reduce.ArgReduce` over a materialized
 ``i if cond(i) else N`` array cannot give -- that form pays a whole extra array and three full
 sweeps to compute what one cancelling sweep already knows.

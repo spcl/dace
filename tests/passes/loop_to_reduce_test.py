@@ -1877,3 +1877,25 @@ def test_accumulator_initialized_before_the_loop_is_still_retargeted():
 
     out, src, _base = _run_chain(sdfg, terms=1, seed=4116)
     assert np.allclose(out[0], src.sum()), 'retargeting changed the carried sum'
+
+
+def test_loop_to_reduce_doesnt_lift_break_loop():
+    """LoopToReduce must not pick up a break-loop -- in either emit mode, and without mutating.
+
+    An early exit is a find-FIRST search: any reduction this pass emits scans the whole range, so
+    lifting one is a value miscompile rather than a tie mismatch. The no-mutate half is the
+    project rule that a pass which does not apply leaves the SDFG bit-identical."""
+
+    @dace.program
+    def s481(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+        for i in range(N):
+            if d[i] < 0.0:
+                break
+            a[i] = a[i] + b[i] * c[i]
+
+    for prefer in ('reduce-libnode', 'wcr-scalar'):
+        sdfg = s481.to_sdfg(simplify=True)
+        before = sdfg.to_json()
+        res = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
+        assert res is None
+        assert sdfg.to_json() == before, f'LoopToReduce({prefer}) refused the loop but still mutated the SDFG'

@@ -10,6 +10,10 @@ the extra traversals counted here, which were 1.5x, 1.4x and 1.4x of the sequent
 traffic. The traversals are the durable half of that: whether they add up to a LOSS turned out to
 depend entirely on the machine, and on one of these three kernels the answer flipped.
 
+Two of the three were fixed in their lowering; the third had its lowering withdrawn. The break
+kernels are pinned here anyway, because the surcharge is what any future break lowering has to
+buy back, and a lowering that reappears without a cost model has to fail this file first.
+
 That surcharge is what a parallel form has to buy back, and how much it can buy back is a property
 of the run rather than of the graph. On a 64-core EPYC 7A53 with 4 NUMA domains -- the cluster's
 DEFAULT partition, and NOT the 24-physical-core MI300A quadrant the grading contract pins
@@ -23,12 +27,19 @@ part that survives being measured somewhere else.
 
 What each kernel pays, and what one of them stopped paying:
 
-* ``ext_break_post_body`` (TSVC ``s482``) -- the search predicate is ``c[i] > b[i]`` and the body is
-  ``a[i] += b[i] * c[i]``, so :class:`~dace.transformation.passes.canonicalize.early_exit_to_find_index.EarlyExitToFindIndex`
-  puts a whole ``FindFirst`` pass over ``b`` and ``c`` in front of a map that reads ``b`` and ``c``
-  again. Its sibling ``ext_break_find_first`` (``s481``) breaks on ``d[i] < 0`` and its body never
-  reads ``d``, so the same lowering adds NO stream there -- and it measures 1.03x where ``s482``
-  measures 0.70x. The overlap, not the lowering, is the cost.
+* ``ext_break_post_body`` (TSVC ``s482``) and ``ext_break_find_first`` (``s481``) -- both stay
+  SEQUENTIAL, so neither buys any traversal at all. The lowering that used to lift them put a
+  whole ``FindFirst`` pass over the predicate arrays in front of a map that read them again, and
+  it matched on the break's shape alone: on ``s482``, whose predicate ``c[i] > b[i]`` names the
+  same arrays as the body ``a[i] += b[i] * c[i]``, that was three extra streams for a form
+  measuring 0.70x, while ``s481``'s predicate over ``d`` -- an array its body never reads --
+  added none and measured 1.03x. The overlap, not the lowering, was the cost, and nothing in the
+  rewrite ever priced it, so the rewrite was withdrawn rather than gated. The case against
+  withdrawing it is worth keeping: the re-stream is a CPU cost paid in a device-neutral stage,
+  and on a GPU the break is divergent control flow whose removal is the whole point -- which is
+  why ``FindFirst`` keeps its CUDA expansion over ``dace::find_first_index_device``. A lift that
+  returns on that argument needs somewhere to hand the parallelism back, and the
+  ``cpu_specialize`` band that would do it only re-schedules Maps today.
 * ``s1244_d_single`` -- FIXED, and pinned here so it stays fixed. The ``d[i] = a[i] + a[i + 1]``
   anti dependence used to be broken with a FULL-LENGTH snapshot of ``a``: one extra read of ``a``
   and one extra write plus read of the snapshot.
@@ -55,15 +66,13 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
 from typing import Iterable
 
-import pytest
-
 import dace
 from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import BreakBlock, LoopRegion, SDFGState
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
@@ -111,9 +120,9 @@ def canonical_sdfg(name: str) -> dace.SDFG:
 def evaluated(expr) -> int:
     """``expr`` with every free symbol pinned to :data:`N`, as an int.
 
-    A data-dependent bound (``s482``'s ``Min(LEN_1D, _exit_i_0 + 1)``) is as much a whole-array
-    pass as a static one -- the search that produced it can land anywhere -- so its symbol is
-    pinned like any other rather than making the pass uncountable.
+    A data-dependent bound is as much a whole-array pass as a static one -- the search that
+    produced it can land anywhere -- so its symbol is pinned like any other rather than making
+    the pass uncountable.
     """
     parsed = symbolic.pystr_to_symbolic(str(expr))
     # ``__dace_num_threads`` is a MACHINE property, not a problem dimension: frame code defines it
@@ -168,6 +177,13 @@ def full_length_reads(sdfg: dace.SDFG) -> list[str]:
     return sorted(passes)
 
 
+def sequential_break_loops(sdfg: dace.SDFG) -> int:
+    """Loop regions that still carry a ``break``, i.e. the shape no lowering claimed."""
+    return sum(
+        1 for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, LoopRegion) and any(isinstance(b, BreakBlock) for b, _ in node.all_nodes_recursive()))
+
+
 def anti_dependence_buffers(sdfg: dace.SDFG) -> dict[str, int]:
     """Every anti-dependence buffer canonicalization allocated, by its element count at :data:`N`."""
     return {
@@ -177,26 +193,38 @@ def anti_dependence_buffers(sdfg: dace.SDFG) -> dict[str, int]:
     }
 
 
-def test_s482_search_rereads_the_arrays_its_body_streams():
-    """The ``FindFirst`` pass over ``b`` and ``c`` is in front of a map that reads ``b`` and ``c``.
+def test_s482_break_loop_buys_no_traversal():
+    """``s482`` stays one sequential loop, so it streams each array exactly as the source does.
 
-    Six whole-array reads and writes where the sequential loop made four: the +50% traffic behind
-    1.90x the sequential time on ONE thread, where no threading effect can be blamed for it. The
-    predicate is not what makes the search long -- under the corpus fill it fires at 94% of the
-    range, so the search and the sequential loop visit the same elements.
+    It used to make six whole-array reads and writes where the sequential loop made four -- the
+    +50% traffic behind 1.90x the sequential time on ONE thread, where no threading effect can be
+    blamed for it. The predicate was not what made the search long: under the corpus fill it fires
+    at 94% of the range, so the search and the sequential loop visited the same elements, and the
+    surcharge was the second pass over ``b`` and ``c``, not the first.
+
+    The list is also asserted to hold no name twice: the property the withdrawn lowering never
+    reached is that no array is read by both a search and the body it clips.
     """
-    reads = full_length_reads(canonical_sdfg("ext_break_post_body"))
-    assert reads == ["a", "b", "b", "c", "c"], reads
+    sdfg = canonical_sdfg("ext_break_post_body")
+    reads = full_length_reads(sdfg)
+    assert reads == [], reads
+    assert len(reads) == len(set(reads)), reads
+    assert sequential_break_loops(sdfg) == 1, "the break loop must survive as one sequential LoopRegion"
 
 
-def test_s481_search_reads_an_array_its_body_never_touches():
-    """The same lowering on ``s481``, where the predicate array ``d`` is not a body array.
+def test_s481_break_loop_buys_no_traversal():
+    """``s481`` stays sequential too, and for the same reason: nothing rewrites a break.
 
-    The contrast is the whole cost model: identical rewrite, no repeated name, and 1.03x rather
-    than 0.70x. Whatever refuses the ``s482`` shape must not refuse this one.
+    Pinned alongside ``s482`` because the two kernels are what separated a sound rewrite from a
+    profitable one. ``s481``'s predicate reads ``d``, an array its body never touches, so the
+    withdrawn lowering added no stream here and measured 1.03x where ``s482`` measured 0.70x. A
+    break lowering that returns may well be right for this shape and wrong for the other, which is
+    the distinction it has to make rather than inherit.
     """
-    reads = full_length_reads(canonical_sdfg("ext_break_find_first"))
-    assert reads == ["a", "b", "c", "d"], reads
+    sdfg = canonical_sdfg("ext_break_find_first")
+    reads = full_length_reads(sdfg)
+    assert reads == [], reads
+    assert sequential_break_loops(sdfg) == 1, "the break loop must survive as one sequential LoopRegion"
 
 
 def test_war_unit_snapshot_is_a_per_chunk_seam():
@@ -235,16 +263,3 @@ def test_s319_accumulates_in_the_map_that_writes():
     """
     reads = full_length_reads(canonical_sdfg("s319_d_single"))
     assert reads == ["c", "d", "e"], reads
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="EarlyExitToFindIndex._match (dace/transformation/passes/canonicalize/early_exit_to_find_index.py:183) "
-    "matches on the break's SHAPE and never costs the rewrite: no condition compares the "
-    "predicate's read set against the body's, so a search that re-reads the body's own arrays "
-    "is lifted exactly like s481's search over an array the body never touches")
-def test_s482_search_should_not_restream_the_body_arrays():
-    """What the lowering should reach: no array read by both the search and the body."""
-    sdfg = canonical_sdfg("ext_break_post_body")
-    reads = full_length_reads(sdfg)
-    assert len(reads) == len(set(reads)), reads

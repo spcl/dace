@@ -2427,3 +2427,25 @@ def test_a_read_ahead_is_refused_rather_than_guarded():
     assert carry_distance_kind(symbolic.int_floor(N, M)) == 'guard'
     assert carry_distance_kind(1) == 'scan'
     assert carry_distance_kind(5) == 'scan'
+
+
+def test_loop_to_scan_doesnt_lift_break_loop():
+    """LoopToScan must not pick up a break-loop: an early exit is a find-FIRST search, and its
+    carrier holds the value at the exit iteration rather than a prefix fold.
+
+    Also pins the project rule -- a pass that does not apply must not mutate. The body here HAS a
+    foldable copy tasklet, so a lifter that ran its own normalization preprocess would edit the
+    graph and report ``0`` instead of ``None``."""
+
+    @dace.program
+    def s481(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+        for i in range(N):
+            if d[i] < 0.0:
+                break
+            a[i] = a[i] + b[i] * c[i]
+
+    sdfg = s481.to_sdfg(simplify=True)
+    before = sdfg.to_json()
+    res = LoopToScan().apply_pass(sdfg, {})
+    assert res is None
+    assert sdfg.to_json() == before, 'LoopToScan refused the loop but still mutated the SDFG'

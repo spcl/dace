@@ -200,63 +200,6 @@ class EmitCtx:
     mask_connector: Optional[str] = None
 
 
-def _emit_ite_with_symbol_arms(ctx: EmitCtx) -> str:
-    """Per-lane C++ select for ``ITE(cond, then, else)`` with symbol arms (1
-    array input + 2 symbol/literal arms).
-
-    Lowering for the canonicalize ``EarlyExitToFindIndex`` phi tasklet (``__out =
-    ITE(__t0, _loop_it_0, LEN_1D)``): cond is an array connector, arms are
-    loop-index symbols / literals. Parses the 3 ``ITE`` args from the tasklet's
-    Python code, emits per-lane ``out[lane] = cond[lane] ? then(lane) : else``
-    with the vectorized map param shifted to ``(<param> + _vi)`` inside arms so a
-    lane-index symbol walks W values per call.
-
-    :param ctx: Emission context.
-    :returns: Generated C++ for the per-lane select.
-    :raises NotImplementedError: tasklet shape isn't ``__out = ITE(cond, t, e)``.
-    """
-    import ast
-    import re
-
-    code_str = (ctx.node.code.as_string or "").strip()
-    rhs = code_str.split(" = ", 1)[1] if " = " in code_str else code_str
-    try:
-        tree = ast.parse(rhs, mode="eval").body
-    except SyntaxError as ex:
-        raise NotImplementedError(f"_emit_ite_with_symbol_arms: parse failed on {rhs!r}: {ex}")
-    if not (isinstance(tree, ast.Call) and isinstance(tree.func, ast.Name) and tree.func.id in ('ITE', 'merge')
-            and len(tree.args) == 3):
-        raise NotImplementedError(f"_emit_ite_with_symbol_arms: expected ``ITE(c, t, e)``, got {rhs!r}")
-    out_conns = list(ctx.node.out_connectors.keys())
-    if len(out_conns) != 1:
-        raise NotImplementedError(f"_emit_ite_with_symbol_arms: expected 1 output connector, got {out_conns}")
-    out_conn = out_conns[0]
-    in_conns = list(ctx.node.in_connectors.keys())
-
-    def _shift(expr: str) -> str:
-        """Substitute ``conn`` -> ``conn[_vi]`` for in-connectors and shift
-        the vectorized map param to ``(<param> + _vi)``."""
-        for c in in_conns:
-            expr = re.sub(rf"\b{re.escape(c)}\b", f"{c}[_vi]", expr)
-        if ctx.vector_map_param and re.search(rf"\b{re.escape(ctx.vector_map_param)}\b", expr):
-            expr = re.sub(rf"\b{re.escape(ctx.vector_map_param)}\b", f"({ctx.vector_map_param} + _vi)", expr)
-        return expr
-
-    cond = _shift(ast.unparse(tree.args[0]))
-    then_arm = _shift(ast.unparse(tree.args[1]))
-    else_arm = _shift(ast.unparse(tree.args[2]))
-
-    vw = ctx.vector_width
-    lines = [f"_dace_vectorize({vw})", f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{"]
-    if ctx.mask_connector:
-        lines.append(f"if ({ctx.mask_connector}[_vi]) {{")
-    lines.append(f"{out_conn}[_vi] = ({cond}) ? ({then_arm}) : ({else_arm});")
-    if ctx.mask_connector:
-        lines.append("}")
-    lines.append("}")
-    return "\n".join(lines)
-
-
 def _template_key(ctx: EmitCtx, base_op: str) -> str:
     """Return the templates-dict key for ``base_op``, adjusted for masking.
 
