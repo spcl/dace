@@ -393,3 +393,40 @@ if __name__ == '__main__':
     test_break_in_the_loop_is_refused()
     for kernel_name in TSVC_KERNELS:
         test_the_canonical_form_keeps_every_barrier(kernel_name)
+
+
+def test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph():
+    """The team is outlined from the graph that HOLDS the loop, not from the SDFG.
+
+    ``visit_region`` descends into nested regions carrying the top-level SDFG, so a hoistable loop
+    inside a region that is itself not hoistable is not a node of that SDFG. Building the outline
+    subgraph over the SDFG then raised ``NodeNotFoundError`` while sorting the subgraph by
+    ``sdfg.node_id`` -- warpx_boris_push's and bfs's shape, a worksharing loop inside an outer
+    sweep the copy in its prologue disqualifies.
+    """
+    sdfg = dace.SDFG('nested_hoistable')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('b', [N], dace.float64)
+    outer = loop_region(sdfg, 'outer', 'N')
+
+    # An AccessNode -> AccessNode copy in the outer body: ``hoistable`` refuses the outer loop on
+    # it, so the walk descends instead of hoisting here.
+    prologue = outer.add_state('prologue', is_start_block=True)
+    prologue.add_edge(prologue.add_read('b'), None, prologue.add_write('a'), None, dace.Memlet('a[0:N]'))
+
+    inner = LoopRegion('inner',
+                       initialize_expr='jt = 0',
+                       condition_expr='jt < N',
+                       update_expr='jt = jt + 1',
+                       loop_var='jt')
+    outer.add_node(inner)
+    outer.add_edge(prologue, inner, dace.InterstateEdge())
+    mapped_state(inner, 'inner_body', 'a', '1.0', ['0:N'])
+    sdfg.validate()
+
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1, 'the inner worksharing loop must be hoisted'
+    sdfg.validate()
+    assert teams(sdfg) == 1, 'exactly one persistent team, around the inner loop'
+    assert not any(
+        isinstance(b, LoopRegion) and b.label == 'inner'
+        for b in sdfg.nodes()), ('the inner loop must stay inside the outer region, not be lifted to the SDFG')

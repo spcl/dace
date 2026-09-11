@@ -257,6 +257,7 @@ class HoistParallelRegion(ppl.Pass):
                     # iteration of ``omp for`` runs it once, on one thread, with the barrier kept.
                     if isinstance(node, nodes.Tasklet):
                         xfh.wrap_code_node_in_unit_map(block, node, WORKSHARED, '_single')
-        state = xfh.nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]), start=loop)
+        # ``loop`` may not be a node of ``sdfg`` when nested -- use ``loop.parent_graph`` instead.
+        state = xfh.nest_sdfg_subgraph(sdfg, SubgraphView(loop.parent_graph, [loop]), start=loop)
         nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
         xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, '_team')

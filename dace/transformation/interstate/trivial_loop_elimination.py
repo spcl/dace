@@ -70,23 +70,27 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+        # Bind ONCE: ``self.loop`` re-resolves via ``sdfg.cfg_list`` on every read, and reparenting
+        # below renumbers that list -- later reads landed in the wrong region (warpx_boris_push).
+        loop = self.loop
+
         # Obtain iteration variable, range and stride
-        itervar = self.loop.loop_variable
-        start = loop_analysis.get_init_assignment(self.loop)
+        itervar = loop.loop_variable
+        start = loop_analysis.get_init_assignment(loop)
 
         if self.is_zero_trip():
             # The body never runs: delete the loop outright. What remains of the region is its
             # exit binding -- a for-loop that fails its first condition check still executed the
             # init, so downstream reads of the iterator see ``start``. Bound on its own edge so the
             # init expression reads pre-edge values, exactly as the loop would have evaluated it.
-            head = graph.add_state(self.loop.label + '_zero_trip', is_start_block=graph.start_block is self.loop)
-            tail = graph.add_state(self.loop.label + '_zero_trip_exit')
-            for e in graph.in_edges(self.loop):
+            head = graph.add_state(loop.label + '_zero_trip', is_start_block=graph.start_block is loop)
+            tail = graph.add_state(loop.label + '_zero_trip_exit')
+            for e in graph.in_edges(loop):
                 graph.add_edge(e.src, head, e.data)
             graph.add_edge(head, tail, InterstateEdge(assignments={itervar: str(start)}))
-            for e in graph.out_edges(self.loop):
+            for e in graph.out_edges(loop):
                 graph.add_edge(tail, e.dst, e.data)
-            graph.remove_node(self.loop)
+            graph.remove_node(loop)
             return
 
         # ``replace`` (``ControlGraphView.replace``, state.py) hand-walks ``nodes()`` / ``edges()`` and
@@ -98,7 +102,7 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         # nussinov). ``replace_dict`` is the override-aware path. ``replace_keys=False`` leaves the
         # about-to-be-removed loop's own ``loop_variable`` alone; nested loops keep their own iterators
         # because those names are not in the replacement map.
-        self.loop.replace_dict({itervar: str(start)}, symrepl={symbolic.symbol(itervar): start}, replace_keys=False)
+        loop.replace_dict({itervar: str(start)}, symrepl={symbolic.symbol(itervar): start}, replace_keys=False)
 
         # Reparent the loop's blocks into the parent graph. A loop body is its own name scope, so a
         # label that was unique inside the loop can already be taken in the destination: sibling loops
@@ -110,21 +114,21 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         # edge loop below would otherwise auto-add the non-start blocks (``OrderedDiGraph.add_edge``),
         # which bypasses the unique naming entirely. Edges are wired by object reference, so relabelling
         # is safe. ``start_block`` goes first to keep the parent's node order as it was.
-        spliced = [self.loop.start_block] + [b for b in self.loop.nodes() if b is not self.loop.start_block]
+        spliced = [loop.start_block] + [b for b in loop.nodes() if b is not loop.start_block]
         for block in spliced:
             graph.add_node(block, ensure_unique_name=True)
-        for e in graph.in_edges(self.loop):
-            graph.add_edge(e.src, self.loop.start_block, e.data)
-        sink = graph.add_state(self.loop.label + '_sink')
-        for n in self.loop.sink_nodes():
+        for e in graph.in_edges(loop):
+            graph.add_edge(e.src, loop.start_block, e.data)
+        sink = graph.add_state(loop.label + '_sink')
+        for n in loop.sink_nodes():
             graph.add_edge(n, sink, InterstateEdge())
-        for e in graph.out_edges(self.loop):
+        for e in graph.out_edges(loop):
             graph.add_edge(sink, e.dst, e.data)
-        for e in self.loop.edges():
+        for e in loop.edges():
             graph.add_edge(e.src, e.dst, e.data)
 
         # Remove loop and if necessary also the loop variable.
-        graph.remove_node(self.loop)
+        graph.remove_node(loop)
         if itervar in sdfg.symbols and helpers.is_symbol_unused(sdfg, itervar):
             sdfg.remove_symbol(itervar)
 

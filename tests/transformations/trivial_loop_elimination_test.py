@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import TrivialLoopElimination
 import unittest
 import numpy as np
@@ -52,6 +53,39 @@ class TrivialLoopEliminationTest(unittest.TestCase):
         sdfg(A2, I=A1.shape[0], J=A1.shape[1])
 
         self.assertTrue(np.allclose(A1, A2))
+
+    def test_splicing_a_body_that_holds_a_region(self):
+        """A loop body can hold a control-flow region, and the splice reparents it into the parent.
+
+        That reparenting calls ``reset_cfg_list``, which renumbers every region -- so ``apply`` must
+        bind the matched loop ONCE up front instead of re-resolving ``self.loop`` as
+        ``cfg_list[cfg_id].node(node_id)`` after it. Re-resolving landed in a different region and
+        raised ``NodeNotFoundError`` on warpx_boris_push and bfs, whose single-trip loops sit inside
+        an outer sweep and carry a region in the body.
+        """
+        n = 8
+        sdfg = dace.SDFG('splice_body_region')
+        sdfg.add_array('a', [n], dace.float64)
+        trivial = LoopRegion('L',
+                             initialize_expr='i = 0',
+                             condition_expr='i < 1',
+                             update_expr='i = i + 1',
+                             loop_var='i')
+        sdfg.add_node(trivial, is_start_block=True)
+        head = trivial.add_state('head', is_start_block=True)
+        head.add_edge(head.add_read('a'), None, head.add_write('a'), None, dace.Memlet('a[0]'))
+        body_region = ControlFlowRegion('body_region', sdfg=sdfg)
+        trivial.add_node(body_region)
+        trivial.add_edge(head, body_region, dace.InterstateEdge())
+        inner = body_region.add_state('inner', is_start_block=True)
+        inner.add_edge(inner.add_read('a'), None, inner.add_write('a'), None, dace.Memlet('a[1]'))
+        sdfg.validate()
+
+        self.assertEqual(sdfg.apply_transformations(TrivialLoopElimination), 1)
+        sdfg.validate()
+        self.assertNotIn(trivial, sdfg.nodes(), 'the spliced loop is gone from its parent')
+        self.assertIn(body_region, sdfg.nodes(), 'its body region was reparented into the parent')
+        self.assertIs(body_region.parent_graph, sdfg, 'and knows the parent it moved to')
 
 
 if __name__ == '__main__':

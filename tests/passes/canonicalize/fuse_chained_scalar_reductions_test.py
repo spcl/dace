@@ -63,6 +63,63 @@ def test_chained_accumulations_fold():
     run(sdfg, 24)
 
 
+def nest_inner_sdfg(inner_sdfg: dace.SDFG) -> dace.SDFG:
+    """Wrap ``inner_sdfg`` as a ``NestedSDFG`` node inside a fresh outer host SDFG, duplicating
+    every one of its data descriptors under the same names on the outer scope -- the
+    seissol_tensor_contraction shape that let a ``recursive=True`` walk resolve the accumulator
+    on the wrong SDFG (see the comment on ``FuseChainedScalarReductions.apply_pass``)."""
+    outer_sdfg = dace.SDFG('outer_scalar_reduction_host')
+    for name, desc in inner_sdfg.arrays.items():
+        outer_sdfg.add_datadesc(name, desc.clone())
+
+    outer_state = outer_sdfg.add_state('call_inner', is_start_block=True)
+    non_transient = [name for name, desc in inner_sdfg.arrays.items() if not desc.transient]
+    read_write = [name for name in non_transient if name in ('a', 'b')]
+    inputs = dict.fromkeys(name for name in non_transient if name != 'out')
+    outputs = dict.fromkeys(name for name in non_transient if name in ('a', 'b', 'out'))
+    nsdfg_node = outer_state.add_nested_sdfg(inner_sdfg, inputs, outputs, symbol_mapping={'N': N})
+
+    for name in non_transient:
+        if name in read_write:
+            outer_state.add_edge(outer_state.add_access(name), None, nsdfg_node, name,
+                                 dace.Memlet.from_array(name, outer_sdfg.arrays[name]))
+            outer_state.add_edge(nsdfg_node, name, outer_state.add_access(name), None,
+                                 dace.Memlet.from_array(name, outer_sdfg.arrays[name]))
+        elif name == 'out':
+            outer_state.add_edge(nsdfg_node, name, outer_state.add_access(name), None,
+                                 dace.Memlet.from_array(name, outer_sdfg.arrays[name]))
+        else:
+            outer_state.add_edge(outer_state.add_access(name), None, nsdfg_node, name,
+                                 dace.Memlet.from_array(name, outer_sdfg.arrays[name]))
+    return outer_sdfg
+
+
+def test_fold_inside_nested_sdfg_scopes_descriptor_to_the_inner_sdfg():
+    """A chained-scalar-reduction loop one level down inside a NestedSDFG must fold with ``sd``
+    bound to the SDFG that owns the loop body state -- not to whichever outer host SDFG the walk
+    happens to be sitting on -- else the fresh ``_fused_inc`` descriptor is registered on the
+    outer SDFG while the access node that names it lands in the inner SDFG's state."""
+    inner_sdfg = s319.to_sdfg(simplify=True)
+    found = chain_state(inner_sdfg)
+    assert found is not None, 'fixture must produce the chained-accumulator shape'
+    inner_state, _ = found
+
+    outer_sdfg = nest_inner_sdfg(inner_sdfg)
+    outer_sdfg.validate()
+
+    fused = FuseChainedScalarReductions().apply_pass(outer_sdfg, {})
+    assert fused == 1, 'exactly one chain must fold, inside the nested SDFG state'
+    outer_sdfg.validate()
+
+    fused_nodes = [n for n in inner_state.data_nodes() if n.data.startswith('_fused_inc')]
+    assert len(fused_nodes) == 1, 'the fold must run exactly once on the nested loop body'
+    fused_name = fused_nodes[0].data
+    assert fused_name in inner_sdfg.arrays, f'{fused_name} must be declared on the SDFG owning its access node'
+    assert fused_name not in outer_sdfg.arrays, 'the fold must not register its descriptor on the outer host SDFG'
+
+    run(outer_sdfg, 24)
+
+
 def test_ordering_memlet_on_a_chain_node_refuses_the_fold():
     """The fold deletes the downstream chain nodes; an ordering memlet on one of them would go
     with it, so the fold must decline."""

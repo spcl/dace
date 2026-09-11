@@ -6,6 +6,20 @@ import copy
 from dace.transformation.transformation import explicit_cf_compatible
 
 
+def view_keeps_a_data_binding(state: dace.SDFGState, view: dace.nodes.AccessNode,
+                              dropped: MultiConnectorEdge[dace.Memlet]) -> bool:
+    """Whether ``view`` binds data through some edge other than ``dropped`` (else the fold leaves it dangling)."""
+    for e in state.in_edges(view):
+        if e is not dropped and not e.data.is_empty() and isinstance(
+                state.memlet_path(e)[0].src, dace.nodes.AccessNode):
+            return True
+    for e in state.out_edges(view):
+        if e is not dropped and not e.data.is_empty() and isinstance(
+                state.memlet_path(e)[-1].dst, dace.nodes.AccessNode):
+            return True
+    return False
+
+
 @dace.properties.make_properties
 @explicit_cf_compatible
 class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
@@ -208,6 +222,11 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                             src_array_written_here = True
                             break
                     if src_array_written_here:
+                        continue
+
+                    # A View source binds via whichever edge reaches an access node; this fold retargets one.
+                    if (isinstance(an1, dace.nodes.AccessNode) and isinstance(sdfg.arrays[an1.data], dace.data.View)
+                            and not view_keeps_a_data_binding(state, an1, ie)):
                         continue
 
                     reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an2.data, an2)
