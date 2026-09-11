@@ -11,6 +11,7 @@ from typing import Any
 import dace
 from dace import SDFGState, subsets, symbolic
 from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.passes.vectorization.utils.tasklets import LANE_ID_MATERIALISER_PREFIX
 
 
 def has_maps(sdfg: dace.SDFG) -> bool:
@@ -263,19 +264,34 @@ def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | 
     return True
 
 
+def is_foreign_language_tasklet(node: dace.nodes.Node) -> bool:
+    """True for a non-Python tasklet the tile emitters did not mint themselves.
+
+    The vectorizer's OWN per-lane index materialiser (``materialise_lane_id_index_tile``) is
+    EXCLUDED, mirroring the tile-lib-node carve-out in :func:`map_body_has_library_node` and the
+    one the exit invariant ``no_widened_scalar_tasklets`` already makes: ``InsertTileLoadStore``
+    stages a gather index with it one pass before ``ConvertTaskletsToTileOps``, already at tile
+    shape, so counting it makes a half-tiled map refuse its own remaining tile passes.
+    """
+    if not isinstance(node, dace.nodes.Tasklet) or node.language == dace.dtypes.Language.Python:
+        return False
+    return not node.label.startswith(LANE_ID_MATERIALISER_PREFIX)
+
+
 def map_body_has_foreign_language_tasklet(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """True if the map's body holds a tasklet whose code is NOT Python (recursively).
 
     The tile emitters rewrite a body via its Python AST, so a non-Python tasklet cannot be
     widened; its free symbols are also invisible to ``get_free_symbols``, which can drop a map
-    parameter it reads from raw code text out of a nested SDFG's symbol mapping.
+    parameter it reads from raw code text out of a nested SDFG's symbol mapping. The pipeline's
+    own lane-id index materialiser is not such a tasklet -- see
+    :func:`is_foreign_language_tasklet`.
     """
     for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
-        if isinstance(node, dace.nodes.Tasklet) and node.language != dace.dtypes.Language.Python:
+        if is_foreign_language_tasklet(node):
             return True
         if isinstance(node, dace.nodes.NestedSDFG) and any(
-                isinstance(n, dace.nodes.Tasklet) and n.language != dace.dtypes.Language.Python
-                for n, _ in node.sdfg.all_nodes_recursive()):
+                is_foreign_language_tasklet(n) for n, _ in node.sdfg.all_nodes_recursive()):
             return True
     return False
 

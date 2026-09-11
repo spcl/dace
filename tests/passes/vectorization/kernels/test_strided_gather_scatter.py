@@ -204,11 +204,6 @@ def test_strided_load_stride_3(emission_style):
     )
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='The scatter counterpart of the multi-dim gather gap: the staged '
-                   '``a_gather`` transient leaves ``_assign_a_to_out`` holding the scalar body '
-                   "``_out = _in`` beside a widened operand, and VectorizeMultiDim refuses the "
-                   'kernel rather than emit a half-tiled graph. Drop the mark with the gather half.')
 def test_scatter_store(emission_style):
     N = 64
     src = numpy.random.random(N)
@@ -228,6 +223,9 @@ def test_scatter_store(emission_style):
         vector_width=8,
         sdfg_name="scatter_store",
         emission_style=emission_style,
+        # ``idx`` is a permutation, so the scatter is conflict-free and may parallelise; without
+        # this canonicalize leaves a sequential loop and there is no innermost map to tile.
+        loop_to_map_permissive=True,
     )
 
 
@@ -392,13 +390,6 @@ def scatter_store_i_2i(src: dace.float64[8 * N], A: dace.float64[8 * N, 2 * 8 * 
         A[i, 2 * i] = src[i] * scale
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A MULTI-DIMENSIONAL gather (A[i, i], A[2 * i, i]) stages into an '
-                   '``A_gather`` transient that ConvertTaskletsToTileOps cannot classify, so the '
-                   'consuming tasklet keeps its scalar body next to a widened operand and '
-                   'VectorizeMultiDim refuses the whole kernel (correct, un-tiled). The 1-D form '
-                   '``src[i * 2] * scale`` lowers fine, so this is the gather rank, not the op '
-                   'shape. Drop the mark when the multi-dim gather stages a tile the classifier reads.')
 def test_diagonal_gather_load():
     N_val = 64
     A = numpy.random.rand(N_val, N_val)
@@ -419,10 +410,13 @@ def test_diagonal_gather_load():
 
 
 @pytest.mark.xfail(strict=True,
-                   reason='The scatter counterpart of the multi-dim gather gap: the staged '
-                   '``a_gather`` transient leaves ``_assign_a_to_out`` holding the scalar body '
-                   "``_out = _in`` beside a widened operand, and VectorizeMultiDim refuses the "
-                   'kernel rather than emit a half-tiled graph. Drop the mark with the gather half.')
+                   reason='A multi-dim scatter write (A[i, i], A[2 * i, i]) is refused by '
+                   '``map_body_is_tile_lowerable``, which fails closed on an expression-gather '
+                   'write it cannot prove injective. The store machinery itself lowers and gives '
+                   'the right numbers; what is missing is a soundness proof that the lane-vector-'
+                   'to-address map is injective, which at K >= 2 is not the K=1 nonzero-coefficient '
+                   'argument (A[i + j] is not injective across a 2-D tile). Drop the mark when that '
+                   'analysis lands -- never by relaxing the gate, which guards against a write race.')
 def test_diagonal_scatter_store():
     N_val = 64
     src = numpy.random.rand(N_val)
@@ -442,13 +436,6 @@ def test_diagonal_scatter_store():
     )
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A MULTI-DIMENSIONAL gather (A[i, i], A[2 * i, i]) stages into an '
-                   '``A_gather`` transient that ConvertTaskletsToTileOps cannot classify, so the '
-                   'consuming tasklet keeps its scalar body next to a widened operand and '
-                   'VectorizeMultiDim refuses the whole kernel (correct, un-tiled). The 1-D form '
-                   '``src[i * 2] * scale`` lowers fine, so this is the gather rank, not the op '
-                   'shape. Drop the mark when the multi-dim gather stages a tile the classifier reads.')
 def test_gather_load_2i_i():
     N_val = 64
     A = numpy.random.rand(2 * N_val, N_val)
@@ -471,10 +458,13 @@ def test_gather_load_2i_i():
 
 
 @pytest.mark.xfail(strict=True,
-                   reason='The scatter counterpart of the multi-dim gather gap: the staged '
-                   '``a_gather`` transient leaves ``_assign_a_to_out`` holding the scalar body '
-                   "``_out = _in`` beside a widened operand, and VectorizeMultiDim refuses the "
-                   'kernel rather than emit a half-tiled graph. Drop the mark with the gather half.')
+                   reason='A multi-dim scatter write (A[i, i], A[2 * i, i]) is refused by '
+                   '``map_body_is_tile_lowerable``, which fails closed on an expression-gather '
+                   'write it cannot prove injective. The store machinery itself lowers and gives '
+                   'the right numbers; what is missing is a soundness proof that the lane-vector-'
+                   'to-address map is injective, which at K >= 2 is not the K=1 nonzero-coefficient '
+                   'argument (A[i + j] is not injective across a 2-D tile). Drop the mark when that '
+                   'analysis lands -- never by relaxing the gate, which guards against a write race.')
 def test_scatter_store_2i_i():
     N_val = 64
     src = numpy.random.rand(N_val)
@@ -496,13 +486,6 @@ def test_scatter_store_2i_i():
     )
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A MULTI-DIMENSIONAL gather (A[i, i], A[2 * i, i]) stages into an '
-                   '``A_gather`` transient that ConvertTaskletsToTileOps cannot classify, so the '
-                   'consuming tasklet keeps its scalar body next to a widened operand and '
-                   'VectorizeMultiDim refuses the whole kernel (correct, un-tiled). The 1-D form '
-                   '``src[i * 2] * scale`` lowers fine, so this is the gather rank, not the op '
-                   'shape. Drop the mark when the multi-dim gather stages a tile the classifier reads.')
 def test_gather_load_i_2i():
     N_val = 64
     A = numpy.random.rand(N_val, 2 * N_val)
@@ -525,10 +508,13 @@ def test_gather_load_i_2i():
 
 
 @pytest.mark.xfail(strict=True,
-                   reason='The scatter counterpart of the multi-dim gather gap: the staged '
-                   '``a_gather`` transient leaves ``_assign_a_to_out`` holding the scalar body '
-                   "``_out = _in`` beside a widened operand, and VectorizeMultiDim refuses the "
-                   'kernel rather than emit a half-tiled graph. Drop the mark with the gather half.')
+                   reason='A multi-dim scatter write (A[i, i], A[2 * i, i]) is refused by '
+                   '``map_body_is_tile_lowerable``, which fails closed on an expression-gather '
+                   'write it cannot prove injective. The store machinery itself lowers and gives '
+                   'the right numbers; what is missing is a soundness proof that the lane-vector-'
+                   'to-address map is injective, which at K >= 2 is not the K=1 nonzero-coefficient '
+                   'argument (A[i + j] is not injective across a 2-D tile). Drop the mark when that '
+                   'analysis lands -- never by relaxing the gate, which guards against a write race.')
 def test_scatter_store_i_2i():
     N_val = 64
     src = numpy.random.rand(N_val)
@@ -776,11 +762,6 @@ def test_gather_load_nondiv(remainder_strategy):
     )
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='The scatter counterpart of the multi-dim gather gap: the staged '
-                   '``a_gather`` transient leaves ``_assign_a_to_out`` holding the scalar body '
-                   "``_out = _in`` beside a widened operand, and VectorizeMultiDim refuses the "
-                   'kernel rather than emit a half-tiled graph. Drop the mark with the gather half.')
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_scatter_store_nondiv(remainder_strategy):
     N_val = 22
@@ -801,6 +782,8 @@ def test_scatter_store_nondiv(remainder_strategy):
         vector_width=8,
         sdfg_name=f"scatter_store_nondiv_{remainder_strategy}",
         remainder_strategy=remainder_strategy,
+        # Permutation index: conflict-free, see ``test_scatter_store``.
+        loop_to_map_permissive=True,
     )
 
 
@@ -880,13 +863,6 @@ def test_strided_load_fp32_stride_2_nondiv(remainder_strategy):
 # scalar/masked remainder path (linearised-stride strided_load/store).
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A MULTI-DIMENSIONAL gather (A[i, i], A[2 * i, i]) stages into an '
-                   '``A_gather`` transient that ConvertTaskletsToTileOps cannot classify, so the '
-                   'consuming tasklet keeps its scalar body next to a widened operand and '
-                   'VectorizeMultiDim refuses the whole kernel (correct, un-tiled). The 1-D form '
-                   '``src[i * 2] * scale`` lowers fine, so this is the gather rank, not the op '
-                   'shape. Drop the mark when the multi-dim gather stages a tile the classifier reads.')
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_diagonal_gather_load_masked(remainder_strategy):
     N_val = 22
@@ -909,10 +885,13 @@ def test_diagonal_gather_load_masked(remainder_strategy):
 
 
 @pytest.mark.xfail(strict=True,
-                   reason='The scatter counterpart of the multi-dim gather gap: the staged '
-                   '``a_gather`` transient leaves ``_assign_a_to_out`` holding the scalar body '
-                   "``_out = _in`` beside a widened operand, and VectorizeMultiDim refuses the "
-                   'kernel rather than emit a half-tiled graph. Drop the mark with the gather half.')
+                   reason='A multi-dim scatter write (A[i, i], A[2 * i, i]) is refused by '
+                   '``map_body_is_tile_lowerable``, which fails closed on an expression-gather '
+                   'write it cannot prove injective. The store machinery itself lowers and gives '
+                   'the right numbers; what is missing is a soundness proof that the lane-vector-'
+                   'to-address map is injective, which at K >= 2 is not the K=1 nonzero-coefficient '
+                   'argument (A[i + j] is not injective across a 2-D tile). Drop the mark when that '
+                   'analysis lands -- never by relaxing the gate, which guards against a write race.')
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_diagonal_scatter_store_masked(remainder_strategy):
     N_val = 22

@@ -11,6 +11,11 @@ import dace
 from dace.memlet import Memlet
 from dace import typeclass
 
+#: Label prefix of every tasklet :func:`materialise_lane_id_index_tile` mints. The tile pipeline
+#: emits these itself, already at tile shape, so the tile-candidate gates recognise them by this
+#: prefix and stay transparent to them the way they do to the vectorizer's own tile lib nodes.
+LANE_ID_MATERIALISER_PREFIX = "lane_id_mat_"
+
 
 def is_python_tasklet(node: 'dace.nodes.Tasklet') -> bool:
     """Whether ``node``'s body is a Python expression, i.e. whether parsing it is even defined.
@@ -90,7 +95,7 @@ def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
     code_lines.append(f"{'    ' * K}_out[{flat}] = (int64_t)({body_expr});")
     for d in reversed(range(K)):
         code_lines.append(f"{'    ' * d}}}")
-    tasklet = inner_state.add_tasklet(name=f"lane_id_mat_{arr_name}",
+    tasklet = inner_state.add_tasklet(name=f"{LANE_ID_MATERIALISER_PREFIX}{arr_name}",
                                       inputs=set(),
                                       outputs={"_out"},
                                       code="\n".join(code_lines),
