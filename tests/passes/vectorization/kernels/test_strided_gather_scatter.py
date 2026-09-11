@@ -409,14 +409,6 @@ def test_diagonal_gather_load():
     )
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A multi-dim scatter write (A[i, i], A[2 * i, i]) is refused by '
-                   '``map_body_is_tile_lowerable``, which fails closed on an expression-gather '
-                   'write it cannot prove injective. The store machinery itself lowers and gives '
-                   'the right numbers; what is missing is a soundness proof that the lane-vector-'
-                   'to-address map is injective, which at K >= 2 is not the K=1 nonzero-coefficient '
-                   'argument (A[i + j] is not injective across a 2-D tile). Drop the mark when that '
-                   'analysis lands -- never by relaxing the gate, which guards against a write race.')
 def test_diagonal_scatter_store():
     N_val = 64
     src = numpy.random.rand(N_val)
@@ -457,14 +449,6 @@ def test_gather_load_2i_i():
     )
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A multi-dim scatter write (A[i, i], A[2 * i, i]) is refused by '
-                   '``map_body_is_tile_lowerable``, which fails closed on an expression-gather '
-                   'write it cannot prove injective. The store machinery itself lowers and gives '
-                   'the right numbers; what is missing is a soundness proof that the lane-vector-'
-                   'to-address map is injective, which at K >= 2 is not the K=1 nonzero-coefficient '
-                   'argument (A[i + j] is not injective across a 2-D tile). Drop the mark when that '
-                   'analysis lands -- never by relaxing the gate, which guards against a write race.')
 def test_scatter_store_2i_i():
     N_val = 64
     src = numpy.random.rand(N_val)
@@ -507,14 +491,6 @@ def test_gather_load_i_2i():
     )
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A multi-dim scatter write (A[i, i], A[2 * i, i]) is refused by '
-                   '``map_body_is_tile_lowerable``, which fails closed on an expression-gather '
-                   'write it cannot prove injective. The store machinery itself lowers and gives '
-                   'the right numbers; what is missing is a soundness proof that the lane-vector-'
-                   'to-address map is injective, which at K >= 2 is not the K=1 nonzero-coefficient '
-                   'argument (A[i + j] is not injective across a 2-D tile). Drop the mark when that '
-                   'analysis lands -- never by relaxing the gate, which guards against a write race.')
 def test_scatter_store_i_2i():
     N_val = 64
     src = numpy.random.rand(N_val)
@@ -884,14 +860,6 @@ def test_diagonal_gather_load_masked(remainder_strategy):
     )
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A multi-dim scatter write (A[i, i], A[2 * i, i]) is refused by '
-                   '``map_body_is_tile_lowerable``, which fails closed on an expression-gather '
-                   'write it cannot prove injective. The store machinery itself lowers and gives '
-                   'the right numbers; what is missing is a soundness proof that the lane-vector-'
-                   'to-address map is injective, which at K >= 2 is not the K=1 nonzero-coefficient '
-                   'argument (A[i + j] is not injective across a 2-D tile). Drop the mark when that '
-                   'analysis lands -- never by relaxing the gate, which guards against a write race.')
 @pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
 def test_diagonal_scatter_store_masked(remainder_strategy):
     N_val = 22

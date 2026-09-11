@@ -114,38 +114,6 @@ def boundary_write_index_syms(sdfg: SDFG, data_name: str) -> set:
     return syms
 
 
-def _wcr_write_is_injective(write_subset, params: List[str]) -> bool:
-    """Write at ``write_subset`` hits a DISTINCT element per distinct enclosing-map ``params``
-    value → conflict-free → WCR droppable for explicit RMW without cross-lane race.
-
-    Conservative: only single-param affine case decided (LoopToMap in-place shape ``a[c*i+d]``).
-    Injective iff some dim is ``c*i+d``, ``c`` nonzero numeric const, no loop-varying multi-element
-    range. Reduction (``c==0``) NOT injective; symbolic stride (``c`` not known-nonzero) → left to
-    guarded parallelization passes. Else ``False`` (WCR kept).
-    """
-    if len(params) != 1:
-        return False
-    p = symbolic.pystr_to_symbolic(params[0])
-    monotone_dim = False
-    for (b, e, _step) in write_subset.ranges:
-        be = symbolic.pystr_to_symbolic(b)
-        en = symbolic.pystr_to_symbolic(e)
-        depends = p in be.free_symbols or p in en.free_symbols
-        if be != en:
-            # Multi-element range: if loop-varying, per-iter windows may overlap → not injective.
-            if depends:
-                return False
-            continue
-        if depends:
-            slope = sympy.diff(be, p)
-            if slope.is_number and slope != 0:
-                monotone_dim = True
-            else:
-                # Non-affine, or a symbolic slope we cannot prove nonzero.
-                return False
-    return monotone_dim
-
-
 def _wcr_augassign_body(wcr_str: str) -> str:
     """Render binary WCR ``lambda <acc>, <new>: <body>`` as a tasklet expr: acc (1st arg,
     existing dest value) → ``__in1``, incoming (2nd arg) → ``__in2``.
@@ -1158,7 +1126,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             return False
         # Injective over the enclosing map(s): distinct lane -> distinct element (not a reduction).
         params = _enclosing_map_params(graph, self.tasklet)
-        if not _wcr_write_is_injective(sub, params):
+        # Avoid import loop: the vectorization package imports this module.
+        from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
+        if not write_subset_is_injective(sub, params):
             return False
         # Parent-map guard (mirrors the scalar-revert path): across a nested-SDFG boundary the
         # PARENT's enclosing maps are invisible to ``_enclosing_map_params``. If an outer map's
@@ -1211,7 +1181,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         if write is None:
             return False
         # Injective over the enclosing map: distinct iteration -> distinct element, no reduction.
-        if not _wcr_write_is_injective(write, _enclosing_map_params(graph, self.nested)):
+        # Avoid import loop: the vectorization package imports this module.
+        from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
+        if not write_subset_is_injective(write, _enclosing_map_params(graph, self.nested)):
             return False
         # The RMW must already be materialised inside: the body reads back exactly what it writes,
         # so the written value already equals ``dest <op> incoming`` and a plain store is equivalent.
@@ -1282,7 +1254,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # injective over map params. Reduction (constant target) NOT injective → keeps WCR
         # (lifted to Reduce libnode / OMP-reduction elsewhere); symbolic stride → guarded passes.
         params = _enclosing_map_params(graph, edge.src)
-        if params and not _wcr_write_is_injective(edge.data.subset, params):
+        # Avoid import loop: the vectorization package imports this module.
+        from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
+        if params and not write_subset_is_injective(edge.data.subset, params):
             return False
 
         # Nested-SDFG guard: inside a NestedSDFG the enclosing maps of the PARENT are invisible to
