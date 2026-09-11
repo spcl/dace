@@ -30,12 +30,11 @@ nodes** at the K-dim layer (the contract: K-dim → tile ops only) and
 that the expected per-tile-dim shape survives.
 """
 
+import numpy as np
 import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import dace
-import pytest
 
-from dace.libraries.tileops import TileLoad, TileLoad, TileStore
+from dace.libraries.tileops import TileLoad, TileStore
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import _is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -67,6 +66,11 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
 def _count_lib_nodes_by_type(sdfg: dace.SDFG, cls) -> int:
     """Number of lib nodes of ``cls`` anywhere in ``sdfg``."""
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, cls))
+
+
+def _tile_loads(sdfg: dace.SDFG) -> list[TileLoad]:
+    """Every ``TileLoad`` node anywhere in ``sdfg``, recursing into nested SDFGs."""
+    return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad)]
 
 
 def _vectorize_k2(sdfg: dace.SDFG) -> None:
@@ -201,140 +205,204 @@ def _fully_unstructured_2d_index(a: dace.float64[NK], idx: dace.int32[NK, NJ], c
 
 # ---------------------------------------------------------------- tests
 
-_BROADCAST_GAP_REASON = ("K>=2 BROADCAST_SYMBOL composition gap: the descent needs to distinguish "
-                         "true broadcast (no symbols in the access) from gather (fanned-out symbols "
-                         "as indices) from partial-binding (some tile vars unbound — broadcast along "
-                         "those lanes). The naive `dim_strides=(0,)*K` fallback silently degrades "
-                         "gathers to broadcasts (incorrect numerics). Tracked as the next slice — "
-                         "needs a TileLoad with per-tile-dim dim_strides reflecting the partial "
-                         "binding + a TileLoad (gather) composition for fanned indices.")
-
 
 def test_scalar_broadcast_descent_to_tile_only():
-    """Scalar broadcast produces 0 raw tasklets + at least one TileLoad."""
+    """Scalar (size-1) broadcast lowers via a Scalar-kind TileLoad, not per-element compute."""
     sdfg = _scalar_broadcast.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0, "K-dim scalar-broadcast must lower to tile-only"
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    loads = _tile_loads(sdfg)
+    assert len(loads) == 1
+    assert loads[0].src_kind == "Scalar", f"a size-1 source must broadcast via src_kind=Scalar, got {loads[0]!r}"
     assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
 
 
 def test_col_broadcast_descent_to_tile_only():
-    """1D-column broadcast (a[jk] across jc) produces 0 raw tasklets."""
+    """1D-column broadcast (a[jk] across jc): stride 1 along jk, 0 (broadcast) along jc."""
     sdfg = _col_broadcast.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0, "K-dim col-broadcast must lower to tile-only"
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    loads = _tile_loads(sdfg)
+    assert len(loads) == 1
+    assert list(loads[0].dim_strides) == [1, 0], f"expected dim_strides=(1, 0), got {loads[0].dim_strides}"
     assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
 
 
 def test_row_broadcast_descent_to_tile_only():
-    """1D-row broadcast (a[jc] across jk) produces 0 raw tasklets."""
+    """1D-row broadcast (a[jc] across jk): stride 0 (broadcast) along jk, 1 along jc."""
     sdfg = _row_broadcast.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0, "K-dim row-broadcast must lower to tile-only"
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    loads = _tile_loads(sdfg)
+    assert len(loads) == 1
+    assert list(loads[0].dim_strides) == [0, 1], f"expected dim_strides=(0, 1), got {loads[0].dim_strides}"
     assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
 
 
 def test_full_2d_baseline_descent_to_tile_only():
-    """2D contiguous load baseline: 0 raw tasklets + TileLoad + TileStore."""
+    """2D contiguous load baseline: unit stride on both tile dims, no broadcast."""
     sdfg = _full_2d_baseline.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    loads = _tile_loads(sdfg)
+    assert len(loads) == 1
+    assert list(loads[0].dim_strides) == [1, 1], f"expected dim_strides=(1, 1), got {loads[0].dim_strides}"
     assert _count_lib_nodes_by_type(sdfg, TileStore) >= 1
 
 
 def test_col_gather_descent_to_tile_only():
-    """Per-row data-dep gather (a[idx[jk]]) broadcast across jc.
-
-    Lowers to a ``TileLoad`` (gather) (data-dep index tile) whose result is
-    then broadcast across ``jc``. No raw Tasklets at the K-dim layer.
-    """
+    """Per-row data-dep gather (a[idx[jk]]): gather_dims must fire, not degrade to a plain load."""
     sdfg = _col_gather.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    gathers = [n for n in _tile_loads(sdfg) if n.gather_dims]
+    assert len(gathers) == 1, f"expected exactly one gather TileLoad, got {gathers}"
+    assert list(gathers[0].gather_dims) == [0], f"expected gather_dims=(0,), got {gathers[0].gather_dims}"
 
 
 def test_col_structured_descent_to_tile_only():
-    """Per-row structured ``a[jk // 2]`` broadcast across jc."""
+    """Per-row structured ``a[jk // 2]`` broadcast across jc: lane-replication factor 2 on jk."""
     sdfg = _col_structured.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    loads = _tile_loads(sdfg)
+    assert len(loads) == 1
+    assert list(loads[0].dim_strides) == [1, 0], f"expected dim_strides=(1, 0), got {loads[0].dim_strides}"
+    assert list(loads[0].replicate_factor_per_dim) == [
+        2, 8
+    ], f"a[jk // 2] must replicate factor 2 on jk, got {loads[0].replicate_factor_per_dim}"
 
 
 def test_row_gather_descent_to_tile_only():
-    """Per-column data-dep gather (a[idx[jc]]) broadcast across jk."""
+    """Per-column data-dep gather (a[idx[jc]]) broadcast across jk; gather_dims must fire."""
     sdfg = _row_gather.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    gathers = [n for n in _tile_loads(sdfg) if n.gather_dims]
+    assert len(gathers) == 1, f"expected exactly one gather TileLoad, got {gathers}"
+    assert list(gathers[0].gather_dims) == [0], f"expected gather_dims=(0,), got {gathers[0].gather_dims}"
 
 
 def test_row_structured_descent_to_tile_only():
-    """Per-column structured ``a[jc // 2]`` broadcast across jk."""
+    """Per-column structured ``a[jc // 2]`` broadcast across jk: lane-replication factor 2 on jc."""
     sdfg = _row_structured.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    loads = _tile_loads(sdfg)
+    assert len(loads) == 1
+    assert list(loads[0].dim_strides) == [0, 1], f"expected dim_strides=(0, 1), got {loads[0].dim_strides}"
+    assert list(loads[0].replicate_factor_per_dim) == [
+        8, 2
+    ], f"a[jc // 2] must replicate factor 2 on jc, got {loads[0].replicate_factor_per_dim}"
 
 
 def test_fully_structured_2d_descent_to_tile_only():
-    """``a[jk // 2, jc]`` — both source dims tile-var-bound (col is
-    structured / lane-replicated, row is affine)."""
+    """``a[jk // 2, jc]`` — affine stride on both dims, lane-replication factor 2 on jk only."""
     sdfg = _fully_structured_2d.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    loads = _tile_loads(sdfg)
+    assert len(loads) == 1
+    assert list(loads[0].dim_strides) == [1, 1], f"expected dim_strides=(1, 1), got {loads[0].dim_strides}"
+    assert list(loads[0].replicate_factor_per_dim) == [
+        2, 1
+    ], f"a[jk // 2, jc] must replicate factor 2 on jk only, got {loads[0].replicate_factor_per_dim}"
 
 
 def test_fully_unstructured_separable_descent_to_tile_only():
-    """``a[idx_k[jk], idx_j[jc]]`` — every source dim data-dependent.
-
-    Both dims gather, but the index sources factor (one per tile var)
-    so the descent can build two independent 1-D index tiles. The
-    resulting ``TileLoad`` (gather) reads ``a`` with per-lane (8, 8) indices."""
+    """``a[idx_k[jk], idx_j[jc]]``: both source dims must appear in gather_dims."""
     sdfg = _fully_unstructured_separable.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    gathers = [n for n in _tile_loads(sdfg) if n.gather_dims]
+    assert len(gathers) == 1, f"expected exactly one gather TileLoad, got {gathers}"
+    assert list(gathers[0].gather_dims) == [0, 1], f"expected gather_dims=(0, 1), got {gathers[0].gather_dims}"
 
 
 def test_fully_unstructured_2d_index_descent_to_tile_only():
-    """``a[idx[jk, jc]]`` — 1-D source addressed by a 2-D index tile.
-
-    The single source dim collapses both tile vars via a single 2-D
-    index lookup (canonical batched-gather shape). The descent lowers
-    to one ``TileLoad`` (gather) with a (8, 8)-shaped per-lane index tile."""
+    """``a[idx[jk, jc]]``: a single (8, 8) index TileLoad feeds the gather, not two 1-D tiles."""
     sdfg = _fully_unstructured_2d_index.to_sdfg()
     sdfg.validate()
     _vectorize_k2(sdfg)
     sdfg.validate()
     assert _count_tasklets(sdfg) == 0
-    assert _count_lib_nodes_by_type(sdfg, TileLoad) >= 1
+    loads = _tile_loads(sdfg)
+    gathers = [n for n in loads if n.gather_dims]
+    idx_loads = [n for n in loads if not n.gather_dims]
+    assert len(gathers) == 1, f"expected exactly one gather TileLoad, got {gathers}"
+    assert list(gathers[0].gather_dims) == [0], f"expected gather_dims=(0,), got {gathers[0].gather_dims}"
+    assert len(idx_loads) == 1 and list(
+        idx_loads[0].widths) == [8, 8], f"a single 2-D index tile must feed the gather, got {idx_loads}"
+
+
+def test_all_kdim_broadcast_shapes_match_numpy():
+    """Compile-and-run every K=2 broadcast/gather shape against a plain-numpy reference."""
+    # One test, not eleven: each shape needs its own native compile + run (expensive), the
+    # grouped-Act exception for tests that would otherwise repeat a costly setup per case.
+    n, m = 8, 8
+    rng = np.random.default_rng(0)
+
+    def run(prog, **arrays) -> np.ndarray:
+        sdfg = prog.to_sdfg()
+        _vectorize_k2(sdfg)
+        csdfg = sdfg.compile()
+        c = np.zeros((n, m), dtype=np.float64)
+        csdfg(NK=n, NJ=m, c=c, **arrays)
+        return c
+
+    a0 = rng.random(1)
+    np.testing.assert_allclose(run(_scalar_broadcast, a=a0), np.broadcast_to(a0[0], (n, m)))
+
+    a_col = rng.random(n)
+    np.testing.assert_allclose(run(_col_broadcast, a=a_col), np.broadcast_to(a_col[:, None], (n, m)))
+
+    a_row = rng.random(m)
+    np.testing.assert_allclose(run(_row_broadcast, a=a_row), np.broadcast_to(a_row[None, :], (n, m)))
+
+    a_2d = rng.random((n, m))
+    np.testing.assert_allclose(run(_full_2d_baseline, a=a_2d), a_2d)
+
+    idx_k = rng.integers(0, n, size=n).astype(np.int32)
+    np.testing.assert_allclose(run(_col_gather, a=a_col, idx=idx_k), np.broadcast_to(a_col[idx_k][:, None], (n, m)))
+
+    np.testing.assert_allclose(run(_col_structured, a=a_col), np.broadcast_to(a_col[np.arange(n) // 2][:, None],
+                                                                              (n, m)))
+
+    idx_j = rng.integers(0, m, size=m).astype(np.int32)
+    np.testing.assert_allclose(run(_row_gather, a=a_row, idx=idx_j), np.broadcast_to(a_row[idx_j][None, :], (n, m)))
+
+    np.testing.assert_allclose(run(_row_structured, a=a_row), np.broadcast_to(a_row[np.arange(m) // 2][None, :],
+                                                                              (n, m)))
+
+    np.testing.assert_allclose(run(_fully_structured_2d, a=a_2d), a_2d[np.arange(n) // 2, :])
+
+    idx_ik = rng.integers(0, n, size=n).astype(np.int32)
+    idx_ij = rng.integers(0, m, size=m).astype(np.int32)
+    np.testing.assert_allclose(run(_fully_unstructured_separable, a=a_2d, idx_k=idx_ik, idx_j=idx_ij),
+                               a_2d[np.ix_(idx_ik, idx_ij)])
+
+    idx_2d = rng.integers(0, n, size=(n, m)).astype(np.int32)
+    np.testing.assert_allclose(run(_fully_unstructured_2d_index, a=a_col, idx=idx_2d), a_col[idx_2d])
 
 
 if __name__ == "__main__":
