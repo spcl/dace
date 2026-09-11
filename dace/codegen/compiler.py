@@ -529,9 +529,12 @@ def configure_and_compile(
     if cmake_link_flags:
         cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
 
-    pch_dir = prepare_precompiled_header(targets)
-    if pch_dir:
-        cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
+    # Stated on every build, empty included: a configure cache seeded by an earlier build carries
+    # its own value for this, and a precompiled header that lived in shared memory is gone after a
+    # reboot while the path it was cached under is not. The build would then be told to include a
+    # header that is not there, which is a hard error rather than the fallback it should be.
+    pch_dir = prepare_precompiled_header(targets) or ''
+    cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
     # What the configure DISCOVERS: the command minus the flags naming this program. ``DACE_FILES``
     # reduces to its target subdirectories, which select the languages and packages CMake enables.
     shape = [c for c in cmake_command if not c.startswith(('-DDACE_SRC_DIR=', '-DDACE_FILES=', '-DDACE_PROGRAM_NAME='))]
