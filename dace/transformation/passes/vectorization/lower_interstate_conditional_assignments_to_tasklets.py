@@ -2,7 +2,7 @@
 """Demote free symbols used in conditional-assignment tasklets to scalars."""
 from typing import Any, Dict, List, Optional, Set
 import dace
-from dace import SDFG, properties, SDFGState, symbolic
+from dace import dtypes, SDFG, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
 from dace.transformation.passes.vectorization.utils.tasklets import is_python_tasklet
@@ -64,24 +64,36 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         return {}
 
     @staticmethod
-    def arm_bound_symbols(sd: SDFG) -> Dict[str, None]:
+    def arm_bound_symbols(sd: SDFG) -> Dict[str, 'dtypes.typeclass']:
         """Symbols an arm of a ``ConditionalBlock`` binds on one of its own interstate edges.
 
         Only ``sd``'s own regions are walked -- a nested SDFG binds symbols in its own scope and is
         reached separately, by the caller's walk over :meth:`~dace.SDFG.all_sdfgs_recursive`.
 
         :param sd: the SDFG whose conditional blocks are inspected.
-        :returns: the bound names, insertion-ordered (this drives ``demote_symbol_to_scalar``,
-            which adds arrays to the SDFG).
+        :returns: the bound names mapped to the dtype to demote each at (inferred from the
+            assignment if undeclared, absent if neither), insertion-ordered.
         """
-        bound: Dict[str, None] = {}
+        bound: Dict[str, dtypes.typeclass] = {}
         for block in sd.all_control_flow_blocks():
             if not isinstance(block, ConditionalBlock):
                 continue
             for _condition, region in block.branches:
                 for r in region.all_control_flow_regions():
                     for e in r.edges():
-                        bound.update(dict.fromkeys(sorted(e.data.assignments)))
+                        # An assignment DEFINES its symbol -- CloudSC's zlcrit is bound but never
+                        # declared, so a ``sd.symbols`` miss must fall back to ``new_symbols``.
+                        inferred = None
+                        for name in sorted(e.data.assignments):
+                            if name in bound:
+                                continue
+                            if name in sd.symbols:
+                                bound[name] = sd.symbols[name]
+                                continue
+                            if inferred is None:
+                                inferred = e.data.new_symbols(sd, sd.symbols)
+                            if name in inferred:
+                                bound[name] = inferred[name]
         return bound
 
     def demote_arm_bound_symbols(self, sdfg: SDFG) -> int:
@@ -99,9 +111,9 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
             # and rebuild lazily at the next ask.
             structural: Optional[Set[str]] = None
             free_syms: Optional[Set[str]] = None
-            for name in self.arm_bound_symbols(sd):
-                if name not in sd.symbols:
-                    continue
+            for name, dtype in self.arm_bound_symbols(sd).items():
+                if name in sd.arrays:
+                    continue  # already a scalar -- demoted by an earlier round or by another pass
                 if structural is None:
                     structural = sdutil.structural_symbols(sd)
                     # Consulted only for a top-level SDFG; a nested one reads its parent's mapping.
@@ -116,7 +128,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                 # Nothing downstream wants a float: the ITE rewrite gates the write it finds,
                 # whatever its dtype, and the rest of the graph already read this symbol at the
                 # dtype it was declared with.
-                sdutil.demote_symbol_to_scalar(sd, name, sd.symbols[name], None)
+                sdutil.demote_symbol_to_scalar(sd, name, dtype, None)
                 demoted += 1
                 structural = free_syms = None  # the demotion rewrote ``sd``; rebuild before the next ask
         return demoted

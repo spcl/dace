@@ -116,3 +116,50 @@ def test_demotion_keeps_the_declared_dtype(declared):
     assert "v" in sdfg.arrays, "the data-bound symbol must still be demoted"
     assert sdfg.arrays["v"].dtype == declared, \
         f"demotion changed the dtype: declared {declared}, scalar is {sdfg.arrays['v'].dtype}"
+
+
+def build_undeclared_arm_bound_sdfg() -> dace.SDFG:
+    """A ``ConditionalBlock`` arm binds ``zlcrit`` on one of its OWN interstate edges, and
+    ``zlcrit`` is declared nowhere -- not in ``sdfg.symbols``, not in ``sdfg.arrays``. This is
+    CloudSC's shape: an interstate assignment DEFINES its symbol, so an arm can bind a name the
+    SDFG never declared. ``arm_bound_symbols`` must type it off the assignment, not a declaration
+    that does not exist.
+    """
+    sdfg = dace.SDFG("undeclared_arm_bound_symbol")
+    sdfg.add_array("a", shape=(1, ), dtype=dace.float32)
+
+    entry = sdfg.add_state("entry", is_start_block=True)
+    cb = ConditionalBlock("cb")
+    sdfg.add_node(cb)
+    sdfg.add_edge(entry, cb, dace.InterstateEdge())
+
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    b0 = arm.add_state("b0", is_start_block=True)
+    b1 = arm.add_state("b1")
+    # zlcrit is bound HERE, on the arm's own interstate edge, from data -- never declared.
+    arm.add_edge(b0, b1, dace.InterstateEdge(assignments={"zlcrit": "a[0]"}))
+    cb.add_branch(CodeBlock("True"), arm)
+    return sdfg
+
+
+def test_undeclared_arm_bound_symbol_is_demoted_from_the_assignment_type():
+    """The miss ``arm_bound_symbols`` used to make: a name bound only on an arm's own interstate
+    edge, absent from ``sdfg.symbols``, must still be demoted -- typed off the assignment that
+    defines it. Before the fix, ``arm_bound_symbols`` read ``sd.symbols[name]`` for every bound
+    name and the caller skipped any name missing from ``sd.symbols`` -- exactly this case --
+    leaving ``zlcrit`` a symbol and the guard it is bound under lane-varying after widening.
+    """
+    sdfg = build_undeclared_arm_bound_sdfg()
+    assert "zlcrit" not in sdfg.symbols, "zlcrit must start undeclared, the shape this test pins"
+
+    demoted = LowerInterstateConditionalAssignmentsToTasklets().demote_arm_bound_symbols(sdfg)
+
+    assert demoted == 1, f"expected exactly one arm-bound symbol demoted, got {demoted}"
+    assert "zlcrit" in sdfg.arrays, "the undeclared arm-bound symbol must be demoted to a scalar"
+    scalar = sdfg.arrays["zlcrit"]
+    assert isinstance(scalar, dace.data.Scalar) and scalar.transient, \
+        "the demoted symbol must be a transient Scalar"
+    assert scalar.dtype == dace.float32, \
+        f"dtype must come from the assignment (a is float32), got {scalar.dtype}"
+    assert "zlcrit" not in sdfg.symbols, "the demoted name must no longer be a symbol"
+    sdfg.validate()
