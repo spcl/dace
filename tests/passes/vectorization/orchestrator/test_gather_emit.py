@@ -103,11 +103,6 @@ def _prepped(tag=""):
     return sdfg
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="a[i, i] is left ENTIRELY untiled: apply_pass returns without a tile lib node, "
-                   "without a VectorizeUnsupported and without a warning, so the numeric check below "
-                   "compares the reference to itself. Exposed by assert_tiled 2026-09-11; drop this mark "
-                   "when the walker lowers the diagonal to the TileLoad/TileStore gather this file names.")
 @pytest.mark.parametrize("n", [16, 17])
 def test_diagonal_gather_numerically_matches_reference(n):
     """Diagonal gather/scatter output matches the unvectorized SDFG."""
