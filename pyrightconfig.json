@@ -3,9 +3,8 @@
   // Everything listed here must stay at ZERO errors; a config that reports pre-existing
   // noise is a config people learn to ignore.
   "include": [
-    "dace/transformation/passes/vectorization"
-    // "dace/libraries/tileops" -- the tile library nodes are annotated separately and are
-    // NOT clean under these rules yet (275 findings). Add the line once that half lands.
+    "dace/transformation/passes/vectorization",
+    "dace/libraries/tileops"
   ],
   "exclude": [
     // Held by another agent while this gate was written; drop each entry once the file is

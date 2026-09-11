@@ -89,7 +89,7 @@ def detect_host_isa() -> str:
 
 
 @functools.lru_cache(maxsize=1, typed=True)
-def host_supported_isas() -> frozenset:
+def host_supported_isas() -> frozenset[str]:
     """The set of K=1 tile-op ISAs the host can EXECUTE (cached).
 
     Arch-native enforcement: a forced ``target_isa`` outside this set would emit instructions the
@@ -175,7 +175,7 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     return impl if impl in node.implementations else "pure"
 
 
-def _tile_has_complex_operand(node: nodes.LibraryNode, parent_state) -> bool:
+def _tile_has_complex_operand(node: nodes.LibraryNode, parent_state: dace.SDFGState | None) -> bool:
     """True iff any connected operand / output of the tile op is a complex dtype.
 
     ``parent_state`` is the containing :class:`~dace.sdfg.state.SDFGState`; ``None``

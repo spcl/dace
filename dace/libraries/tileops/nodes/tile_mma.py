@@ -169,7 +169,12 @@ class TileMMA(nodes.LibraryNode):
         "(``c = a @ b + c``); ``0`` overwrites (``c = a @ b``).",
     )
 
-    def __init__(self, name: str, widths: Tuple[int, int, int], alpha=1, beta=1, location: Optional[str] = None):
+    def __init__(self,
+                 name: str,
+                 widths: Tuple[int, int, int],
+                 alpha: int | float = 1,
+                 beta: int | float = 1,
+                 location: Optional[str] = None):
         """Construct a ``TileMMA`` node.
 
         :param name: Node label.

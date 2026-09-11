@@ -10,6 +10,7 @@ Symbol pair belongs outside the tile path.
 The pure expansion returns a CPP tasklet whose body is a single
 ``for``-loop over the flattened tile (correctness-only).
 """
+from collections.abc import Sequence
 from typing import Optional, Tuple
 
 import numpy as np
@@ -17,14 +18,14 @@ import numpy as np
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
-from dace.sdfg import nodes
+from dace.sdfg import graph, nodes
 from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
 
 
-def _is_tile_shape(desc, widths) -> bool:
+def _is_tile_shape(desc: dace.data.Data, widths: Sequence[int]) -> bool:
     """True iff ``desc`` is an :class:`dace.data.Array` whose shape equals ``widths``."""
     if not isinstance(desc, dace.data.Array):
         return False
@@ -34,7 +35,7 @@ def _is_tile_shape(desc, widths) -> bool:
     return all(bool(dace.symbolic.simplify(s - w) == 0) for s, w in zip(shape, widths))
 
 
-def edge_moves_a_tile(edge, widths) -> bool:
+def edge_moves_a_tile(edge: graph.MultiConnectorEdge[dace.Memlet], widths: Sequence[int]) -> bool:
     """True iff ``edge``'s MEMLET moves a tile-shaped box, whatever its descriptor's shape.
 
     :class:`WidenAccesses` widens the memlet of a lane-indexed array in place rather than swapping
@@ -60,7 +61,7 @@ def edge_moves_a_tile(edge, widths) -> bool:
     return dace.symbolic.shapes_equal(size[split:], tuple(widths))
 
 
-def _is_scalar_shape(desc) -> bool:
+def _is_scalar_shape(desc: dace.data.Data) -> bool:
     """True iff ``desc`` is a :class:`dace.data.Scalar` or a length-1 :class:`Array`."""
     if isinstance(desc, dace.data.Scalar):
         return True
@@ -69,7 +70,7 @@ def _is_scalar_shape(desc) -> bool:
     return False
 
 
-def scalar_operand_ref(desc, conn: str, widths, off: str) -> Tuple[str, bool]:
+def scalar_operand_ref(desc: dace.data.Data, conn: str, widths: Sequence[int], off: str) -> Tuple[str, bool]:
     """Per-lane C++ reference for a ``Scalar``-kind tile-op operand.
 
     A ``Scalar``-kind operand (one classified as a broadcast because its source
@@ -254,7 +255,7 @@ class ExpandTileBinopPure(ExpandTransformation):
         # corrupting the comparison. Prefer a data operand's descriptor dtype;
         # else the symbol's own declared dtype from ``sdfg.symbols``; else
         # fall back to ``out_dtype`` (all-Symbol case with no resolvable type).
-        def _operand_dtype():
+        def _operand_dtype() -> str:
             for k, c in ((node.kind_a, "_a"), (node.kind_b, "_b")):
                 if k in (_TILE, _SCALAR) and c in in_e:
                     return parent_sdfg.arrays[in_e[c].data.data].dtype.ctype
@@ -276,7 +277,7 @@ class ExpandTileBinopPure(ExpandTransformation):
         # which are never bool; so suppress it when the operand dtype is bool.
         _cast = "" if operand_dtype == "bool" else f"({operand_dtype})"
 
-        def _effective_ctype(kind, conn):
+        def _effective_ctype(kind: str, conn: str) -> str:
             """The C++ type ``conn`` is actually emitted as (post any cast)."""
             if kind == _SYMBOL:
                 return operand_dtype
@@ -289,7 +290,7 @@ class ExpandTileBinopPure(ExpandTransformation):
         ctype_a = _effective_ctype(node.kind_a, "_a")
         ctype_b = _effective_ctype(node.kind_b, "_b")
 
-        def _operand_ref(kind, conn, expr, meets_ctype):
+        def _operand_ref(kind: str, conn: str, expr: str | None, meets_ctype: str) -> str:
             """Return the per-lane C++ reference for one operand.
 
             A ``_SYMBOL`` / ``_SCALAR`` operand is cast to ``operand_dtype``

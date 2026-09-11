@@ -59,7 +59,7 @@ class ExpandTileFMAPure(ExpandTransformation):
         # is cast to this). Prefer a data operand's descriptor dtype; else a
         # symbol's own declared dtype; else fall back to ``out_dtype``. Mirrors
         # ``ExpandTileBinopPure._operand_dtype``.
-        def _operand_dtype():
+        def _operand_dtype() -> str:
             for k, c in ((node.kind_a, "_a"), (node.kind_b, "_b"), (node.kind_c, "_c")):
                 if k in (_TILE, _SCALAR) and c in in_e:
                     return parent_sdfg.arrays[in_e[c].data.data].dtype.ctype
@@ -80,7 +80,7 @@ class ExpandTileFMAPure(ExpandTransformation):
         narrow_operand = any(dt.ctype == operand_dtype and dt.bytes < 4
                              for dt in (dace.float16, dace.bfloat16, dace.int8, dace.uint8, dace.int16, dace.uint16))
 
-        def _effective_ctype(kind, conn):
+        def _effective_ctype(kind: str, conn: str) -> str:
             """The C++ type ``conn`` is actually emitted as (post any cast)."""
             if kind == _SYMBOL:
                 return operand_dtype
@@ -96,7 +96,7 @@ class ExpandTileFMAPure(ExpandTransformation):
             "_c": _effective_ctype(node.kind_c, "_c"),
         }
 
-        def _meets_ctype(this_conn):
+        def _meets_ctype(this_conn: str) -> str:
             """``dace::float16`` if every OTHER operand is also float16 (native
             half arithmetic stays safe), else a non-float16 placeholder --
             :func:`half_disambiguated` only cares about the binary distinction.
@@ -104,7 +104,7 @@ class ExpandTileFMAPure(ExpandTransformation):
             others = [c for k, c in _ctypes.items() if k != this_conn]
             return dace.float16.ctype if all(c == dace.float16.ctype for c in others) else operand_dtype + "?mixed"
 
-        def _operand_ref(kind, conn, expr):
+        def _operand_ref(kind: str, conn: str, expr: str | None) -> str:
             """Return the per-lane C++ reference for one FMA operand.
 
             A ``_SYMBOL`` / broadcast ``_SCALAR`` operand is cast to
