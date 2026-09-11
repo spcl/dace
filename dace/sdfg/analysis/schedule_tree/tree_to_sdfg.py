@@ -87,6 +87,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_nestedSDFG: int | None = None
         """Id of the current nested SDFG if we are inside one."""
 
+        self._known_data_outside_nestedSDFG: set[str] | None = None
+        """In case we are inside a nested SDFG, this list previously accessed data (arrays and scalars) outside the nestedSDFG."""
+
         self._interstate_symbols: list[tn.AssignNode] = []
         """Interstate symbol assignments. Will be assigned with the next state transition."""
 
@@ -207,13 +210,16 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                         use_nview = self._apply_nview_array_override(memlet.data, sdfg)
                         if not use_nview:
                             sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-
                             # Transients passed into a nested SDFG become non-transient inside that nested SDFG
                             if parent_sdfg.arrays[memlet.data].transient:
                                 sdfg.arrays[memlet.data].transient = False
 
                         # Dev note: nview.target and memlet.data are identical
                         assert memlet.data not in to_connect["inputs"]
+                        to_connect["inputs"].add(memlet.data)
+
+                    # Add in_connector in case of read after write of "outside" data
+                    if memlet.data in self._known_data_outside_nestedSDFG:
                         to_connect["inputs"].add(memlet.data)
                 return
 
@@ -288,13 +294,16 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     use_nview = self._apply_nview_array_override(memlet.data, sdfg)
                     if not use_nview:
                         sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-
                         # Transients passed into a nested SDFG become non-transient inside that nested SDFG
                         if parent_sdfg.arrays[memlet.data].transient:
                             sdfg.arrays[memlet.data].transient = False
 
                     # Dev note: memlet.data and nview.target are identical
                     assert memlet.data not in to_connect["inputs"]
+                    to_connect["inputs"].add(memlet.data)
+
+                # Add in_connector in case of read after write in case of "outside data"
+                if memlet.data in self._known_data_outside_nestedSDFG:
                     to_connect["inputs"].add(memlet.data)
 
     def visit_IfScope(self, node: tn.IfScope, sdfg: SDFG) -> None:
@@ -381,6 +390,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         dataflow_stack_size = len(self._dataflow_stack)
         state_stack_size = len(self._state_stack)
         outer_nestedSDFG = self._current_nestedSDFG
+        outer_known_data = self._known_data_outside_nestedSDFG
+
+        self._known_data_outside_nestedSDFG = set()
+        for access_dict in self._ctx.access_cache.values():
+            for name in access_dict:
+                self._known_data_outside_nestedSDFG.add(name)
 
         # prepare inner SDFG
         inner_sdfg = SDFG("nested_sdfg", parent=self._current_state)
@@ -469,6 +484,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # Restore current nested SDFG
         self._current_nestedSDFG = outer_nestedSDFG
+        self._known_data_outside_nestedSDFG = outer_known_data
 
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
@@ -518,10 +534,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     dst_conn=connector,
                     memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]),
                 )
+                if isinstance(outer_map_entry, SDFG) and memlet_data in self._known_data_outside_nestedSDFG:
+                    # in case of read after write of memory that comes from an "outside" SDFG,
+                    # make sure that we register the read in the nested SDFG.
+                    outer_to_connect["inputs"].add(memlet_data)
                 continue
 
             if isinstance(outer_map_entry, nodes.EntryNode):
-
                 # get it from outside the map
                 connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet_data}"
                 if connector_name not in outer_map_entry.out_connectors:
@@ -541,19 +560,22 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 if isinstance(outer_map_entry, SDFG):
                     # Copy data descriptor from parent SDFG and add input connector
                     if memlet_data not in sdfg.arrays:
-                        parent_sdfg: SDFG = self._parent_sdfg_with_array(memlet_data, sdfg)
+                        parent_sdfg = self._parent_sdfg_with_array(memlet_data, sdfg)
 
                         # Add support for NView nodes
                         use_nview = self._apply_nview_array_override(memlet_data, sdfg)
                         if not use_nview:
                             sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
-
                             # Transients passed into a nested SDFG become non-transient inside that nested SDFG
                             if parent_sdfg.arrays[memlet_data].transient:
                                 sdfg.arrays[memlet_data].transient = False
 
-                    # Dev note: nview.target and memlet_data are identical
-                    outer_to_connect["inputs"].add(memlet_data)
+                        # Dev note: nview.target and memlet_data are identical
+                        outer_to_connect["inputs"].add(memlet_data)
+
+                    # Add in_connector in case of read after write of "outside data"
+                    if memlet_data in self._known_data_outside_nestedSDFG:
+                        outer_to_connect["inputs"].add(memlet_data)
                 else:
                     assert outer_map_entry is None
 
@@ -620,12 +642,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     use_nview = self._apply_nview_array_override(name, sdfg)
                     if not use_nview:
                         sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
-
                         # Transients passed into a nested SDFG become non-transient inside that nested SDFG
                         if parent_sdfg.arrays[name].transient:
                             sdfg.arrays[name].transient = False
 
-                # Add out_connector in any case if not yet present, e.g. write after read
+                # Add out connector in any case because we don't know who (if anyone)
+                # is gonna read from it down the line.
                 # Dev not: name and nview.target are identical
                 outer_to_connect["outputs"].add(name)
 
@@ -702,13 +724,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     use_nview = self._apply_nview_array_override(memlet.data, sdfg)
                     if not use_nview:
                         sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-
                         # Transients passed into a nested SDFG become non-transient inside that nested SDFG
                         if parent_sdfg.arrays[memlet.data].transient:
                             sdfg.arrays[memlet.data].transient = False
 
                     # Dev note: memlet.data and nview.target are identical
-                    assert memlet.data not in to_connect["inputs"]
+                    to_connect["inputs"].add(memlet.data)
+
+                # Add in_connector in case of read after (partial) write of "outside data"
+                if memlet.data in self._known_data_outside_nestedSDFG:
                     to_connect["inputs"].add(memlet.data)
             else:
                 assert scope_node is None
@@ -748,15 +772,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     use_nview = self._apply_nview_array_override(memlet.data, sdfg)
                     if not use_nview:
                         sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-
                         # Transients passed into a nested SDFG become non-transient inside that nested SDFG
                         if parent_sdfg.arrays[memlet.data].transient:
                             sdfg.arrays[memlet.data].transient = False
 
-                # Add out_connector in any case if not yet present, e.g. write after read
+                # Add out connector in any case because we don't know who (if anyone)
+                # is gonna read from it down the line.
                 # Dev note: memlet.data and nview.target are identical
                 to_connect["outputs"].add(memlet.data)
-
             else:
                 assert scope_node is None
 
