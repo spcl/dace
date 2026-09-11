@@ -23,18 +23,19 @@ from .frontend.python.ndloop import ndrange
 from .frontend.operations import reduce, elementwise
 
 
-def cpf(sdfg, validate: bool = True, language: str = 'c++') -> str:
+def cpf(sdfg, validate: bool = True, language: str = 'c++', order=None) -> str:
     """Render ``sdfg`` as one self-contained translation unit (see :func:`dace.codegen.cpf.cpf`).
 
     ``language`` is ``'c++'`` (C++20, the default) or ``'c'`` (C23); both build with a bare host
-    compiler and no DaCe runtime.
+    compiler and no DaCe runtime. ``order`` names the entry point's parameters in the caller's own
+    order; ``None`` keeps CPF's.
 
     Imported on call rather than at module scope: the code generators pull in ``dace.nodes``, which
     does not exist yet this early in ``dace/__init__``, and every ``import dace`` would otherwise
     pay for a code generator most programs never run.
     """
     from dace.codegen.cpf import cpf as _cpf
-    return _cpf(sdfg, validate=validate, language=language)
+    return _cpf(sdfg, validate=validate, language=language, order=order)
 
 
 # Run Jupyter notebook code

@@ -23,7 +23,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pytest
@@ -306,15 +306,22 @@ def build_standalone(code: str, name: str = 'cpf_kernel', language: str = 'c++')
     return ctypes.CDLL(compile_standalone(code, name, language=language))
 
 
-def entry_argtypes(sdfg: dace.SDFG) -> List[Any]:
+def entry_argtypes(sdfg: dace.SDFG, order: Optional[Sequence[str]] = None) -> List[Any]:
     """ctypes argument types for ``sdfg``'s CPF entry point.
 
     CPF emits ``void <sdfg.name>(<arglist>)`` with the SAME argument order DaCe's own
     ``__program_<name>`` uses -- :meth:`dace.SDFG.arglist`, arrays first then scalars, each group
     sorted. Arrays are plain pointers; scalars and free symbols are passed by value.
+
+    :param sdfg: the SDFG whose arglist names and types the parameters.
+    :param order: the rendered parameter order (``Rendering.arguments``) when the caller asked
+                  :func:`~dace.codegen.cpf.render` for one of its own; ``None`` is the arglist's.
     """
+    arglist = sdfg.arglist()
+    names = list(arglist) if order is None else list(order)
     argtypes: List[Any] = []
-    for name, desc in sdfg.arglist().items():
+    for name in names:
+        desc = arglist[name]
         if isinstance(desc, dt.Scalar):
             argtypes.append(desc.dtype.as_ctypes())
         else:
@@ -322,7 +329,10 @@ def entry_argtypes(sdfg: dace.SDFG) -> List[Any]:
     return argtypes
 
 
-def call_standalone(library: ctypes.CDLL, sdfg: dace.SDFG, arguments: Dict[str, Any]) -> None:
+def call_standalone(library: ctypes.CDLL,
+                    sdfg: dace.SDFG,
+                    arguments: Dict[str, Any],
+                    order: Optional[Sequence[str]] = None) -> None:
     """Invoke ``sdfg``'s CPF entry point in ``library`` with ``arguments``.
 
     Array arguments are numpy arrays, passed by data pointer (so the kernel writes in place);
@@ -332,6 +342,8 @@ def call_standalone(library: ctypes.CDLL, sdfg: dace.SDFG, arguments: Dict[str, 
     :param library: the loaded shared object from :func:`build_standalone`.
     :param sdfg: the SDFG whose arglist defines the signature.
     :param arguments: name -> value for every arglist entry.
+    :param order: the rendered parameter order (``Rendering.arguments``) when the caller asked for
+                  one of its own; ``None`` calls in the arglist's order.
     """
     arglist = sdfg.arglist()
     missing = sorted(set(arglist) - set(arguments))
@@ -341,11 +353,15 @@ def call_standalone(library: ctypes.CDLL, sdfg: dace.SDFG, arguments: Dict[str, 
     extra = sorted(set(arguments) - set(arglist))
     assert not extra, (f'{sdfg.name}: {extra} are not in the SDFG arglist {list(arglist)} and would be dropped; '
                        'a symbol the SDFG does not use never reaches the entry point')
+    names = list(arglist) if order is None else list(order)
+    assert set(names) == set(arglist), (f'{sdfg.name}: the requested order {names} is not the arglist '
+                                        f'{list(arglist)}; the call would be shifted')
     function = getattr(library, sdfg.name)
-    function.argtypes = entry_argtypes(sdfg)
+    function.argtypes = entry_argtypes(sdfg, order)
     function.restype = None
     values: List[Any] = []
-    for name, desc in arglist.items():
+    for name in names:
+        desc = arglist[name]
         value = arguments[name]
         if isinstance(desc, dt.Scalar):
             values.append(desc.dtype.as_ctypes()(value))

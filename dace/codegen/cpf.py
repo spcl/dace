@@ -32,7 +32,7 @@ kernel would still compile and still produce numbers, just not the SDFG's.
 """
 import copy
 import re
-from typing import Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from dace.ordered import OrderedSet
 
@@ -760,24 +760,74 @@ def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str) -> str:
     readonly = readonly_entry_arrays(sdfg)
     if not readonly:
         return code
+    return rewrite_entry_parameters(
+        code, entry, lambda params: [f'const {p}' if entry_parameter_name(p) in readonly else p for p in params])
+
+
+def rewrite_entry_parameters(code: str, entry: str, rewrite: Callable[[List[str]], List[str]]) -> str:
+    """Apply ``rewrite`` to the entry point's parameter list wherever the unit declares it.
+
+    One splitter for every signature rewrite, so the qualifier pass and the ordering pass can never
+    disagree about where a parameter begins or which declarations they reach.
+
+    The list is split on commas and terminated at the first ``)``, which is exact for pointers and
+    by-value scalars and wrong for anything nested (a function-pointer parameter). CPF emits
+    neither today; a nested list is refused rather than mangled.
+
+    :param code: the rendered unit.
+    :param entry: the entry point's name.
+    :param rewrite: takes the stripped parameter declarations in order, returns the new ones.
+    :returns: the unit with every declaration of ``entry`` rewritten.
+    :raises NotImplementedError: if a parameter carries a nested parameter list.
+    """
     pattern = re.compile(r'\bvoid\s+%s\s*\(' % re.escape(entry))
     out, cursor = [], 0
     for match in pattern.finditer(code):
         opened = match.end() - 1
         closed = code.index(')', opened)
-        # The parameter list is split on commas and terminated at the first ``)``, which is exact
-        # for pointers and by-value scalars and wrong for anything nested (a function-pointer
-        # parameter). CPF emits neither today; refuse rather than mangle the signature if it ever
-        # does.
         if '(' in code[opened + 1:closed]:
-            raise NotImplementedError(f'CPF cannot qualify the entry signature of {entry}: a parameter carries a '
+            raise NotImplementedError(f'CPF cannot rewrite the entry signature of {entry}: a parameter carries a '
                                       'nested parameter list, which this rewrite cannot split.')
         params = [p.strip() for p in code[opened + 1:closed].split(',')]
-        params = [f'const {p}' if entry_parameter_name(p) in readonly else p for p in params]
-        out.append(code[cursor:opened + 1] + ', '.join(params))
+        out.append(code[cursor:opened + 1] + ', '.join(rewrite(params)))
         cursor = closed
     out.append(code[cursor:])
     return ''.join(out)
+
+
+def reorder_entry_parameters(code: str, entry: str, order: Sequence[str]) -> str:
+    """Rewrite the entry point's parameter list into ``order``, matching declarations by name.
+
+    CPF's own order is ``SDFG.arglist()``: every array sorted by name, then every scalar sorted by
+    name. A caller whose calling convention is fixed elsewhere needs the same body under a
+    different parameter order -- an ABI that reserves a trailing scratch pair puts a pointer behind
+    the scalars, which no name sort reaches. Nothing in the body depends on the order, and the unit
+    is self-contained (no prototype, no header), so the entry is declared here and nowhere else.
+
+    Only the ORDER moves. Each declaration keeps the type and the qualifiers CPF gave it, including
+    the ``const`` :func:`qualify_readonly_pointers` added: C linkage ignores qualifiers, so
+    re-spelling them to match a caller's own declaration would change nothing a compiler can see.
+
+    ``order`` must name exactly the parameters the entry takes. A disagreement is refused rather
+    than resolved by dropping or inventing one: the result would link and be called with its
+    arguments shifted, which no compiler catches across a rename.
+
+    :param code: the rendered unit.
+    :param entry: the entry point's name.
+    :param order: the parameter names, in the order the caller will pass them.
+    :returns: the unit with every declaration of ``entry`` reordered.
+    :raises ValueError: if ``order`` is not exactly the entry's parameter set.
+    """
+    wanted = list(order)
+
+    def to_order(params: List[str]) -> List[str]:
+        by_name = {entry_parameter_name(p): p for p in params}
+        if set(by_name) != set(wanted):
+            raise ValueError(f'CPF cannot render {entry} in the requested order: the entry takes '
+                             f'{sorted(by_name)} but the order names {sorted(wanted)}.')
+        return [by_name[name] for name in wanted]
+
+    return rewrite_entry_parameters(code, entry, to_order)
 
 
 #: ``language`` argument -> the dialect that renders it. ``'c++'`` is the default and stays the
@@ -921,24 +971,40 @@ class Rendering(NamedTuple):
     had kept to itself, so the entry point takes an argument the original SDFG's ``arglist()``
     never mentions. Calling the rendered code means calling it with THIS SDFG's arglist; the
     original's would silently drop that symbol and run the kernel on an uninitialized extent.
+
+    ``arguments`` is the second half of that: it says what ORDER the rendered signature takes those
+    parameters in, which is the arglist's order unless the caller supplied one of its own.
     """
     #: The self-contained translation unit.
     code: str
-    #: The prepared copy that was rendered. Its ``arglist()`` is the entry point's signature.
+    #: The prepared copy that was rendered. Its ``arglist()`` names the entry point's parameters
+    #: and gives their types; ``arguments`` is the ORDER the rendered text declares them in.
     sdfg: SDFG
+    #: The entry point's parameter names, in the order the rendered signature takes them. Equal to
+    #: ``tuple(sdfg.arglist())`` unless the caller asked for an order of its own, which is exactly
+    #: when a consumer that read the arglist instead would call with its arguments shifted.
+    arguments: Tuple[str, ...]
 
 
-def render(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> Rendering:
+def render(sdfg: SDFG,
+           validate: bool = True,
+           language: str = 'c++',
+           order: Optional[Sequence[str]] = None) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
 
     :param sdfg: the SDFG to render. Not modified -- a copy is prepared and rendered.
     :param validate: validate the SDFG during code generation.
     :param language: ``'c++'`` (the default, C++20) or ``'c'`` (C23). Both are self-contained: the
                      result builds with a bare host compiler, no ``-I``, no libdace, no BLAS.
+    :param order: the entry point's parameter names in the order the caller will pass them, for a
+                  caller whose calling convention is fixed elsewhere. ``None`` keeps CPF's own
+                  order (``arglist()``: arrays by name, then scalars by name). Must name exactly
+                  the parameters the prepared SDFG takes -- see :func:`reorder_entry_parameters`.
     :returns: the :class:`Rendering`.
     :raises NotImplementedError: if the SDFG needs anything a single host unit cannot hold; the
                                  message names the construct.
-    :raises ValueError: if ``language`` is neither.
+    :raises ValueError: if ``language`` is neither, or if ``order`` is not the entry's parameter
+                        set.
     """
     dialect = dialect_for(language)
     prepared = copy.deepcopy(sdfg)
@@ -967,16 +1033,21 @@ def render(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> Renderin
                 # of which goes through an expression printer, so the rename runs over the whole unit.
                 body = cpf_lowering.rewrite_ctypes(body, dialect)
                 body = qualify_readonly_pointers(body, prepared, sdfg.name)
+                # After the qualifier pass, so each declaration carries the ``const`` CPF decided
+                # on before it moves; only the order changes here.
+                if order is not None:
+                    body = reorder_entry_parameters(body, sdfg.name, order)
                 if dialect is cpf_lowering.Dialect.STANDALONE_C:
                     # ``__restrict__`` is the GNU spelling ``Data.as_arg`` emits because C++ has no
                     # ``restrict`` keyword. C does, and it is the one a C23 unit should carry.
                     body = re.sub(r'\b__restrict__\b', 'restrict', body)
     code = preamble(body, dialect) + body
     verify(code, sdfg.name, dialect)
-    return Rendering(code, prepared)
+    arguments = tuple(order) if order is not None else tuple(prepared.arglist())
+    return Rendering(code, prepared, arguments)
 
 
-def cpf(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> str:
+def cpf(sdfg: SDFG, validate: bool = True, language: str = 'c++', order: Optional[Sequence[str]] = None) -> str:
     """Render ``sdfg`` as one self-contained translation unit.
 
     The SDFG is copied first, so neither the lifetime demotions nor the code generator's own
@@ -988,10 +1059,13 @@ def cpf(sdfg: SDFG, validate: bool = True, language: str = 'c++') -> str:
     :param sdfg: the SDFG to render.
     :param validate: validate the SDFG during code generation.
     :param language: ``'c++'`` (the default) or ``'c'``.
+    :param order: the entry point's parameter names in the caller's own order; ``None`` keeps
+                  CPF's (see :func:`render`).
     :returns: the translation unit, defining ``extern "C" void <sdfg.name>(<arglist>)`` in C++ and
               ``void <sdfg.name>(<arglist>)`` in C, whose ABI is the same.
     :raises NotImplementedError: if the SDFG needs anything a single host unit cannot hold; the
                                  message names the construct.
-    :raises ValueError: if ``language`` is neither.
+    :raises ValueError: if ``language`` is neither, or if ``order`` is not the entry's parameter
+                        set.
     """
-    return render(sdfg, validate=validate, language=language).code
+    return render(sdfg, validate=validate, language=language, order=order).code
