@@ -34,21 +34,27 @@ def build_gather_loop() -> dace.SDFG:
     return sdfg
 
 
+def assignment_map(sdfg: dace.SDFG) -> dict[tuple[str, str], dict[str, str]]:
+    """Every interstate edge's assignments, keyed by the block labels it connects."""
+    return {(e.src.label, e.dst.label): dict(e.data.assignments) for e in sdfg.all_interstate_edges()}
+
+
 def test_cascade_refuses_to_create_an_interstate_race():
     sdfg = build_gather_loop()
     sdfg.validate()
+    before = assignment_map(sdfg)
 
-    CascadeInterstateEdgeAssignmentsUp().apply_pass(sdfg, {})
+    applied = CascadeInterstateEdgeAssignmentsUp().apply_pass(sdfg, {})
 
-    # Whatever the pass chose to do, the result must still be a valid SDFG: no edge may carry an
-    # assignment whose rhs reads a symbol another assignment on that same edge writes.
+    # ``validate`` already rejects an edge whose assignment reads a symbol a sibling assignment on
+    # that same edge writes (``dace/sdfg/validation.py``), so re-deriving that rule here would only
+    # copy the production check. What it does NOT say is that the pass declined: the contract is
+    # that ``ip_index`` stayed where it was instead of joining ``i = i + 1``.
     sdfg.validate()
-    for edge in sdfg.all_interstate_edges():
-        assigned = set(edge.data.assignments.keys())
-        for name, rhs in edge.data.assignments.items():
-            reads = set(dace.symbolic.free_symbols_and_functions(rhs))
-            racing = (reads & assigned) - {name}
-            assert not racing, f'edge assigns {name} = {rhs} while also writing {racing}'
+    assert applied is None, f'the pass rewrote a graph whose only candidate edge races: {applied}'
+    assert assignment_map(sdfg) == before, 'the refused cascade still moved an assignment'
+    assert before[('body', 'tail')] == {'i': 'i + 1'}
+    assert before[('tail', 'inner')] == {'ip_index': 'ip[i]'}
 
 
 if __name__ == '__main__':

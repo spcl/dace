@@ -7,14 +7,10 @@ the closed-form exit value under a fresh unique name and rewrites every
 post-loop reader to use it, so the original symbol is no longer "used after the
 loop" and the body can parallelise.
 """
-import contextlib
-import os
-
 import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import (MaterializeLoopExitSymbols,
                                                                                    _POST_PREFIX)
 
@@ -22,17 +18,8 @@ N = dace.symbol('N')
 step = dace.symbol('step')
 
 
-def _n_loops(sdfg):
-    return sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
-
-
 def _has_loop_exit_sym(sdfg, base_name):
     return any(s.startswith(f"{_POST_PREFIX}{base_name}_") for s in sdfg.symbols)
-
-
-def _l2m(sdfg):
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
-        sdfg.apply_transformations_repeated(LoopToMap)
 
 
 def test_post_loop_iv_symbol_materialised_with_unique_name():
@@ -64,7 +51,6 @@ def test_post_loop_iv_symbol_materialised_with_unique_name():
     sdfg.validate()
     assert res == 1
     assert _has_loop_exit_sym(sdfg, 'k')
-    assert 'k' in t.code.as_string or '_loop_exit_k' in t.code.as_string
     assert '_loop_exit_k' in t.code.as_string, (
         f"post-loop tasklet should read the materialised symbol; got code={t.code.as_string!r}")
 

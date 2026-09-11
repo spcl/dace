@@ -299,33 +299,43 @@ def test_lookalike_refuses_body_after_conditional():
     assert res is None, "unconditional body work alongside the cond is not pure argmax"
 
 
-def test_lookalike_refuses_carrier_constant_init():
-    """``x = 0.0`` (pre-loop init reads no array) -- still semantically argmax,
-    but the lift relies on the pre-loop carrier value as the WCR seed; if the
-    user starts at 0 and ALL of ``a`` is negative, the lifted reduce would
-    return ``0`` while the sequential loop returns the actual max. This
-    distinction is currently NOT enforced in v1 -- documented as a known
-    limitation; positive numerics test below verifies the common case still
-    works. (Refusal will be the design for v2 unless the init is provably
-    ``-inf`` / the array's lowest value.)"""
+@dace.program
+def constant_init_carrier(a: dace.float64[N], result: dace.float64[1]):
+    """``x = 0.0`` -- a constant pre-loop init instead of ``a[0]``."""
+    x = 0.0
+    for i in range(N):
+        if a[i] > x:
+            x = a[i]
+    result[0] = x
 
-    @dace.program
-    def kernel(a: dace.float64[N], result: dace.float64[1]):
-        x = 0.0  # constant init, not `a[0]`
-        for i in range(N):
-            if a[i] > x:
-                x = a[i]
-        result[0] = x
 
-    sdfg = kernel.to_sdfg(simplify=True)
-    res = ArgMaxLift().apply_pass(sdfg, {})
-    if res is not None:
-        # Currently accepted; verify the common "max is positive" case works.
-        sdfg.validate()
-        a = np.array([1.0, 5.0, -3.0, 2.0])
-        out = np.zeros(1)
-        sdfg(a=a, result=out, N=4)
-        assert np.isclose(out[0], 5.0)
+def test_constant_init_carrier_lifts_and_keeps_the_seed():
+    """A constant carrier init is lifted, with the seed kept as the WCR identity."""
+    sdfg = constant_init_carrier.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1, 'a constant carrier init is in scope for the lift'
+    sdfg.validate()
+    a = np.array([1.0, 5.0, -3.0, 2.0])
+    out = np.zeros(1)
+    sdfg(a=a, result=out, N=4)
+    assert np.isclose(out[0], 5.0)
+
+
+def test_constant_init_carrier_matches_the_sequential_loop_on_all_negative_data():
+    """All-negative data: the lifted reduce must answer the seed, exactly as the loop does."""
+    a = np.array([-1.0, -5.0, -3.0, -2.0])
+
+    ref_sdfg = constant_init_carrier.to_sdfg(simplify=True)
+    ref = np.zeros(1)
+    ref_sdfg(a=a.copy(), result=ref, N=4)
+
+    sdfg = constant_init_carrier.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    out = np.zeros(1)
+    sdfg(a=a.copy(), result=out, N=4)
+    assert np.isclose(out[0], ref[0]) and np.isclose(
+        out[0], 0.0), (f'the seed is part of the program: `x = 0.0` with all-negative data answers 0.0 both ways, '
+                       f'got lifted={out[0]} sequential={ref[0]}')
 
 
 # -----------------------------------------------------------------------------
@@ -1241,12 +1251,15 @@ def test_tsvc_s331_predicate_index_lifts_to_wcr_max_map():
     assert _num_loops(sdfg) == 0
     assert _num_wcr_max_maps(sdfg) == 1
 
+    # Matches at both ends of the range plus one in the middle: a first-match lowering
+    # answers 5 and a min-reduction answers 5, only the max-reduction answers ``n - 2``.
     n = 37
     rng = np.random.default_rng(331)
     a = np.abs(rng.standard_normal(n))
     a[5] = -1.0
     a[19] = -2.0
-    assert _run_s331(sdfg, a, n) == _reference_last_index(a) == 19
+    a[n - 2] = -1.0
+    assert _run_s331(sdfg, a, n) == _reference_last_index(a) == n - 2
 
 
 def test_predicate_index_empty_predicate_set_yields_the_seed():
@@ -1272,31 +1285,6 @@ def test_predicate_index_empty_predicate_set_yields_the_seed():
     # ... and a single match still beats the seed.
     a[11] = -0.5
     assert _run_s331(sdfg, a, n) == 11
-
-
-def test_predicate_index_last_match_wins_not_first():
-    """Distinguishes the max-reduction from a min- / first-match lowering: with matches
-    at both ends of the range only the LAST one is the sequential answer."""
-
-    @dace.program
-    def s331_last(a: dace.float64[N], b: dace.float64[2]):
-        j = -1
-        for i in range(N):
-            if a[i] < 0.0:
-                j = i
-        b[0] = j
-
-    sdfg = s331_last.to_sdfg(simplify=True)
-    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
-    sdfg.validate()
-
-    n = 40
-    a = np.abs(np.random.default_rng(3312).standard_normal(n)) + 1.0
-    a[2] = -1.0
-    a[3] = -1.0
-    a[n - 2] = -1.0
-    got = _run_s331(sdfg, a, n)
-    assert got == _reference_last_index(a) == n - 2, f'first-match lowering would have given 2, got {got}'
 
 
 def test_predicate_index_offset_loop_and_threshold_scalar():

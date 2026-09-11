@@ -96,18 +96,49 @@ def deep_producer_accumulates(a: dace.float64[N], b: dace.float64[N], c: dace.fl
         t = u
 
 
-def oracle(program, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
-    """The sequential loop run in Python -- one branch per kernel above, same arithmetic, same order."""
+def two_stage_oracle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
+    """The sequential loop of :func:`two_stage`, in Python, same arithmetic in the same order."""
     t = 0.0
     for i in range(a.shape[0]):
-        if program is deep_producer_calls:
-            s = math.sqrt(b[i]) * c[i]
-        elif program is deep_producer_accumulates:
-            s = b[i] * c[i] + t
-        else:
-            s = b[i] * c[i]
-        a[i] = s * 2.0 if program is deep_producer_accumulates else s + t
-        t = s * 1.0 if program is three_stage else s + 0.0
+        s = b[i] * c[i]
+        a[i] = s + t
+        t = s + 0.0
+
+
+def three_stage_oracle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
+    """:func:`three_stage`: one more pure stage, so the carry is ``(s + 0.0) * 1.0``."""
+    t = 0.0
+    for i in range(a.shape[0]):
+        s = b[i] * c[i]
+        a[i] = s + t
+        t = (s + 0.0) * 1.0
+
+
+def over_the_limit_oracle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
+    """:func:`over_the_limit`: four ``+ 0.0`` stages, each exact, so the carry is still ``s``."""
+    t = 0.0
+    for i in range(a.shape[0]):
+        s = b[i] * c[i]
+        a[i] = s + t
+        t = s + 0.0 + 0.0 + 0.0 + 0.0
+
+
+def deep_producer_calls_oracle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
+    """:func:`deep_producer_calls`: the head producer calls ``sqrt``."""
+    t = 0.0
+    for i in range(a.shape[0]):
+        s = math.sqrt(b[i]) * c[i]
+        a[i] = s + t
+        t = s + 0.0
+
+
+def deep_producer_accumulates_oracle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
+    """:func:`deep_producer_accumulates`: ``s`` reads the carry, so the loop accumulates."""
+    t = 0.0
+    for i in range(a.shape[0]):
+        s = b[i] * c[i] + t
+        a[i] = s * 2.0
+        t = s + 0.0
 
 
 def canonicalized(program, name: str) -> dace.SDFG:
@@ -132,14 +163,14 @@ def residual_loops(sdfg: dace.SDFG) -> list[str]:
     ]
 
 
-def run(program, name: str) -> dace.SDFG:
-    """Canonicalize, then hold the result against the sequential oracle bit for bit."""
+def run(program, name: str, oracle) -> dace.SDFG:
+    """Canonicalize, then hold the result against that kernel's sequential oracle bit for bit."""
     n = 64
     rng = np.random.default_rng(252)
     b = rng.random(n) + 1.0
     c = rng.random(n) + 1.0
     want = np.zeros(n)
-    oracle(program, want, b, c)
+    oracle(want, b, c)
 
     sdfg = canonicalized(program, name)
     got = np.zeros(n)
@@ -151,35 +182,35 @@ def run(program, name: str) -> dace.SDFG:
 
 def test_a_two_stage_chain_is_rematerialized():
     """The head producer reads a body-written transient, so the clone has to go one level deeper."""
-    sdfg = run(two_stage, 'remat_two_stage')
+    sdfg = run(two_stage, 'remat_two_stage', two_stage_oracle)
     assert len(remat_tasklets(sdfg)) == 2, 'the single read of the carry must mint one clone per stage'
     assert residual_loops(sdfg) == [], 'the carry is gone but the loop stayed sequential'
 
 
 def test_a_three_stage_chain_is_rematerialized():
     """Depth is not special-cased: the same proof applies once more."""
-    sdfg = run(three_stage, 'remat_three_stage')
+    sdfg = run(three_stage, 'remat_three_stage', three_stage_oracle)
     assert len(remat_tasklets(sdfg)) == 3, 'the single read of the carry must mint one clone per stage'
     assert residual_loops(sdfg) == [], 'the carry is gone but the loop stayed sequential'
 
 
 def test_a_chain_past_the_limit_is_refused():
     """The bound is a refusal, not a truncation -- a partial chain would recompute the wrong value."""
-    sdfg = run(over_the_limit, 'remat_over_the_limit')
+    sdfg = run(over_the_limit, 'remat_over_the_limit', over_the_limit_oracle)
     assert not remat_tasklets(sdfg), 'a chain past the chase limit was rematerialized anyway'
     assert residual_loops(sdfg), 'the refused chain must leave the loop sequential'
 
 
 def test_a_deep_calling_producer_is_refused():
     """A call may be a dace callback; cloning the chain would run it a second time."""
-    sdfg = run(deep_producer_calls, 'remat_deep_call')
+    sdfg = run(deep_producer_calls, 'remat_deep_call', deep_producer_calls_oracle)
     assert not remat_tasklets(sdfg), 'a call at the bottom of the chain was duplicated'
     assert residual_loops(sdfg), 'the refused chain must leave the loop sequential'
 
 
 def test_a_deep_carried_producer_is_refused():
     """``s = b[i]*c[i] + t`` reads the carry, so the value is accumulated, not delayed."""
-    sdfg = run(deep_producer_accumulates, 'remat_deep_carry')
+    sdfg = run(deep_producer_accumulates, 'remat_deep_carry', deep_producer_accumulates_oracle)
     assert not remat_tasklets(sdfg), 'an accumulation was rematerialized as a delay line'
 
 

@@ -28,6 +28,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol('N')  # horizontal (parallel) extent, e.g. columns / jl
@@ -36,6 +37,20 @@ K = dace.symbol('K')  # vertical (carried) extent, e.g. levels / jk
 
 def _nmaps(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+
+
+def carried_axis_loops(sdfg, extent: str):
+    """Residual ``LoopRegion`` s whose last iteration is a function of the symbol ``extent`` -- the
+    sweeps over the carried axis. A loop COUNT alone cannot tell one of those from an outer loop
+    that happened to survive for an unrelated reason."""
+    out = []
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        if not isinstance(region, LoopRegion):
+            continue
+        end = loop_analysis.get_loop_end(region)
+        if end is not None and extent in {str(s) for s in end.free_symbols}:
+            out.append(region.loop_variable)
+    return out
 
 
 def _nloops(sdfg):
@@ -113,13 +128,15 @@ def test_thomas_solve_value_preserving():
 
 
 def test_thomas_solve_keeps_vertical_axis_sequential():
-    """The two ``jk`` sweeps are loop-carried; they must remain
-    ``LoopRegion`` s after canonicalize (never become Maps). At least one
-    surviving loop is mandatory."""
+    """The two ``jk`` sweeps are loop-carried, so both must still be ``LoopRegion`` s over ``K``
+    after canonicalize, with only the independent ``jc`` axis lifted to a Map."""
     sdfg = thomas_solve.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nloops(sdfg) >= 1, 'the loop-carried vertical sweeps must stay sequential LoopRegions'
+    assert _nloops(sdfg) == 2, f'both jk sweeps must stay sequential LoopRegions, got {_nloops(sdfg)}'
+    assert len(carried_axis_loops(sdfg, 'K')) == 2, \
+        'a jk sweep was lifted to a Map -- parallelizing a Thomas sweep is a correctness bug'
+    assert _nmaps(sdfg) == 1, f'only the independent jc axis may map; got {_nmaps(sdfg)} maps'
 
 
 # ----------------------------------------------------------------------
@@ -169,7 +186,9 @@ def test_vertical_flux_prefix_scan_keeps_level_axis_sequential():
     sdfg = vertical_flux_prefix_scan.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nloops(sdfg) >= 1, 'the loop-carried level accumulation must stay a sequential LoopRegion'
+    assert _nloops(sdfg) == 1, f'exactly the carried level sweep may survive, got {_nloops(sdfg)}'
+    assert len(carried_axis_loops(sdfg, 'K')) == 1, 'the carried level accumulation was lifted to a Map'
+    assert _nmaps(sdfg) == 1, f'only the independent column axis may map; got {_nmaps(sdfg)} maps'
 
 
 # ----------------------------------------------------------------------

@@ -14,10 +14,49 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol('N')
 M = dace.symbol('M')
+
+
+def nmaps(sdfg: dace.SDFG) -> int:
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+
+
+def nloops(sdfg: dace.SDFG) -> int:
+    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+
+
+def nconds(sdfg: dace.SDFG) -> int:
+    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock))
+
+
+def structure(sdfg: dace.SDFG) -> str:
+    """Node/edge/memlet shape of the whole SDFG, with block LABELS and edge insertion order left
+    out: canonicalize re-mints a state name on every run and a state name is not the product, while
+    a node appearing, a memlet widening or a map range moving all show up as a diff.
+    """
+    lines: list[str] = []
+    for index, state in enumerate(sdfg.all_states()):
+        lines.append(f'STATE {index}')
+        ids = {n: i for i, n in enumerate(state.nodes())}
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode):
+                lines.append(f'  N{ids[node]} access {node.data}')
+            elif isinstance(node, nodes.Tasklet):
+                lines.append(f'  N{ids[node]} tasklet {node.code.as_string}')
+            elif isinstance(node, nodes.MapEntry):
+                lines.append(f'  N{ids[node]} map {node.map.params} {node.map.range}')
+            else:
+                lines.append(f'  N{ids[node]} {type(node).__name__}')
+        lines.extend(
+            sorted(f'  E N{ids[e.src]}:{e.src_conn} -> N{ids[e.dst]}:{e.dst_conn} {e.data}' for e in state.edges()))
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        lines.append(f'CFG {type(region).__name__} {len(region.nodes())}')
+    return '\n'.join(lines)
 
 
 @dace.program
@@ -76,6 +115,7 @@ def test_canonicalize_elementwise():
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, N=n)
     assert np.allclose(out, ref) and np.allclose(out, a * 2.0 + 1.0)
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the elementwise map did not survive as the one parallel map'
 
 
 def test_canonicalize_stencil_1d():
@@ -92,6 +132,7 @@ def test_canonicalize_stencil_1d():
     exp = np.zeros(n)
     exp[1:n - 1] = a[0:n - 2] + a[1:n - 1] + a[2:n]
     assert np.allclose(out, exp)
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the stencil did not stay one parallel map'
 
 
 def test_canonicalize_two_independent_fission_fuse_roundtrip():
@@ -106,6 +147,8 @@ def test_canonicalize_two_independent_fission_fuse_roundtrip():
     sdfg(a=a.copy(), b=out_b, c=c.copy(), d=out_d, N=n)
     assert np.allclose(out_b, ref_b) and np.allclose(out_d, ref_d)
     assert np.allclose(out_b, a + 1.0) and np.allclose(out_d, c * 3.0)
+    # Fission splits the body, fusion puts the two independent statements back under one map.
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), f'fission/fuse left {nmaps(sdfg)} maps, {nloops(sdfg)} loops'
 
 
 def test_canonicalize_jacobi_2d():
@@ -122,6 +165,7 @@ def test_canonicalize_jacobi_2d():
     exp = np.zeros((n, m))
     exp[1:n - 1, 1:m - 1] = 0.25 * (a[0:n - 2, 1:m - 1] + a[2:n, 1:m - 1] + a[1:n - 1, 0:m - 2] + a[1:n - 1, 2:m])
     assert np.allclose(out, exp)
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the 2-D nest must stay one collapsed map'
 
 
 def test_canonicalize_indirect_gather():
@@ -137,6 +181,7 @@ def test_canonicalize_indirect_gather():
     sdfg(a=a.copy(), idx=idx.copy(), b=out_b, c=c.copy(), e=out_e, N=n)
     assert np.allclose(out_b, ref_b) and np.allclose(out_e, ref_e)
     assert np.allclose(out_b, a[idx]) and np.allclose(out_e, c[idx])
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the indirection must not cost the parallel map'
 
 
 def test_canonicalize_strided_map_normalized():
@@ -152,6 +197,8 @@ def test_canonicalize_strided_map_normalized():
     exp = np.zeros(40)
     exp[3:31:4] = a[3:31:4] + 5.0
     assert np.allclose(out, exp)
+    # Constant trip count, so normalization unrolls the strided map into straight-line states.
+    assert (nmaps(sdfg), nloops(sdfg)) == (0, 0), f'the strided map was not unrolled: {nmaps(sdfg)} maps'
 
 
 @pytest.mark.parametrize('av', [1, 0])
@@ -167,11 +214,14 @@ def test_canonicalize_guarded_conditional(av):
     sdfg(a=a.copy(), b=out, active=np.array([av], np.int32), N=n)
     assert np.allclose(out, ref), f"mismatch active={av}"
     assert np.allclose(out, a * 2.0 if av > 0 else np.full(n, 7.0))
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the guarded body lost its parallel map'
+    assert nconds(sdfg) == 1, f'the data-dependent guard must survive; got {nconds(sdfg)} conditionals'
 
 
 def test_canonicalize_is_idempotent():
-    """Canonicalizing twice stays valid and value-preserving (fixed-point /
-    deterministic-key sanity for the pipeline)."""
+    """The second application is a FIXED POINT: same values is the weaker half, the structure being
+    byte-identical is the claim, since a pipeline that keeps rewriting its own output can stay
+    value-preserving forever while the graph drifts."""
     n = 22
     a, c = np.random.rand(n), np.random.rand(n)
     ref_b, ref_d = np.zeros(n), np.zeros(n)
@@ -179,7 +229,10 @@ def test_canonicalize_is_idempotent():
 
     sdfg = two_independent.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    canonicalize(sdfg, validate=True)  # second application must stay valid
+    once = structure(sdfg)
+    canonicalize(sdfg, validate=True)
+    assert structure(sdfg) == once, 'the second canonicalize rewrote its own output'
+
     out_b, out_d = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), b=out_b, c=c.copy(), d=out_d, N=n)
     assert np.allclose(out_b, ref_b) and np.allclose(out_d, ref_d)

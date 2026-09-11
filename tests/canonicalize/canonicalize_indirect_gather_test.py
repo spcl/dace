@@ -78,7 +78,10 @@ def test_indirect_gather_3nbr_keeps_parallel_map():
     sdfg = indirect_gather_3nbr.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) >= 1, 'the parallel jc gather must keep a Map'
+    assert _nmaps(sdfg) == 1, f'the parallel jc gather must be exactly one Map, got {_nmaps(sdfg)}'
+    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert len(entry.map.params) == 1 and str(entry.map.range) == '0:N', (
+        f'the surviving map must span the jc axis, got {entry.map.params} over {entry.map.range}')
 
 
 # ----------------------------------------------------------------------

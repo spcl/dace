@@ -24,6 +24,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.pipeline import _build_stages
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -299,12 +300,33 @@ def test_length_one_scalarization_runs_before_the_split():
     assert convert[0] < split[0]
 
 
+@dace.program
+def writes_a_length_one_parameter(a: dace.float64[N], total: dace.float64[1]):
+    """The frontend spelling of a scalar OUTPUT: a ``(1,)`` array in the signature."""
+    total[0] = 0.0
+    for i in range(N):
+        total[0] = total[0] + a[i]
+
+
 def test_length_one_scalarization_keeps_the_signature():
-    """Wired with the default knobs, so a signature-level length-1 array is NOT rewritten -- the
-    caller still passes a 1-element buffer."""
-    stages = _build_stages()
-    convert = next(p for _lbl, p in stages if isinstance(p, ConvertLengthOneArraysToScalars))
-    assert convert.preserve_abi is False
+    """A ``(1,)`` PARAMETER stays a 1-element buffer through canonicalize: the caller's ABI is not
+    the pass's to rewrite, however the transient temporaries inside are normalized."""
+    sdfg = writes_a_length_one_parameter.to_sdfg(simplify=True)
+    before_arglist = sdfg.signature_arglist()
+    before = sdfg.arrays['total']
+    canonicalize(sdfg, validate=True)
+
+    after = sdfg.arrays['total']
+    assert type(after) is type(before), f'the length-1 parameter was rescalarized to {type(after).__name__}'
+    assert after.shape == (1, ) and after.dtype == before.dtype
+    assert sdfg.signature_arglist() == before_arglist, 'canonicalize moved the entry signature'
+
+    n = 16
+    rng = np.random.default_rng(9)
+    a = rng.random(n)
+    total = np.zeros(1)
+    sdfg(a=a.copy(), total=total, N=n)
+    assert np.allclose(total[0], a.sum())
 
 
 if __name__ == '__main__':
