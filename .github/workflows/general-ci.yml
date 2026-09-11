@@ -47,7 +47,7 @@ jobs:
         # backend-marked FFT/BLAS suites themselves run in the libnode job.
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev libfftw3-dev
           libpapi-dev papi-tools g++-aarch64-linux-gnu
         pip-packages: flake8 pytest-xdist coverage
         codecov: 'true'
@@ -203,7 +203,7 @@ jobs:
         python-version: '3.14'
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
           g++-aarch64-linux-gnu
         pip-packages: pytest-xdist
         groups: testing
@@ -251,7 +251,7 @@ jobs:
         python-version: '3.14'
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         pip-packages: pytest-xdist
         groups: testing
 
@@ -401,7 +401,7 @@ jobs:
         # ``ninja -t compdb``, and dace/codegen/compiler.py only selects the Ninja generator when
         # ``ninja`` is on PATH. BLAS/LAPACK: the readable library-lowering test lowers BLAS library
         # nodes and the corpus kernels link against cBLAS/LAPACKE.
-        apt-packages: libyaml-dev cmake ninja-build libblas-dev libopenblas-dev liblapacke-dev
+        apt-packages: libyaml-dev cmake ninja-build libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         pip-packages: pytest-xdist rustworkx
         groups: testing
 
@@ -464,7 +464,7 @@ jobs:
         python-version: '3.14'
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         pip-packages: pytest-xdist
         groups: testing
 

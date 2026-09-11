@@ -38,7 +38,7 @@ jobs:
         python-version: '3.14'
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         groups: testing
 
     - name: Check out HPCAgent-Bench
