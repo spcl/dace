@@ -56,7 +56,7 @@ _PURE_ONLY_MATH_OPS = frozenset(
     {"atan2", "hypot", "fmod", "tan", "asin", "acos", "atan", "sinh", "cosh", "pow", "ipow", "**"})
 
 
-@functools.lru_cache(maxsize=1)
+@functools.lru_cache(maxsize=1, typed=True)
 def detect_host_isa() -> str:
     """Best K=1 tile-op ISA for the host, by CPU features (cached).
 
@@ -88,7 +88,7 @@ def detect_host_isa() -> str:
     return "SCALAR"
 
 
-@functools.lru_cache(maxsize=1)
+@functools.lru_cache(maxsize=1, typed=True)
 def host_supported_isas() -> frozenset:
     """The set of K=1 tile-op ISAs the host can EXECUTE (cached).
 
