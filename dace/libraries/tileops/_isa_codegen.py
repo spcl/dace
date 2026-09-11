@@ -469,9 +469,24 @@ def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Task
     node.validate(parent_sdfg, parent_state)
     vlen = _require_k1(node)
     out_dtype = _out_ctype(node, parent_state, parent_sdfg, "_o")
-    cond_dtype = _in_ctype(node, parent_state, parent_sdfg, "_mask")
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
     pre = []
+
+    # A loop-invariant predicate carries NO ``_mask`` connector (TileITE's kind_mask='Symbol')
+    # or a length-1 one ('Scalar'), while the runtime reads ``cond`` per lane -- so splat it.
+    if node.kind_mask == _TILE:
+        cond_dtype = _in_ctype(node, parent_state, parent_sdfg, "_mask")
+        mask_ptr = "_mask"
+    else:
+        cond_dtype = "bool"
+        if node.kind_mask == _SYMBOL:
+            cond_val = pyexpr2cpp(node.expr_mask)
+        else:
+            mask_desc = parent_sdfg.arrays[in_e["_mask"].data.data]
+            cond_val = _scalar_ref("_mask", mask_desc, in_e["_mask"].data.subset)
+        mask_ptr = "_bcmask"
+        pre.append(f"{cond_dtype} {mask_ptr}[{vlen}];")
+        pre.append(f"for (int _mi = 0; _mi < {vlen}; ++_mi) {mask_ptr}[_mi] = ({cond_dtype})({cond_val});")
 
     def arm(kind, conn, expr):
         """An arm lowers to a per-lane Tile read (``Broadcast=false``, via its
@@ -492,11 +507,12 @@ def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Task
     t_bcast, t_ptr = arm(node.kind_t, "_t", node.expr_t)
     e_bcast, e_ptr = arm(node.kind_e, "_e", node.expr_e)
     call = (f"dace::tileops::tile_ite<{out_dtype}, {cond_dtype}, {vlen}, "
-            f"{t_bcast}, {e_bcast}, false>(_o, _mask, {t_ptr}, {e_ptr}, nullptr);")
-    # A Symbol arm embeds its expression inline (no connector); only Tile / Scalar
-    # arms read through a connector. ``_mask`` is always a connector (the select
-    # predicate is materialised to a tile by ``_convert_ite``).
-    inputs = {"_mask"}
+            f"{t_bcast}, {e_bcast}, false>(_o, {mask_ptr}, {t_ptr}, {e_ptr}, nullptr);")
+    # A Symbol operand embeds its expression inline (no connector); only Tile / Scalar
+    # operands read through a connector.
+    inputs = set()
+    if node.kind_mask in (_TILE, _SCALAR):
+        inputs.add("_mask")
     if node.kind_t in (_TILE, _SCALAR):
         inputs.add("_t")
     if node.kind_e in (_TILE, _SCALAR):

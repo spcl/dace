@@ -17,7 +17,7 @@ import pytest
 
 import dace
 from dace import nodes
-from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops._dispatch import detect_host_isa, select_tile_implementation
 from dace.libraries.tileops.nodes.tile_ite import TileITE
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -72,3 +72,54 @@ def test_a_uniform_flag_select_vectorizes_and_matches_numpy(isa):
         out = np.zeros(N)
         sdfg(flags=flags, a=a, b=b, out=out)
         assert np.array_equal(out, a if flag else b), f'flag={flag} selected the wrong arm'
+
+
+def build_symbol_mask_ite_sdfg(name: str, isa: str):
+    """A standalone width-8 ``TileITE(kind_mask='Symbol')`` (both arms Tile), ISA-stamped but not
+    yet expanded. Returns ``(sdfg, state, ite)``, mirroring ``tile_ite_dtype_promotion_test.py``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol('flag_sym', dace.bool_)
+    sdfg.add_array('t', WIDTHS, dace.float64)
+    sdfg.add_array('e', WIDTHS, dace.float64)
+    sdfg.add_array('o', WIDTHS, dace.float64)
+    state = sdfg.add_state('main')
+    ite = TileITE(name='sel_ite', widths=WIDTHS, kind_mask='Symbol', expr_mask='flag_sym')
+    ite.target_isa = isa
+    ite.implementation = select_tile_implementation(ite)
+    state.add_node(ite)
+    t_an, e_an, o_an = state.add_access('t'), state.add_access('e'), state.add_access('o')
+    state.add_edge(t_an, None, ite, '_t', dace.Memlet(f't[0:{WIDTHS[0]}]'))
+    state.add_edge(e_an, None, ite, '_e', dace.Memlet(f'e[0:{WIDTHS[0]}]'))
+    state.add_edge(ite, '_o', o_an, None, dace.Memlet(f'o[0:{WIDTHS[0]}]'))
+    return sdfg, state, ite
+
+
+def test_symbol_mask_ite_expands_through_isa_backend_without_stopiteration():
+    """A kind_mask='Symbol' TileITE lowers via the host ISA backend, not just 'pure'."""
+    sdfg, state, _ite = build_symbol_mask_ite_sdfg('symbol_mask_ite_isa_expand', detect_host_isa())
+
+    sdfg.expand_library_nodes()  # used to raise StopIteration out of _in_ctype's next(...)
+
+    tasklets = [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]
+    assert len(tasklets) == 1, 'the Symbol-mask ITE did not lower to a single tasklet'
+    tasklet = tasklets[0]
+    assert '_mask' not in tasklet.in_connectors, 'a Symbol condition must carry no _mask connector'
+    code = tasklet.code.as_string
+    assert f'_bcmask[{WIDTHS[0]}]' in code, 'the predicate was not splatted into a per-lane buffer'
+    assert 'flag_sym' in code, 'the inline symbol expression is missing from the splat'
+
+
+@pytest.mark.parametrize('isa', ['SCALAR', detect_host_isa()])
+def test_symbol_mask_ite_selects_every_lane_from_the_splat(isa):
+    """The splatted predicate must pick the same arm on every lane, not just lane 0."""
+    sdfg, _state, _ite = build_symbol_mask_ite_sdfg(f'symbol_mask_ite_splat_{isa.lower()}', isa)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    compiled = sdfg.compile()
+
+    rng = np.random.default_rng(2)
+    t, e = rng.standard_normal(WIDTHS[0]), rng.standard_normal(WIDTHS[0])
+    for flag in (True, False):
+        out = np.zeros(WIDTHS[0])
+        compiled(t=t, e=e, o=out, flag_sym=flag)
+        assert np.array_equal(out, t if flag else e), f'isa={isa} flag={flag}: a lane picked the wrong arm'
