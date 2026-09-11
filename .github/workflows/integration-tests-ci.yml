@@ -54,9 +54,16 @@ jobs:
         ROOT=$(uv run python -c 'import pathlib, dace; print(pathlib.Path(dace.__file__).resolve().parents[1])')
         # No xdist: the SDFG is parsed once per process and memoized, so a worker per test would
         # pay the multi-minute parse again instead of sharing one.
+        # The three files after the regression pair are in-process and take seconds to a few
+        # minutes each. They live under ``tests/corpus/cloudsc``, so the directory rule in
+        # ``tests/conftest.py`` marks them ``integration`` and the general matrix deselects them --
+        # naming them here is the only thing that runs them at all.
         uv run pytest --tb=short --timeout_method thread --timeout=3600 \
           "$ROOT/tests/corpus/cloudsc_regression_test.py" \
-          "$ROOT/tests/passes/constant_propagation_on_cloudsc_test.py"
+          "$ROOT/tests/passes/constant_propagation_on_cloudsc_test.py" \
+          "$ROOT/tests/corpus/cloudsc/cloudsc_input_data_test.py" \
+          "$ROOT/tests/corpus/cloudsc/cloudsc_pipeline_coalesce_test.py" \
+          "$ROOT/tests/corpus/cloudsc/cloudsc_pipeline_offload_test.py"
 
   # The host leg of the default parallelization pipeline on CloudSC, on its own runner. It shares every phase with the
   # device leg the CSCS GPU pipeline runs (``ci/cscs_gpu.yml``: test_cscs_gh200_cloudsc_pipelines),

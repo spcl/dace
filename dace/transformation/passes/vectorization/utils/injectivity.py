@@ -48,6 +48,24 @@ def write_subset_is_injective(write_subset: subsets.Range, params: list[str]) ->
     return monotone_dim
 
 
+def equalized_range(write_subset: subsets.Range) -> subsets.Range:
+    """``write_subset`` with every same-named symbol collapsed onto ONE instance, group-wise.
+
+    A name denotes one value in an SDFG, but sympy keeps two instances of it apart whenever their
+    DaCe dtype or assumptions differ, and nothing downstream raises -- the analysis just answers
+    wrong. A diagonal ``a[i, i]`` nested into a body NestedSDFG propagates to a bound spelled
+    ``Min(i, i)`` over an ``int64`` and an ``int`` instance of ``i``: sympy will not fold it, and
+    differentiating it yields ``Heaviside(i - i)`` rather than the constant 1 the affine test wants.
+    Equalized as a GROUP, so a dim's begin and end stay comparable to each other.
+
+    :param write_subset: the range to normalize.
+    :returns: an equivalent range whose bounds are parsed sympy expressions over merged symbols.
+    """
+    bounds = symbolic.equalize_symbols_across(*(symbolic.pystr_to_symbolic(str(bound)) for rng in write_subset.ranges
+                                                for bound in rng))
+    return subsets.Range([bounds[d:d + 3] for d in range(0, len(bounds), 3)])
+
+
 def scatter_write_is_injective(write_subset: subsets.Range, lane_var: str, desc: dt.Data) -> bool:
     """True when concurrent tile lanes of ``lane_var`` provably write DISTINCT elements of ``desc``.
 
@@ -68,10 +86,11 @@ def scatter_write_is_injective(write_subset: subsets.Range, lane_var: str, desc:
     if not isinstance(desc, dt.Array) or isinstance(desc, dt.View):
         return False
     try:
-        for beg, end, _step in write_subset.ranges:
+        equalized = equalized_range(write_subset)
+        for beg, end, _step in equalized.ranges:
             for bound in (beg, end):
-                if len(symbolic.pystr_to_symbolic(str(bound)).atoms(symbolic.Subscript)) > 0:
+                if len(bound.atoms(symbolic.Subscript)) > 0:
                     return False
-        return write_subset_is_injective(write_subset, [lane_var])
+        return write_subset_is_injective(equalized, [lane_var])
     except Exception:  # noqa: BLE001 -- a bound we cannot parse is not a bound we can prove
         return False
