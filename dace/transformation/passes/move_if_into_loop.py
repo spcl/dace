@@ -40,13 +40,15 @@ import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import dace.symbolic
-from dace import SDFG
+from dace import Memlet, SDFG, subsets
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
-from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg import nodes
+from dace.sdfg.sdfg import InterstateEdge, memlets_in_ast
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState)
+from dace.sdfg import nodes, propagation
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.analysis import loop_analysis
 
 
 def _written(region: ControlFlowRegion) -> set:
@@ -186,6 +188,158 @@ def _loop_bound_symbols(loop: LoopRegion) -> set:
             names |= {str(s) for s in stmt.get_free_symbols()}
     names.discard(str(loop.loop_variable))
     return names
+
+
+def reads_outside(cb: ConditionalBlock) -> OrderedSet[str]:
+    """Names read anywhere in ``cb``'s SDFG outside ``cb``'s own subtree.
+
+    A prep name in this set is still live once the guard has moved, so its definition cannot
+    follow the guard down into a loop body.
+
+    :param cb: The guard whose subtree is left out of the sweep.
+    :returns: The names read by every other block, edge, loop bound, branch condition and data
+              descriptor of the same SDFG.
+    """
+    sd = cb.sdfg
+    inside = {id(r) for r in cb.all_control_flow_regions(recursive=False)}
+    reads: OrderedSet[str] = OrderedSet()
+    for region in sd.all_control_flow_regions(recursive=False):
+        if id(region) in inside:
+            continue
+        if isinstance(region, LoopRegion):
+            reads |= _loop_bound_symbols(region)
+        elif isinstance(region, ConditionalBlock):
+            for branch_cond, _branch in region.branches:
+                if branch_cond is not None:
+                    reads |= {str(s) for s in branch_cond.get_free_symbols()}
+        for blk in region.nodes():
+            if isinstance(blk, SDFGState):
+                reads |= {str(s) for s in blk.free_symbols}
+        for e in region.edges():
+            if not e.data.is_unconditional():
+                reads |= {str(s) for s in e.data.condition.get_free_symbols()}
+            for rhs in e.data.assignments.values():
+                reads |= _free(rhs)
+    for desc in sd.arrays.values():
+        reads |= {str(s) for s in desc.free_symbols}
+    return reads
+
+
+def body_may_overwrite(region: ControlFlowRegion, loop: LoopRegion, read: Memlet) -> bool:
+    """Whether some iteration of ``loop`` writes the location ``read`` names.
+
+    Every state of ``region`` ends up inside the loop body, so each of its writes happens once
+    per iteration; propagating one over the loop's own range turns that per-iteration subset into
+    the whole-loop footprint, which is what a loop-invariant read has to miss. A footprint that
+    does not come back provably disjoint counts as a hit.
+
+    :param region: The guarded region whose blocks become the loop body.
+    :param loop: The loop the guard is entering.
+    :param read: The read whose location must survive the whole loop unchanged.
+    :returns: ``True`` unless the read location is provably never written.
+    """
+    desc = loop.sdfg.arrays.get(read.data)
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if desc is None or read.subset is None or not loop.loop_variable:
+        return True
+    if start is None or end is None or stride in (None, 0):
+        return True
+    params = [str(loop.loop_variable)]
+    rng = subsets.Range([(start, end, stride)])
+    for st in region.all_states():
+        for n in st.nodes():
+            if not isinstance(n, nodes.AccessNode) or n.data != read.data:
+                continue
+            for e in st.in_edges(n):
+                if e.data.is_empty():
+                    continue
+                written = e.data.get_dst_subset(e, st) or e.data.subset
+                if written is None:
+                    return True
+                image = propagation.propagate_subset([Memlet(data=read.data, subset=written)], desc, params, rng)
+                if subsets.intersects(read.subset, image.subset) is not False:
+                    return True
+    return False
+
+
+def sinkable_prep(cb: ConditionalBlock, region: ControlFlowRegion, loop: LoopRegion) -> dict[str, str]:
+    """The guard's condition prep, when the whole of it may ride into the loop body with the guard.
+
+    ``_move`` relocates the guarded region only, so prep that sits on the PARENT loop's chain stays
+    behind and keeps that loop at two blocks -- the shape a perfect-nest walk refuses. Taking the
+    chain down is value-preserving when, for every assignment ``lhs = rhs`` on it: nothing outside
+    the guard reads ``lhs`` (the loop's own bounds count as outside, being evaluated before the
+    body runs), the moved body never redefines ``lhs``, ``rhs`` does not read the loop variable,
+    and the body writes neither a name nor a location ``rhs`` reads. Then the value computed once
+    before the loop and the value recomputed at the top of every iteration are the same value, and
+    no reader loses its definition. All or nothing: a partial sink leaves a block behind and buys
+    nothing.
+
+    :param cb: The guard being pushed into ``loop``.
+    :param region: ``cb``'s branch region -- the blocks that become the loop body.
+    :param loop: The loop the guard is entering.
+    :returns: The ``lhs -> rhs`` map to sink, empty when the chain cannot be taken as a whole.
+    """
+    parent = cb.parent_graph
+    if not isinstance(parent, LoopRegion):
+        return {}
+    order = _linear_order(parent)
+    if order is None or order[-1] is not cb or len(order) < 2:
+        return {}
+    if any(not isinstance(b, SDFGState) or b.number_of_nodes() != 0 for b in order[:-1]):
+        return {}
+    prep: dict[str, str] = {}
+    for a, b in zip(order, order[1:], strict=False):
+        prep.update(parent.edges_between(a, b)[0].data.assignments)
+    if not prep:
+        return {}
+    lvar = str(loop.loop_variable)
+    written = _written(region)
+    bounds = _loop_bound_symbols(loop)
+    live = reads_outside(cb)
+    arrays = cb.sdfg.arrays
+    for lhs, rhs in prep.items():
+        rfree = _free(rhs)
+        if lhs in written or lhs in bounds or lhs in live or lhs in rfree:
+            return {}
+        if lvar in rfree or (rfree & written):
+            return {}
+        try:
+            reads = memlets_in_ast(CodeBlock(rhs).code[0], arrays, include_scalars=True)
+        except Exception:
+            return {}
+        if any(body_may_overwrite(region, loop, r) for r in reads):
+            return {}
+    return prep
+
+
+def splice_empty_prep_states(parent: ControlFlowRegion, block: ControlFlowBlock) -> None:
+    """Drop the emptied boundary states that only forward into ``block``.
+
+    :param parent: The region holding ``block``.
+    :param block: The block whose empty predecessors are spliced out.
+    """
+    while True:
+        for pred in parent.predecessors(block):
+            if not isinstance(pred, SDFGState) or pred.number_of_nodes() != 0:
+                continue
+            in_e = list(parent.in_edges(pred))
+            out_e = list(parent.out_edges(pred))
+            if len(out_e) != 1 or any(not (e.data.is_unconditional() and not e.data.assignments) for e in in_e + out_e):
+                continue
+            was_start = parent.start_block is pred
+            for e in in_e:
+                parent.add_edge(e.src, block, copy.deepcopy(e.data))
+            for e in in_e + out_e:
+                parent.remove_edge(e)
+            parent.remove_node(pred)
+            if was_start:
+                parent.start_block = parent.node_id(block)
+            break
+        else:
+            return
 
 
 def _match_imperfect(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, ControlFlowRegion]]:
@@ -334,6 +488,7 @@ class MoveIfIntoLoop(ppl.Pass):
         in_edges = list(parent.in_edges(cb))
         out_edges = list(parent.out_edges(cb))
         is_start = parent.start_block is cb
+        sunk = sinkable_prep(cb, region, _linear_order(region)[-1])
 
         # Work on a copy of the branch region; splice the loop's body in
         # place of the loop so the region becomes  prep... -> body...
@@ -365,6 +520,8 @@ class MoveIfIntoLoop(ppl.Pass):
         for b in list(new_loop.nodes()):
             new_loop.remove_node(b)
         new_loop.add_node(inner_cb, is_start_block=True, ensure_unique_name=True)
+        if sunk:
+            new_loop.add_state_before(inner_cb, f'{new_loop.label}_prep', is_start_block=True, assignments=dict(sunk))
 
         parent.add_node(new_loop, ensure_unique_name=True)
         for e in in_edges:
@@ -376,6 +533,13 @@ class MoveIfIntoLoop(ppl.Pass):
         parent.remove_node(cb)
         if is_start:
             parent.start_block = parent.node_id(new_loop)
+        if sunk:
+            # ``sinkable_prep`` vetted the whole parent chain, so every edge left here carries
+            # prep that now lives in the loop body; stripped, the chain's states splice away.
+            for e in parent.edges():
+                for lhs in sunk:
+                    e.data.assignments.pop(lhs, None)
+            splice_empty_prep_states(parent, new_loop)
 
     @staticmethod
     def _move_imperfect(cb: ConditionalBlock, cond: CodeBlock, region: ControlFlowRegion):
