@@ -1110,6 +1110,18 @@ class int_ceil(sympy.Function):
         return True
 
 
+def relax_int_floor(expr: SymbolicType) -> SymbolicType:
+    """Rewrite ``int_floor``/``int_ceil`` to SymPy's own ``floor``/``ceiling``.
+
+    Both are bare ``Function`` heads to SymPy, which relates neither of them to the ``floor`` that
+    Python's ``//`` operator produces. Normalize both sides through this before comparing them.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    expr = expr.replace(int_floor, lambda x, y: sympy.floor(x / y))
+    return expr.replace(int_ceil, lambda x, y: sympy.ceiling(x / y))
+
+
 class OR(sympy.Function):
 
     @classmethod
@@ -2696,7 +2708,7 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
     if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
         return a != b
     else:
-        a, b = equalize_symbols(a, b)
+        a, b = (relax_int_floor(x) for x in equalize_symbols(a, b))
         # NOTE: We simplify in an attempt to remove inconvenient methods, such
         # as `ceiling` and `floor`, if the symbol assumptions allow it.
         # We subtract and compare to zero according to the SymPy documentation
