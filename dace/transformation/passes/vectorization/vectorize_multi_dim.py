@@ -704,10 +704,12 @@ def _resolve_body_nsdfg_symbol_aliases(sdfg: dace.SDFG) -> None:
             if inner_sym in inner.symbols:
                 inner.remove_symbol(inner_sym)
             node.symbol_mapping.pop(inner_sym, None)
-            # Rebind the target identically so the NSDFG still declares it (int-typed iter
-            # var). Usually already an inner symbol; this only fills a genuinely-new name.
+            # Rebind the target identically so the NSDFG still declares it. Take the OUTER
+            # declaration's dtype: one name at two dtypes is two SYMBOLS here, so a guessed
+            # int64 against an int32 map param leaves Min(i, i) that never folds and every
+            # later consumer inherits an opaque bound.
             if outer_sym not in inner.symbols:
-                inner.add_symbol(outer_sym, dace.int64)
+                inner.add_symbol(outer_sym, sdfg.symbols.get(outer_sym, dace.int64))
             node.symbol_mapping[outer_sym] = symbolic.pystr_to_symbolic(outer_sym)
 
 
