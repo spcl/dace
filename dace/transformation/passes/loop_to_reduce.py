@@ -343,10 +343,8 @@ class AccumulatorCopyChainToWCR(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """:returns: The number of rewrites, or ``None`` if the SDFG was left untouched."""
-        from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        applied = PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
-        count = sum(len(v) for v in applied.values()) if applied else 0
+        from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
+        count = EliminateTrivialTasklets().apply_pass(sdfg, {}) or 0
         count += _augassign_to_wcr_per_state(sdfg)
         return count or None
 
