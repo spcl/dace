@@ -230,7 +230,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            emission_style: str = "default",
                            vectorize_config: str = "tile_nodes",
                            scalar_remainder_emit: str = "scalar",
-                           expect_no_tiling: bool = False):
+                           expect_no_tiling: bool = False,
+                           canon_lift_copy: bool = True):
 
     import pytest as _pytest
     # ``--run-full-matrix`` hook: when the flag is set, the test was
@@ -373,7 +374,14 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # so or not; that entry call is gone -- it cost 98% of the pass -- and the prerequisite is now
     # the caller's. Only the copy is canonicalized: the reference stays the plain scalar oracle the
     # numbers are compared against.
-    canonicalize(copy_sdfg, validate=True)
+    #
+    # ``canon_lift_copy=False`` hands the tiler the raw map a pure copy / zero-init kernel would
+    # otherwise lose: canonicalize's ``lift_copy`` stage rewrites ``for i, j: A[i, j] = 0.0`` into a
+    # ``FillLibraryNode``, an opaque library node with no per-lane body to widen
+    # (``map_predicates.map_body_has_library_node``), so every tile pass skips the map and the
+    # vectorizer emits nothing. The knob is the documented escape hatch for exactly that -- a
+    # constant-store kernel is the SUBJECT of these tests, so they must not let the lift consume it.
+    canonicalize(copy_sdfg, validate=True, lift_copy=canon_lift_copy)
 
     if vectorize_config == "tile_nodes":
         # Tile-op path (``VectorizeCPUMultiDim``), hybrid emit:

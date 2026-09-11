@@ -6,13 +6,20 @@ constraints against them lived in ``tests/canonicalize/canonicalize_pipeline_sta
 passes now live HERE, so the constraints do too -- otherwise they are asserted in a file where
 their subject no longer exists, which is a test that passes by skipping.
 """
+import warnings
+
 import pytest
 
+import dace
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
-from dace.transformation.passes.vectorization.vectorize_multi_dim import (VectorizeCPUMultiDim,
+from dace.transformation.passes.vectorization.vectorize_multi_dim import (EMITTABLE_TILE_NODE_TYPES,
+                                                                          VectorizeCPUMultiDim,
                                                                           vectorization_prep_units)
+
+N_SYM = dace.symbol('N')
 
 
 def _pass_names(**knobs) -> list:
@@ -82,6 +89,65 @@ def test_the_semantic_lifts_do_not_run_inside_the_vectorizer():
     names = _pass_names()
     for lift in ('LiftInv', 'LoopToSymm', 'AssignmentAndCopyKernelToMemsetAndMemcpy'):
         assert lift not in names
+
+
+def fill_lifted_memset(name: str) -> dace.SDFG:
+    """``for i: A[i, 0:N] = 0.0`` with the row store already a ``FillLibraryNode`` -- the shape
+    canonicalize's ``lift_copy`` stage leaves behind for a pure zero-init nest."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [N_SYM, N_SYM], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('rows', {'i': '0:N'})
+    node = FillLibraryNode(name='memsetLib_A_0')
+    state.add_node(node)
+    state.add_nedge(entry, node, dace.Memlet())
+    state.add_memlet_path(node,
+                          exit_node,
+                          state.add_write('A'),
+                          src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet('A[i, 0:N]'))
+    return sdfg
+
+
+def elementwise_copy(name: str) -> dace.SDFG:
+    """``for i: B[i] = A[i] * 2`` -- an ordinary per-lane body the tiler does widen."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [N_SYM], dace.float64)
+    sdfg.add_array('B', [N_SYM], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('lanes', {'i': '0:N'})
+    tasklet = state.add_tasklet('scale', {'inp'}, {'out'}, 'out = inp * 2.0')
+    state.add_memlet_path(state.add_read('A'), entry, tasklet, dst_conn='inp', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('B'), src_conn='out', memlet=dace.Memlet('B[i]'))
+    return sdfg
+
+
+def vectorize_and_collect_warnings(sdfg: dace.SDFG) -> list[str]:
+    """Run the CPU tile orchestrator over ``sdfg`` and return the warning messages it emitted."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    return [str(w.message) for w in caught]
+
+
+def test_a_kernel_the_tiler_leaves_untouched_says_so():
+    """A map whose body is an opaque library node passes no tile-candidate gate, so every tile
+    pass skips it and the orchestrator emits nothing -- and it must SAY it emitted nothing. The
+    silence read exactly like a successful vectorization, which is how a caller ended up comparing
+    a kernel against itself."""
+    messages = vectorize_and_collect_warnings(fill_lifted_memset('untiled_memset'))
+    assert any('tiled nothing' in m for m in messages), messages
+    # Not a refusal: nothing was restored, and the callers that audit refusals grep that phrase.
+    assert not any('refusing to vectorize' in m for m in messages), messages
+
+
+def test_a_kernel_that_does_tile_stays_quiet():
+    """The empty-bracket control for the assertion above: bracket a kernel the tiler DOES widen
+    and the same counter must read zero, or 'tiled nothing' proves nothing."""
+    sdfg = elementwise_copy('tiled_scale')
+    messages = vectorize_and_collect_warnings(sdfg)
+    assert not any('tiled nothing' in m for m in messages), messages
+    assert any(isinstance(node, EMITTABLE_TILE_NODE_TYPES) for node, _ in sdfg.all_nodes_recursive())
 
 
 if __name__ == '__main__':

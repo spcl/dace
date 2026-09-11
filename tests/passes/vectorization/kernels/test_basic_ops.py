@@ -126,12 +126,6 @@ def memset_4d(A: dace.float64[N, N, N, N]):
                     A[i, j, k, m] = 0.0
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A pure constant store (A[...] = 0.0) emits ZERO tile lib nodes, with no '
-                   'VectorizeUnsupported and no warning at all -- VectorizeCPUMultiDim is a silent '
-                   'no-op on it, so this test compared the reference against itself until the harness '
-                   'tile-node assertion exposed it on 2026-09-11. Drop the mark when the vectorizer '
-                   'lowers a constant store to a TileStore.')
 def test_memset_4d(remainder_strategy):
     N = 8
     A = numpy.random.random((N, N, N, N))
@@ -146,6 +140,7 @@ def test_memset_4d(remainder_strategy):
                            },
                            vector_width=8,
                            sdfg_name="memset_4d",
+                           canon_lift_copy=False,
                            remainder_strategy=remainder_strategy)
 
 
@@ -261,12 +256,6 @@ def test_vsubs_cpu(remainder_strategy):
                            remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A pure constant store (A[...] = 0.0) emits ZERO tile lib nodes, with no '
-                   'VectorizeUnsupported and no warning at all -- VectorizeCPUMultiDim is a silent '
-                   'no-op on it, so this test compared the reference against itself until the harness '
-                   'tile-node assertion exposed it on 2026-09-11. Drop the mark when the vectorizer '
-                   'lowers a constant store to a TileStore.')
 def test_memset(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -279,15 +268,10 @@ def test_memset(remainder_strategy):
                            vector_width=8,
                            sdfg_name="memset",
                            exact=0.0,
+                           canon_lift_copy=False,
                            remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A pure constant store (A[...] = 0.0) emits ZERO tile lib nodes, with no '
-                   'VectorizeUnsupported and no warning at all -- VectorizeCPUMultiDim is a silent '
-                   'no-op on it, so this test compared the reference against itself until the harness '
-                   'tile-node assertion exposed it on 2026-09-11. Drop the mark when the vectorizer '
-                   'lowers a constant store to a TileStore.')
 def test_memset_with_fuse_and_copyin_enabled(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -300,15 +284,10 @@ def test_memset_with_fuse_and_copyin_enabled(remainder_strategy):
                            vector_width=8,
                            sdfg_name="memset_with_fuse_and_copy_in_enabled",
                            exact=0.0,
+                           canon_lift_copy=False,
                            remainder_strategy=remainder_strategy)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='A pure constant store (A[...] = 0.0) emits ZERO tile lib nodes, with no '
-                   'VectorizeUnsupported and no warning at all -- VectorizeCPUMultiDim is a silent '
-                   'no-op on it, so this test compared the reference against itself until the harness '
-                   'tile-node assertion exposed it on 2026-09-11. Drop the mark when the vectorizer '
-                   'lowers a constant store to a TileStore.')
 def test_nested_memset_with_fuse_and_copyin_enabled(remainder_strategy):
     N = 64
     A = numpy.random.random((N, N))
@@ -322,6 +301,7 @@ def test_nested_memset_with_fuse_and_copyin_enabled(remainder_strategy):
                            sdfg_name="nested_memset_with_fuse_and_copy_in_enabled",
                            simplify=False,
                            exact=0.0,
+                           canon_lift_copy=False,
                            remainder_strategy=remainder_strategy)
 
 

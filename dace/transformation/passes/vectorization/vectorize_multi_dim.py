@@ -103,14 +103,18 @@ from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepe
 from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import (NormalizeMaskedWriteTasklets,
                                                                                       NormalizeTernaryTasklets)
-from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore,
-                                          TileUnop)
+from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA,
+                                          TileReduce, TileStore, TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
 _TILE_NODE_TYPES = (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
+
+#: Every node the emit stage can produce, including the two the selector above does not stamp.
+#: Used ONLY by the empty-emit audit, which must not report a kernel that did tile.
+EMITTABLE_TILE_NODE_TYPES = _TILE_NODE_TYPES + (TileIota, TileMMA)
 
 
 def vectorization_prep_units() -> tuple[ppl.Pass, ...]:
@@ -1254,6 +1258,17 @@ class VectorizeMultiDim(ppl.Pipeline):
             # second whole-SDFG deepcopy of it.
             restore_sdfg_in_place(sdfg, snapshot)
             return None
+        # An empty emit is not a success, and silence there reads exactly like a tiled run. Every
+        # tile pass selects through ``is_vectorizable_map`` and SKIPS what it refuses, so a map that
+        # never passes that gate (an opaque library node in the body -- canonicalize's ``lift_copy``
+        # ``FillLibraryNode`` is the common one) produces nothing with no ``VectorizeUnsupported``
+        # to report. Counted HERE, before ``expand_library_nodes`` lowers the tile nodes away. Not
+        # worded as a refusal: nothing was restored, and callers grep ``refusing to vectorize``.
+        if not any(isinstance(node, EMITTABLE_TILE_NODE_TYPES) for node, _ in sdfg.all_nodes_recursive()):
+            warnings.warn(
+                f"VectorizeMultiDim: tiled nothing in {sdfg.name!r} -- no map passed the tile-candidate "
+                f"gate, so the SDFG is correct but un-vectorized",
+                stacklevel=2)
         # Stamp ``target_isa`` + the concrete implementation on every tile lib node
         # UNCONDITIONALLY, even when expansion is deferred: a deferred SDFG
         # (``expand_tile_nodes=False``) is expanded later by the caller / ``compile()``, so its
