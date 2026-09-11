@@ -111,9 +111,7 @@ def test_tile_load_pure_replicate_k1(k):
     SRC = rng.random(W // k)
     DST = np.zeros(W)
     sdfg(SRC=SRC, DST=DST)
-    # Lane ``l`` should read SRC[l // k]
-    expected = np.array([SRC[l // k] for l in range(W)])
-    np.testing.assert_allclose(DST, expected, rtol=0, atol=0)
+    np.testing.assert_allclose(DST, np.repeat(SRC, k), rtol=0, atol=0)
 
 
 def test_tile_load_pure_replicate_factor_1_is_contiguous():

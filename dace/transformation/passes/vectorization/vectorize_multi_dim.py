@@ -86,10 +86,7 @@ from dace.transformation.passes.vectorization.remove_empty_states import RemoveE
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
-try:
-    from dace.transformation.passes.normalize_wcr import NormalizeWCR
-except ImportError:  # transition: canonicalize's shared reduction-normalize still lives in normalize_nested_reduction
-    from dace.transformation.passes.normalize_nested_reduction import NormalizeWCR
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
 from dace.transformation.passes.vectorization.predicate_masked_reduction import PredicateMaskedReduction
 from dace.transformation.passes.vectorization.reduction_scalar_local_prep import PrepareReductionForWidening

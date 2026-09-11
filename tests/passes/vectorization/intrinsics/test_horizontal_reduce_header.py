@@ -9,9 +9,12 @@ pairwise tree in ``cpu_vectorizable_math_common.h``; the scalar backend
 delegates straight to it. This test compiles the real codegen header
 (scalar-fallback path) with ``g++`` and checks every supported op
 against a reference fold, including the odd-width and width-1 edges.
-The avx512 / neon / sve single-instruction variants are validated on
-their respective hardware (this host is scalar-fallback only).
+The avx512 / neon / sve single-instruction variants COMPILE wherever their target compiler
+exists -- that needs no such CPU, and gating the compile on one is how an x86 box without
+AVX-512 came to skip the whole intrinsic path and report green. Only EXECUTION is gated,
+by mark (``avx512`` / ``arm_cross``), never by a runtime skip.
 """
+import platform
 import shutil
 import subprocess
 import textwrap
@@ -22,6 +25,10 @@ import pytest
 import dace
 
 _INCLUDE = str(Path(dace.__file__).parent / "runtime" / "include")
+#: The standard DaCe builds generated code with. Pinning c++17 here un-gates the day the runtime
+#: headers reach for a C++20 feature -- ``dace/codegen/common.py`` clamps generated code to >= 20.
+_STD = f"-std=c++{dace.Config.get('compiler', 'cpp_standard')}"
+_HOST_IS_X86 = platform.machine().lower() in ("x86_64", "amd64", "x64")
 
 _SRC = textwrap.dedent("""
     #include "dace/cpu_vectorizable_math.h"
@@ -81,42 +88,45 @@ _AVX512_SRC = textwrap.dedent("""
     """)
 
 
-def _host_has_avx512():
-    try:
-        out = subprocess.run(["g++", "-mavx512f", "-dM", "-E", "-xc++", "-"], input="", capture_output=True, text=True)
-        if out.returncode != 0:
-            return False
-        import pathlib
-        cpuinfo = pathlib.Path("/proc/cpuinfo")
-        return cpuinfo.exists() and "avx512f" in cpuinfo.read_text()
-    except Exception:
-        return False
-
-
 @pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
 def test_scalar_horizontal_reduce_compiles_and_is_correct(tmp_path):
     src = tmp_path / "hreduce_check.cpp"
     src.write_text(_SRC)
     exe = tmp_path / "hreduce_check"
-    compile_res = subprocess.run(["g++", "-std=c++17", "-I", _INCLUDE,
-                                  str(src), "-o", str(exe)],
-                                 capture_output=True,
-                                 text=True)
+    compile_res = subprocess.run(
+        ["g++", _STD, "-I", _INCLUDE, str(src), "-o", str(exe)], capture_output=True, text=True)
     assert compile_res.returncode == 0, f"compile failed:\n{compile_res.stderr}"
     run_res = subprocess.run([str(exe)], capture_output=True, text=True)
     assert run_res.returncode == 0, f"runtime check failed:\n{run_res.stdout}"
     assert "ALL OK" in run_res.stdout, run_res.stdout
 
 
-@pytest.mark.skipif(not _host_has_avx512(), reason="host CPU/g++ lacks AVX-512")
-def test_avx512_horizontal_reduce_compiles_and_is_correct(tmp_path):
+def build_avx512(tmp_path):
+    """Build the AVX-512 driver; returns the executable path and the compiler result."""
     src = tmp_path / "hred_avx512.cpp"
     src.write_text(_AVX512_SRC)
     exe = tmp_path / "hred_avx512"
-    compile_res = subprocess.run(
-        ["g++", "-std=c++17", "-mavx512f", "-I", _INCLUDE,
-         str(src), "-o", str(exe)], capture_output=True, text=True)
-    assert compile_res.returncode == 0, f"compile failed:\n{compile_res.stderr}"
+    res = subprocess.run(["g++", _STD, "-mavx512f", "-I", _INCLUDE,
+                          str(src), "-o", str(exe)],
+                         capture_output=True,
+                         text=True)
+    return exe, res
+
+
+@pytest.mark.skipif(not _HOST_IS_X86, reason="AVX-512 intrinsics need an x86-targeting compiler")
+def test_avx512_horizontal_reduce_compiles(tmp_path):
+    """Building the AVX-512 header needs the compiler, NOT the instruction set: an x86 box without
+    an AVX-512 CPU used to skip this whole file's intrinsic path and report green."""
+    _exe, res = build_avx512(tmp_path)
+    assert res.returncode == 0, f"compile failed:\n{res.stderr}"
+
+
+@pytest.mark.avx512
+@pytest.mark.skipif(not _HOST_IS_X86, reason="AVX-512 intrinsics need an x86-targeting compiler")
+def test_avx512_horizontal_reduce_is_correct(tmp_path):
+    """Executing those instructions is what needs the hardware, so only this half is mark-gated."""
+    exe, res = build_avx512(tmp_path)
+    assert res.returncode == 0, f"compile failed:\n{res.stderr}"
     run_res = subprocess.run([str(exe)], capture_output=True, text=True)
     assert run_res.returncode == 0, f"runtime check failed:\n{run_res.stdout}"
     assert "ALL OK" in run_res.stdout, run_res.stdout
@@ -155,20 +165,23 @@ def _aarch64_cxx():
 def _syntax_only_ok(driver, march_flags, tmp_path, name):
     src = tmp_path / f"{name}.cpp"
     src.write_text(_ARM_TU)
-    res = subprocess.run(driver + ["-std=c++17", "-fsyntax-only"] + march_flags +
-                         ["-I", _INCLUDE, str(src)],
+    res = subprocess.run(driver + [_STD, "-fsyntax-only"] + march_flags + ["-I", _INCLUDE, str(src)],
                          capture_output=True,
                          text=True)
     return res.returncode == 0, res.stderr
 
 
-@pytest.mark.skipif(_aarch64_cxx() is None, reason="no aarch64 C++ cross toolchain (NEON/SVE syntax-test skipped)")
+@pytest.mark.arm_cross
 @pytest.mark.parametrize("variant,flags", [
     ("neon", ["-march=armv8-a"]),
     ("sve", ["-march=armv8-a+sve", "-D__DACE_USE_SVE=1"]),
 ])
 def test_arm_horizontal_reduce_syntax_only(variant, flags, tmp_path):
-    ok, err = _syntax_only_ok(_aarch64_cxx(), flags, tmp_path, f"hred_{variant}")
+    """Mark-gated rather than runtime-skipped: an absent cross toolchain is a deselection the
+    selection line has to state, not a hole that reports green on every x86 box."""
+    driver = _aarch64_cxx()
+    assert driver is not None, "aarch64-linux-gnu-g++ is required by the arm_cross mark"
+    ok, err = _syntax_only_ok(driver, flags, tmp_path, f"hred_{variant}")
     assert ok, f"{variant} -fsyntax-only failed:\n{err}"
 
 

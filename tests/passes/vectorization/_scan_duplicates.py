@@ -163,7 +163,7 @@ def main():
             all_tests[(rel, name)] = fn
             test_kernel[(rel, name)] = mapping.get(name)
     print("=" * 78)
-    print(f"K0 SCANNER REPORT")
+    print("K0 SCANNER REPORT")
     print(f"  Files scanned: {len(file_paths)}")
     print(f"  @dace.program kernels: {sum(1 for _,n in all_programs if not n.startswith('_get_'))}")
     print(f"  _get_*_sdfg helpers: {sum(1 for _,n in all_programs if n.startswith('_get_'))}")

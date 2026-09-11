@@ -3,12 +3,10 @@
 
 Lives in ``tests/passes/vectorization/`` (not ``tests/passes/``) so the
 opt-in fixtures defined in ``tests/passes/vectorization/conftest.py``
-(``tile_emit_mode``, ``branch_mode``, ``remainder_strategy``,
+(``branch_mode``, ``remainder_strategy``,
 ``emission_style``, ``vectorize_config``) are visible to the test.
 """
 
-import pytest
-# [UNSKIPPED-FOR-ASSESSMENT 2026-06-14] pytestmark = pytest.mark.skip(reason="legacy K=1/K=2 descent path frozen during walker-primary migration -- this test goes through VectorizeCPUMultiDim or the harness; both depend on the legacy descent + emit infrastructure being removed. Will be revived (or replaced by walker-primary equivalents) after the new orchestrator pipeline lands end-to-end.")
 import pytest
 import numpy as np
 
@@ -53,8 +51,7 @@ def _resolve_canonical(kernel_name):
 
 
 @pytest.mark.parametrize("kernel_name", _K6_HARD_CANONICALS)
-def test_tsvc_hardening_canonicals(kernel_name, tile_emit_mode, branch_mode, remainder_strategy, emission_style,
-                                   vectorize_config):
+def test_tsvc_hardening_canonicals(kernel_name, branch_mode, remainder_strategy, emission_style, vectorize_config):
     """K6: hard TSVC canonicals under the full knob matrix.
 
     Nine kernels covering stencil / branch / multi-stmt / gather /
@@ -69,7 +66,6 @@ def test_tsvc_hardening_canonicals(kernel_name, tile_emit_mode, branch_mode, rem
     orchestrator does not support.
     """
     from tests.passes.vectorization.helpers.harness import run_vectorization_test
-    insert_copies = tile_emit_mode
     kernel = _resolve_canonical(kernel_name)
     # Use the divisible LEN per regime (the non-divisible variant is
     # already exercised in ``test_tsvc_vectorization``; here we focus on
@@ -94,6 +90,5 @@ def test_tsvc_hardening_canonicals(kernel_name, tile_emit_mode, branch_mode, rem
         branch_mode=branch_mode,
         remainder_strategy=remainder_strategy,
         emission_style=emission_style,
-        insert_copies=insert_copies,
         vectorize_config=vectorize_config,
     )

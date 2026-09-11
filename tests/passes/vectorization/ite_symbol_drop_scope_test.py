@@ -105,9 +105,26 @@ def test_unconsumed_symbol_is_still_dropped():
     assert 'dead_sym' not in outer.symbols
 
 
+@pytest.mark.parametrize('kind', ['condition', 'tasklet'])
+def test_the_public_pass_leaves_a_validating_sdfg(kind):
+    """The shipped symptom, through the public entry point: "Missing symbols on nested SDFG".
+
+    The tests above drive ``_drop_interstate_symbol`` and its gate directly, so a deletion that
+    unbinds the nested guard shows up only as a count -- never as the validation failure the bug
+    was actually reported as.
+    """
+    outer = build_nested_consumer(kind)
+
+    SameWriteSetIfElseToITECFG().apply_pass(outer, {})
+
+    outer.validate()
+
+
 if __name__ == '__main__':
     test_nested_consumer_is_visible('condition')
     test_nested_consumer_is_visible('tasklet')
     test_nested_consumer_keeps_the_definition('condition')
     test_nested_consumer_keeps_the_definition('tasklet')
     test_unconsumed_symbol_is_still_dropped()
+    test_the_public_pass_leaves_a_validating_sdfg('condition')
+    test_the_public_pass_leaves_a_validating_sdfg('tasklet')

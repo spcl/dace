@@ -104,8 +104,7 @@ def test_tile_fma_registered():
     assert node.default_implementation == "pure"
 
 
-@pytest.mark.parametrize("isa,dt", [("SCALAR", dace.float32), (_HOST_ISA, dace.float32), (_HOST_ISA, dace.float64)])
-def test_cpu_fma_lowers_and_runs(isa, dt):
+def fma_lowers_and_runs(isa, dt):
     """``fuse_multiply_add`` -> the CPU vectorizer emits ``TileFMA`` (no ``TileBinop``) and runs
     within FMA rounding of ``a*b + c``."""
     sdfg = _axpy(dt).to_sdfg(simplify=True)
@@ -123,6 +122,22 @@ def test_cpu_fma_lowers_and_runs(isa, dt):
     assert np.allclose(C.astype(np.float64), (A * B + A).astype(np.float64), rtol=1e-4, atol=1e-6)
 
 
+@pytest.mark.parametrize("dt", [dace.float32, dace.float64])
+def test_cpu_fma_lowers_and_runs(dt):
+    """The portable contract, pinned to the SCALAR backend so the assertions do not depend on
+    which SIMD unit this host happens to have."""
+    fma_lowers_and_runs("SCALAR", dt)
+
+
+@pytest.mark.host_isa
+@pytest.mark.parametrize("dt", [dace.float32, dace.float64])
+def test_cpu_fma_lowers_and_runs_on_the_host_isa(dt):
+    """The same contract on whatever ``detect_host_isa`` reports -- a machine-dependent case, so
+    it is marked rather than folded into the portable parametrization, where a SCALAR host made it
+    a byte-for-byte duplicate racing the same ``.dacecache`` directory."""
+    fma_lowers_and_runs(_HOST_ISA, dt)
+
+
 def test_cpu_fma_off_by_default():
     """Without the flag the pipeline keeps the plain ``*`` / ``+`` (bit-exact, no FMA)."""
     sdfg = _axpy(dace.float32).to_sdfg(simplify=True)
@@ -134,7 +149,7 @@ def test_cpu_fma_off_by_default():
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; PTX check skipped")
-def test_gpu_fma_lowers_to_native_hfma2():
+def test_gpu_fma_lowers_to_native_hfma2(tmp_path):
     """A width-8 fp16 ``tile_fma`` lowers to native ``fma.rn.f16x2`` (four packed half2 FMAs),
     NOT separate ``mul.f16x2`` + ``add.f16x2`` -- verified in the PTX."""
     import subprocess
@@ -143,23 +158,17 @@ def test_gpu_fma_lowers_to_native_hfma2():
            "                  const dace::float16* c) {\n"
            "  dace::tileops::tile_fma<dace::float16, 8, false, false, false, false>(o, a, b, c, nullptr);\n}\n")
     inc = os.path.join(os.path.dirname(dace.__file__), "runtime", "include")
-    tmp = os.path.join(os.path.dirname(__file__), "_fma_f16x2_probe.cu")
-    ptx = tmp + ".ptx"
-    try:
-        with open(tmp, "w") as f:
-            f.write(src)
-        subprocess.run([
-            "nvcc", "-I", inc, "--expt-relaxed-constexpr", "-diag-suppress", "128", "-ptx", "-arch=sm_80", tmp, "-o",
-            ptx
-        ],
-                       check=True,
-                       capture_output=True)
-        text = open(ptx).read()
-        assert "fma.rn.f16x2" in text, "fp16 tile_fma did not lower to native hfma2 (fma.rn.f16x2)"
-    finally:
-        for f in (tmp, ptx):
-            if os.path.exists(f):
-                os.remove(f)
+    cu = tmp_path / "fma_f16x2_probe.cu"
+    ptx = tmp_path / "fma_f16x2_probe.ptx"
+    cu.write_text(src)
+    subprocess.run([
+        "nvcc", "-I", inc, "--expt-relaxed-constexpr", "-diag-suppress", "128", "-ptx", "-arch=sm_80",
+        str(cu), "-o",
+        str(ptx)
+    ],
+                   check=True,
+                   capture_output=True)
+    assert "fma.rn.f16x2" in ptx.read_text(), "fp16 tile_fma did not lower to native hfma2 (fma.rn.f16x2)"
 
 
 @pytest.mark.gpu
@@ -189,8 +198,7 @@ if __name__ == "__main__":
     test_fuse_pass_refuses_reused_intermediate()
     test_tile_fma_registered()
     test_cpu_fma_off_by_default()
-    for _isa, _dt in [("SCALAR", dace.float32), (_HOST_ISA, dace.float32), (_HOST_ISA, dace.float64)]:
-        test_cpu_fma_lowers_and_runs(_isa, _dt)
-    if _HAS_NVCC:
-        test_gpu_fma_lowers_to_native_hfma2()
+    for _dt in (dace.float32, dace.float64):
+        test_cpu_fma_lowers_and_runs(_dt)
+        test_cpu_fma_lowers_and_runs_on_the_host_isa(_dt)
     print("fma fusion tests ok")

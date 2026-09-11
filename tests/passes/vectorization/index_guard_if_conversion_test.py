@@ -75,10 +75,7 @@ def test_range_protecting_guard_is_refused():
 
 
 def test_s276_lowers_to_a_per_lane_blend():
-    """End-to-end: s276 vectorizes (a ``TileITE`` blend) and stays value-correct.
-
-    Skipped if the corpus harness is unavailable in this environment.
-    """
+    """End-to-end: s276 vectorizes (a ``TileITE`` blend) and stays value-correct."""
     from dace.libraries.tileops.nodes import TileITE
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 

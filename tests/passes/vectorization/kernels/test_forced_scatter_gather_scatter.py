@@ -58,6 +58,9 @@ def test_forced_scatter_store(branch_mode, remainder_strategy):
         params={"N": n},
         vector_width=8,
         sdfg_name="forced_scatter_store",
+        # canonicalize sequentialises the scatter (the write is not provably injective to
+        # it), so only a permissive LoopToMap brings the map back for the tiler.
+        loop_to_map_permissive=True,
         branch_mode=branch_mode,
         remainder_strategy=remainder_strategy,
     )
@@ -80,6 +83,9 @@ def test_forced_gather_scatter(branch_mode, remainder_strategy):
         params={"N": n},
         vector_width=8,
         sdfg_name="forced_gather_scatter",
+        # canonicalize sequentialises the scatter (the write is not provably injective to
+        # it), so only a permissive LoopToMap brings the map back for the tiler.
+        loop_to_map_permissive=True,
         branch_mode=branch_mode,
         remainder_strategy=remainder_strategy,
     )

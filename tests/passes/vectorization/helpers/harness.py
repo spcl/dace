@@ -32,6 +32,8 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 
 from dace.transformation.passes.vectorization.enums import ISA
 
+from tests.passes.vectorization.tile_assertions import tile_library_nodes
+
 N = dace.symbol('N')
 S1 = dace.symbol("S1")
 S2 = dace.symbol("S2")
@@ -52,7 +54,7 @@ NCLDQL = dace.symbol('NCLDQL')
 NCLDQI = dace.symbol('NCLDQI')
 
 
-def _innermost_map_K(sdfg: dace.SDFG):
+def _innermost_map_K(sdfg: dace.SDFG, loop_to_map_permissive: bool = False) -> int | None:
     """Return the number of params of the innermost map in ``sdfg``.
 
     Walks every map entry; an entry is "innermost" when no other map
@@ -62,6 +64,9 @@ def _innermost_map_K(sdfg: dace.SDFG):
     deep copy so callers see the K the orchestrator will tile.
 
     :param sdfg: SDFG to inspect.
+    :param loop_to_map_permissive: probe ``LoopToMap`` the way the caller will run it. A scatter
+        loop (``a[idx[i]] = ...``) only parallelises permissively, so a strict probe reports no
+        map for a kernel the orchestrator does tile -- and the harness then skipped the pass.
     :returns: ``len(map.params)`` of the first innermost map found, or
         ``None`` when no map is present even after the probe ``LoopToMap``.
     """
@@ -85,14 +90,14 @@ def _innermost_map_K(sdfg: dace.SDFG):
     # (e.g. raw Python ``@dace.program`` for-loops) still report K.
     from dace.transformation.interstate import LoopToMap
     probe = copy.deepcopy(sdfg)
-    probe.apply_transformations_repeated(LoopToMap(), permissive=False, validate=False)
+    probe.apply_transformations_repeated(LoopToMap(), permissive=loop_to_map_permissive, validate=False)
     candidates = _scan(probe)
     if not candidates:
         return None
     return len(candidates[0].map.params)
 
 
-def _collapsible_innermost_K(sdfg: dace.SDFG):
+def _collapsible_innermost_K(sdfg: dace.SDFG, loop_to_map_permissive: bool = False) -> int | None:
     """Return the K an innermost map exposes *after* collapsing nested maps.
 
     A realistic K-dim kernel (``LoopToMap`` -> ``simplify``) leaves
@@ -120,10 +125,10 @@ def _collapsible_innermost_K(sdfg: dace.SDFG):
     # tiler; a 4-D nest whose 3 inner maps are all Sequential still collapses to K=3).
     infer_types.set_default_schedule_and_storage_types(probe, None)
     probe.apply_transformations_repeated(MapCollapse(), permissive=False, validate=False)
-    return _innermost_map_K(probe)
+    return _innermost_map_K(probe, loop_to_map_permissive)
 
 
-def _auto_tile_widths(sdfg: dace.SDFG, vector_width: int):
+def _auto_tile_widths(sdfg: dace.SDFG, vector_width: int, loop_to_map_permissive: bool = False) -> tuple[int, ...]:
     """Pick ``widths`` for ``VectorizeCPUMultiDim`` from the SDFG's
     innermost map's *collapsed* dimensionality.
 
@@ -142,7 +147,7 @@ def _auto_tile_widths(sdfg: dace.SDFG, vector_width: int):
         tile cannot fit the 4-wide outer dim. The inner dim still tiles
         at W; the outer dim sequentialises (CLOUDSC ``klon, 5, 5`` pattern).
     """
-    K = _collapsible_innermost_K(sdfg)
+    K = _collapsible_innermost_K(sdfg, loop_to_map_permissive)
     if K is None or K < 1:
         return (vector_width, )
     if K == 1:
@@ -201,7 +206,7 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: str, remainder_strateg
     # ``loop_to_map_permissive`` IS supported on the tile path now (threaded into
     # the orchestrator's LoopToMap call) — scatter benchmarks set it True so the
     # scatter loop parallelises and the tile path can vectorise it. No skip.
-    if _innermost_map_K(sdfg) is None:
+    if _innermost_map_K(sdfg, loop_to_map_permissive) is None:
         return "no innermost map (v2 has nothing to tile)"
     return ""
 
@@ -224,7 +229,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            loop_to_map_permissive: bool = False,
                            emission_style: str = "default",
                            vectorize_config: str = "tile_nodes",
-                           scalar_remainder_emit: str = "scalar"):
+                           scalar_remainder_emit: str = "scalar",
+                           expect_no_tiling: bool = False):
 
     import pytest as _pytest
     # ``--run-full-matrix`` hook: when the flag is set, the test was
@@ -260,7 +266,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         _default_branch_mode = "merge"
         _default_remainder = "scalar"
         _default_emission = "default"
-        _default_copies = True  # ``insert_copies`` default in the signature
         if branch_mode == _default_branch_mode and "branch_mode" in request.fixturenames:
             try:
                 branch_mode = request.getfixturevalue("branch_mode")
@@ -274,13 +279,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         if emission_style == _default_emission and "emission_style" in request.fixturenames:
             try:
                 emission_style = request.getfixturevalue("emission_style")
-            except Exception:
-                pass
-        if "tile_emit_mode" in request.fixturenames:
-            try:
-                _copies = request.getfixturevalue("tile_emit_mode")
-                if insert_copies == _default_copies:
-                    insert_copies = _copies
             except Exception:
                 pass
     # Create copies for comparison
@@ -313,12 +311,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         else:
             base = getattr(dace_func, "name", None) or getattr(dace_func, "__name__", "kernel")
         sdfg_name = re.sub(r"\W+", "_", base).strip("_")
-    # Include ``insert_copies`` in the suffix so the two ``tile_emit_mode``
-    # variants (no_copies / copies) each get their own ``.dacecache/<name>/``
-    # build dir; without this they collide under ``-n``-parallel xdist on the
-    # same combo of (branch_mode, remainder_strategy, emission_style,
-    # vectorize_config) and CMake races mid-configure ("file too short" /
-    # "Configuring incomplete").
+    # ``insert_copies`` reaches no pass -- ``VectorizeConfig`` has no such field -- it only
+    # discriminates build dirs, so two callers that differ ONLY in it still get their own
+    # ``.dacecache/<name>/`` and cannot race CMake mid-configure under xdist.
     tile_tag = f"_c{int(insert_copies)}"
     sdfg_name = f"{sdfg_name}_{branch_mode}_{remainder_strategy}_{emission_style}_{vectorize_config}{tile_tag}"
     if param_tag is not None:
@@ -400,18 +395,17 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             emission_style,
             loop_to_map_permissive,
         )
-        # ``no innermost map`` is a legitimate no-op: the SDFG has nothing to
-        # tile. The test's numerical-equivalence assertion still holds
-        # trivially because the un-vectorized SDFG equals the reference. Set a
-        # flag so we skip the orchestrator call but still run the comparison
-        # below; SKIP only the genuine knob-incompatibility cases.
+        # ``no innermost map`` means the orchestrator is never called at all, so the
+        # comparison below would compare a deep copy of the reference against the
+        # reference and pass no matter what. That is a FAILURE unless the caller said
+        # so with ``expect_no_tiling=True``; SKIP only the knob-incompatibility cases.
         _tile_nodes_noop = False
         if _skip_reason:
             if "no innermost map" in _skip_reason:
                 _tile_nodes_noop = True
             else:
                 _pytest.skip(f"tile_nodes arm: {_skip_reason}")
-        widths = _auto_tile_widths(copy_sdfg, vector_width)
+        widths = _auto_tile_widths(copy_sdfg, vector_width, loop_to_map_permissive)
         from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
             VectorizeCPUMultiDim, )
         # Map the test knobs to the tile orchestrator's remainder strategy:
@@ -439,6 +433,25 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                                 loop_to_map_permissive=loop_to_map_permissive,
                                 scalar_remainder_emit=scalar_remainder_emit)).apply_pass(copy_sdfg, {})
         copy_sdfg.validate()
+        # Read before ``compile()``, which expands the tile nodes away.
+        control = tile_library_nodes(sdfg)
+        emitted = tile_library_nodes(copy_sdfg)
+        if expect_no_tiling:
+            assert len(emitted) <= len(control), (f"{sdfg_name}: expect_no_tiling=True but the vectorizer emitted "
+                                                  f"{len(emitted) - len(control)} tile lib node(s) -- drop the flag.")
+        else:
+            # The control is the reference's own count, not zero: a caller that passes a pre-built
+            # SDFG (``from_sdfg=True``) may hand one that already carries tile nodes. Requiring a
+            # STRICT increase keeps what the empty-bracket rule is for -- a refusal restores the
+            # pristine graph, so emitted == control and this fails.
+            assert len(emitted) > len(control), (
+                f"{sdfg_name}: the vectorizer added ZERO tile lib nodes "
+                f"(reference {len(control)}, vectorized {len(emitted)})"
+                f"{' (no innermost map: the pass was never called)' if _tile_nodes_noop else ''}, "
+                f"so the comparison below runs the reference against itself "
+                f"and passes unconditionally. Re-run with -W error::UserWarning "
+                f"to read the refusal reason, or pass expect_no_tiling=True if "
+                f"this kernel genuinely has nothing to tile.")
 
     c_copy_sdfg = copy_sdfg.compile()
 
@@ -449,7 +462,12 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
 
     # Compare results
     for name in arrays.keys():
-        assert numpy.allclose(arrays_orig[name], arrays_vec[name], rtol=1e-32), \
+        # ``atol=0``: numpy's 1e-8 default matched ANY two arrays below that magnitude, and
+        # cloudsc feeds ``rand * 1e-12``. The slack is relative instead, and sized for the one
+        # reordering the tile path is allowed -- a reduction folded per lane instead of
+        # left-to-right, which lands a few ulp away. At these kernels' magnitudes (<= 1e4) that
+        # is tighter than the 1e-8 it replaces, and at 1e-12 it is 1e-24 rather than vacuous.
+        assert numpy.allclose(arrays_orig[name], arrays_vec[name], rtol=1e-12, atol=0), \
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
         if exact is not None:
             diff = arrays_vec[name] - exact

@@ -72,13 +72,6 @@ def test_constant_indexed_transient_is_still_refused():
         WidenAccesses()._propagate_lane_dep(sdfg, ('i', ), {'A'})
 
 
-if __name__ == '__main__':
-    for spelling in ('destination', 'source'):
-        test_lane_indexing_is_seen_through_either_orientation(spelling)
-        test_lane_indexed_transient_is_not_refused(spelling)
-    test_constant_indexed_transient_is_still_refused()
-
-
 def scalar_staging_copy(orientation: str) -> dace.SDFG:
     """``A[i] -> s[0]`` as one AN-to-AN copy, written with the given orientation.
 
@@ -144,3 +137,7 @@ def test_a_scalar_like_buffer_is_never_lane_indexed():
     assert data_is_lane_indexed(sdfg, 's', ('i', )) is False
     # The multi-element array the exemption exists for still answers True.
     assert data_is_lane_indexed(copy_into_lane_indexed_transient('source'), 'buf', ('i', )) is True
+
+
+if __name__ == '__main__':
+    pytest.main([__file__, '-v'])
