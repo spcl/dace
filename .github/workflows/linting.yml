@@ -26,8 +26,6 @@ jobs:
       with:
         python-version: '3.10'
         enable-cache: true
-        pyproject-file: pyproject.toml
-        cache-dependency-glob: pyproject.toml
 
     # In one place we should check that `pyproject.toml` and `uv.lock` are up-to-date.
     # This place is as good any other. We un-freeze to lock file to do so.
