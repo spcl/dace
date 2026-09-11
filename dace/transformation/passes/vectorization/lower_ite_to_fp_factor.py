@@ -9,7 +9,8 @@ so no arithmetic form can sanitize it afterwards). Integers have no inf/nan, so
 the blend is exact there; a float/complex output keeps its ``ITE`` call and is
 lowered by a real select instead. See :meth:`_ITEToFpFactor.visit_Call`."""
 import ast
-from typing import Optional
+
+from typing import Any
 
 import dace
 from dace import properties
@@ -28,7 +29,7 @@ class _ITEToFpFactor(ast.NodeTransformer):
     no promotion is needed) the condition is used as-is.
     """
 
-    def __init__(self, cast_dtype: Optional[str] = None):
+    def __init__(self, cast_dtype: str | None = None) -> None:
         self.changed = False
         self._cast_dtype = cast_dtype
 
@@ -74,7 +75,7 @@ class LowerITEToFpFactor(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _ite_output_dtype(self, sdfg: dace.SDFG, state, tasklet) -> Optional[str]:
+    def _ite_output_dtype(self, sdfg: dace.SDFG, state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> str | None:
         """The ``dace`` dtype name (e.g. ``"float64"``) to promote the condition to
         -- the tasklet's single output-array dtype (== the ITE arms' dtype). Returns
         ``None`` when it cannot be resolved or the output is already ``bool`` (no
@@ -88,7 +89,7 @@ class LowerITEToFpFactor(ppl.Pass):
             return None
         return name
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Rewrite all ITE calls in Python tasklet bodies of ``sdfg``.
 
         :param sdfg: the SDFG whose tasklets are rewritten in place.

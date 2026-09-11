@@ -14,9 +14,10 @@ caller wraps with ``_out = ...``.
 """
 import ast
 from dataclasses import dataclass
-from typing import List, Optional
 
 import dace
+from dace.memlet import Memlet
+from dace.sdfg.graph import MultiConnectorEdge
 
 _INFIX_OPS = {"+", "-", "*", "/", "&", "|", "^"}
 _FUNCALL_OPS = {"max", "min"}
@@ -89,9 +90,9 @@ def emit_tree_reduction(input_var: str, vector_width: int, op: str) -> str:
     :returns: The balanced-tree reduction expression.
     """
     _validate(op, vector_width)
-    operands: List[str] = [f"{input_var}[{i}]" for i in range(vector_width)]
+    operands: list[str] = [f"{input_var}[{i}]" for i in range(vector_width)]
     while len(operands) > 1:
-        nxt: List[str] = []
+        nxt: list[str] = []
         for i in range(0, len(operands) - 1, 2):
             nxt.append(_wrap_pair(op, operands[i], operands[i + 1]))
         if len(operands) % 2 == 1:
@@ -118,7 +119,7 @@ _AST_BOOLOP_TO_OP = {
 _CALL_REDUCERS = {"max", "min"}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ReductionInfo:
     """Result of :func:`recognize_reduction` — data only, no behaviour.
 
@@ -139,7 +140,7 @@ class ReductionInfo:
     identity: str
 
 
-def _single_assignment(code: str) -> Optional[ast.Assign]:
+def _single_assignment(code: str) -> ast.Assign | None:
     """Parse ``code`` and return its body iff it is one bare ``Assign``."""
     try:
         tree = ast.parse((code or "").strip())
@@ -150,7 +151,7 @@ def _single_assignment(code: str) -> Optional[ast.Assign]:
     return tree.body[0]
 
 
-def _reduction_op_and_operands(rhs: ast.AST):
+def _reduction_op_and_operands(rhs: ast.AST) -> tuple[str, list[ast.expr]] | None:
     """``(op_token, [operand_ast, ...])`` for a reduction RHS, or ``None``.
 
     Recognises ``a <binop> b``, ``a and/or b``, and ``max(a, b)`` /
@@ -171,11 +172,11 @@ def _reduction_op_and_operands(rhs: ast.AST):
     return None
 
 
-def _has_data(edge) -> bool:
+def _has_data(edge: MultiConnectorEdge[Memlet]) -> bool:
     return edge.data is not None and not edge.data.is_empty()
 
 
-def recognize_reduction(state: "dace.SDFGState", tasklet: "dace.nodes.Tasklet") -> Optional[ReductionInfo]:
+def recognize_reduction(state: "dace.SDFGState", tasklet: "dace.nodes.Tasklet") -> ReductionInfo | None:
     """Recognise a read-modify-write scalar reduction tasklet.
 
     Detects the canonical accumulation shape ``acc = acc <op> <expr>``
@@ -231,7 +232,7 @@ def recognize_reduction(state: "dace.SDFGState", tasklet: "dace.nodes.Tasklet") 
     return None
 
 
-@dataclass
+@dataclass(slots=True)
 class MapReductionInfo:
     """Result of :func:`recognize_map_reduction` — a per-iteration scalar
     reduction carried *across* an innermost map (the spmv "row reduction").
@@ -259,11 +260,11 @@ class MapReductionInfo:
     map_entry: "dace.nodes.MapEntry"
     map_exit: "dace.nodes.MapExit"
     body: "dace.nodes.Node"
-    read_edge: object
-    write_edge: object
+    read_edge: MultiConnectorEdge[Memlet]
+    write_edge: MultiConnectorEdge[Memlet]
 
 
-def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> Optional[str]:
+def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> str | None:
     """Reduction op of ``tasklet`` iff ``conn`` is an operand of its top-level
     associative binop (``__out = conn <op> other`` / ``op(conn, other)``).
 
@@ -290,7 +291,8 @@ def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> Opt
     return None
 
 
-def _op_through_body(state: "dace.SDFGState", body: "dace.nodes.Node", read_edge, write_edge) -> Optional[str]:
+def _op_through_body(state: "dace.SDFGState", body: "dace.nodes.Node", read_edge: MultiConnectorEdge[Memlet],
+                     write_edge: MultiConnectorEdge[Memlet]) -> str | None:
     """Recover the reduction op combining the accumulator inside ``body``.
 
     ``body`` is either a flat tasklet (delegate to :func:`recognize_reduction`)
@@ -324,7 +326,7 @@ def _op_through_body(state: "dace.SDFGState", body: "dace.nodes.Node", read_edge
     return None
 
 
-def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry") -> Optional[MapReductionInfo]:
+def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry") -> MapReductionInfo | None:
     """Recognise a scalar reduction carried across an innermost map.
 
     The shape (the spmv ``for idx: tmp = tmp + data[idx]*x[indices[idx]]``
@@ -355,7 +357,7 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
         return None
     body = body_nodes[0]
 
-    def _scalar_slot(e) -> bool:
+    def _scalar_slot(e: MultiConnectorEdge[Memlet]) -> bool:
         return (e.data is not None and e.data.data is not None and e.data.subset is not None
                 and e.data.subset.num_elements() == 1)
 

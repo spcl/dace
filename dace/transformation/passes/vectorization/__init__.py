@@ -16,7 +16,7 @@ from dace.transformation.passes.vectorization import reduce_expansion  # noqa: F
 _PIPELINE_EXPORTS = frozenset({"VectorizeMultiDim", "VectorizeCPUMultiDim", "VectorizeGPUMultiDim"})
 
 
-def __getattr__(name):
+def __getattr__(name: str) -> object:
     """Lazily resolve the pipeline entry points (breaks the interstate import cycle)."""
     if name in _PIPELINE_EXPORTS:
         from dace.transformation.passes.vectorization import vectorize_multi_dim
@@ -28,5 +28,5 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__():
+def __dir__() -> list[str]:
     return sorted(list(globals()) + list(_PIPELINE_EXPORTS))

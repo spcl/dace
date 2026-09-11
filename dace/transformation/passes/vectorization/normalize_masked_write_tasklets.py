@@ -27,7 +27,8 @@ rather than a function like ``ITE`` precisely because it has no else arm -- ther
 return when the predicate is false.
 """
 import ast
-from typing import List, Optional
+
+from typing import Any
 
 import dace
 from dace.sdfg import SDFG, SDFGState, nodes as nd
@@ -50,10 +51,10 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = 0
         for state in sdfg.all_states():
             for tasklet in list(state.nodes()):
@@ -136,7 +137,7 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         state.remove_memlet_path(in_edges[0], remove_orphans=True)
         return True
 
-    def _parse_self_blend(self, tasklet: nd.Tasklet):
+    def _parse_self_blend(self, tasklet: nd.Tasklet) -> tuple[str, str, str, str] | None:
         """Match a lone ``<out> = ITE(<cond>, <value>, <in_conn>)`` body.
 
         :param tasklet: The candidate tasklet.
@@ -190,7 +191,7 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
             return False
 
         cond_src = ast.unparse(ifnode.test)
-        new_lines: List[str] = []
+        new_lines: list[str] = []
         for s in ifnode.body:
             lhs = s.targets[0].id
             rhs = ast.unparse(s.value)
@@ -246,10 +247,10 @@ class NormalizeTernaryTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = 0
         for state in sdfg.all_states():
             for tasklet in list(state.nodes()):

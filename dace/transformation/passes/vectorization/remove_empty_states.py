@@ -1,7 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Remove empty states, splicing their interstate edges and assignments together."""
 import copy
-from typing import Any, Dict, Optional
+from typing import Any
 from dace import SDFG, InterstateEdge, properties
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -23,7 +23,7 @@ class RemoveEmptyStates(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
         return {}
 
     def _apply(self, sdfg: SDFG) -> int:
@@ -80,7 +80,7 @@ class RemoveEmptyStates(ppl.Pass):
 
         return removed
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Remove all empty states from the SDFG and validate the result.
 
         :param sdfg: The SDFG to transform in place.

@@ -27,14 +27,15 @@ state); such a tasklet is left intact for a later pass or a clean abort.
 """
 import ast
 import copy
-from typing import Dict, List, Optional, Set, Tuple
+
+from typing import Any
 
 import dace
 from dace.sdfg import SDFG, SDFGState, nodes as nd
 from dace.transformation import pass_pipeline as ppl
 
 
-def _rhs_names(node: ast.AST) -> Dict[str, None]:
+def _rhs_names(node: ast.AST) -> dict[str, None]:
     """Every ``Name`` identifier read in an expression AST, in AST order."""
     return dict.fromkeys(n.id for n in ast.walk(node) if isinstance(n, ast.Name))
 
@@ -52,10 +53,10 @@ class SplitMultiOutputTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         count = 0
         # Recurse into every nested SDFG: a multi-output tasklet can live inside a body
         # NSDFG -- e.g. ``LoopToMap`` wraps a parallel map body (here adi's row-tile map)
@@ -87,15 +88,15 @@ class SplitMultiOutputTasklets(ppl.Pass):
         if not body or not all(
                 isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name) for s in body):
             return False
-        stmts: List[Tuple[str, str,
-                          Dict[str,
+        stmts: list[tuple[str, str,
+                          dict[str,
                                None]]] = [(s.targets[0].id, ast.unparse(s.value), _rhs_names(s.value)) for s in body]
         # Ordered: iteration order below decides the order the split tasklets and their edges are
         # added to the state, and the connector dicts already carry a deterministic one.
         out_conns = dict.fromkeys(tasklet.out_connectors)
         in_conns = set(tasklet.in_connectors)
         # The last statement assigning each output connector is its defining statement.
-        last_def: Dict[str, int] = {}
+        last_def: dict[str, int] = {}
         for idx, (lhs, _, _) in enumerate(stmts):
             if lhs in out_conns:
                 last_def[lhs] = idx
@@ -109,7 +110,7 @@ class SplitMultiOutputTasklets(ppl.Pass):
         if any(o not in out_edges for o in out_conns):
             return False
 
-        plans: List[Tuple[str, List[int], Dict[str, None]]] = []
+        plans: list[tuple[str, list[int], dict[str, None]]] = []
         for o in out_conns:
             sliced = self._backward_slice(stmts, last_def[o], set(out_conns) - {o})
             if sliced is None:
@@ -137,15 +138,15 @@ class SplitMultiOutputTasklets(ppl.Pass):
         state.remove_node(tasklet)
         return True
 
-    def _backward_slice(self, stmts: List[Tuple[str, str, Dict[str, None]]], target_idx: int,
-                        other_outputs: Set[str]) -> Optional[Set[int]]:
+    def _backward_slice(self, stmts: list[tuple[str, str, dict[str, None]]], target_idx: int,
+                        other_outputs: set[str]) -> set[int] | None:
         """Indices of the statements needed to compute ``stmts[target_idx]``'s LHS.
 
         Walks the def-use chain backwards: each read name is resolved to its most
         recent prior assignment. Returns ``None`` if the slice reads another output
         connector (the outputs are entangled and cannot be cleanly separated).
         """
-        needed: Set[int] = set()
+        needed: set[int] = set()
         frontier = [target_idx]
         while frontier:
             idx = frontier.pop()

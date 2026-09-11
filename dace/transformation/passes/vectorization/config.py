@@ -8,7 +8,6 @@ caller may write either ``VectorizeConfig(target_isa=ISA.AVX512)`` or
 ``VectorizeConfig(target_isa="AVX512")``.
 """
 import dataclasses
-from typing import Tuple
 
 from dace.dtypes import DeviceType
 from dace.transformation.passes.vectorization.enums import (
@@ -21,7 +20,7 @@ from dace.transformation.passes.vectorization.enums import (
 )
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class VectorizeConfig:
     """Every knob for :class:`VectorizeMultiDim`, grouped into one config object.
 
@@ -45,7 +44,7 @@ class VectorizeConfig:
         ``a*b + c`` / a NumPy reference. Enable for the throughput win when that is acceptable.
     :param device: Target device (CPU / GPU).
     """
-    widths: Tuple[int, ...]
+    widths: tuple[int, ...]
     target_isa: ISA = ISA.AUTO
     remainder_strategy: RemainderStrategy = RemainderStrategy.MASKED_TAIL
     branch_mode: BranchMode = BranchMode.MERGE

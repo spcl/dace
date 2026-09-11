@@ -4,7 +4,7 @@
 Precondition for remainder-split + iteration-mask passes: every innermost map
 body becomes one uniform unit.
 """
-from typing import Optional
+from typing import Any
 
 import dace
 from dace import properties, symbolic
@@ -55,7 +55,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         "this: its provably-divisible interior still needs a NestedSDFG body "
         "for the tile iteration mask.")
 
-    def __init__(self, vector_width: int = 8, nest_provably_divisible: bool = False, tiled_dims: int = 1):
+    def __init__(self, vector_width: int = 8, nest_provably_divisible: bool = False, tiled_dims: int = 1) -> None:
         super().__init__()
         self.vector_width = vector_width
         self.nest_provably_divisible = nest_provably_divisible
@@ -144,7 +144,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             if mem.other_subset is not None:
                 mem.other_subset = None
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Wrap every eligible innermost map body in a NestedSDFG.
 
         :param sdfg: The SDFG to transform in place.

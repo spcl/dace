@@ -9,7 +9,7 @@ DOMINATES every (possibly branch-local) consumer, and (2) thread the bound
 symbols the producer references into the body NestedSDFG. These two helpers
 capture that shared structure so the two passes do not drift apart.
 """
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 import dace
 from dace.sdfg import SDFG, SDFGState

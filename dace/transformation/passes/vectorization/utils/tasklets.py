@@ -6,7 +6,6 @@ path; the ``EmitCtx`` / ``_generate_code`` helpers pick per-template C++ from an
 operator classification, falling back to a scalar lane loop.
 """
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Union
 
 import dace
 from dace.memlet import Memlet
@@ -36,10 +35,10 @@ def is_vectorizable_tasklet(state: 'dace.SDFGState', node: 'dace.nodes.Tasklet')
     return is_python_tasklet(node)
 
 
-def materialise_lane_id_index_tile(inner_state,
+def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
                                    expr: str,
-                                   iter_vars: Tuple[str, ...],
-                                   widths: Tuple[int, ...],
+                                   iter_vars: tuple[str, ...],
+                                   widths: tuple[int, ...],
                                    name_hint: str = "_sym_tile") -> "dace.nodes.AccessNode":
     """Mint a per-lane int64 tile = ``expr`` evaluated at ``(iter_var_k -> iter_var_k + __l_k)``
     for each tile dim ``k`` -- i.e. the function is EXPANDED INSIDE per lane, not widened as if
@@ -146,7 +145,7 @@ def binop_cpp(l_op: str, op_: str, r_op: str) -> str:
     return f"({l_op} {op_} {r_op})"
 
 
-def _roundtrip_constant(s: Union[int, float, str, None]):
+def _roundtrip_constant(s: int | float | str | None) -> int | float | str | None:
     """Return the constant verbatim for emission — no ``float()`` round-trip.
 
     Constant is only ever string-formatted into a C++ template, so the exact
@@ -160,7 +159,7 @@ def _roundtrip_constant(s: Union[int, float, str, None]):
     return s
 
 
-def _is_number(s: Union[int, float, str, None]) -> bool:
+def _is_number(s: int | float | str | None) -> bool:
     """Whether ``s`` is a numeric literal (a constant, not a symbol).
 
     Recognises ints/floats, numeric strings, IEEE infinity (``inf`` /
@@ -181,7 +180,7 @@ def _is_number(s: Union[int, float, str, None]) -> bool:
         return txt.lstrip("+-") == "oo"
 
 
-@dataclass
+@dataclass(slots=True)
 class EmitCtx:
     """Per-tasklet emission state shared by every per-``TaskletType`` emitter.
 
@@ -191,13 +190,13 @@ class EmitCtx:
     """
     state: dace.SDFGState
     node: dace.nodes.Tasklet
-    templates: Dict[str, str]
+    templates: dict[str, str]
     vector_dtype: typeclass
     vector_width: int
     vector_map_param: str
     is_commutative: bool
     fallbackcode_due_to_types: bool
-    mask_connector: Optional[str] = None
+    mask_connector: str | None = None
 
 
 def _emit_ite_with_symbol_arms(ctx: EmitCtx) -> str:
@@ -272,7 +271,8 @@ def _template_key(ctx: EmitCtx, base_op: str) -> str:
     return base_op
 
 
-def _generate_code(ctx: EmitCtx, rhs1_, rhs2_, const1_, const2_, lhs_, op_) -> str:
+def _generate_code(ctx: EmitCtx, rhs1_: str | None, rhs2_: str | None, const1_: int | float | str | None,
+                   const2_: int | float | str | None, lhs_: str, op_: str) -> str:
     """Generate the vectorized C++ code string for one tasklet.
 
     Uses the matching template (array-array, array-scalar, constant variants,

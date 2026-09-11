@@ -1,0 +1,32 @@
+{
+  // Static-typing gate for the code this project CONTRIBUTES, not for dace as a whole.
+  // Everything listed here must stay at ZERO errors; a config that reports pre-existing
+  // noise is a config people learn to ignore.
+  "include": [
+    "dace/transformation/passes/vectorization"
+    // "dace/libraries/tileops" -- the tile library nodes are annotated separately and are
+    // NOT clean under these rules yet (275 findings). Add the line once that half lands.
+  ],
+  "exclude": [
+    // Held by another agent while this gate was written; drop each entry once the file is
+    // annotated. These exclusions are temporary, not a permanent hole.
+    "dace/transformation/passes/vectorization/insert_tile_load_store.py",
+    "dace/transformation/passes/vectorization/convert_tasklets_to_tile_ops.py",
+    "dace/transformation/passes/vectorization/utils/broadcast.py"
+  ],
+  // Oldest interpreter the project supports (pyproject: >=3.10), so the gate rejects syntax
+  // newer than that. The interpreter itself is resolved from PATH -- never hardcode a venv.
+  "pythonVersion": "3.10",
+  // Full type inference is NOT enabled: dace's core signatures under-specify (``Memlet.subset``
+  // is ``str | Subset | None``, ``OrderedSet`` does not satisfy ``Set[str]``, sympy is largely
+  // untyped), so "basic" reports ~470 findings that belong to dace, not to this code, and
+  // silencing them would mean casts and asserts on the CloudSC path. What IS enforced is the
+  // rule the owner asked for: every function fully annotated, with concrete types.
+  "typeCheckingMode": "off",
+  "useLibraryCodeForTypes": true,
+  // Every parameter carries an annotation.
+  "reportMissingParameterType": "error",
+  // Every return carries one too, and no annotation may be a bare generic (``dict``, ``set``,
+  // ``list``, ``tuple``) -- a partially-unknown type is reported the same as a missing one.
+  "reportUnknownParameterType": "error"
+}

@@ -8,10 +8,14 @@ overlapping-but-not-identical write sets unsupported (``NotImplementedError``).
 No ``ConditionalBlock`` remains afterwards.
 """
 import copy
-from typing import Dict, Optional, Set
+
+from typing import Any
 
 import dace
-from dace import properties, symbolic
+from dace import properties, subsets, symbolic
+from dace.memlet import Memlet
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.state import ControlFlowBlock
 from dace.properties import CodeBlock
 from dace.sdfg.construction_utils import (
     assert_connector_role_matches_edges,
@@ -25,7 +29,7 @@ from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import
 from dace.ordered import OrderedSet
 
 
-def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int, Set[str]]:
+def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int, set[str]]:
     """Per-arm array writes that must be rerouted to a private transient.
 
     A write of ``arr`` in arm ``i`` escapes iff ``arr`` non-transient, or read
@@ -42,7 +46,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int
     local_sdfg: dace.SDFG = cb.sdfg
 
     arm_bodies = [body for _, body in cb.branches]
-    arm_states: Dict[int, Set[dace.SDFGState]] = {}
+    arm_states: dict[int, set[dace.SDFGState]] = {}
     for i, body in enumerate(arm_bodies):
         if not isinstance(body, ControlFlowRegion):
             arm_states[i] = set()
@@ -50,12 +54,12 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int
         states_in_arm = {n for n in body.all_control_flow_blocks() if isinstance(n, dace.SDFGState)}
         arm_states[i] = states_in_arm
 
-    inside_states: Set[dace.SDFGState] = set()
+    inside_states: set[dace.SDFGState] = set()
     for s in arm_states.values():
         inside_states |= s
 
     # ---- Outside-read set (rule 2). ----
-    outside_reads: Set[str] = set()
+    outside_reads: set[str] = set()
     for state in local_sdfg.all_states():
         if state in inside_states:
             continue
@@ -90,9 +94,9 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int
             outside_reads |= symbolic.symbols_in_code(text, potential_symbols=array_names)
 
     # ---- Per-arm read sets for rule 3. ----
-    arm_reads: Dict[int, Set[str]] = {}
+    arm_reads: dict[int, set[str]] = {}
     for i, body in enumerate(arm_bodies):
-        reads: Set[str] = set()
+        reads: set[str] = set()
         if isinstance(body, ControlFlowRegion):
             for state in arm_states[i]:
                 r, _ = state.read_and_write_sets()
@@ -100,13 +104,13 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> Dict[int
         arm_reads[i] = reads
 
     # ---- Classify per-arm writes. ----
-    result: Dict[int, Set[str]] = {}
+    result: dict[int, set[str]] = {}
     for i, body in enumerate(arm_bodies):
-        escaping: Set[str] = set()
+        escaping: set[str] = set()
         if not isinstance(body, ControlFlowRegion):
             result[i] = escaping
             continue
-        writes_in_arm: Set[str] = set()
+        writes_in_arm: set[str] = set()
         for state in arm_states[i]:
             _, w = state.read_and_write_sets()
             writes_in_arm |= w
@@ -143,7 +147,7 @@ class BranchNormalization(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Flatten every ``ConditionalBlock`` to fixed point.
 
         :param sdfg: SDFG to transform in place.
@@ -224,12 +228,12 @@ class BranchNormalization(ppl.Pass):
             # cb is region entry: no in-edge to hoist onto. Leave as-is (rare).
             return False
         # Symbols produced inside any arm are NOT available before ``cb``.
-        arm_assigned: Set[str] = set()
+        arm_assigned: set[str] = set()
         for _c, br in cb.branches:
             for e in br.edges():
                 arm_assigned |= set(e.data.assignments.keys())
         # Branch-predicate symbols must keep their pre-``cb`` value.
-        pred_syms: Set[str] = set()
+        pred_syms: set[str] = set()
         for c, _br in cb.branches:
             if c is not None:
                 pred_syms |= symbolic.symbols_in_code(c.as_string if isinstance(c, CodeBlock) else str(c))
@@ -334,7 +338,7 @@ class BranchNormalization(ppl.Pass):
         return False
 
     @staticmethod
-    def _substantive_states(body: ControlFlowRegion):
+    def _substantive_states(body: ControlFlowRegion) -> list[dace.SDFGState]:
         """SDFGStates in ``body`` that hold compute (non-empty)."""
         return [n for n in body.nodes() if isinstance(n, dace.SDFGState) and not n.is_empty()]
 
@@ -352,13 +356,13 @@ class BranchNormalization(ppl.Pass):
         return len(self._substantive_states(body0)) != 1 or len(self._substantive_states(body1)) != 1
 
     @staticmethod
-    def arm_written_arrays(cb: ConditionalBlock) -> Set[str]:
+    def arm_written_arrays(cb: ConditionalBlock) -> set[str]:
         """Array names written anywhere inside any arm of ``cb``.
 
         :param cb: conditional block whose arms are scanned.
         :returns: set of written data names (transient and non-transient alike).
         """
-        written: Set[str] = set()
+        written: set[str] = set()
         for _cond, body in cb.branches:
             if not isinstance(body, ControlFlowRegion):
                 continue
@@ -367,7 +371,7 @@ class BranchNormalization(ppl.Pass):
                     written |= blk.read_and_write_sets()[1]
         return written
 
-    def representative_write_subset(self, cb: ConditionalBlock) -> Optional[str]:
+    def representative_write_subset(self, cb: ConditionalBlock) -> str | None:
         """First element-write subset found in ``cb``'s arms, or ``None`` if there is none.
 
         Only used to SIZE a lifted per-lane transient (the guard's own reads carry their own
@@ -387,7 +391,7 @@ class BranchNormalization(ppl.Pass):
                     return str(next(iter(write_subsets.values())))
         return None
 
-    def freeze_guard_for_serialization(self, cb: ConditionalBlock, cond_text: str) -> Optional[str]:
+    def freeze_guard_for_serialization(self, cb: ConditionalBlock, cond_text: str) -> str | None:
         """Guard expression that still holds when re-tested AFTER one arm has run.
 
         Serializing ``if c: A else: B`` into ``if c: A`` then ``if not c: B`` re-evaluates
@@ -655,7 +659,7 @@ class BranchNormalization(ppl.Pass):
         return True
 
     @staticmethod
-    def _linear_state_order(body: ControlFlowRegion):
+    def _linear_state_order(body: ControlFlowRegion) -> list[ControlFlowBlock] | None:
         """Execution-order block list iff ``body`` is a straight-line chain.
 
         :param body: The arm region.
@@ -732,7 +736,7 @@ class BranchNormalization(ppl.Pass):
         # Same serialization the asymmetric-arm path uses, guard snapshot included.
         return self._serialize_two_arm(cb, cond0, body0, body1)
 
-    def _collect_write_subsets(self, state: dace.SDFGState):
+    def _collect_write_subsets(self, state: dace.SDFGState) -> dict[str, subsets.Range] | None:
         from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
         return collect_element_write_subsets(state)
 
@@ -741,7 +745,7 @@ class BranchNormalization(ppl.Pass):
                           state: dace.SDFGState,
                           cond_text: str,
                           any_subset_str: str,
-                          skip_cb=None):
+                          skip_cb: ConditionalBlock | None = None) -> tuple[str | None, dace.nodes.AccessNode | None]:
         """Resolve the arm condition to ``(cond_array_name, cond_producer)``.
 
         Materialises the boolean arm condition into an array (via
@@ -771,11 +775,11 @@ class BranchNormalization(ppl.Pass):
     def _rewrite_writes_to_ite(self,
                                sdfg: dace.SDFG,
                                state: dace.SDFGState,
-                               write_subsets: dict,
+                               write_subsets: dict[str, subsets.Range],
                                cond_text: str,
                                *,
-                               skip_cb=None,
-                               preresolved=None):
+                               skip_cb: ConditionalBlock | None = None,
+                               preresolved: tuple[str | None, dace.nodes.AccessNode | None] | None = None) -> None:
         """Redirect each write in ``state`` through ``arr = ITE(cond, expr, arr)``.
 
         :param sdfg: SDFG for name resolution.
@@ -823,8 +827,9 @@ class BranchNormalization(ppl.Pass):
                     self._gate_one_write(sdfg, state, arr_name, write_an, in_edge, cond_text, cond_array_name,
                                          cond_producer)
 
-    def _gate_one_write(self, sdfg: dace.SDFG, state: dace.SDFGState, arr_name: str, write_an, in_edge, cond_text: str,
-                        cond_array_name, cond_producer) -> None:
+    def _gate_one_write(self, sdfg: dace.SDFG, state: dace.SDFGState, arr_name: str, write_an: dace.nodes.AccessNode,
+                        in_edge: MultiConnectorEdge[Memlet], cond_text: str, cond_array_name: str | None,
+                        cond_producer: dace.nodes.AccessNode | None) -> None:
         """Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``.
 
         :param sdfg: SDFG the state belongs to, for name resolution.

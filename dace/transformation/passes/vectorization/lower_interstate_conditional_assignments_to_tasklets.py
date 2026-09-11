@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Demote free symbols used in conditional-assignment tasklets to scalars."""
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 import dace
 from dace import dtypes, SDFG, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
@@ -48,11 +48,13 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
     also_demote = properties.ListProperty(element_type=str, default=[])
     apply_once = properties.Property(dtype=bool, default=False)
 
-    def __init__(self, also_demote: Optional[List[str]] = None) -> None:
+    def __init__(self, also_demote: list[str] | None = None) -> None:
         super().__init__()
         # A Property default is stored on the instance without copying, so every default-built
         # pass would otherwise share the one list object.
         self.also_demote = list(also_demote or [])
+        #: Demotions performed by the current ``apply_pass`` run; reset at its top.
+        self._applied: int = 0
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
@@ -60,7 +62,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> dict[type[ppl.Pass] | ppl.Pass, None]:
         return {}
 
     @staticmethod
@@ -109,8 +111,8 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
             # 8% of the vectorizer on CloudSC purely by re-walking. Only a demotion here can
             # invalidate them, and candidates far outnumber demotions, so drop them on a demotion
             # and rebuild lazily at the next ask.
-            structural: Optional[Set[str]] = None
-            free_syms: Optional[Set[str]] = None
+            structural: set[str] | None = None
+            free_syms: set[str] | None = None
             for name, dtype in self.arm_bound_symbols(sd).items():
                 if name in sd.arrays:
                     continue  # already a scalar -- demoted by an earlier round or by another pass
@@ -145,7 +147,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
 
         if all(isinstance(n, SDFGState) for n in cfg.nodes()):
             # Ordered: this drives demote_symbol_to_scalar, which adds arrays to the SDFG.
-            free_conditional_symbols: Dict[str, None] = {}
+            free_conditional_symbols: dict[str, None] = {}
             for state in cfg.nodes():
                 for node in state.nodes():
                     # Python-bodied only -- the expression parse below is undefined otherwise.
@@ -238,7 +240,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
 
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> bool:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> bool:
         """Demote conditional-assignment free symbols to scalars across the SDFG.
 
         :param sdfg: The SDFG to transform in place.

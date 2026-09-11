@@ -6,7 +6,7 @@ First per-map analysis step in the v2 orchestrator. Loud failure on any inner ma
 be K-dim tiled (step != 1, < K params, ...) so error points at the offending map, not a
 confusing downstream masked-tail failure.
 """
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import properties, symbolic
@@ -64,10 +64,10 @@ class MarkTileDims(ppl.Pass):
     )
 
     def __init__(self,
-                 widths: Tuple[int, ...] = (8, ),
+                 widths: tuple[int, ...] = (8, ),
                  skip_ineligible: bool = False,
                  require_gpu_resident: bool = False,
-                 assume_even: bool = False):
+                 assume_even: bool = False) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -105,7 +105,7 @@ class MarkTileDims(ppl.Pass):
         """
         return False
 
-    def _classify_one(self, map_entry: MapEntry) -> Optional[TileDimSpec]:
+    def _classify_one(self, map_entry: MapEntry) -> TileDimSpec | None:
         """Build a :class:`TileDimSpec` for ``map_entry`` if eligible.
 
         :param map_entry: The candidate inner map entry.
@@ -156,7 +156,7 @@ class MarkTileDims(ppl.Pass):
             global_ubs=tuple(global_ubs),
         )
 
-    def _fail_or_skip(self, msg: str) -> Optional[TileDimSpec]:
+    def _fail_or_skip(self, msg: str) -> TileDimSpec | None:
         """Either raise or return ``None`` based on ``skip_ineligible``.
 
         :param msg: Diagnostic message included in the raised error.
@@ -167,7 +167,7 @@ class MarkTileDims(ppl.Pass):
             return None
         raise NotImplementedError(f"MarkTileDims: {msg}")
 
-    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[Dict[MapEntry, TileDimSpec]]:
+    def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> dict[MapEntry, TileDimSpec] | None:
         """Walk every innermost map and record the K-dim spec.
 
         :param sdfg: SDFG to analyze.
@@ -175,9 +175,9 @@ class MarkTileDims(ppl.Pass):
         :returns: ``{MapEntry: TileDimSpec}`` per eligible inner map; ``None`` when none matched.
         :raises NotImplementedError: When an inner map is ineligible and ``skip_ineligible`` False.
         """
-        specs: Dict[MapEntry, TileDimSpec] = {}
+        specs: dict[MapEntry, TileDimSpec] = {}
         # Safe: this loop only classifies, so the gate's whole-SDFG scan is shared, not O(maps^2).
-        scan_cache: Dict[int, Any] = {}
+        scan_cache: dict[int, Any] = {}
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry):
                 continue

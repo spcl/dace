@@ -7,7 +7,9 @@ reads nicely (``ISA.AVX512``) and compares/serialises as its string value
 member or the raw string; :func:`coerce` normalises a string to the member.
 """
 import enum
-from typing import Union
+from typing import TypeVar
+
+EnumT = TypeVar("EnumT", bound=enum.Enum)
 
 
 class ISA(str, enum.Enum):
@@ -42,20 +44,20 @@ class BranchMode(str, enum.Enum):
     FP_FACTOR = "fp_factor"  #: ``c*x + (1-c)*y`` tile-binop arithmetic (K=1 only)
 
 
-def coerce_enum(enum_cls, value):
+def coerce_enum(enum_cls: type[EnumT], value: EnumT | str) -> EnumT:
     """Return ``value`` as a member of ``enum_cls`` (accepts a member or its string)."""
     if isinstance(value, enum_cls):
         return value
     return enum_cls(value)  # raises ValueError on an unknown string
 
 
-def coerce_isa(value: Union["ISA", str]) -> "ISA":
+def coerce_isa(value: ISA | str) -> ISA:
     return coerce_enum(ISA, value)
 
 
-def coerce_remainder_strategy(value: Union["RemainderStrategy", str]) -> "RemainderStrategy":
+def coerce_remainder_strategy(value: RemainderStrategy | str) -> RemainderStrategy:
     return coerce_enum(RemainderStrategy, value)
 
 
-def coerce_branch_mode(value: Union["BranchMode", str]) -> "BranchMode":
+def coerce_branch_mode(value: BranchMode | str) -> BranchMode:
     return coerce_enum(BranchMode, value)

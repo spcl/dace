@@ -8,16 +8,17 @@
 - Memlet rewrite (``replace_all_access_subsets``): walk edges, replace the payload in-place.
 """
 import copy
-from typing import Dict, Optional, Set
 
 import dace
-from dace.sdfg.graph import Edge
+from dace.memlet import Memlet
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.nodes import AccessNode
 from dace.subsets import Range
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
-def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG, state: 'dace.SDFGState'):
+def infer_edge_endpoints(edge: MultiConnectorEdge[Memlet], sdfg: dace.SDFG,
+                         state: 'dace.SDFGState') -> tuple[str | None, Range | None, str | None, Range | None]:
     """``(src_data_name, src_subset, dst_data_name, dst_subset)`` for a memlet edge, both endpoints
     inferred.
 
@@ -43,8 +44,8 @@ def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG, state: 'dace.SDFGState'):
     dst_an = edge.dst if isinstance(edge.dst, _AccessNode) else None
     src_data = src_an.data if src_an is not None else None
     dst_data = dst_an.data if dst_an is not None else None
-    src_subset: Optional[Range] = None
-    dst_subset: Optional[Range] = None
+    src_subset: Range | None = None
+    dst_subset: Range | None = None
     if src_an is not None:
         src_subset = an_side_subset(edge, src_an, sdfg, state)
     if dst_an is not None:
@@ -52,7 +53,7 @@ def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG, state: 'dace.SDFGState'):
     return src_data, src_subset, dst_data, dst_subset
 
 
-def an_side_subset(edge: Edge, an: AccessNode, sdfg: dace.SDFG, state: 'dace.SDFGState') -> Range:
+def an_side_subset(edge: MultiConnectorEdge[Memlet], an: AccessNode, sdfg: dace.SDFG, state: 'dace.SDFGState') -> Range:
     """Return the subset belonging to ``an`` on the AN-incident ``edge``.
 
     An AN-incident edge carries one endpoint's region in ``edge.data.subset`` and the other's in
@@ -83,7 +84,7 @@ def an_side_subset(edge: Edge, an: AccessNode, sdfg: dace.SDFG, state: 'dace.SDF
     return Range([(0, s - 1, 1) for s in desc.shape])
 
 
-def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
+def repl_subset(subset: dace.subsets.Range, repl_dict: dict[str, str]) -> dace.subsets.Range:
     """Apply ``repl_dict`` to a copy of ``subset`` (non-in-place ``.replace``).
 
     :param subset: Subset to copy and rewrite.
@@ -95,7 +96,8 @@ def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.s
     return new_subset
 
 
-def _assert_no_new_free_symbols(sdfg: dace.SDFG, prev_sdfg_free_syms: Set, free_syms: Set, helper_name: str) -> None:
+def _assert_no_new_free_symbols(sdfg: dace.SDFG, prev_sdfg_free_syms: set[str], free_syms: set[str],
+                                helper_name: str) -> None:
     """Raise if a subset rewrite introduced new free symbols into the SDFG.
 
     :param sdfg: The SDFG being rewritten.
@@ -154,7 +156,7 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
     return new_subset
 
 
-def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr: str):
+def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr: str) -> None:
     """Replace every memlet subset for ``name`` in ``state`` with a new subset.
 
     :param state: The SDFG state to modify.

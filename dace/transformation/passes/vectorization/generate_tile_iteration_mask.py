@@ -7,7 +7,7 @@ The mask lives directly in the parent state (between ``MapEntry`` and
 the body) as a register transient, so downstream :class:`ConvertTaskletsToTileOps`
 can wire it into every lib node without crossing a NestedSDFG boundary.
 """
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import properties, symbolic
@@ -46,7 +46,7 @@ class GenerateTileIterationMask(ppl.Pass):
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
 
-    def __init__(self, widths: Tuple[int, ...] = (8, )):
+    def __init__(self, widths: tuple[int, ...] = (8, )) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -157,14 +157,14 @@ class GenerateTileIterationMask(ppl.Pass):
         thread_symbols_into_nsdfg(inner_sdfg, body_nsdfg, all_syms, parent_sdfg)
         return True
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Optional[Dict]) -> Optional[int]:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any] | None) -> int | None:
         """Walk every innermost map and attach the mask to its scope.
 
         :param sdfg: SDFG to transform in place.
         :param pipeline_results: Reads ``"MarkTileDims"`` when present.
         :returns: Number of maps with a fresh mask, or ``None`` if none.
         """
-        specs: Optional[Dict[MapEntry, TileDimSpec]] = None
+        specs: dict[MapEntry, TileDimSpec] | None = None
         if pipeline_results and "MarkTileDims" in pipeline_results:
             specs = pipeline_results["MarkTileDims"]
         attached = 0
@@ -172,7 +172,7 @@ class GenerateTileIterationMask(ppl.Pass):
         # Shared across the maps this loop REFUSES -- the gate's whole-SDFG body scan is what makes a
         # per-map selection loop quadratic, and a refusal never mutates. Dropped below the moment a
         # mask is attached, so no candidate is ever gated on a stale scan.
-        scan_cache: Dict[int, Any] = {}
+        scan_cache: dict[int, Any] = {}
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue

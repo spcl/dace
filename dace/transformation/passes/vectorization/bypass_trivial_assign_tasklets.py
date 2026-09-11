@@ -31,10 +31,12 @@ The pass is body-NSDFG-scoped: the outer SDFG's ``AN -> AN`` edges may
 be scatter / gather staging, so they stay untouched. Mirrors
 :class:`EliminateDeadCopies`'s scoping.
 """
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import dace
 from dace import subsets
+from dace.memlet import Memlet
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.libraries.standard.nodes.reduce import Reduce
@@ -46,7 +48,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
 # migration). The matcher is inlined below.
 
 
-def _is_assign_tasklet(t) -> bool:
+def _is_assign_tasklet(t: dace.nodes.Node) -> bool:
     """True iff ``t`` is a tasklet with a single in / out connector and a body
     of the form ``<out_conn> = <in_conn>`` (no arithmetic, no calls).
     """
@@ -60,7 +62,8 @@ def _is_assign_tasklet(t) -> bool:
     return body == f"{out_conn} = {in_conn}"
 
 
-def _assign_triple(istate: SDFGState, t: dace.nodes.Tasklet) -> Optional[Tuple]:
+def _assign_triple(istate: SDFGState,
+                   t: dace.nodes.Tasklet) -> tuple[MultiConnectorEdge[Memlet], MultiConnectorEdge[Memlet]] | None:
     """Return ``(in_edge, out_edge)`` iff ``t`` is the trivial
     ``AN -> [_out=_in] -> AN`` triple. ``None`` otherwise.
 
@@ -103,7 +106,7 @@ def _accessed_in_other_states(inner_sdfg: SDFG, data_name: str, current_state: S
     return False
 
 
-def _accumulates_into_destination(pe) -> bool:
+def _accumulates_into_destination(pe: MultiConnectorEdge[Memlet]) -> bool:
     """True iff producer edge ``pe`` folds into what its destination ALREADY holds.
 
     Re-pointing a write at a different buffer is value-preserving only when the
@@ -133,11 +136,11 @@ class BypassTrivialAssignTasklets(ppl.Pass):
         """Single fixed-point sweep is enough."""
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         """Standalone pass."""
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Sweep every body NSDFG and apply dedup + bypass.
 
         :param sdfg: Top-level SDFG.
@@ -176,7 +179,7 @@ class BypassTrivialAssignTasklets(ppl.Pass):
         :param istate: Inner state being rewritten.
         :returns: Number of duplicate tasklets removed.
         """
-        seen: Dict = {}
+        seen: dict = {}
         removed = 0
         for t in [n for n in istate.nodes() if isinstance(n, dace.nodes.Tasklet)]:
             triple = _assign_triple(istate, t)
