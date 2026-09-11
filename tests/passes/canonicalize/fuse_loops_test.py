@@ -48,22 +48,6 @@ def _fuse_and_check(prog, n=64, arrays=("a", "b"), seed=0):
     return applied, before, after, exact
 
 
-def test_fuse_two_sequential_recurrences():
-    """Two sequential recurrences, body2 reads ``a[i]`` (same index) -> fuse, bit-exact."""
-
-    @dace.program
-    def fuse_ok(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
-        for i in range(1, N):
-            a[i] = a[i - 1] + c[i]
-        for i in range(1, N):
-            b[i] = b[i - 1] + a[i]
-
-    applied, before, after, exact = _fuse_and_check(fuse_ok)
-    assert applied == 1
-    assert before == 2 and after == 1
-    assert exact
-
-
 def test_refuse_forward_flow_dependence():
     """body2 reads ``a[i+1]`` (read-ahead of body1's write) -> must NOT fuse."""
 

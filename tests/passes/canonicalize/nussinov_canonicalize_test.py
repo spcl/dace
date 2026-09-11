@@ -186,13 +186,7 @@ def test_nussinov_peel1_end_to_end_bit_exact():
 
 
 def test_nussinov_peel4_end_to_end_bit_exact():
-    """canonicalize(nussinov, peel_limit=4) end to end -- the pipeline's default CPU peel preset.
-
-    Records the remaining known-open blocker on nussinov's peel path. The canonicalize half of
-    this configuration is already asserted green by
-    ``test_nussinov_canonicalize_valid_deterministic``; only codegen is blocked. Marked
-    non-strict so it turns green on its own once the peeling defect is fixed.
-    """
+    """canonicalize(nussinov, peel_limit=4) end to end -- the pipeline's default CPU peel preset."""
     _end_to_end_bit_exact(4)
 
 

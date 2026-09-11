@@ -21,12 +21,10 @@ Assertion strategy (deliberate):
 * The load-bearing assertions are the STRUCTURAL proxies -- generated-code size and
   node count. They are deterministic and independent of machine load, so they cannot
   flake.
-* The wall-clock bounds are extremely generous (~100x the measured values). This box
-  is shared and routinely runs concurrent pytest sweeps and nvcc builds, so a tight
-  timing assertion would flake; these bounds only catch a 900s-class regression, not
-  a 2x slowdown. A flaky perf test is worse than none.
+* There is deliberately NO wall-clock assertion. This box is shared, so a timing bound
+  is a function of the machine rather than of the code; the size and node ceilings above
+  catch the code-growth blowup that is the only way compile time can explode here.
 """
-import time
 
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
@@ -48,10 +46,6 @@ _MAX_CODE_BYTES = 200_000
 #: SDFG node ceiling. Measured: 11 untransformed, 17 after canon.
 _MAX_NODES = 500
 
-#: Wall-clock ceilings -- see the module docstring: ~100x measured, load-tolerant.
-_MAX_CANON_SECONDS = 120.0
-_MAX_COMPILE_SECONDS = 300.0
-
 
 def _kernel():
     kernels = PB.collect('k3mm')
@@ -60,13 +54,11 @@ def _kernel():
 
 
 def _canonicalized():
-    """A canonicalized + CPU-finalized k3mm, and the seconds canon itself took."""
+    """A canonicalized + CPU-finalized k3mm."""
     sdfg = PB.fresh_sdfg(_kernel())
-    t0 = time.perf_counter()
     canonicalize(sdfg, validate=True, validate_all=False, **_CPU)
-    canon_seconds = time.perf_counter() - t0
     finalize_for_target(sdfg, 'cpu')
-    return sdfg, canon_seconds
+    return sdfg
 
 
 def _code_bytes(sdfg):
@@ -83,7 +75,7 @@ def test_k3mm_canonicalize_does_not_explode():
     Deterministic (no compile, no timing dependence) -- this is the assertion that
     actually catches a code-growth regression.
     """
-    sdfg, canon_seconds = _canonicalized()
+    sdfg = _canonicalized()
 
     libs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.LibraryNode)]
     assert len(libs) == 3, (f"expected k3mm's 3 chained MatMul library nodes to survive canon+finalize "
@@ -96,9 +88,6 @@ def test_k3mm_canonicalize_does_not_explode():
     assert code_bytes <= _MAX_CODE_BYTES, (f"canon exploded k3mm's generated code: {code_bytes} bytes "
                                            f"(> {_MAX_CODE_BYTES}); expected ~5.9KB")
 
-    assert canon_seconds <= _MAX_CANON_SECONDS, (f"canonicalize(k3mm) took {canon_seconds:.1f}s "
-                                                 f"(> {_MAX_CANON_SECONDS}s); expected ~0.3s")
-
 
 def test_k3mm_canonicalized_compiles_and_is_value_preserving():
     """The canonicalized k3mm compiles in sane time and matches the polybench reference.
@@ -110,14 +99,8 @@ def test_k3mm_canonicalized_compiles_and_is_value_preserving():
     arrays, psize = PB.make_inputs(kernel)
     ref = PB.reference(kernel, arrays, psize)
 
-    sdfg, _ = _canonicalized()
+    sdfg = _canonicalized()
     sdfg.name = f'{sdfg.name}_compile_time_guard'
-
-    t0 = time.perf_counter()
     got = PB.run(sdfg, arrays, psize)
-    compile_and_run_seconds = time.perf_counter() - t0
 
-    assert compile_and_run_seconds <= _MAX_COMPILE_SECONDS, (
-        f"canonicalized k3mm took {compile_and_run_seconds:.1f}s to compile+run "
-        f"(> {_MAX_COMPILE_SECONDS}s); expected ~3s")
     assert PB.outputs_match(ref, got), "canonicalized k3mm is not value-preserving vs the polybench reference"

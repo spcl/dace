@@ -379,12 +379,12 @@ def test_quadratic_scatter_is_value_preserving():
     assert np.allclose(got, expected), 'the quadratic scatter must be preserved'
 
 
+@pytest.mark.skipif(not smt_dependence.has_z3(),
+                    reason='needs z3: the affine classifier cannot reach a quadratic subscript')
 def test_quadratic_scatter_parallelizes():
     """The oracle discharges ``i1*i1 == i2*i2 AND 0 <= i1 < i2 < N`` as UNSAT, so the write is
     injective and the loop lifts. Without z3 the affine classifier refuses and the loop stays."""
     sdfg = cpu_canon(quadratic_scatter.to_sdfg(simplify=True))
-    if not smt_dependence.has_z3():
-        pytest.skip('needs z3: the affine classifier cannot reach a quadratic subscript')
     assert residual_loops(sdfg) == 0
 
 
