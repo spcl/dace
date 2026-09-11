@@ -591,8 +591,12 @@ def test_create_map_scope_write() -> None:
 
     states = sdfg.states()
     assert len(states) == 1
-    assert [type(node)
-            for node in states[0].nodes()] == [nodes.MapEntry, nodes.Tasklet, nodes.MapExit, nodes.AccessNode]
+    assert [type(node) for node in states[0].nodes()] == [
+        nodes.MapEntry,
+        nodes.Tasklet,
+        nodes.MapExit,
+        nodes.AccessNode,
+    ]
 
 
 def test_create_map_scope_read() -> None:
@@ -784,7 +788,7 @@ def test_read_after_write_nested_SDFG() -> None:
         containers={
             'A': data.Array(dace.float32, [60], transient=True),
             'B': data.Array(dace.float32, [60]),
-            'tmp_condition': data.Scalar(dace.bool, transient=True)
+            'tmp_condition': data.Scalar(dace.bool, transient=True),
         },
         children=[
             tn.MapScope(
@@ -821,14 +825,16 @@ def test_read_after_write_nested_SDFG() -> None:
                             )
                         ],
                     ),
-                    tn.MapScope(node=nodes.MapEntry(nodes.Map("map_k", "k", sbs.Range.from_string("10:20"))),
-                                children=[
-                                    tn.TaskletNode(
-                                        nodes.Tasklet("assign", {"read"}, {"out"}, "out = read"),
-                                        {"read": dace.Memlet("A[k]")},
-                                        {"out": dace.Memlet("B[k]")},
-                                    )
-                                ])
+                    tn.MapScope(
+                        node=nodes.MapEntry(nodes.Map("map_k", "k", sbs.Range.from_string("10:20"))),
+                        children=[
+                            tn.TaskletNode(
+                                nodes.Tasklet("assign", {"read"}, {"out"}, "out = read"),
+                                {"read": dace.Memlet("A[k]")},
+                                {"out": dace.Memlet("B[k]")},
+                            )
+                        ],
+                    ),
                 ],
             ),
         ],
@@ -837,10 +843,17 @@ def test_read_after_write_nested_SDFG() -> None:
     sdfg = stree.as_sdfg(validate=True, simplify=True)
 
     # Make sure we keep the initialization of A = 42.42
-    assert len(
-        list(
-            filter(lambda node: isinstance(node, nodes.Tasklet) and node.label == "fill",
-                   [node for node, _ in sdfg.all_nodes_recursive()]))) == 1
+    assert (
+        len(
+            list(
+                filter(
+                    lambda node: isinstance(node, nodes.Tasklet) and node.label == "fill",
+                    [node for node, _ in sdfg.all_nodes_recursive()],
+                )
+            )
+        )
+        == 1
+    )
 
     # Ensure that A isn't transient in the nested SDFG
     nested_sdfg: dace.SDFG = list(filter(lambda node: node.label == "nested_sdfg", sdfg.cfg_list))[0]
