@@ -350,8 +350,7 @@ def _run_probe_pipeline(probe: SDFG) -> None:
     SimplifyPass().apply_pass(probe, {})
     # Parallelize: every loop (including the WCR reduction axis) becomes a map;
     # flatten the resulting nested SDFGs and merge the perfect nest into one map.
-    # ParallelizeLoops, not LoopToMap directly: it shares one probe context across candidates
-    # instead of re-deriving the analysis per loop. It propagates itself, so SimplifyPass follows.
+    # ParallelizeLoops, not LoopToMap: shares one probe context; propagates itself, so SimplifyPass follows.
     ParallelizeLoops(propagate=False).apply_pass(probe, {})
     probe.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG], validate=False, validate_all=False)
     SimplifyPass().apply_pass(probe, {})

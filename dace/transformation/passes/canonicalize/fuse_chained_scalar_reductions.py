@@ -159,8 +159,7 @@ class FuseChainedScalarReductions(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         fused = 0
         for sd in sdfg.all_sdfgs_recursive():
-            # Not recursive: ``all_sdfgs_recursive`` already visits nested SDFGs, and recursing here
-            # folds an inner loop against the outer ``sd``, leaving ``_fused_inc`` on the wrong SDFG.
+            # Not recursive: ``all_sdfgs_recursive`` already recurses; nesting here misplaces ``_fused_inc``.
             for loop in [n for n in sd.all_control_flow_regions() if isinstance(n, LoopRegion)]:
                 if loop.pinned_sequential or not loop.loop_variable:
                     continue

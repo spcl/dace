@@ -281,11 +281,10 @@ class StructuralCleanup(ppl.Pass):
         """The block's members, in order. Symbols are folded before the state machine is rewritten,
         then ``FuseStates`` walks the region's edges to fuse what it can.
 
-        ``FuseStates`` drives the SAME ``StateFusionExtended.can_be_applied`` over the same blocks a
-        ``PatternApplyOnceEverywhere`` matcher would, plus ``BlockFusion`` on non-state blocks, so
-        the matcher that used to run ahead of it re-derived every match through VF2 to reach a
-        fixpoint the walk reaches anyway. State fusion is not confluent, so the two orders can
-        settle differently (channel_flow: 11 states via the matcher, 12 via the walk).
+        ``FuseStates`` now drives the same ``StateFusionExtended.can_be_applied`` a ``PatternApplyOnceEverywhere``
+        matcher would, plus ``BlockFusion`` on non-state blocks -- the removed matcher only re-derived
+        the same matches through VF2 for a fixpoint the walk reaches alone. Fusion is not confluent, so
+        results can still differ (channel_flow: 11 states via the matcher, 12 via the walk).
 
         ``PruneUnreferencedTransients`` is LAST, after the state deletions above have taken the
         readers with them, so it decides against the block's own final graph. It pays for itself:
@@ -2046,17 +2045,8 @@ def _assert_self_contained(unit: ppl.Pass):
 
 
 def changed_the_graph(unit: ppl.Pass, result: Any) -> bool:
-    """Whether ``unit``'s ``result`` reports a rewrite rather than a resolved analysis.
-
-    A plain ``Pipeline`` returns its WHOLE results dict, analyses included, so a pipeline that
-    rewrote nothing still answers non-``None`` -- ``FixedPointPipeline`` filters those out by pass
-    name and plain ``Pipeline`` does not. Without the same filter the caller's dirty flag is pinned
-    true and the cleanup block can never be skipped.
-
-    :param unit: The pass that was applied.
-    :param result: What it returned.
-    :returns: ``True`` if the graph should be treated as modified.
-    """
+    """Whether ``result`` reports a rewrite: plain ``Pipeline`` returns its whole dict even when
+    unchanged (unlike ``FixedPointPipeline``), which would pin the caller's dirty flag forever."""
     if result is None:
         return False
     if type(unit) is ppl.Pipeline:

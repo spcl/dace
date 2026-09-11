@@ -49,8 +49,7 @@ class LiftPreprocess(ppl.Pass):
 
         count = 0
         # Reductions written as WCR edges -> in-body augmented assignment, so the matchers
-        # see one uniform tasklet shape. No-op on already-augassign bodies. The traversal-half
-        # passes replace PatternMatchAndApplyRepeated, which re-ran VF2 after every apply.
+        # see one uniform tasklet shape (no-op if already augassign); avoids the matcher's per-call VF2.
         count += RevertNonReductionWCR().apply_pass(sdfg, {}) or 0
         # Strip frontend ``__out = __inp`` copy tasklets so the matcher sees the bare
         # ``out[i+1] = out[i] + delta[i]`` shape instead of an ``assign_NN`` copy node.

@@ -64,7 +64,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         return {}
 
     @staticmethod
-    def arm_bound_symbols(sd: SDFG) -> Dict[str, 'dtypes.typeclass']:
+    def arm_bound_symbols(sd: SDFG) -> dict[str, 'dtypes.typeclass']:
         """Symbols an arm of a ``ConditionalBlock`` binds on one of its own interstate edges.
 
         Only ``sd``'s own regions are walked -- a nested SDFG binds symbols in its own scope and is
@@ -74,7 +74,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         :returns: the bound names mapped to the dtype to demote each at (inferred from the
             assignment if undeclared, absent if neither), insertion-ordered.
         """
-        bound: Dict[str, dtypes.typeclass] = {}
+        bound: dict[str, dtypes.typeclass] = {}
         for block in sd.all_control_flow_blocks():
             if not isinstance(block, ConditionalBlock):
                 continue

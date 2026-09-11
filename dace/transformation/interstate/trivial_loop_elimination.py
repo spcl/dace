@@ -70,8 +70,7 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        # Bind ONCE: ``self.loop`` re-resolves via ``sdfg.cfg_list`` on every read, and reparenting
-        # below renumbers that list -- later reads landed in the wrong region (warpx_boris_push).
+        # Bind ONCE: ``self.loop`` re-resolves via ``sdfg.cfg_list``; reparenting below renumbers it (warpx_boris_push).
         loop = self.loop
 
         # Obtain iteration variable, range and stride
