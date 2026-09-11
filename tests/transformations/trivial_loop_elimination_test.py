@@ -55,14 +55,7 @@ class TrivialLoopEliminationTest(unittest.TestCase):
         self.assertTrue(np.allclose(A1, A2))
 
     def test_splicing_a_body_that_holds_a_region(self):
-        """A loop body can hold a control-flow region, and the splice reparents it into the parent.
-
-        That reparenting calls ``reset_cfg_list``, which renumbers every region -- so ``apply`` must
-        bind the matched loop ONCE up front instead of re-resolving ``self.loop`` as
-        ``cfg_list[cfg_id].node(node_id)`` after it. Re-resolving landed in a different region and
-        raised ``NodeNotFoundError`` on warpx_boris_push and bfs, whose single-trip loops sit inside
-        an outer sweep and carry a region in the body.
-        """
+        """apply must bind the matched loop once up front; reset_cfg_list renumbers regions on splice."""
         n = 8
         sdfg = dace.SDFG('splice_body_region')
         sdfg.add_array('a', [n], dace.float64)

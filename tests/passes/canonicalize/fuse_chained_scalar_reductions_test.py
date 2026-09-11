@@ -64,10 +64,7 @@ def test_chained_accumulations_fold():
 
 
 def nest_inner_sdfg(inner_sdfg: dace.SDFG) -> dace.SDFG:
-    """Wrap ``inner_sdfg`` as a ``NestedSDFG`` node inside a fresh outer host SDFG, duplicating
-    every one of its data descriptors under the same names on the outer scope -- the
-    seissol_tensor_contraction shape that let a ``recursive=True`` walk resolve the accumulator
-    on the wrong SDFG (see the comment on ``FuseChainedScalarReductions.apply_pass``)."""
+    """Wrap inner_sdfg as a NestedSDFG in a fresh outer host (seissol_tensor_contraction shape)."""
     outer_sdfg = dace.SDFG('outer_scalar_reduction_host')
     for name, desc in inner_sdfg.arrays.items():
         outer_sdfg.add_datadesc(name, desc.clone())
@@ -95,10 +92,7 @@ def nest_inner_sdfg(inner_sdfg: dace.SDFG) -> dace.SDFG:
 
 
 def test_fold_inside_nested_sdfg_scopes_descriptor_to_the_inner_sdfg():
-    """A chained-scalar-reduction loop one level down inside a NestedSDFG must fold with ``sd``
-    bound to the SDFG that owns the loop body state -- not to whichever outer host SDFG the walk
-    happens to be sitting on -- else the fresh ``_fused_inc`` descriptor is registered on the
-    outer SDFG while the access node that names it lands in the inner SDFG's state."""
+    """The fold inside a NestedSDFG must register its new descriptor on the inner SDFG, not the outer host."""
     inner_sdfg = s319.to_sdfg(simplify=True)
     found = chain_state(inner_sdfg)
     assert found is not None, 'fixture must produce the chained-accumulator shape'

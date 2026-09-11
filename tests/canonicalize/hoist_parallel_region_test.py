@@ -396,21 +396,13 @@ if __name__ == '__main__':
 
 
 def test_a_loop_nested_inside_another_region_is_hoisted_in_its_own_graph():
-    """The team is outlined from the graph that HOLDS the loop, not from the SDFG.
-
-    ``visit_region`` descends into nested regions carrying the top-level SDFG, so a hoistable loop
-    inside a region that is itself not hoistable is not a node of that SDFG. Building the outline
-    subgraph over the SDFG then raised ``NodeNotFoundError`` while sorting the subgraph by
-    ``sdfg.node_id`` -- warpx_boris_push's and bfs's shape, a worksharing loop inside an outer
-    sweep the copy in its prologue disqualifies.
-    """
+    """The team is outlined from the graph that holds the loop, not from the SDFG (warpx_boris_push's shape)."""
     sdfg = dace.SDFG('nested_hoistable')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [N], dace.float64)
     outer = loop_region(sdfg, 'outer', 'N')
 
-    # An AccessNode -> AccessNode copy in the outer body: ``hoistable`` refuses the outer loop on
-    # it, so the walk descends instead of hoisting here.
+    # An AccessNode -> AccessNode copy in the outer body: hoistable refuses the outer loop here.
     prologue = outer.add_state('prologue', is_start_block=True)
     prologue.add_edge(prologue.add_read('b'), None, prologue.add_write('a'), None, dace.Memlet('a[0:N]'))
 

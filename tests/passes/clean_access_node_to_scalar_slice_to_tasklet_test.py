@@ -335,16 +335,7 @@ def test_refuses_when_source_array_also_written_in_same_state():
 
 
 def test_refuses_when_view_source_would_lose_its_only_data_binding():
-    """The fold must NOT retarget a View source's only data-side edge at
-    the tasklet. A View has no data of its own -- ``get_view_edge`` reads
-    off whichever edge reaches an AccessNode. Here the view ``V`` sits
-    between a ``Reduce`` library node (its other side) and the scalar
-    ``A_slice``: the ``Reduce`` side never reaches an AccessNode, so
-    ``V``'s only binding is the very edge into ``A_slice`` that the fold
-    would drop. Folding it would leave ``V`` binding nothing and
-    validation would refuse the graph (lda_xc_potential's
-    ``sum_eps_x_eps_c_n``, whose other side is a ``Reduce`` node).
-    """
+    """The fold must not retarget a View's only AccessNode-reaching edge (lda_xc_potential's shape)."""
     sdfg = dace.SDFG('rmw_view_loses_binding')
     sdfg.add_array('A', (16, ), dace.float64)
     sdfg.add_view('V', [1], dace.float64)
@@ -366,14 +357,10 @@ def test_refuses_when_view_source_would_lose_its_only_data_binding():
 
     CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, None)
 
-    # Without the guard, folding this leaves V with no edge reaching an
-    # AccessNode and validate() raises "Ambiguous or invalid edge to/from
-    # a View access node" -- check that first so a missing guard fails
-    # with that exact error, not a structural assert lower down.
+    # Without the guard, validate() raises "Ambiguous or invalid edge to/from a View access node".
     sdfg.validate()
 
-    # The fold must have been declined: V, A_slice and the V -> A_slice
-    # edge that would have been retargeted are all still there.
+    # The fold must have been declined: V, A_slice, and the V -> A_slice edge all still there.
     assert any(n is v and n.data == 'V' for n in s.data_nodes()), 'V must survive the declined fold'
     assert any(n.data == 'A_slice' for n in s.data_nodes()), 'A_slice must survive the declined fold'
     v_to_slice = [e for e in s.out_edges(v) if e.dst is a_slice]

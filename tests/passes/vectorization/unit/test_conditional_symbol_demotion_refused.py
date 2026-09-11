@@ -119,12 +119,7 @@ def test_demotion_keeps_the_declared_dtype(declared):
 
 
 def build_undeclared_arm_bound_sdfg() -> dace.SDFG:
-    """A ``ConditionalBlock`` arm binds ``zlcrit`` on one of its OWN interstate edges, and
-    ``zlcrit`` is declared nowhere -- not in ``sdfg.symbols``, not in ``sdfg.arrays``. This is
-    CloudSC's shape: an interstate assignment DEFINES its symbol, so an arm can bind a name the
-    SDFG never declared. ``arm_bound_symbols`` must type it off the assignment, not a declaration
-    that does not exist.
-    """
+    """A ConditionalBlock arm binds zlcrit on its own interstate edge; zlcrit is declared nowhere (CloudSC shape)."""
     sdfg = dace.SDFG("undeclared_arm_bound_symbol")
     sdfg.add_array("a", shape=(1, ), dtype=dace.float32)
 
@@ -143,12 +138,7 @@ def build_undeclared_arm_bound_sdfg() -> dace.SDFG:
 
 
 def test_undeclared_arm_bound_symbol_is_demoted_from_the_assignment_type():
-    """The miss ``arm_bound_symbols`` used to make: a name bound only on an arm's own interstate
-    edge, absent from ``sdfg.symbols``, must still be demoted -- typed off the assignment that
-    defines it. Before the fix, ``arm_bound_symbols`` read ``sd.symbols[name]`` for every bound
-    name and the caller skipped any name missing from ``sd.symbols`` -- exactly this case --
-    leaving ``zlcrit`` a symbol and the guard it is bound under lane-varying after widening.
-    """
+    """A symbol bound only on an arm's own edge, absent from sdfg.symbols, must still demote."""
     sdfg = build_undeclared_arm_bound_sdfg()
     assert "zlcrit" not in sdfg.symbols, "zlcrit must start undeclared, the shape this test pins"
 
