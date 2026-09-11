@@ -21,8 +21,7 @@ def test_simplify_bool_does_not_poison_integer_one():
     dace.symbolic.simplify(True)
 
     result = dace.symbolic.simplify(sympy.Integer(1))
-    assert isinstance(result, (sympy.Integer, int)), \
-        f"expected sympy.Integer, got {type(result).__name__}: {result!r}"
+    assert isinstance(result, (sympy.Integer, int)), f"expected sympy.Integer, got {type(result).__name__}: {result!r}"
     assert not isinstance(result, (Boolean, bool))
     assert result == 1
 
@@ -33,8 +32,7 @@ def test_simplify_integer_one_does_not_poison_bool():
     dace.symbolic.simplify(sympy.Integer(1))
 
     result = dace.symbolic.simplify(True)
-    assert isinstance(result, (Boolean, bool)), \
-        f"expected a sympy boolean, got {type(result).__name__}: {result!r}"
+    assert isinstance(result, (Boolean, bool)), f"expected a sympy boolean, got {type(result).__name__}: {result!r}"
     assert bool(result) is True
 
 
@@ -44,8 +42,7 @@ def test_simplify_bool_does_not_poison_integer_zero():
     dace.symbolic.simplify(False)
 
     result = dace.symbolic.simplify(sympy.Integer(0))
-    assert isinstance(result, (sympy.Integer, int)), \
-        f"expected sympy.Integer, got {type(result).__name__}: {result!r}"
+    assert isinstance(result, (sympy.Integer, int)), f"expected sympy.Integer, got {type(result).__name__}: {result!r}"
     assert not isinstance(result, (Boolean, bool))
     assert result == 0
 
@@ -56,8 +53,7 @@ def test_simplify_integer_zero_does_not_poison_bool():
     dace.symbolic.simplify(sympy.Integer(0))
 
     result = dace.symbolic.simplify(False)
-    assert isinstance(result, (Boolean, bool)), \
-        f"expected a sympy boolean, got {type(result).__name__}: {result!r}"
+    assert isinstance(result, (Boolean, bool)), f"expected a sympy boolean, got {type(result).__name__}: {result!r}"
     assert bool(result) is False
 
 
@@ -89,12 +85,14 @@ def test_volume_propagation_after_bool_simplify():
     state = sdfg.add_state()
     # A single-iteration map: the propagated volume is ``sympy.Integer(1)`` --
     # exactly the cache key that a cached ``simplify(True)`` poisons.
-    state.add_mapped_tasklet('copy',
-                             dict(i='0:1'),
-                             dict(inp=dace.Memlet('A[i]')),
-                             'out = inp',
-                             dict(out=dace.Memlet('B[i]')),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        'copy',
+        dict(i='0:1'),
+        dict(inp=dace.Memlet('A[i]')),
+        'out = inp',
+        dict(out=dace.Memlet('B[i]')),
+        external_edges=True,
+    )
     # Without the fix this raised: TypeError: Property volume must be a literal
     # or symbolic expression (the propagated volume was a BooleanTrue).
     propagate_memlets_sdfg(sdfg)

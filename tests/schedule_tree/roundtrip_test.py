@@ -2,6 +2,7 @@
 """
 Tests conversion of schedule trees to SDFGs.
 """
+
 import dace
 import numpy as np
 

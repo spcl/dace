@@ -2,6 +2,7 @@
 """
 Parse the authors file and print for CITATION.cff
 """
+
 with open("AUTHORS", "r") as f:
     content = f.readlines()
 

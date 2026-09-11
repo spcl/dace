@@ -33,14 +33,14 @@ def test_lack_of_omp_props():
     sdfg = arrayop.to_sdfg(simplify=True)
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.EntryNode):
-            assert (isinstance(node, nodes.MapEntry))
+            assert isinstance(node, nodes.MapEntry)
             node.map.schedule = dtypes.ScheduleType.Sequential
             break
 
     json = sdfg.to_json()
-    assert (not key_exists(json, 'omp_num_threads'))
-    assert (not key_exists(json, 'omp_schedule'))
-    assert (not key_exists(json, 'omp_chunk_size'))
+    assert not key_exists(json, 'omp_num_threads')
+    assert not key_exists(json, 'omp_schedule')
+    assert not key_exists(json, 'omp_chunk_size')
 
 
 def test_omp_props():
@@ -49,31 +49,31 @@ def test_omp_props():
     mapnode = None
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.EntryNode):
-            assert (isinstance(node, nodes.MapEntry))
+            assert isinstance(node, nodes.MapEntry)
             mapnode = node.map
             break
 
     mapnode.schedule = dtypes.ScheduleType.CPU_Multicore
 
     code = sdfg.generate_code()[0].clean_code
-    assert ("#pragma omp parallel for" in code)
+    assert "#pragma omp parallel for" in code
 
     mapnode.omp_num_threads = 10
     code = sdfg.generate_code()[0].clean_code
-    assert ("#pragma omp parallel for num_threads(10)" in code)
+    assert "#pragma omp parallel for num_threads(10)" in code
 
     mapnode.omp_schedule = dtypes.OMPScheduleType.Guided
     code = sdfg.generate_code()[0].clean_code
-    assert ("#pragma omp parallel for schedule(guided) num_threads(10)" in code)
+    assert "#pragma omp parallel for schedule(guided) num_threads(10)" in code
 
     mapnode.omp_chunk_size = 5
     code = sdfg.generate_code()[0].clean_code
-    assert ("#pragma omp parallel for schedule(guided, 5) num_threads(10)" in code)
+    assert "#pragma omp parallel for schedule(guided, 5) num_threads(10)" in code
 
     json = sdfg.to_json()
-    assert (key_exists(json, 'omp_num_threads'))
-    assert (key_exists(json, 'omp_schedule'))
-    assert (key_exists(json, 'omp_chunk_size'))
+    assert key_exists(json, 'omp_num_threads')
+    assert key_exists(json, 'omp_schedule')
+    assert key_exists(json, 'omp_chunk_size')
 
 
 def test_omp_parallel():
@@ -88,7 +88,7 @@ def test_omp_parallel():
     me.map.omp_num_threads = 2
 
     code = sdfg.generate_code()[0].clean_code
-    assert ("#pragma omp parallel num_threads(2)" in code)
+    assert "#pragma omp parallel num_threads(2)" in code
 
     a = np.random.rand(1)
     ref = a + 2

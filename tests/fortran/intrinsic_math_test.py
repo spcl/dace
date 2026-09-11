@@ -222,14 +222,14 @@ def test_fortran_frontend_mod_float():
 
     size = 12
     d = np.full([size], 42, order="F", dtype=np.float64)
-    d[0] = 17.
-    d[1] = 3.
-    d[2] = -17.
-    d[3] = 3.
-    d[4] = 17.
-    d[5] = -3.
-    d[6] = -17.
-    d[7] = -3.
+    d[0] = 17.0
+    d[1] = 3.0
+    d[2] = -17.0
+    d[3] = 3.0
+    d[4] = 17.0
+    d[5] = -3.0
+    d[6] = -17.0
+    d[7] = -3.0
     d[8] = 17.5
     d[9] = 5.5
     d[10] = -17.5
@@ -317,14 +317,14 @@ def test_fortran_frontend_modulo_float():
 
     size = 12
     d = np.full([size], 42, order="F", dtype=np.float64)
-    d[0] = 17.
-    d[1] = 3.
-    d[2] = -17.
-    d[3] = 3.
-    d[4] = 17.
-    d[5] = -3.
-    d[6] = -17.
-    d[7] = -3.
+    d[0] = 17.0
+    d[1] = 3.0
+    d[2] = -17.0
+    d[3] = 3.0
+    d[4] = 17.0
+    d[5] = -3.0
+    d[6] = -17.0
+    d[7] = -3.0
     d[8] = 17.5
     d[9] = 5.5
     d[10] = -17.5
@@ -468,10 +468,10 @@ def test_fortran_frontend_scale():
     sdfg(d=d, d2=d2, res=res)
 
     assert abs(res[0] - 0.570043862) < 10**-7
-    assert res[1] == 176.
-    assert res[2] == 704.
-    assert res[3] == 65280.
-    assert res[4] == 11141120.
+    assert res[1] == 176.0
+    assert res[2] == 704.0
+    assert res[3] == 65280.0
+    assert res[4] == 11141120.0
 
 
 def test_fortran_frontend_exponent():
@@ -587,11 +587,11 @@ def test_fortran_frontend_int():
 
     assert np.array_equal(res, [1, 1, 42, -42])
 
-    assert np.array_equal(res2, [1., 1., 42., -42.])
+    assert np.array_equal(res2, [1.0, 1.0, 42.0, -42.0])
 
     assert np.array_equal(res3, [3, 4, 4, 4, -3, -4, -4, -4])
 
-    assert np.array_equal(res4, [3., 4., 4., 4., -3., -4., -4., -4.])
+    assert np.array_equal(res4, [3.0, 4.0, 4.0, 4.0, -3.0, -4.0, -4.0, -4.0])
 
 
 def test_fortran_frontend_real():
@@ -650,8 +650,8 @@ def test_fortran_frontend_real():
     res2 = np.full([size * 3], 42, order="F", dtype=np.float32)
     sdfg(d=d, d2=d2, d3=d3, res=res, res2=res2)
 
-    assert np.allclose(res, [7.0, 13.11, 7.0, 13.11, 7., 13.])
-    assert np.allclose(res2, [7.0, 13.11, 7.0, 13.11, 7., 13.])
+    assert np.allclose(res, [7.0, 13.11, 7.0, 13.11, 7.0, 13.0])
+    assert np.allclose(res2, [7.0, 13.11, 7.0, 13.11, 7.0, 13.0])
 
 
 def test_fortran_frontend_trig():
@@ -692,7 +692,7 @@ def test_fortran_frontend_trig():
     res = np.full([size * 2], 42, order="F", dtype=np.float32)
     sdfg(d=d, res=res)
 
-    assert np.allclose(res, [0.0, 0.999999702, 1.59254798E-03, 1.0, 7.96274282E-04, -0.999998748])
+    assert np.allclose(res, [0.0, 0.999999702, 1.59254798e-03, 1.0, 7.96274282e-04, -0.999998748])
 
 
 def test_fortran_frontend_hyperbolic():
@@ -739,7 +739,8 @@ def test_fortran_frontend_hyperbolic():
 
     assert np.allclose(
         res,
-        [0.00000000, 1.17520118, 11.5302935, 1.00000000, 1.54308057, 11.5735760, 0.00000000, 0.761594176, 0.996260226])
+        [0.00000000, 1.17520118, 11.5302935, 1.00000000, 1.54308057, 11.5735760, 0.00000000, 0.761594176, 0.996260226],
+    )
 
 
 def test_fortran_frontend_trig_inverse():
@@ -805,14 +806,26 @@ def test_fortran_frontend_trig_inverse():
     res = np.full([size * 4], 42, order="F", dtype=np.float32)
     sdfg(sincos_args=sincos_args, tan_args=atan_args, tan2_args=atan2_args, res=res)
 
-    assert np.allclose(res, [
-        -0.523598790, 0.00000000, 1.57079637, 2.09439516, 1.57079637, 0.00000000, 0.00000000, 0.785398185, 1.26248074,
-        0.00000000, 0.785398185, 1.57079637
-    ])
+    assert np.allclose(
+        res,
+        [
+            -0.523598790,
+            0.00000000,
+            1.57079637,
+            2.09439516,
+            1.57079637,
+            0.00000000,
+            0.00000000,
+            0.785398185,
+            1.26248074,
+            0.00000000,
+            0.785398185,
+            1.57079637,
+        ],
+    )
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_min_max()
     test_fortran_frontend_sqrt()
     test_fortran_frontend_abs()

@@ -114,7 +114,6 @@ def test_fortran_frontend_array_offset():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_array_offset()
     test_fortran_frontend_array_attribute_no_offset()
     test_fortran_frontend_array_attribute_offset()

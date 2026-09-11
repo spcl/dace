@@ -13,7 +13,7 @@ def rw_data_race(A: dace.float32[10, 10]):
 def test_rw_data_race():
     sdfg = rw_data_race.to_sdfg(simplify=True)
     access_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.AccessNode)]
-    assert (len(access_nodes) > 2)
+    assert len(access_nodes) > 2
 
 
 if __name__ == "__main__":

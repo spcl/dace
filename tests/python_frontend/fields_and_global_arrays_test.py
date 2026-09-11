@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests class fields and external arrays. """
+"""Tests class fields and external arrays."""
+
 import dace
 from dace.data import Array
 from dace.frontend.python.common import DaceSyntaxError
@@ -101,7 +102,7 @@ def test_dataclass_method_cache():
 
 
 def test_dataclass_method_aot():
-    """ AOT compilation of dataclass methods. """
+    """AOT compilation of dataclass methods."""
 
     @dataclass
     class MyObject:
@@ -123,10 +124,9 @@ def test_dataclass_method_aot():
 
 
 def test_object_method():
-    """ JIT-based inference of fields at call time. """
+    """JIT-based inference of fields at call time."""
 
     class MyObject:
-
         def __init__(self) -> None:
             self.my_a = np.random.rand(20)
 
@@ -146,7 +146,6 @@ def test_object_newfield():
     with pytest.raises(DaceSyntaxError):
 
         class MyObject:
-
             @dace.method
             def something(self, B: dace.float64[20]):
                 self.my_newfield = B
@@ -199,10 +198,9 @@ def test_external_cache():
 
 
 def test_nested_objects():
-    """ Multiple objects with multiple "self" values and same field names. """
+    """Multiple objects with multiple "self" values and same field names."""
 
     class ObjA:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
 
@@ -211,7 +209,6 @@ def test_nested_objects():
             return A + self.q
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
             self.obja = ObjA(q * 2)
@@ -231,7 +228,6 @@ def test_nested_objects():
 def test_nested_constants():
 
     class ObjA:
-
         def __init__(self, q) -> None:
             self.q = q
 
@@ -240,7 +236,6 @@ def test_nested_constants():
             return A + self.q
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = q
             self.obja = ObjA(q * 2)
@@ -260,12 +255,10 @@ def test_nested_constants():
 def test_nested_object_access():
 
     class ObjA:
-
         def __init__(self, q) -> None:
             self.q = q
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = q
             self.obja = ObjA(q * 2)
@@ -289,12 +282,10 @@ def test_same_field_different_classes():
     """
 
     class A:
-
         def __init__(self, arr) -> None:
             self.arr = arr
 
     class B(A):
-
         def __init__(self, arr) -> None:
             super().__init__(arr)
             self.arr2 = arr
@@ -322,7 +313,6 @@ def test_object_methods_ref_across_methods():
     """
 
     class MyObject:
-
         def __init__(self) -> None:
             self.my_a = np.random.rand(20)
             self.my_b = np.random.rand(20)
@@ -347,7 +337,6 @@ def test_object_methods_ref_across_methods():
 def test_nested_objects_call():
 
     class ObjA:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
 
@@ -356,7 +345,6 @@ def test_nested_objects_call():
             return A + self.q
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
             self.obja = ObjA(q * 2)
@@ -373,7 +361,6 @@ def test_nested_objects_call():
 
 
 class MyObjA:
-
     @dace.method
     def method_a(self, A):
         A[...] = 1.0 + A
@@ -391,7 +378,6 @@ class MyObjA:
 
 
 class MyObjB:
-
     def __init__(self) -> None:
         self.obja = MyObjA()
 
@@ -428,7 +414,6 @@ def test_arg_field():
 def test_nested_methods_different_inner_objects():
 
     class ObjA:
-
         def __init__(self, key):
             self.key = key
 
@@ -440,7 +425,6 @@ def test_nested_methods_different_inner_objects():
                 A[...] = A + 2.0
 
     class ObjB:
-
         def __init__(self) -> None:
             self.obja1 = ObjA("1")
             self.obja2 = ObjA("2")
@@ -461,7 +445,6 @@ def test_nested_methods_different_inner_objects():
 def test_constant_closure_cache():
 
     class Obj:
-
         def __init__(self, q) -> None:
             self.q = q
 
@@ -491,12 +474,10 @@ def test_constant_closure_cache():
 def test_constant_closure_cache_nested():
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = q
 
     class ObjA:
-
         def __init__(self, obj) -> None:
             self.obj = obj
 
@@ -519,12 +500,10 @@ def test_constant_closure_cache_nested():
 def test_array_closure_cache():
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = np.random.rand(q)
 
     class ObjA:
-
         def __init__(self, obj) -> None:
             self.obj = obj
 
@@ -547,7 +526,6 @@ def test_array_closure_cache():
 def test_array_closure_cache_nested():
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = np.random.rand(20)
 
@@ -556,7 +534,6 @@ def test_array_closure_cache_nested():
             return A + self.q
 
     class ObjA:
-
         def __init__(self, obj) -> None:
             self.obj = obj
 
@@ -572,7 +549,7 @@ def test_array_closure_cache_nested():
 
 def test_allconstants():
     some_namespace = SimpleNamespace(A=1.0)
-    A = np.zeros((10, ))
+    A = np.zeros((10,))
 
     @dace.program
     def func(ns: dace.compiletime):
@@ -583,7 +560,7 @@ def test_allconstants():
 
 
 def test_method_allconstants():
-    A = np.ones((10, ))
+    A = np.ones((10,))
     ns = SimpleNamespace(A=A)
 
     @dace.program
@@ -591,7 +568,6 @@ def test_method_allconstants():
         A[...] = 7.0
 
     class Example:
-
         @dace.method
         def __call__(self, ns: dace.compiletime):
             inner(ns.A)
@@ -633,7 +609,6 @@ def test_same_global_array():
 def test_two_inner_methods():
 
     class Inner:
-
         def __init__(self, scalar):
             self._tmp = np.full(fill_value=7.0, shape=(10, 10, 10))
             self.scalar = scalar
@@ -643,7 +618,6 @@ def test_two_inner_methods():
             A[...] = self._tmp + self.scalar
 
     class Outer:
-
         def __init__(self):
             self.inner1 = Inner(3.0)
             self.inner2 = Inner(4.0)
@@ -665,7 +639,6 @@ def test_two_inner_methods():
 
 
 class TransientField(np.ndarray):
-
     def __descriptor__(self) -> Array:
         dtype = dace.typeclass(self.dtype.type)
         # Adapted from dace.data.create_datadescriptor
@@ -680,7 +653,6 @@ class TransientField(np.ndarray):
 def test_transient_field():
 
     class Something:
-
         def __init__(self):
             self._nonglobal = TransientField(shape=[10, 11], dtype=np.float64)
 
@@ -706,7 +678,6 @@ def test_transient_field():
 def test_nested_transient_field():
 
     class Something:
-
         def __init__(self):
             self._nonglobal = TransientField(shape=[10, 11], dtype=np.float64)
 
@@ -716,7 +687,6 @@ def test_nested_transient_field():
             return self._nonglobal + 1
 
     class MainSomething:
-
         def __init__(self) -> None:
             self.something_else = Something()
 

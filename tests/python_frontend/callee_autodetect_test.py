@@ -3,6 +3,7 @@
 Tests automatic detection and parsing of nested functions and methods that are
 not annotated with @dace decorators.
 """
+
 import dace
 from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 from dataclasses import dataclass
@@ -209,9 +210,9 @@ def test_autodetect_function_in_for():
 def test_error_handling():
 
     class NotConvertible(SDFGConvertible):
-
         def __call__(self, a):
             import numpy as np  # noqa: F401 (acts as an SDFG conversion inhibitor)
+
             print('A very pythonic method', a)
 
         def __sdfg__(self, *args, **kwargs):
@@ -237,7 +238,6 @@ def test_nested_class_error_handling():
     def not_convertible(f):
 
         class NotConvertibleMethod(SDFGConvertible):
-
             def __sdfg__(self, *args, **kwargs):
                 # Raise a special type of error that does not naturally occur in dace
                 raise NotADirectoryError('I am not really convertible')
@@ -248,10 +248,10 @@ def test_nested_class_error_handling():
         return NotConvertibleMethod()
 
     class MaybeConvertible:
-
         @not_convertible
         def __call__(self, a):
             import numpy as np  # noqa: F401 (acts as an SDFG conversion inhibitor)
+
             print('A very pythonic method', a)
 
     A = np.random.rand(20)

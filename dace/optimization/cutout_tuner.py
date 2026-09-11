@@ -95,10 +95,9 @@ class CutoutTuner(auto_tuner.AutoTuner):
             except:
                 continue
 
-        runtime = optim_utils.subprocess_measure(cutout=cutout,
-                                                 dreport=dreport_,
-                                                 repetitions=repetitions,
-                                                 timeout=timeout)
+        runtime = optim_utils.subprocess_measure(
+            cutout=cutout, dreport=dreport_, repetitions=repetitions, timeout=timeout
+        )
         return runtime
 
     def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict[Any, Any]:
@@ -142,8 +141,9 @@ class CutoutTuner(auto_tuner.AutoTuner):
         all_configs = []
         for cutout_label in tuning_report:
             configs = tuning_report[cutout_label]
-            best_k_configs = [(key, value) for key, value in sorted(configs.items(), key=lambda item: item[1])
-                              ][:min(len(configs), k)]
+            best_k_configs = [(key, value) for key, value in sorted(configs.items(), key=lambda item: item[1])][
+                : min(len(configs), k)
+            ]
             best_k_configs = filter(lambda c: c[1] != math.inf, best_k_configs)
             best_k_configs = list(map(lambda c: (cutout_label, c[0]), best_k_configs))
 

@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Eliminates trivial loop """
+"""Eliminates trivial loop"""
 
 from dace import sdfg as sd
 from dace.sdfg import utils as sdutil

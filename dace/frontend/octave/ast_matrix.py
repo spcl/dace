@@ -6,7 +6,6 @@ import dace
 
 
 class AST_Matrix_Row(AST_Node):
-
     def __init__(self, context, elements):
         AST_Node.__init__(self, context)
         self.elements = elements
@@ -49,7 +48,6 @@ class AST_Matrix_Row(AST_Node):
 
 
 class AST_Matrix(AST_Node):
-
     def __init__(self, context, rows):
         AST_Node.__init__(self, context)
         self.rows = rows
@@ -72,8 +70,7 @@ class AST_Matrix(AST_Node):
         dims = -1
         for r in self.rows:
             if (dims > 0) and (r.get_dims() != dims):
-                raise ValueError("Matrices with unequal row lengths are currently not "
-                                 "supported.")
+                raise ValueError("Matrices with unequal row lengths are currently not supported.")
             else:
                 dims = r.get_dims()
         return [len(self.rows), dims]
@@ -119,13 +116,21 @@ class AST_Matrix(AST_Node):
             tasklet = sdfg.nodes()[state].add_tasklet('init', {}, {'out'}, code, dace.Language.CPP)
             me, mx = sdfg.nodes()[state].add_map('init', dict(i='0:' + str(arrlen)))
             sdfg.nodes()[state].add_edge(me, None, tasklet, None, dace.memlet.Memlet())
-            sdfg.nodes()[state].add_edge(tasklet, "out", mx, None,
-                                         dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
-            sdfg.nodes()[state].add_edge(mx, None, trans, None,
-                                         dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
+            sdfg.nodes()[state].add_edge(
+                tasklet, "out", mx, None, dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg))
+            )
+            sdfg.nodes()[state].add_edge(
+                mx, None, trans, None, dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg))
+            )
 
-            print("The const expr " + str(self) + " will be stored in " + str(name) + ", values are: " +
-                  str(self.get_values_row_major()))
+            print(
+                "The const expr "
+                + str(self)
+                + " will be stored in "
+                + str(name)
+                + ", values are: "
+                + str(self.get_values_row_major())
+            )
         else:
             raise ValueError("Non-constant matrices are currently not supported")
 
@@ -140,7 +145,6 @@ class AST_Matrix(AST_Node):
 
 
 class AST_Transpose(AST_Node):
-
     def __init__(self, context, arg, op):
         AST_Node.__init__(self, context)
         self.arg = arg
@@ -164,8 +168,7 @@ class AST_Transpose(AST_Node):
         name = self.get_name_in_sdfg(sdfg)
         basetype = self.get_basetype()
         if basetype.is_complex():
-            raise NotImplementedError("Transpose of complex matrices not implemented (we might need "
-                                      "to conjugate)")
+            raise NotImplementedError("Transpose of complex matrices not implemented (we might need to conjugate)")
         if len(dims) != 2:
             raise NotImplementedError("Transpose only implemented for 2D matrices")
         sdfg.add_transient(name, dims, basetype, debuginfo=self.context)

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Various AST parsing utilities for DaCe. """
+"""Various AST parsing utilities for DaCe."""
+
 import ast
 import astunparse
 import copy
@@ -23,10 +24,10 @@ ast.Call.skip_keywords = ()
 
 
 def _remove_outer_indentation(src: str):
-    """ Removes extra indentation from a source Python function.
+    """Removes extra indentation from a source Python function.
 
-        :param src: Source code (possibly indented).
-        :return: Code after de-indentation.
+    :param src: Source code (possibly indented).
+    :return: Code after de-indentation.
     """
     lines = src.split('\n')
     indentation = len(lines[0]) - len(lines[0].lstrip())
@@ -34,11 +35,11 @@ def _remove_outer_indentation(src: str):
 
 
 def function_to_ast(f):
-    """ Obtain the source code of a Python function and create an AST.
+    """Obtain the source code of a Python function and create an AST.
 
-        :param f: Python function.
-        :return: A 4-tuple of (AST, function filename, function line-number,
-                               source code as string).
+    :param f: Python function.
+    :return: A 4-tuple of (AST, function filename, function line-number,
+                           source code as string).
     """
     try:
         src = inspect.getsource(f)
@@ -50,15 +51,18 @@ def function_to_ast(f):
         # Try to import dill to obtain code from compiled functions
         try:
             import dill
+
             src = dill.source.getsource(f)
             src_file = '<interpreter>'
             src_line = 0
         except (ImportError, ModuleNotFoundError, TypeError, OSError):
-            raise TypeError('Cannot obtain source code for dace program. This may '
-                            'happen if you are using the "python" default '
-                            'interpreter. Please either use the "ipython" '
-                            'interpreter, a Jupyter or Colab notebook, or place '
-                            'the source code in a file and import it.')
+            raise TypeError(
+                'Cannot obtain source code for dace program. This may '
+                'happen if you are using the "python" default '
+                'interpreter. Please either use the "ipython" '
+                'interpreter, a Jupyter or Colab notebook, or place '
+                'the source code in a file and import it.'
+            )
 
     src_ast = ast.parse(_remove_outer_indentation(src))
     ast.increment_lineno(src_ast, src_line)
@@ -106,7 +110,7 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
 
 
 def rname(node):
-    """ Obtains names from different types of AST nodes. """
+    """Obtains names from different types of AST nodes."""
 
     if isinstance(node, str):
         return node
@@ -132,8 +136,9 @@ def rname(node):
         if isinstance(value, ast.Name):
             name = value.id + '.' + name
         else:
-            raise NotImplementedError("Unsupported AST {n} node nested inside "
-                                      "AST call node: {s}".format(n=type(value), s=unparse(value)))
+            raise NotImplementedError(
+                "Unsupported AST {n} node nested inside AST call node: {s}".format(n=type(value), s=unparse(value))
+            )
         return name
     if isinstance(node, ast.FunctionDef):  # form def func(...)
         return node.name
@@ -149,13 +154,13 @@ def rname(node):
 
 
 def subscript_to_ast_slice(node, without_array=False):
-    """ Converts an AST subscript to slice on the form
-        (<name>, [<3-tuples of AST nodes>]). If an ast.Name is passed, returns
-        (name, None), implying the full range.
+    """Converts an AST subscript to slice on the form
+    (<name>, [<3-tuples of AST nodes>]). If an ast.Name is passed, returns
+    (name, None), implying the full range.
 
-        :param node: The AST node to convert.
-        :param without_array: If True, returns only the slice. Otherwise,
-                              returns a 2-tuple of (array, range).
+    :param node: The AST node to convert.
+    :param without_array: If True, returns only the slice. Otherwise,
+                          returns a 2-tuple of (array, range).
     """
 
     if isinstance(node, ast.Name):
@@ -194,10 +199,10 @@ def subscript_to_ast_slice(node, without_array=False):
 
 
 def subscript_to_ast_slice_recursive(node):
-    """ Converts an AST subscript to a slice in a recursive manner into nested
-        subscripts.
+    """Converts an AST subscript to a slice in a recursive manner into nested
+    subscripts.
 
-        :see: subscript_to_ast_slice
+    :see: subscript_to_ast_slice
     """
     result = []
     while isinstance(node, ast.Subscript):
@@ -208,7 +213,6 @@ def subscript_to_ast_slice_recursive(node):
 
 
 class ExtUnparser(astunparse.Unparser):
-
     def _Constant(self, t):
         # NOTE: This is needed since NumPy 2.0 to avoid unparsing NumPy scalars as calls, e.g. `numpy.int32(1)`
         if isinstance(t.value, numbers.Number):
@@ -242,7 +246,7 @@ class ExtUnparser(astunparse.Unparser):
 
 
 def unparse(node):
-    """ Unparses an AST node to a Python string, chomping trailing newline. """
+    """Unparses an AST node to a Python string, chomping trailing newline."""
     if node is None:
         return None
     if isinstance(node, (ast.AST, list)):
@@ -265,9 +269,9 @@ def unparse(node):
 # Helper function to convert an ND subscript AST node to a list of 3-tuple
 # slice strings
 def subscript_to_slice(node, arrays, without_array=False):
-    """ Converts an AST subscript to slice on the form
-        (<name>, [<3-tuples of indices>]). If an ast.Name is passed, return
-        (name, None), implying the full range. """
+    """Converts an AST subscript to slice on the form
+    (<name>, [<3-tuples of indices>]). If an ast.Name is passed, return
+    (name, None), implying the full range."""
 
     name, ast_slice = subscript_to_ast_slice(node)
     if name in arrays:
@@ -283,13 +287,13 @@ def subscript_to_slice(node, arrays, without_array=False):
 
 
 def slice_to_subscript(arrname, range):
-    """ Converts a name and subset to a Python AST Subscript object. """
+    """Converts a name and subset to a Python AST Subscript object."""
     return ast.parse(f'{arrname}[{range}]').body[0].value
 
 
 def astrange_to_symrange(astrange, arrays, arrname=None):
-    """ Converts an AST range (array, [(start, end, skip)]) to a symbolic math
-        range, using the obtained array sizes and resolved symbols. """
+    """Converts an AST range (array, [(start, end, skip)]) to a symbolic math
+    range, using the obtained array sizes and resolved symbols."""
     if arrname is not None:
         arrdesc = arrays[arrname]
 
@@ -300,8 +304,14 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         # If range is the entire array, use the array descriptor to obtain the
         # entire range
         if astrange is None:
-            return [(symbolic.pystr_to_symbolic(0), symbolic.pystr_to_symbolic(symbolic.symbol_name_or_value(s)) - 1,
-                     symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape]
+            return [
+                (
+                    symbolic.pystr_to_symbolic(0),
+                    symbolic.pystr_to_symbolic(symbolic.symbol_name_or_value(s)) - 1,
+                    symbolic.pystr_to_symbolic(1),
+                )
+                for s in arrdesc.shape
+            ]
 
         missing_slices = len(arrdesc.shape) - len(astrange)
         if missing_slices < 0:
@@ -346,8 +356,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 
 
 def negate_expr(node):
-    """ Negates an AST expression by adding a `Not` AST node in front of it.
-    """
+    """Negates an AST expression by adding a `Not` AST node in front of it."""
 
     # Negation support for SymPy expressions
     if isinstance(node, sympy.Basic):
@@ -360,12 +369,12 @@ def negate_expr(node):
         return "not ({})".format(node)
 
     from dace.properties import CodeBlock  # Avoid import loop
+
     if isinstance(node, CodeBlock):
         node = node.code
     if isinstance(node, (list, tuple)):
         if len(node) > 1:
-            raise ValueError("negate_expr only expects "
-                             "single expressions, got: {}".format(node))
+            raise ValueError("negate_expr only expects single expressions, got: {}".format(node))
         expr = node[0]
     else:
         expr = node
@@ -378,8 +387,7 @@ def negate_expr(node):
 
 
 def and_expr(node_a, node_b):
-    """ Generates the logical AND of two AST expressions.
-    """
+    """Generates the logical AND of two AST expressions."""
     if type(node_a) is not type(node_b):
         raise ValueError('Node types do not match')
 
@@ -394,6 +402,7 @@ def and_expr(node_a, node_b):
         return f'({node_a}) and ({node_b})'
 
     from dace.properties import CodeBlock  # Avoid import loop
+
     if isinstance(node_a, CodeBlock):
         node_a = node_a.code
         node_b = node_b.code
@@ -439,7 +448,6 @@ def copy_tree(node: ast.AST) -> ast.AST:
     """
 
     class Copier(ast.NodeTransformer):
-
         def visit_Constant(self, node):
             # Ignore value
             return ast.copy_location(ast.Constant(value=node.value, kind=node.kind), node)
@@ -479,10 +487,10 @@ def copy_tree(node: ast.AST) -> ast.AST:
 
 
 class ExtNodeTransformer(ast.NodeTransformer):
-    """ A `NodeTransformer` subclass that walks the abstract syntax tree and
-        allows modification of nodes. As opposed to `NodeTransformer`,
-        this class is capable of traversing over top-level expressions in
-        bodies in order to discern DaCe statements from others.
+    """A `NodeTransformer` subclass that walks the abstract syntax tree and
+    allows modification of nodes. As opposed to `NodeTransformer`,
+    this class is capable of traversing over top-level expressions in
+    bodies in order to discern DaCe statements from others.
     """
 
     def visit_TopLevel(self, node):
@@ -520,10 +528,10 @@ class ExtNodeTransformer(ast.NodeTransformer):
 
 
 class ExtNodeVisitor(ast.NodeVisitor):
-    """ A `NodeVisitor` subclass that walks the abstract syntax tree.
-        As opposed to `NodeVisitor`, this class is capable of traversing over
-        top-level expressions in bodies in order to discern DaCe statements
-        from others. """
+    """A `NodeVisitor` subclass that walks the abstract syntax tree.
+    As opposed to `NodeVisitor`, this class is capable of traversing over
+    top-level expressions in bodies in order to discern DaCe statements
+    from others."""
 
     def visit_TopLevel(self, node):
         visitor_name = "visit_TopLevel" + type(node).__name__
@@ -557,7 +565,6 @@ class NameFound(Exception):
 
 
 class ASTFindReplace(ast.NodeTransformer):
-
     def __init__(self, repldict: Dict[str, str], trigger_names: Set[str] = None):
         self.replace_count = 0
         self.repldict = repldict
@@ -592,7 +599,6 @@ class ASTFindReplace(ast.NodeTransformer):
 
 
 class FindAssignment(ast.NodeVisitor):
-
     assignments: Dict[str, str]
     multiple: bool
 
@@ -610,7 +616,6 @@ class FindAssignment(ast.NodeVisitor):
 
 
 class ASTReplaceAssignmentRHS(ast.NodeVisitor):
-
     repl_visitor: ASTFindReplace
 
     def __init__(self, repl: Dict[str, str]):
@@ -622,7 +627,6 @@ class ASTReplaceAssignmentRHS(ast.NodeVisitor):
 
 
 class RemoveSubscripts(ast.NodeTransformer):
-
     def __init__(self, keywords: Set[str]):
         self.keywords = keywords
 
@@ -660,8 +664,12 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
             self.visit(node.value)
 
     def visit_Name(self, node):
-        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined and isinstance(node.id, str)
-                and node.id not in ('inf', 'nan')):
+        if (
+            isinstance(node.ctx, ast.Load)
+            and node.id not in self.defined
+            and isinstance(node.id, str)
+            and node.id not in ('inf', 'nan')
+        ):
             self.free_symbols.add(node.id)
         else:
             self.defined.add(node.id)
@@ -669,14 +677,12 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
 
 
 class AnnotateTopLevel(ExtNodeTransformer):
-
     def visit_TopLevel(self, node):
         node.toplevel = True
         return super().visit_TopLevel(node)
 
 
 class ConstantExtractor(ast.NodeTransformer):
-
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
         self.id = 0
@@ -696,7 +702,7 @@ class ConstantExtractor(ast.NodeTransformer):
 
 
 class ASTHelperMixin:
-    """ A mixin that adds useful helper functions for AST node transformers and visitors """
+    """A mixin that adds useful helper functions for AST node transformers and visitors"""
 
     def generic_visit_filtered(self, node: ast.AST, filter: Optional[Set[str]] = None):
         """

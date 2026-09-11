@@ -38,7 +38,7 @@ def test_irregular_stride():
 
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
-        for i in dace.map[0:N * N]:
+        for i in dace.map[0 : N * N]:
             with dace.tasklet:
                 a << A[i * i]
                 b >> B[i * i]

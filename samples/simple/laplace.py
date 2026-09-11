@@ -1,5 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Simple program showing the `dace.map` syntax and profiling. """
+"""Simple program showing the `dace.map` syntax and profiling."""
 
 import argparse
 import dace
@@ -18,12 +18,12 @@ def laplace(A: dace.float64[N], T: dace.int64):
     # This loop will remain a loop
     for _ in range(T):
         # This loop will become a parallel map
-        for i in dace.map[1:N - 1]:
+        for i in dace.map[1 : N - 1]:
             tmp[i] = A[i - 1] - 2 * A[i] + A[i + 1]
             # Alternatively, a "NumPy way" to write the kernel also works
             # tmp[i] = np.sum(A[i - 1:i + 2] * np.array([1, -2, 1]))
 
-        for i in dace.map[1:N - 1]:
+        for i in dace.map[1 : N - 1]:
             A[i] = tmp[i - 1] - 2 * tmp[i] + tmp[i + 1]
 
 

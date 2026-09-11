@@ -16,15 +16,17 @@ FLAGS = flags.FLAGS
 
 
 def polybench_dump(filename, args, output_args):
-    """ Dumps the outputs in a format that matches the Polybench dumper. """
+    """Dumps the outputs in a format that matches the Polybench dumper."""
     with open(filename, 'w') as fp:
         fp.write("==BEGIN DUMP_ARRAYS==\n")
 
         for i, name in output_args:
             fp.write("begin dump: %s\n" % name)
-            np.savetxt(fp,
-                       args[i].reshape(args[i].shape[0], functools.reduce(lambda a, b: a * b, args[i].shape[1:], 1)),
-                       fmt="%0.7lf")
+            np.savetxt(
+                fp,
+                args[i].reshape(args[i].shape[0], functools.reduce(lambda a, b: a * b, args[i].shape[1:], 1)),
+                fmt="%0.7lf",
+            )
             fp.write("\nend   dump: %s\n" % name)
 
         fp.write("==END   DUMP_ARRAYS==\n")

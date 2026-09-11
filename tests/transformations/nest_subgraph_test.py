@@ -95,7 +95,7 @@ def test_nest_cf_simple_for_loop():
 
     @dace.program
     def simple_for_loop():
-        A = np.ndarray((10, ), dtype=np.int32)
+        A = np.ndarray((10,), dtype=np.int32)
         for i in range(10):
             A[i] = i
         return A
@@ -118,7 +118,7 @@ def test_nest_cf_simple_while_loop():
     @dace.program
     def simple_while_loop():
         i = 0
-        A = np.ndarray((10, ), dtype=np.int32)
+        A = np.ndarray((10,), dtype=np.int32)
         while i < 10:
             A[i] = i
             i = update(A[i])

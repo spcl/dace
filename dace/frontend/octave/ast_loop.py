@@ -5,7 +5,6 @@ from .ast_node import AST_Node
 
 
 class AST_ForLoop(AST_Node):
-
     def __init__(self, context, var, initializer, stmts):
         AST_Node.__init__(self, context)
         self.var = var
@@ -13,8 +12,9 @@ class AST_ForLoop(AST_Node):
         self.stmts = stmts
 
     def __repr__(self):
-        return "AST_ForLoop(" + str(self.var) + " = " + str(self.initializer) + ", stmts: {\n" + str(
-            self.stmts) + "\n})"
+        return (
+            "AST_ForLoop(" + str(self.var) + " = " + str(self.initializer) + ", stmts: {\n" + str(self.stmts) + "\n})"
+        )
 
     def get_children(self):
         return [self.var, self.initializer, self.stmts]
@@ -33,6 +33,7 @@ class AST_ForLoop(AST_Node):
 
     def generate_code(self, sdfg, state):
         from .ast_range import AST_RangeExpression
+
         # This ignores matlab semantics and only works for loops of the form
         # for var = start:end where start and end are expressions which
         # evaluate to scalars.
@@ -49,8 +50,9 @@ class AST_ForLoop(AST_Node):
             rhs_node = self.initializer.rhs.get_datanode(sdfg, state)
             sdfg.add_transient(self.var.get_name_in_sdfg(sdfg), [1], self.initializer.lhs.get_basetype())
             var_node = s.add_access(self.var.get_name_in_sdfg(sdfg))
-            s.add_edge(lhs_node, None, var_node, None,
-                       dace.memlet.Memlet.from_array(var_node.data, var_node.desc(sdfg)))
+            s.add_edge(
+                lhs_node, None, var_node, None, dace.memlet.Memlet.from_array(var_node.data, var_node.desc(sdfg))
+            )
             loop_guard_var = '_loopiter_' + str(state)
             loop_end_var = '_loopend_' + str(state)
 
@@ -72,8 +74,9 @@ class AST_ForLoop(AST_Node):
             lg_init = dace.sdfg.InterstateEdge(
                 assignments={
                     loop_guard_var: self.var.get_name_in_sdfg(sdfg) + '(0)',
-                    loop_end_var: self.initializer.rhs.get_name_in_sdfg(sdfg) + '(0)'
-                })
+                    loop_end_var: self.initializer.rhs.get_name_in_sdfg(sdfg) + '(0)',
+                }
+            )
             sdfg.add_edge(sdfg.nodes()[state], s_guard, lg_init)
 
             # Add state for each statement within the for loop
@@ -83,13 +86,17 @@ class AST_ForLoop(AST_Node):
                 newstate = dace.SDFGState("s" + str(state), sdfg, debuginfo=s.context)
                 sdfg.add_node(newstate)
                 last_state = s.generate_code(sdfg, state)
-                if last_state is None: last_state = state
+                if last_state is None:
+                    last_state = state
                 if prev != s_guard:
                     edge = dace.sdfg.InterstateEdge()
                     sdfg.add_edge(prev, newstate, edge)
                 else:
-                    edge = dace.sdfg.InterstateEdge(condition=dace.properties.CodeProperty.from_string(
-                        loop_guard_var + " <= " + loop_end_var, language=dace.dtypes.Language.Python))
+                    edge = dace.sdfg.InterstateEdge(
+                        condition=dace.properties.CodeProperty.from_string(
+                            loop_guard_var + " <= " + loop_end_var, language=dace.dtypes.Language.Python
+                        )
+                    )
                     sdfg.add_edge(prev, newstate, edge)
                 prev = sdfg.nodes()[last_state]
 
@@ -101,8 +108,11 @@ class AST_ForLoop(AST_Node):
             state = len(sdfg.nodes())
             s_lexit = dace.SDFGState("s" + str(state), sdfg, debuginfo=s.context)
             lend_val = str(self.initializer.get_dims()[-1])
-            for_exit = dace.sdfg.InterstateEdge(condition=dace.properties.CodeProperty.from_string(
-                loop_guard_var + " > " + loop_end_var, language=dace.dtypes.Language.Python))
+            for_exit = dace.sdfg.InterstateEdge(
+                condition=dace.properties.CodeProperty.from_string(
+                    loop_guard_var + " > " + loop_end_var, language=dace.dtypes.Language.Python
+                )
+            )
             sdfg.add_edge(s_guard, s_lexit, for_exit)
 
             return state
@@ -142,8 +152,11 @@ class AST_ForLoop(AST_Node):
 
         # Add edge from guard to getinit
         lend_val = str(self.initializer.get_dims()[-1])
-        for_entry = dace.sdfg.InterstateEdge(condition=dace.properties.CodeProperty.from_string(
-            loop_guard_var + " < " + lend_val, language=dace.dtypes.Language.Python))
+        for_entry = dace.sdfg.InterstateEdge(
+            condition=dace.properties.CodeProperty.from_string(
+                loop_guard_var + " < " + lend_val, language=dace.dtypes.Language.Python
+            )
+        )
         sdfg.add_edge(s_guard, s_getinit, for_entry)
 
         # Add state for each statement within the for loop
@@ -153,7 +166,8 @@ class AST_ForLoop(AST_Node):
             newstate = dace.SDFGState("s" + str(state), sdfg, debuginfo=s.context)
             sdfg.add_node(newstate)
             last_state = s.generate_code(sdfg, state)
-            if last_state is None: last_state = state
+            if last_state is None:
+                last_state = state
             edge = dace.sdfg.InterstateEdge()
             sdfg.add_edge(prev, newstate, edge)
             prev = sdfg.nodes()[last_state]
@@ -166,8 +180,11 @@ class AST_ForLoop(AST_Node):
         state = len(sdfg.nodes())
         s_lexit = dace.SDFGState("s" + str(state), sdfg, debuginfo=s.context)
         lend_val = str(self.initializer.get_dims()[-1])
-        for_exit = dace.sdfg.InterstateEdge(condition=dace.properties.CodeProperty.from_string(
-            loop_guard_var + " >= " + lend_val, language=dace.dtypes.Language.Python))
+        for_exit = dace.sdfg.InterstateEdge(
+            condition=dace.properties.CodeProperty.from_string(
+                loop_guard_var + " >= " + lend_val, language=dace.dtypes.Language.Python
+            )
+        )
         sdfg.add_edge(s_guard, s_lexit, for_exit)
 
         return state

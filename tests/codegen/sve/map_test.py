@@ -24,7 +24,7 @@ def test_map_advanced():
     # Multidimensional + stride
     @dace.program
     def program(A: dace.float64[16 * N], B: dace.float64[16 * N]):
-        for i, j, k in dace.map[0:N, 0:N:2, 1:8 * N + 1:N * 2]:
+        for i, j, k in dace.map[0:N, 0:N:2, 1 : 8 * N + 1 : N * 2]:
             with dace.tasklet:
                 a << A[k]
                 b >> B[k]

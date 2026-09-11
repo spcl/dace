@@ -1,12 +1,20 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Various analyses related to control flow in SDFGs. """
+"""Various analyses related to control flow in SDFGs."""
+
 from collections import defaultdict
 from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
 import networkx as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
+from dace.sdfg.state import (
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    ReturnBlock,
+)
 
 
 def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
@@ -41,9 +49,9 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
 
 
 def all_dominators(
-        cfg: ControlFlowRegion,
-        idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
-    """ Returns a mapping between each control flow block and all its dominators. """
+    cfg: ControlFlowRegion, idom: Dict[ControlFlowBlock, ControlFlowBlock] = None
+) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+    """Returns a mapping between each control flow block and all its dominators."""
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
     # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
     g = nx.DiGraph()
@@ -59,10 +67,12 @@ def all_dominators(
     return alldoms
 
 
-def all_postdominators(cfg: ControlFlowRegion,
-                       ipostdom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-                       sink: Optional[ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
-    """ Returns a mapping between each control flow block and all its postdominators. """
+def all_postdominators(
+    cfg: ControlFlowRegion,
+    ipostdom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+    sink: Optional[ControlFlowBlock] = None,
+) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+    """Returns a mapping between each control flow block and all its postdominators."""
     remove_sink = False
     if sink is None:
         remove_sink = True
@@ -225,18 +235,21 @@ def find_sese_region(
     return region_nodes, entry_node, exit_node
 
 
-def back_edges(cfg: ControlFlowRegion,
-               idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-               alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None) -> List[gr.Edge[InterstateEdge]]:
-    """ Returns a list of back-edges in a control flow graph. """
+def back_edges(
+    cfg: ControlFlowRegion,
+    idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None,
+) -> List[gr.Edge[InterstateEdge]]:
+    """Returns a list of back-edges in a control flow graph."""
     alldoms = alldoms or all_dominators(cfg, idom)
     return [e for e in cfg.edges() if e.dst in alldoms[e.src]]
 
 
 def branch_merges(
-        cfg: ControlFlowRegion,
-        idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-        alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+    cfg: ControlFlowRegion,
+    idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None,
+) -> Dict[ControlFlowBlock, ControlFlowBlock]:
     alldoms = alldoms or all_dominators(cfg, idom)
 
     # Annotate branches
@@ -295,10 +308,12 @@ def branch_merges(
     return result
 
 
-def block_parent_tree(cfg: ControlFlowRegion,
-                      loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
-                      idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-                      with_loops: bool = True) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+def block_parent_tree(
+    cfg: ControlFlowRegion,
+    loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+    idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+    with_loops: bool = True,
+) -> Dict[ControlFlowBlock, ControlFlowBlock]:
     """
     Computes an upward-pointing tree of each control flow block, pointing to the "parent block" it belongs to (in terms
     of structured control flow). More formally, each block is either mapped to its immediate dominator with out
@@ -383,8 +398,8 @@ def block_parent_tree(cfg: ControlFlowRegion,
                     return False
                 return True  # Keep traversing
 
-            list(sdutil.dfs_conditional(cfg, (oa, ), cond_a))
-            list(sdutil.dfs_conditional(cfg, (ob, ), cond_b))
+            list(sdutil.dfs_conditional(cfg, (oa,), cond_a))
+            list(sdutil.dfs_conditional(cfg, (ob,), cond_b))
 
             # Check which candidate states led back to guard
             is_a_begin = a_reached_guard and reachable_a
@@ -436,13 +451,14 @@ def block_parent_tree(cfg: ControlFlowRegion,
 
 
 def _blockorder_topological_sort(
-        cfg: ControlFlowRegion,
-        start: ControlFlowBlock,
-        ptree: Dict[ControlFlowBlock, ControlFlowBlock],
-        branch_merges: Dict[ControlFlowBlock, ControlFlowBlock],
-        stop: ControlFlowBlock = None,
-        visited: Set[ControlFlowBlock] = None,
-        loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None) -> Iterator[ControlFlowBlock]:
+    cfg: ControlFlowRegion,
+    start: ControlFlowBlock,
+    ptree: Dict[ControlFlowBlock, ControlFlowBlock],
+    branch_merges: Dict[ControlFlowBlock, ControlFlowBlock],
+    stop: ControlFlowBlock = None,
+    visited: Set[ControlFlowBlock] = None,
+    loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+) -> Iterator[ControlFlowBlock]:
     """
     Helper function for ``blockorder_topological_sort``.
 
@@ -477,25 +493,17 @@ def _blockorder_topological_sort(
             # If loop, traverse body, then exit
             if node in loopexits:
                 if oe[0].dst == loopexits[node]:
-                    for s in _blockorder_topological_sort(cfg,
-                                                          oe[1].dst,
-                                                          ptree,
-                                                          branch_merges,
-                                                          stop=node,
-                                                          visited=visited,
-                                                          loopexits=loopexits):
+                    for s in _blockorder_topological_sort(
+                        cfg, oe[1].dst, ptree, branch_merges, stop=node, visited=visited, loopexits=loopexits
+                    ):
                         yield s
                         visited.add(s)
                     stack.append(oe[0].dst)
                     continue
                 elif oe[1].dst == loopexits[node]:
-                    for s in _blockorder_topological_sort(cfg,
-                                                          oe[0].dst,
-                                                          ptree,
-                                                          branch_merges,
-                                                          stop=node,
-                                                          visited=visited,
-                                                          loopexits=loopexits):
+                    for s in _blockorder_topological_sort(
+                        cfg, oe[0].dst, ptree, branch_merges, stop=node, visited=visited, loopexits=loopexits
+                    ):
                         yield s
                         visited.add(s)
                     stack.append(oe[1].dst)
@@ -518,21 +526,17 @@ def _blockorder_topological_sort(
             if branch.dst is mergeblock:
                 # If we hit the merge block (if without else), defer to end of branch traversal
                 continue
-            for s in _blockorder_topological_sort(cfg,
-                                                  branch.dst,
-                                                  ptree,
-                                                  branch_merges,
-                                                  stop=mergeblock,
-                                                  visited=visited,
-                                                  loopexits=loopexits):
+            for s in _blockorder_topological_sort(
+                cfg, branch.dst, ptree, branch_merges, stop=mergeblock, visited=visited, loopexits=loopexits
+            ):
                 yield s
                 visited.add(s)
         stack.append(mergeblock)
 
 
-def blockorder_topological_sort(cfg: ControlFlowRegion,
-                                recursive: bool = True,
-                                ignore_nonstate_blocks: bool = False) -> Iterator[ControlFlowBlock]:
+def blockorder_topological_sort(
+    cfg: ControlFlowRegion, recursive: bool = True, ignore_nonstate_blocks: bool = False
+) -> Iterator[ControlFlowBlock]:
     """
     Returns a generator that produces control flow blocks in the order that they will be executed, disregarding multiple
     loop iterations and employing topological sort for branches.

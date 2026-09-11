@@ -1,5 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Simple program showing the DaCe Python interface via scalar multiplication and vector addition. """
+"""Simple program showing the DaCe Python interface via scalar multiplication and vector addition."""
 
 import argparse
 import dace

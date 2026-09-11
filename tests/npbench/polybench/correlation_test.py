@@ -21,7 +21,7 @@ def correlation_kernel(float_n: dc.float64, data: dc.float64[N, M]):
 
     mean = np.mean(data, axis=0)
     # stddev = np.std(data, axis=0)
-    stddev = np.sqrt(np.mean(np.subtract(data, mean)**2, axis=0))
+    stddev = np.sqrt(np.mean(np.subtract(data, mean) ** 2, axis=0))
     stddev[stddev <= 0.1] = 1.0
     # data -= mean
     np.subtract(data, mean, out=data)
@@ -30,8 +30,8 @@ def correlation_kernel(float_n: dc.float64, data: dc.float64[N, M]):
     corr = np.eye(M, dtype=data.dtype)
     for i in range(M - 1):
         # corr[i, i+1:M] = np.transpose(data[:, i+1:M]) @ data[:, i]
-        corr[i, i + 1:M] = data[:, i] @ data[:, i + 1:M]
-        corr[i + 1:M, i] = corr[i, i + 1:M]
+        corr[i, i + 1 : M] = data[:, i] @ data[:, i + 1 : M]
+        corr[i + 1 : M, i] = corr[i, i + 1 : M]
 
     return corr
 
@@ -46,14 +46,14 @@ def initialize(M, N, datatype=np.float64):
 def correlation_jax_kernel(jnp, float_n, data):
     mean = jnp.mean(data, axis=0)
     M = data.shape[1]
-    stddev = jnp.sqrt(jnp.mean(jnp.subtract(data, mean)**2, axis=0))
+    stddev = jnp.sqrt(jnp.mean(jnp.subtract(data, mean) ** 2, axis=0))
     stddev = jnp.where(stddev <= 0.1, 1.0, stddev)
     data = jnp.subtract(data, mean)
     data = jnp.divide(data, jnp.sqrt(float_n) * stddev)
     corr = jnp.eye(M, dtype=data.dtype)
     for i in range(M - 1):
-        corr = corr.at[i, i + 1:M].set(data[:, i] @ data[:, i + 1:M])
-        corr = corr.at[i + 1:M, i].set(corr[i, i + 1:M])
+        corr = corr.at[i, i + 1 : M].set(data[:, i] @ data[:, i + 1 : M])
+        corr = corr.at[i + 1 : M, i].set(corr[i, i + 1 : M])
     return jnp.sum(corr)
 
 
@@ -66,7 +66,7 @@ def ground_truth(M, float_n, data):
     data /= np.sqrt(float_n) * stddev
     corr = np.eye(M, dtype=data.dtype)
     for i in range(M - 1):
-        corr[i + 1:M, i] = corr[i, i + 1:M] = data[:, i] @ data[:, i + 1:M]
+        corr[i + 1 : M, i] = corr[i, i + 1 : M] = data[:, i] @ data[:, i + 1 : M]
 
     return corr
 
@@ -110,7 +110,7 @@ def run_correlation_autodiff():
 
     # Initialize gradient computation data
     gradient_data = np.zeros_like(data)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -128,7 +128,7 @@ def run_correlation_autodiff():
 
     # Numerically validate vs JAX
     jax_kernel = lambda float_n, data: correlation_jax_kernel(jnp, float_n, data)
-    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0,))
     _, data_jax = initialize(M, N)
     jax_grad_data = jax_grad(float_n, data_jax)
     np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-8, atol=1e-8)
@@ -155,7 +155,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

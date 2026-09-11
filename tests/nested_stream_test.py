@@ -17,7 +17,7 @@ state = sdfg.add_state('a')
 
 # Nodes
 sdfg.add_stream('SB', dace.int32, transient=True)
-sdfg.add_array('B', (2, ), dace.int32)
+sdfg.add_array('B', (2,), dace.int32)
 SB = state.add_access('SB')
 B = state.add_write('B')
 n = state.add_nested_sdfg(nsdfg, set(), {'nout'})

@@ -18,15 +18,12 @@ def test():
 
     # Add edges
     state.add_edge_pair(me, t, a, dace.Memlet.simple(a, 'i'), internal_connector='a')
-    state.add_edge_pair(mx,
-                        t,
-                        b,
-                        dace.Memlet.simple(b, '0', wcr_str='lambda a,b: a+b'),
-                        internal_connector='b',
-                        scope_connector='o')
+    state.add_edge_pair(
+        mx, t, b, dace.Memlet.simple(b, '0', wcr_str='lambda a,b: a+b'), internal_connector='b', scope_connector='o'
+    )
 
     A = np.random.rand(31).astype(np.float64)
-    B = np.array([0.], dtype=np.float64)
+    B = np.array([0.0], dtype=np.float64)
     sdfg(A=A, B=B)
 
     diff = np.linalg.norm(B[0] - np.sum(2 * A))

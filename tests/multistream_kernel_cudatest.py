@@ -31,17 +31,31 @@ gc = state.add_access('gC')
 c = state.add_write('C')
 state.add_nedge(gc, c, dace.Memlet.simple('gC', '0:2'))
 
-t1, me1, mx1 = state.add_mapped_tasklet('addone', dict(i='0:2'),
-                                        dict(inp=dace.Memlet.simple('gA1', 'i')), 'out = inp + 1',
-                                        dict(out=dace.Memlet.simple('gA2', 'i')), dace.ScheduleType.GPU_Device)
-t2, me2, mx2 = state.add_mapped_tasklet('addtwo', dict(i='0:2'),
-                                        dict(inp=dace.Memlet.simple('gB1', 'i')), 'out = inp + 2',
-                                        dict(out=dace.Memlet.simple('gB2', 'i')), dace.ScheduleType.GPU_Device)
+t1, me1, mx1 = state.add_mapped_tasklet(
+    'addone',
+    dict(i='0:2'),
+    dict(inp=dace.Memlet.simple('gA1', 'i')),
+    'out = inp + 1',
+    dict(out=dace.Memlet.simple('gA2', 'i')),
+    dace.ScheduleType.GPU_Device,
+)
+t2, me2, mx2 = state.add_mapped_tasklet(
+    'addtwo',
+    dict(i='0:2'),
+    dict(inp=dace.Memlet.simple('gB1', 'i')),
+    'out = inp + 2',
+    dict(out=dace.Memlet.simple('gB2', 'i')),
+    dace.ScheduleType.GPU_Device,
+)
 
-t2, me3, mx3 = state.add_mapped_tasklet('twoarrays', dict(i='0:2'),
-                                        dict(inp1=dace.Memlet.simple('gA2', 'i'),
-                                             inp2=dace.Memlet.simple('gB2', 'i')), 'out = inp1 * inp2',
-                                        dict(out=dace.Memlet.simple('gC', 'i')), dace.ScheduleType.GPU_Device)
+t2, me3, mx3 = state.add_mapped_tasklet(
+    'twoarrays',
+    dict(i='0:2'),
+    dict(inp1=dace.Memlet.simple('gA2', 'i'), inp2=dace.Memlet.simple('gB2', 'i')),
+    'out = inp1 * inp2',
+    dict(out=dace.Memlet.simple('gC', 'i')),
+    dace.ScheduleType.GPU_Device,
+)
 
 state.add_nedge(ga1, me1, dace.Memlet.simple('gA1', '0:2'))
 state.add_nedge(gb1, me2, dace.Memlet.simple('gB1', '0:2'))

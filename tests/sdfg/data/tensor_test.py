@@ -8,8 +8,13 @@ from scipy import sparse
 def test_read_csr_tensor():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    csr_obj = dace.data.Tensor(dace.float32, (M, N), [(dace.data.TensorIndexDense(), 0),
-                                                      (dace.data.TensorIndexCompressed(), 1)], nnz, "CSR_Tensor")
+    csr_obj = dace.data.Tensor(
+        dace.float32,
+        (M, N),
+        [(dace.data.TensorIndexDense(), 0), (dace.data.TensorIndexCompressed(), 1)],
+        nnz,
+        "CSR_Tensor",
+    )
 
     sdfg = dace.SDFG('tensor_csr_to_dense')
 
@@ -51,9 +56,11 @@ def test_read_csr_tensor():
     A = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
     B = np.zeros((20, 20), dtype=np.float32)
 
-    inpA = csr_obj.dtype._typeclass.as_ctypes()(idx1_pos=A.indptr.__array_interface__['data'][0],
-                                                idx1_crd=A.indices.__array_interface__['data'][0],
-                                                values=A.data.__array_interface__['data'][0])
+    inpA = csr_obj.dtype._typeclass.as_ctypes()(
+        idx1_pos=A.indptr.__array_interface__['data'][0],
+        idx1_crd=A.indices.__array_interface__['data'][0],
+        values=A.data.__array_interface__['data'][0],
+    )
 
     func(A=inpA, B=B, M=A.shape[0], N=A.shape[1], nnz=A.nnz)
     ref = A.toarray()

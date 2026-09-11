@@ -2,6 +2,7 @@
 """
 Tests variants of the numpy split array manipulation.
 """
+
 import dace
 import numpy as np
 from common import compare_numpy_output
@@ -135,7 +136,7 @@ def test_compiletime_split(out_idx):
         x0, x1, x2, x3, x4, x5 = np.split(x[:, in_indices], 6, axis=1)
         factor = 1 / 12
         o = out_index
-        y[:, o:o + 1] = factor * (-(x1 + x2) + (x0 + x1) - (x0 + x4) + (x3 + x4) + (x2 + x5) - (x3 + x5))
+        y[:, o : o + 1] = factor * (-(x1 + x2) + (x0 + x1) - (x0 + x4) + (x3 + x4) + (x2 + x5) - (x3 + x5))
 
     x = np.random.rand(1000, 8)
     y = np.zeros_like(x)

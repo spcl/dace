@@ -34,6 +34,7 @@ def test_memory_pool():
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(20)
     b = cp.random.rand(20)
     a_expected = cp.copy(a)
@@ -69,6 +70,7 @@ def test_memory_pool_state():
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(20)
     b = cp.random.rand(20)
     c = cp.random.rand(20)
@@ -107,6 +109,7 @@ def test_memory_pool_tasklet():
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(20)
     b = cp.random.rand(20)
     b_expected = cp.copy(b)
@@ -148,6 +151,7 @@ def test_memory_pool_multistate():
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(20)
     b = cp.random.rand(20)
     b_expected = cp.copy(a)
@@ -179,21 +183,25 @@ def test_memory_pool_if_states(cnd):
     sdfg.add_edge(fstate, exit_state, dace.InterstateEdge())
 
     tmp_node = tstate.add_access(tmp)
-    tstate.add_mapped_tasklet('write_zero',
-                              map_ranges=dict(i=f'0:{N}'),
-                              inputs={},
-                              outputs={'_val': dace.Memlet(data=tmp, subset='i')},
-                              output_nodes={tmp: tmp_node},
-                              code='_val = 0.0',
-                              external_edges=True)
+    tstate.add_mapped_tasklet(
+        'write_zero',
+        map_ranges=dict(i=f'0:{N}'),
+        inputs={},
+        outputs={'_val': dace.Memlet(data=tmp, subset='i')},
+        output_nodes={tmp: tmp_node},
+        code='_val = 0.0',
+        external_edges=True,
+    )
     tstate.add_nedge(tmp_node, tstate.add_access(A), sdfg.make_array_memlet(A))
 
-    fstate.add_mapped_tasklet('write_cond',
-                              map_ranges=dict(i=f'0:{N}'),
-                              inputs={},
-                              outputs={'_val': dace.Memlet(data=A, subset='i')},
-                              code='_val = dace.float64(cnd)',
-                              external_edges=True)
+    fstate.add_mapped_tasklet(
+        'write_cond',
+        map_ranges=dict(i=f'0:{N}'),
+        inputs={},
+        outputs={'_val': dace.Memlet(data=A, subset='i')},
+        code='_val = dace.float64(cnd)',
+        external_edges=True,
+    )
 
     sdfg.validate()
     code = sdfg.generate_code()[0].clean_code
@@ -202,6 +210,7 @@ def test_memory_pool_if_states(cnd):
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(N)
     a_expected = cp.full(N, cnd, dtype=cp.float64)
     sdfg(A=a, cnd=cnd)

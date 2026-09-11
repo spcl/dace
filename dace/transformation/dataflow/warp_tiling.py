@@ -20,9 +20,9 @@ class WarpTiling(xf.SingleStateTransformation):
     """
 
     warp_size = properties.Property(dtype=int, default=32, desc='Hardware warp size')
-    replicate_maps = properties.Property(dtype=bool,
-                                         default=True,
-                                         desc='Replicate tiled maps that lead to multiple other tiled maps')
+    replicate_maps = properties.Property(
+        dtype=bool, default=True, desc='Replicate tiled maps that lead to multiple other tiled maps'
+    )
 
     mapentry = xf.PatternNode(nodes.MapEntry)
 
@@ -37,15 +37,16 @@ class WarpTiling(xf.SingleStateTransformation):
             return False
 
         # GPU map that has no predefined thread-block maps
-        return (me.schedule == dtypes.ScheduleType.GPU_Device and not xfh.gpu_map_has_explicit_threadblocks(graph, me))
+        return me.schedule == dtypes.ScheduleType.GPU_Device and not xfh.gpu_map_has_explicit_threadblocks(graph, me)
 
     def apply(self, graph: SDFGState, sdfg: SDFG) -> nodes.MapEntry:
         me = self.mapentry
 
         # Add new map within map
         mx = graph.exit_node(me)
-        new_me, new_mx = graph.add_map('warp_tile', dict(__tid=f'0:{self.warp_size}'),
-                                       dtypes.ScheduleType.GPU_ThreadBlock)
+        new_me, new_mx = graph.add_map(
+            'warp_tile', dict(__tid=f'0:{self.warp_size}'), dtypes.ScheduleType.GPU_ThreadBlock
+        )
         __tid = symbolic.pystr_to_symbolic('__tid')
         for e in graph.out_edges(me):
             xfh.reconnect_edge_through_map(graph, e, new_me, True)
@@ -114,7 +115,7 @@ class WarpTiling(xf.SingleStateTransformation):
                     redtype = detect_reduction_type(out_edge.data.wcr)
                     if redtype == dtypes.ReductionType.Custom:
                         raise NotImplementedError
-                    credtype = ('dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:])
+                    credtype = 'dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1 :]
 
                     # One element: tasklet
                     if out_edge.data.subset.num_elements() == 1:
@@ -131,15 +132,20 @@ class WarpTiling(xf.SingleStateTransformation):
 
                         newnode = nstate.add_access(name)
                         nstate.remove_edge(out_edge)
-                        edge = nstate.add_edge(out_edge.src, out_edge.src_conn, newnode, None,
-                                               copy.deepcopy(out_edge.data))
+                        edge = nstate.add_edge(
+                            out_edge.src, out_edge.src_conn, newnode, None, copy.deepcopy(out_edge.data)
+                        )
                         for e in nstate.memlet_path(edge):
                             e.data.data = name
                             e.data.subset = subsets.Range([(0, 0, 1)])
 
-                        wrt = nstate.add_tasklet('warpreduce', {'__a'}, {'__out'},
-                                                 f'__out = dace::warpReduce<{credtype}, {ctype}>::reduce(__a);',
-                                                 dtypes.Language.CPP)
+                        wrt = nstate.add_tasklet(
+                            'warpreduce',
+                            {'__a'},
+                            {'__out'},
+                            f'__out = dace::warpReduce<{credtype}, {ctype}>::reduce(__a);',
+                            dtypes.Language.CPP,
+                        )
                         nstate.add_edge(newnode, None, wrt, '__a', Memlet(name))
                         out_edge.data.wcr = None
                         nstate.add_edge(wrt, '__out', out_edge.dst, None, out_edge.data)

@@ -24,13 +24,13 @@ def write_to_null(A: dace.float64[5], B: dace.float64[5], ub: dace.int64):
 def test_wtn():
     sdfg = write_to_null.to_sdfg()
 
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     sdfg.safe_call(A, B, 5)
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
 
     # This should raise an exception, but not crash
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     caught = False
     try:
@@ -45,14 +45,14 @@ def test_wtn():
 def test_wtn_precompiled():
     sdfg = write_to_null.to_sdfg()
 
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     obj = sdfg.compile()
     obj.safe_call(A, B, 5)
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
 
     # This should raise an exception, but not crash
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     caught = False
     try:
@@ -68,7 +68,7 @@ def test_instrumentation():
     sdfg = write_to_null.to_sdfg()
     sdfg.instrument = dace.InstrumentationType.Timer
 
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     sdfg.safe_call(A, B, 5)
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
@@ -81,7 +81,7 @@ def test_instrumentation_precompiled():
     sdfg = write_to_null.to_sdfg()
     sdfg.instrument = dace.InstrumentationType.Timer
 
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     obj = sdfg.compile()
     obj.safe_call(A, B, 5)
@@ -94,7 +94,7 @@ def test_instrumentation_precompiled():
 def test_kwargs():
     sdfg = write_to_null.to_sdfg()
 
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     sdfg.safe_call(A=A, B=B, ub=5)
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
@@ -104,7 +104,7 @@ def test_kwargs():
 def test_kwargs_precompiled():
     sdfg = write_to_null.to_sdfg()
 
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     obj = sdfg.compile()
     obj.safe_call(A=A, B=B, ub=5)
@@ -122,7 +122,7 @@ def test_symbols():
 
     sdfg = indirect_access_sym.to_sdfg()
 
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     sdfg.safe_call(A=A, B=B, N=5)
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
@@ -140,7 +140,7 @@ def test_symbols_precompiled():
     sdfg = indirect_access_sym.to_sdfg()
     obj = sdfg.compile()
 
-    A = np.zeros((5, ), dtype=np.float64)
+    A = np.zeros((5,), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     obj.safe_call(A=A, B=B, N=5)
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"

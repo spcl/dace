@@ -7,8 +7,12 @@ from typing import Tuple
 import dace
 from dace import nodes, data as dace_data
 from dace.libraries.linalg import Transpose
-from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray, RedundantArrayCopying,
-                                          RedundantArrayCopyingIn)
+from dace.transformation.dataflow import (
+    RedundantArray,
+    RedundantSecondArray,
+    RedundantArrayCopying,
+    RedundantArrayCopyingIn,
+)
 
 from . import utility
 
@@ -58,12 +62,17 @@ def test_reshaping_with_redundant_arrays():
             None,
             dace.Memlet.from_array("input", input_desc),
         )
-        state.add_edge(a_an, None, b_an, None,
-                       dace.Memlet.simple(
-                           "a",
-                           subset_str="0:6, 0:6, 0:6",
-                           other_subset_str="0:36, 0, 0:6",
-                       ))
+        state.add_edge(
+            a_an,
+            None,
+            b_an,
+            None,
+            dace.Memlet.simple(
+                "a",
+                subset_str="0:6, 0:6, 0:6",
+                other_subset_str="0:36, 0, 0:6",
+            ),
+        )
         state.add_edge(
             b_an,
             None,
@@ -371,7 +380,7 @@ def conv2d(input: dace.float64[N, H, W, C_in], weights: dace.float64[K, K, C_in,
     for i in range(H - K + 1):
         for j in range(W - K + 1):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -379,15 +388,21 @@ def conv2d(input: dace.float64[N, H, W, C_in], weights: dace.float64[K, K, C_in,
 
 
 def conv2d_py(input, weights):
-    output = np.ndarray((input.shape[0], input.shape[1] - weights.shape[0] + 1, input.shape[2] - weights.shape[1] + 1,
-                         weights.shape[3]),
-                        dtype=np.float64)
+    output = np.ndarray(
+        (
+            input.shape[0],
+            input.shape[1] - weights.shape[0] + 1,
+            input.shape[2] - weights.shape[1] + 1,
+            weights.shape[3],
+        ),
+        dtype=np.float64,
+    )
     K = weights.shape[0]
     # Loop structure adapted from https://github.com/SkalskiP/ILearnDeepLearning.py/blob/ba0b5ba589d4e656141995e8d1a06d44db6ce58d/01_mysteries_of_neural_networks/06_numpy_convolutional_neural_net/src/layers/convolutional.py#L88
     for i in range(output.shape[1]):
         for j in range(output.shape[2]):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -397,10 +412,11 @@ def conv2d_py(input, weights):
 def test_conv2d():
     sdfg = conv2d.to_sdfg(simplify=True)
     access_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive()
+        n
+        for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.AccessNode) and not isinstance(sdfg.arrays[n.data], dace.data.View)
     ]
-    assert (len(access_nodes) == 4)
+    assert len(access_nodes) == 4
 
 
 @dace.program
@@ -411,7 +427,7 @@ def padded_conv2d(input: dace.float64[N, H, W, C_in], weights: dace.float64[1, 1
 
 
 def test_padded_conv2d():
-    """ Tests for issues regarding redundant arrays with views in nested SDFGs. """
+    """Tests for issues regarding redundant arrays with views in nested SDFGs."""
     input = np.random.rand(8, 32, 32, 3)
     weights = np.random.rand(1, 1, 3, 16)
     reference = np.zeros((8, 34, 34, 16), dtype=np.float64)
@@ -449,7 +465,8 @@ def test_invalid_redundant_array_strided(order):
 
 
 def _make_reshaping_not_zero_started_input_sdfg(
-    a_has_larger_rank_than_b: bool, ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
+    a_has_larger_rank_than_b: bool,
+) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
     sdfg = dace.SDFG(utility.unique_name("non_zero_offset_reshaping"))
     state = sdfg.add_state(is_start_block=True)
 
@@ -478,16 +495,18 @@ def _make_reshaping_not_zero_started_input_sdfg(
     a, b, c = (state.add_access(name) for name in "abc")
 
     state.add_edge(
-        a, None, b, None,
+        a,
+        None,
+        b,
+        None,
         dace.Memlet("a[5:10, 0, 1, 3:13] -> [0:5, 0, 0:10]")
-        if a_has_larger_rank_than_b else dace.Memlet("a[5:10, 3:13] -> [0:5, 0, 0:10]"))
+        if a_has_larger_rank_than_b
+        else dace.Memlet("a[5:10, 3:13] -> [0:5, 0, 0:10]"),
+    )
 
     _, me, _ = state.add_mapped_tasklet(
         "comp",
-        map_ranges={
-            "__i": "5:10",
-            "__j": "3:13"
-        },
+        map_ranges={"__i": "5:10", "__j": "3:13"},
         inputs={"__in": dace.Memlet("b[__i - 5, 0, __j - 3]")},
         code="__out = __in + 1.3",
         outputs={"__out": dace.Memlet("c[__i, __j]")},

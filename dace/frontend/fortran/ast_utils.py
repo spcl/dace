@@ -1,6 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-#dace imports
+# dace imports
 from dace import subsets
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace import Memlet
@@ -19,18 +19,21 @@ fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,
     "REAL": dtypes.float32,
     "INTEGER": dtypes.int32,
-    "BOOL": dtypes.int32,  #This is a hack to allow fortran to pass through external C
+    "BOOL": dtypes.int32,  # This is a hack to allow fortran to pass through external C
 }
 
 
-def add_tasklet(substate: SDFGState, name: str, vars_in: Set[str], vars_out: Set[str], code: str, debuginfo: list,
-                source: str):
-    tasklet = substate.add_tasklet(name="T" + name,
-                                   inputs=vars_in,
-                                   outputs=vars_out,
-                                   code=code,
-                                   debuginfo=di(start_line=debuginfo[0], start_column=debuginfo[1], filename=source),
-                                   language=lang.Python)
+def add_tasklet(
+    substate: SDFGState, name: str, vars_in: Set[str], vars_out: Set[str], code: str, debuginfo: list, source: str
+):
+    tasklet = substate.add_tasklet(
+        name="T" + name,
+        inputs=vars_in,
+        outputs=vars_out,
+        code=code,
+        debuginfo=di(start_line=debuginfo[0], start_column=debuginfo[1], filename=source),
+        language=lang.Python,
+    )
     return tasklet
 
 
@@ -86,13 +89,15 @@ class TaskletWriter:
     :return: python code for a tasklet, as a string
     """
 
-    def __init__(self,
-                 outputs: List[str],
-                 outputs_changes: List[str],
-                 sdfg: SDFG = None,
-                 name_mapping=None,
-                 input: List[str] = None,
-                 input_changes: List[str] = None):
+    def __init__(
+        self,
+        outputs: List[str],
+        outputs_changes: List[str],
+        sdfg: SDFG = None,
+        name_mapping=None,
+        input: List[str] = None,
+        input_changes: List[str] = None,
+    ):
         self.outputs = outputs
         self.outputs_changes = outputs_changes
         self.sdfg = sdfg
@@ -115,7 +120,7 @@ class TaskletWriter:
         }
 
     def pardecl2string(self, node: ast_internal_classes.ParDecl_Node):
-        #At this point in the process, the should not be any ParDecl nodes left in the AST - they should have been replaced by the appropriate ranges
+        # At this point in the process, the should not be any ParDecl nodes left in the AST - they should have been replaced by the appropriate ranges
         return f"ERROR{node.type}"
 
     def write_code(self, node: ast_internal_classes.FNode):
@@ -255,7 +260,7 @@ class TaskletWriter:
             op = "<"
         if op == ".GT.":
             op = ">"
-        #TODO Add list of missing operators
+        # TODO Add list of missing operators
 
         left = self.write_code(node.lval)
         right = self.write_code(node.rval)
@@ -277,7 +282,7 @@ def generate_memlet(op, top_sdfg, state):
         for i in op.indices:
             tw = TaskletWriter([], [], top_sdfg, state.name_mapping)
             text = tw.write_code(i)
-            #This might need to be replaced with the name in the context of the top/current sdfg
+            # This might need to be replaced with the name in the context of the top/current sdfg
             indices.append(sym.pystr_to_symbolic(text))
     memlet = '0'
     if len(shape) == 1:
@@ -339,7 +344,6 @@ class ProcessedWriter(TaskletWriter):
 
 
 class Context:
-
     def __init__(self, name):
         self.name = name
         self.constants = {}
@@ -350,7 +354,6 @@ class Context:
 
 
 class NameMap(dict):
-
     def __getitem__(self, k):
         assert isinstance(k, SDFG)
         if k not in self:
@@ -367,7 +370,6 @@ class NameMap(dict):
 
 
 class ModuleMap(dict):
-
     def __getitem__(self, k):
         assert isinstance(k, ast_internal_classes.Module_Node)
         if k not in self:

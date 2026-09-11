@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains the access deduplication transformation. """
+"""Contains the access deduplication transformation."""
 
 from collections import defaultdict
 import copy
@@ -50,7 +50,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
             return False
 
         # For each common connector
-        for conn in (edges1 & edges2):
+        for conn in edges1 & edges2:
             # Deduplication: Only apply to first pair of edges
             node_ids = [graph.node_id(e.dst) for e in graph.out_edges(map_entry) if e.src_conn == conn]
             if any(nid < nid1 for nid in node_ids):
@@ -108,9 +108,9 @@ class DeduplicateAccess(xf.SingleStateTransformation):
         # Find largest contiguous subsets
         try:
             # Start from stride-1 dimension
-            contiguous_subsets = helpers.find_contiguous_subsets(unique_subsets,
-                                                                 dim=next(i for i, s in enumerate(desc.strides)
-                                                                          if s == 1))
+            contiguous_subsets = helpers.find_contiguous_subsets(
+                unique_subsets, dim=next(i for i, s in enumerate(desc.strides) if s == 1)
+            )
         except (StopIteration, NotImplementedError):
             warnings.warn("DeduplicateAcces::Not operating on Stride One Dimension!")
             contiguous_subsets = unique_subsets

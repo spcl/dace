@@ -23,7 +23,7 @@ def test_onnx_return_scalars():
         name='axes',
         data_type=onnx.TensorProto.INT64,
         dims=[1],  # Single element array
-        vals=[0]  # Reduce along axis 0
+        vals=[0],  # Reduce along axis 0
     )
 
     # return value is a scalar
@@ -41,7 +41,7 @@ def test_onnx_return_scalars():
         'test-scalar-return',
         [X],  # inputs
         [Y],  # outputs
-        [axes_constant]  # initializers (constants)
+        [axes_constant],  # initializers (constants)
     )
 
     model_def = onnx.helper.make_model(graph_def, ir_version=10, opset_imports=[onnx.helper.make_opsetid('', 13)])

@@ -65,8 +65,9 @@ def test_create_cart_subgrid_bcast_uses_descriptor_name():
     assert all(pgrid.name == pgrid_name for pgrid_name, pgrid in process_grids.items())
 
     init_code = sdfg.init_code['frame'].as_string
-    dummy_fields = '\n'.join(field for state in sdfg.states() for node in state.nodes() if isinstance(node, Dummy)
-                             for field in node.fields)
+    dummy_fields = '\n'.join(
+        field for state in sdfg.states() for node in state.nodes() if isinstance(node, Dummy) for field in node.fields
+    )
     for pgrid_name in process_grids:
         assert f'__state->{pgrid_name}' in init_code
         assert f'MPI_Comm {pgrid_name};' in dummy_fields
@@ -76,8 +77,9 @@ def test_create_cart_subgrid_bcast_uses_descriptor_name():
     assert all(_incoming_descriptor_name(sdfg, bcast, '_grid') in process_grids for bcast in bcasts)
 
     sdfg.expand_library_nodes()
-    tasklet_code = '\n'.join(node.code.as_string for state in sdfg.states() for node in state.nodes()
-                             if isinstance(node, dace.nodes.Tasklet))
+    tasklet_code = '\n'.join(
+        node.code.as_string for state in sdfg.states() for node in state.nodes() if isinstance(node, dace.nodes.Tasklet)
+    )
     assert '_grid' in tasklet_code
     assert '_comm' not in tasklet_code
 

@@ -38,8 +38,9 @@ def test_parse_forward_simple():
 @pytest.mark.torch
 def test_parse_forward_nested():
 
-    torch_module = torch.nn.Sequential(torch.nn.Sequential(torch.nn.Linear(12, 24), torch.nn.Linear(24, 2)),
-                                       nn.Softmax(dim=1))
+    torch_module = torch.nn.Sequential(
+        torch.nn.Sequential(torch.nn.Linear(12, 24), torch.nn.Linear(24, 2)), nn.Softmax(dim=1)
+    )
     dace_module2 = DaceModule(torch_module, sdfg_name='test_parse_forward_nested')
     x = torch.randn(2, 12)
     expected = torch_module(x)

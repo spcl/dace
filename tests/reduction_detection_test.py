@@ -23,8 +23,8 @@ def test_expr_type():
     _test_type('a or b', dace.ReductionType.Logical_Or)
     _test_type('a != b', dace.ReductionType.Logical_Xor)
     _test_type('a and b', dace.ReductionType.Logical_And)
-    #_test_type('b if b[0] < a[0] else a', dace.ReductionType.Min_Location)
-    #_test_type('b if b[0] > a[0] else a', dace.ReductionType.Max_Location)
+    # _test_type('b if b[0] < a[0] else a', dace.ReductionType.Min_Location)
+    # _test_type('b if b[0] > a[0] else a', dace.ReductionType.Max_Location)
 
     _test_type('a * b + b', dace.ReductionType.Custom)
     _test_type('a / b', dace.ReductionType.Custom)

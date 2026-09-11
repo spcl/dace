@@ -36,22 +36,25 @@ class RangeFromStringTests(unittest.TestCase):
     def test_complex_uni_dim_range_2(self):
 
         r = sbs.Range.from_string('tile_i * ts_i : min(int_ceil(M, rs_i), tile_i * ts_i + ts_i)')
-        self.assertTrue(r.pystr() == '[(tile_i*ts_i, Min(tile_i*ts_i + ts_i, int_ceil(M, rs_i)) - 1, 1)]',
-                        msg=r.pystr())
+        self.assertTrue(
+            r.pystr() == '[(tile_i*ts_i, Min(tile_i*ts_i + ts_i, int_ceil(M, rs_i)) - 1, 1)]', msg=r.pystr()
+        )
 
     def test_complex_multi_dim_range_1(self):
 
         r = sbs.Range.from_string('0:M:2, tile_i * ts_i : min(int_ceil(M, rs_i), tile_i * ts_i + ts_i)')
         self.assertTrue(
             r.pystr() == '[(0, M - 1, 2), (tile_i*ts_i, Min(tile_i*ts_i + ts_i, int_ceil(M, rs_i)) - 1, 1)]',
-            msg=r.pystr())
+            msg=r.pystr(),
+        )
 
     def test_complex_multi_dim_range_2(self):
 
         r = sbs.Range.from_string('tile_i * ts_i : min(int_ceil(M, rs_i), tile_i * ts_i + ts_i), 0:M:2')
         self.assertTrue(
             r.pystr() == '[(tile_i*ts_i, Min(tile_i*ts_i + ts_i, int_ceil(M, rs_i)) - 1, 1), (0, M - 1, 2)]',
-            msg=r.pystr())
+            msg=r.pystr(),
+        )
 
     def test_complex_multi_dim_range_3(self):
 
@@ -59,9 +62,10 @@ class RangeFromStringTests(unittest.TestCase):
             'tile_i * ts_i : min(int_ceil(M, rs_i), tile_i * ts_i + ts_i), regtile_j * rs_j : min(K, regtile_j * rs_j + rs_j)'
         )
         self.assertTrue(
-            r.pystr() ==
-            '[(tile_i*ts_i, Min(tile_i*ts_i + ts_i, int_ceil(M, rs_i)) - 1, 1), (regtile_j*rs_j, Min(K, regtile_j*rs_j + rs_j) - 1, 1)]',
-            msg=r.pystr())
+            r.pystr()
+            == '[(tile_i*ts_i, Min(tile_i*ts_i + ts_i, int_ceil(M, rs_i)) - 1, 1), (regtile_j*rs_j, Min(K, regtile_j*rs_j + rs_j) - 1, 1)]',
+            msg=r.pystr(),
+        )
 
 
 if __name__ == '__main__':

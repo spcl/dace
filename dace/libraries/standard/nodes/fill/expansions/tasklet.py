@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Single-element same-side scalar assignment."""
+
 from typing import TYPE_CHECKING
 
 import dace
@@ -23,13 +24,17 @@ class ExpandTasklet(ExpandTransformation):
         out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
         out_volume = out_subset.num_elements_exact()
         if out_volume != 1:
-            raise ValueError(f"Tasklet expansion requires single-element subsets "
-                             f"(got output volume {out_volume}). Use 'pure' for multi-element fills.")
+            raise ValueError(
+                f"Tasklet expansion requires single-element subsets "
+                f"(got output volume {out_volume}). Use 'pure' for multi-element fills."
+            )
 
         # Host scope can't write device memory directly; route that case to 'CUDA' instead.
-        if (not is_devicelevel_gpu(parent_state.sdfg, parent_state, node) and out.storage in GPU_RESIDENT_STORAGES):
-            raise ValueError(f"Tasklet expansion cannot fill GPU-resident storage ({out.storage}) for "
-                             f"'{out_name}' from host scope; use the 'CUDA' Fill expansion instead.")
+        if not is_devicelevel_gpu(parent_state.sdfg, parent_state, node) and out.storage in GPU_RESIDENT_STORAGES:
+            raise ValueError(
+                f"Tasklet expansion cannot fill GPU-resident storage ({out.storage}) for "
+                f"'{out_name}' from host scope; use the 'CUDA' Fill expansion instead."
+            )
 
         value_info = node.value_descriptor(parent_state)
         if value_info is not None:
@@ -39,8 +44,10 @@ class ExpandTasklet(ExpandTransformation):
             inputs = {}
             value_expr = python_literal(node.value, out.dtype)
 
-        return nodes.Tasklet(node.name,
-                             inputs=inputs,
-                             outputs={OUTPUT_CONNECTOR_NAME: out.dtype},
-                             code=f"{OUTPUT_CONNECTOR_NAME} = {value_expr}",
-                             language=dace.Language.Python)
+        return nodes.Tasklet(
+            node.name,
+            inputs=inputs,
+            outputs={OUTPUT_CONNECTOR_NAME: out.dtype},
+            code=f"{OUTPUT_CONNECTOR_NAME} = {value_expr}",
+            language=dace.Language.Python,
+        )

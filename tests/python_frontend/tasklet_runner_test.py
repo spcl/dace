@@ -91,7 +91,7 @@ def test_dynamic_output_wcr():
     B = np.zeros([1], dtype=np.int32)
 
     # Count number of elements >= 0.5
-    for i in dace.map[0:A.shape[0]]:
+    for i in dace.map[0 : A.shape[0]]:
         with dace.tasklet:
             a << A[i]
             b >> B(-1, lambda a, b: a + b)

@@ -28,11 +28,10 @@ def test_fortran_frontend_basic_allocate():
     sdfg.simplify(verbose=True)
     a = np.full([4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0, 0] == 42)
-    assert (a[1, 0] == 5.5)
-    assert (a[2, 0] == 42)
+    assert a[0, 0] == 42
+    assert a[1, 0] == 5.5
+    assert a[2, 0] == 42
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_basic_allocate()

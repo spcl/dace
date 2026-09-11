@@ -59,13 +59,13 @@ def test_filter():
 
     # Sort the outputs
     filtered = np.sort(filtered)
-    B[:outsize[0]] = np.sort(B[:outsize[0]])
+    B[: outsize[0]] = np.sort(B[: outsize[0]])
 
     if len(filtered) == 0:
         print("==== Program end ====")
         exit(0)
 
-    diff = np.linalg.norm(filtered - B[:outsize[0]]) / float(outsize[0])
+    diff = np.linalg.norm(filtered - B[: outsize[0]]) / float(outsize[0])
     print("Difference:", diff)
     if diff > 1e-5:
         totalitems = min(outsize[0], N)

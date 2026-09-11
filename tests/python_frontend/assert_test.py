@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests static and runtime assertions in dace programs. """
+"""Tests static and runtime assertions in dace programs."""
+
 import dace
 import pytest
 import numpy as np

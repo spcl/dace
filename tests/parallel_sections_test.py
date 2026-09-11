@@ -9,8 +9,8 @@ def test():
 
     sdfg = dace.SDFG("parallel_sections")
 
-    sdfg.add_array("array_in", (2 * N, ), dace.dtypes.int32)
-    sdfg.add_array("array_out", (N, ), dace.dtypes.int32)
+    sdfg.add_array("array_in", (2 * N,), dace.dtypes.int32)
+    sdfg.add_array("array_out", (N,), dace.dtypes.int32)
 
     sdfg.add_stream("fifo_in_a", dace.dtypes.int32, 1, transient=True)
     sdfg.add_stream("fifo_in_b", dace.dtypes.int32, 1, transient=True)
@@ -45,8 +45,9 @@ def test():
     ###########################################################################
     # Second processing element: reads from memory into a stream
 
-    read_b_entry, read_b_exit = state.add_map("read_map_b", {"i": "N:2*N"},
-                                              schedule=dace.dtypes.ScheduleType.Sequential)
+    read_b_entry, read_b_exit = state.add_map(
+        "read_map_b", {"i": "N:2*N"}, schedule=dace.dtypes.ScheduleType.Sequential
+    )
     read_b_tasklet = state.add_tasklet("read_b", {"from_memory"}, {"to_stream"}, "to_stream = from_memory")
 
     # Inner edges
@@ -61,8 +62,9 @@ def test():
     # Third processing element: reads from both input streams, adds the
     # numbers, the writes it to the output stream
 
-    compute_entry, compute_exit = state.add_map("compute_map", {"i": "0:N"},
-                                                schedule=dace.dtypes.ScheduleType.Sequential)
+    compute_entry, compute_exit = state.add_map(
+        "compute_map", {"i": "0:N"}, schedule=dace.dtypes.ScheduleType.Sequential
+    )
     compute_tasklet = state.add_tasklet("compute", {"a", "b"}, {"c"}, "c = a + b")
 
     # Inner edges

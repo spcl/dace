@@ -49,8 +49,9 @@ def forward_out_desc_with_name(forward_node: nd.Node, context: BackwardContext, 
     return utils.out_desc_with_name(forward_node, context.forward_state, context.forward_sdfg, name)
 
 
-def add_backward_desc_for_connector(backward_sdfg: dace.SDFG, forward_node: nd.Node, context: BackwardContext,
-                                    connector: str, input: bool) -> str:
+def add_backward_desc_for_connector(
+    backward_sdfg: dace.SDFG, forward_node: nd.Node, context: BackwardContext, connector: str, input: bool
+) -> str:
     """Adds the backward array for the connector of ``forward_node``.
 
     :param backward_sdfg: The SDFG to add the backward array descriptor to.
@@ -74,8 +75,9 @@ def add_backward_desc_for_connector(backward_sdfg: dace.SDFG, forward_node: nd.N
     return backward_sdfg.add_datadesc(arr_name + "_grad", new_desc, find_new_name=True)
 
 
-def add_backward_desc(backward_sdfg: dace.SDFG, forward_sdfg: dace.SDFG, forward_desc: dt.Data,
-                      forward_name: str) -> str:
+def add_backward_desc(
+    backward_sdfg: dace.SDFG, forward_sdfg: dace.SDFG, forward_desc: dt.Data, forward_name: str
+) -> str:
     """Adds the backward array for the given descriptor.
 
     :param backward_sdfg: The SDFG to add the backward array descriptor to.
@@ -116,22 +118,23 @@ def backward_symbol_mapping(nested_sdfg: SDFG, parent_state: SDFGState) -> Dict[
     return {name: connector_symbol(name, parent_symbols.get(name)) for name in sorted(nested_sdfg.free_symbols)}
 
 
-def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[str],
-                            context: BackwardContext) -> Tuple[nd.NestedSDFG, BackwardResult]:
-    """ Given a node, return an SDFG that can be used as a nested SDFG expansion for that node.
+def add_empty_sdfg_for_node(
+    forward_node: nd.Node, required_descriptors: List[str], context: BackwardContext
+) -> Tuple[nd.NestedSDFG, BackwardResult]:
+    """Given a node, return an SDFG that can be used as a nested SDFG expansion for that node.
 
-        ``required_descriptors`` may contain:
-        * Inputs/outputs of the forward node (these will be hooked up as required)
-        * Inputs/outputs of the forward node with the ``_grad`` suffix. These will be hooked up
-          as the gradients of the corresponding inputs/outputs.
+    ``required_descriptors`` may contain:
+    * Inputs/outputs of the forward node (these will be hooked up as required)
+    * Inputs/outputs of the forward node with the ``_grad`` suffix. These will be hooked up
+      as the gradients of the corresponding inputs/outputs.
 
-        The descriptors will be initialized using the descriptors connected to edges of the
-        forward node.
+    The descriptors will be initialized using the descriptors connected to edges of the
+    forward node.
 
-        :param forward_node: the node in the forward pass
-        :param required_descriptors: A list of descriptors that should be added to the SDFG.
-        :param context: the backward context
-        :return: the nested SDFG and backward result for the forward node
+    :param forward_node: the node in the forward pass
+    :param required_descriptors: A list of descriptors that should be added to the SDFG.
+    :param context: the backward context
+    :return: the nested SDFG and backward result for the forward node
     """
 
     nsdfg = dace.SDFG(forward_node.label + "_backward_expansion")
@@ -173,25 +176,24 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[st
         ndesc.transient = False
         nsdfg.add_datadesc(name, ndesc)
 
-    bwd_node = context.backward_state.add_nested_sdfg(nsdfg,
-                                                      sorted(inputs),
-                                                      sorted(outputs),
-                                                      symbol_mapping=backward_symbol_mapping(
-                                                          nsdfg, context.backward_state))
+    bwd_node = context.backward_state.add_nested_sdfg(
+        nsdfg, sorted(inputs), sorted(outputs), symbol_mapping=backward_symbol_mapping(nsdfg, context.backward_state)
+    )
     for output in outputs_to_connect_from_forward:
         connect_output_from_forward(forward_node, bwd_node, context, output)
 
     return bwd_node, result
 
 
-def backward_program_for_node(program, context: BackwardContext,
-                              forward_node: nd.Node) -> Tuple[nd.Node, BackwardResult]:
-    """ Expand a function to the backward function for a node.
+def backward_program_for_node(
+    program, context: BackwardContext, forward_node: nd.Node
+) -> Tuple[nd.Node, BackwardResult]:
+    """Expand a function to the backward function for a node.
 
-        The dtypes for the arguments will be extracted by matching the parameter names to edges.
+    The dtypes for the arguments will be extracted by matching the parameter names to edges.
 
-        Gradient parameters should be the name of the forward parameter, appended with _grad. For these arguments the
-        data descriptors will match the data descriptors of the inputs/outputs they correspond to.
+    Gradient parameters should be the name of the forward parameter, appended with _grad. For these arguments the
+    data descriptors will match the data descriptors of the inputs/outputs they correspond to.
     """
 
     input_names = set(inp.name for inp in forward_node.schema.inputs)
@@ -199,8 +201,11 @@ def backward_program_for_node(program, context: BackwardContext,
 
     if input_names.intersection(output_names):
         # this is currently the case for only one onnx op
-        raise ValueError("program_for_node cannot be applied on nodes of this type;"
-                         " '{}' is both an input and an output".format(next(input_names.intersection(output_names))))
+        raise ValueError(
+            "program_for_node cannot be applied on nodes of this type; '{}' is both an input and an output".format(
+                next(input_names.intersection(output_names))
+            )
+        )
 
     def name_without_grad_in(name, collection):
         return name[-5:] == "_grad" and name[:-5] in collection
@@ -233,27 +238,26 @@ def backward_program_for_node(program, context: BackwardContext,
 
     sdfg = DaceProgram(program, (), {}, False, dace.DeviceType.CPU).to_sdfg()
 
-    result_node = context.backward_state.add_nested_sdfg(sdfg,
-                                                         sorted(inputs),
-                                                         sorted(outputs),
-                                                         symbol_mapping=backward_symbol_mapping(
-                                                             sdfg, context.backward_state))
+    result_node = context.backward_state.add_nested_sdfg(
+        sdfg, sorted(inputs), sorted(outputs), symbol_mapping=backward_symbol_mapping(sdfg, context.backward_state)
+    )
 
     return result_node, backward_result
 
 
-def connect_output_from_forward(forward_node: nd.Node, backward_node: nd.Node, context: BackwardContext,
-                                output_connector_name: str):
-    """ Connect an output of the forward node as an input to the backward node. This is done by forwarding the array
-        from the forward pass.
+def connect_output_from_forward(
+    forward_node: nd.Node, backward_node: nd.Node, context: BackwardContext, output_connector_name: str
+):
+    """Connect an output of the forward node as an input to the backward node. This is done by forwarding the array
+    from the forward pass.
 
-        Conceptually, this is similar to pytorch's ctx.save_for_backward.
+    Conceptually, this is similar to pytorch's ctx.save_for_backward.
 
-        :param forward_node: the node in the forward pass.
-        :param backward_node: the node in the backward pass.
-        :param context: the backward context.
-        :param output_connector_name: the name of the connector on the backward pass. The output of that connector will
-                                      be forwarded to the connector of the same name on the backward node.
+    :param forward_node: the node in the forward pass.
+    :param backward_node: the node in the backward pass.
+    :param context: the backward context.
+    :param output_connector_name: the name of the connector on the backward pass. The output of that connector will
+                                  be forwarded to the connector of the same name on the backward node.
     """
     output_edge = utils.out_edge_with_name(forward_node, context.forward_state, output_connector_name)
 
@@ -270,7 +274,8 @@ def connect_output_from_forward(forward_node: nd.Node, backward_node: nd.Node, c
         read = context.backward_state.add_read(output_arr_name)
     else:
         cand = [
-            n for n, _ in context.backward_state.all_nodes_recursive()
+            n
+            for n, _ in context.backward_state.all_nodes_recursive()
             if isinstance(n, nd.AccessNode) and n.data == output_arr_name
         ]
         read = cand[0]
@@ -297,14 +302,14 @@ def cast_consts_to_type(code: str, dtype: dace.typeclass) -> str:
     """
 
     class CastConsts(ast.NodeTransformer):
-
         def __init__(self):
             self._in_div_stack = collections.deque()
 
         def visit_Num(self, node):
             if self._in_div_stack:
                 return ast.copy_location(
-                    ast.parse(f"dace.{dtype.to_string()}({astunparse.unparse(node)})").body[0].value, node)
+                    ast.parse(f"dace.{dtype.to_string()}({astunparse.unparse(node)})").body[0].value, node
+                )
             else:
                 return self.generic_visit(node)
 
@@ -329,7 +334,8 @@ def cast_consts_to_type(code: str, dtype: dace.typeclass) -> str:
         def visit_Constant(self, node):
             if self._in_div_stack:
                 return ast.copy_location(
-                    ast.parse(f"dace.{dtype.to_string()}({astunparse.unparse(node)})").body[0].value, node)
+                    ast.parse(f"dace.{dtype.to_string()}({astunparse.unparse(node)})").body[0].value, node
+                )
             else:
                 return self.generic_visit(node)
 
@@ -363,14 +369,14 @@ def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> None:
 
     if isinstance(arr, (dt.Array, dt.Scalar)):
         state.add_mapped_tasklet(
-            "_init_" + data + "_", {
-                "i{}".format(i): "0:{}".format(shape)
-                for i, shape in enumerate(arr.shape)
-            }, {},
+            "_init_" + data + "_",
+            {"i{}".format(i): "0:{}".format(shape) for i, shape in enumerate(arr.shape)},
+            {},
             "__out = {}".format(scalar),
             {"__out": dace.Memlet.simple(data, ", ".join("i{}".format(i) for i in range(len(arr.shape))))},
             schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
-            external_edges=True)
+            external_edges=True,
+        )
     elif type(arr) is dt.View:
         # not need to initialize: the viewed array will always be visited
         # (since a view can never be a required grad), and thus the viewed array will be initialized.
@@ -409,15 +415,16 @@ def extract_indices(expression: str) -> Dict[str, List[str]]:
     return index_map
 
 
-def code_to_exprs(code: str, tasklet: nd.Tasklet,
-                  symbols: Dict[str, dtypes.typeclass]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
-    """ Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
-        supports only code consisting of assignment statements.
+def code_to_exprs(
+    code: str, tasklet: nd.Tasklet, symbols: Dict[str, dtypes.typeclass]
+) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
+    """Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
+    supports only code consisting of assignment statements.
 
-        :param code: the code to convert
-        :param tasklet: the tasklet the code belongs to; its connectors are the defined variables
-        :param symbols: the SDFG symbols visible to the code, mapped to their dtypes
-        :return: map from outputs to symbolic expressions, and the map of indexed objects to indices
+    :param code: the code to convert
+    :param tasklet: the tasklet the code belongs to; its connectors are the defined variables
+    :param symbols: the SDFG symbols visible to the code, mapped to their dtypes
+    :return: map from outputs to symbolic expressions, and the map of indexed objects to indices
     """
 
     inputs: List[str] = list(tasklet.in_connectors)
@@ -445,8 +452,11 @@ def code_to_exprs(code: str, tasklet: nd.Tasklet,
     # Add the definition of indexed objects to the sympy code
     indexed_objects_code = ""
     for conn in inputs + outputs:
-        if (conn in inputs and isinstance(tasklet.in_connectors[conn], dace.dtypes.pointer)
-                or (conn in outputs and isinstance(tasklet.out_connectors[conn], dace.dtypes.pointer))):
+        if (
+            conn in inputs
+            and isinstance(tasklet.in_connectors[conn], dace.dtypes.pointer)
+            or (conn in outputs and isinstance(tasklet.out_connectors[conn], dace.dtypes.pointer))
+        ):
             if conn not in indexed_objects_map:
                 raise AutoDiffException(f"Expected connector '{conn}' to be in indexed objects map for pointer type")
             indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
@@ -495,7 +505,8 @@ def symbolic_execution({}):
 
         # no idea why, but simply calling symbolic_execution doesn't work
         results = temp_globals["symbolic_execution"](
-            *[connector_symbol(inp, tasklet.in_connectors[inp]) for inp in inputs])
+            *[connector_symbol(inp, tasklet.in_connectors[inp]) for inp in inputs]
+        )
 
         # pystr_to_symbolic rather than sympify: it keeps `//` as int_floor and mints DaCe symbols.
         if len(outputs) > 1:
@@ -510,7 +521,8 @@ def symbolic_execution({}):
             return {outputs[0]: results}, indexed_objects_map
     except Exception as e:
         raise AutoDiffException(
-            "Exception occurred while attempting to symbolically execute code:\n{}".format(code)) from e
+            "Exception occurred while attempting to symbolically execute code:\n{}".format(code)
+        ) from e
 
 
 def is_int_eq_value(value, target_value: int) -> bool:
@@ -570,7 +582,8 @@ def get_state_topological_order(graph) -> List[SDFGState]:
             state_order.extend(loop_state_order)
         else:
             raise AutoDiffException(
-                f"Unsupported node type {node} at the highest level of the SDFG while getting the state order")
+                f"Unsupported node type {node} at the highest level of the SDFG while getting the state order"
+            )
 
     # All states in the graph need to be present in the state order
     if isinstance(graph, SDFG) and set(state_order) != set(graph.states()):
@@ -658,9 +671,9 @@ def analyze_loop_change(code: str, loop_variable: str) -> str:
 
 
 def get_map_nest_information(
-        edges_list: List[dstate.MultiConnectorEdge]) -> Tuple[List, List[str], List, Dict[str, Tuple]]:
-    """
-        """
+    edges_list: List[dstate.MultiConnectorEdge],
+) -> Tuple[List, List[str], List, Dict[str, Tuple]]:
+    """ """
     # First, get the shape of the new array
     shape_list = []
 
@@ -683,15 +696,17 @@ def get_map_nest_information(
 
     if not (len(param_list) == len(shape_list) == len(start_range)):
         raise AutoDiffException(
-            f"Mismatched lengths: params={len(param_list)}, shapes={len(shape_list)}, ranges={len(start_range)}")
+            f"Mismatched lengths: params={len(param_list)}, shapes={len(shape_list)}, ranges={len(start_range)}"
+        )
 
     # Create a dictionary mapping parameters to their start and end ranges
     param_dict = {param: (start, end) for param, start, end in zip(param_list, start_range, shape_list)}
     return start_range, param_list, shape_list, param_dict
 
 
-def get_all_path_edges(state: SDFGState, source: nd.Node,
-                       starting_edge: dgraph.MultiConnectorEdge) -> List[dgraph.MultiConnectorEdge]:
+def get_all_path_edges(
+    state: SDFGState, source: nd.Node, starting_edge: dgraph.MultiConnectorEdge
+) -> List[dgraph.MultiConnectorEdge]:
     """
     We will start from the target node and go back until we reach the destination.
     Starting edge should be an in node
@@ -717,13 +732,13 @@ def get_all_path_edges(state: SDFGState, source: nd.Node,
 
 def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str, str]:
     """
-        Given a conditional tasklet node, extract the if and else expressions and return them with the conditional.
-        The else statement could be None in case there is only an if statement. The current supported formats are the following:
-        1 - if cond:
-                out = expression_1
-        which would return ("out = expression_1", None, "if cond")
-        2- out = expression_1 if cond else expression 2
-        """
+    Given a conditional tasklet node, extract the if and else expressions and return them with the conditional.
+    The else statement could be None in case there is only an if statement. The current supported formats are the following:
+    1 - if cond:
+            out = expression_1
+    which would return ("out = expression_1", None, "if cond")
+    2- out = expression_1 if cond else expression 2
+    """
 
     tasklet_code = tasklet_node.code.as_string
 
@@ -849,7 +864,8 @@ def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:
             if edge_type in [dace.string]:
                 raise AutoDiffException(
                     f"Expected Subgraph to differentiate to only contain float, int, and bool edges, but data {edge.data}"
-                    f" on edge {edge} has type {edge_type}")
+                    f" on edge {edge} has type {edge_type}"
+                )
 
 
 def state_within_loop(forward_state: SDFGState) -> Tuple[bool, LoopRegion]:
@@ -866,7 +882,6 @@ def state_within_loop(forward_state: SDFGState) -> Tuple[bool, LoopRegion]:
 
 
 class SympyCleaner(ast.NodeTransformer):
-
     def visit_Name(self, node):
         if node.id == "pi":
             return ast.copy_location(ast.parse("dace.math.pi").body[0].value, node)
@@ -875,9 +890,9 @@ class SympyCleaner(ast.NodeTransformer):
 
 def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
     """
-        Use regular expression matching to extract the start and end of the loop region.
-        We only treat regular for-loops with incrementation and decrementation updates.
-        """
+    Use regular expression matching to extract the start and end of the loop region.
+    We only treat regular for-loops with incrementation and decrementation updates.
+    """
 
     # Extract the loop iterator
     it = loop.loop_variable
@@ -889,10 +904,10 @@ def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
 
     # If the stride is positive
     if stride_sign > 0:
-        conditional_expression = fr".*{it} < .*"
+        conditional_expression = rf".*{it} < .*"
     else:
         # If the stride is negative
-        conditional_expression = fr".*{it} > .*"
+        conditional_expression = rf".*{it} > .*"
 
     # Match the conditional using regular expressions
     matches = re.search(conditional_expression, conditional)
@@ -902,7 +917,8 @@ def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
     matches_inner = re.search(conditional_expression[:-2], conditional)
     if not matches_inner:
         raise AutoDiffException(
-            f"Could not match conditional pattern '{conditional_expression[:-2]}' in '{conditional}'")
+            f"Could not match conditional pattern '{conditional_expression[:-2]}' in '{conditional}'"
+        )
     expression_to_remove = matches_inner.group()
     end = expression.replace(expression_to_remove, "")
 
@@ -919,11 +935,11 @@ def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
 
     # Get the start from the initialization code
     init_code = loop.init_statement.as_string
-    matches = re.search(fr".*{it} = .*", init_code)
+    matches = re.search(rf".*{it} = .*", init_code)
     if not matches:
         raise AutoDiffException(f"Could not find initialization pattern for loop variable '{it}' in '{init_code}'")
     expression = matches.group()
-    matches = re.search(fr"{it} =", init_code)
+    matches = re.search(rf"{it} =", init_code)
     if not matches:
         raise AutoDiffException(f"Could not find assignment pattern for loop variable '{it}' in '{init_code}'")
     expression_to_remove = matches.group()
@@ -953,5 +969,6 @@ def get_stride_sign(loop: LoopRegion) -> int:
         return 1
 
     # unsupported loop structure
-    raise AutoDiffException(f"Expected the loop region {loop.label} to have a regular update statement."
-                            f" Instead got: {update_statement}")
+    raise AutoDiffException(
+        f"Expected the loop region {loop.label} to have a regular update statement. Instead got: {update_statement}"
+    )

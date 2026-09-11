@@ -9,7 +9,7 @@ def test_trivial_tasklet():
     ty_ = dace.int32
     sdfg = dace.SDFG("trivial_tasklet")
     sdfg.add_symbol("s", ty_)
-    sdfg.add_array("v", (N, ), ty_)
+    sdfg.add_array("v", (N,), ty_)
     st = sdfg.add_state()
 
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty_, transient=True)
@@ -51,7 +51,7 @@ def test_trivial_tasklet_with_map():
     ty_ = dace.int32
     sdfg = dace.SDFG("trivial_tasklet_with_map")
     sdfg.add_symbol("s", ty_)
-    sdfg.add_array("v", (N, ), ty_)
+    sdfg.add_array("v", (N,), ty_)
     st = sdfg.add_state()
 
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty_, transient=True)
@@ -93,7 +93,7 @@ def test_trivial_tasklet_with_implicit_cast():
     ty64_ = dace.int64
     sdfg = dace.SDFG("trivial_tasklet_with_implicit_cast")
     sdfg.add_symbol("s", ty32_)
-    sdfg.add_array("v", (N, ), ty32_)
+    sdfg.add_array("v", (N,), ty32_)
     st = sdfg.add_state()
 
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty32_, transient=True)

@@ -79,7 +79,7 @@ def blank_lines(A: dace.float32[N], B: dace.float32[N]):
 def test_blank_lines():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     blank_lines(A, B)
     assert np.allclose(A, B)
 

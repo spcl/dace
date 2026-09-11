@@ -11,7 +11,6 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, in
 
 @dace.library.expansion
 class ExpandBcastMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -55,17 +54,18 @@ class ExpandBcastMPI(ExpandTransformation):
             {init}
             MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm});
             _outbuffer = _inbuffer;"""
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.node
 class Bcast(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandBcastMPI,

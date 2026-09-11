@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-"""Helper functions for compilation. """
+"""Helper functions for compilation."""
+
 from typing import Any, Union, Tuple, Type, List
 
 import copy
@@ -42,15 +43,21 @@ def unique_name(name: str) -> str:
     maximal_length = 200
     unique_sufix = str(uuid.uuid1()).replace("-", "_")
     if len(name) > (maximal_length - len(unique_sufix)):
-        name = name[:(maximal_length - len(unique_sufix) - 1)]
+        name = name[: (maximal_length - len(unique_sufix) - 1)]
     return f"{name}_{unique_sufix}"
 
 
-def make_sdfg_args(sdfg: dace.SDFG, ) -> tuple[dict[str, Any], dict[str, Any]]:
+def make_sdfg_args(
+    sdfg: dace.SDFG,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     ref = {
-        name: (np.array(np.random.rand(*desc.shape), copy=True, dtype=desc.dtype.as_numpy_dtype()) if isinstance(
-            desc, dace_data.Array) else np.array(np.random.rand(1), copy=True, dtype=desc.dtype.as_numpy_dtype())[0])
-        for name, desc in sdfg.arrays.items() if (not desc.transient) and (not name.startswith("__return"))
+        name: (
+            np.array(np.random.rand(*desc.shape), copy=True, dtype=desc.dtype.as_numpy_dtype())
+            if isinstance(desc, dace_data.Array)
+            else np.array(np.random.rand(1), copy=True, dtype=desc.dtype.as_numpy_dtype())[0]
+        )
+        for name, desc in sdfg.arrays.items()
+        if (not desc.transient) and (not name.startswith("__return"))
     }
     res = copy.deepcopy(ref)
     return ref, res

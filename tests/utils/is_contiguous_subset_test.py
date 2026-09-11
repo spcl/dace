@@ -163,7 +163,7 @@ def test_c_2d_partial_first_full_second():
 
 def test_1d_full_range():
     """Test 1D array with full range - should be contiguous"""
-    array = create_array((100, ), (1, ))
+    array = create_array((100,), (1,))
     subset = create_subset([(0, 99, 1)])
     result = subset.is_contiguous_subset(array)
     assert result is True
@@ -171,7 +171,7 @@ def test_1d_full_range():
 
 def test_1d_partial_range():
     """Test 1D array with partial range - should be contiguous"""
-    array = create_array((100, ), (1, ))
+    array = create_array((100,), (1,))
     subset = create_subset([(25, 74, 1)])
     result = subset.is_contiguous_subset(array)
     assert result is True

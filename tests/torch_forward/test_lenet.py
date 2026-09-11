@@ -14,7 +14,6 @@ from tests.utils import torch_tensors_close
 
 
 class LeNet(nn.Module):
-
     def __init__(self):
         super(LeNet, self).__init__()
         self.conv1 = nn.Conv2d(1, 6, (3, 3))
@@ -44,9 +43,9 @@ def test_lenet(use_cpp_dispatcher: bool):
     dace_net = LeNet()
     dace_net.load_state_dict(net.state_dict())
     dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
-    dace_net = DaceModule(dace_net,
-                          sdfg_name=f"test_lenet_{dispatcher_suffix}",
-                          compile_torch_extension=use_cpp_dispatcher)
+    dace_net = DaceModule(
+        dace_net, sdfg_name=f"test_lenet_{dispatcher_suffix}", compile_torch_extension=use_cpp_dispatcher
+    )
 
     torch_output = net(torch.clone(input))
     dace_output = dace_net(torch.clone(input))

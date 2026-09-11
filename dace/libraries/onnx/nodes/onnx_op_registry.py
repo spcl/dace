@@ -9,7 +9,15 @@ from dace.properties import Property, ListProperty
 from dace.transformation.transformation import ExpandTransformation
 
 from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
-from dace.libraries.onnx.schema import ONNXSchema, ONNXAttributeType, _ATTR_TYPE_TO_PYTHON_TYPE, ONNXParameterType, ONNXAttribute, ONNXParameter, ONNXTypeConstraint
+from dace.libraries.onnx.schema import (
+    ONNXSchema,
+    ONNXAttributeType,
+    _ATTR_TYPE_TO_PYTHON_TYPE,
+    ONNXParameterType,
+    ONNXAttribute,
+    ONNXParameter,
+    ONNXTypeConstraint,
+)
 
 import dace.libraries.onnx.nodes.onnx_op as onnx_op
 from dace.frontend.python.common import StringLiteral
@@ -19,14 +27,16 @@ import onnx
 
 def _get_typecons_docstring(cons: ONNXTypeConstraint) -> str:
     """Generate documentation string for type constraints."""
-    return "    * **{}** -- {}".format(cons.type_str,
-                                       ", ".join(":class:`{}`".format(t.to_string()) for t in cons.types))
+    return "    * **{}** -- {}".format(
+        cons.type_str, ", ".join(":class:`{}`".format(t.to_string()) for t in cons.types)
+    )
 
 
 def _get_connector_docstring(param: ONNXParameter) -> str:
     """Generate documentation string for connectors."""
-    return "    * **{}** ({}, {}) -- {}".format(param.name, param.type_str, param.param_type.name.lower(),
-                                                param.description)
+    return "    * **{}** ({}, {}) -- {}".format(
+        param.name, param.type_str, param.param_type.name.lower(), param.description
+    )
 
 
 def _get_attr_docstring(attr: ONNXAttribute) -> str:
@@ -88,9 +98,12 @@ def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str, dace_
         inputs = {
             name: arr_name
             for name, arr_name in kwargs.items()
-            if (name in input_names or
+            if (
+                name in input_names
+                or
                 # variadic params
-                ("__" in name and parse_variadic_param(name)[0] in variadic_inputs))
+                ("__" in name and parse_variadic_param(name)[0] in variadic_inputs)
+            )
         }
 
         kwargs = {k: v for k, v in kwargs.items() if k not in inputs}
@@ -98,9 +111,12 @@ def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str, dace_
         outputs = {
             name: arr_name
             for name, arr_name in kwargs.items()
-            if (name in output_names or
+            if (
+                name in output_names
+                or
                 # variadic params
-                ("__" in name and parse_variadic_param(name)[0] in variadic_outputs))
+                ("__" in name and parse_variadic_param(name)[0] in variadic_outputs)
+            )
         }
 
         kwargs = {k: v for k, v in kwargs.items() if k not in outputs}
@@ -155,8 +171,9 @@ def _initialize_onnx_registry():
         try:
             dace_schema = ONNXSchema.from_onnx_proto(schema)
             # If the schema has a parameter name that exists as both an input and an output, prepend "in_" and "out_"
-            intersecting_names = set(i.name for i in dace_schema.inputs).intersection(o.name
-                                                                                      for o in dace_schema.outputs)
+            intersecting_names = set(i.name for i in dace_schema.inputs).intersection(
+                o.name for o in dace_schema.outputs
+            )
             for name in intersecting_names:
                 in_cands = [i for i in dace_schema.inputs if i.name == name]
                 out_cands = [i for i in dace_schema.outputs if i.name == name]
@@ -173,17 +190,24 @@ def _initialize_onnx_registry():
         # Add properties for each op attribute
         for name, attr in dace_schema.attributes.items():
             if attr.attribute_type in [
-                    ONNXAttributeType.Int, ONNXAttributeType.String, ONNXAttributeType.Float, ONNXAttributeType.Tensor
+                ONNXAttributeType.Int,
+                ONNXAttributeType.String,
+                ONNXAttributeType.Float,
+                ONNXAttributeType.Tensor,
             ]:
-                attrs[name] = Property(dtype=_ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type],
-                                       desc=attr.description,
-                                       allow_none=True,
-                                       default=None if attr.default_value is None else attr.default_value)
+                attrs[name] = Property(
+                    dtype=_ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type],
+                    desc=attr.description,
+                    allow_none=True,
+                    default=None if attr.default_value is None else attr.default_value,
+                )
             elif attr.attribute_type in [ONNXAttributeType.Ints, ONNXAttributeType.Strings, ONNXAttributeType.Floats]:
-                attrs[name] = ListProperty(element_type=_ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type],
-                                           desc=attr.description,
-                                           allow_none=True,
-                                           default=None if attr.default_value is None else attr.default_value)
+                attrs[name] = ListProperty(
+                    element_type=_ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type],
+                    desc=attr.description,
+                    allow_none=True,
+                    default=None if attr.default_value is None else attr.default_value,
+                )
             elif attr.required:
                 raise NotImplementedError("Required attribute '{}' has an unsupported type".format(attr.name))
 
@@ -196,14 +220,17 @@ def _initialize_onnx_registry():
                 # Add required parameters as in/out connectors, without types for now
                 inputs={
                     inp.name
-                    for inp in self.schema.inputs if inp.param_type == ONNXParameterType.Single or (
-                        inp.name in optional and inp.param_type == ONNXParameterType.Optional)
+                    for inp in self.schema.inputs
+                    if inp.param_type == ONNXParameterType.Single
+                    or (inp.name in optional and inp.param_type == ONNXParameterType.Optional)
                 },
                 outputs={
                     out.name
-                    for out in self.schema.outputs if out.param_type == ONNXParameterType.Single or (
-                        out.name in optional and out.param_type == ONNXParameterType.Optional)
-                })
+                    for out in self.schema.outputs
+                    if out.param_type == ONNXParameterType.Single
+                    or (out.name in optional and out.param_type == ONNXParameterType.Optional)
+                },
+            )
             self.backward_implementation = None
 
             if len(args) > 0:
@@ -211,15 +238,17 @@ def _initialize_onnx_registry():
 
             missing_arguments = required_attrs.difference(op_attributes)
             if len(missing_arguments) > 0:
-
                 raise TypeError(
-                    onnx_op.get_missing_arguments_message("__init__()", missing_arguments, "keyword-only argument"))
+                    onnx_op.get_missing_arguments_message("__init__()", missing_arguments, "keyword-only argument")
+                )
 
             unknown_attrs = set(op_attributes).difference(self.schema.attributes)
             if len(unknown_attrs) > 0:
-                raise TypeError("{}.__init__() got an unexpected keyword argument '{}'".format(
-                    self.schema.name,
-                    list(unknown_attrs)[0]))
+                raise TypeError(
+                    "{}.__init__() got an unexpected keyword argument '{}'".format(
+                        self.schema.name, list(unknown_attrs)[0]
+                    )
+                )
 
             for name, attr in op_attributes.items():
                 if isinstance(attr, StringLiteral):
@@ -233,11 +262,15 @@ def _initialize_onnx_registry():
 
         # The first line of the init docstring contains the signature of the method. This will be picked up by sphinx and
         # means that the generated sphinx docs have a proper signature, and not just *args, **kwargs.
-        init_docstring = "__init__(name, *, {})\n".format(", ".join(attr.name if attr.required else attr.name + "=" +
-                                                                    repr(attr.default_value)
-                                                                    for _, attr in dace_schema.attributes.items()))
+        init_docstring = "__init__(name, *, {})\n".format(
+            ", ".join(
+                attr.name if attr.required else attr.name + "=" + repr(attr.default_value)
+                for _, attr in dace_schema.attributes.items()
+            )
+        )
         init_docstring += ":param name: The name of the node.\n" + "\n".join(
-            _get_attr_docstring(attr) for _, attr in dace_schema.attributes.items())
+            _get_attr_docstring(attr) for _, attr in dace_schema.attributes.items()
+        )
 
         docstring = "\n" + dace_schema.doc
         type_docstrings = "\n".join(_get_typecons_docstring(cons) for _, cons in dace_schema.type_constraints.items())
@@ -255,7 +288,7 @@ def _initialize_onnx_registry():
 
         cls_name_ver = cls_name + "_" + str(dace_schema.since_version)
 
-        cls = type(cls_name_ver, (onnx_op.ONNXOp, ), attrs)
+        cls = type(cls_name_ver, (onnx_op.ONNXOp,), attrs)
         cls = dace.library.node(cls)
         cls.__init__.__doc__ = "\n" + init_docstring
         # Set library name for lazy-loaded nodes

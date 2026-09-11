@@ -54,8 +54,10 @@ def test_libnode():
     stree = as_schedule_tree(sdfg)
     assert len(stree.children) == 1
     assert isinstance(stree.children[0], tn.LibraryCall)
-    assert (stree.children[0].as_string() ==
-            '__return[0:M, 0:N] = library MatMul[alpha=1, beta=0](a[0:M, 0:K], b[0:K, 0:N])')
+    assert (
+        stree.children[0].as_string()
+        == '__return[0:M, 0:N] = library MatMul[alpha=1, beta=0](a[0:M, 0:K], b[0:K, 0:N])'
+    )
 
 
 def test_nesting():
@@ -103,7 +105,7 @@ def test_nesting_view():
     def nest1(a):
         for i in range(5):
             subset = a[:, i, :]
-            nest2(subset.reshape((40, )))
+            nest2(subset.reshape((40,)))
 
     @dace.program
     def main(a: dace.float64[20, 10]):
@@ -243,7 +245,7 @@ def test_dyn_map_range():
         b = np.zeros([H], dtype=np.float32)
 
         for i in dace.map[0:H]:
-            for j in dace.map[A_row[i]:A_row[i + 1]]:
+            for j in dace.map[A_row[i] : A_row[i + 1]]:
                 b[i] += A_val[j] * x[A_col[j]]
 
         return b

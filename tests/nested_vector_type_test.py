@@ -39,23 +39,17 @@ vecMap_entry, vecMap_exit = vecAdd_state.add_map('vecAdd_map', dict(i='0:n/{}'.f
 
 vecAdd_tasklet = vecAdd_state.add_tasklet('vecAdd_task', {'x_con', 'y_con'}, {'z_con'}, 'z_con = x_con + y_con')
 
-vecAdd_state.add_memlet_path(x_in,
-                             vecMap_entry,
-                             vecAdd_tasklet,
-                             dst_conn='x_con',
-                             memlet=dace.Memlet.simple(x_in.data, 'i'))
+vecAdd_state.add_memlet_path(
+    x_in, vecMap_entry, vecAdd_tasklet, dst_conn='x_con', memlet=dace.Memlet.simple(x_in.data, 'i')
+)
 
-vecAdd_state.add_memlet_path(y_in,
-                             vecMap_entry,
-                             vecAdd_tasklet,
-                             dst_conn='y_con',
-                             memlet=dace.Memlet.simple(y_in.data, 'i'))
+vecAdd_state.add_memlet_path(
+    y_in, vecMap_entry, vecAdd_tasklet, dst_conn='y_con', memlet=dace.Memlet.simple(y_in.data, 'i')
+)
 
-vecAdd_state.add_memlet_path(vecAdd_tasklet,
-                             vecMap_exit,
-                             z_out,
-                             src_conn='z_con',
-                             memlet=dace.Memlet.simple(z_out.data, 'i'))
+vecAdd_state.add_memlet_path(
+    vecAdd_tasklet, vecMap_exit, z_out, src_conn='z_con', memlet=dace.Memlet.simple(z_out.data, 'i')
+)
 
 # ---------- ----------
 # Create Outer SDFG

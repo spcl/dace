@@ -15,7 +15,7 @@ sizes = {
     "small": (116, 124),
     "medium": (390, 410),
     "large": (1900, 2100),
-    "extra-large": (1800, 2200)
+    "extra-large": (1800, 2200),
 }
 
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
@@ -29,8 +29,8 @@ def kernel(A: dc.float32[M, N], x: dc.float32[N]):
 def init_data(M, N):
     fn = np.float32(N)
     A = np.empty((M, N), dtype=np.float32)
-    x = np.empty((N, ), dtype=np.float32)
-    y = np.empty((N, ), dtype=np.float32)
+    x = np.empty((N,), dtype=np.float32)
+    y = np.empty((N,), dtype=np.float32)
     for i in range(N):
         x[i] = 1 + (i / fn)
     for i in range(M):
@@ -77,7 +77,7 @@ def run_atax_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
@@ -113,7 +113,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

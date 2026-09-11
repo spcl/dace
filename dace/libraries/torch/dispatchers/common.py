@@ -34,6 +34,7 @@ class DaceTorchFunction:
         ptr: Pointers to the initialized SDFG state handles. These must be
             passed as the first arguments to the function.
     """
+
     function: Callable
     compiled_sdfgs: List[CompiledSDFG]
     ptr: List[torch.Tensor]
@@ -77,9 +78,9 @@ def compile_and_init_sdfgs(
 
     if module.backward:
         forwarded_transients = {
-            name:
-            create_output_array(symbols, desc, use_torch=True, zeros=True)
-            if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[name]
+            name: create_output_array(symbols, desc, use_torch=True, zeros=True)
+            if name not in module.dace_model.initialized_parameters
+            else module.dace_model.initialized_parameters[name]
             for name, desc in module._ad_inp_arrs.items()
         }
     else:

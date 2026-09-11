@@ -20,8 +20,11 @@ from dace.sdfg.nodes import Node
 
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
-from dace.libraries.onnx.op_implementations.utils import (op_implementation, program_for_node,
-                                                          python_pure_op_implementation)
+from dace.libraries.onnx.op_implementations.utils import (
+    op_implementation,
+    program_for_node,
+    python_pure_op_implementation,
+)
 from dace.sdfg.utils import in_desc_with_name, in_edge_with_name
 from dace.transformation.onnx.replacement import onnx_constant_or_none
 
@@ -113,7 +116,6 @@ def Sigmoid(X, Y):
 
 @op_implementation(op="Pow", name="pure")
 class PurePow(ONNXForward):
-
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         return True
@@ -124,8 +126,10 @@ class PurePow(ONNXForward):
         # Special case for constant exponents
         y_value = None
         try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "Y").src.data in sdfg._parent_onnx_model.clean_weights:
+            if (
+                hasattr(sdfg, "_parent_onnx_model")
+                and in_edge_with_name(node, state, "Y").src.data in sdfg._parent_onnx_model.clean_weights
+            ):
                 y_value = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "Y").src.data].numpy()
         except ValueError:
             pass
@@ -177,20 +181,21 @@ def Relu(X, Y):
 
 @python_pure_op_implementation(
     cast_lambda=lambda node, X: "lambda x: (max(x, dace.{dtype}(0)) + {alpha} * min(x, dace.{dtype}(0)))".format(
-        dtype=X.dtype.to_string(), alpha=node.alpha))
+        dtype=X.dtype.to_string(), alpha=node.alpha
+    )
+)
 def LeakyRelu(X, Y):
     Y[:] = dace.elementwise(cast_lambda, X)
 
 
 @op_implementation(op="Clip", name="pure")
 class PureClip(ONNXForward):
-
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         min_node = next(state.in_edges_by_connector(node, 'min')).src
         max_node = next(state.in_edges_by_connector(node, 'max')).src
         # TODO other cases
-        return (onnx_constant_or_none(sdfg, min_node) is not None and onnx_constant_or_none(sdfg, max_node) is not None)
+        return onnx_constant_or_none(sdfg, min_node) is not None and onnx_constant_or_none(sdfg, max_node) is not None
 
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:

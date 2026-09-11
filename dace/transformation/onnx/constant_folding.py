@@ -41,8 +41,8 @@ NONDETERMINISTIC_OPS = {'ONNXDropout',
 
 @make_properties
 class ConstantFolding(transformation.SingleStateTransformation):
-    """ Remove nodes where all inputs are known and replace them with constant nodes by precomputing the output.
-    """
+    """Remove nodes where all inputs are known and replace them with constant nodes by precomputing the output."""
+
     # pattern matching only checks that the type of the node matches,
     onnx_node = transformation.PatternNode(ONNXOp)
 
@@ -61,11 +61,9 @@ class ConstantFolding(transformation.SingleStateTransformation):
 
         return False
 
-    def can_be_applied(self,
-                       graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
-                       expr_index: int,
-                       sdfg,
-                       permissive: bool = False):
+    def can_be_applied(
+        self, graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph, expr_index: int, sdfg, permissive: bool = False
+    ):
 
         node = self.onnx_node
 
@@ -116,7 +114,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
 
             constant_name = sdfg.temp_data_name()
             clean_constant_name = clean_onnx_name(constant_name)
-            sdfg.add_array(clean_constant_name, (len(shape_desc.shape), ), dace.int64)
+            sdfg.add_array(clean_constant_name, (len(shape_desc.shape),), dace.int64)
 
             assert constant_name not in parent.clean_weights
             parent.weights[constant_name] = torch.from_numpy(np.array(shape_desc.shape, np.int64))
@@ -124,21 +122,22 @@ class ConstantFolding(transformation.SingleStateTransformation):
             assert len(state.out_edges(node)) == 1
             output_edge = state.out_edges(node)[0]
             access_shape = state.add_access(clean_constant_name)
-            state.add_edge(access_shape, None, output_edge.dst, output_edge.dst_conn,
-                           sdfg.make_array_memlet(clean_constant_name))
+            state.add_edge(
+                access_shape, None, output_edge.dst, output_edge.dst_conn, sdfg.make_array_memlet(clean_constant_name)
+            )
 
         # remove all now useless nodes with a reverse BFS
         remove_node_and_computation(sdfg, state, node)
 
 
 def remove_node_and_computation(sdfg: dace.SDFG, state: dace.SDFGState, node: nd.Node, connector: Optional[str] = None):
-    """ Remove a node and the parent nodes that compute this node, if the outputs are not used elsewhere.
+    """Remove a node and the parent nodes that compute this node, if the outputs are not used elsewhere.
 
-        :param sdfg: the sdfg containing the node.
-        :param state: the state containing the node.
-        :param node: the node to remove
-        :param connector: if not None, the computation of the connector of
-                          ``node`` will be removed, but not ``node`` itself.
+    :param sdfg: the sdfg containing the node.
+    :param state: the state containing the node.
+    :param node: the node to remove
+    :param connector: if not None, the computation of the connector of
+                      ``node`` will be removed, but not ``node`` itself.
     """
     if connector is not None:
         if connector not in node.in_connectors:
@@ -154,5 +153,5 @@ def remove_node_and_computation(sdfg: dace.SDFG, state: dace.SDFGState, node: nd
 
     # remove dangling nodes, this can happen with non-transients
     for node, parent in sdfg.all_nodes_recursive():
-        if (isinstance(node, nd.AccessNode) and parent.in_degree(node) + parent.out_degree(node) == 0):
+        if isinstance(node, nd.AccessNode) and parent.in_degree(node) + parent.out_degree(node) == 0:
             parent.remove_node(node)

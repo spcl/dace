@@ -15,15 +15,21 @@ sizes = {
     "small": (40, 50, 70, 80),
     "medium": (180, 190, 210, 220),
     "large": (800, 900, 1100, 1200),
-    "extra-large": (1600, 1800, 2200, 2400)
+    "extra-large": (1600, 1800, 2200, 2400),
 }
 
 NI, NJ, NK, NL = (dc.symbol(s, dtype=dc.int64) for s in ('NI', 'NJ', 'NK', 'NL'))
 
 
 @dc.program
-def k2mm_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[NI, NK], B: dc.float64[NK, NJ],
-                C: dc.float64[NJ, NL], D: dc.float64[NI, NL]):
+def k2mm_kernel(
+    alpha: dc.float64,
+    beta: dc.float64,
+    A: dc.float64[NI, NK],
+    B: dc.float64[NK, NJ],
+    C: dc.float64[NJ, NL],
+    D: dc.float64[NI, NL],
+):
 
     D[:] = alpha * A @ B @ C + beta * D
 
@@ -76,30 +82,27 @@ def run_k2mm_autodiff():
 
     # Intiialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[NI, NK], B: dc.float64[NK, NJ],
-                        C: dc.float64[NJ, NL], D: dc.float64[NI, NL]):
+    def autodiff_kernel(
+        alpha: dc.float64,
+        beta: dc.float64,
+        A: dc.float64[NI, NK],
+        B: dc.float64[NK, NJ],
+        C: dc.float64[NJ, NL],
+        D: dc.float64[NI, NL],
+    ):
         k2mm_kernel(alpha, beta, A, B, C, D)
         return np.sum(D)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
-    sdfg(alpha,
-         beta,
-         A,
-         B,
-         C,
-         D,
-         NI=NI,
-         NJ=NJ,
-         NK=NK,
-         NL=NL,
-         gradient_A=gradient_A,
-         gradient___return=gradient___return)
+    sdfg(
+        alpha, beta, A, B, C, D, NI=NI, NJ=NJ, NK=NK, NL=NL, gradient_A=gradient_A, gradient___return=gradient___return
+    )
 
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
@@ -127,7 +130,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

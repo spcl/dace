@@ -15,13 +15,17 @@ walking the hierarchy top-down so a parent's promotion is already visible at its
 the change through NestedSDFG connectors, and rewriting the state-machine slots that name a
 descriptor as text rather than through a memlet -- are identical whatever the criteria are.
 """
+
 from typing import Any, Callable, Dict, Optional, Set
 
 from dace import data, dtypes, properties
 from dace.sdfg import SDFG, SDFGState, infer_types, nodes
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.length_one_array_scalar_conversion import (descriptor_is_written, rewrite_code_slots,
-                                                                           rewrite_refs_to_element)
+from dace.transformation.passes.length_one_array_scalar_conversion import (
+    descriptor_is_written,
+    rewrite_code_slots,
+    rewrite_refs_to_element,
+)
 
 #: Decides whether ``sdfg.arrays[name]`` is promoted.
 PromotionRule = Callable[[SDFG, str], bool]
@@ -74,11 +78,11 @@ def promote_scalar_to_array(sdfg: SDFG, name: str, storage: Optional[dtypes.Stor
     scalar_desc: data.Scalar = sdfg.arrays[name]
     array_desc = data.Array(
         dtype=scalar_desc.dtype,
-        shape=(1, ),
+        shape=(1,),
         transient=scalar_desc.transient,
         storage=scalar_desc.storage if storage is None else storage,
         location=scalar_desc.location,
-        strides=(1, ),
+        strides=(1,),
         lifetime=scalar_desc.lifetime,
         allow_conflicts=scalar_desc.allow_conflicts,
         debuginfo=scalar_desc.debuginfo,
@@ -122,14 +126,17 @@ def push_promotion_into_nested(state: SDFGState, name: str, storage: Optional[dt
             if oedge.data.is_empty():
                 continue
             inner_name = oedge.src_conn
-            if oedge.data.data == name and inner_name not in handled_inner_names and isinstance(
-                    node.sdfg.arrays[inner_name], data.Scalar):
+            if (
+                oedge.data.data == name
+                and inner_name not in handled_inner_names
+                and isinstance(node.sdfg.arrays[inner_name], data.Scalar)
+            ):
                 promote_scalar_to_array(node.sdfg, inner_name, storage)
 
 
-def promote_matching_scalars(sdfg: SDFG,
-                             needs_promotion: PromotionRule,
-                             storage_for: Optional[StorageRule] = None) -> int:
+def promote_matching_scalars(
+    sdfg: SDFG, needs_promotion: PromotionRule, storage_for: Optional[StorageRule] = None
+) -> int:
     """Promote every scalar in ``sdfg``'s hierarchy that ``needs_promotion`` accepts.
 
     Does NOT call :func:`invalidate_array_connectors`; whether a pass needs it unconditionally or
@@ -175,17 +182,21 @@ def written_by_gpu_map_exit(sdfg: SDFG, name: str) -> bool:
 class PromoteScalarOutputsToArrays(ppl.Pass):
     """Replace every written ``Scalar`` the criteria accept with a length-1 ``Array``."""
 
-    gpu = properties.Property(dtype=bool,
-                              default=False,
-                              desc="Use the GPU criteria: promote a GPU-storage scalar (keeping its storage) or a "
-                              "scalar written by a GPU map exit (forcing GPU_Global), rather than a written "
-                              "non-transient scalar with its storage left alone.")
-    non_transient_only = properties.Property(dtype=bool,
-                                             default=True,
-                                             desc="GPU only: the kernel-output rule promotes non-transient scalars "
-                                             "only. A transient scalar written by a GPU map exit stays a Scalar -- "
-                                             "the host never observes the value, so it can live in registers / "
-                                             "per-thread stack. Disable to promote every kernel-output scalar.")
+    gpu = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Use the GPU criteria: promote a GPU-storage scalar (keeping its storage) or a "
+        "scalar written by a GPU map exit (forcing GPU_Global), rather than a written "
+        "non-transient scalar with its storage left alone.",
+    )
+    non_transient_only = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="GPU only: the kernel-output rule promotes non-transient scalars "
+        "only. A transient scalar written by a GPU map exit stays a Scalar -- "
+        "the host never observes the value, so it can live in registers / "
+        "per-thread stack. Disable to promote every kernel-output scalar.",
+    )
 
     #: GPU only. Register-storage scalars are thread-local; widening would force a per-thread
     #: ``cudaMalloc`` inside the kernel body.

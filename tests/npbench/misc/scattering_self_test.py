@@ -7,15 +7,19 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-NA, NB, Nkz, NE, Nqz, Nw, Norb, N3D = (dc.symbol(s, dc.int64)
-                                       for s in ('NA', 'NB', 'Nkz', 'NE', 'Nqz', 'Nw', 'Norb', 'N3D'))
+NA, NB, Nkz, NE, Nqz, Nw, Norb, N3D = (
+    dc.symbol(s, dc.int64) for s in ('NA', 'NB', 'Nkz', 'NE', 'Nqz', 'Nw', 'Norb', 'N3D')
+)
 
 
 @dc.program
-def scattering_self_energies_kernel(neigh_idx: dc.int32[NA, NB], dH: dc.complex128[NA, NB, N3D, Norb, Norb],
-                                    G: dc.complex128[Nkz, NE, NA, Norb, Norb],
-                                    D: dc.complex128[Nqz, Nw, NA, NB, N3D, N3D], Sigma: dc.complex128[Nkz, NE, NA, Norb,
-                                                                                                      Norb]):
+def scattering_self_energies_kernel(
+    neigh_idx: dc.int32[NA, NB],
+    dH: dc.complex128[NA, NB, N3D, Norb, Norb],
+    G: dc.complex128[Nkz, NE, NA, Norb, Norb],
+    D: dc.complex128[Nqz, Nw, NA, NB, N3D, N3D],
+    Sigma: dc.complex128[Nkz, NE, NA, Norb, Norb],
+):
 
     for k in range(Nkz):
         for E in range(NE):
@@ -35,11 +39,12 @@ def scattering_self_energies_kernel(neigh_idx: dc.int32[NA, NB], dH: dc.complex1
 
 
 def rng_complex(shape, rng):
-    return (rng.random(shape) + rng.random(shape) * 1j)
+    return rng.random(shape) + rng.random(shape) * 1j
 
 
 def initialize(Nkz, NE, Nqz, Nw, N3D, NA, NB, Norb):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
     neigh_idx = np.ndarray([NA, NB], dtype=np.int32)
@@ -107,7 +112,6 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

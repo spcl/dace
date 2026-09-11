@@ -15,7 +15,7 @@ sizes = {
     "small": (20, 25, 30),
     "medium": (40, 50, 60),
     "large": (140, 150, 160),
-    "extra-large": (220, 250, 270)
+    "extra-large": (220, 250, 270),
 }
 
 NR, NQ, NP = (dc.symbol(s, dtype=dc.int64) for s in ('NR', 'NQ', 'NP'))
@@ -83,7 +83,7 @@ def run_doitgen_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -123,7 +123,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

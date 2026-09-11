@@ -4,7 +4,6 @@ import dace.library
 
 @dace.library.environment
 class cuSPARSE:
-
     cmake_minimum_version = None
     cmake_packages = ["CUDA"]
     cmake_variables = {}
@@ -22,6 +21,9 @@ class cuSPARSE:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 cusparseHandle_t &__dace_cusparse_handle = __state->cusparse_handle.Get();
 cusparseSetStream(__dace_cusparse_handle, __dace_current_stream);\n"""
+        )

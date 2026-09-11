@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop detection transformation """
+"""Loop detection transformation"""
 
 import sympy as sp
 import networkx as nx
@@ -14,7 +14,7 @@ from dace.transformation import transformation
 # NOTE: This class extends PatternTransformation directly in order to not show up in the matches
 @transformation.explicit_cf_compatible
 class DetectLoop(transformation.PatternTransformation):
-    """ Detects a for-loop construct from an SDFG. """
+    """Detects a for-loop construct from an SDFG."""
 
     # Always available
     loop_begin = transformation.PatternNode(ControlFlowBlock)
@@ -116,11 +116,9 @@ class DetectLoop(transformation.PatternTransformation):
         """
         return self.loop_guard if self.expr_index <= 1 else self.loop_begin
 
-    def can_be_applied(self,
-                       graph: ControlFlowRegion,
-                       expr_index: int,
-                       sdfg: sd.SDFG,
-                       permissive: bool = False) -> bool:
+    def can_be_applied(
+        self, graph: ControlFlowRegion, expr_index: int, sdfg: sd.SDFG, permissive: bool = False
+    ) -> bool:
         if expr_index == 0:
             return self.detect_loop(graph, multistate_loop=False, accept_missing_itvar=permissive) is not None
         elif expr_index == 1:
@@ -132,22 +130,25 @@ class DetectLoop(transformation.PatternTransformation):
         elif expr_index == 4:
             return self.detect_self_loop(graph, accept_missing_itvar=permissive) is not None
         elif expr_index in (5, 7):
-            return self.detect_rotated_loop(graph,
-                                            multistate_loop=True,
-                                            accept_missing_itvar=permissive,
-                                            separate_latch=True) is not None
+            return (
+                self.detect_rotated_loop(
+                    graph, multistate_loop=True, accept_missing_itvar=permissive, separate_latch=True
+                )
+                is not None
+            )
         elif expr_index == 6:
-            return self.detect_rotated_loop(graph,
-                                            multistate_loop=False,
-                                            accept_missing_itvar=permissive,
-                                            separate_latch=True) is not None
+            return (
+                self.detect_rotated_loop(
+                    graph, multistate_loop=False, accept_missing_itvar=permissive, separate_latch=True
+                )
+                is not None
+            )
 
         raise ValueError(f'Invalid expression index {expr_index}')
 
-    def detect_loop(self,
-                    graph: ControlFlowRegion,
-                    multistate_loop: bool,
-                    accept_missing_itvar: bool = False) -> Optional[str]:
+    def detect_loop(
+        self, graph: ControlFlowRegion, multistate_loop: bool, accept_missing_itvar: bool = False
+    ) -> Optional[str]:
         """
         Detects a loop of the form:
 
@@ -238,11 +239,13 @@ class DetectLoop(transformation.PatternTransformation):
 
         return next(iter(itvar))
 
-    def detect_rotated_loop(self,
-                            graph: ControlFlowRegion,
-                            multistate_loop: bool,
-                            accept_missing_itvar: bool = False,
-                            separate_latch: bool = False) -> Optional[str]:
+    def detect_rotated_loop(
+        self,
+        graph: ControlFlowRegion,
+        multistate_loop: bool,
+        accept_missing_itvar: bool = False,
+        separate_latch: bool = False,
+    ) -> Optional[str]:
         """
         Detects a loop of the form:
 
@@ -388,10 +391,14 @@ class DetectLoop(transformation.PatternTransformation):
     # Functionality that provides loop metadata
 
     def loop_information(
-        self,
-        itervar: Optional[str] = None
-    ) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], Tuple[
-            List[sd.SDFGState], sd.SDFGState]]]:
+        self, itervar: Optional[str] = None
+    ) -> Optional[
+        Tuple[
+            AnyStr,
+            Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
+            Tuple[List[sd.SDFGState], sd.SDFGState],
+        ]
+    ]:
 
         entry = self.loop_begin
         if self.expr_index <= 1:
@@ -399,11 +406,9 @@ class DetectLoop(transformation.PatternTransformation):
             return find_for_loop(guard.parent_graph, guard, entry, itervar)
         elif self.expr_index in (2, 3, 5, 6, 7):
             latch = self.loop_latch
-            return find_rotated_for_loop(latch.parent_graph,
-                                         latch,
-                                         entry,
-                                         itervar,
-                                         separate_latch=(self.expr_index in (5, 6, 7)))
+            return find_rotated_for_loop(
+                latch.parent_graph, latch, entry, itervar, separate_latch=(self.expr_index in (5, 6, 7))
+            )
         elif self.expr_index == 4:
             return find_rotated_for_loop(entry.parent_graph, entry, entry, itervar)
 
@@ -552,8 +557,12 @@ class DetectLoop(transformation.PatternTransformation):
             body = self.loop_body()
             return next(e for e in graph.in_edges(guard) if e.src in body)
         elif self.expr_index in (2, 3, 5, 6, 7):
-            _, step_edge = rotated_loop_find_itvar(graph.in_edges(begin), graph.in_edges(self.loop_latch),
-                                                   graph.edges_between(self.loop_latch, begin)[0], self.loop_latch)
+            _, step_edge = rotated_loop_find_itvar(
+                graph.in_edges(begin),
+                graph.in_edges(self.loop_latch),
+                graph.edges_between(self.loop_latch, begin)[0],
+                self.loop_latch,
+            )
             return step_edge
         elif self.expr_index == 4:
             return graph.edges_between(begin, begin)[0]
@@ -562,11 +571,12 @@ class DetectLoop(transformation.PatternTransformation):
 
 
 def rotated_loop_find_itvar(
-        begin_inedges: List[gr.Edge[InterstateEdge]],
-        latch_inedges: List[gr.Edge[InterstateEdge]],
-        backedge: gr.Edge[InterstateEdge],
-        latch: ControlFlowBlock,
-        accept_missing_itvar: bool = False) -> Tuple[Optional[str], Optional[gr.Edge[InterstateEdge]]]:
+    begin_inedges: List[gr.Edge[InterstateEdge]],
+    latch_inedges: List[gr.Edge[InterstateEdge]],
+    backedge: gr.Edge[InterstateEdge],
+    latch: ControlFlowBlock,
+    accept_missing_itvar: bool = False,
+) -> Tuple[Optional[str], Optional[gr.Edge[InterstateEdge]]]:
     # The iteration variable must be assigned (initialized) on all edges leading into the beginning block, which
     # are not the backedge. Gather all variabes for which that holds - they are all candidates for the iteration
     # variable (Phase 1). Said iteration variable must then be incremented:
@@ -640,12 +650,14 @@ def rotated_loop_find_itvar(
 
 
 def find_for_loop(
-    graph: ControlFlowRegion,
-    guard: sd.SDFGState,
-    entry: sd.SDFGState,
-    itervar: Optional[str] = None
-) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], Tuple[
-        List[sd.SDFGState], sd.SDFGState]]]:
+    graph: ControlFlowRegion, guard: sd.SDFGState, entry: sd.SDFGState, itervar: Optional[str] = None
+) -> Optional[
+    Tuple[
+        AnyStr,
+        Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
+        Tuple[List[sd.SDFGState], sd.SDFGState],
+    ]
+]:
     """
     Finds loop range from state machine.
 
@@ -710,7 +722,7 @@ def find_for_loop(
 
     # Get the init expression and the stride.
     start = symbolic.pystr_to_symbolic(init_assignment)
-    stride = (symbolic.pystr_to_symbolic(step_edge.data.assignments[itervar]) - itersym)
+    stride = symbolic.pystr_to_symbolic(step_edge.data.assignments[itervar]) - itersym
 
     # Get a list of the last states before the loop and a reference to the last
     # loop state.
@@ -756,8 +768,13 @@ def find_rotated_for_loop(
     entry: sd.SDFGState,
     itervar: Optional[str] = None,
     separate_latch: bool = False,
-) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], Tuple[
-        List[sd.SDFGState], sd.SDFGState]]]:
+) -> Optional[
+    Tuple[
+        AnyStr,
+        Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
+        Tuple[List[sd.SDFGState], sd.SDFGState],
+    ]
+]:
     """
     Finds rotated loop range from state machine.
 
@@ -819,7 +836,7 @@ def find_rotated_for_loop(
 
     # Get the init expression and the stride.
     start = symbolic.pystr_to_symbolic(init_assignment)
-    stride = (symbolic.pystr_to_symbolic(step_edge.data.assignments[itervar]) - itersym)
+    stride = symbolic.pystr_to_symbolic(step_edge.data.assignments[itervar]) - itersym
 
     # Get a list of the last states before the loop and a reference to the last
     # loop state.

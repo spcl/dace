@@ -1,5 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Simple Fortran SDFG command-line compiler. """
+"""Simple Fortran SDFG command-line compiler."""
 
 import os
 import argparse
@@ -15,19 +15,21 @@ def main():
     parser.add_argument('filepath', help='<PATH TO FORTRAN FILE>', type=str)
 
     # Optional argument for output location
-    parser.add_argument('-o',
-                        '--out',
-                        type=str,
-                        help='If provided, saves library as the given file or in the specified path, '
-                        'together with a header file.')
+    parser.add_argument(
+        '-o',
+        '--out',
+        type=str,
+        help='If provided, saves library as the given file or in the specified path, together with a header file.',
+    )
 
-    parser.add_argument('-O',
-                        '--optimize',
-                        dest='optimize',
-                        action='store_true',
-                        help="If set, invokes the command-line optimization"
-                        " interface",
-                        default=False)
+    parser.add_argument(
+        '-O',
+        '--optimize',
+        dest='optimize',
+        action='store_true',
+        help="If set, invokes the command-line optimization interface",
+        default=False,
+    )
 
     args = parser.parse_args()
 

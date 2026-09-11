@@ -32,8 +32,8 @@ def jacobi_1d_jax_kernel(jax, jnp, TSTEPS, A, B):
 
 
 def initialize(N, datatype=np.float64):
-    A = np.fromfunction(lambda i: (i + 2) / N, (N, ), dtype=datatype)
-    B = np.fromfunction(lambda i: (i + 3) / N, (N, ), dtype=datatype)
+    A = np.fromfunction(lambda i: (i + 2) / N, (N,), dtype=datatype)
+    B = np.fromfunction(lambda i: (i + 3) / N, (N,), dtype=datatype)
 
     return A, B
 
@@ -79,7 +79,7 @@ def run_jacobi_1d_autodiff():
 
     # Intiialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -118,7 +118,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

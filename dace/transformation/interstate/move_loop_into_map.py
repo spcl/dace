@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Moves a loop around a map into the map """
+"""Moves a loop around a map into the map"""
 
 import copy
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
@@ -16,8 +16,9 @@ from dace.transformation.passes.analysis import loop_analysis
 
 
 def fold(memlet_subset_ranges, itervar, lower, upper):
-    return [(r[0].replace(symbol(itervar), lower), r[1].replace(symbol(itervar), upper), r[2])
-            for r in memlet_subset_ranges]
+    return [
+        (r[0].replace(symbol(itervar), lower), r[1].replace(symbol(itervar), upper), r[2]) for r in memlet_subset_ranges
+    ]
 
 
 def offset(memlet_subset_ranges, value):
@@ -75,7 +76,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         # Check for iteration variable in map and data descriptors
         if str(itervar) in map_entry.free_symbols:
             return False
-        for arr in (read_set | write_set):
+        for arr in read_set | write_set:
             if str(itervar) in set(map(str, sdfg.arrays[arr].free_symbols)):
                 return False
 
@@ -172,9 +173,16 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         nested_state: SDFGState = nsdfg.sdfg.nodes()[0]
 
         # replicate loop in nested sdfg
-        inner_loop = LoopRegion(self.loop.label, self.loop.loop_condition, self.loop.loop_variable,
-                                self.loop.init_statement, self.loop.update_statement, self.loop.inverted, nsdfg,
-                                self.loop.update_before_condition)
+        inner_loop = LoopRegion(
+            self.loop.label,
+            self.loop.loop_condition,
+            self.loop.loop_variable,
+            self.loop.init_statement,
+            self.loop.update_statement,
+            self.loop.inverted,
+            nsdfg,
+            self.loop.update_before_condition,
+        )
         inner_loop.add_node(nested_state, is_start_block=True)
         nsdfg.sdfg.remove_node(nested_state)
         nsdfg.sdfg.add_node(inner_loop, is_start_block=True)
@@ -227,9 +235,11 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         sdfg.reset_cfg_list()
 
         from dace.transformation.interstate import RefineNestedAccess
+
         transformation = RefineNestedAccess()
-        transformation.setup_match(sdfg, body.parent_graph.cfg_id, body.block_id,
-                                   {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)
+        transformation.setup_match(
+            sdfg, body.parent_graph.cfg_id, body.block_id, {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0
+        )
         transformation.apply(body, sdfg)
 
         # Second propagation for refined accesses.

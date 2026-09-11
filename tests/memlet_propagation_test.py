@@ -15,7 +15,7 @@ def test_conditional():
                 out[i] = in1[i]
 
     inp = np.random.rand(10)
-    outp = np.zeros((10, ))
+    outp = np.zeros((10,))
     conditional(inp, outp)
     expected = inp.copy()
     expected[1:] = inp[0:-1]
@@ -37,7 +37,7 @@ def test_conditional_nested():
         conditional(in1, out)
 
     inp = np.random.rand(10)
-    outp = np.zeros((10, ))
+    outp = np.zeros((10,))
     nconditional(inp, outp)
     expected = inp.copy()
     expected[1:] = inp[0:-1]
@@ -55,9 +55,9 @@ def test_runtime_conditional():
                 out[i] = in1[i]
 
     inp = np.random.rand(10)
-    mask = np.ones((10, ))
+    mask = np.ones((10,))
     mask[0] = 0
-    outp = np.zeros((10, ))
+    outp = np.zeros((10,))
     rconditional(inp, outp, mask)
     expected = inp.copy()
     expected[1:] = inp[0:-1]
@@ -129,8 +129,13 @@ def test_strided_write_keeps_the_multiplier():
     propagate_memlets_sdfg(sdfg)
 
     state = next(s for s in sdfg.states() if any(isinstance(n, dace.sdfg.nodes.MapExit) for n in s.nodes()))
-    out = next(e.data for e in state.edges() if isinstance(e.src, dace.sdfg.nodes.MapExit)
-               and isinstance(e.dst, dace.sdfg.nodes.AccessNode) and e.dst.data == 'C')
+    out = next(
+        e.data
+        for e in state.edges()
+        if isinstance(e.src, dace.sdfg.nodes.MapExit)
+        and isinstance(e.dst, dace.sdfg.nodes.AccessNode)
+        and e.dst.data == 'C'
+    )
 
     assert out.subset.ranges == [(0, 2 * N - 2, 2)], out.subset
     assert out.subset.num_elements() == N, out.subset.num_elements()

@@ -44,7 +44,13 @@ def test_hooks():
 
     # Ensure hooks are called in the right order
     assert called_list == [
-        'before', 'before2', 'ctxmgr-before-tester', 'before_csdfg', 'ctxmgr-after', 'after2', 'after'
+        'before',
+        'before2',
+        'ctxmgr-before-tester',
+        'before_csdfg',
+        'ctxmgr-after',
+        'after2',
+        'after',
     ]
     called_list.clear()
 

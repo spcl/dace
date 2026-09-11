@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Analyses the operational intensity of an input SDFG. Can be used as a Python script
-or from the VS Code extension. """
+"""Analyses the operational intensity of an input SDFG. Can be used as a Python script
+or from the VS Code extension."""
 
 import argparse
 from dace.sdfg import nodes as nd
@@ -14,8 +14,12 @@ from dace.symbolic import pystr_to_symbolic, SymExpr, symbol, simplify
 import re
 import warnings
 
-from dace.sdfg.performance_evaluation.helpers import (get_uuid, get_static_symbols, subs_till_fixed_point,
-                                                      has_unstructured_control_flow)
+from dace.sdfg.performance_evaluation.helpers import (
+    get_uuid,
+    get_static_symbols,
+    subs_till_fixed_point,
+    has_unstructured_control_flow,
+)
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
 
@@ -26,8 +30,8 @@ from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_taskle
 from dace.transformation.passes.analysis import loop_analysis
 
 
-class SymbolRange():
-    """ Used to describe an SDFG symbol associated with a range (start, stop, step) of values. """
+class SymbolRange:
+    """Used to describe an SDFG symbol associated with a range (start, stop, step) of values."""
 
     def __init__(self, start_stop_step) -> None:
         self.r = range(*start_stop_step)
@@ -63,7 +67,7 @@ def update_map(op_in_map, uuid, new_misses, average=True):
 
 
 def calculate_op_in(op_in_map, work_map, stringify=False, assumptions={}):
-    """ Calculates the operational intensity for each SDFG element from work and bytes loaded. """
+    """Calculates the operational intensity for each SDFG element from work and bytes loaded."""
     for uuid in op_in_map:
         work = work_map[uuid].subs(assumptions)
         if work == 0 and op_in_map[uuid] == 0:
@@ -115,7 +119,9 @@ def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
         (?P<index>[^\[\]]+)     # anything inside brackets (no nested [])
     \])?
     \s*$
-""", re.VERBOSE)
+""",
+        re.VERBOSE,
+    )
 
     misses = 0
     for lhs, rhs in edge.data.assignments.items():
@@ -137,17 +143,21 @@ def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
                 lhs_index = sp.Expr(int(rhs_index))
 
             if lhs_name in clt.array_info or (lhs_name in array_names and array_names[lhs_name] in clt.array_info):
-                line_id = clt.cache_line_id(lhs_name if lhs_name not in array_names else array_names[lhs_name],
-                                            ([lhs_index.subs(mapping)] if isinstance(lhs_index, sp.Expr) else []),
-                                            mapping)
+                line_id = clt.cache_line_id(
+                    lhs_name if lhs_name not in array_names else array_names[lhs_name],
+                    ([lhs_index.subs(mapping)] if isinstance(lhs_index, sp.Expr) else []),
+                    mapping,
+                )
                 line_id = int(line_id.subs(symbols).subs(mapping) if isinstance(line_id, sp.Expr) else line_id)
                 dist = stack.touch(line_id)
                 misses += 1 if dist >= C or dist == -1 else 0
 
             if rhs_name in clt.array_info or (rhs_name in array_names and array_names[rhs_name] in clt.array_info):
-                line_id = clt.cache_line_id(rhs_name if rhs_name not in array_names else array_names[rhs_name],
-                                            ([rhs_index.subs(mapping)] if isinstance(rhs_index, sp.Expr) else []),
-                                            mapping)
+                line_id = clt.cache_line_id(
+                    rhs_name if rhs_name not in array_names else array_names[rhs_name],
+                    ([rhs_index.subs(mapping)] if isinstance(rhs_index, sp.Expr) else []),
+                    mapping,
+                )
                 line_id = int(line_id.subs(symbols).subs(mapping) if isinstance(line_id, sp.Expr) else line_id)
                 dist = stack.touch(line_id)
                 misses += 1 if dist >= C or dist == -1 else 0
@@ -173,8 +183,19 @@ def update_map_iterators(map, mapping, symbols):
     return map_exhausted
 
 
-def map_op_in(state: SDFGState, op_in_map: Dict[str, sp.Expr], entry, mapping, stack, clt, C, symbols, array_names,
-              decided_branches, ask_user):
+def map_op_in(
+    state: SDFGState,
+    op_in_map: Dict[str, sp.Expr],
+    entry,
+    mapping,
+    stack,
+    clt,
+    C,
+    symbols,
+    array_names,
+    decided_branches,
+    ask_user,
+):
     # we are inside a map --> we need to iterate over the map range and check each memory access.
     for p, range in zip(entry.map.params, entry.map.range):
         # map each map iteration variable to its start
@@ -182,8 +203,9 @@ def map_op_in(state: SDFGState, op_in_map: Dict[str, sp.Expr], entry, mapping, s
     map_misses = 0
     while True:
         # do analysis of map contents
-        map_misses += scope_misses(state, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches,
-                                   ask_user, entry)
+        map_misses += scope_misses(
+            state, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches, ask_user, entry
+        )
 
         if update_map_iterators(entry.map, mapping, symbols):
             break
@@ -200,24 +222,29 @@ def _edge_miss(edge, clt: CacheLineTracker, array_names, mapping, symbols, stack
     data = edge.data.data
     if data not in clt.array_info and not (data in array_names and array_names[data] in clt.array_info):
         return 0
-    line_id = clt.cache_line_id(data if data not in array_names else array_names[data],
-                                [x[0].subs(mapping) for x in edge.data.subset.ranges], mapping)
+    line_id = clt.cache_line_id(
+        data if data not in array_names else array_names[data],
+        [x[0].subs(mapping) for x in edge.data.subset.ranges],
+        mapping,
+    )
     line_id = int(line_id.subs(symbols).subs(mapping))
     dist = stack.touch(line_id)
     return 1 if dist >= C or dist == -1 else 0
 
 
-def scope_misses(state: SDFGState,
-                 op_in_map: Dict[str, sp.Expr],
-                 mapping,
-                 stack: AccessStack,
-                 clt: CacheLineTracker,
-                 C,
-                 symbols,
-                 array_names,
-                 decided_branches,
-                 ask_user,
-                 entry=None):
+def scope_misses(
+    state: SDFGState,
+    op_in_map: Dict[str, sp.Expr],
+    mapping,
+    stack: AccessStack,
+    clt: CacheLineTracker,
+    C,
+    symbols,
+    array_names,
+    decided_branches,
+    ask_user,
+    entry=None,
+):
     """
     Computes the operational intensity of a single scope (scope is either an SDFG state or a map scope).
 
@@ -242,8 +269,9 @@ def scope_misses(state: SDFGState,
     for node in scope_nodes:
         if isinstance(node, nd.EntryNode):
             # If the scope contains an entry node, we need to recursively analyze the sub-scope of the entry node first.
-            map_misses = map_op_in(state, op_in_map, node, mapping, stack, clt, C, symbols, array_names,
-                                   decided_branches, ask_user)
+            map_misses = map_op_in(
+                state, op_in_map, node, mapping, stack, clt, C, symbols, array_names, decided_branches, ask_user
+            )
 
             update_map(op_in_map, get_uuid(node, state), map_misses)
             scope_misses += map_misses
@@ -266,7 +294,6 @@ def scope_misses(state: SDFGState,
             # num_total_misses / accesses then gives the average misses
             update_map(op_in_map, get_uuid(node, state), tasklet_misses)
         elif isinstance(node, nd.NestedSDFG):
-
             # keep track of nested symbols: "symbols" maps local nested SDFG symbols to global symbols.
             # We only want global symbols in our final expressions.
             nested_syms = {}
@@ -283,8 +310,18 @@ def scope_misses(state: SDFGState,
             for e in state.out_edges(node):
                 nested_array_names[e.src_conn] = e.data.data
             # Nested SDFGs are recursively analyzed first.
-            nsdfg_misses = cfg_misses(node.sdfg, op_in_map, mapping, stack, clt, C, nested_syms, nested_array_names,
-                                      decided_branches, ask_user)
+            nsdfg_misses = cfg_misses(
+                node.sdfg,
+                op_in_map,
+                mapping,
+                stack,
+                clt,
+                C,
+                nested_syms,
+                nested_array_names,
+                decided_branches,
+                ask_user,
+            )
 
             scope_misses += nsdfg_misses
             update_map(op_in_map, get_uuid(node, state), nsdfg_misses)
@@ -305,21 +342,24 @@ def scope_misses(state: SDFGState,
     return scope_misses
 
 
-def cfr_misses(cfr: ControlFlowRegion,
-               op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
-               mapping,
-               stack: AccessStack,
-               clt: CacheLineTracker,
-               C,
-               symbols,
-               array_names,
-               decided_branches,
-               ask_user,
-               start=None):
+def cfr_misses(
+    cfr: ControlFlowRegion,
+    op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+    mapping,
+    stack: AccessStack,
+    clt: CacheLineTracker,
+    C,
+    symbols,
+    array_names,
+    decided_branches,
+    ask_user,
+    start=None,
+):
     region_misses = 0
     if isinstance(cfr, SDFGState):
-        region_misses = scope_misses(cfr, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches,
-                                     ask_user, None)
+        region_misses = scope_misses(
+            cfr, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches, ask_user, None
+        )
 
     elif isinstance(cfr, LoopRegion):
         loop_var = cfr.loop_variable
@@ -328,19 +368,21 @@ def cfr_misses(cfr: ControlFlowRegion,
         step = pystr_to_symbolic(loop_analysis.get_loop_stride(cfr))
         mapping[loop_var] = start.subs(mapping)
         region_misses = 0
-        while (loop_condition.subs(mapping) == True):
-            iter_misses = cfg_misses(cfr,
-                                     op_in_map,
-                                     mapping,
-                                     stack,
-                                     clt,
-                                     C,
-                                     symbols,
-                                     array_names,
-                                     decided_branches,
-                                     ask_user,
-                                     start=cfr.start_block,
-                                     end=None)
+        while loop_condition.subs(mapping) == True:
+            iter_misses = cfg_misses(
+                cfr,
+                op_in_map,
+                mapping,
+                stack,
+                clt,
+                C,
+                symbols,
+                array_names,
+                decided_branches,
+                ask_user,
+                start=cfr.start_block,
+                end=None,
+            )
             mapping[loop_var] = mapping[loop_var] + step
             region_misses += iter_misses
     elif isinstance(cfr, ConditionalBlock):
@@ -368,8 +410,12 @@ def cfr_misses(cfr: ControlFlowRegion,
         # 2- take the one we took last time if he has decided
         # 3- take the worst case if he opted not to decide
         possibilities = true_branches + possible_branches + [else_branch]
-        if not true_branches and len(possible_branches) > 0 and ask_user and (
-                cfr not in decided_branches or decided_branches[cfr] not in possibilities):
+        if (
+            not true_branches
+            and len(possible_branches) > 0
+            and ask_user
+            and (cfr not in decided_branches or decided_branches[cfr] not in possibilities)
+        ):
             if len(possibilities) > 1:
                 print(f'\n\nWhich branch to take at {cfr.name}')
                 for i in range(len(possibilities)):
@@ -403,46 +449,66 @@ def cfr_misses(cfr: ControlFlowRegion,
             stack_copy = deepcopy(stack)
             symbols_copy = deepcopy(symbols)
             decided_branches_copy = deepcopy(decided_branches)
-            branch_misses = cfg_misses(branch, op_in_map, mapping_copy, stack_copy, clt, C, symbols_copy, array_names,
-                                       decided_branches_copy, ask_user, branch.start_block, None)
+            branch_misses = cfg_misses(
+                branch,
+                op_in_map,
+                mapping_copy,
+                stack_copy,
+                clt,
+                C,
+                symbols_copy,
+                array_names,
+                decided_branches_copy,
+                ask_user,
+                branch.start_block,
+                None,
+            )
 
             if branch_misses > max_branch_misses:
                 max_branch_misses = branch_misses
-                mapping_after_cond, stack_after_cond, decided_branches_after_cond = mapping_copy, stack_copy, decided_branches_copy
+                mapping_after_cond, stack_after_cond, decided_branches_after_cond = (
+                    mapping_copy,
+                    stack_copy,
+                    decided_branches_copy,
+                )
 
         mapping.update(mapping_after_cond)
         stack.replace_self(stack_after_cond)
         decided_branches.update(decided_branches_after_cond)
         region_misses = max_branch_misses
     elif isinstance(cfr, FunctionCallRegion):
-        region_misses = cfg_misses(cfr,
-                                   op_in_map,
-                                   mapping,
-                                   stack,
-                                   clt,
-                                   C,
-                                   symbols,
-                                   array_names,
-                                   decided_branches,
-                                   ask_user,
-                                   start=cfr.start_block,
-                                   end=None)
+        region_misses = cfg_misses(
+            cfr,
+            op_in_map,
+            mapping,
+            stack,
+            clt,
+            C,
+            symbols,
+            array_names,
+            decided_branches,
+            ask_user,
+            start=cfr.start_block,
+            end=None,
+        )
 
     return region_misses
 
 
-def cfg_misses(cfg: ControlFlowRegion,
-               op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
-               mapping,
-               stack: AccessStack,
-               clt: CacheLineTracker,
-               C,
-               symbols,
-               array_names,
-               decided_branches,
-               ask_user,
-               start=None,
-               end=None):
+def cfg_misses(
+    cfg: ControlFlowRegion,
+    op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+    mapping,
+    stack: AccessStack,
+    clt: CacheLineTracker,
+    C,
+    symbols,
+    array_names,
+    decided_branches,
+    ask_user,
+    start=None,
+    end=None,
+):
     """
     Computes the operational intensity of the input SDFG.
 
@@ -476,9 +542,9 @@ def cfg_misses(cfg: ControlFlowRegion,
     total_misses = 0
     # traverse this SDFG's ControlFlowRegions
     while True:
-
-        region_misses = cfr_misses(curr_state, op_in_map, mapping, stack, clt, C, symbols, array_names,
-                                   decided_branches, ask_user)
+        region_misses = cfr_misses(
+            curr_state, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches, ask_user
+        )
 
         total_misses += region_misses
         out_edges = cfg.out_edges(curr_state)
@@ -495,8 +561,10 @@ def cfg_misses(cfg: ControlFlowRegion,
             total_misses += assignment_misses(edge, mapping, stack, clt, C, symbols, array_names)
             update_mapping(mapping, edge)
         except Exception:
-            warnings.warn('Uncommon assignment on an interstate edge (e.g. bitwise operators); '
-                          'analysis may give wrong results. Assignments: %s' % edge.data.assignments)
+            warnings.warn(
+                'Uncommon assignment on an interstate edge (e.g. bitwise operators); '
+                'analysis may give wrong results. Assignments: %s' % edge.data.assignments
+            )
         curr_state = edge.dst
         if curr_state == end:
             break
@@ -508,15 +576,17 @@ def cfg_misses(cfg: ControlFlowRegion,
     return total_misses
 
 
-def analyze_sdfg_op_in(sdfg: SDFG,
-                       op_in_map: Dict[str, sp.Expr],
-                       C,
-                       L,
-                       assumptions,
-                       generate_plots=False,
-                       stringify=False,
-                       test_set_size=1,
-                       ask_user=False):
+def analyze_sdfg_op_in(
+    sdfg: SDFG,
+    op_in_map: Dict[str, sp.Expr],
+    C,
+    L,
+    assumptions,
+    generate_plots=False,
+    stringify=False,
+    test_set_size=1,
+    ask_user=False,
+):
     """
     Computes the operational intensity of the input SDFG.
 
@@ -545,9 +615,11 @@ def analyze_sdfg_op_in(sdfg: SDFG,
     # The analysis only models structured control flow. If the SDFG has a legacy loop or
     # unstructured branching, bail out with a zero result rather than producing a wrong one.
     if has_unstructured_control_flow(sdfg):
-        warnings.warn('Operational-intensity analysis supports only structured control flow '
-                      '(LoopRegion / ConditionalBlock); the SDFG contains a legacy loop or '
-                      'unstructured branch, so no result is produced.')
+        warnings.warn(
+            'Operational-intensity analysis supports only structured control flow '
+            '(LoopRegion / ConditionalBlock); the SDFG contains a legacy loop or '
+            'unstructured branch, so no result is produced.'
+        )
         op_in_map[get_uuid(sdfg)] = 0
         return
 
@@ -607,7 +679,6 @@ def analyze_sdfg_op_in(sdfg: SDFG,
             while True:
                 new_val = False
                 for sym, r in range_symbol.items():
-
                     val = r.next()
                     if val > -1:
                         new_val = True
@@ -655,7 +726,6 @@ def analyze_sdfg_op_in(sdfg: SDFG,
 
             sympy_fs = {}
             for k, v in cache_miss_measurements.items():
-
                 final_f, sympy_f, r_s = fit_curve(x_values[:-test_set_size], v[:-test_set_size], symbol_name)
                 op_in_map[k] = simplify(sympy_f * L)
                 sympy_fs[k] = sympy_f
@@ -663,14 +733,26 @@ def analyze_sdfg_op_in(sdfg: SDFG,
                     # compute MAPE on total SDFG
                     mape = compute_mape(final_f, x_values[-test_set_size:], v[-test_set_size:], test_set_size)
                     if mape > 0.2:
-                        warnings.warn('High MAPE (%s) with R^2 = %s: the fit matches the test data but '
-                                      'may not generalize; generating plots is suggested.' % (mape, r_s))
+                        warnings.warn(
+                            'High MAPE (%s) with R^2 = %s: the fit matches the test data but '
+                            'may not generalize; generating plots is suggested.' % (mape, r_s)
+                        )
             calculate_op_in(op_in_map, work_map, not generate_plots)
 
             if generate_plots:
                 # plot results for the whole SDFG
-                plot(x_values, work_map, cache_miss_measurements, op_in_map, symbol_name, C, L, sympy_fs,
-                     get_uuid(sdfg), sdfg.name)
+                plot(
+                    x_values,
+                    work_map,
+                    cache_miss_measurements,
+                    op_in_map,
+                    symbol_name,
+                    C,
+                    L,
+                    sympy_fs,
+                    get_uuid(sdfg),
+                    sdfg.name,
+                )
 
             if stringify:
                 for k, v in op_in_map.items():
@@ -685,9 +767,11 @@ def analyze_sdfg_op_in(sdfg: SDFG,
 
 def main() -> None:
 
-    parser = argparse.ArgumentParser('operational_intensity',
-                                     usage='python operational_intensity.py [-h] filename',
-                                     description='Analyze the operational_intensity of an SDFG.')
+    parser = argparse.ArgumentParser(
+        'operational_intensity',
+        usage='python operational_intensity.py [-h] filename',
+        description='Analyze the operational_intensity of an SDFG.',
+    )
 
     parser.add_argument('filename', type=str, help='The SDFG file to analyze.')
     parser.add_argument('--C', type=str, help='Cache size in bytes')
