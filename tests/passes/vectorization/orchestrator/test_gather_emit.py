@@ -20,6 +20,8 @@ from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.interstate import LoopToMap
 
+from tests.passes.vectorization.tile_assertions import assert_tiled
+
 N = dace.symbol("N")
 
 
@@ -62,6 +64,7 @@ def test_data_gather_with_elementwise_input_matches_reference(n):
     vec = _data_gather_binop_kernel.to_sdfg(simplify=True)
     vec.name = f"dgb_vec{n}"
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    assert_tiled(vec, ref)
 
     ref.compile()(a=a_ref, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
     vec.compile()(a=a_vec, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
@@ -84,6 +87,7 @@ def test_structured_int_floor_replication_matches_reference(n):
     vec = copy.deepcopy(ref)
     vec.name = f"sk_vec{n}"
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    assert_tiled(vec, ref)
     ref.compile()(b=b.copy(), c=c.copy(), out=ro, N=n)
     vec.compile()(b=b.copy(), c=c.copy(), out=vo, N=n)
     np.testing.assert_allclose(vo, ro, rtol=1e-12, atol=1e-12)
@@ -99,6 +103,11 @@ def _prepped(tag=""):
     return sdfg
 
 
+@pytest.mark.xfail(strict=True,
+                   reason="a[i, i] is left ENTIRELY untiled: apply_pass returns without a tile lib node, "
+                   "without a VectorizeUnsupported and without a warning, so the numeric check below "
+                   "compares the reference to itself. Exposed by assert_tiled 2026-09-11; drop this mark "
+                   "when the walker lowers the diagonal to the TileLoad/TileStore gather this file names.")
 @pytest.mark.parametrize("n", [16, 17])
 def test_diagonal_gather_numerically_matches_reference(n):
     """Diagonal gather/scatter output matches the unvectorized SDFG."""
@@ -111,6 +120,7 @@ def test_diagonal_gather_numerically_matches_reference(n):
     ref = _prepped(f"ref{n}")
     vec = _prepped(f"vec{n}")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    assert_tiled(vec, ref)
 
     ref.compile()(aa=ref_aa, bb=bb.copy(), cc=cc.copy(), N=n)
     vec.compile()(aa=vec_aa, bb=bb.copy(), cc=cc.copy(), N=n)

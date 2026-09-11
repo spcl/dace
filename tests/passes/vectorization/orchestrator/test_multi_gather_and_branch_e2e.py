@@ -33,6 +33,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 NB = dace.symbol("NB")
 NLEV = dace.symbol("NLEV")
@@ -60,6 +61,7 @@ def _run_compare(kern, make_inputs, params, widths=(8, ), branch_mode="merge", s
                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
                         branch_mode=branch_mode)).apply_pass(vec_sdfg, {})
     vec_sdfg.validate()
+    assert_tiled(vec_sdfg, ref_sdfg, kern.name)
     c_ref = ref_sdfg.compile()
     c_vec = vec_sdfg.compile()
     for seed in seeds:

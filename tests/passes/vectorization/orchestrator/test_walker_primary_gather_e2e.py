@@ -14,6 +14,7 @@ import dace
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 N_SYM = dace.symbol("N_GATHER")
 
@@ -42,6 +43,7 @@ def test_k1_gather_matches_reference(N):
         VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
     except Exception as exc:  # noqa: BLE001 - the walker may still refuse some gather shapes.
         pytest.xfail(f"gather walker path refused: {exc}")
+    assert_tiled(vec_sdfg, ref_sdfg)
     ref_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_ref, N_GATHER=N)
     vec_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_vec, N_GATHER=N)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
@@ -78,6 +80,7 @@ def test_k1_scatter_matches_reference():
         VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
     except Exception as exc:  # noqa: BLE001
         pytest.xfail(f"scatter walker path refused: {exc}")
+    assert_tiled(vec_sdfg, ref_sdfg)
     ref_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_ref, N_SCATTER=n)
     vec_sdfg.compile()(A=a.copy(), idx=idx.copy(), B=b_vec, N_SCATTER=n)
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
