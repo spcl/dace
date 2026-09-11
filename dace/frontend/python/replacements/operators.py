@@ -803,6 +803,26 @@ def fold_symbolic_operator(operator: str, operands: Sequence[Any]) -> Optional[s
     return func(*operands)
 
 
+def _demote_constant_sympy(value):
+    """A SymPy number carrying no free symbols, as the Python scalar it stands for; anything else unchanged.
+
+    Folding a symbolic expression whose symbols CANCEL (``2.0 / N * N``) leaves a ``sympy.Float`` that is not
+    symbolic -- ``free_symbols`` is empty -- but is also not a key ``dtype_to_typeclass`` holds. The two later
+    gates then disagree about what it is: ``result_type`` takes the ``numbers.Number`` branch, because SymPy
+    registers its numeric atoms in that ABC tower, and asks for a typeclass that does not exist, while
+    ``_visit_assign`` refuses the same value as neither data, constant, nor symbol. Demoting at the site that
+    PRODUCES the value keeps both gates seeing a plain Python number.
+    """
+    if isinstance(value, sp.Basic) and value.is_number and not value.free_symbols:
+        if value.is_Integer:
+            return int(value)
+        if value.is_Boolean:
+            return bool(value)
+        if value.is_real:
+            return float(value)
+    return value
+
+
 def _const_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                        operator: str, opcode: str):
     """
@@ -826,7 +846,7 @@ def _const_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
     if isinstance(left, sp.Basic) or isinstance(right, sp.Basic):
         folded = fold_symbolic_operator(operator, (left, right))
         if folded is not None:
-            return folded
+            return _demote_constant_sympy(folded)
         if opcode in _pyop2symtype.keys():
             try:
                 return _pyop2symtype[opcode](left, right)
@@ -840,7 +860,7 @@ def _const_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
 
     expr = 'l {o} r'.format(o=opcode)
     vars = {'l': left, 'r': right}
-    return eval(expr, vars)
+    return _demote_constant_sympy(eval(expr, vars))
 
 
 def _makebinop(op, opcode):
