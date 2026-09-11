@@ -163,6 +163,13 @@ def test_pack_is_refused_rather_than_broadcast():
         'pack kernel was tiled; its mask predicate broadcasts the tile-base element across the lanes'
 
 
+def test_expand_is_refused_rather_than_broadcast():
+    """Structural half for TSVC s342 (the docstring's second named hazard): the mask map feeding
+    the gather index must stay unstrided, the same refusal the pack (s341) kernel gets."""
+    assert set(map_steps(vectorized(expand_kernel, 'expand_struct'))) == {'1'}, \
+        'expand kernel was tiled; its mask predicate broadcasts the tile-base element across the lanes'
+
+
 def test_invariant_interstate_symbol_still_tiles():
     """Over-refusal control: ``alpha = c[0]`` names no iter_var and its interstate definition does
     not reach one, so it is a genuine uniform broadcast and the map must still be strided."""

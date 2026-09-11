@@ -173,7 +173,7 @@ def test_gpu_half2_emits_tile_ops_in_device_tu():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; compile check skipped")
+@pytest.mark.nvcc
 @pytest.mark.parametrize("name,prog", [("add16", _add16), ("jacobi2d16", _jacobi2d16), ("heat3d16", _heat3d16)])
 def test_gpu_half2_compiles(name, prog):
     """The half2 GPU vectorization of an elementwise / stencil fp16 kernel
@@ -211,7 +211,7 @@ def test_gpu_reduction_uses_gpu_expansion():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; PTX check skipped")
+@pytest.mark.nvcc
 def test_gpu_half2_lowers_to_native_f16x2():
     """The fp16 add tile lowers to a native ``f16x2`` SIMD instruction (two lanes
     per op), not the scalar float fallback -- verified in the generated PTX."""
@@ -234,7 +234,7 @@ def test_gpu_half2_lowers_to_native_f16x2():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; PTX check skipped")
+@pytest.mark.nvcc
 def test_gpu_half2_reduce_lowers_to_native_f16x2():
     """The in-map fp16 horizontal reduce (``TileReduce`` -> ``dace::tileops::tile_reduce``)
     folds via native ``f16x2`` SIMD (two lanes per op) and returns a single ``__half`` --
@@ -284,7 +284,7 @@ def test_gpu_vectorize_width_gt2_numeric(width):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; PTX check skipped")
+@pytest.mark.nvcc
 @pytest.mark.parametrize("width", [4, 8])
 def test_gpu_half2_wide_emits_width_over_2_f16x2(width):
     """A wide fp16 tile (width 4 / 8) uses the SAME half2 fast path as width 2: the per-tile

@@ -242,6 +242,7 @@ def test_sum_into_slot_widens_and_correct():
     ref = np.zeros(4)
     ref[2] = float(a.sum())
     sdfg = _vectorize(sum_into_slot, "sum_into_slot_prep")
+    assert "8" in _tiled_map_steps(sdfg), "prep+widen must stride the tiled map to width 8 (real widening)"
     sdfg.compile()(a=a.copy(), s=s, N=n)
     assert np.allclose(s, ref, rtol=1e-9, atol=1e-12), f"got {s}, ref {ref}"
 
@@ -254,6 +255,7 @@ def test_prod_into_slot_widens_and_correct():
     ref = np.ones(4)
     ref[1] = float(np.prod(a))
     sdfg = _vectorize(prod_into_slot, "prod_into_slot_prep")
+    assert "8" in _tiled_map_steps(sdfg), "prep+widen must stride the tiled map to width 8 (real widening)"
     sdfg.compile()(a=a.copy(), s=s, N=n)
     assert np.allclose(s, ref, rtol=1e-9, atol=1e-12), f"got {s}, ref {ref}"
 
