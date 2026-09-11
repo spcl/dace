@@ -7,6 +7,7 @@ cannot load MPI library`` rather than ``ImportError``. The frontend guarded only
 so the RuntimeError escaped ``resolve_names`` and EVERY ``@dace.program`` -- including ones that
 never mention MPI -- failed to parse. A stray ``pip install mpi4py`` was enough to brick DaCe.
 """
+
 import sys
 import types
 

@@ -11,7 +11,6 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, in
 
 @library.expansion
 class ExpandGatherMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -38,7 +37,6 @@ class ExpandGatherMPI(ExpandTransformation):
 
 @library.node
 class Gather(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandGatherMPI,
@@ -83,7 +81,6 @@ class Gather(MPINode):
 
 @library.expansion
 class ExpandBlockGatherMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -118,17 +115,18 @@ class ExpandBlockGatherMPI(ExpandTransformation):
                 }}
             """
 
-        tasklet = nodes.Tasklet(node.name,
-                                expanded_input_connectors(node, parent_state),
-                                node.out_connectors,
-                                code,
-                                language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @library.node
 class BlockGather(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandBlockGatherMPI,

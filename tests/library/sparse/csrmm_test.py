@@ -14,9 +14,9 @@ NNZ = dace.symbol("NNZ")
 
 def make_sdfg(transB: bool, alpha: float, beta: float, implementation: str, dtype) -> dace.SDFG:
     sdfg = dace.SDFG(name="CSRMM")
-    sdfg.add_array("A_val", shape=(NNZ, ), dtype=dtype, transient=False)
-    sdfg.add_array("A_row", shape=(N + 1, ), dtype=dace.int32, transient=False)
-    sdfg.add_array("A_col", shape=(NNZ, ), dtype=dace.int32, transient=False)
+    sdfg.add_array("A_val", shape=(NNZ,), dtype=dtype, transient=False)
+    sdfg.add_array("A_row", shape=(N + 1,), dtype=dace.int32, transient=False)
+    sdfg.add_array("A_col", shape=(NNZ,), dtype=dace.int32, transient=False)
     sdfg.add_array("C", shape=(N, K), dtype=dtype, transient=False)
     if transB:
         sdfg.add_array("B", shape=(K, M), dtype=dtype, transient=False)
@@ -51,38 +51,41 @@ def make_sdfg(transB: bool, alpha: float, beta: float, implementation: str, dtyp
     return sdfg
 
 
-@pytest.mark.parametrize("transB, alpha, beta, implementation, dtype", [
-    pytest.param(False, 1.0, 0.0, "pure", dace.float32),
-    pytest.param(False, 1.0, 0.0, "pure", dace.float64),
-    pytest.param(False, 1.0, 1.0, "pure", dace.float32),
-    pytest.param(False, 1.0, 1.0, "pure", dace.float64),
-    pytest.param(False, 2.0, 2.0, "pure", dace.float32),
-    pytest.param(False, 2.0, 2.0, "pure", dace.float64),
-    pytest.param(True, 1.0, 0.0, "pure", dace.float32),
-    pytest.param(True, 1.0, 0.0, "pure", dace.float64),
-    pytest.param(True, 1.0, 1.0, "pure", dace.float32),
-    pytest.param(True, 1.0, 1.0, "pure", dace.float64),
-    pytest.param(True, 2.0, 2.0, "pure", dace.float32),
-    pytest.param(True, 2.0, 2.0, "pure", dace.float64),
-    pytest.param(False, 1.0, 0.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param(False, 1.0, 0.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param(False, 1.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param(False, 1.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param(False, 2.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param(False, 2.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param(False, 1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(False, 1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    pytest.param(False, 1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(False, 1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    pytest.param(False, 2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(False, 2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    pytest.param(True, 1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(True, 1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    pytest.param(True, 1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(True, 1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    pytest.param(True, 2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(True, 2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-])
+@pytest.mark.parametrize(
+    "transB, alpha, beta, implementation, dtype",
+    [
+        pytest.param(False, 1.0, 0.0, "pure", dace.float32),
+        pytest.param(False, 1.0, 0.0, "pure", dace.float64),
+        pytest.param(False, 1.0, 1.0, "pure", dace.float32),
+        pytest.param(False, 1.0, 1.0, "pure", dace.float64),
+        pytest.param(False, 2.0, 2.0, "pure", dace.float32),
+        pytest.param(False, 2.0, 2.0, "pure", dace.float64),
+        pytest.param(True, 1.0, 0.0, "pure", dace.float32),
+        pytest.param(True, 1.0, 0.0, "pure", dace.float64),
+        pytest.param(True, 1.0, 1.0, "pure", dace.float32),
+        pytest.param(True, 1.0, 1.0, "pure", dace.float64),
+        pytest.param(True, 2.0, 2.0, "pure", dace.float32),
+        pytest.param(True, 2.0, 2.0, "pure", dace.float64),
+        pytest.param(False, 1.0, 0.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param(False, 1.0, 0.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param(False, 1.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param(False, 1.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param(False, 2.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param(False, 2.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param(False, 1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+        pytest.param(False, 1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+        pytest.param(False, 1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+        pytest.param(False, 1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+        pytest.param(False, 2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+        pytest.param(False, 2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+        pytest.param(True, 1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+        pytest.param(True, 1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+        pytest.param(True, 1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+        pytest.param(True, 1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+        pytest.param(True, 2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+        pytest.param(True, 2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+    ],
+)
 def test_csrmm(transB, alpha, beta, implementation, dtype):
     sdfg = make_sdfg(transB, alpha, beta, implementation, dtype)
 

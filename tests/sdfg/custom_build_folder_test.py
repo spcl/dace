@@ -24,11 +24,12 @@ def unlaunched(monkeypatch):
 
 
 def test_default_build_folder(unlaunched):
-    """Tests if the `default_build_folder` configuration key is respected.
-    """
+    """Tests if the `default_build_folder` configuration key is respected."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        with dace.config.set_temporary('default_build_folder', value=tmpdir), dace.config.set_temporary('cache',
-                                                                                                        value='single'):
+        with (
+            dace.config.set_temporary('default_build_folder', value=tmpdir),
+            dace.config.set_temporary('cache', value='single'),
+        ):
             # Ensure build folder matches
             sdfg = customprog.to_sdfg()
             assert str(sdfg.build_folder).startswith(tmpdir)
@@ -62,9 +63,10 @@ def test_default_build_folder(unlaunched):
 
 def test_explicitly_set_build_folder(unlaunched):
     with tempfile.TemporaryDirectory() as tmpdir_def, tempfile.TemporaryDirectory() as tmpdir_used:
-        with dace.config.set_temporary('default_build_folder',
-                                       value=tmpdir_def), dace.config.set_temporary('cache', value='single'):
-
+        with (
+            dace.config.set_temporary('default_build_folder', value=tmpdir_def),
+            dace.config.set_temporary('cache', value='single'),
+        ):
             # Ensure build folder matches
             sdfg = customprog.to_sdfg()
             sdfg.build_folder = tmpdir_used

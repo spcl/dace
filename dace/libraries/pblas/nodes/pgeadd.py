@@ -9,7 +9,6 @@ from dace import dtypes
 
 @dace.library.expansion
 class ExpandBlockCyclicScatterMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl_mpich.IntelMKLScaLAPACKMPICH]
 
     @staticmethod
@@ -35,19 +34,19 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
             else {{ pdtran(&grows, &gcols, &one, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor); }}
         """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         # NOTE: The commented out part does not work properly when expanding
         # from regular BLAS GEMV (somehow `_block_sizes` stays a scalar for the
         # vector input).
         conn = tasklet.in_connectors
         conn = {
             c: (
-                dtypes.pointer(dace.int32) if c == '_block_sizes'  # and not isinstance(t, dtypes.pointer)
-                else t)
+                dtypes.pointer(dace.int32)
+                if c == '_block_sizes'  # and not isinstance(t, dtypes.pointer)
+                else t
+            )
             for c, t in conn.items()
         }
         tasklet.in_connectors = conn
@@ -56,7 +55,6 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
 
 @dace.library.node
 class BlockCyclicScatter(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "MKL": ExpandBlockCyclicScatterMKL,
@@ -64,11 +62,13 @@ class BlockCyclicScatter(dace.sdfg.nodes.LibraryNode):
     default_implementation = "MKL"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_inbuffer", "_block_sizes"},
-                         outputs={"_outbuffer", "_gdescriptor", "_ldescriptor"},
-                         **kwargs)
+        super().__init__(
+            name,
+            *args,
+            inputs={"_inbuffer", "_block_sizes"},
+            outputs={"_outbuffer", "_gdescriptor", "_ldescriptor"},
+            **kwargs,
+        )
 
     def validate(self, sdfg, state):
         """
@@ -113,7 +113,6 @@ class ExpandBlockCyclicGatherPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandBlockCyclicGatherMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl_mpich.IntelMKLScaLAPACKMPICH]
 
     @staticmethod
@@ -140,17 +139,14 @@ class ExpandBlockCyclicGatherMKL(ExpandTransformation):
             else {{ pdtran(&gcols, &grows, &one, _inbuffer,  &__state->__mkl_int_one, &__state->__mkl_int_one, _ldescriptor, &zero, _outbuffer, &__state->__mkl_int_one, &__state->__mkl_int_one, _gdescriptor); }}
         """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.node
 class BlockCyclicGather(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "MKL": ExpandBlockCyclicGatherMKL,

@@ -72,7 +72,7 @@ def test_symbol_dependent_heap_array():
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
         B_ref[i] = np.sum(tmp)
-    assert (np.allclose(B, B_ref))
+    assert np.allclose(B, B_ref)
 
 
 def test_symbol_dependent_register_array():
@@ -87,7 +87,7 @@ def test_symbol_dependent_register_array():
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
         B_ref[i] = np.sum(tmp)
-    assert (np.allclose(B, B_ref))
+    assert np.allclose(B, B_ref)
 
 
 def test_symbol_dependent_threadlocal_array():
@@ -102,7 +102,7 @@ def test_symbol_dependent_threadlocal_array():
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
         B_ref[i] = np.sum(tmp)
-    assert (np.allclose(B, B_ref))
+    assert np.allclose(B, B_ref)
 
 
 def test_symbol_dependent_cpu_view():
@@ -117,7 +117,7 @@ def test_symbol_dependent_cpu_view():
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
         B_ref[i] = np.sum(tmp)
-    assert (np.allclose(B, B_ref))
+    assert np.allclose(B, B_ref)
 
 
 @pytest.mark.gpu
@@ -133,7 +133,7 @@ def test_symbol_dependent_gpu_global_array():
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
         B_ref[i] = np.sum(tmp)
-    assert (np.allclose(B, B_ref))
+    assert np.allclose(B, B_ref)
 
 
 @pytest.mark.gpu
@@ -149,7 +149,7 @@ def test_symbol_dependent_pinned_array():
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
         B_ref[i] = np.sum(tmp)
-    assert (np.allclose(B, B_ref))
+    assert np.allclose(B, B_ref)
 
 
 @pytest.mark.skip('Invalid address accessed in kernel')  # @pytest.mark.gpu
@@ -168,7 +168,7 @@ def test_symbol_dependent_gpu_view():
     for i in range(10):
         tmp = A[2:-2, 2:-2, i:]
         B_ref[i] = np.sum(tmp)
-    assert (np.allclose(B, B_ref))
+    assert np.allclose(B, B_ref)
 
 
 def test_symbol_dependent_array_in_map():
@@ -177,7 +177,7 @@ def test_symbol_dependent_array_in_map():
     def symbol_dependent_array_in_map(A: dace.float32[10]):
         out = np.ndarray(10, dtype=np.float32)
         for i in dace.map[0:10]:
-            tmp = A[0:i + 1]
+            tmp = A[0 : i + 1]
             out[i] = np.sum(tmp)
         return out
 
@@ -192,7 +192,7 @@ def test_symbol_dependent_array_in_map():
     A = np.random.randn(10).astype(np.float32)
     val = func(A=A)
     ref = np.cumsum(A)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 if __name__ == '__main__':

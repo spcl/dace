@@ -15,12 +15,14 @@ def create_sdfg():
     sdfg.add_array('A', [2], dace.float32)
     sdfg.add_array('B', [2], dace.float32)
     state = sdfg.add_state()
-    t, me, mx = state.add_mapped_tasklet('map',
-                                         dict(i='0:2'),
-                                         dict(a=dace.Memlet.simple('A', 'i')),
-                                         'b = a * 2',
-                                         dict(b=dace.Memlet.simple('B', 'i')),
-                                         external_edges=True)
+    t, me, mx = state.add_mapped_tasklet(
+        'map',
+        dict(i='0:2'),
+        dict(a=dace.Memlet.simple('A', 'i')),
+        'b = a * 2',
+        dict(b=dace.Memlet.simple('B', 'i')),
+        external_edges=True,
+    )
     return sdfg, state, t, me, mx
 
 
@@ -29,12 +31,14 @@ def create_sdfg_4():
     sdfg.add_array('A', [4], dace.float32)
     sdfg.add_array('B', [4], dace.float32)
     state = sdfg.add_state()
-    t, me, mx = state.add_mapped_tasklet('map',
-                                         dict(i='0:4'),
-                                         dict(a=dace.Memlet.simple('A', 'i')),
-                                         'b = a * 2',
-                                         dict(b=dace.Memlet.simple('B', 'i')),
-                                         external_edges=True)
+    t, me, mx = state.add_mapped_tasklet(
+        'map',
+        dict(i='0:4'),
+        dict(a=dace.Memlet.simple('A', 'i')),
+        'b = a * 2',
+        dict(b=dace.Memlet.simple('B', 'i')),
+        external_edges=True,
+    )
     return sdfg, state, t, me, mx
 
 
@@ -85,7 +89,7 @@ def test_simple_sdfg():
 
 def test_index_propagation_in_tiled_sdfg():
     sdfg, state, t, me, mx = create_sdfg_4()
-    tiling.MapTiling.apply_to(sdfg=sdfg, options={'tile_sizes': (2, )}, map_entry=me)
+    tiling.MapTiling.apply_to(sdfg=sdfg, options={'tile_sizes': (2,)}, map_entry=me)
     nested_me = state.in_edges(t)[0].src
     nested_mx = state.out_edges(t)[0].dst
     nest_state_subgraph(sdfg, state, SubgraphView(state, [nested_me, t, nested_mx]))

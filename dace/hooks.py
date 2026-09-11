@@ -23,8 +23,12 @@ _SDFG_CALL_HOOKS: List[GeneratorType] = []
 _COMPILED_SDFG_CALL_HOOKS: List[GeneratorType] = []
 
 
-def _register_hook(hook_list: List[GeneratorType], before_hook: Optional[Callable[..., None]],
-                   after_hook: Optional[Callable[..., None]], context_manager: Optional[GeneratorType]) -> int:
+def _register_hook(
+    hook_list: List[GeneratorType],
+    before_hook: Optional[Callable[..., None]],
+    after_hook: Optional[Callable[..., None]],
+    context_manager: Optional[GeneratorType],
+) -> int:
     """
     Internal function that registers function or context manager hooks to be called.
     :param hook_list: The list of hooks to register to.
@@ -58,10 +62,12 @@ def _register_hook(hook_list: List[GeneratorType], before_hook: Optional[Callabl
     return hook_id
 
 
-def register_sdfg_call_hook(*,
-                            before_hook: Optional[CallHookType] = None,
-                            after_hook: Optional[CallHookType] = None,
-                            context_manager: Optional[GeneratorType] = None) -> int:
+def register_sdfg_call_hook(
+    *,
+    before_hook: Optional[CallHookType] = None,
+    after_hook: Optional[CallHookType] = None,
+    context_manager: Optional[GeneratorType] = None,
+) -> int:
     """
     Registers a hook that is called when an SDFG is called.
 
@@ -74,10 +80,12 @@ def register_sdfg_call_hook(*,
     return _register_hook(_SDFG_CALL_HOOKS, before_hook, after_hook, context_manager)
 
 
-def register_compiled_sdfg_call_hook(*,
-                                     before_hook: Optional[CompiledCallHookType] = None,
-                                     after_hook: Optional[CompiledCallHookType] = None,
-                                     context_manager: Optional[GeneratorType] = None) -> int:
+def register_compiled_sdfg_call_hook(
+    *,
+    before_hook: Optional[CompiledCallHookType] = None,
+    after_hook: Optional[CompiledCallHookType] = None,
+    context_manager: Optional[GeneratorType] = None,
+) -> int:
     """
     Registers a hook that is called when a compiled SDFG is called.
 
@@ -113,10 +121,12 @@ def unregister_compiled_sdfg_call_hook(hook_id: int):
 
 
 @contextmanager
-def on_call(*,
-            before: Optional[CallHookType] = None,
-            after: Optional[CallHookType] = None,
-            context_manager: Optional[GeneratorType] = None):
+def on_call(
+    *,
+    before: Optional[CallHookType] = None,
+    after: Optional[CallHookType] = None,
+    context_manager: Optional[GeneratorType] = None,
+):
     """
     Context manager that registers a function to be called around each SDFG call.
     Use this to modify the SDFG before it is compiled and run.
@@ -155,10 +165,12 @@ def on_call(*,
 
 
 @contextmanager
-def on_compiled_sdfg_call(*,
-                          before: Optional[CompiledCallHookType] = None,
-                          after: Optional[CompiledCallHookType] = None,
-                          context_manager: Optional[GeneratorType] = None):
+def on_compiled_sdfg_call(
+    *,
+    before: Optional[CompiledCallHookType] = None,
+    after: Optional[CompiledCallHookType] = None,
+    context_manager: Optional[GeneratorType] = None,
+):
     """
     Context manager that registers a function to be called around each compiled SDFG call.
     Use this to wrap the compiled SDFG's C function call.
@@ -196,8 +208,9 @@ def on_compiled_sdfg_call(*,
 # Input type
 
 
-def _as_context_manager(begin_func: Union[Callable[..., Any], ContextManager],
-                        end_func: Optional[Callable[..., Any]] = None) -> GeneratorType:
+def _as_context_manager(
+    begin_func: Union[Callable[..., Any], ContextManager], end_func: Optional[Callable[..., Any]] = None
+) -> GeneratorType:
     """
     Returns a context manager from a begin and end functions, if not already given.
 
@@ -311,4 +324,5 @@ def _install_hooks_from_config():
     # Convenience hooks
     if config.Config.get_bool('profiling'):
         from dace.frontend.operations import CompiledSDFGProfiler
+
         register_compiled_sdfg_call_hook(context_manager=CompiledSDFGProfiler())

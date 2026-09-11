@@ -50,7 +50,7 @@ def test_vector_type_inference():
 
 
 def test_vector_type_cast():
-    """ Test vector types with casting from float* to float2. """
+    """Test vector types with casting from float* to float2."""
     sdfg = dace.SDFG('vectortypes')
     sdfg.add_array('A', [4], dace.float32)
     sdfg.add_array('B', [4], dace.float32)

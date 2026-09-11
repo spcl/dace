@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the trivial-map-elimination transformation. """
+"""Contains classes that implement the trivial-map-elimination transformation."""
 
 import dace
 from dace.sdfg import nodes
@@ -37,8 +37,9 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
             return False
         if not any(r[0] == r[1] for r in map_entry.map.range):
             return False
-        if (map_entry.map.get_param_num()) == 1 and (any(not e.dst_conn.startswith("IN_")
-                                                         for e in graph.in_edges(map_entry) if not e.data.is_empty())):
+        if (map_entry.map.get_param_num()) == 1 and (
+            any(not e.dst_conn.startswith("IN_") for e in graph.in_edges(map_entry) if not e.data.is_empty())
+        ):
             # There is only one map parameter and there are dynamic map ranges, this can not be resolved.
             return False
         return True

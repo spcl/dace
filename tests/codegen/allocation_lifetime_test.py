@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests different allocation lifetimes. """
+"""Tests different allocation lifetimes."""
+
 import re
 
 import pytest
@@ -26,7 +27,7 @@ N = dace.symbol('N')
 
 
 def _test_determine_alloc(lifetime: dace.AllocationLifetime, unused: bool = False) -> dace.SDFG:
-    """ Creates an SDFG playground for determining allocation. """
+    """Creates an SDFG playground for determining allocation."""
     sdfg = dace.SDFG('lifetimetest')
     sdfg.add_array('A', [N], dace.float64)
     sdfg.add_array('B', [N], dace.float64)
@@ -119,26 +120,34 @@ def test_persistent_gpu_copy_regression():
     nstate = nsdfg.add_state()
 
     sdfg.add_array("input", [2, 2], dace.float64)
-    sdfg.add_array("input_gpu", [2, 2],
-                   dace.float64,
-                   transient=True,
-                   storage=dace.StorageType.GPU_Global,
-                   lifetime=dace.AllocationLifetime.Persistent)
+    sdfg.add_array(
+        "input_gpu",
+        [2, 2],
+        dace.float64,
+        transient=True,
+        storage=dace.StorageType.GPU_Global,
+        lifetime=dace.AllocationLifetime.Persistent,
+    )
     sdfg.add_array("__return", [2, 2], dace.float64)
 
-    nsdfg.add_array("ninput", [2, 2],
-                    dace.float64,
-                    storage=dace.StorageType.GPU_Global,
-                    lifetime=dace.AllocationLifetime.Persistent)
-    nsdfg.add_array("transient_heap", [2, 2],
-                    dace.float64,
-                    transient=True,
-                    storage=dace.StorageType.CPU_Heap,
-                    lifetime=dace.AllocationLifetime.Persistent)
-    nsdfg.add_array("noutput", [2, 2],
-                    dace.float64,
-                    storage=dace.dtypes.StorageType.CPU_Heap,
-                    lifetime=dace.AllocationLifetime.Persistent)
+    nsdfg.add_array(
+        "ninput", [2, 2], dace.float64, storage=dace.StorageType.GPU_Global, lifetime=dace.AllocationLifetime.Persistent
+    )
+    nsdfg.add_array(
+        "transient_heap",
+        [2, 2],
+        dace.float64,
+        transient=True,
+        storage=dace.StorageType.CPU_Heap,
+        lifetime=dace.AllocationLifetime.Persistent,
+    )
+    nsdfg.add_array(
+        "noutput",
+        [2, 2],
+        dace.float64,
+        storage=dace.dtypes.StorageType.CPU_Heap,
+        lifetime=dace.AllocationLifetime.Persistent,
+    )
 
     a_trans = nstate.add_access("transient_heap")
     nstate.add_edge(nstate.add_read("ninput"), None, a_trans, None, nsdfg.make_array_memlet("transient_heap"))
@@ -177,7 +186,7 @@ def test_persistent_gpu_transpose_regression():
 
 
 def test_alloc_persistent_register():
-    """ Tries to allocate persistent register array. Should fail. """
+    """Tries to allocate persistent register array. Should fail."""
 
     @dace.program
     def lifetimetest(input: dace.float64[N]):
@@ -225,10 +234,9 @@ def test_alloc_persistent_threadlocal():
 
     @dace.program
     def persistentmem(output: dace.int32[2]):
-        tmp = dace.ndarray([2],
-                           output.dtype,
-                           storage=dace.StorageType.CPU_ThreadLocal,
-                           lifetime=dace.AllocationLifetime.Persistent)
+        tmp = dace.ndarray(
+            [2], output.dtype, storage=dace.StorageType.CPU_ThreadLocal, lifetime=dace.AllocationLifetime.Persistent
+        )
         if output[0] == 1:
             for i in dace.map[0:2]:
                 tmp[i] = i
@@ -260,18 +268,16 @@ def test_alloc_persistent_threadlocal_naming():
 
     @dace.program
     def nested1(A: dace.float64[2, 2], output: dace.float64[2, 2]):
-        B = dace.ndarray([2, 2],
-                         A.dtype,
-                         storage=dace.StorageType.CPU_ThreadLocal,
-                         lifetime=dace.AllocationLifetime.Persistent)
+        B = dace.ndarray(
+            [2, 2], A.dtype, storage=dace.StorageType.CPU_ThreadLocal, lifetime=dace.AllocationLifetime.Persistent
+        )
         B[:] = A
         output[:] = B
 
     def nested2(A: dace.float64[2, 2], output: dace.float64[2, 2]):
-        B = dace.ndarray([2, 2],
-                         A.dtype,
-                         storage=dace.StorageType.CPU_ThreadLocal,
-                         lifetime=dace.AllocationLifetime.Persistent)
+        B = dace.ndarray(
+            [2, 2], A.dtype, storage=dace.StorageType.CPU_ThreadLocal, lifetime=dace.AllocationLifetime.Persistent
+        )
         B[:] = A + 1
         output[:] = B
 
@@ -385,7 +391,7 @@ def test_persistent_scalar_in_map():
         tmp[:] = 1
         tmp2[:] = 2
 
-        for i, j in dace.map[tmp:tmp + 1, tmp2:tmp2 + 1]:
+        for i, j in dace.map[tmp : tmp + 1, tmp2 : tmp2 + 1]:
             with dace.tasklet:
                 aa >> a[i, j]
                 aa = 5
@@ -491,16 +497,12 @@ def test_branched_allocation(mode):
     sdfg.add_edge(state_br1_1, state_merge, dace.InterstateEdge())
     sdfg.add_edge(state_br2_1, state_merge, dace.InterstateEdge())
 
-    tasklet1 = state_br1.add_tasklet(name="br1",
-                                     inputs=[],
-                                     outputs=["out"],
-                                     code="out = 1;",
-                                     language=dace.Language.CPP)
-    tasklet2 = state_br2.add_tasklet(name="br2",
-                                     inputs=[],
-                                     outputs=["out"],
-                                     code="out = 1;",
-                                     language=dace.Language.CPP)
+    tasklet1 = state_br1.add_tasklet(
+        name="br1", inputs=[], outputs=["out"], code="out = 1;", language=dace.Language.CPP
+    )
+    tasklet2 = state_br2.add_tasklet(
+        name="br2", inputs=[], outputs=["out"], code="out = 1;", language=dace.Language.CPP
+    )
 
     arr_A = state_br1.add_write("A")
     memlet = dace.Memlet(expr="A[1]")
@@ -510,12 +512,20 @@ def test_branched_allocation(mode):
     memlet = dace.Memlet(expr="A[1]")
     state_br2.add_memlet_path(tasklet2, arr_A, src_conn="out", memlet=memlet)
 
-    state_br1_1.add_edge(state_br1_1.add_read('A'), None,
-                         state_br1_1.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True), 'inp',
-                         dace.Memlet('A[1]'))
-    state_br2_1.add_edge(state_br2_1.add_read('A'), None,
-                         state_br2_1.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True), 'inp',
-                         dace.Memlet('A[1]'))
+    state_br1_1.add_edge(
+        state_br1_1.add_read('A'),
+        None,
+        state_br1_1.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True),
+        'inp',
+        dace.Memlet('A[1]'),
+    )
+    state_br2_1.add_edge(
+        state_br2_1.add_read('A'),
+        None,
+        state_br2_1.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True),
+        'inp',
+        dace.Memlet('A[1]'),
+    )
 
     # Make sure array is allocated once or twice, depending on the test
     code = sdfg.generate_code()[0].clean_code
@@ -528,7 +538,7 @@ def test_branched_allocation(mode):
 
 @pytest.mark.skip('Dynamic array resize is not yet supported')
 def test_scope_multisize():
-    """ An array that needs to be allocated multiple times with different sizes. """
+    """An array that needs to be allocated multiple times with different sizes."""
     sdfg = dace.SDFG('test')
     N = dace.symbol('N')
     sdfg.add_transient('A', [N], dace.float64)
@@ -556,7 +566,7 @@ def test_scope_multisize():
 
 
 def test_multisize():
-    """ An array that needs to be allocated once, with runtime-dependent sizes. """
+    """An array that needs to be allocated once, with runtime-dependent sizes."""
     sdfg = dace.SDFG('test')
     N = dace.symbol('N')
     sdfg.add_transient('A', [N], dace.float64)

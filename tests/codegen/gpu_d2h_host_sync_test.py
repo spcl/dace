@@ -9,6 +9,7 @@ memory, HIP and graph capture do not.
 
 These assert on emitted code, so they need a GPU for neither compilation nor a run.
 """
+
 import re
 
 import dace
@@ -85,7 +86,7 @@ def host_copy_and_launch(code: str):
     """The device-to-host copy and the kernel launch that reads its destination."""
     copy = re.search(COPY + r'[^;]*DeviceToHost[^;]*\)', code)
     assert copy, 'no device-to-host copy was emitted, so this test is anchored on nothing'
-    launch = re.search(r'__dace_runkernel_\w+\(', code[copy.end():])
+    launch = re.search(r'__dace_runkernel_\w+\(', code[copy.end() :])
     assert launch, 'no kernel launch follows the device-to-host copy, so this test is anchored on nothing'
     return copy, copy.end() + launch.start()
 
@@ -93,11 +94,11 @@ def host_copy_and_launch(code: str):
 def test_a_device_to_host_copy_is_synchronized_before_its_host_reader():
     code = generated_code(scalar_through_host(dtypes.StorageType.CPU_Heap))
     copy, launch_at = host_copy_and_launch(code)
-    between = code[copy.end():launch_at]
-    assert re.search(
-        SYNC,
-        between), ('the kernel launch reads the copied scalar by value on the host, but no stream synchronization '
-                   'separates it from the asynchronous device-to-host copy')
+    between = code[copy.end() : launch_at]
+    assert re.search(SYNC, between), (
+        'the kernel launch reads the copied scalar by value on the host, but no stream synchronization '
+        'separates it from the asynchronous device-to-host copy'
+    )
 
 
 def test_the_synchronization_names_the_stream_the_copy_was_issued_on():
@@ -105,7 +106,7 @@ def test_the_synchronization_names_the_stream_the_copy_was_issued_on():
     code = generated_code(scalar_through_host(dtypes.StorageType.CPU_Heap))
     copy, launch_at = host_copy_and_launch(code)
     stream = copy.group(0).rsplit(',', 1)[1].strip().rstrip(')')
-    sync = re.search(SYNC + re.escape(stream) + r'\)', code[copy.end():launch_at])
+    sync = re.search(SYNC + re.escape(stream) + r'\)', code[copy.end() : launch_at])
     assert sync, f'the synchronization before the kernel launch does not wait on {stream}'
 
 
@@ -113,8 +114,9 @@ def test_pinned_destinations_are_synchronized_too():
     """Pinned memory is where the accidental blocking of pageable copies stops covering for this."""
     code = generated_code(scalar_through_host(dtypes.StorageType.CPU_Pinned))
     copy, launch_at = host_copy_and_launch(code)
-    assert re.search(SYNC, code[copy.end():launch_at]), (
-        'a copy into pinned host memory is not waited for before the host reads the destination')
+    assert re.search(SYNC, code[copy.end() : launch_at]), (
+        'a copy into pinned host memory is not waited for before the host reads the destination'
+    )
 
 
 def test_a_device_to_device_copy_does_not_wait_on_the_host():
@@ -122,11 +124,13 @@ def test_a_device_to_device_copy_does_not_wait_on_the_host():
     code = generated_code(device_to_device())
     copy = re.search(COPY + r'[^;]*DeviceToDevice[^;]*\)', code)
     assert copy, 'no device-to-device copy was emitted, so this test is anchored on nothing'
-    launch = re.search(r'__dace_runkernel_\w+\(', code[copy.end():])
+    launch = re.search(r'__dace_runkernel_\w+\(', code[copy.end() :])
     assert launch, 'no kernel launch follows the device-to-device copy, so this test is anchored on nothing'
-    between = code[copy.end():copy.end() + launch.start()]
-    assert not re.search(SYNC, between), ('a device-to-device copy is followed by a host wait, which serializes the '
-                                          'stream for a destination no host reads')
+    between = code[copy.end() : copy.end() + launch.start()]
+    assert not re.search(SYNC, between), (
+        'a device-to-device copy is followed by a host wait, which serializes the '
+        'stream for a destination no host reads'
+    )
     assert not re.search(r'DeviceToHost', code), 'the device-to-device fixture emitted a host copy after all'
 
 

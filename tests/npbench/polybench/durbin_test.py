@@ -17,7 +17,7 @@ M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
 
 @dc.program
 def flip(A: dc.float64[M]):
-    B = np.ndarray((M, ), dtype=np.float64)
+    B = np.ndarray((M,), dtype=np.float64)
     for i in dc.map[0:M]:
         B[i] = A[M - 1 - i]
     return B
@@ -41,7 +41,7 @@ def durbin_kernel(r: dc.float64[N]):
 
 
 def initialize(N, datatype=np.float64):
-    r = np.fromfunction(lambda i: N + 1 - i, (N, ), dtype=datatype)
+    r = np.fromfunction(lambda i: N + 1 - i, (N,), dtype=datatype)
     return r
 
 
@@ -131,7 +131,7 @@ def run_durbin_autodiff():
 
     # Initialize gradient computation data
     gradient_r = np.zeros_like(r)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -171,7 +171,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

@@ -18,14 +18,14 @@ def test_indirection():
     M = 100
     N = 100
 
-    x = np.ndarray((N, ), dtype=np.int32)
+    x = np.ndarray((N,), dtype=np.int32)
     for i in range(N):
         x[i] = N - 1 - i
-    A = np.ndarray((M, ), dtype=np.float64)
+    A = np.ndarray((M,), dtype=np.float64)
 
     indirection(A, x)
 
-    npA = np.ndarray((M, ), dtype=np.float64)
+    npA = np.ndarray((M,), dtype=np.float64)
     npA[:] = 1.0
     for j in range(1, N):
         npA[x[j]] += npA[x[j - 1]]

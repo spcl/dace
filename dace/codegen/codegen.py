@@ -21,7 +21,7 @@ from dace.transformation.passes.simplification.control_flow_raising import Contr
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
-    """ Generate a header file for the SDFG """
+    """Generate a header file for the SDFG"""
     proto = ""
     proto += "#include <dace/dace.h>\n"
     init_params = (sdfg.name, sdfg.name, sdfg.init_signature(free_symbols=frame.free_symbols(sdfg)))
@@ -38,9 +38,9 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
 
 
 def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
-    """ Generates a C program calling this SDFG. Since we do not
-        know the purpose/semantics of the program, we allocate
-        the right types and and guess values for scalars.
+    """Generates a C program calling this SDFG. Since we do not
+    know the purpose/semantics of the program, we allocate
+    the right types and and guess values for scalars.
     """
     al = frame.arglist
     init_params = sdfg.init_signature(for_call=True, free_symbols=frame.free_symbols(sdfg))
@@ -54,16 +54,27 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     # first find all scalars and set them to 42
     for argname, arg in al.items():
         if isinstance(arg, data.Scalar):
-            allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = 42;\n")
+            allocations += "    " + str(arg.as_arg(name=argname, with_types=True)) + " = 42;\n"
 
     # allocate the array args using calloc
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
             from dace.codegen.targets import cpp
+
             dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
-            allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype + "*) calloc(" +
-                            dims_mul + ", sizeof(" + basetype + ")" + ");\n")
+            allocations += (
+                "    "
+                + str(arg.as_arg(name=argname, with_types=True))
+                + " = ("
+                + basetype
+                + "*) calloc("
+                + dims_mul
+                + ", sizeof("
+                + basetype
+                + ")"
+                + ");\n"
+            )
             deallocations += "    free(" + argname + ");\n"
 
     return f'''#include <cstdlib>
@@ -140,8 +151,17 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         if isinstance(node, SDFGState):
             disp.instrumentation[node.symbol_instrument] = provider_mapping[node.symbol_instrument]
         # MapEntry and ConsumeEntry forward ``instrument`` to their Map/Consume object
-        if isinstance(node, (SDFGState, dace.nodes.AccessNode, dace.nodes.Tasklet, dace.nodes.NestedSDFG,
-                             dace.nodes.MapEntry, dace.nodes.ConsumeEntry)):
+        if isinstance(
+            node,
+            (
+                SDFGState,
+                dace.nodes.AccessNode,
+                dace.nodes.Tasklet,
+                dace.nodes.NestedSDFG,
+                dace.nodes.MapEntry,
+                dace.nodes.ConsumeEntry,
+            ),
+        ):
             disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
         elif isinstance(node, dace.nodes.ConsumeExit):
             disp.instrumentation[node.consume.instrument] = provider_mapping[node.consume.instrument]
@@ -173,6 +193,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         import filecmp
         import shutil
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             sdfg.save(f'{tmp_dir}/test.sdfg', hash=False)
             sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
@@ -183,10 +204,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
                     with open(f'{tmp_dir}/test2.sdfg', 'r') as f2:
                         data1 = json.dumps(json.load(f1), indent=2).splitlines(keepends=True)
                         data2 = json.dumps(json.load(f2), indent=2).splitlines(keepends=True)
-                        diff = difflib.unified_diff(data1,
-                                                    data2,
-                                                    fromfile='test.sdfg  (first save)',
-                                                    tofile='test2.sdfg (after roundtrip)')
+                        diff = difflib.unified_diff(
+                            data1, data2, fromfile='test.sdfg  (first save)', tofile='test2.sdfg (after roundtrip)'
+                        )
                 diff = ''.join(diff)
                 shutil.move(f'{tmp_dir}/test.sdfg', 'test.sdfg')
                 shutil.move(f'{tmp_dir}/test2.sdfg', 'test2.sdfg')
@@ -209,6 +229,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # at and the copy is free to move ahead of a write it must follow.
     if config.Config.get_bool('compiler', 'cpu', 'explicit_copy'):
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+
         InsertExplicitCopies().apply_pass(sdfg, {})
         # The nodes just inserted carry no inferred connector types, and the expansion below reads
         # them to decide pointer vs. value. Storage defaults above already hold.
@@ -225,12 +246,15 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
 
     # Test for undefined symbols in SDFG arguments
     if "?" in frame.arglist.keys():
-        raise exc.CodegenError("SDFG '%s' has undefined symbols in its arguments. "
-                               "Please ensure all symbols are defined before generating code." % sdfg.name)
+        raise exc.CodegenError(
+            "SDFG '%s' has undefined symbols in its arguments. "
+            "Please ensure all symbols are defined before generating code." % sdfg.name
+        )
 
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
     from dace.codegen.targets import cpu
+
     default_target = cpu.CPUCodeGen
     for k, v in TargetCodeGenerator.extensions().items():
         # If another target has already been registered as CPU, use it instead
@@ -239,10 +263,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     targets = {'cpu': default_target(frame, sdfg)}
 
     # Instantiate the rest of the targets
-    targets.update({
-        v['name']: k(frame, sdfg)
-        for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets
-    })
+    targets.update(
+        {v['name']: k(frame, sdfg) for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets}
+    )
 
     # Query all code generation targets and instrumentation providers in SDFG
     _get_codegen_targets(sdfg, frame)
@@ -253,8 +276,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
 
     # Instantiate instrumentation providers
     frame._dispatcher.instrumentation = {
-        k: v() if v is not None else None
-        for k, v in frame._dispatcher.instrumentation.items()
+        k: v() if v is not None else None for k, v in frame._dispatcher.instrumentation.items()
     }
 
     # NOTE: THE SDFG IS ASSUMED TO BE FROZEN (not change) FROM THIS POINT ONWARDS
@@ -262,13 +284,15 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # Generate frame code (and the rest of the code)
     (global_code, frame_code, used_targets, used_environments) = frame.generate_code(sdfg, None)
     target_objects = [
-        CodeObject(sdfg.name,
-                   global_code + frame_code,
-                   'cpp',
-                   cpu.CPUCodeGen,
-                   'Frame',
-                   environments=used_environments,
-                   sdfg=sdfg)
+        CodeObject(
+            sdfg.name,
+            global_code + frame_code,
+            'cpp',
+            cpu.CPUCodeGen,
+            'Frame',
+            environments=used_environments,
+            sdfg=sdfg,
+        )
     ]
 
     # Create code objects for each target
@@ -279,13 +303,15 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     assert frame._dispatcher.used_targets == (frame.targets - {frame})
 
     # add a header file for calling the SDFG
-    dummy = CodeObject(sdfg.name,
-                       generate_headers(sdfg, frame),
-                       'h',
-                       cpu.CPUCodeGen,
-                       'CallHeader',
-                       target_type='../../include',
-                       linkable=False)
+    dummy = CodeObject(
+        sdfg.name,
+        generate_headers(sdfg, frame),
+        'h',
+        cpu.CPUCodeGen,
+        'CallHeader',
+        target_type='../../include',
+        linkable=False,
+    )
     target_objects.append(dummy)
 
     for env in dace.library.get_environments_and_dependencies(used_environments):
@@ -293,13 +319,15 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             target_objects.extend(env.codeobjects)
 
     # add a dummy main function to show how to call the SDFG
-    dummy = CodeObject(sdfg.name + "_main",
-                       generate_dummy(sdfg, frame),
-                       'cpp',
-                       cpu.CPUCodeGen,
-                       'SampleMain',
-                       target_type='../../sample',
-                       linkable=False)
+    dummy = CodeObject(
+        sdfg.name + "_main",
+        generate_dummy(sdfg, frame),
+        'cpp',
+        cpu.CPUCodeGen,
+        'SampleMain',
+        target_type='../../sample',
+        linkable=False,
+    )
     target_objects.append(dummy)
 
     return target_objects

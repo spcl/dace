@@ -43,7 +43,7 @@ def augassign_wcr3(A: dace.int32[10, 10, 10], B: dace.int32[10], W: dace.bool_[1
 
 @dace.program
 def augassign_wcr4():
-    a = np.zeros((10, ))
+    a = np.zeros((10,))
     for i in dace.map[1:9]:
         a[i - 1] += 1
         a[i] += 2
@@ -53,8 +53,8 @@ def augassign_wcr4():
 
 def test_augassign_wcr():
     A = np.random.randint(1, 10, size=(10, 10, 10), dtype=np.int32)
-    B = np.empty((10, ), dtype=np.int32)
-    W = np.random.randint(2, size=(10, ), dtype=np.bool_)
+    B = np.empty((10,), dtype=np.int32)
+    W = np.random.randint(2, size=(10,), dtype=np.bool_)
 
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=True):
         test_sdfg = augassign_wcr.to_sdfg(simplify=False)
@@ -64,17 +64,17 @@ def test_augassign_wcr():
             for edge in state.edges():
                 if edge.data.wcr:
                     wcr_count += 1
-    assert (wcr_count == 1)
+    assert wcr_count == 1
 
     count = test_sdfg(A=A, B=B, W=W)
-    assert (count[0] == np.count_nonzero(W))
-    assert (np.array_equal(np.add.reduce(A, axis=(1, 2))[W], B[W]))
+    assert count[0] == np.count_nonzero(W)
+    assert np.array_equal(np.add.reduce(A, axis=(1, 2))[W], B[W])
 
 
 def test_augassign_wcr2():
     A = np.random.randint(1, 10, size=(10, 10, 10), dtype=np.int32)
-    B = np.empty((10, ), dtype=np.int32)
-    C = np.zeros((10, ), dtype=np.int32)
+    B = np.empty((10,), dtype=np.int32)
+    C = np.zeros((10,), dtype=np.int32)
     W = np.random.randint(2, size=(10, 10, 10), dtype=np.bool_)
 
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=True):
@@ -85,20 +85,20 @@ def test_augassign_wcr2():
             for edge in state.edges():
                 if edge.data.wcr:
                     wcr_count += 1
-    assert (wcr_count == 2)
+    assert wcr_count == 2
 
     count = test_sdfg(A=A, B=B, W=W)
     C = np.add.reduce(A, axis=(1, 2), where=W)
-    assert (count[0] == np.count_nonzero(W))
-    assert (np.array_equal(B, C))
+    assert count[0] == np.count_nonzero(W)
+    assert np.array_equal(B, C)
 
 
 def test_augassign_wcr3():
     A = np.random.randint(1, 10, size=(10, 10, 10), dtype=np.int32)
-    B = np.empty((10, ), dtype=np.int32)
-    C = np.zeros((10, ), dtype=np.int32)
-    D = np.zeros((10, ), dtype=np.int32)
-    ind = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
+    B = np.empty((10,), dtype=np.int32)
+    C = np.zeros((10,), dtype=np.int32)
+    D = np.zeros((10,), dtype=np.int32)
+    ind = np.random.randint(0, 10, size=(10,), dtype=np.int32)
     W = np.random.randint(2, size=(10, 10, 10), dtype=np.bool_)
 
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=True):
@@ -109,14 +109,14 @@ def test_augassign_wcr3():
             for edge in state.edges():
                 if edge.data.wcr:
                     wcr_count += 1
-    assert (wcr_count == 2)
+    assert wcr_count == 2
 
     count = test_sdfg(A=A, B=B, W=W, ind=ind)
     C = np.add.reduce(A, axis=(1, 2), where=W)
     for i in range(10):
         D[ind[i]] += C[i]
-    assert (count[0] == np.count_nonzero(W))
-    assert (np.array_equal(B, D))
+    assert count[0] == np.count_nonzero(W)
+    assert np.array_equal(B, D)
 
 
 def test_augassign_no_wcr():
@@ -129,13 +129,13 @@ def test_augassign_no_wcr():
         sdfg = no_wcr.to_sdfg(simplify=False)
     for e, _ in sdfg.all_edges_recursive():
         if hasattr(e.data, 'wcr'):
-            assert (not e.data.wcr)
+            assert not e.data.wcr
 
     ref = np.reshape(np.arange(125, dtype=np.int32), (5, 5, 5))
     A = ref.copy()
     sdfg(A)
     no_wcr.f(ref)
-    assert (np.allclose(A, ref))
+    assert np.allclose(A, ref)
 
 
 def test_augassign_no_wcr2():
@@ -148,13 +148,13 @@ def test_augassign_no_wcr2():
         sdfg = no_wcr.to_sdfg(simplify=False)
     for e, _ in sdfg.all_edges_recursive():
         if hasattr(e.data, 'wcr'):
-            assert (not e.data.wcr)
+            assert not e.data.wcr
 
     ref = np.reshape(np.arange(125, dtype=np.int32), (5, 5, 5))
     A = ref.copy()
     sdfg(A)
     no_wcr.f(ref)
-    assert (np.allclose(A, ref))
+    assert np.allclose(A, ref)
 
 
 def test_augassign_wcr4():

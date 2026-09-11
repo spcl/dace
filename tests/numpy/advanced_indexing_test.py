@@ -3,6 +3,7 @@
 Tests for numpy advanced indexing syntax. See also:
 https://numpy.org/devdocs/reference/arrays.indexing.html
 """
+
 import dace
 from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
@@ -360,18 +361,14 @@ def test_advanced_indexing_syntax(tuple_index):
     @dace.program
     def indexing_test(A: dace.float64[N, N, N]):
         if tuple_index:
-            A[
-                (1, 2, 3),
-            ] = 2
+            A[(1, 2, 3),] = 2
         else:
             A[[1, 2, 3]] = 2
         A[(1, 2, 3)] = 1
 
     A = np.random.rand(20, 20, 20)
     ref = np.copy(A)
-    ref[
-        (1, 2, 3),
-    ] = 2
+    ref[(1, 2, 3),] = 2
     ref[(1, 2, 3)] = 1
     indexing_test(A)
 

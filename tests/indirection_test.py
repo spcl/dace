@@ -49,7 +49,7 @@ def test_two_nested_levels_indirection():
     w = h = 5
 
     A = np.arange(10, 10 + w * w, dtype=np.float64)
-    B = np.zeros((w, ), dtype=np.float64)
+    B = np.zeros((w,), dtype=np.float64)
     x = np.random.randint(0, w * w, w, dtype=np.uint32)
 
     indirection(A, x, B, W=w, H=h)

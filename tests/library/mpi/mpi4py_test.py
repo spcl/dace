@@ -9,6 +9,7 @@ import pytest
 def test_comm_world_bcast():
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -29,19 +30,20 @@ def test_comm_world_bcast():
         A = np.arange(10, dtype=np.int32)
         A_ref = A.copy()
     else:
-        A = np.zeros((10, ), dtype=np.int32)
+        A = np.zeros((10,), dtype=np.int32)
         A_ref = A.copy()
 
     func(A=A)
     comm_world_bcast.f(A_ref)
 
-    assert (np.array_equal(A, A_ref))
+    assert np.array_equal(A, A_ref)
 
 
 @pytest.mark.mpi
 def test_external_comm_bcast():
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -67,19 +69,20 @@ def test_external_comm_bcast():
         A = np.arange(10, 20, dtype=np.int32)
         A_ref = A.copy()
     else:
-        A = np.zeros((10, ), dtype=np.int32)
+        A = np.zeros((10,), dtype=np.int32)
         A_ref = A.copy()
 
     func(A=A, new_comm=new_comm.py2f())
     external_comm_bcast.f(A_ref)
 
-    assert (np.array_equal(A, A_ref))
+    assert np.array_equal(A, A_ref)
 
 
 @pytest.mark.mpi
 def test_process_grid_bcast():
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -102,19 +105,20 @@ def test_process_grid_bcast():
         A = np.arange(10, dtype=np.int32)
         A_ref = A.copy()
     else:
-        A = np.zeros((10, ), dtype=np.int32)
+        A = np.zeros((10,), dtype=np.int32)
         A_ref = A.copy()
 
     func(A=A)
     pgrid_bcast.f(A_ref)
 
-    assert (np.array_equal(A, A_ref))
+    assert np.array_equal(A, A_ref)
 
 
 @pytest.mark.mpi
 def test_sub_grid_bcast():
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -142,31 +146,33 @@ def test_sub_grid_bcast():
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
     else:
-        A = np.ones((10, ), dtype=np.int32)
+        A = np.ones((10,), dtype=np.int32)
     A_ref = A.copy()
 
     func(A=A, rank=rank)
     subgrid_bcast.f(A_ref, rank)
 
-    assert (np.array_equal(A, A_ref))
+    assert np.array_equal(A, A_ref)
 
 
-def initialize_3mm(b_NI: int,
-                   b_NJ: int,
-                   b_NK: int,
-                   b_NL: int,
-                   b_NM: int,
-                   ts_NI: int,
-                   ts_NJ: int,
-                   ts_NK,
-                   ts_NL: int,
-                   ts_NM: int,
-                   NI: int,
-                   NJ: int,
-                   NK: int,
-                   NL: int,
-                   NM: int,
-                   datatype: type = np.float64):
+def initialize_3mm(
+    b_NI: int,
+    b_NJ: int,
+    b_NK: int,
+    b_NL: int,
+    b_NM: int,
+    ts_NI: int,
+    ts_NJ: int,
+    ts_NK,
+    ts_NL: int,
+    ts_NM: int,
+    NI: int,
+    NJ: int,
+    NK: int,
+    NL: int,
+    NM: int,
+    datatype: type = np.float64,
+):
 
     A = np.fromfunction(lambda i, k: b_NK + k + 1, (ts_NI, ts_NK), dtype=datatype)
     B = np.eye(ts_NK, ts_NJ, b_NK - b_NJ)
@@ -174,18 +180,18 @@ def initialize_3mm(b_NI: int,
     D = np.eye(ts_NM, ts_NL, b_NM - b_NL)
 
     if b_NI + ts_NI > NI:
-        A[NI - b_NI:] = 0
+        A[NI - b_NI :] = 0
     if b_NJ + ts_NJ > NJ:
-        B[:, NJ - b_NJ:] = 0
-        C[NJ - b_NJ:] = 0
+        B[:, NJ - b_NJ :] = 0
+        C[NJ - b_NJ :] = 0
     if b_NK + ts_NJ > NK:
-        A[:, NK - b_NK:] = 0
-        B[NK - b_NK:] = 0
+        A[:, NK - b_NK :] = 0
+        B[NK - b_NK :] = 0
     if b_NL + ts_NL > NL:
-        D[:NL - b_NL] = 0
+        D[: NL - b_NL] = 0
     if b_NM + ts_NM > NM:
-        C[:NM - b_NM] = 0
-        D[NM - b_NM:] = 0
+        C[: NM - b_NM] = 0
+        D[NM - b_NM :] = 0
 
     return A, B, C, D
 
@@ -221,6 +227,7 @@ def test_direct_use_of_MPICOMM_all_reduce():
 def test_3mm():
 
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -229,7 +236,6 @@ def test_3mm():
     def k3mm(A, B, C, D):
         cart_comm = commworld.Create_cart([1, size, 1])
         if cart_comm != MPI.COMM_NULL:
-
             ab_reduce_comm = cart_comm.Sub([False, False, True])
             cd_reduce_comm = cart_comm.Sub([True, False, False])
             abcd_reduce_comm = cart_comm.Sub([False, True, False])
@@ -244,9 +250,9 @@ def test_3mm():
             return E
 
     N = 128
-    assert (size <= 128)
+    assert size <= 128
 
-    NI, NJ, NK, NL, NM = (N, ) * 5
+    NI, NJ, NK, NL, NM = (N,) * 5
     PNI, PNJ, PNK, PNL, PNM = 1, 2, 1, 1, 1
 
     cart_comm = commworld.Create_cart([1, size, 1])
@@ -278,12 +284,13 @@ def test_3mm():
     commworld.Barrier()
 
     if E_ref is not None:
-        assert (np.array_equal(E, E_ref))
+        assert np.array_equal(E, E_ref)
 
 
 @pytest.mark.mpi
 def test_isend_irecv():
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -292,10 +299,10 @@ def test_isend_irecv():
     def mpi4py_isend_irecv(rank: dace.int32, size: dace.int32):
         src = (rank - 1) % size
         dst = (rank + 1) % size
-        req = np.empty((2, ), dtype=MPI.Request)
-        sbuf = np.full((1, ), rank, dtype=np.int32)
+        req = np.empty((2,), dtype=MPI.Request)
+        sbuf = np.full((1,), rank, dtype=np.int32)
         req[0] = commworld.Isend(sbuf, dst, tag=0)
-        rbuf = np.empty((1, ), dtype=np.int32)
+        rbuf = np.empty((1,), dtype=np.int32)
         req[1] = commworld.Irecv(rbuf, src, tag=0)
         MPI.Request.Waitall(req)
         return rbuf
@@ -308,12 +315,13 @@ def test_isend_irecv():
     val = func(rank=rank, size=size)
     ref = mpi4py_isend_irecv.f(rank, size)
 
-    assert (val[0] == ref[0])
+    assert val[0] == ref[0]
 
 
 @pytest.mark.mpi
 def test_send_recv():
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -322,9 +330,9 @@ def test_send_recv():
     def mpi4py_send_recv(rank: dace.int32, size: dace.int32):
         src = (rank - 1) % size
         dst = (rank + 1) % size
-        sbuf = np.full((1, ), rank, dtype=np.int32)
+        sbuf = np.full((1,), rank, dtype=np.int32)
         commworld.Send(sbuf, dst, tag=0)
-        rbuf = np.empty((1, ), dtype=np.int32)
+        rbuf = np.empty((1,), dtype=np.int32)
         commworld.Recv(rbuf, src, tag=0)
         return rbuf
 
@@ -336,20 +344,21 @@ def test_send_recv():
     val = func(rank=rank, size=size)
     ref = mpi4py_send_recv.f(rank, size)
 
-    assert (val[0] == ref[0])
+    assert val[0] == ref[0]
 
 
 @pytest.mark.mpi
 def test_alltoall():
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
 
     @dace.program
     def mpi4py_alltoall(rank: dace.int32, size: dace.compiletime):
-        sbuf = np.full((size, ), rank, dtype=np.int32)
-        rbuf = np.zeros((size, ), dtype=np.int32)
+        sbuf = np.full((size,), rank, dtype=np.int32)
+        rbuf = np.zeros((size,), dtype=np.int32)
         commworld.Alltoall(sbuf, rbuf)
         return rbuf
 

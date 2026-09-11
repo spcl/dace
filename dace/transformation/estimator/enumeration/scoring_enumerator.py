@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This file implements the Enuerator class """
+"""This file implements the Enuerator class"""
 
 from dace.properties import make_properties, Property
 
@@ -13,11 +13,12 @@ class MapScoringEnumerator(Enumerator):
     which rely on a scoring function
     """
 
-    mode = Property(desc="Data type the Iterator should return. "
-                    "Choice between Subgraph and List of Map Entries.",
-                    default="map_entries",
-                    choices=["subgraph", "map_entries"],
-                    dtype=str)
+    mode = Property(
+        desc="Data type the Iterator should return. Choice between Subgraph and List of Map Entries.",
+        default="map_entries",
+        choices=["subgraph", "map_entries"],
+        dtype=str,
+    )
 
     def __init__(self, sdfg, graph, subgraph, condition_function, scoring_function):
 

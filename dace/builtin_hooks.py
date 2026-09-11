@@ -2,6 +2,7 @@
 """
 A set of built-in hooks.
 """
+
 from contextlib import contextmanager
 import fnmatch
 import os
@@ -79,8 +80,9 @@ def profile(
     profiler.report.save(filename)
 
 
-def _make_filter_function(filter: Optional[Union[str, Callable[[Any], bool]]],
-                          with_attr: bool = True) -> Callable[[Any], bool]:
+def _make_filter_function(
+    filter: Optional[Union[str, Callable[[Any], bool]]], with_attr: bool = True
+) -> Callable[[Any], bool]:
     """
     Internal helper that makes a filtering function.
 
@@ -96,8 +98,9 @@ def _make_filter_function(filter: Optional[Union[str, Callable[[Any], bool]]],
     if isinstance(filter, str):
         # If a string was given, construct predicate based on wildcard name matching
         if with_attr:
-            filter_func = lambda elem: fnmatch.fnmatch(elem.name, filter) if hasattr(elem, 'name') else fnmatch.fnmatch(
-                elem.label, filter)
+            filter_func = lambda elem: (
+                fnmatch.fnmatch(elem.name, filter) if hasattr(elem, 'name') else fnmatch.fnmatch(elem.label, filter)
+            )
         else:
             filter_func = lambda elem: fnmatch.fnmatch(elem, filter)
     elif callable(filter):
@@ -107,12 +110,14 @@ def _make_filter_function(filter: Optional[Union[str, Callable[[Any], bool]]],
 
 
 @contextmanager
-def instrument(itype: 'InstrumentationType',
-               filter: Optional[Union[str, Callable[[Any], bool]]],
-               annotate_maps: bool = True,
-               annotate_tasklets: bool = False,
-               annotate_states: bool = False,
-               annotate_sdfgs: bool = False):
+def instrument(
+    itype: 'InstrumentationType',
+    filter: Optional[Union[str, Callable[[Any], bool]]],
+    annotate_maps: bool = True,
+    annotate_tasklets: bool = False,
+    annotate_states: bool = False,
+    annotate_sdfgs: bool = False,
+):
     """
     Context manager that instruments every called DaCe program. Depending on the given instrumentation
     type and parameters, annotates the given elements on the SDFG. Filtering is possible with strings
@@ -149,7 +154,6 @@ def instrument(itype: 'InstrumentationType',
     filter_func = _make_filter_function(filter)
 
     class Instrumenter:
-
         def __init__(self):
             self.reports: List[InstrumentationReport] = []
 
@@ -192,10 +196,12 @@ def instrument(itype: 'InstrumentationType',
 
 
 @contextmanager
-def instrument_data(ditype: 'DataInstrumentationType',
-                    filter: Optional[Union[str, Callable[[Any], bool]]],
-                    restore_from: Optional[Union[str, 'InstrumentedDataReport']] = None,
-                    verbose: bool = False):
+def instrument_data(
+    ditype: 'DataInstrumentationType',
+    filter: Optional[Union[str, Callable[[Any], bool]]],
+    restore_from: Optional[Union[str, 'InstrumentedDataReport']] = None,
+    verbose: bool = False,
+):
     """
     Context manager that instruments (serializes/deserializes) the data of every called DaCe program.
     This can be used for reproducible runs and debugging. Depending on the given data instrumentation
@@ -245,7 +251,6 @@ def instrument_data(ditype: 'DataInstrumentationType',
     filter_func = _make_filter_function(filter, with_attr=False)
 
     class DataInstrumenter:
-
         @contextmanager
         def __call__(self, sdfg: 'SDFG'):
             for n, _ in sdfg.all_nodes_recursive():
@@ -272,7 +277,6 @@ def instrument_data(ditype: 'DataInstrumentationType',
     if ditype == DataInstrumentationType.Restore:
         # Restore data into compiled SDFG
         class DataRestoreHook:
-
             @contextmanager
             def __call__(self, csdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
                 # Restore data from requested data report
@@ -312,5 +316,6 @@ def cli_optimize_on_call(sdfg: 'SDFG'):
     """
 
     from dace.transformation.optimizer import SDFGOptimizer
+
     opt = SDFGOptimizer(sdfg)
     return opt.optimize()

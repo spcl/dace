@@ -16,8 +16,8 @@ def create_array(shape, strides):
 
 def test_get_packed_fortran_strides_1d():
     """Test Fortran strides for 1D array"""
-    _, array = create_array((10, ), None)
-    expected = (1, )
+    _, array = create_array((10,), None)
+    expected = (1,)
     result = array._get_packed_fortran_strides()
     assert result == expected
 
@@ -48,8 +48,8 @@ def test_get_packed_fortran_strides_4d():
 
 def test_get_packed_c_strides_1d():
     """Test C strides for 1D array"""
-    _, array = create_array((10, ), None)
-    expected = (1, )
+    _, array = create_array((10,), None)
+    expected = (1,)
     result = array._get_packed_c_strides()
     assert result == expected
 
@@ -108,7 +108,7 @@ def test_is_packed_fortran_strides_false_wrong_order():
 
 def test_is_packed_c_strides_true_1d():
     """Test 1D array with C strides"""
-    _, array = create_array((10, ), (1, ))
+    _, array = create_array((10,), (1,))
     result = array.is_packed_c_strides()
     assert result is True
 
@@ -150,7 +150,7 @@ def test_is_packed_c_strides_false_wrong_order():
 
 def test_fortran_and_c_equivalent_for_1d():
     """Test that 1D arrays have same strides for both layouts"""
-    _, array = create_array((100, ), (1, ))
+    _, array = create_array((100,), (1,))
     assert array.is_packed_fortran_strides() is True
     assert array.is_packed_c_strides() is True
 
@@ -192,12 +192,12 @@ def test_explicit_c_strides_not_packed():
 
 def test_set_shape_reshape_1d_to_2d():
     """Reshape 1D array to 2D and verify packed Fortran/C strides."""
-    _, array = create_array((12, ), None)
+    _, array = create_array((12,), None)
 
     before_fortran = array._get_packed_fortran_strides()
     before_c = array._get_packed_c_strides()
-    assert before_fortran == (1, )
-    assert before_c == (1, )
+    assert before_fortran == (1,)
+    assert before_c == (1,)
 
     array.set_shape((3, 4))
     after_fortran = array._get_packed_fortran_strides()
@@ -247,11 +247,11 @@ def test_set_shape_reshape_3d_to_1d():
     assert before_fortran == (1, 2, 6)
     assert before_c == (12, 4, 1)
 
-    array.set_shape((24, ))
+    array.set_shape((24,))
     after_fortran = array._get_packed_fortran_strides()
     after_c = array._get_packed_c_strides()
-    assert after_fortran == (1, )
-    assert after_c == (1, )
+    assert after_fortran == (1,)
+    assert after_c == (1,)
 
 
 def test_sdfg_save_and_reload_strides_tempfile():
@@ -306,7 +306,7 @@ def test_is_packed_fortran_strides_true_3d_symbolic_N():
 
 def test_fortran_and_c_equivalent_for_1d_symbolic_N():
     """Test that 1D arrays have same strides for both layouts with symbolic N"""
-    _, array = create_array((N, ), (1, ))
+    _, array = create_array((N,), (1,))
     assert array.is_packed_fortran_strides() is True
     assert array.is_packed_c_strides() is True
 

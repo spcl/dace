@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Code I/O stream that automates indentation and mapping of code to SDFG
-    nodes. """
+"""Code I/O stream that automates indentation and mapping of code to SDFG
+nodes."""
 
 import inspect
 from io import StringIO
@@ -10,8 +10,8 @@ from dace.sdfg.state import ControlFlowRegion
 
 
 class CodeIOStream(StringIO):
-    """ Code I/O stream that automates indentation and mapping of code to SDFG
-        nodes. """
+    """Code I/O stream that automates indentation and mapping of code to SDFG
+    nodes."""
 
     def __init__(self, base_indentation=0):
         super(CodeIOStream, self).__init__()
@@ -89,6 +89,7 @@ class CodeIOStream(StringIO):
 
             # If indentation failed, warn user
             if self._indent < -1:
-                super(CodeIOStream, self).write('///WARNING: Indentation failure! This probably ' +
-                                                'indicates an error in the SDFG.\n')
+                super(CodeIOStream, self).write(
+                    '///WARNING: Indentation failure! This probably ' + 'indicates an error in the SDFG.\n'
+                )
                 self._indent = 0

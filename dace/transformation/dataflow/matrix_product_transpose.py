@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Implements the matrix-matrix product transpose transformation. """
+"""Implements the matrix-matrix product transpose transformation."""
 
 from copy import deepcopy as dcpy
 import dace
@@ -12,10 +12,11 @@ from dace.properties import make_properties
 
 @make_properties
 class MatrixProductTranspose(transformation.SingleStateTransformation):
-    """ Implements the matrix-matrix product transpose transformation.
+    """Implements the matrix-matrix product transpose transformation.
 
-        T(A) @ T(B) = T(B @ A)
+    T(A) @ T(B) = T(B @ A)
     """
+
     import dace.libraries.blas as blas  # Avoid slow imports
     import dace.libraries.linalg as linalg  # Avoid slow imports
 

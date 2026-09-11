@@ -57,6 +57,7 @@ import numpy as np
 # PyTorch is optional (only needed for tensor conversion features)
 try:
     import torch
+
     TORCH_AVAILABLE = True
 except ImportError:
     torch = None
@@ -73,6 +74,7 @@ except ImportError as e:
 # ONNXRuntime for symbolic shape inference
 try:
     from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference
+
     ONNXRUNTIME_AVAILABLE = True
 except ImportError:
     SymbolicShapeInference = None
@@ -81,6 +83,7 @@ except ImportError:
 # onnxsim is optional (only needed for model simplification)
 try:
     import onnxsim
+
     ONNXSIM_AVAILABLE = True
 except ImportError:
     onnxsim = None
@@ -112,7 +115,7 @@ if TORCH_AVAILABLE:
         np.float32: torch.float32,
         np.float64: torch.float64,
         np.complex64: torch.complex64,
-        np.complex128: torch.complex128
+        np.complex128: torch.complex128,
     }
 
     #: Reverse mapping from PyTorch dtypes to NumPy dtypes
@@ -168,6 +171,7 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
             print("Warning: ONNXRuntime not available, falling back to ONNX shape inference.")
         # Fallback to ONNX's built-in shape inference
         import onnx.shape_inference
+
         return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
     try:
@@ -189,17 +193,20 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
 
         if incomplete_shapes:
             if config.Config.get_bool('debugprint'):
-                print("Warning: ONNXRuntime symbolic shape inference produced incomplete results, "
-                      "falling back to ONNX shape inference.")
+                print(
+                    "Warning: ONNXRuntime symbolic shape inference produced incomplete results, "
+                    "falling back to ONNX shape inference."
+                )
             import onnx.shape_inference
+
             return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
         return model
     except Exception as e:
         if config.Config.get_bool('debugprint'):
-            print(f"Warning: ONNXRuntime symbolic shape inference failed ({e}), "
-                  "falling back to ONNX shape inference.")
+            print(f"Warning: ONNXRuntime symbolic shape inference failed ({e}), falling back to ONNX shape inference.")
         import onnx.shape_inference
+
         return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
 
@@ -240,52 +247,54 @@ def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelP
 
 
 class ONNXModel:
-    """ Loads an ONNX model into an SDFG.
+    """Loads an ONNX model into an SDFG.
 
-        :Example:
-            First download an ONNX model, such as
-            `efficientnet <http://spclstorage.inf.ethz.ch/~rauscho/efficientnet-lite4-11.onnx>`_.
+    :Example:
+        First download an ONNX model, such as
+        `efficientnet <http://spclstorage.inf.ethz.ch/~rauscho/efficientnet-lite4-11.onnx>`_.
 
-            .. testsetup::
+        .. testsetup::
 
-                import subprocess
-                model_path = os.path.join("..", "tests", "onnx_files", "efficientnet.onnx")
-                # Download model
-                if not os.path.exists(model_path):
-                    subprocess.check_call([
-                        "wget",
-                        "http://spclstorage.inf.ethz.ch/~rauscho/efficientnet-lite4-11.onnx",
-                        "--output-document={}".format(model_path),
-                        "--no-verbose"
-                    ])
+            import subprocess
+            model_path = os.path.join("..", "tests", "onnx_files", "efficientnet.onnx")
+            # Download model
+            if not os.path.exists(model_path):
+                subprocess.check_call([
+                    "wget",
+                    "http://spclstorage.inf.ethz.ch/~rauscho/efficientnet-lite4-11.onnx",
+                    "--output-document={}".format(model_path),
+                    "--no-verbose"
+                ])
 
 
-            .. testcode::
+        .. testcode::
 
-                import onnx
-                import os
-                import numpy as np
-                from dace.onnx import ONNXModel
+            import onnx
+            import os
+            import numpy as np
+            from dace.onnx import ONNXModel
 
-                model_path = os.path.join("..", "tests", "onnx_files", "efficientnet.onnx")
-                model = onnx.load(model_path)
-                dace_model = ONNXModel("efficientnet", model)
+            model_path = os.path.join("..", "tests", "onnx_files", "efficientnet.onnx")
+            model = onnx.load(model_path)
+            dace_model = ONNXModel("efficientnet", model)
 
-                test_input = np.random.rand(1, 3, 224, 224).astype(np.float32)
-                dace_model(test_input)
+            test_input = np.random.rand(1, 3, 224, 224).astype(np.float32)
+            dace_model(test_input)
 
     """
 
-    def __init__(self,
-                 name: str,
-                 model: onnx.ModelProto,
-                 cuda: bool = False,
-                 auto_optimize: bool = False,
-                 simplify: bool = False,
-                 onnx_simplify: bool = True,
-                 storage: Optional[dtypes.StorageType] = None,
-                 save_transients: Optional[Dict[str, torch.Tensor]] = None,
-                 auto_merge: bool = False):
+    def __init__(
+        self,
+        name: str,
+        model: onnx.ModelProto,
+        cuda: bool = False,
+        auto_optimize: bool = False,
+        simplify: bool = False,
+        onnx_simplify: bool = True,
+        storage: Optional[dtypes.StorageType] = None,
+        save_transients: Optional[Dict[str, torch.Tensor]] = None,
+        auto_merge: bool = False,
+    ):
         """
         :param name: the name for the SDFG.
         :param model: the model to import.
@@ -369,21 +378,27 @@ class ONNXModel:
 
             # extract the op attributes
             op_attributes = {
-                attribute_proto.name: convert_attribute_proto(attribute_proto)
-                for attribute_proto in node.attribute
+                attribute_proto.name: convert_attribute_proto(attribute_proto) for attribute_proto in node.attribute
             }
 
             if node.op_type == "Constant":
                 # Add constants to weights immediately
                 possible_values = [
-                    "sparse_value", "value", "value_float", "value_floats", "value_int", "value_ints", "value_string",
-                    "value_strings"
+                    "sparse_value",
+                    "value",
+                    "value_float",
+                    "value_floats",
+                    "value_int",
+                    "value_ints",
+                    "value_string",
+                    "value_strings",
                 ]
 
                 # do some manual validation here since the node validation will never run
                 if set(op_attributes).difference(possible_values):
-                    raise ValueError(f"Got unexpected attributes on Constant node "
-                                     f"{set(op_attributes).difference(possible_values)}")
+                    raise ValueError(
+                        f"Got unexpected attributes on Constant node {set(op_attributes).difference(possible_values)}"
+                    )
 
                 if len(op_attributes) != 1:
                     raise ValueError("Expected Constant node to have exactly one of its attributes set")
@@ -409,8 +424,9 @@ class ONNXModel:
             self.state.add_node(op_node)
             self._idx_to_node.append(op_node)
 
-            for param_idx, (name, is_input) in chain(enumerate(zip(node.input, repeat(True))),
-                                                     enumerate(zip(node.output, repeat(False)))):
+            for param_idx, (name, is_input) in chain(
+                enumerate(zip(node.input, repeat(True))), enumerate(zip(node.output, repeat(False)))
+            ):
                 # Get parameter schema
                 params = op_node.schema.inputs if is_input else op_node.schema.outputs
                 params_len = len(params)
@@ -421,10 +437,10 @@ class ONNXModel:
                     if params[-1].param_type != ONNXParameterType.Variadic:
                         raise ValueError(
                             "Expected the last {i_or_o} parameter to be variadic,"
-                            " since the {i_or_o} with idx {param_idx} has more parameters than the schema ({params_len})"
-                            .format(i_or_o="input" if is_input else "output",
-                                    param_idx=param_idx,
-                                    params_len=params_len))
+                            " since the {i_or_o} with idx {param_idx} has more parameters than the schema ({params_len})".format(
+                                i_or_o="input" if is_input else "output", param_idx=param_idx, params_len=params_len
+                            )
+                        )
                     param_type = ONNXParameterType.Variadic
                     conn_name = params[-1].name + "__" + str(param_idx - params_len + 1)
                 else:
@@ -440,8 +456,11 @@ class ONNXModel:
 
                 # Validate required parameters
                 if param_type != ONNXParameterType.Optional and not name:
-                    raise ValueError("Required {i_or_o} parameter '{param_name}' is not set".format(
-                        i_or_o="input" if is_input else "output", param_name=params[param_idx].name))
+                    raise ValueError(
+                        "Required {i_or_o} parameter '{param_name}' is not set".format(
+                            i_or_o="input" if is_input else "output", param_name=params[param_idx].name
+                        )
+                    )
 
                 # Create array if needed
                 if clean_onnx_name(name) not in self.sdfg.arrays:
@@ -463,13 +482,15 @@ class ONNXModel:
                 if is_input:
                     if conn_name not in op_node.in_connectors:
                         assert op_node.add_in_connector(conn_name)
-                    self.state.add_edge(access, None, op_node, conn_name,
-                                        dace.Memlet.from_array(clean_onnx_name(name), data_desc))
+                    self.state.add_edge(
+                        access, None, op_node, conn_name, dace.Memlet.from_array(clean_onnx_name(name), data_desc)
+                    )
                 else:
                     if conn_name not in op_node.out_connectors:
                         assert op_node.add_out_connector(conn_name)
-                    self.state.add_edge(op_node, conn_name, access, None,
-                                        dace.Memlet.from_array(clean_onnx_name(name), data_desc))
+                    self.state.add_edge(
+                        op_node, conn_name, access, None, dace.Memlet.from_array(clean_onnx_name(name), data_desc)
+                    )
 
         # scalars need to be promoted to arrays so that we can return them from the dace program
         # however, this is only for CPU: on GPU, scalars are already pointers
@@ -487,16 +508,20 @@ class ONNXModel:
 
             desc = copy.deepcopy(self.sdfg.arrays[clean_name])
             if isinstance(desc, dt.Scalar) and not self.cuda:
-                desc = dt.Array(desc.dtype, (1, ))
+                desc = dt.Array(desc.dtype, (1,))
                 self._promoted_scalars.add(new_output_name)
 
             # insert new descriptor
             self.sdfg.arrays[new_output_name] = desc
             desc.transient = False
 
-            copy_out_state.add_edge(copy_out_state.add_read(clean_name), None,
-                                    copy_out_state.add_write(new_output_name), None,
-                                    self.sdfg.make_array_memlet(clean_name))
+            copy_out_state.add_edge(
+                copy_out_state.add_read(clean_name),
+                None,
+                copy_out_state.add_write(new_output_name),
+                None,
+                self.sdfg.make_array_memlet(clean_name),
+            )
 
         # finally, rename outputs, and fuse states
         self.outputs = new_output_names
@@ -505,8 +530,9 @@ class ONNXModel:
         if self.cuda:
             self.sdfg.apply_gpu_transformations()
 
-    def _add_constant_tensor(self, tensor: Union[onnx.TensorProto, Tuple[str, np.ndarray]],
-                             storage: dtypes.StorageType):
+    def _add_constant_tensor(
+        self, tensor: Union[onnx.TensorProto, Tuple[str, np.ndarray]], storage: dtypes.StorageType
+    ):
         if isinstance(tensor, tuple):
             unclean_name, value = tensor
             dtype = dtypes.dtype_to_typeclass(value.dtype.type)
@@ -540,11 +566,15 @@ class ONNXModel:
                 if existing_arr.dtype != dtype:
                     raise ValueError(
                         "Invalid ONNX model; found two values with name '{}', but different dtypes ({} and {})".format(
-                            name, existing_arr.dtype, dtype))
+                            name, existing_arr.dtype, dtype
+                        )
+                    )
                 if tuple(existing_arr.shape) != tuple(shape):
                     raise ValueError(
-                        "Invalid ONNX model; found two values with name '{}', but different dimensions ({} and {})".
-                        format(name, existing_arr.shape, shape))
+                        "Invalid ONNX model; found two values with name '{}', but different dimensions ({} and {})".format(
+                            name, existing_arr.shape, shape
+                        )
+                    )
 
         # we need to copy here because the weight_arr tensor is not writable
         self.weights[unclean_name] = torch.from_numpy(np_array.copy())
@@ -556,14 +586,20 @@ class ONNXModel:
         name = value_info.name
 
         if not _nested_HasField(value_info, "type.tensor_type.shape"):
-            raise ValueError("Value '{}' does not have a shape in this graph."
-                             " Please run shape inference before importing.".format(name))
+            raise ValueError(
+                "Value '{}' does not have a shape in this graph. Please run shape inference before importing.".format(
+                    name
+                )
+            )
 
         tensor_type = value_info.type.tensor_type
 
         if not tensor_type.HasField("elem_type"):
-            raise ValueError("Value '{}' does not have a type in this graph."
-                             " Please run type inference before importing.".format(name))
+            raise ValueError(
+                "Value '{}' does not have a type in this graph. Please run type inference before importing.".format(
+                    name
+                )
+            )
 
         shape = []
         for d in tensor_type.shape.dim:
@@ -579,27 +615,33 @@ class ONNXModel:
 
                 shape.append(parsed)
             else:
-                raise ValueError("Value '{}' does not have a shape in this graph."
-                                 " Please run shape inference before importing.".format(name))
+                raise ValueError(
+                    "Value '{}' does not have a shape in this graph."
+                    " Please run shape inference before importing.".format(name)
+                )
         transient = name not in self.inputs
         if len(shape) == 0:
-            self.sdfg.add_scalar(clean_onnx_name(name),
-                                 dtype=onnx_tensor_type_to_typeclass(tensor_type.elem_type),
-                                 transient=transient,
-                                 storage=storage)
+            self.sdfg.add_scalar(
+                clean_onnx_name(name),
+                dtype=onnx_tensor_type_to_typeclass(tensor_type.elem_type),
+                transient=transient,
+                storage=storage,
+            )
         else:
-            self.sdfg.add_array(clean_onnx_name(name),
-                                shape=shape,
-                                dtype=onnx_tensor_type_to_typeclass(tensor_type.elem_type),
-                                transient=transient,
-                                storage=storage)
+            self.sdfg.add_array(
+                clean_onnx_name(name),
+                shape=shape,
+                dtype=onnx_tensor_type_to_typeclass(tensor_type.elem_type),
+                transient=transient,
+                storage=storage,
+            )
 
     @property
     def clean_weights(self):
         return {clean_onnx_name(k): v for k, v in self.weights.items()}
 
     def compile_and_init(self) -> compiled_sdfg.CompiledSDFG:
-        """ Compile the SDFG and load parameters into GPU memory. """
+        """Compile the SDFG and load parameters into GPU memory."""
 
         compiled_sdfg = self.sdfg.compile()
 
@@ -616,14 +658,15 @@ class ONNXModel:
 
         return compiled_sdfg
 
-    def __call__(self, *args,
-                 **kwargs) -> Union[Union[torch.Tensor, np.ndarray], Tuple[Union[torch.Tensor, np.ndarray]]]:
-        """ Execute the model.
+    def __call__(
+        self, *args, **kwargs
+    ) -> Union[Union[torch.Tensor, np.ndarray], Tuple[Union[torch.Tensor, np.ndarray]]]:
+        """Execute the model.
 
-            :param args: positional arguments to the model. The i-th argument will be passed as the i-th input of the
-                         model.
-            :param kwargs: named arguments to the model. The passed names should match the names in the ONNX model.
-            :return: the output of the model (or a tuple of outputs if there are multiple).
+        :param args: positional arguments to the model. The i-th argument will be passed as the i-th input of the
+                     model.
+        :param kwargs: named arguments to the model. The passed names should match the names in the ONNX model.
+        :return: the output of the model (or a tuple of outputs if there are multiple).
         """
 
         transient_kwargs = {}
@@ -661,26 +704,24 @@ class ONNXModel:
 
         return tuple(outputs.values())
 
-    def _call_args(self,
-                   *,
-                   args,
-                   kwargs,
-                   torch_outputs: bool = None) -> Tuple[Dict[str, Any], Dict[str, Any], OrderedDict[str, Any]]:
-        """ Prepare the arguments for a call.
+    def _call_args(
+        self, *, args, kwargs, torch_outputs: bool = None
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], OrderedDict[str, Any]]:
+        """Prepare the arguments for a call.
 
-            This returns 4 dicts; one for each of the following:
-            1. the inputs
-            3. inferred values for symbols for dynamic dimensions
-            4. outputs
+        This returns 4 dicts; one for each of the following:
+        1. the inputs
+        3. inferred values for symbols for dynamic dimensions
+        4. outputs
 
-            These arguments can be passed to `self.sdfg`.
+        These arguments can be passed to `self.sdfg`.
 
-            :param args: model positional args
-            :param kwargs: model kwargs
-            :param torch_outputs: if not None, the outputs will be torch tensors depending on the boolean value.
-                                  Otherwise the outputs will be torch tensors only if at least one of the inputs is a
-                                  torch tensor.
-            :return: the tuple of dicts
+        :param args: model positional args
+        :param kwargs: model kwargs
+        :param torch_outputs: if not None, the outputs will be torch tensors depending on the boolean value.
+                              Otherwise the outputs will be torch tensors only if at least one of the inputs is a
+                              torch tensor.
+        :return: the tuple of dicts
         """
         inputs = kwargs
 
@@ -706,25 +747,23 @@ class ONNXModel:
             else:
                 clean_inputs[clean_onnx_name(input)] = arr
 
-        inferred_symbols = parser.infer_symbols_from_datadescriptor(self.sdfg, {
-            **clean_inputs,
-            **self.initialized_parameters
-        })
+        inferred_symbols = parser.infer_symbols_from_datadescriptor(
+            self.sdfg, {**clean_inputs, **self.initialized_parameters}
+        )
         inferred_symbols = {k: int(v) for k, v in inferred_symbols.items()}
 
         if torch_outputs is None:
-            torch_outputs = any(self.sdfg.arrays[clean_onnx_name(o)].storage in dace.dtypes.GPU_STORAGES
-                                for o in self.outputs) or any(
-                                    isinstance(inp, torch.Tensor) for _, inp in clean_inputs.items())
+            torch_outputs = any(
+                self.sdfg.arrays[clean_onnx_name(o)].storage in dace.dtypes.GPU_STORAGES for o in self.outputs
+            ) or any(isinstance(inp, torch.Tensor) for _, inp in clean_inputs.items())
 
         outputs = collections.OrderedDict()
         # create numpy arrays for the outputs
         for name in self.outputs:
             clean_name = clean_onnx_name(name)
-            outputs[clean_name] = create_output_array(inferred_symbols,
-                                                      self.sdfg.arrays[clean_name],
-                                                      use_torch=torch_outputs,
-                                                      zeros=True)
+            outputs[clean_name] = create_output_array(
+                inferred_symbols, self.sdfg.arrays[clean_name], use_torch=torch_outputs, zeros=True
+            )
 
         # check that there's no overlap
         seen = set()
@@ -744,20 +783,20 @@ class ONNXModel:
             self.cuda,
             simplify=self.simplify,
             # constants have been folded before GPU transforms
-            fold_constants=False)
+            fold_constants=False,
+        )
 
 
-def create_output_array(inferred_symbols: Dict[str, int],
-                        desc: dt.Data,
-                        use_torch=False,
-                        zeros: bool = False) -> Union[np.ndarray, torch.tensor]:
-    """ Create the array for an output. This is either a numpy array or a torch tensor depending on `use_torch`
+def create_output_array(
+    inferred_symbols: Dict[str, int], desc: dt.Data, use_torch=False, zeros: bool = False
+) -> Union[np.ndarray, torch.tensor]:
+    """Create the array for an output. This is either a numpy array or a torch tensor depending on `use_torch`
 
-        When `self.force_torch_outputs` is True, the outputs will be tensors. Otherwise, the outputs will be tensors
-        :param inferred_symbols: the symbols inferred from `infer_symbols_from_datadescriptor`.
-        :param desc: the data descriptor for the array
-        :param use_torch: whether to return a numpy array or a torch tensor.
-        :param zeros: if true init with zeros else empty.
+    When `self.force_torch_outputs` is True, the outputs will be tensors. Otherwise, the outputs will be tensors
+    :param inferred_symbols: the symbols inferred from `infer_symbols_from_datadescriptor`.
+    :param desc: the data descriptor for the array
+    :param use_torch: whether to return a numpy array or a torch tensor.
+    :param zeros: if true init with zeros else empty.
     """
 
     def eval_dim(dim):

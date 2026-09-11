@@ -11,8 +11,8 @@ def test_strip_mining():
     """
     # 1. The program
     sdfg = dace.SDFG("assign")
-    sdfg.add_array("A", (64, ), dtype=dace.uint32)
-    sdfg.add_array("B", (1, ), dtype=dace.uint32)
+    sdfg.add_array("A", (64,), dtype=dace.uint32)
+    sdfg.add_array("B", (1,), dtype=dace.uint32)
     state = sdfg.add_state("main")
 
     # inputs
@@ -23,11 +23,9 @@ def test_strip_mining():
     map_entry, map_exit = state.add_map("map", dict(i="0:64"))
 
     # Assign tasklet
-    tasklet = state.add_tasklet("assign",
-                                inputs=dict(),
-                                outputs={"_out"},
-                                code="_out = 1;",
-                                language=dace.dtypes.Language.CPP)
+    tasklet = state.add_tasklet(
+        "assign", inputs=dict(), outputs={"_out"}, code="_out = 1;", language=dace.dtypes.Language.CPP
+    )
 
     # Write first 1 to B[0] then B[0] to A[i]
     state.add_edge(map_entry, None, tasklet, None, dace.Memlet())
@@ -56,7 +54,7 @@ def test_strip_mining():
 def strided_tiled_sdfg(step: int, tile_size: int):
     """``A[i] = 1`` over ``0:64:step``, strip-mined by ``tile_size`` iterations."""
     sdfg = dace.SDFG(f"strided_assign_{step}")
-    sdfg.add_array("A", (64, ), dtype=dace.uint32)
+    sdfg.add_array("A", (64,), dtype=dace.uint32)
     state = sdfg.add_state("main")
     A = state.add_access("A")
     map_entry, map_exit = state.add_map("map", dict(i=f"0:64:{step}"))
@@ -87,10 +85,12 @@ def test_strided_tile_extent_is_scaled_by_the_map_step():
     for step in (1, 2, 4):
         _, state, map_entry = strided_tiled_sdfg(step, tile_size)
         # ``map_entry`` is the inner (tile) map after strip-mining; its parent is the tile-number map.
-        assert map_entry.map.range.size() == [tile_size], \
+        assert map_entry.map.range.size() == [tile_size], (
             f"step={step}: tile holds {map_entry.map.range.size()} iterations, expected {tile_size}"
-        assert state.entry_node(map_entry).map.range[0][2] == tile_size * step, \
+        )
+        assert state.entry_node(map_entry).map.range[0][2] == tile_size * step, (
             f"step={step}: tile-number map strides {state.entry_node(map_entry).map.range[0][2]}"
+        )
 
 
 def test_strided_tile_assigns_every_visited_element():

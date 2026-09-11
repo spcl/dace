@@ -9,14 +9,13 @@ import ast
 
 
 class TestTypeInference(unittest.TestCase):
-
     def testSimpleAssignment(self):
 
         config_data_types = Config.get('compiler', 'default_data_types')
 
         # simple assignment tests
 
-        #bool
+        # bool
         code_str = "value=True"
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(bool))
@@ -98,7 +97,7 @@ class TestTypeInference(unittest.TestCase):
         inf_type = type_inference.infer_expr_type(code_str, prev_symbols)
         self.assertEqual(inf_type, dtypes.typeclass(int))
 
-        #invalid code
+        # invalid code
         code_str = "a = 5 + 3.5"
         self.assertRaises(TypeError, lambda: type_inference.infer_expr_type(code_str))
 
@@ -171,7 +170,7 @@ var3 = 2.1 if (i>1 and i<10) else 2.1 # A comment
 res = var1 + var3 * var2
         """
 
-        #create AST
+        # create AST
         tree = ast.parse(code_str)
         defined_symbols = {"in_x": dtypes.typeclass(np.float32), "in_y": dtypes.typeclass(np.float32)}
         inf_symbols = type_inference.infer_types(code_str, defined_symbols)
@@ -221,7 +220,7 @@ res = var1 + var3 * var2
         inf_symbols = type_inference.infer_types(for_loop_code)
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(int))
 
-        #It is not possible to annotate the type of the variable in the loop guard
+        # It is not possible to annotate the type of the variable in the loop guard
         # But it is ok to do so outside of the loop
         # https://stackoverflow.com/questions/41641449/how-do-i-annotate-types-in-a-for-loop/41641489#41641489
         for_loop_code = """i: int
@@ -263,7 +262,7 @@ finally:
 """
         inf_symbols = type_inference.infer_types(try_except_finally_code)
 
-        #function def with arguments
+        # function def with arguments
         function_def_return_code = """def f(arg : float):
     res = 5 + arg
     return res

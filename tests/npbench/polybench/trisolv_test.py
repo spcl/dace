@@ -22,8 +22,8 @@ def trisolv_kernel(L: dc.float64[N, N], x: dc.float64[N], b: dc.float64[N]):
 
 def initialize(N, datatype=np.float64):
     L = np.fromfunction(lambda i, j: (i + N - j + 1) * 2 / N, (N, N), dtype=datatype)
-    x = np.full((N, ), -999, dtype=datatype)
-    b = np.fromfunction(lambda i: i, (N, ), dtype=datatype)
+    x = np.full((N,), -999, dtype=datatype)
+    b = np.fromfunction(lambda i: i, (N,), dtype=datatype)
     return L, x, b
 
 
@@ -79,7 +79,7 @@ def run_trisolv_autodiff():
 
     # Initialize gradient computation data
     gradient_L = np.zeros_like(L)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -119,7 +119,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

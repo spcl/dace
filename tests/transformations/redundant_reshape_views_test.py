@@ -36,8 +36,9 @@ def test_inline_reshape_views_work():
 
     arrays = 0
     views = 0
-    sdfg_used_desc = set([(n.data, n.desc(sdfg)) for n, _ in sdfg.all_nodes_recursive()
-                          if isinstance(n, dace.nodes.AccessNode)])
+    sdfg_used_desc = set(
+        [(n.data, n.desc(sdfg)) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.AccessNode)]
+    )
     for _, desc in sdfg_used_desc:
         # View is subclass of Array, so we must do this check first
         if isinstance(desc, dace.data.View):
@@ -50,13 +51,13 @@ def test_inline_reshape_views_work():
 
 
 def _dml_disambiguate_direction_dependent_views(sdfg: dace.SDFG):
-    """ Consider the following subgraph:
-            (A) -- y --> (n) -- x --> (C)
-            In dace, if B is a View node and A and C are access nodes, and y and x both have data set to A.data and
-            B.data respectively, the semantics of the graph depend on the order in which it is executed, i.e. reversing
-            the subgraph doesn't perform as expected anymore. To disambiguate this case, we set y.data to the View's
-            data.
-        """
+    """Consider the following subgraph:
+    (A) -- y --> (n) -- x --> (C)
+    In dace, if B is a View node and A and C are access nodes, and y and x both have data set to A.data and
+    B.data respectively, the semantics of the graph depend on the order in which it is executed, i.e. reversing
+    the subgraph doesn't perform as expected anymore. To disambiguate this case, we set y.data to the View's
+    data.
+    """
 
     for n, state in sdfg.all_nodes_recursive():
         if isinstance(n, nd.AccessNode) and type(n.desc(sdfg)) is dt.View:
@@ -68,9 +69,12 @@ def _dml_disambiguate_direction_dependent_views(sdfg: dace.SDFG):
                 y = in_edges[0].data
                 C = out_edges[0].dst
                 x = out_edges[0].data
-                if (isinstance(A, nd.AccessNode) and isinstance(C, nd.AccessNode) and y.data == A.data
-                        and x.data == C.data):
-
+                if (
+                    isinstance(A, nd.AccessNode)
+                    and isinstance(C, nd.AccessNode)
+                    and y.data == A.data
+                    and x.data == C.data
+                ):
                     # flip the memlet
                     y.subset, y.other_subset = y.other_subset, y.subset
                     y.data = n.data

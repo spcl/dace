@@ -8,6 +8,7 @@ import dace.sdfg.utils as sdutils
 
 class ScopeAnalysis(NamedTuple):
     """Container for scope analysis results."""
+
     used_data: Set[str]
     used_symbols: Set[str]
     constant_data: Set[str]
@@ -69,28 +70,29 @@ class ScopeDataAndSymbolAnalysis(ppl.Pass):
 
         for node, parent_graph in sdfg.all_nodes_recursive():
             # Analyze GPU device maps
-            if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device):
-
+            if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                 analysis_results[node.guid] = ScopeAnalysis(
                     used_data=sdutils.get_used_data(node, parent_state=parent_graph),
-                    used_symbols=sdutils.get_used_symbols(node,
-                                                          parent_state=parent_graph,
-                                                          include_symbols_for_offset_calculations=True),
+                    used_symbols=sdutils.get_used_symbols(
+                        node, parent_state=parent_graph, include_symbols_for_offset_calculations=True
+                    ),
                     constant_data=sdutils.get_constant_data(node, parent_state=parent_graph),
-                    constant_symbols=sdutils.get_constant_symbols(node,
-                                                                  parent_state=parent_graph,
-                                                                  include_symbols_for_offset_calculations=True))
+                    constant_symbols=sdutils.get_constant_symbols(
+                        node, parent_state=parent_graph, include_symbols_for_offset_calculations=True
+                    ),
+                )
 
             # Analyze nested SDFGs
             elif isinstance(node, dace.sdfg.nodes.NestedSDFG):
                 analysis_results[node.guid] = ScopeAnalysis(
                     used_data=sdutils.get_used_data(node, parent_state=parent_graph),
-                    used_symbols=sdutils.get_used_symbols(node,
-                                                          parent_state=parent_graph,
-                                                          include_symbols_for_offset_calculations=True),
+                    used_symbols=sdutils.get_used_symbols(
+                        node, parent_state=parent_graph, include_symbols_for_offset_calculations=True
+                    ),
                     constant_data=sdutils.get_constant_data(node, parent_state=parent_graph),
-                    constant_symbols=sdutils.get_constant_symbols(node,
-                                                                  parent_state=parent_graph,
-                                                                  include_symbols_for_offset_calculations=True))
+                    constant_symbols=sdutils.get_constant_symbols(
+                        node, parent_state=parent_graph, include_symbols_for_offset_calculations=True
+                    ),
+                )
 
         return analysis_results

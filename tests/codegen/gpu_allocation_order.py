@@ -17,14 +17,14 @@ def test_allocation_requiring_map_variables():
     state = sdfg.add_state("main")
 
     # Add input and output array (same array) and corrsponding accessNodes
-    sdfg.add_array("gpu_A", (128, ), dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("gpu_A", (128,), dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
     gpu_a_acc_read = state.add_access("gpu_A")
     gpu_a_acc_write = state.add_access("gpu_A")
 
     # Add GPU_Device and GPU_ThreadBlock Maps
-    gpu_map_entry, gpu_map_exit = state.add_map("gpu_map",
-                                                dict(bi="0:128:32"),
-                                                schedule=dace.dtypes.ScheduleType.GPU_Device)
+    gpu_map_entry, gpu_map_exit = state.add_map(
+        "gpu_map", dict(bi="0:128:32"), schedule=dace.dtypes.ScheduleType.GPU_Device
+    )
     tb_map_entry, tb_map_exit = state.add_map(
         "tb",
         dict(i="bi:bi+32"),
@@ -32,10 +32,13 @@ def test_allocation_requiring_map_variables():
     )
 
     # Add transient helper Array + a corresponding accessNode
-    sdfg.add_transient("gpu_A_helper", ("i+128", ),
-                       dace.uint32,
-                       storage=dace.dtypes.StorageType.Register,
-                       lifetime=dace.dtypes.AllocationLifetime.Scope)
+    sdfg.add_transient(
+        "gpu_A_helper",
+        ("i+128",),
+        dace.uint32,
+        storage=dace.dtypes.StorageType.Register,
+        lifetime=dace.dtypes.AllocationLifetime.Scope,
+    )
     gpu_a_helper_acc = state.add_access("gpu_A_helper")
 
     # Add Edges & connectors

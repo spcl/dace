@@ -50,8 +50,8 @@ def test_one():
     B_ref = A + 42
 
     prog1(A, B)
-    assert (relative_error(A, A_ref) < 1e-12)
-    assert (relative_error(B, B_ref) < 1e-12)
+    assert relative_error(A, A_ref) < 1e-12
+    assert relative_error(B, B_ref) < 1e-12
 
 
 def test_two():
@@ -62,9 +62,9 @@ def test_two():
     C_ref[:] = C[:] + 1
 
     prog2(C, E, F)
-    assert (C[0] == C_ref[0])
-    assert (E[0] == C_ref[0])
-    assert (F[0] == C_ref[0])
+    assert C[0] == C_ref[0]
+    assert E[0] == C_ref[0]
+    assert F[0] == C_ref[0]
 
 
 if __name__ == '__main__':

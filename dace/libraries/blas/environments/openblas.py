@@ -6,7 +6,6 @@ import dace.library
 
 @dace.library.environment
 class OpenBLAS:
-
     # NOTE: This works with OpenBLAS on Linux when liblapack and libblas are
     # pointing to libopenblas through update-alternatives.
 

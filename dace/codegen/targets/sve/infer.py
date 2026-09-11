@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    Inference: This module patches certain dispatchers in the `type_inference.py`, to better suit SVE.
+Inference: This module patches certain dispatchers in the `type_inference.py`, to better suit SVE.
 """
+
 from dace import dtypes
 from dace.sdfg import type_inference
 import sys

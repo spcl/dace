@@ -53,6 +53,7 @@ def test_send_recv_validation_accepts_integer_rank_and_tag_descriptors():
 
 def _test_mpi(info, sdfg, dtype):
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
@@ -104,6 +105,7 @@ def dace_send_recv(rank: dace.int32, size: dace.int32):
 @pytest.mark.mpi
 def test_dace_send_recv():
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
@@ -118,7 +120,7 @@ def test_dace_send_recv():
     mpi_sdfg = utils.distributed_compile(sdfg, comm)
 
     val = mpi_sdfg(rank=rank, size=commsize)
-    assert (val[0] == (rank - 1) % commsize)
+    assert val[0] == (rank - 1) % commsize
 
 
 ###############################################################################

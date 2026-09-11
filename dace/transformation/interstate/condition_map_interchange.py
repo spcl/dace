@@ -36,10 +36,16 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         # Each state in the branch is either empty or only contains maps
         for state in branch.all_states():
             for node in state.nodes():
-                if (not isinstance(node, (MapEntry, MapExit)) and state.entry_node(node) is None and any([
-                        not isinstance(n, (MapEntry, MapExit)) for n in set(state.successors(node))
-                        | set(state.predecessors(node))
-                ])):
+                if (
+                    not isinstance(node, (MapEntry, MapExit))
+                    and state.entry_node(node) is None
+                    and any(
+                        [
+                            not isinstance(n, (MapEntry, MapExit))
+                            for n in set(state.successors(node)) | set(state.predecessors(node))
+                        ]
+                    )
+                ):
                     return False
 
         return True

@@ -5,6 +5,7 @@ Data descriptor creation functions.
 This module contains functions for creating data descriptors from arbitrary objects,
 as well as functions for creating arrays from descriptors.
 """
+
 import ctypes
 
 from numbers import Number
@@ -22,9 +23,9 @@ from dace.data.core import Array, Data, Scalar
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
-    """ Creates a data descriptor from various types of objects.
+    """Creates a data descriptor from various types of objects.
 
-        :see: dace.data.Data
+    :see: dace.data.Data
     """
     if isinstance(obj, Data):
         return obj
@@ -40,6 +41,7 @@ def create_datadescriptor(obj, no_custom_desc=False):
             # conversion happens here in pytorch:
             # https://github.com/pytorch/pytorch/blob/143ef016ee1b6a39cf69140230d7c371de421186/torch/csrc/utils/tensor_numpy.cpp#L237
             import torch
+
             TYPECLASS_TO_TORCH_DTYPE = {
                 dtypes.bool_: torch.bool,
                 dtypes.int8: torch.int8,
@@ -58,10 +60,9 @@ def create_datadescriptor(obj, no_custom_desc=False):
 
             storage = dtypes.StorageType.GPU_Global if obj.device.type == 'cuda' else dtypes.StorageType.Default
 
-            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype],
-                         strides=obj.stride(),
-                         shape=tuple(obj.shape),
-                         storage=storage)
+            return Array(
+                dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype], strides=obj.stride(), shape=tuple(obj.shape), storage=storage
+            )
         except ImportError:
             raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
     elif dtypes.is_array(obj) and (hasattr(obj, '__array_interface__') or hasattr(obj, '__cuda_array_interface__')):
@@ -82,10 +83,9 @@ def create_datadescriptor(obj, no_custom_desc=False):
         else:
             if np.dtype(interface['typestr']).type is np.void:  # Struct from __array_interface__
                 if 'descr' in interface:
-                    dtype = dtypes.struct('unnamed', **{
-                        k: dtypes.typeclass(np.dtype(v).type)
-                        for k, v in interface['descr']
-                    })
+                    dtype = dtypes.struct(
+                        'unnamed', **{k: dtypes.typeclass(np.dtype(v).type) for k, v in interface['descr']}
+                    )
                 else:
                     raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
             else:
@@ -94,10 +94,12 @@ def create_datadescriptor(obj, no_custom_desc=False):
         itemsize = obj.itemsize if hasattr(obj, 'itemsize') else np.dtype(interface['typestr']).itemsize
         if len(interface['shape']) == 0:
             return Scalar(dtype, storage=storage)
-        return Array(dtype=dtype,
-                     shape=interface['shape'],
-                     strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
-                     storage=storage)
+        return Array(
+            dtype=dtype,
+            shape=interface['shape'],
+            strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
+            storage=storage,
+        )
     elif isinstance(obj, (list, tuple)):
         # Lists and tuples are cast to numpy
         obj = np.array(obj)
@@ -117,7 +119,7 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
         return Scalar(obj)
-    elif (obj is int or obj is float or obj is complex or obj is bool or obj is None):
+    elif obj is int or obj is float or obj is complex or obj is bool or obj is None:
         return Scalar(dtypes.typeclass(obj))
     elif isinstance(obj, type) and issubclass(obj, np.number):
         return Scalar(dtypes.typeclass(obj))
@@ -132,14 +134,16 @@ def create_datadescriptor(obj, no_custom_desc=False):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
 
-    raise TypeError(f'Could not create a DaCe data descriptor from object {obj}. '
-                    'If this is a custom object, consider creating a `__descriptor__` '
-                    'adaptor method to the type hint or object itself.')
+    raise TypeError(
+        f'Could not create a DaCe data descriptor from object {obj}. '
+        'If this is a custom object, consider creating a `__descriptor__` '
+        'adaptor method to the type hint or object itself.'
+    )
 
 
-def make_array_from_descriptor(descriptor: Array,
-                               original_array: Optional[ArrayLike] = None,
-                               symbols: Optional[Dict[str, Any]] = None) -> ArrayLike:
+def make_array_from_descriptor(
+    descriptor: Array, original_array: Optional[ArrayLike] = None, symbols: Optional[Dict[str, Any]] = None
+) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor, and optionally copies another array to it.
 
@@ -163,10 +167,9 @@ def make_array_from_descriptor(descriptor: Array,
 
         def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
             buffer = cp.ndarray(shape=[total_size], dtype=dtype)
-            view = cp.ndarray(shape=shape,
-                              dtype=dtype,
-                              memptr=buffer.data,
-                              strides=[s * dtype.itemsize for s in strides])
+            view = cp.ndarray(
+                shape=shape, dtype=dtype, memptr=buffer.data, strides=[s * dtype.itemsize for s in strides]
+            )
             return view
 
         def copy_array(dst, src):
@@ -194,9 +197,9 @@ def make_array_from_descriptor(descriptor: Array,
     return view
 
 
-def make_reference_from_descriptor(descriptor: Array,
-                                   original_array: ctypes.c_void_p,
-                                   symbols: Optional[Dict[str, Any]] = None) -> ArrayLike:
+def make_reference_from_descriptor(
+    descriptor: Array, original_array: ctypes.c_void_p, symbols: Optional[Dict[str, Any]] = None
+) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor from the given pointer. Shares the memory
     with the argument (does not create a copy).
@@ -225,17 +228,16 @@ def make_reference_from_descriptor(descriptor: Array,
             raise NotImplementedError('GPU memory can only be referenced in Python if cupy is installed')
 
         def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = dtypes.ptrtocupy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
-            view = cp.ndarray(shape=shape,
-                              dtype=dtype,
-                              memptr=buffer.data,
-                              strides=[s * dtype.itemsize for s in strides])
+            buffer = dtypes.ptrtocupy(original_array, descriptor.dtype.as_ctypes(), (total_size,))
+            view = cp.ndarray(
+                shape=shape, dtype=dtype, memptr=buffer.data, strides=[s * dtype.itemsize for s in strides]
+            )
             return view
 
     else:
 
         def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = dtypes.ptrtonumpy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
+            buffer = dtypes.ptrtonumpy(original_array, descriptor.dtype.as_ctypes(), (total_size,))
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
             return view
 

@@ -10,7 +10,8 @@ csrmatrix = dace.struct(
     data=(dace.pointer(dace.float32), 'nnz'),
     rowsp1=dace.int32,
     rowptr=(dace.pointer(dace.int32), 'rowsp1'),
-    colind=(dace.pointer(dace.int32), 'nnz'))
+    colind=(dace.pointer(dace.int32), 'nnz'),
+)
 
 sdfg = dace.SDFG('addone')
 state = sdfg.add_state()
@@ -18,13 +19,17 @@ sdfg.add_array('sparsemats_in', [5], dtype=csrmatrix)
 sdfg.add_array('sparsemats_out', [5], dtype=csrmatrix)
 
 ome, omx = state.add_map('matrices', dict(i='0:5'))
-tasklet = state.add_tasklet('addone', {'mat_in'}, {'mat_out': dace.pointer(csrmatrix)},
-                            '''
+tasklet = state.add_tasklet(
+    'addone',
+    {'mat_in'},
+    {'mat_out': dace.pointer(csrmatrix)},
+    '''
 for (int j = 0; j < mat_in.nnz; ++j) {
     mat_out->data[j] = mat_in.data[j] + 1.0f;
 }
 ''',
-                            language=dace.Language.CPP)
+    language=dace.Language.CPP,
+)
 matr = state.add_read('sparsemats_in')
 matw = state.add_write('sparsemats_out')
 state.add_memlet_path(matr, ome, tasklet, dst_conn='mat_in', memlet=dace.Memlet.simple('sparsemats_in', 'i'))

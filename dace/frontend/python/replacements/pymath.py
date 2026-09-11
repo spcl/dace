@@ -2,6 +2,7 @@
 """
 Contains replacements of Python mathematical operations.
 """
+
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, simple_call
 from dace import dtypes, symbolic, SDFG, SDFGState
@@ -109,6 +110,7 @@ def _ndarray_imag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 @oprepo.replaces_method('View', 'conj')
 def _ndarray_conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
     from dace.frontend.python.replacements.ufunc import implement_ufunc
+
     return implement_ufunc(pv, None, sdfg, state, 'conj', [arr], {})[0]
 
 

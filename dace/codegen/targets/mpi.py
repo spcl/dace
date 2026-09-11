@@ -17,7 +17,8 @@ if TYPE_CHECKING:
 
 @registry.autoregister_params(name='mpi')
 class MPICodeGen(TargetCodeGenerator):
-    """ An MPI code generator. """
+    """An MPI code generator."""
+
     target_name = 'mpi'
     title = 'MPI'
     language = 'cpp'
@@ -40,7 +41,8 @@ class MPICodeGen(TargetCodeGenerator):
             params_comma = ', ' + params_comma
 
         codeobj = CodeObject(
-            sdfg.name + '_mpi', """
+            sdfg.name + '_mpi',
+            """
 #include <dace/dace.h>
 #include <mpi.h>
 
@@ -79,10 +81,16 @@ int __dace_exit_mpi({sdfg_state_name} *__state) {{
            __dace_comm_size);
     return 0;
 }}
-""".format(params=params_comma,
-           sdfg=sdfg,
-           sdfg_state_name=mangle_dace_state_struct_name(sdfg),
-           file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
+""".format(
+                params=params_comma,
+                sdfg=sdfg,
+                sdfg_state_name=mangle_dace_state_struct_name(sdfg),
+                file_header=fileheader.getvalue(),
+            ),
+            'cpp',
+            MPICodeGen,
+            'MPI',
+        )
         return [codeobj]
 
     @staticmethod
@@ -103,8 +111,15 @@ int __dace_exit_mpi({sdfg_state_name} *__state) {{
     def has_finalizer(self):
         return True
 
-    def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView, state_id: int,
-                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+    def generate_scope(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        dfg_scope: StateSubgraphView,
+        state_id: int,
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ) -> None:
         # Take care of map header
         assert len(dfg_scope.source_nodes()) == 1
         map_header: nodes.MapEntry = dfg_scope.source_nodes()[0]
@@ -126,16 +141,20 @@ int __dace_exit_mpi({sdfg_state_name} *__state) {{
 
             callsite_stream.write('{\n', cfg, state_id, map_header)
             callsite_stream.write(
-                '%s %s = %s + __dace_comm_rank * (%s);\n' %
-                (symtypes[var], var, cppunparse.pyexpr2cpp(symbolic.symstr(begin, cpp_mode=True)),
-                 cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True))), cfg, state_id, map_header)
+                '%s %s = %s + __dace_comm_rank * (%s);\n'
+                % (
+                    symtypes[var],
+                    var,
+                    cppunparse.pyexpr2cpp(symbolic.symstr(begin, cpp_mode=True)),
+                    cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True)),
+                ),
+                cfg,
+                state_id,
+                map_header,
+            )
 
         self._frame.allocate_arrays_in_scope(sdfg, cfg, map_header, function_stream, callsite_stream)
 
-        self._dispatcher.dispatch_subgraph(sdfg,
-                                           cfg,
-                                           dfg_scope,
-                                           state_id,
-                                           function_stream,
-                                           callsite_stream,
-                                           skip_entry_node=True)
+        self._dispatcher.dispatch_subgraph(
+            sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream, skip_entry_node=True
+        )

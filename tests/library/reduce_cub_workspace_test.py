@@ -8,6 +8,7 @@ as it found it -- on fresh device memory, a clean array of zeros with no error r
 
 These assert on emitted code, so they need a CUDA toolchain for neither compilation nor a run.
 """
+
 import os
 import re
 
@@ -63,17 +64,19 @@ def test_the_cub_workspace_is_never_allocated_zero_bytes_and_is_checked(in_shape
     assert alloc, 'no CUB workspace allocation was emitted'
     text = alloc.group(0)
     assert 'DACE_GPU_CHECK' in text, f'the CUB workspace allocation is unchecked: {text.strip()}'
-    assert '? ' in text and ': 1' in text, (f'the CUB workspace allocation can request zero bytes, which yields a null '
-                                            f'pointer that CUB reads as a size query: {text.strip()}')
+    assert '? ' in text and ': 1' in text, (
+        f'the CUB workspace allocation can request zero bytes, which yields a null '
+        f'pointer that CUB reads as a size query: {text.strip()}'
+    )
 
 
 @pytest.mark.parametrize('in_shape,axes,out_shape', CUB_CASES)
 def test_the_reduction_itself_reports_its_status(in_shape, axes, out_shape):
     """The work call is the only site holding CUB's status for the reduction that produces the output."""
     code = generated_code_for(in_shape, axes, out_shape)
-    assert re.search(
-        r'cudaError_t __dace_reduce_\w+\(',
-        code), ('the reduce helper returns void, so CUB\'s status is discarded at the only site that has it')
+    assert re.search(r'cudaError_t __dace_reduce_\w+\(', code), (
+        'the reduce helper returns void, so CUB\'s status is discarded at the only site that has it'
+    )
     call = re.search(r'^.*__dace_reduce_\w+\(_in, _out,.*$', code, re.MULTILINE)
     assert call, 'no call to the reduce helper was emitted'
     assert 'DACE_GPU_CHECK' in call.group(0), f'the reduction call is unchecked: {call.group(0).strip()}'
@@ -94,8 +97,10 @@ def test_the_check_macro_evaluates_its_argument_once():
     macro = re.search(r'#define DACE_GPU_CHECK\(err\)(?:.|\n)*?while \(0\)', cudacommon_source())
     assert macro, 'DACE_GPU_CHECK is no longer defined where this test looks for it'
     body = macro.group(0).split('gpuError_t errr = (err);', 1)[1]
-    assert '(err)' not in body, ('DACE_GPU_CHECK evaluates its argument a second time in the error path; wrapping a '
-                                 'call with side effects then performs it twice')
+    assert '(err)' not in body, (
+        'DACE_GPU_CHECK evaluates its argument a second time in the error path; wrapping a '
+        'call with side effects then performs it twice'
+    )
 
 
 def test_the_recorded_error_is_the_first_one():
@@ -109,10 +114,13 @@ def test_the_recorded_error_is_the_first_one():
     recorder = re.search(r'void record_error\(gpuError_t err\)(?:.|\n)*?\n  \}', source)
     assert recorder, 'the GPU context no longer records errors through record_error'
     assert 'lasterror == (gpuError_t)0' in recorder.group(0), (
-        'record_error records unconditionally, so a later error about a consequence replaces the first one')
+        'record_error records unconditionally, so a later error about a consequence replaces the first one'
+    )
     written = re.findall(r'^.*\blasterror = .*$', source, re.MULTILINE)
-    assert len(written) == 1, (f'an error is recorded without going through record_error, which overwrites whatever '
-                               f'was recorded before it: {[line.strip() for line in written]}')
+    assert len(written) == 1, (
+        f'an error is recorded without going through record_error, which overwrites whatever '
+        f'was recorded before it: {[line.strip() for line in written]}'
+    )
 
 
 if __name__ == '__main__':

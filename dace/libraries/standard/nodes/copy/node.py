@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``CopyLibraryNode``: an explicit copy between two data containers.
-"""
+"""``CopyLibraryNode``: an explicit copy between two data containers."""
+
 from typing import TYPE_CHECKING
 
 from dace import library, nodes, dtypes, properties
-from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES)
+from dace.libraries.standard.helper import CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES
 from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 
 if TYPE_CHECKING:
@@ -32,10 +32,11 @@ class CopyLibraryNode(nodes.LibraryNode):
     INPUT_CONNECTOR_NAME = "_cpy_in"
     OUTPUT_CONNECTOR_NAME = "_cpy_out"
 
-    sync = properties.Property(dtype=bool,
-                               default=True,
-                               desc='Emit __syncthreads() barriers around the SharedMemoryCollective '
-                               'copy (default True).')
+    sync = properties.Property(
+        dtype=bool,
+        default=True,
+        desc='Emit __syncthreads() barriers around the SharedMemoryCollective copy (default True).',
+    )
 
     def __init__(self, name, *args, sync=True, **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)
@@ -83,8 +84,7 @@ class CopyLibraryNode(nodes.LibraryNode):
         """
         out_edges = [oe for oe in state.out_edges(self) if oe.src_conn == OUTPUT_CONNECTOR_NAME]
         if len(out_edges) != 1:
-            raise ValueError(f"{type(self).__name__} expects exactly one "
-                             f"``{OUTPUT_CONNECTOR_NAME}`` output edge.")
+            raise ValueError(f"{type(self).__name__} expects exactly one ``{OUTPUT_CONNECTOR_NAME}`` output edge.")
         oe = out_edges[0]
         out = sdfg.arrays[oe.data.data]
         out_subset = oe.data.subset
@@ -93,13 +93,17 @@ class CopyLibraryNode(nodes.LibraryNode):
         reserved = {INPUT_CONNECTOR_NAME, CURRENT_STREAM_NAME}
         extra = [ie.dst_conn for ie in state.in_edges(self) if ie.dst_conn not in reserved and not ie.data.is_empty()]
         if extra:
-            raise ValueError(f"{type(self).__name__} does not accept dynamic input connectors; got {extra}. "
-                             f"Subset expressions must use symbols already in scope.")
+            raise ValueError(
+                f"{type(self).__name__} does not accept dynamic input connectors; got {extra}. "
+                f"Subset expressions must use symbols already in scope."
+            )
 
         in_edges = [ie for ie in state.in_edges(self) if ie.dst_conn == INPUT_CONNECTOR_NAME]
         if len(in_edges) != 1:
-            raise ValueError(f"{type(self).__name__} expects exactly one data input edge "
-                             f"connected to the ``{INPUT_CONNECTOR_NAME}`` connector.")
+            raise ValueError(
+                f"{type(self).__name__} expects exactly one data input edge "
+                f"connected to the ``{INPUT_CONNECTOR_NAME}`` connector."
+            )
         ie = in_edges[0]
         inp = sdfg.arrays[ie.data.data]
         in_subset = ie.data.subset
@@ -112,8 +116,10 @@ class CopyLibraryNode(nodes.LibraryNode):
         # only a CPU/GPU (or other target-specific) pairing genuinely needs a different expansion.
         host_pair = {inp.storage, out.storage} <= (CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default})
         if not allow_cross_storage and inp.storage != out.storage and not host_pair:
-            raise ValueError(f"Input and output storage types must match for this expansion "
-                             f"(got {inp.storage} vs {out.storage}). Use a cross-storage "
-                             f"expansion or the pure fallback.")
+            raise ValueError(
+                f"Input and output storage types must match for this expansion "
+                f"(got {inp.storage} vs {out.storage}). Use a cross-storage "
+                f"expansion or the pure fallback."
+            )
 
         return inp_name, inp, in_subset, out_name, out, out_subset

@@ -46,14 +46,16 @@ def pure_graph(implementation, dtype, veclen):
     return ger_node, state, sdfg
 
 
-def run_ger(target: str,
-            n: int,
-            m: int,
-            tile_size_x: int,
-            tile_size_y: int,
-            alpha: float = 1,
-            veclen: int = 1,
-            eps: float = 1e-6):
+def run_ger(
+    target: str,
+    n: int,
+    m: int,
+    tile_size_x: int,
+    tile_size_y: int,
+    alpha: float = 1,
+    veclen: int = 1,
+    eps: float = 1e-6,
+):
 
     if target == "pure":
         ger_node, state, sdfg = pure_graph("pure", dace.float32, veclen)
@@ -89,7 +91,6 @@ def test_ger_pure():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=256)
     parser.add_argument("M", type=int, nargs="?", default=512)

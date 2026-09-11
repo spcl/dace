@@ -55,7 +55,7 @@ def reverse_einsum_wrt_input(forward_node: 'donnx.nodes.onnx_op.ONNXOp', input_n
     _, input_idx = donnx.parse_variadic_param(input_name)
     parser = einsum.EinsumParser(forward_node.equation)
 
-    backward_input_expressions = [parser.output] + parser.inputs[:input_idx] + parser.inputs[input_idx + 1:]
+    backward_input_expressions = [parser.output] + parser.inputs[:input_idx] + parser.inputs[input_idx + 1 :]
     backward_input_arrays = [
         f"Inputs__{i}" for i in itertools.chain(range(input_idx), range(input_idx + 1, len(parser.inputs)))
     ]
@@ -77,8 +77,12 @@ class DefaultEinsumBackward(BackwardImplementation):
         return PureEinsum.forward_can_be_applied(node, state, sdfg)
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[nd.Node, BackwardResult]:
 
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         nstate = nsdfg.add_state()
@@ -90,8 +94,9 @@ class DefaultEinsumBackward(BackwardImplementation):
         access_output_grad = nstate.add_read(result.given_grad_names["Output"])
 
         def create_access_node(connector: str) -> nd.AccessNode:
-            nsdfg.add_datadesc(connector,
-                               copy.deepcopy(butils.forward_in_desc_with_name(forward_node, context, connector)))
+            nsdfg.add_datadesc(
+                connector, copy.deepcopy(butils.forward_in_desc_with_name(forward_node, context, connector))
+            )
             return nstate.add_read(connector)
 
         # the forward inputs we will require
@@ -107,8 +112,13 @@ class DefaultEinsumBackward(BackwardImplementation):
 
             # the first input is always the output grad
             einsum_node.add_in_connector(f"Inputs__0")
-            nstate.add_edge(access_output_grad, None, einsum_node, "Inputs__0",
-                            nsdfg.make_array_memlet(result.given_grad_names["Output"]))
+            nstate.add_edge(
+                access_output_grad,
+                None,
+                einsum_node,
+                "Inputs__0",
+                nsdfg.make_array_memlet(result.given_grad_names["Output"]),
+            )
 
             # add the other inputs from forward that we need
             for i, forward_input in enumerate(sorted(forward_inputs)):
@@ -117,24 +127,32 @@ class DefaultEinsumBackward(BackwardImplementation):
                 if forward_input not in required_forward_inputs:
                     required_forward_inputs[forward_input] = create_access_node(forward_input)
 
-                nstate.add_edge(required_forward_inputs[forward_input], None, einsum_node, connector,
-                                nsdfg.make_array_memlet(forward_input))
+                nstate.add_edge(
+                    required_forward_inputs[forward_input],
+                    None,
+                    einsum_node,
+                    connector,
+                    nsdfg.make_array_memlet(forward_input),
+                )
 
             # write out the gradient
             butils.forward_in_desc_with_name(forward_node, context, input_name)
             result.required_grad_names[input_name] = butils.add_backward_desc_for_connector(
-                nsdfg, forward_node, context, input_name, True)
+                nsdfg, forward_node, context, input_name, True
+            )
             memlet = nsdfg.make_array_memlet(result.required_grad_names[input_name])
             # Add a wcr for gradient accumulation
             memlet.wcr = "lambda x, y: x + y"
-            nstate.add_edge(einsum_node, "Output", nstate.add_write(result.required_grad_names[input_name]), None,
-                            memlet)
+            nstate.add_edge(
+                einsum_node, "Output", nstate.add_write(result.required_grad_names[input_name]), None, memlet
+            )
 
         result_node = context.backward_state.add_nested_sdfg(
             nsdfg,
             sorted(set(result.given_grad_names.values()).union(required_forward_inputs)),
             sorted(result.required_grad_names.values()),
-            symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state))
+            symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state),
+        )
 
         return result_node, result
 
@@ -148,11 +166,16 @@ class DefaultClipBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
 
-        result_node, result = butils.add_empty_sdfg_for_node(forward_node, ["input_grad", "output_grad", "input"],
-                                                             context)
+        result_node, result = butils.add_empty_sdfg_for_node(
+            forward_node, ["input_grad", "output_grad", "input"], context
+        )
 
         nstate = result_node.sdfg.add_state()
 
@@ -176,15 +199,17 @@ if __input < {minstr} or __input > {maxstr}:
 else:
     __input_grad = __output_grad
                 """
-        nstate.add_mapped_tasklet(forward_node.label + "_backward",
-                                  map_ranges=map_ranges,
-                                  inputs={
-                                      f"__output_grad": dace.Memlet(f"output_grad[{index_str}]"),
-                                      f"__input": dace.Memlet(f"input[{index_str}]"),
-                                  },
-                                  code=code,
-                                  outputs={f"__input_grad": dace.Memlet(f"input_grad[{index_str}]")},
-                                  external_edges=True)
+        nstate.add_mapped_tasklet(
+            forward_node.label + "_backward",
+            map_ranges=map_ranges,
+            inputs={
+                f"__output_grad": dace.Memlet(f"output_grad[{index_str}]"),
+                f"__input": dace.Memlet(f"input[{index_str}]"),
+            },
+            code=code,
+            outputs={f"__input_grad": dace.Memlet(f"input_grad[{index_str}]")},
+            external_edges=True,
+        )
 
         return result_node, result
 
@@ -197,11 +222,16 @@ class DefaultDropoutBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
 
-        result_node, result = butils.add_empty_sdfg_for_node(forward_node,
-                                                             ["data_grad", "output_grad", "mask", "ratio"], context)
+        result_node, result = butils.add_empty_sdfg_for_node(
+            forward_node, ["data_grad", "output_grad", "mask", "ratio"], context
+        )
 
         nstate = result_node.sdfg.add_state()
 
@@ -215,16 +245,18 @@ class DefaultDropoutBackward(BackwardImplementation):
 scale = dace.{dtype_str}(1.0) / (1 - __ratio)
 __data_grad = __output_grad * __mask * scale
         """
-        nstate.add_mapped_tasklet(forward_node.label + "_backward",
-                                  map_ranges=map_ranges,
-                                  inputs={
-                                      "__output_grad": dace.Memlet(f"output_grad[{index_str}]"),
-                                      "__mask": dace.Memlet(f"mask[{index_str}]"),
-                                      "__ratio": dace.Memlet("ratio[0]")
-                                  },
-                                  code=code,
-                                  outputs={f"__data_grad": dace.Memlet(f"data_grad[{index_str}]")},
-                                  external_edges=True)
+        nstate.add_mapped_tasklet(
+            forward_node.label + "_backward",
+            map_ranges=map_ranges,
+            inputs={
+                "__output_grad": dace.Memlet(f"output_grad[{index_str}]"),
+                "__mask": dace.Memlet(f"mask[{index_str}]"),
+                "__ratio": dace.Memlet("ratio[0]"),
+            },
+            code=code,
+            outputs={f"__data_grad": dace.Memlet(f"data_grad[{index_str}]")},
+            external_edges=True,
+        )
 
         return result_node, result
 
@@ -239,8 +271,12 @@ class DefaultSoftmaxBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
 
         dim = forward_node.axis
 
@@ -339,7 +375,8 @@ class DefaultSoftmaxBackward(BackwardImplementation):
             ["output", "output_grad"],
             # Outputs from nested SDFG
             ["input_grad"],
-            symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state))
+            symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state),
+        )
 
         butils.connect_output_from_forward(forward_node, result_node, context, "output")
 
@@ -366,8 +403,12 @@ class DefaultMaxPoolBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
 
         output_shape = butils.forward_out_desc_with_name(forward_node, context, "Y").shape
 
@@ -419,8 +460,12 @@ class DefaultLogSoftmaxBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[nd.Node, BackwardResult]:
 
         dim = forward_node.axis
         output_shape = butils.forward_out_desc_with_name(forward_node, context, "output").shape
@@ -458,8 +503,12 @@ class PureGlobalAveragePoolingBackward(BackwardImplementation):
         return len(in_desc_with_name(node, state, sdfg, "X").shape) == 4
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[nd.Node, BackwardResult]:
         desc = butils.forward_in_desc_with_name(forward_node, context, "X")
         N, C, H, W = desc.shape
         dtype = desc.dtype
@@ -484,8 +533,12 @@ class DefaultTransposeBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[nd.Node, BackwardResult]:
         inv_perm = tuple(np.argsort(forward_node.perm))
 
         node = donnx.ONNXTranspose(forward_node.name + "_backward", perm=inv_perm)
@@ -507,8 +560,12 @@ class WhereBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[nd.Node, BackwardResult]:
         # condition, X, Y -> Output
         # Get condition descriptor for shape information
         _ = butils.forward_in_desc_with_name(forward_node, context, "condition")
@@ -548,8 +605,12 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[nd.Node, BackwardResult]:
         # Create new SDFG
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         nstate = nsdfg.add_state()
@@ -611,11 +672,13 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         axes_access = nstate.add_access(axes_name)
 
         # Initialize reduction axes as a constant array
-        axes_tasklet = nstate.add_tasklet(name="init_axes",
-                                          inputs={},
-                                          outputs={"out": dace.pointer(dace.int64)},
-                                          code=f"\n".join([f"out[{i}] = {0};" for i, _ in enumerate(reduction_axes)]),
-                                          language=dace.Language.CPP)
+        axes_tasklet = nstate.add_tasklet(
+            name="init_axes",
+            inputs={},
+            outputs={"out": dace.pointer(dace.int64)},
+            code=f"\n".join([f"out[{i}] = {0};" for i, _ in enumerate(reduction_axes)]),
+            language=dace.Language.CPP,
+        )
         nstate.add_edge(axes_tasklet, "out", axes_access, None, dace.Memlet(f"{axes_name}[0:{len(reduction_axes)}]"))
 
         # Create mean descriptor with reduced shape
@@ -777,8 +840,9 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             nstate.add_node(scale_grad_op)
             nstate.add_edge(dY_x_hat_access, None, scale_grad_op, "data", nsdfg.make_array_memlet("dY_x_hat"))
             nstate.add_edge(axes_access, None, scale_grad_op, "axes", nsdfg.make_array_memlet(axes_name))
-            nstate.add_edge(scale_grad_op, "reduced", nstate.add_write("Scale_grad"), None,
-                            nsdfg.make_array_memlet("Scale_grad"))
+            nstate.add_edge(
+                scale_grad_op, "reduced", nstate.add_write("Scale_grad"), None, nsdfg.make_array_memlet("Scale_grad")
+            )
 
         # Compute X gradient if needed
         if "X" in required_gradients:
@@ -831,12 +895,18 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             dX_hat_x_hat_mean_op = donnx.ONNXReduceMean("dX_hat_x_hat_mean_op", keepdims=1, optional={"axes"})
             dX_hat_x_hat_mean_op.axes = reduction_axes
             nstate.add_node(dX_hat_x_hat_mean_op)
-            nstate.add_edge(dX_hat_x_hat_access, None, dX_hat_x_hat_mean_op, "data",
-                            nsdfg.make_array_memlet("dX_hat_x_hat"))
+            nstate.add_edge(
+                dX_hat_x_hat_access, None, dX_hat_x_hat_mean_op, "data", nsdfg.make_array_memlet("dX_hat_x_hat")
+            )
             nstate.add_edge(axes_access, None, dX_hat_x_hat_mean_op, "axes", nsdfg.make_array_memlet(axes_name))
             dX_hat_x_hat_mean_access = nstate.add_access("dX_hat_x_hat_mean")
-            nstate.add_edge(dX_hat_x_hat_mean_op, "reduced", dX_hat_x_hat_mean_access, None,
-                            nsdfg.make_array_memlet("dX_hat_x_hat_mean"))
+            nstate.add_edge(
+                dX_hat_x_hat_mean_op,
+                "reduced",
+                dX_hat_x_hat_mean_access,
+                None,
+                nsdfg.make_array_memlet("dX_hat_x_hat_mean"),
+            )
 
             # Compute x_hat * mean(dX_hat * x_hat)
             x_hat_dX_hat_x_hat_mean_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
@@ -847,11 +917,21 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             x_hat_dX_hat_x_hat_mean_op = donnx.ONNXMul("x_hat_dX_hat_x_hat_mean_op")
             nstate.add_node(x_hat_dX_hat_x_hat_mean_op)
             nstate.add_edge(x_hat_access, None, x_hat_dX_hat_x_hat_mean_op, "A", nsdfg.make_array_memlet("x_hat"))
-            nstate.add_edge(dX_hat_x_hat_mean_access, None, x_hat_dX_hat_x_hat_mean_op, "B",
-                            nsdfg.make_array_memlet("dX_hat_x_hat_mean"))
+            nstate.add_edge(
+                dX_hat_x_hat_mean_access,
+                None,
+                x_hat_dX_hat_x_hat_mean_op,
+                "B",
+                nsdfg.make_array_memlet("dX_hat_x_hat_mean"),
+            )
             x_hat_dX_hat_x_hat_mean_access = nstate.add_access("x_hat_dX_hat_x_hat_mean")
-            nstate.add_edge(x_hat_dX_hat_x_hat_mean_op, "C", x_hat_dX_hat_x_hat_mean_access, None,
-                            nsdfg.make_array_memlet("x_hat_dX_hat_x_hat_mean"))
+            nstate.add_edge(
+                x_hat_dX_hat_x_hat_mean_op,
+                "C",
+                x_hat_dX_hat_x_hat_mean_access,
+                None,
+                nsdfg.make_array_memlet("x_hat_dX_hat_x_hat_mean"),
+            )
 
             # Compute dX_hat - mean(dX_hat) - x_hat * mean(dX_hat * x_hat)
             dX_hat_minus_mean_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
@@ -864,8 +944,9 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             nstate.add_edge(dX_hat_access, None, dX_hat_minus_mean_op, "A", nsdfg.make_array_memlet("dX_hat"))
             nstate.add_edge(dX_hat_mean_access, None, dX_hat_minus_mean_op, "B", nsdfg.make_array_memlet("dX_hat_mean"))
             dX_hat_minus_mean_access = nstate.add_access("dX_hat_minus_mean")
-            nstate.add_edge(dX_hat_minus_mean_op, "C", dX_hat_minus_mean_access, None,
-                            nsdfg.make_array_memlet("dX_hat_minus_mean"))
+            nstate.add_edge(
+                dX_hat_minus_mean_op, "C", dX_hat_minus_mean_access, None, nsdfg.make_array_memlet("dX_hat_minus_mean")
+            )
 
             # Final subtraction
             dX_hat_final_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
@@ -875,10 +956,16 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
 
             dX_hat_final_op = donnx.ONNXSub("dX_hat_final_op")
             nstate.add_node(dX_hat_final_op)
-            nstate.add_edge(dX_hat_minus_mean_access, None, dX_hat_final_op, "A",
-                            nsdfg.make_array_memlet("dX_hat_minus_mean"))
-            nstate.add_edge(x_hat_dX_hat_x_hat_mean_access, None, dX_hat_final_op, "B",
-                            nsdfg.make_array_memlet("x_hat_dX_hat_x_hat_mean"))
+            nstate.add_edge(
+                dX_hat_minus_mean_access, None, dX_hat_final_op, "A", nsdfg.make_array_memlet("dX_hat_minus_mean")
+            )
+            nstate.add_edge(
+                x_hat_dX_hat_x_hat_mean_access,
+                None,
+                dX_hat_final_op,
+                "B",
+                nsdfg.make_array_memlet("x_hat_dX_hat_x_hat_mean"),
+            )
             dX_hat_final_access = nstate.add_access("dX_hat_final")
             nstate.add_edge(dX_hat_final_op, "C", dX_hat_final_access, None, nsdfg.make_array_memlet("dX_hat_final"))
 
@@ -894,11 +981,12 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         if "B" in required_gradients:
             inputs.add("B")
 
-        bwd_node = context.backward_state.add_nested_sdfg(nsdfg,
-                                                          sorted(inputs),
-                                                          sorted(result.required_grad_names.values()),
-                                                          symbol_mapping=butils.backward_symbol_mapping(
-                                                              nsdfg, context.backward_state))
+        bwd_node = context.backward_state.add_nested_sdfg(
+            nsdfg,
+            sorted(inputs),
+            sorted(result.required_grad_names.values()),
+            symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state),
+        )
         return bwd_node, result
 
 
@@ -915,8 +1003,12 @@ class DefaultReduceSumBackward(BackwardImplementation):
         return True
 
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]],
+    ) -> Tuple[nd.Node, BackwardResult]:
 
         # The backward pass of a reduction is a broadcast.
         # We use ONNXExpand to perform the broadcast.
@@ -959,8 +1051,10 @@ class DefaultReduceSumBackward(BackwardImplementation):
             unsqueezed_shape = []
             axes = []
             if len(in_shape) < len(out_shape):
-                raise ValueError(f"Input shape {in_shape} has fewer dimensions than output shape {out_shape}. "
-                                 f"This is unexpected for a ReduceSum operation.")
+                raise ValueError(
+                    f"Input shape {in_shape} has fewer dimensions than output shape {out_shape}. "
+                    f"This is unexpected for a ReduceSum operation."
+                )
             if len(in_shape) > len(out_shape):
                 # This assumes that non-reduced dimensions are preserved in order.
                 out_shape_idx = 0
@@ -974,8 +1068,10 @@ class DefaultReduceSumBackward(BackwardImplementation):
 
             # If shapes are equal, it's a no-op reduction and axes is empty.
             if (not axes) != (len(in_shape) == len(out_shape)):
-                raise ValueError(f"Inconsistent state: axes={axes}, input_shape={in_shape}, output_shape={out_shape}. "
-                                 f"For equal shapes, axes should be empty.")
+                raise ValueError(
+                    f"Inconsistent state: axes={axes}, input_shape={in_shape}, output_shape={out_shape}. "
+                    f"For equal shapes, axes should be empty."
+                )
 
             if 'axes' in forward_node.in_connectors:
                 # The axes are a dynamic input to the forward node. Pass them to the backward node.
@@ -986,10 +1082,9 @@ class DefaultReduceSumBackward(BackwardImplementation):
                 axes_access = nstate.add_read("axes")
             elif axes:
                 # Create a constant array for the axes to be passed to Unsqueeze
-                axes_name_in_bwd, axes_desc_bwd = nsdfg.add_array(f"axes_for_unsqueeze_{forward_node.name}",
-                                                                  [len(axes)],
-                                                                  dace.int64,
-                                                                  transient=True)
+                axes_name_in_bwd, axes_desc_bwd = nsdfg.add_array(
+                    f"axes_for_unsqueeze_{forward_node.name}", [len(axes)], dace.int64, transient=True
+                )
                 axes_tasklet = nstate.add_tasklet(
                     'init_axes',
                     {},
@@ -998,8 +1093,9 @@ class DefaultReduceSumBackward(BackwardImplementation):
                     language=dace.Language.CPP,
                 )
                 axes_access = nstate.add_access(axes_name_in_bwd)
-                nstate.add_edge(axes_tasklet, 'out', axes_access, None,
-                                dace.Memlet.from_array(axes_name_in_bwd, axes_desc_bwd))
+                nstate.add_edge(
+                    axes_tasklet, 'out', axes_access, None, dace.Memlet.from_array(axes_name_in_bwd, axes_desc_bwd)
+                )
 
             unsqueezed_desc = dace.data.Array(dtype=reduced_grad_desc.dtype, shape=unsqueezed_shape, transient=True)
             nsdfg.add_datadesc("unsqueezed_grad", unsqueezed_desc)
@@ -1008,20 +1104,27 @@ class DefaultReduceSumBackward(BackwardImplementation):
             nstate.add_node(unsqueeze_op)
 
             nstate.add_edge(read_grad_to_expand, None, unsqueeze_op, "data", nsdfg.make_array_memlet("reduced_grad"))
-            nstate.add_edge(axes_access, None, unsqueeze_op, "axes",
-                            dace.Memlet(data=axes_access.data, subset=f'0:{axes_access.desc(nsdfg).shape[0]}'))
+            nstate.add_edge(
+                axes_access,
+                None,
+                unsqueeze_op,
+                "axes",
+                dace.Memlet(data=axes_access.data, subset=f'0:{axes_access.desc(nsdfg).shape[0]}'),
+            )
 
             grad_to_expand = "unsqueezed_grad"
             read_grad_to_expand = nstate.add_access(grad_to_expand)
-            nstate.add_edge(unsqueeze_op, "expanded", read_grad_to_expand, None,
-                            nsdfg.make_array_memlet("unsqueezed_grad"))
+            nstate.add_edge(
+                unsqueeze_op, "expanded", read_grad_to_expand, None, nsdfg.make_array_memlet("unsqueezed_grad")
+            )
 
         # Create shape tensor for ONNXExpand
-        shape_name, shape_desc = nsdfg.add_array("shape_for_expand", [len(input_desc.shape)],
-                                                 dace.int64,
-                                                 transient=True)
-        shape_tasklet = nstate.add_tasklet("init_shape", {}, {"out"},
-                                           '\n'.join([f"out[{i}] = {s};" for i, s in enumerate(input_desc.shape)]))
+        shape_name, shape_desc = nsdfg.add_array(
+            "shape_for_expand", [len(input_desc.shape)], dace.int64, transient=True
+        )
+        shape_tasklet = nstate.add_tasklet(
+            "init_shape", {}, {"out"}, '\n'.join([f"out[{i}] = {s};" for i, s in enumerate(input_desc.shape)])
+        )
         shape_access = nstate.add_access(shape_name)
         nstate.add_edge(shape_tasklet, "out", shape_access, None, dace.Memlet.from_array(shape_name, shape_desc))
 
@@ -1044,9 +1147,11 @@ class DefaultReduceSumBackward(BackwardImplementation):
         if not keepdims and 'axes' in forward_node.in_connectors:
             inputs.add("axes")
 
-        result_node = context.backward_state.add_nested_sdfg(nsdfg,
-                                                             sorted(inputs), ["data_grad"],
-                                                             symbol_mapping=butils.backward_symbol_mapping(
-                                                                 nsdfg, context.backward_state))
+        result_node = context.backward_state.add_nested_sdfg(
+            nsdfg,
+            sorted(inputs),
+            ["data_grad"],
+            symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state),
+        )
 
         return result_node, result

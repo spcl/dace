@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains redundant array removal transformations. """
+"""Contains redundant array removal transformations."""
 
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -9,8 +9,8 @@ from dace.transformation import transformation as pm
 
 
 class RedundantArrayCopyingIn(pm.SingleStateTransformation):
-    """ Implements the redundant array removal transformation. Removes the first and second access nodeds
-        in pattern A -> B -> A
+    """Implements the redundant array removal transformation. Removes the first and second access nodeds
+    in pattern A -> B -> A
     """
 
     in_array = pm.PatternNode(nodes.AccessNode)
@@ -40,8 +40,8 @@ class RedundantArrayCopyingIn(pm.SingleStateTransformation):
 
         # Only apply if arrays are of same shape (no need to modify memlet subset)
         if len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape) or any(
-                i != o for i, o in zip(in_array.desc(sdfg).shape,
-                                       out_array.desc(sdfg).shape)):
+            i != o for i, o in zip(in_array.desc(sdfg).shape, out_array.desc(sdfg).shape)
+        ):
             return False
 
         return True
@@ -53,7 +53,6 @@ class RedundantArrayCopyingIn(pm.SingleStateTransformation):
 
         # Modify all edges that point to in_array to point to out_array
         for in_edge in graph.in_edges(in_array):
-
             # Make all memlets that write to in_array write to out_array instead
             tree = graph.memlet_tree(in_edge)
             for te in tree:
@@ -69,8 +68,8 @@ class RedundantArrayCopyingIn(pm.SingleStateTransformation):
 
 
 class RedundantArrayCopying(pm.SingleStateTransformation):
-    """ Implements the redundant array removal transformation. Removes the last access node
-        in pattern A -> B -> A, and the second (if possible)
+    """Implements the redundant array removal transformation. Removes the last access node
+    in pattern A -> B -> A, and the second (if possible)
     """
 
     in_array = pm.PatternNode(nodes.AccessNode)
@@ -117,8 +116,8 @@ class RedundantArrayCopying(pm.SingleStateTransformation):
 
         # Only apply if arrays are of same shape (no need to modify memlet subset)
         if len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape) or any(
-                i != o for i, o in zip(in_array.desc(sdfg).shape,
-                                       out_array.desc(sdfg).shape)):
+            i != o for i, o in zip(in_array.desc(sdfg).shape, out_array.desc(sdfg).shape)
+        ):
             return False
 
         return True
@@ -155,9 +154,10 @@ class RedundantArrayCopying(pm.SingleStateTransformation):
 
 
 class RedundantArrayCopying2(pm.SingleStateTransformation):
-    """ Implements the redundant array removal transformation. Removes
-        multiples of array B in pattern A -> B.
+    """Implements the redundant array removal transformation. Removes
+    multiples of array B in pattern A -> B.
     """
+
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
@@ -172,7 +172,7 @@ class RedundantArrayCopying2(pm.SingleStateTransformation):
         # Ensure out degree is one (only one target, which is out_array)
         found = 0
         for _, _, dst, _, _ in graph.out_edges(in_array):
-            if (isinstance(dst, nodes.AccessNode) and dst != out_array and dst.data == out_array.data):
+            if isinstance(dst, nodes.AccessNode) and dst != out_array and dst.data == out_array.data:
                 found += 1
 
         return found > 0
@@ -183,7 +183,7 @@ class RedundantArrayCopying2(pm.SingleStateTransformation):
 
         for e1 in graph.out_edges(in_array):
             dst = e1.dst
-            if (isinstance(dst, nodes.AccessNode) and dst != out_array and dst.data == out_array.data):
+            if isinstance(dst, nodes.AccessNode) and dst != out_array and dst.data == out_array.data:
                 for e2 in graph.out_edges(dst):
                     graph.add_edge(out_array, None, e2.dst, e2.dst_conn, e2.data)
                     graph.remove_edge(e2)
@@ -192,8 +192,8 @@ class RedundantArrayCopying2(pm.SingleStateTransformation):
 
 
 class RedundantArrayCopying3(pm.SingleStateTransformation):
-    """ Implements the redundant array removal transformation. Removes multiples
-        of array B in pattern MapEntry -> B.
+    """Implements the redundant array removal transformation. Removes multiples
+    of array B in pattern MapEntry -> B.
     """
 
     map_entry = pm.PatternNode(nodes.MapEntry)
@@ -210,7 +210,7 @@ class RedundantArrayCopying3(pm.SingleStateTransformation):
         # Ensure out degree is one (only one target, which is out_array)
         found = 0
         for _, _, dst, _, _ in graph.out_edges(map_entry):
-            if (isinstance(dst, nodes.AccessNode) and dst != out_array and dst.data == out_array.data):
+            if isinstance(dst, nodes.AccessNode) and dst != out_array and dst.data == out_array.data:
                 found += 1
 
         return found > 0
@@ -221,7 +221,7 @@ class RedundantArrayCopying3(pm.SingleStateTransformation):
 
         for e1 in graph.out_edges(map_entry):
             dst = e1.dst
-            if (isinstance(dst, nodes.AccessNode) and dst != out_array and dst.data == out_array.data):
+            if isinstance(dst, nodes.AccessNode) and dst != out_array and dst.data == out_array.data:
                 for e2 in graph.out_edges(dst):
                     graph.add_edge(out_array, None, e2.dst, e2.dst_conn, e2.data)
                     graph.remove_edge(e2)

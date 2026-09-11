@@ -165,7 +165,7 @@ def test_cond():
 
 
 def test_complex_case():
-    """ Tests a complex control flow case. """
+    """Tests a complex control flow case."""
     sdfg = dace.SDFG('program')
     sdfg.add_scalar('a', dace.float64)
     init = sdfg.add_state('init')
@@ -338,9 +338,13 @@ def test_for_with_external_init():
 
     sdfg = dace.SDFG('for_with_external_init')
     sdfg.add_symbol('i', dace.int64)
-    sdfg.add_array('A', {
-        N,
-    }, dace.int32)
+    sdfg.add_array(
+        'A',
+        {
+            N,
+        },
+        dace.int32,
+    )
     init = sdfg.add_state('init')
     body = sdfg.add_state('body')
     sdfg.add_loop(init, body, None, 'i', None, 'i < N', 'i + 1')
@@ -353,11 +357,11 @@ def test_for_with_external_init():
     init_i = 4
     ref = np.arange(10, dtype=np.int32)
     ref[:init_i] = 0
-    val0 = np.zeros((10, ), dtype=np.int32)
+    val0 = np.zeros((10,), dtype=np.int32)
     sdfg(A=val0, N=10, i=init_i)
     assert np.allclose(val0, ref)
     ConstantPropagation().apply_pass(sdfg, {})
-    val1 = np.zeros((10, ), dtype=np.int32)
+    val1 = np.zeros((10,), dtype=np.int32)
     sdfg(A=val1, N=10, i=init_i)
     assert np.allclose(val1, ref)
 
@@ -401,13 +405,13 @@ def test_for_with_external_init_nested():
     N = dace.symbol('N')
 
     sdfg = dace.SDFG('for_with_external_init_nested')
-    sdfg.add_array('A', (N, ), dace.int32)
+    sdfg.add_array('A', (N,), dace.int32)
     init = sdfg.add_state('init', is_start_block=True)
     main = sdfg.add_state('main')
     sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': 'N-1'}))
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', (N, ), dace.int32)
+    nsdfg.add_array('inner_A', (N,), dace.int32)
     ninit = nsdfg.add_state('nested_init', is_start_block=True)
     nguard = nsdfg.add_state('nested_guard')
     nbody = nsdfg.add_state('nested_body')
@@ -428,11 +432,11 @@ def test_for_with_external_init_nested():
     sdfg.validate()
 
     ref = np.arange(10, dtype=np.int32)
-    val0 = np.ndarray((10, ), dtype=np.int32)
+    val0 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val0, N=10)
     assert np.allclose(val0, ref)
     ConstantPropagation().apply_pass(sdfg, {})
-    val1 = np.ndarray((10, ), dtype=np.int32)
+    val1 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val1, N=10)
     assert np.allclose(val1, ref)
 
@@ -446,13 +450,13 @@ def test_for_with_external_init_nested_start_with_guard():
     N = dace.symbol('N')
 
     sdfg = dace.SDFG('for_with_external_init_nested_start_with_guard')
-    sdfg.add_array('A', (N, ), dace.int32)
+    sdfg.add_array('A', (N,), dace.int32)
     init = sdfg.add_state('init', is_start_block=True)
     main = sdfg.add_state('main')
     sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': '1'}))
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', (N, ), dace.int32)
+    nsdfg.add_array('inner_A', (N,), dace.int32)
     nguard = nsdfg.add_state('nested_guard', is_start_block=True)
     nbody = nsdfg.add_state('nested_body')
     nexit = nsdfg.add_state('nested_exit')
@@ -471,11 +475,11 @@ def test_for_with_external_init_nested_start_with_guard():
     sdfg.validate()
 
     ref = np.arange(10, dtype=np.int32)
-    val0 = np.ndarray((10, ), dtype=np.int32)
+    val0 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val0, N=10)
     assert np.allclose(val0, ref)
     ConstantPropagation().apply_pass(sdfg, {})
-    val1 = np.ndarray((10, ), dtype=np.int32)
+    val1 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val1, N=10)
     assert np.allclose(val1, ref)
 
@@ -483,7 +487,7 @@ def test_for_with_external_init_nested_start_with_guard():
 def test_skip_branch():
     sdfg = dace.SDFG('skip_branch')
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('__return', (1, ), dace.int32)
+    sdfg.add_array('__return', (1,), dace.int32)
     init = sdfg.add_state('init')
     if_guard = sdfg.add_state('if_guard')
     if_state = sdfg.add_state('if_state')
@@ -499,16 +503,16 @@ def test_skip_branch():
     sdfg.validate()
 
     rval_1 = sdfg(k=-1)
-    assert (rval_1[0] == 0)
+    assert rval_1[0] == 0
     rval_2 = sdfg(k=1)
-    assert (rval_2[0] == 1)
+    assert rval_2[0] == 1
 
     ConstantPropagation().apply_pass(sdfg, {})
 
     rval_1 = sdfg(k=-1)
-    assert (rval_1[0] == 0)
+    assert rval_1[0] == 0
     rval_2 = sdfg(k=1)
-    assert (rval_2[0] == 1)
+    assert rval_2[0] == 1
 
 
 def test_dependency_change():
@@ -534,14 +538,31 @@ def test_dependency_change():
     sdfg.add_edge(init, entry, dace.InterstateEdge(assignments=dict(i='0', t='0', irev='2500')))
     sdfg.add_edge(entry, body, dace.InterstateEdge())
     sdfg.add_edge(
-        body, body2,
-        dace.InterstateEdge(assignments=dict(t_next='(t + irev)', irev_next='(irev + (- 1))', i_next='i + 1'), ))
-    sdfg.add_edge(body2, exiting, dace.InterstateEdge(assignments=dict(cont='i_next == 2500'), ))
+        body,
+        body2,
+        dace.InterstateEdge(
+            assignments=dict(t_next='(t + irev)', irev_next='(irev + (- 1))', i_next='i + 1'),
+        ),
+    )
+    sdfg.add_edge(
+        body2,
+        exiting,
+        dace.InterstateEdge(
+            assignments=dict(cont='i_next == 2500'),
+        ),
+    )
     sdfg.add_edge(exiting, final, dace.InterstateEdge('cont'))
-    sdfg.add_edge(exiting, latch, dace.InterstateEdge('not cont', dict(
-        irev='irev_next',
-        i='i_next',
-    )))
+    sdfg.add_edge(
+        exiting,
+        latch,
+        dace.InterstateEdge(
+            'not cont',
+            dict(
+                irev='irev_next',
+                i='i_next',
+            ),
+        ),
+    )
     sdfg.add_edge(latch, body, dace.InterstateEdge(assignments=dict(t='t_next')))
 
     t = body.add_tasklet('add', {'inp'}, {'out'}, 'out = inp + t')
@@ -562,9 +583,9 @@ def test_dependency_change():
 
         # exiting state
         t_next = t + irev
-        irev_next = (irev + (-1))
+        irev_next = irev + (-1)
         i_next = i + 1
-        cont = (i_next == 2500)
+        cont = i_next == 2500
         if not cont:
             irev = irev_next
             i = i_next

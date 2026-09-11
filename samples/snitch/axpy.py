@@ -6,13 +6,14 @@ N = dace.symbol('N')
 
 
 def find_access_node_by_name(sdfg, name):
-    """ Finds the first data node by the given name"""
+    """Finds the first data node by the given name"""
     return next(
-        (n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.AccessNode) and name == n.data)
+        (n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.AccessNode) and name == n.data
+    )
 
 
 def find_map_by_name(sdfg, name):
-    """ Finds the first map entry node by the given name """
+    """Finds the first map entry node by the given name"""
     return next((n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and name == n.label)
 
 
@@ -42,6 +43,7 @@ if __name__ == "__main__":
 
     # Generate the code
     from dace.codegen.targets.snitch import SnitchCodeGen
+
     code, header = SnitchCodeGen.gen_code_snitch(sdfg)
 
     # Write code to files

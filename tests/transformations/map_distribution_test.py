@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" A test for the ElementWiseArrayOperation transformation. """
+"""A test for the ElementWiseArrayOperation transformation."""
 
 import dace
 import numpy as np
@@ -17,6 +17,7 @@ def eao_mpi(A: dace.float64[N], B: dace.float64[N]):
 @pytest.mark.mpi
 def test_eao_mpi():
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
@@ -35,9 +36,9 @@ def test_eao_mpi():
     B = np.random.randn(length)
     C = mpi_exec(A=A, B=B, N=length, commsize=commsize)
     if rank == 0:
-        assert (np.allclose(C, A * B))
+        assert np.allclose(C, A * B)
     else:
-        assert (True)
+        assert True
 
 
 if __name__ == '__main__':

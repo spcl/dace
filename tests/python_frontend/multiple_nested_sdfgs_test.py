@@ -22,18 +22,17 @@ def test_call_multiple_sdfgs():
     exp_minus_max.add_array("output", out_tmp_shape, out_tmp_dtype)
     exp_minus_max.add_state().add_mapped_tasklet(
         "_softmax_exp_",
-        map_ranges={
-            "__i" + str(i): "0:" + str(shape)
-            for i, shape in enumerate(inparr.shape)
-        },
+        map_ranges={"__i" + str(i): "0:" + str(shape) for i, shape in enumerate(inparr.shape)},
         inputs={
-            '__max': dace.Memlet.simple("tmp_max",
-                                        ','.join("__i" + str(i) for i in range(len(inparr.shape)) if i != axis)),
-            '__x': dace.Memlet.simple("original_input", ','.join("__i" + str(i) for i in range(len(inparr.shape))))
+            '__max': dace.Memlet.simple(
+                "tmp_max", ','.join("__i" + str(i) for i in range(len(inparr.shape)) if i != axis)
+            ),
+            '__x': dace.Memlet.simple("original_input", ','.join("__i" + str(i) for i in range(len(inparr.shape)))),
         },
         code='__out = exp(__x - __max)',
         outputs={'__out': dace.Memlet.simple("output", ','.join("__i" + str(i) for i in range(len(inparr.shape))))},
-        external_edges=True)
+        external_edges=True,
+    )
 
     ##################
     # out_tmp / sum
@@ -44,18 +43,17 @@ def test_call_multiple_sdfgs():
 
     out_tmp_div_sum.add_state().add_mapped_tasklet(
         "_softmax_div_",
-        map_ranges={
-            "__i" + str(i): "0:" + str(shape)
-            for i, shape in enumerate(inparr.shape)
-        },
+        map_ranges={"__i" + str(i): "0:" + str(shape) for i, shape in enumerate(inparr.shape)},
         inputs={
-            '__sum': dace.Memlet.simple("tmp_sum",
-                                        ','.join("__i" + str(i) for i in range(len(inparr.shape)) if i != axis)),
-            '__exp': dace.Memlet.simple("out_tmp", ','.join("__i" + str(i) for i in range(len(inparr.shape))))
+            '__sum': dace.Memlet.simple(
+                "tmp_sum", ','.join("__i" + str(i) for i in range(len(inparr.shape)) if i != axis)
+            ),
+            '__exp': dace.Memlet.simple("out_tmp", ','.join("__i" + str(i) for i in range(len(inparr.shape)))),
         },
         code='__out = __exp / __sum',
         outputs={'__out': dace.Memlet.simple("output", ','.join("__i" + str(i) for i in range(len(inparr.shape))))},
-        external_edges=True)
+        external_edges=True,
+    )
 
     ##################
     # put everything together as a program
@@ -79,12 +77,12 @@ def test_call_multiple_sdfgs():
     assert state is not None
     for n in state.nodes():
         if isinstance(n, dace.sdfg.nodes.AccessNode):
-            assert (n.data in {'out_tmp', 'tmp_sum', 'output'})
+            assert n.data in {'out_tmp', 'tmp_sum', 'output'}
         elif isinstance(n, dace.sdfg.nodes.CodeNode):
             for src, _, _, _, _ in state.in_edges(n):
-                assert (src.data in {'out_tmp', 'tmp_sum'})
+                assert src.data in {'out_tmp', 'tmp_sum'}
             for _, _, dst, _, _ in state.out_edges(n):
-                assert (dst.data in {'output'})
+                assert dst.data in {'output'}
 
 
 def test_nested_sdfg_with_return_value():

@@ -8,7 +8,6 @@ def dace_blocker(f):
 
 
 class MyContextManager:
-
     def __init__(self, seed):
         self.rng = np.random.default_rng(seed)
 

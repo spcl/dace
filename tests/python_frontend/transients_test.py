@@ -26,16 +26,16 @@ def test_transients():
     A = np.random.rand(n).astype(np.float32)
     scal, arr = transients(A)
     if scal[0] > 0:
-        assert (arr[0:scal[0]] >= 0.5).all()
-    assert (arr[scal[0]:] == 0).all()
+        assert (arr[0 : scal[0]] >= 0.5).all()
+    assert (arr[scal[0] :] == 0).all()
 
 
 def test_transients_array():
 
     @dace.program
     def tester(
-            A: dace.data.Array(dace.float32, [60], transient=True),
-            B: dace.data.Array(dace.float32, [60]),
+        A: dace.data.Array(dace.float32, [60], transient=True),
+        B: dace.data.Array(dace.float32, [60]),
     ) -> None:
         A[:] = 42.42
 

@@ -27,9 +27,15 @@ def test_bn_standalone(training_mode: bool):
     if training_mode:
 
         @dace.program
-        def test_bn_standalone(X: dace.float32[8, 3, 32,
-                                               32], scale: dace.float32[3], B: dace.float32[3], mean: dace.float32[3],
-                               var: dace.float32[3], running_mean: dace.float32[3], running_var: dace.float32[3]):
+        def test_bn_standalone(
+            X: dace.float32[8, 3, 32, 32],
+            scale: dace.float32[3],
+            B: dace.float32[3],
+            mean: dace.float32[3],
+            var: dace.float32[3],
+            running_mean: dace.float32[3],
+            running_var: dace.float32[3],
+        ):
             Y = dace.define_local([8, 3, 32, 32], dace.float32)
             donnx.ONNXBatchNormalization(
                 X=X,
@@ -46,17 +52,18 @@ def test_bn_standalone(training_mode: bool):
     else:
 
         @dace.program
-        def test_bn_standalone(X: dace.float32[8, 3, 32, 32], scale: dace.float32[3], B: dace.float32[3],
-                               mean: dace.float32[3], var: dace.float32[3]):
+        def test_bn_standalone(
+            X: dace.float32[8, 3, 32, 32],
+            scale: dace.float32[3],
+            B: dace.float32[3],
+            mean: dace.float32[3],
+            var: dace.float32[3],
+        ):
 
             Y = dace.define_local([8, 3, 32, 32], dace.float32)
-            donnx.ONNXBatchNormalization(X=X,
-                                         scale=scale,
-                                         B=B,
-                                         input_mean=mean,
-                                         input_var=var,
-                                         Y=Y,
-                                         training_mode=training_mode)
+            donnx.ONNXBatchNormalization(
+                X=X, scale=scale, B=B, input_mean=mean, input_var=var, Y=Y, training_mode=training_mode
+            )
             return Y
 
     X = torch.randn(8, 3, 32, 32)
@@ -64,7 +71,12 @@ def test_bn_standalone(training_mode: bool):
     B = torch.randn(3)
     mean = torch.randn(3)
     var = torch.abs(torch.randn(3))
-    X_torch, scale_torch, B_torch, mean_torch, var_torch = X.clone(), scale.clone(), B.clone(), mean.clone(), var.clone(
+    X_torch, scale_torch, B_torch, mean_torch, var_torch = (
+        X.clone(),
+        scale.clone(),
+        B.clone(),
+        mean.clone(),
+        var.clone(),
     )
     if training_mode:
         running_mean = np.zeros(3, dtype=np.float32)
@@ -81,7 +93,6 @@ def test_bn_standalone(training_mode: bool):
 def test_bn_in_import():
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.bn = nn.BatchNorm2d(3, track_running_stats=True)

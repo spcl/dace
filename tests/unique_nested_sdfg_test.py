@@ -47,23 +47,17 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
 
     vecAdd_tasklet = vecAdd_state.add_tasklet('vecAdd_task', ['x_con', 'y_con'], ['z_con'], 'z_con = x_con + y_con')
 
-    vecAdd_state.add_memlet_path(x_in,
-                                 vecMap_entry,
-                                 vecAdd_tasklet,
-                                 dst_conn='x_con',
-                                 memlet=dace.Memlet.simple(x_in.data, 'i'))
+    vecAdd_state.add_memlet_path(
+        x_in, vecMap_entry, vecAdd_tasklet, dst_conn='x_con', memlet=dace.Memlet.simple(x_in.data, 'i')
+    )
 
-    vecAdd_state.add_memlet_path(y_in,
-                                 vecMap_entry,
-                                 vecAdd_tasklet,
-                                 dst_conn='y_con',
-                                 memlet=dace.Memlet.simple(y_in.data, 'i'))
+    vecAdd_state.add_memlet_path(
+        y_in, vecMap_entry, vecAdd_tasklet, dst_conn='y_con', memlet=dace.Memlet.simple(y_in.data, 'i')
+    )
 
-    vecAdd_state.add_memlet_path(vecAdd_tasklet,
-                                 vecMap_exit,
-                                 z_out,
-                                 src_conn='z_con',
-                                 memlet=dace.Memlet.simple(z_out.data, 'i'))
+    vecAdd_state.add_memlet_path(
+        vecAdd_tasklet, vecMap_exit, z_out, src_conn='z_con', memlet=dace.Memlet.simple(z_out.data, 'i')
+    )
 
     return vecAdd_sdfg
 
@@ -107,18 +101,15 @@ def make_nested_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
 
     # Nest it and connect memlets
     nested_sdfg = vecAdd_parent_state.add_nested_sdfg(to_nest, {"x", "y"}, {"z"})
-    vecAdd_parent_state.add_memlet_path(x_in,
-                                        nested_sdfg,
-                                        dst_conn="x",
-                                        memlet=Memlet.simple(x_in, "0:size", num_accesses=n))
-    vecAdd_parent_state.add_memlet_path(y_in,
-                                        nested_sdfg,
-                                        dst_conn="y",
-                                        memlet=Memlet.simple(y_in, "0:size", num_accesses=n))
-    vecAdd_parent_state.add_memlet_path(nested_sdfg,
-                                        z_out,
-                                        src_conn="z",
-                                        memlet=Memlet.simple(z_out, "0:size", num_accesses=n))
+    vecAdd_parent_state.add_memlet_path(
+        x_in, nested_sdfg, dst_conn="x", memlet=Memlet.simple(x_in, "0:size", num_accesses=n)
+    )
+    vecAdd_parent_state.add_memlet_path(
+        y_in, nested_sdfg, dst_conn="y", memlet=Memlet.simple(y_in, "0:size", num_accesses=n)
+    )
+    vecAdd_parent_state.add_memlet_path(
+        nested_sdfg, z_out, src_conn="z", memlet=Memlet.simple(z_out, "0:size", num_accesses=n)
+    )
 
     return vecAdd_parent_sdfg
 

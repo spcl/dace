@@ -25,7 +25,6 @@ class ExpandGetrfPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGetrfOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -42,18 +41,17 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
             raise (NotImplementedError)
 
         n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        code = (
+            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandGetrfMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -70,18 +68,17 @@ class ExpandGetrfMKL(ExpandTransformation):
             raise (NotImplementedError)
 
         n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        code = (
+            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandGetrfCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
@@ -97,7 +94,9 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
-        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
+        code = (
+            environments.cusolverdn.cuSolverDn.handle_setup_code(node)
+            + f"""
                 int __dace_workspace_size = 0;
                 {cuda_type}* __dace_workspace;
                 cusolverDn{func}_bufferSize(
@@ -110,13 +109,12 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
                     __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
                     {stride_x}, __dace_workspace, _ipiv, _res);
                 cudaFree(__dace_workspace);
-                """)
+                """
+        )
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         conn = tasklet.out_connectors
         conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
@@ -126,7 +124,6 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Getrf(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {"OpenBLAS": ExpandGetrfOpenBLAS, "MKL": ExpandGetrfMKL, "cuSolverDn": ExpandGetrfCuSolverDn}
     default_implementation = None

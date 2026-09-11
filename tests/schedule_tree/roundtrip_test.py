@@ -2,6 +2,7 @@
 """
 Tests conversion of schedule trees to SDFGs.
 """
+
 import dace
 import numpy as np
 
@@ -83,16 +84,25 @@ def test_transients_and_nested_sdfg() -> None:
             state = sdfg.add_state("map_state")
             access_A = state.add_access("A")
             write_B = state.add_write("B")
-            state.add_mapped_tasklet("write_one", {"j": dace.subsets.Range.from_string("0:10")}, {},
-                                     "out = 1.0", {"out": dace.Memlet("A[15*i + 3*j]")},
-                                     external_edges=True,
-                                     output_nodes={"A": access_A})
-            state.add_mapped_tasklet("copy", {"k": dace.subsets.Range.from_string("10:20")},
-                                     {"read": dace.Memlet("A[k]")},
-                                     "write = read", {"write": dace.Memlet("B[k]")},
-                                     external_edges=True,
-                                     input_nodes={"A": access_A},
-                                     output_nodes={"B": write_B})
+            state.add_mapped_tasklet(
+                "write_one",
+                {"j": dace.subsets.Range.from_string("0:10")},
+                {},
+                "out = 1.0",
+                {"out": dace.Memlet("A[15*i + 3*j]")},
+                external_edges=True,
+                output_nodes={"A": access_A},
+            )
+            state.add_mapped_tasklet(
+                "copy",
+                {"k": dace.subsets.Range.from_string("10:20")},
+                {"read": dace.Memlet("A[k]")},
+                "write = read",
+                {"write": dace.Memlet("B[k]")},
+                external_edges=True,
+                input_nodes={"A": access_A},
+                output_nodes={"B": write_B},
+            )
             return state
 
         sdfg = dace.SDFG(name="nested")
@@ -116,12 +126,15 @@ def test_transients_and_nested_sdfg() -> None:
     _, B_desc = sdfg.add_array("B", [60], dace.float32)
     state = sdfg.add_state("state")
     access_A = state.add_access("A")
-    state.add_mapped_tasklet("fill", {"i": dace.subsets.Range.from_string("0:60")},
-                             inputs={},
-                             code="out = 42.42",
-                             outputs={"out": dace.Memlet("A[i]")},
-                             external_edges=True,
-                             output_nodes={"A": access_A})
+    state.add_mapped_tasklet(
+        "fill",
+        {"i": dace.subsets.Range.from_string("0:60")},
+        inputs={},
+        code="out = 42.42",
+        outputs={"out": dace.Memlet("A[i]")},
+        external_edges=True,
+        output_nodes={"A": access_A},
+    )
 
     read_B = state.add_read("B")
     map_entry, map_exit = state.add_map("second_map", {"i": dace.subsets.Range.from_string("0:2")})
@@ -138,14 +151,8 @@ def test_transients_and_nested_sdfg() -> None:
     nsdfg = nestedSDFG()
     nsdfg_node = state.add_nested_sdfg(
         nsdfg,
-        inputs={
-            "A": None,
-            "B": None
-        },
-        outputs={
-            "A": None,
-            "B": None
-        },
+        inputs={"A": None, "B": None},
+        outputs={"A": None, "B": None},
         name="nested_sdfg",
     )
     state.add_edge(map_entry, "OUT_A", nsdfg_node, "A", dace.Memlet.from_array("A", A_desc))

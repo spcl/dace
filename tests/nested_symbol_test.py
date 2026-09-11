@@ -87,12 +87,14 @@ def test_nested_symbol_in_args():
     state = inner.add_state('inner_state')
     inner.add_symbol('rdt', stype=float)
     inner.add_datadesc('field', dace.float64[10])
-    state.add_mapped_tasklet('tasklet',
-                             map_ranges={'i': "0:10"},
-                             inputs={},
-                             outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
-                             code="field_out = rdt",
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        'tasklet',
+        map_ranges={'i': "0:10"},
+        inputs={},
+        outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
+        code="field_out = rdt",
+        external_edges=True,
+    )
     inner.arg_names = ['field', 'rdt']
 
     @dace.program
@@ -100,8 +102,19 @@ def test_nested_symbol_in_args():
         rdt = 1.0 / dt
         inner(field, rdt)
 
-    sdfg = funct.to_sdfg(np.random.randn(10, ), 1.0, simplify=False)
-    sdfg(np.random.randn(10, ), 1.0)
+    sdfg = funct.to_sdfg(
+        np.random.randn(
+            10,
+        ),
+        1.0,
+        simplify=False,
+    )
+    sdfg(
+        np.random.randn(
+            10,
+        ),
+        1.0,
+    )
 
 
 def test_nested_symbol_as_constant():
@@ -115,7 +128,8 @@ def test_nested_symbol_as_constant():
         inputs={},
         outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
         code="field_out = rdt",
-        external_edges=True)
+        external_edges=True,
+    )
     inner.arg_names = ['field', 'rdt']
     rdt = 1e30
 
@@ -123,7 +137,11 @@ def test_nested_symbol_as_constant():
     def funct(field):
         inner(field, rdt)
 
-    funct(np.random.randn(10, ))
+    funct(
+        np.random.randn(
+            10,
+        )
+    )
 
 
 if __name__ == '__main__':

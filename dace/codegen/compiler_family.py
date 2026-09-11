@@ -4,6 +4,7 @@
 The shipped flags are GCC/Clang spellings, several of which nvc++ rejects outright. Family names
 match CMake's ``CMAKE_<LANG>_COMPILER_ID``, lowercased.
 """
+
 import functools
 import os
 import subprocess
@@ -36,18 +37,17 @@ def detect(executable: str) -> str:
     Asks the compiler rather than reading its filename, which a wrapper or ccache shim can change.
     """
     try:
-        probe = subprocess.run([executable, '-dM', '-E', '-x', 'c++', '-'],
-                               input='',
-                               capture_output=True,
-                               text=True,
-                               timeout=60)
+        probe = subprocess.run(
+            [executable, '-dM', '-E', '-x', 'c++', '-'], input='', capture_output=True, text=True, timeout=60
+        )
     except (OSError, subprocess.SubprocessError):
         return FALLBACK_FAMILY
     if probe.returncode != 0:
         return FALLBACK_FAMILY
     defined = {
         parts[1]
-        for parts in (line.split() for line in probe.stdout.splitlines()) if len(parts) > 1 and parts[0] == '#define'
+        for parts in (line.split() for line in probe.stdout.splitlines())
+        if len(parts) > 1 and parts[0] == '#define'
     }
     for macro, family in FAMILY_MACROS:
         if macro in defined:
@@ -67,4 +67,4 @@ def cpu_args() -> str:
     family = Config.get_metadata('compiler', 'cpu', 'args').get('default_' + detect(host_compiler()))
     if family is None or not configured.startswith(shipped):
         return configured
-    return family + configured[len(shipped):]
+    return family + configured[len(shipped) :]

@@ -35,7 +35,6 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(dot_node, result, src_conn="_result", memlet=Memlet.simple(result, "0", num_accesses=1))
 
     if storage != dace.StorageType.Default:
-
         sdfg.add_array("x", [n], dtype)
         sdfg.add_array("y", [n], dtype)
         sdfg.add_array("result", [1], dtype)
@@ -55,9 +54,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
         result_device = finalize_state.add_write("result" + suffix)
         result_host = finalize_state.add_read("result")
-        finalize_state.add_memlet_path(result_device,
-                                       result_host,
-                                       memlet=Memlet.simple(result_device, "0", num_accesses=1))
+        finalize_state.add_memlet_path(
+            result_device, result_host, memlet=Memlet.simple(result_device, "0", num_accesses=1)
+        )
 
     return sdfg
 
@@ -65,16 +64,19 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("pure", dace.float32),
-    pytest.param("pure", dace.float64),
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("pure", dace.float32),
+        pytest.param("pure", dace.float64),
+        pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+        pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+    ],
+)
 def test_dot(implementation, dtype):
-    storage = (dace.StorageType.GPU_Global if implementation == 'cuBLAS' else dace.StorageType.Default)
+    storage = dace.StorageType.GPU_Global if implementation == 'cuBLAS' else dace.StorageType.Default
     sdfg = make_sdfg(implementation, dtype, storage=storage)
     np_dtype = getattr(np, dtype.to_string())
 

@@ -23,11 +23,13 @@ TensorOrTensors = Union[str, Sequence[str]]
 
 
 @op_repository.replaces('torch.autograd.backward')
-def backward(pv: newast.ProgramVisitor,
-             sdfg: SDFG,
-             state: SDFGState,
-             tensors: TensorOrTensors,
-             grads: Optional[TensorOrTensors] = None):
+def backward(
+    pv: newast.ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    tensors: TensorOrTensors,
+    grads: Optional[TensorOrTensors] = None,
+):
     """
     Adds a backward pass node to the SDFG.
 
@@ -37,12 +39,14 @@ def backward(pv: newast.ProgramVisitor,
 
     # First, remove function call regions
     transformation = InlineControlFlowRegions()
-    transformation.set_opts({
-        'no_inline_function_call_regions': False,
-        'no_inline_named_regions': False,
-        'no_inline_loops': True,
-        'no_inline_conditional': True
-    })
+    transformation.set_opts(
+        {
+            'no_inline_function_call_regions': False,
+            'no_inline_named_regions': False,
+            'no_inline_loops': True,
+            'no_inline_conditional': True,
+        }
+    )
     transformation.apply_pass(sdfg, {})
 
     if isinstance(tensors, str):
@@ -77,15 +81,15 @@ def backward(pv: newast.ProgramVisitor,
         grad_desc = sdfg.arrays[grad] if grad in sdfg.arrays else sdfg.constants_prop[grad][0]
 
         if not iterables_equal(grad_desc.shape, sdfg.arrays[tensor].shape):
-            raise common.DaceSyntaxError(pv, None,
-                                         "Gradient {} and tensor {} have different shapes".format(grad, tensor))
+            raise common.DaceSyntaxError(
+                pv, None, "Gradient {} and tensor {} have different shapes".format(grad, tensor)
+            )
 
     given_gradients = dict(zip(grads, tensors))
 
-    bwd_node = BackwardPass('backward',
-                            inputs=set(itertools.chain(tensors, grads)),
-                            outputs=set(),
-                            given_gradients=given_gradients)
+    bwd_node = BackwardPass(
+        'backward', inputs=set(itertools.chain(tensors, grads)), outputs=set(), given_gradients=given_gradients
+    )
     state.add_node(bwd_node)
 
     for inp in itertools.chain(tensors, grads):
@@ -97,7 +101,8 @@ def backward(pv: newast.ProgramVisitor,
     to_compute = {
         dependency
         for tensor in tensors
-        for dependency in dependencies[tensor] if isinstance(sdfg.arrays[dependency], ParameterArray)
+        for dependency in dependencies[tensor]
+        if isinstance(sdfg.arrays[dependency], ParameterArray)
     }
 
     for param in to_compute:
@@ -126,8 +131,11 @@ def grad(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
     desc = sdfg.arrays[arr]
     if not isinstance(desc, ParameterArray):
         raise common.DaceSyntaxError(
-            pv, None, "Called .grad on an Array that was not a Parameter. Convert it to a parameter "
-            " first using .requires_grad_()")
+            pv,
+            None,
+            "Called .grad on an Array that was not a Parameter. Convert it to a parameter "
+            " first using .requires_grad_()",
+        )
 
     return desc.gradient
 

@@ -89,8 +89,7 @@ def _test_matmul(implementation, dtype, impl_name, storage, data_layout='CCC', e
     ref = np.dot(x, y)
 
     if dtype == dace.float16 and np.linalg.norm(z) == 0:
-        print('No computation performed, half-precision probably not '
-              'supported, skipping test.')
+        print('No computation performed, half-precision probably not supported, skipping test.')
         return
 
     diff = np.linalg.norm(ref - z)
@@ -181,6 +180,7 @@ def test_default_stream_blas_node():
 
 if __name__ == '__main__':
     import os
+
     try:
         test_batchmm()
         test_types()

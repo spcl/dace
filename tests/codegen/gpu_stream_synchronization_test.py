@@ -8,6 +8,7 @@ as soon as ``__program_*`` returns, whatever the device is still doing.
 
 These assert on emitted code, so they need a GPU for neither compilation nor a run.
 """
+
 import re
 import warnings
 
@@ -54,10 +55,10 @@ def callback_code() -> str:
 def test_the_default_stream_is_synchronized_at_the_end_of_its_state():
     """Nothing else orders it: DaCe's streams are non-blocking, and the host returns right after."""
     code = callback_code()
-    assert re.search(
-        r'StreamSynchronize\(nullptr\)',
-        code), ('the state pinned to the default stream ends without synchronizing it, so the host reads the '
-                'callback output while the device may still be writing it')
+    assert re.search(r'StreamSynchronize\(nullptr\)', code), (
+        'the state pinned to the default stream ends without synchronizing it, so the host reads the '
+        'callback output while the device may still be writing it'
+    )
 
 
 def test_the_synchronization_fences_the_callback_rather_than_preceding_it():
@@ -73,8 +74,9 @@ def test_the_synchronization_fences_the_callback_rather_than_preceding_it():
     sync = re.search(r'StreamSynchronize\(nullptr\)', code)
     assert sync, 'no default-stream synchronization was emitted'
     assert sync.start() > callback.start(), 'the default-stream synchronization precedes the callback it guards'
-    assert not re.search(r'Async\([^;]*nullptr\)', code[sync.end():]), \
+    assert not re.search(r'Async\([^;]*nullptr\)', code[sync.end() :]), (
         'work is queued on the default stream after the last synchronization of it'
+    )
 
 
 def test_the_default_stream_is_never_rendered_as_an_array_index():
@@ -92,8 +94,9 @@ def test_a_state_on_a_created_stream_still_synchronizes_that_stream():
         b[:] = a * 2
 
     code = generated_code_for(doubler, np.zeros(64), np.zeros(64))
-    assert re.search(r'StreamSynchronize\(__state->gpu_context->streams\[\d+\]\)',
-                     code), ('a state whose work runs on a created stream no longer synchronizes it')
+    assert re.search(r'StreamSynchronize\(__state->gpu_context->streams\[\d+\]\)', code), (
+        'a state whose work runs on a created stream no longer synchronizes it'
+    )
 
 
 if __name__ == '__main__':

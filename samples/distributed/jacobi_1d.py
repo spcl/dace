@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Explicitly distributed Jacobi-1D sample."""
+"""Explicitly distributed Jacobi-1D sample."""
+
 import dace as dc
 import numpy as np
 import os
@@ -30,9 +31,9 @@ def jacobi_1d_shared(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
 @dc.program
 def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
 
-    lA = np.zeros((lN + 2, ), dtype=A.dtype)
-    lB = np.zeros((lN + 2, ), dtype=B.dtype)
-    tAB = np.empty((lN, ), dtype=A.dtype)
+    lA = np.zeros((lN + 2,), dtype=A.dtype)
+    lB = np.zeros((lN + 2,), dtype=B.dtype)
+    tAB = np.empty((lN,), dtype=A.dtype)
 
     dc.comm.Scatter(A, tAB)
     lA[1:-1] = tAB
@@ -73,8 +74,8 @@ def jacobi_1d_dist(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
 
 def init_data(N, datatype):
 
-    A = np.fromfunction(lambda i: (i + 2) / N, shape=(N, ), dtype=datatype)
-    B = np.fromfunction(lambda i: (i + 3) / N, shape=(N, ), dtype=datatype)
+    A = np.fromfunction(lambda i: (i + 2) / N, shape=(N,), dtype=datatype)
+    B = np.fromfunction(lambda i: (i + 3) / N, shape=(N,), dtype=datatype)
 
     return A, B
 
@@ -84,7 +85,6 @@ def time_to_ms(raw):
 
 
 if __name__ == "__main__":
-
     # Initialization
     TSTEPS, N = 50, 1000
     A, B = init_data(N, np.float64)
@@ -97,8 +97,10 @@ if __name__ == "__main__":
 
     if size < 2 or lN * size != 1000:
         if rank == 0:
-            print("Please run this sample with at least 2 MPI ranks. Furthermore, "
-                  "the number of MPI ranks must divide evenly N (by default 1000).")
+            print(
+                "Please run this sample with at least 2 MPI ranks. Furthermore, "
+                "the number of MPI ranks must divide evenly N (by default 1000)."
+            )
         sys.exit(0)
 
     mpi_sdfg = jacobi_1d_dist.to_sdfg()
@@ -117,8 +119,7 @@ if __name__ == "__main__":
 
     comm.Barrier()
 
-    stmt = ("mpi_func(A=A, B=B, TSTEPS=TSTEPS, N=N, "
-            "lN=lN, rank=rank, size=size)")
+    stmt = "mpi_func(A=A, B=B, TSTEPS=TSTEPS, N=N, lN=lN, rank=rank, size=size)"
     setup = "A, B = init_data(N, np.float64); comm.Barrier()"
     repeat = 10
 
@@ -136,6 +137,6 @@ if __name__ == "__main__":
         shared_sdfg(A=refA, B=refB, TSTEPS=TSTEPS, N=N)
 
         print("=======Validation=======")
-        assert (np.allclose(A, refA))
-        assert (np.allclose(B, refB))
+        assert np.allclose(A, refA)
+        assert np.allclose(B, refB)
         print("OK")

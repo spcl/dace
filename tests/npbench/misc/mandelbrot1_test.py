@@ -18,12 +18,13 @@ def linspace(start: dc.float64, stop: dc.float64, X: dc.float64[N]):
 
 
 @dc.program
-def mandelbrot_kernel(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax: dc.float64, maxiter: dc.int64,
-                      horizon: dc.float64):
+def mandelbrot_kernel(
+    xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax: dc.float64, maxiter: dc.int64, horizon: dc.float64
+):
     # Adapted from https://www.ibm.com/developerworks/community/blogs/jfp/...
     #              .../entry/How_To_Compute_Mandelbrodt_Set_Quickly?lang=en
-    X = np.ndarray((XN, ), dtype=np.float64)
-    Y = np.ndarray((YN, ), dtype=np.float64)
+    X = np.ndarray((XN,), dtype=np.float64)
+    Y = np.ndarray((YN,), dtype=np.float64)
     linspace(xmin, xmax, X)
     linspace(ymin, ymax, Y)
     # C = X + np.reshape(Y, (YN, 1)) * 1j
@@ -43,7 +44,7 @@ def mandelbrot_kernel(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax
         # np.add(np.power(Z, 2, where=I), C, out=Z, where=I)
         for j, k in dc.map[0:YN, 0:XN]:
             if I[j, k]:
-                Z[j, k] = Z[j, k]**2 + C[j, k]
+                Z[j, k] = Z[j, k] ** 2 + C[j, k]
     N[N == maxiter - 1] = 0
     # np.positive(0, out=N, where=N==maxiter-1)
     # for j, k in dace.map[0:YN, 0:XN]:
@@ -63,7 +64,7 @@ def ground_truth(xmin, xmax, ymin, ymax, xn, yn, maxiter, horizon=2.0):
     for n in range(maxiter):
         I = np.less(abs(Z), horizon)
         N[I] = n
-        Z[I] = Z[I]**2 + C[I]
+        Z[I] = Z[I] ** 2 + C[I]
     N[N == maxiter - 1] = 0
     return Z, N
 
@@ -104,7 +105,6 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

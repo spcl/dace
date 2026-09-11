@@ -10,7 +10,7 @@ import dace.serialize
 
 def test_cond_region_if():
     sdfg = dace.SDFG('regular_if')
-    sdfg.add_array('A', (1, ), dace.float32)
+    sdfg.add_array('A', (1,), dace.float32)
     sdfg.add_symbol('i', dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
 
@@ -27,11 +27,11 @@ def test_cond_region_if():
     state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[0]'))
 
     assert sdfg.is_valid()
-    A = np.ones((1, ), dtype=np.float32)
+    A = np.ones((1,), dtype=np.float32)
     sdfg(i=1, A=A)
     assert A[0] == 100
 
-    A = np.ones((1, ), dtype=np.float32)
+    A = np.ones((1,), dtype=np.float32)
     sdfg(i=0, A=A)
     assert A[0] == 1
 
@@ -60,7 +60,7 @@ def test_serialization():
 
 def test_if_else():
     sdfg = dace.SDFG('regular_if_else')
-    sdfg.add_array('A', (1, ), dace.float32)
+    sdfg.add_array('A', (1,), dace.float32)
     sdfg.add_symbol('i', dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
 
@@ -83,11 +83,11 @@ def test_if_else():
     if1.add_branch(CodeBlock('i == 0'), else_body)
 
     assert sdfg.is_valid()
-    A = np.ones((1, ), dtype=np.float32)
+    A = np.ones((1,), dtype=np.float32)
     sdfg(i=1, A=A)
     assert A[0] == 100
 
-    A = np.ones((1, ), dtype=np.float32)
+    A = np.ones((1,), dtype=np.float32)
     sdfg(i=0, A=A)
     assert A[0] == 200
 

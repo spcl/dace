@@ -5,7 +5,6 @@ import ctypes.util
 
 @dace.library.environment
 class rocBLAS:
-
     cmake_minimum_version = None
     cmake_packages = [""]
     cmake_variables = {}
@@ -23,9 +22,12 @@ class rocBLAS:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 rocblas_handle &__dace_rocblas_handle = __state->rocblas_handle.Get();
 rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream);\n"""
+        )
 
     @staticmethod
     def _find_library():

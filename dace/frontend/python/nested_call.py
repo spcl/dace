@@ -9,21 +9,22 @@ else:
     ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
 
-class NestedCall():
+class NestedCall:
     """An object to support nested calls in replacement functions. It does this by keeping track of
-       the last added state.
+    the last added state.
 
-       Example usage:
-       def _cos_then_max(pv, sdfg, state, a: str):
-           nest = NestedCall(pv, sdfg, state)
+    Example usage:
+    def _cos_then_max(pv, sdfg, state, a: str):
+        nest = NestedCall(pv, sdfg, state)
 
-           # you don't need to pass the first two args
-           c = nest(_cos)(a)
-           result = nest(_max)(a, axis=1)
+        # you don't need to pass the first two args
+        c = nest(_cos)(a)
+        result = nest(_max)(a, axis=1)
 
-           # return a tuple of the nest object and the result
-           return nest, result
+        # return a tuple of the nest object and the result
+        return nest, result
     """
+
     state: SDFGState
     last_state: Optional[SDFGState]
     pv: ProgramVisitor
@@ -40,9 +41,13 @@ class NestedCall():
     def __call__(self, func):
 
         def nested(*args, **kwargs):
-            result = func(self.pv, self.sdfg,
-                          self.add_state("{}_nested_call_{}_{}".format(self.state.label, self.count, func.__name__)),
-                          *args, **kwargs)
+            result = func(
+                self.pv,
+                self.sdfg,
+                self.add_state("{}_nested_call_{}_{}".format(self.state.label, self.count, func.__name__)),
+                *args,
+                **kwargs,
+            )
             if isinstance(result, tuple) and type(result[0]) is NestedCall:
                 self.last_state = result[0].last_state
                 result = result[1]

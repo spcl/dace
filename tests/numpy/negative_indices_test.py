@@ -44,7 +44,7 @@ def test_negative_range():
 def nested_negative_range(A: dace.int64[10]):
     out = np.ndarray([10], dtype=np.int64)
     for i in dace.map[0:2]:
-        out[i * 5:i * 5 + 5] = A[-6:-1]
+        out[i * 5 : i * 5 + 5] = A[-6:-1]
     return out
 
 

@@ -21,7 +21,7 @@ def _make_horizontal_map_sdfg(common_ancestor: bool):
     for name in names:
         sdfg.add_array(
             name,
-            shape=((10, 4) if name == "out" else (10, )),
+            shape=((10, 4) if name == "out" else (10,)),
             dtype=dace.float64,
             transient=False,
         )
@@ -49,10 +49,7 @@ def _make_horizontal_map_sdfg(common_ancestor: bool):
     state.add_mapped_tasklet(
         "comp_4",
         map_ranges={"__i": "0:10"},
-        inputs={
-            "__in1": dace.Memlet("A[__i]"),
-            "__in2": dace.Memlet("D[__i]")
-        },
+        inputs={"__in1": dace.Memlet("A[__i]"), "__in2": dace.Memlet("D[__i]")},
         code="__out = __in1 + __in2",
         outputs={"__out": dace.Memlet(f"out[__i, 3]")},
         input_nodes=input_nodes,
@@ -72,7 +69,7 @@ def _make_vertical_map_sdfg() -> dace.SDFG:
     for name in names:
         sdfg.add_array(
             name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=(name == "t"),
         )

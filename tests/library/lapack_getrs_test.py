@@ -66,10 +66,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(getrs_node, res_getrs, src_conn="_res", memlet=Memlet.simple(res_getrs, "0", num_accesses=1))
     state.add_memlet_path(getrf_node, pivots, src_conn="_ipiv", memlet=Memlet.simple(pivots, "0:n", num_accesses=n))
     state.add_memlet_path(pivots, getrs_node, dst_conn="_ipiv", memlet=Memlet.simple(pivots, "0:n", num_accesses=n))
-    state.add_memlet_path(getrf_node,
-                          Aout,
-                          src_conn="_xout",
-                          memlet=Memlet.simple(Aout, "0:n, 0:n", num_accesses=n * n))
+    state.add_memlet_path(
+        getrf_node, Aout, src_conn="_xout", memlet=Memlet.simple(Aout, "0:n, 0:n", num_accesses=n * n)
+    )
     state.add_memlet_path(Aout, getrs_node, dst_conn="_a", memlet=Memlet.simple(Aout, "0:n, 0:n", num_accesses=n * n))
     state.add_memlet_path(Bin, getrs_node, dst_conn="_rhs_in", memlet=Memlet.simple(Bin, "0:n", num_accesses=n))
     state.add_memlet_path(getrs_node, Bout, src_conn="_rhs_out", memlet=Memlet.simple(Bout, "0:n", num_accesses=n))
@@ -80,14 +79,17 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-])
+@pytest.mark.parametrize(
+    "implementation, dtype, storage",
+    [
+        pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    ],
+)
 def test_getrs(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     solve_sdfg = sdfg.compile()
@@ -106,12 +108,14 @@ def test_getrs(implementation, dtype, storage):
     lapack_status2 = np.array([-1], dtype=np.int32)
     a2 = np.copy(a1)  # a input will be overwritten by its lu factorization (by getrf)
     b2 = np.copy(b1)  # rhs input will be overwritten by the solution (by getrs)
-    solve_sdfg(A=a2,
-               B=b2,
-               result_getrf=lapack_status1,
-               result_getrs=lapack_status2,
-               pivots=np.ndarray([0, 0], dtype=np.int32),
-               n=2)
+    solve_sdfg(
+        A=a2,
+        B=b2,
+        result_getrf=lapack_status1,
+        result_getrs=lapack_status2,
+        pivots=np.ndarray([0, 0], dtype=np.int32),
+        n=2,
+    )
 
     if np.allclose(np.dot(a1, b2), b1):
         print("Test ran successfully for {}.".format(implementation))

@@ -30,7 +30,7 @@ def ludcmp_kernel(A: dc.float64[N, N], b: dc.float64[N]):
     for i in range(N):
         y[i] = b[i] - A[i, :i] @ y[:i]
     for i in range(N - 1, -1, -1):
-        x[i] = (y[i] - A[i, i + 1:] @ x[i + 1:]) / A[i, i]
+        x[i] = (y[i] - A[i, i + 1 :] @ x[i + 1 :]) / A[i, i]
 
     return x, y
 
@@ -38,12 +38,12 @@ def ludcmp_kernel(A: dc.float64[N, N], b: dc.float64[N]):
 def initialize(N, datatype=np.float64):
     A = np.empty((N, N), dtype=datatype)
     for i in range(N):
-        A[i, :i + 1] = np.fromfunction(lambda j: (-j % N) / N + 1, (i + 1, ), dtype=datatype)
-        A[i, i + 1:] = 0.0
+        A[i, : i + 1] = np.fromfunction(lambda j: (-j % N) / N + 1, (i + 1,), dtype=datatype)
+        A[i, i + 1 :] = 0.0
         A[i, i] = 1.0
     A[:] = A @ np.transpose(A)
     fn = datatype(N)
-    b = np.fromfunction(lambda i: (i + 1) / fn / 2.0 + 4.0, (N, ), dtype=datatype)
+    b = np.fromfunction(lambda i: (i + 1) / fn / 2.0 + 4.0, (N,), dtype=datatype)
 
     return A, b
 
@@ -62,7 +62,7 @@ def ground_truth(A, b):
     for i in range(A.shape[0]):
         y[i] = b[i] - A[i, :i] @ y[:i]
     for i in range(A.shape[0] - 1, -1, -1):
-        x[i] = (y[i] - A[i, i + 1:] @ x[i + 1:]) / A[i, i]
+        x[i] = (y[i] - A[i, i + 1 :] @ x[i + 1 :]) / A[i, i]
 
     return x, y
 
@@ -137,7 +137,7 @@ def run_ludcmp_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -205,7 +205,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

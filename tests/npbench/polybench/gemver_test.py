@@ -16,9 +16,19 @@ M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
 
 
 @dc.program
-def gemver_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], u1: dc.float64[N], v1: dc.float64[N],
-                  u2: dc.float64[N], v2: dc.float64[N], w: dc.float64[N], x: dc.float64[N], y: dc.float64[N],
-                  z: dc.float64[N]):
+def gemver_kernel(
+    alpha: dc.float64,
+    beta: dc.float64,
+    A: dc.float64[N, N],
+    u1: dc.float64[N],
+    v1: dc.float64[N],
+    u2: dc.float64[N],
+    v2: dc.float64[N],
+    w: dc.float64[N],
+    x: dc.float64[N],
+    y: dc.float64[N],
+    z: dc.float64[N],
+):
 
     A += np.multiply.outer(u1, v1) + np.multiply.outer(u2, v2)
     x += beta * y @ A + z
@@ -30,14 +40,14 @@ def initialize(N, datatype=np.float64):
     beta = datatype(1.2)
     fn = datatype(N)
     A = np.fromfunction(lambda i, j: (i * j % N) / N, (N, N), dtype=datatype)
-    u1 = np.fromfunction(lambda i: i, (N, ), dtype=datatype)
-    u2 = np.fromfunction(lambda i: ((i + 1) / fn) / 2.0, (N, ), dtype=datatype)
-    v1 = np.fromfunction(lambda i: ((i + 1) / fn) / 4.0, (N, ), dtype=datatype)
-    v2 = np.fromfunction(lambda i: ((i + 1) / fn) / 6.0, (N, ), dtype=datatype)
-    w = np.zeros((N, ), dtype=datatype)
-    x = np.zeros((N, ), dtype=datatype)
-    y = np.fromfunction(lambda i: ((i + 1) / fn) / 8.0, (N, ), dtype=datatype)
-    z = np.fromfunction(lambda i: ((i + 1) / fn) / 9.0, (N, ), dtype=datatype)
+    u1 = np.fromfunction(lambda i: i, (N,), dtype=datatype)
+    u2 = np.fromfunction(lambda i: ((i + 1) / fn) / 2.0, (N,), dtype=datatype)
+    v1 = np.fromfunction(lambda i: ((i + 1) / fn) / 4.0, (N,), dtype=datatype)
+    v2 = np.fromfunction(lambda i: ((i + 1) / fn) / 6.0, (N,), dtype=datatype)
+    w = np.zeros((N,), dtype=datatype)
+    x = np.zeros((N,), dtype=datatype)
+    y = np.fromfunction(lambda i: ((i + 1) / fn) / 8.0, (N,), dtype=datatype)
+    z = np.fromfunction(lambda i: ((i + 1) / fn) / 9.0, (N,), dtype=datatype)
 
     return alpha, beta, A, u1, v1, u2, v2, w, x, y, z
 
@@ -87,40 +97,53 @@ def run_gemver_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], u1: dc.float64[N], v1: dc.float64[N],
-                        u2: dc.float64[N], v2: dc.float64[N], w: dc.float64[N], x: dc.float64[N], y: dc.float64[N],
-                        z: dc.float64[N]):
+    def autodiff_kernel(
+        alpha: dc.float64,
+        beta: dc.float64,
+        A: dc.float64[N, N],
+        u1: dc.float64[N],
+        v1: dc.float64[N],
+        u2: dc.float64[N],
+        v2: dc.float64[N],
+        w: dc.float64[N],
+        x: dc.float64[N],
+        y: dc.float64[N],
+        z: dc.float64[N],
+    ):
         gemver_kernel(alpha, beta, A, u1, v1, u2, v2, w, x, y, z)
         return np.sum(w)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
-    sdfg(alpha,
-         beta,
-         A,
-         np.copy(u1),
-         v1,
-         u2,
-         v2,
-         w,
-         x,
-         y,
-         z,
-         N=N,
-         gradient_A=gradient_A,
-         gradient___return=gradient___return)
+    sdfg(
+        alpha,
+        beta,
+        A,
+        np.copy(u1),
+        v1,
+        u2,
+        v2,
+        w,
+        x,
+        y,
+        z,
+        N=N,
+        gradient_A=gradient_A,
+        gradient___return=gradient___return,
+    )
 
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_kernel = lambda alpha, beta, A, u1, v1, u2, v2, w, x, y, z: gemver_jax_kernel(
-        jnp, alpha, beta, A, u1, v1, u2, v2, w, x, y, z)
+        jnp, alpha, beta, A, u1, v1, u2, v2, w, x, y, z
+    )
     jax_grad = jax.jit(jax.grad(jax_kernel, argnums=2))
     jax_grad_A = jax_grad(alpha, beta, A_jax, u1_jax, v1_jax, u2_jax, v2_jax, w_jax, x_jax, y_jax, z_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
@@ -142,7 +165,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

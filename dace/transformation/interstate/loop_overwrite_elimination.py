@@ -173,9 +173,11 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     if itervar_dep_syms.intersection(cond.get_free_symbols()):
                         return False
             elif isinstance(cfb, LoopRegion):
-                if (itervar_dep_syms.intersection(cfb.init_statement.get_free_symbols())
-                        or itervar_dep_syms.intersection(cfb.loop_condition.get_free_symbols())
-                        or itervar_dep_syms.intersection(cfb.update_statement.get_free_symbols())):
+                if (
+                    itervar_dep_syms.intersection(cfb.init_statement.get_free_symbols())
+                    or itervar_dep_syms.intersection(cfb.loop_condition.get_free_symbols())
+                    or itervar_dep_syms.intersection(cfb.update_statement.get_free_symbols())
+                ):
                     return False
 
         return True

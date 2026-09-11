@@ -1,5 +1,13 @@
+line-length = 120
+
 [lint]
 select = ["F401"]
 
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]
+
+[format]
+# DaCe is predominantly single-quoted; do not normalize to double quotes.
+quote-style = "preserve"
+# The previous yapf hook was `types: [python]` and never touched notebooks.
+exclude = ["*.ipynb"]

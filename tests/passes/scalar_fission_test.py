@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the scalar fission pass. """
+"""Tests the scalar fission pass."""
 
 import numpy as np
 import pytest
@@ -365,7 +365,8 @@ def test_ordering_edge_does_not_start_a_version():
                 continue
             endpoints = [n.data for n in (edge.src, edge.dst) if isinstance(n, dace.nodes.AccessNode)]
             assert not endpoints or edge.data.data in endpoints, (
-                f'{state.label}: memlet {edge.data.data} on {edge.src} -> {edge.dst} names no endpoint')
+                f'{state.label}: memlet {edge.data.data} on {edge.src} -> {edge.dst} names no endpoint'
+            )
 
     minted = set(sdfg.arrays.keys()) - before
     assert not minted, f'the ordering edge is not a write, so nothing may be versioned: {sorted(minted)}'

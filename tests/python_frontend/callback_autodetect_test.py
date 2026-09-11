@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests automatic detection and baking of callbacks in the Python frontend. """
+"""Tests automatic detection and baking of callbacks in the Python frontend."""
+
 from typing import Dict, Union
 import dace
 import numpy as np
@@ -118,7 +119,6 @@ def test_automatic_callback_inference_2():
 def test_automatic_callback_method():
 
     class NotDace:
-
         def __init__(self):
             self.q = np.random.rand()
 
@@ -407,7 +407,6 @@ def test_object_with_nested_callback():
         c[:] = a + b
 
     class MyObject:
-
         def __call__(self, a, b):
             c = dict(a=a, b=b)
             call_another_function(**c)
@@ -460,7 +459,7 @@ def test_inout_same_name():
 
 
 def test_inhibit_state_fusion():
-    """ Tests that state fusion is inhibited around callbacks if configured as such. """
+    """Tests that state fusion is inhibited around callbacks if configured as such."""
 
     @dace_inhibitor
     def add(a, b):
@@ -496,7 +495,7 @@ def test_two_callbacks():
         arr[:] = arr[:] * scal
         call(arr)
 
-    arr = np.ones((12, ), np.float64)
+    arr = np.ones((12,), np.float64)
     scal = 2
 
     with pytest.warns(match="Automatically creating callback"):
@@ -522,7 +521,7 @@ def test_two_callbacks_different_sig():
     def call_twice_2(arr, scal):
         call_twice(arr, scal)
 
-    arr = np.ones((12, ), np.float64)
+    arr = np.ones((12,), np.float64)
     scal = 2
 
     with pytest.warns(match="Automatically creating callback"):
@@ -548,7 +547,7 @@ def test_two_callbacks_different_type():
     def call_twice_3(arr: dace.float64[20], arr2: dace.int32[20, 20]):
         call_twice(arr, arr2)
 
-    arr = np.ones((20, ), np.float64)
+    arr = np.ones((20,), np.float64)
     arr2 = np.full((20, 20), 2, np.int32)
 
     with pytest.warns(match="Automatically creating callback"):
@@ -559,7 +558,6 @@ def test_two_callbacks_different_type():
 def test_disallowed_keyword():
 
     class Obj:
-
         def hello(a):
             try:
                 return a + 1
@@ -664,7 +662,7 @@ def test_callback_kwargs():
 
 
 def test_same_callback_kwargs():
-    """ Calls the same callback twice, with different kwargs each time. """
+    """Calls the same callback twice, with different kwargs each time."""
     called_with = (None, None, None)
     called_2_with = (None, None, None)
 
@@ -761,7 +759,7 @@ def test_callback_literal_dict(as_kwarg):
 def test_unused_callback():
 
     def deg_to_rad(a):
-        res = np.zeros((2, ))
+        res = np.zeros((2,))
 
         res[0] = a[0] * np.pi / 180.0
         res[1] = a[1] * np.pi / 180.0
@@ -826,7 +824,6 @@ def test_unknown_pyobject():
     success_counter = 0
 
     class MyCustomObject:
-
         def __init__(self) -> None:
             nonlocal counter
             self.q = counter
@@ -863,7 +860,6 @@ def test_pyobject_return():
     counter = 1
 
     class MyCustomObject:
-
         @dace_inhibitor
         def __init__(self) -> None:
             nonlocal counter
@@ -889,7 +885,6 @@ def test_pyobject_return_tuple():
     counter = 1
 
     class MyCustomObject:
-
         @dace_inhibitor
         def __init__(self) -> None:
             nonlocal counter
@@ -928,7 +923,7 @@ def test_custom_generator():
             val: int = next(gen)
             a[i] = val
 
-    aa = np.ones((20, ), np.float64)
+    aa = np.ones((20,), np.float64)
     with pytest.warns(match="Automatically creating callback"):
         with pytest.warns(match="Cannot infer return type"):
             tester(aa)
@@ -961,15 +956,17 @@ def test_custom_generator_with_break():
                 break
             a[i] = val
 
-    aa = np.ones((21, ), np.float64)
+    aa = np.ones((21,), np.float64)
     expected = np.copy(aa)
     expected[:20] = np.arange(20, 0, -1)
 
-    with pytest.warns(UserWarning,
-                      match='Automatically creating callback to Python interpreter from method "reverse_range"'):
+    with pytest.warns(
+        UserWarning, match='Automatically creating callback to Python interpreter from method "reverse_range"'
+    ):
         with pytest.warns(UserWarning, match='Cannot infer return type of function call "reverse_range"'):
-            with pytest.warns(UserWarning,
-                              match='Automatically creating callback to Python interpreter from method "my_next"'):
+            with pytest.warns(
+                UserWarning, match='Automatically creating callback to Python interpreter from method "my_next"'
+            ):
                 tester(aa)
     assert np.allclose(aa, expected)
 
@@ -1042,7 +1039,6 @@ def test_matplotlib_with_compute():
 
 
 class _MyArrayLike:
-
     def __init__(self) -> None:
         self.array = np.random.rand(10)
 
@@ -1111,7 +1107,6 @@ def test_nested_callback_with_nested_arraylike_object():
     test = False
 
     class State:
-
         def __init__(self) -> None:
             self.myarraylike = _MyArrayLike()
 

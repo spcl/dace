@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Implements the map-dim shuffle transformation. """
+"""Implements the map-dim shuffle transformation."""
 
 from dace.sdfg import SDFG
 from dace.sdfg import nodes
@@ -11,10 +11,10 @@ from dace.properties import make_properties, ListProperty
 
 @make_properties
 class MapDimShuffle(transformation.SingleStateTransformation):
-    """ Implements the map-dim shuffle transformation.
+    """Implements the map-dim shuffle transformation.
 
-        MapDimShuffle takes a map and a list of params.
-        It reorders the dimensions in the map such that it matches the list.
+    MapDimShuffle takes a map and a list of params.
+    It reorders the dimensions in the map such that it matches the list.
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)

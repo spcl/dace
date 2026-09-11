@@ -30,8 +30,7 @@ class MyNode(CodeLibraryNode):
         output_expr = ' + '.join(f'i{dim} * {stride}' for dim, stride in enumerate(outarr.strides))
         input_expr = ' + '.join(f'i{dim} * {stride}' for dim, stride in enumerate(inarr.strides))
 
-        code += \
-            f'out[{output_expr}] = inp[{input_expr}] + {self.value_to_add};\n'
+        code += f'out[{output_expr}] = inp[{input_expr}] + {self.value_to_add};\n'
 
         # End for loops
         for dim in range(len(inarr.shape)):
@@ -63,8 +62,7 @@ class MyNode2(CodeLibraryNode):
         output_expr = ' + '.join(f'i{dim} * {stride}' for dim, stride in enumerate(outarr.strides))
         input_expr = ' + '.join(f'i{dim} * {stride}' for dim, stride in enumerate(inarr.strides))
 
-        code += \
-            f'out[{output_expr}] = inp[{input_expr}] * {self.value_to_mul};\n'
+        code += f'out[{output_expr}] = inp[{input_expr}] * {self.value_to_mul};\n'
 
         # End for loops
         for dim in range(len(inarr.shape)):

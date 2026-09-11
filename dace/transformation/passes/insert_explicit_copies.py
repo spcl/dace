@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances."""
+
 import copy
 from typing import Any, Dict, Optional
 
@@ -82,8 +83,9 @@ class InsertExplicitCopies(ppl.Pass):
     chained ``MapEntry``/``MapExit`` (libnode placed inside the map scope)."""
 
     # Other storages (TensorCore_*, FPGA_*, Snitch_*) use their own codegen ``copy_memory`` hook.
-    _STANDARD_STORAGES = (CPU_RESIDENT_STORAGES | GPU_RESIDENT_STORAGES
-                          | {dtypes.StorageType.Default, dtypes.StorageType.Register})
+    _STANDARD_STORAGES = (
+        CPU_RESIDENT_STORAGES | GPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, dtypes.StorageType.Register}
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -141,16 +143,18 @@ class InsertExplicitCopies(ppl.Pass):
 
             # A view's alias (view-defining) edge references the underlying buffer, not data -- skip.
             if any(
-                    isinstance(sdfg.arrays[an.data], data.View) and sdutils.get_view_edge(state, an) is edge
-                    for an in (src_node, dst_node)):
+                isinstance(sdfg.arrays[an.data], data.View) and sdutils.get_view_edge(state, an) is edge
+                for an in (src_node, dst_node)
+            ):
                 continue
 
-            if not isinstance(src_desc, (data.Array, data.Scalar)) \
-                    or not isinstance(dst_desc, (data.Array, data.Scalar)):
+            if not isinstance(src_desc, (data.Array, data.Scalar)) or not isinstance(
+                dst_desc, (data.Array, data.Scalar)
+            ):
                 continue
 
             # Custom-target storages are handled by their own codegen, not CopyLibraryNode.
-            if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
+            if src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES:
                 continue
 
             # A dtype-converting copy is a cast, not a byte move: CopyLibraryNode (memcpy)
@@ -255,8 +259,11 @@ class InsertExplicitCopies(ppl.Pass):
         except RuntimeError:
             return False
         outer_desc = sdfg.arrays[outer.data]
-        if (outer_desc.storage not in self._STANDARD_STORAGES or inner_desc.storage not in self._STANDARD_STORAGES
-                or outer_desc.dtype != inner_desc.dtype):
+        if (
+            outer_desc.storage not in self._STANDARD_STORAGES
+            or inner_desc.storage not in self._STANDARD_STORAGES
+            or outer_desc.dtype != inner_desc.dtype
+        ):
             return False
 
         outer_memlet = edge.data
@@ -283,7 +290,7 @@ class InsertExplicitCopies(ppl.Pass):
         if stage_in and _competing_writer(state, inner_node, edge, inner_node.data, inner_subset):
             return False
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
-        label = (f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}")
+        label = f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}"
         libnode = CopyLibraryNode(name=label)
         libnode.instrument = state.instrument
         state.add_node(libnode)
@@ -292,13 +299,13 @@ class InsertExplicitCopies(ppl.Pass):
             state.add_edge(map_node, edge.src_conn, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, outer_side_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_node, None, inner_memlet)
             _carry_write_ordering(state, inner_node, libnode)
-            boundary_conn = 'IN_' + edge.src_conn[len('OUT_'):]
+            boundary_conn = 'IN_' + edge.src_conn[len('OUT_') :]
             boundary_edges = list(state.in_edges_by_connector(map_node, boundary_conn))
         else:
             map_node = edge.dst
             state.add_edge(inner_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, inner_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, map_node, edge.dst_conn, outer_side_memlet)
-            boundary_conn = 'OUT_' + edge.dst_conn[len('IN_'):]
+            boundary_conn = 'OUT_' + edge.dst_conn[len('IN_') :]
             boundary_edges = list(state.out_edges_by_connector(map_node, boundary_conn))
         state.remove_edge(edge)
 

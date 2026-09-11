@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This file implements the BruteForceEnumerator class """
+"""This file implements the BruteForceEnumerator class"""
 
 from dace.transformation.estimator.enumeration import MapScoringEnumerator
 
@@ -21,18 +21,18 @@ class BruteForceEnumerator(MapScoringEnumerator):
     is defined.
     """
 
-    def __init__(self,
-                 sdfg: SDFG,
-                 graph: SDFGState,
-                 subgraph: SubgraphView = None,
-                 condition_function: Callable = None,
-                 scoring_function=None):
+    def __init__(
+        self,
+        sdfg: SDFG,
+        graph: SDFGState,
+        subgraph: SubgraphView = None,
+        condition_function: Callable = None,
+        scoring_function=None,
+    ):
         # initialize base class
-        super().__init__(sdfg,
-                         graph,
-                         subgraph=subgraph,
-                         condition_function=condition_function,
-                         scoring_function=scoring_function)
+        super().__init__(
+            sdfg, graph, subgraph=subgraph, condition_function=condition_function, scoring_function=scoring_function
+        )
 
     def brute_force(self):
         """
@@ -41,7 +41,6 @@ class BruteForceEnumerator(MapScoringEnumerator):
         """
         for i in range(2, len(self._map_entries) + 1):
             for sg in itertools.combinations(self._map_entries, i):
-
                 current_subgraph = helpers.subgraph_from_maps(self._sdfg, self._graph, sg)
 
                 # evaluate condition if specified

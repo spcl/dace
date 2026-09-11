@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests that shadowing a name inside a C++ tasklet declares it with the type it was declared
-with, rather than deducing one from whatever expression a pass substituted. """
+"""Tests that shadowing a name inside a C++ tasklet declares it with the type it was declared
+with, rather than deducing one from whatever expression a pass substituted."""
 
 import numpy as np
 
