@@ -12,9 +12,10 @@ A genuine linear solve (non-identity RHS) and a shifted / non-identity diagonal
 are left untouched (opt-in, safe).
 
 RUNTIME: the numerical checks expand ``Inv`` to LAPACK (getrf/getri via
-OpenBLAS/MKL). Where that toolchain is genuinely unavailable the build raises a
-``CompilationError`` and only the numerical assertion is skipped -- the
-structural lift (Inv appears, Solve / identity map gone) is always checked.
+OpenBLAS/MKL). LAPACK is an installed dependency of this suite (CI installs
+``liblapack-dev``/``liblapacke-dev``/``libopenblas-dev``), not an optional
+toolchain, so no marker or skip guards it: a build/link failure is a real
+failure and must go red.
 """
 import os
 
@@ -25,12 +26,10 @@ os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.codegen.exceptions import CompilationError, CompilerConfigurationError
 from dace.libraries.linalg.nodes.inv import Inv
 from dace.libraries.linalg.nodes.solve import Solve
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
@@ -84,15 +83,6 @@ def _well_conditioned(n, seed):
     return rng.random((n, n)) + n * np.eye(n)
 
 
-def _run_or_skip(sdfg, **kwargs):
-    """Run ``sdfg`` (which contains an ``Inv``); skip only if the LAPACK
-    expansion genuinely cannot be built/linked in this environment."""
-    try:
-        sdfg(**kwargs)
-    except (CompilationError, CompilerConfigurationError) as ex:
-        pytest.skip(f"LAPACK (getrf/getri) unavailable to build Inv: {ex}")
-
-
 def test_solve_eye_lifts_standalone():
     """``solve(A, eye(N))`` lifts to exactly one Inv node; the Solve and the
     identity-construction map are gone, and the result matches numpy.inv."""
@@ -109,7 +99,7 @@ def test_solve_eye_lifts_standalone():
     n = 7
     A = _well_conditioned(n, 0)
     out = np.zeros((n, n))
-    _run_or_skip(sdfg, A=A.copy(), out=out, N=n)
+    sdfg(A=A.copy(), out=out, N=n)
     assert np.allclose(out, np.linalg.inv(A), rtol=1e-9, atol=1e-11)
 
 
@@ -127,7 +117,7 @@ def test_solve_identity_lifts_standalone():
     n = 6
     A = _well_conditioned(n, 1)
     out = np.zeros((n, n))
-    _run_or_skip(sdfg, A=A.copy(), out=out, N=n)
+    sdfg(A=A.copy(), out=out, N=n)
     assert np.allclose(out, np.linalg.inv(A), rtol=1e-9, atol=1e-11)
 
 
@@ -143,7 +133,7 @@ def test_solve_eye_lifts_via_canonicalize():
     n = 8
     A = _well_conditioned(n, 2)
     out = np.zeros((n, n))
-    _run_or_skip(sdfg, A=A.copy(), out=out, N=n)
+    sdfg(A=A.copy(), out=out, N=n)
     assert np.allclose(out, np.linalg.inv(A), rtol=1e-9, atol=1e-11)
 
 
@@ -162,7 +152,7 @@ def test_real_solve_not_lifted():
     rng = np.random.default_rng(30)
     B = rng.random((n, n))
     out = np.zeros((n, n))
-    _run_or_skip(sdfg, A=A.copy(), B=B.copy(), out=out, N=n)
+    sdfg(A=A.copy(), B=B.copy(), out=out, N=n)
     assert np.allclose(out, np.linalg.solve(A, B), rtol=1e-9, atol=1e-11)
 
 

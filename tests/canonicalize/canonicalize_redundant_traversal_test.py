@@ -53,7 +53,8 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
-from typing import Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import pytest
 
@@ -108,7 +109,7 @@ def canonical_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def evaluated(expr) -> int:
+def evaluated(expr: Any) -> int:
     """``expr`` with every free symbol pinned to :data:`N`, as an int.
 
     A data-dependent bound (``s482``'s ``Min(LEN_1D, _exit_i_0 + 1)``) is as much a whole-array
@@ -237,14 +238,28 @@ def test_s319_accumulates_in_the_map_that_writes():
     assert reads == ["c", "d", "e"], reads
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="EarlyExitToFindIndex._match (dace/transformation/passes/canonicalize/early_exit_to_find_index.py:183) "
-    "matches on the break's SHAPE and never costs the rewrite: no condition compares the "
-    "predicate's read set against the body's, so a search that re-reads the body's own arrays "
-    "is lifted exactly like s481's search over an array the body never touches")
+@pytest.mark.xfail(strict=True,
+                   reason="the re-stream is a CPU cost paid in a DEVICE-NEUTRAL stage, so the fix is NOT a "
+                   "read-set refusal in EarlyExitToFindIndex._match "
+                   "(dace/transformation/passes/canonicalize/early_exit_to_find_index.py:182). The overlap "
+                   "condition itself is exact -- the predicate reads b and c, the body reads a, b and c, while "
+                   "s481's predicate reads only d -- but canonicalization takes the maximally parallel form "
+                   "wherever the choice is open (canonicalize/pipeline.py, the note above the "
+                   "assume_constraints stage), and the lift is the thing that removes the data-dependent break. "
+                   "On a GPU that break is divergent control flow and removing it is the win the pass exists "
+                   "for: FindFirst carries a CUDA expansion over dace::find_first_index_device built for "
+                   "exactly that. EarlyExitToFindIndex is also constructed with no target "
+                   "(canonicalize/pipeline.py:853) while _build_stages threads target= into six sibling pass "
+                   "constructions and gates two more on it, so it cannot gate on one today. Taking parallelism "
+                   "back belongs in the cpu_specialize band "
+                   "-- 'lives here ... and nowhere else', "
+                   "cpu_specialization/sequentialize_unprofitable_parallel_scopes.py -- which has no pass that "
+                   "reverts a FindFirst lift to the sequential break loop; that band only re-schedules Maps")
 def test_s482_search_should_not_restream_the_body_arrays():
-    """What the lowering should reach: no array read by both the search and the body."""
+    """What the lowering should reach: no array read by both the search and the body.
+
+    Held open deliberately: the missing piece is a CPU-specialization pass, not a match condition.
+    """
     sdfg = canonical_sdfg("ext_break_post_body")
     reads = full_length_reads(sdfg)
     assert len(reads) == len(set(reads)), reads

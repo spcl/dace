@@ -135,7 +135,7 @@ jobs:
         python-version: '3.14'
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         pip-packages: pytest-xdist
         groups: testing
 
@@ -295,7 +295,7 @@ jobs:
         # -- without the package they are permanently red rather than skipped.
         apt-packages: >-
           libyaml-dev cmake
-          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
+          libblas-dev libopenblas-dev liblapacke-dev liblapack-dev libfftw3-dev
         pip-packages: pytest-xdist
         groups: testing
 
