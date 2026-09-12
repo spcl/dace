@@ -1546,8 +1546,18 @@ _C_SIGN_BODY = 'return ({T})((({T})0 < value) - (value < ({T})0));'
 #:
 #: The four out-parameter helpers took C++ references. Their C macros take the same LVALUES the
 #: printers already pass and apply ``&`` themselves, so no call site changes shape.
+#: ``dace::`` complex type -> the C function that builds one of its values from two components. C has
+#: no functional cast, and ``re + im * I`` evaluates, so a NaN or infinite component would propagate.
+C_COMPLEX_BUILDERS: Dict[str, str] = {'dace::complex64': 'cpf_complex64', 'dace::complex128': 'cpf_complex128'}
+
 C_INLINE_DEFINITIONS: Dict[str, str] = dict(_C_MATH_MACROS)
 C_INLINE_DEFINITIONS.update(_C_MINMAX_DEFINITIONS)
+# C11 6.2.5p13: a complex has the representation of a two-element array of its real type.
+C_INLINE_DEFINITIONS.update({
+    builder: ('static inline %s _Complex %s(%s re, %s im) { union { %s _Complex value; %s parts[2]; } z = '
+              '{.parts = {re, im}}; return z.value; }' % ((real, builder) + (real, ) * 4))
+    for real, builder in (('float', 'cpf_complex64'), ('double', 'cpf_complex128'))
+})
 C_INLINE_DEFINITIONS.update({
     'sign':
     c_typed_family('sign', (('{T}', 'value'), ), ((C_ARITHMETIC, '{T}', _C_SIGN_BODY), ), '+(value)'),
@@ -1970,7 +1980,7 @@ C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<flo
                                    '<assert.h>', '<complex.h>')
 
 #: ``<complex.h>`` defines ``I``, and ``I`` is a plausible loop-index name in scientific code. The
-#: macro is removed immediately after the include; complex literals are built with ``CMPLX``.
+#: macro is removed immediately after the include; complex literals are built with :data:`C_COMPLEX_BUILDERS`.
 C_UNDEF_LINE: str = '#undef I  // <complex.h> defines I, which an SDFG may use as a container name'
 
 

@@ -953,7 +953,10 @@ class CPPUnparser:
         # complex64 literal does not widen to dace::complex128.
         if isinstance(t_n, (complex, np.complexfloating)):
             dtype = dtypes.dtype_to_typeclass(type(t_n))
-            repr_n = f'{dtype}({t_n.real}, {t_n.imag})'
+            if cpf_lowering.standalone_c():
+                repr_n = f'{cpf_lowering.C_COMPLEX_BUILDERS[str(dtype)]}({t_n.real}, {t_n.imag})'
+            else:
+                repr_n = f'{dtype}({t_n.real}, {t_n.imag})'
 
         # Handle large integer values
         if isinstance(t_n, int):

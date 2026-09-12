@@ -88,9 +88,8 @@ def sym2cpp(s,
         ctype = str(dtypes.dtype_to_typeclass(type(s)))
         if dialect is cpf_lowering.Dialect.STANDALONE_C:
             # ``a + b*I`` is not the same literal: it evaluates, so a NaN or an infinite component
-            # propagates through the multiplication. ``CMPLX`` builds the value component-wise.
-            builder = 'CMPLXF' if ctype == 'dace::complex64' else 'CMPLX'
-            return f'{builder}({s.real}, {s.imag})'
+            # propagates through the multiplication. The builder takes the two components.
+            return f'{cpf_lowering.C_COMPLEX_BUILDERS[ctype]}({s.real}, {s.imag})'
         if dialect is cpf_lowering.Dialect.STANDALONE:
             ctype = cpf_lowering.ctype_for(ctype, dialect)
         return f'{ctype}({s.real}, {s.imag})'

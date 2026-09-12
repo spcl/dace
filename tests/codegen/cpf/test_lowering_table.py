@@ -455,6 +455,8 @@ def test_every_c_definition_is_reachable():
     # The native lane: a name a hand-written body carries is renamed straight onto its C helper,
     # and the duplicate check's two arities pick two different macros.
     reachable |= set(cpf_lowering.C_NATIVE_RENAMES.values())
+    # The literal printers spell every complex constant through its builder.
+    reachable |= set(cpf_lowering.C_COMPLEX_BUILDERS.values())
     for statement in DETECT_COLLISION_STATEMENTS.values():
         reachable |= cpf_lowering.helpers_used(cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C),
                                                Dialect.STANDALONE_C)

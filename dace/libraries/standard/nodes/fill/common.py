@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple, TYPE_CHECKING
 import numpy as np
 
 import dace
+from dace import cpf_lowering
 from dace.libraries.standard.helper import collapse_shape_and_strides
 
 if TYPE_CHECKING:
@@ -62,7 +63,7 @@ def c_literal(value, dtype: dace.dtypes.typeclass) -> str:
     """Render the fill value as a C literal of ``dtype``.
 
     Differs from :func:`cpp_literal` only where C++ writes a constructor call: a complex constant,
-    which C builds with the ``CMPLX`` macro from ``<complex.h>``.
+    which C builds with CPF's component-wise builder function for its width.
 
     :param value: The Python constant held by the node.
     :param dtype: Destination element type.
@@ -70,7 +71,7 @@ def c_literal(value, dtype: dace.dtypes.typeclass) -> str:
     """
     narrowed = numpy_scalar(value, dtype).item()
     if isinstance(narrowed, complex):
-        return f"CMPLX({narrowed.real!r}, {narrowed.imag!r})"
+        return f"{cpf_lowering.C_COMPLEX_BUILDERS[str(dtype)]}({narrowed.real!r}, {narrowed.imag!r})"
     return cpp_literal(value, dtype)
 
 

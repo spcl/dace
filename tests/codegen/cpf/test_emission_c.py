@@ -11,6 +11,7 @@ hide exactly the constructs the C dialect exists to avoid. What differs from C++
 templates, ``constexpr`` functions, aligned ``new``, ``std::max``, references and the type-generic
 maths all have no C spelling -- so each kernel also asserts the C form it must have taken.
 """
+import ast
 import ctypes
 import math
 import re
@@ -26,7 +27,7 @@ from dace import cpf, cpf_lowering
 from dace.codegen import cpf as cpf_module
 from dace.codegen.cpf import render as render_sdfg
 from dace.codegen.common import sym2cpp, unparse_interstate_edge
-from dace.codegen.cppunparse import pyexpr2cpp
+from dace.codegen.cppunparse import cppunparse, pyexpr2cpp
 from dace.codegen.targets.experimental_cpu import format_index_helper
 
 from tests.codegen.cpf.conftest import (assert_matches, assert_standalone, build_standalone, call_standalone,
@@ -825,3 +826,36 @@ def test_a_dace_typed_cast_on_an_interstate_edge_is_spelled_by_the_dialect(diale
     with cpf_lowering.dialect_scope(dialect):
         rendered = unparse_interstate_edge('dace.int64(la) + 1', sdfg)
     assert rendered == ATTRIBUTE_CAST_FORMS[dialect], rendered
+
+
+@dace.program
+def c_complex_literal(x: dace.complex128[N], y: dace.complex128[N]):
+    for k in range(N):
+        y[k] = 0j
+        y[k] += x[k] * (1 - 2j)
+
+
+def test_a_complex_literal_in_a_tasklet_body_is_built_component_wise():
+    """A tasklet body's complex literal printed as ``double _Complex(re, im)`` is a C++ functional cast,
+    which no C compiler accepts; C calls the unit's builder function for the literal's width."""
+    name = 'cpf_c_complex_literal'
+    sdfg, code = render_c(c_complex_literal, name)
+    assert 'cpf_complex128(' in code and 'CMPLX' not in code, code
+    n = 16
+    rng = np.random.default_rng(0)
+    x = rng.random(n) + 1j * rng.random(n)
+    y = np.zeros(n, dtype=np.complex128)
+    run_c(sdfg, code, {'x': x, 'y': y, 'N': n}, name)
+    assert_matches({'y': x * (1 - 2j)}, {'y': y}, name)
+
+
+@pytest.mark.parametrize('value,builder', [(np.complex64(1 - 2j), 'cpf_complex64'),
+                                           (np.complex128(1 - 2j), 'cpf_complex128')],
+                         ids=['complex64', 'complex128'])
+def test_a_complex_constant_keeps_its_width_in_c(value, builder: str):
+    """A ``double _Complex`` builder would widen a complex64 constant, so each width has its own."""
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_C):
+        assert cppunparse(ast.Constant(value=value), expr_semicolon=False) == '%s(1.0, -2.0)' % builder
+        assert sym2cpp(value) == '%s(1.0, -2.0)' % builder
+    assert '#define' not in cpf_lowering.C_INLINE_DEFINITIONS[builder]
+
