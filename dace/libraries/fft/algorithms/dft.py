@@ -3,6 +3,7 @@
 One-dimensional Discrete Fourier Transform (DFT) native implementations.
 """
 import dace
+import sympy
 import numpy as np
 import math
 
@@ -77,6 +78,19 @@ def _add_zero_state(sdfg, after, dst, shape):
     return state
 
 
+class FloatingPrinter(sympy.printing.str.StrPrinter):
+    """Prints a factor so C evaluates it in floating point: every symbol and every rational is a double.
+
+    ``1/(M*N)`` and ``sqrt(M)`` over integer symbols are integer division and an integer root in C.
+    """
+
+    def _print_Symbol(self, expr):
+        return f'(1.0 * {expr.name})'
+
+    def _print_Rational(self, expr):
+        return f'({expr.p}.0 / {expr.q}.0)'
+
+
 def _add_dft_axis_state(sdfg, after, src, dst, shape, ax, inverse, factor):
     """Append a state doing a batched 1-D DFT of ``src`` along ``ax`` into ``dst``.
 
@@ -93,7 +107,8 @@ def _add_dft_axis_state(sdfg, after, src, dst, shape, ax, inverse, factor):
     in_idx[ax] = '__n'
     in_sub = ', '.join(in_idx)
     isign = '+' if inverse else '-'  # idft uses exp(+i...), fwd uses exp(-i...)
-    fac = '' if str(factor) == '1' else f' * ({factor})'
+    # Divide by a FLOATING denominator: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero.
+    fac = '' if str(factor) == '1' else f' * ({FloatingPrinter().doprint(dace.symbolic.pystr_to_symbolic(factor))})'
     code = (f'exponent = (2.0 * {math.pi!r} / {dace.symbolic.symstr(N)}) * __i{ax} * __n\n'
             f'o = decltype(o)(math.cos(exponent), {isign}math.sin(exponent)) * inp{fac}')
     state = sdfg.add_state_after(after, f'dft_ax{ax}')

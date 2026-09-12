@@ -122,6 +122,40 @@ def test_pure_fftn_symbolic():
     np.testing.assert_allclose(y, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
+@pytest.mark.parametrize('norm', ['backward', 'forward', 'ortho'])
+def test_pure_ifftn_symbolic(norm):
+    """The normalization factor is ``1 / (M*N)`` over integer symbols: emitted verbatim into C it is integer
+    division and the whole transform returns zeros."""
+    M, N = dace.symbol('M'), dace.symbol('N')
+
+    @dace.program
+    def tester(x: dace.complex128[M, N]):
+        return np.fft.ifftn(x, norm=norm)
+
+    rng = np.random.default_rng(7)
+    x = (rng.standard_normal((7, 9)) + 1j * rng.standard_normal((7, 9))).astype(np.complex128)
+    y = tester(x.copy())
+    np.testing.assert_allclose(y, np.fft.ifftn(x, norm=norm), rtol=1e-10, atol=1e-10)
+
+
+@pytest.mark.parametrize('norm', ['backward', 'ortho'])
+def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
+    """The tasklet carries the normalization as text, so the text is what decides integer versus floating division."""
+    M, N = dace.symbol('M'), dace.symbol('N')
+
+    @dace.program
+    def tester(x: dace.complex128[M, N]):
+        return np.fft.ifftn(x, norm=norm)
+
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.expand_library_nodes()
+    codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    scaled = [code for code in codes if 'exponent' in code and 'M' in code and 'N' in code]
+    assert scaled, f'no DFT tasklet carries the {norm} factor: {codes}'
+    assert all('(1.0 * M)' in code and '(1.0 * N)' in code for code in scaled), scaled
+    assert not any('1/(M*N)' in code.replace(' ', '') for code in scaled), scaled
+
+
 # ---------------------------------------------------------------------------
 # The rank-1 path must stay byte-identical (still routes to dft_explicit).
 # ---------------------------------------------------------------------------
@@ -147,5 +181,7 @@ if __name__ == '__main__':
     test_pure_ifft_axis_inverse()
     test_pure_fftn_inplace()
     test_pure_fftn_symbolic()
+    for nrm in ('backward', 'forward', 'ortho'):
+        test_pure_ifftn_symbolic(nrm)
     test_pure_rank1_unchanged()
     print('pure N-D FFT tests PASS')
