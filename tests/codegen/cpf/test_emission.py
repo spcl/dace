@@ -24,6 +24,7 @@ import pytest
 
 import dace
 from dace.libraries.standard.nodes import FindFirst
+from dace.transformation.passes.scatter_conflict_guard import insert_scatter_guard
 from dace import cpf
 from dace.codegen.cpf import render as render_sdfg
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (insert_assumption_guards,
@@ -809,3 +810,31 @@ def test_the_assumption_guard_renders_in_both_dialects(language):
     a, out = rng.random(64), np.zeros(64)
     call_standalone(library, rendering.sdfg, {'a': a, 'out': out, 'N': 64})
     assert_matches({'out': a * 2.0}, {'out': out}, sdfg.name)
+
+
+@dace.program
+def cpp_scatter(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N]):
+    for i in range(N):
+        a[ip[i]] = b[i]
+
+
+def test_the_scatter_guard_renders_without_the_dace_runtime():
+    """The permutation guard calls ``dace::detect_collision``, a runtime template that lives in
+    ``dace/detect.h`` -- a header a self-contained unit does not have. CPF writes the check out
+    instead, so the guarded scatter renders in C++ as well as in C."""
+    sdfg = cpp_scatter.to_sdfg(simplify=True)
+    sdfg.name = 'cpf_cpp_scatter_guard'
+    insert_scatter_guard(sdfg, 'ip')
+    rendering = render_sdfg(sdfg)
+    assert_standalone(rendering.code, sdfg.name)
+    assert 'static inline long long detect_collision(' in rendering.code, 'CPF must define the check it calls'
+    assert 'reduction(| : c)' in rendering.code, 'the verify pass must keep its OR reduction'
+
+    n = 64
+    ip = np.random.default_rng(0).permutation(n).astype(np.int32)
+    a, b = np.zeros(n), np.random.default_rng(1).random(n)
+    expected = np.zeros(n)
+    expected[ip] = b
+    library = build_standalone(rendering.code, sdfg.name)
+    call_standalone(library, rendering.sdfg, {'a': a, 'b': b, 'ip': ip, 'N': n})
+    assert_matches({'a': expected}, {'a': a}, sdfg.name)

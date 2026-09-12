@@ -35,7 +35,7 @@ Names absent from all three tables are NOT silently passed through: see :func:`l
 import contextlib
 import enum
 import re
-from typing import Dict, FrozenSet, NamedTuple, Optional, Set, Tuple
+from typing import Dict, FrozenSet, List, NamedTuple, Optional, Set, Tuple
 
 
 class Dialect(enum.Enum):
@@ -548,6 +548,46 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '        }\n'
     '    }\n'
     '    return best;\n'
+    '}',
+    'detect_collision':
+    '// Tagged-write + verify, the two-pass duplicate detection the scatter guard runs. Pass 1\n'
+    '// writes owner[idx[i]] = i; pass 2 ORs owner[idx[i]] != i. A slot only one writer won reads\n'
+    '// back a different i, so the OR trips. Pass 2 reads only slots pass 1 wrote, so the tag\n'
+    '// buffer needs no initialization and none between calls. Values outside [0, capacity) are\n'
+    '// skipped: the guarded scatter never writes those slots, so they can neither collide nor\n'
+    '// mask a collision.\n'
+    'template <typename T, typename TagT>\n'
+    'static inline long long detect_collision(const T *idx, long long n, TagT *owner, long long capacity,\n'
+    '                                         bool parallel) {\n'
+    '    long long c = 0;\n'
+    '    #pragma omp parallel for if (parallel : parallel)\n'
+    '    for (long long i = 0; i < n; ++i) {\n'
+    '        const long long v = (long long)idx[i];\n'
+    '        if (v >= 0 && v < capacity) owner[v] = (TagT)i;\n'
+    '    }\n'
+    '    #pragma omp parallel for simd if (parallel : parallel) reduction(| : c)\n'
+    '    for (long long i = 0; i < n; ++i) {\n'
+    '        const long long v = (long long)idx[i];\n'
+    '        if (v >= 0 && v < capacity) c |= ((long long)owner[v] != i) ? 1LL : 0LL;\n'
+    '    }\n'
+    '    return c;\n'
+    '}\n'
+    '// The same check sizing its own tag buffer from max(idx). A failed allocation reports a\n'
+    '// collision, which is the answer that is never unsafe: the guard then takes its sequential\n'
+    '// path instead of parallelizing a scatter nothing proved conflict-free.\n'
+    'template <typename T>\n'
+    'static inline long long detect_collision(const T *idx, long long n, bool parallel) {\n'
+    '    long long mx = 0;\n'
+    '    #pragma omp parallel for simd if (parallel : parallel) reduction(max : mx)\n'
+    '    for (long long i = 0; i < n; ++i) {\n'
+    '        const long long v = (long long)idx[i];\n'
+    '        mx = v > mx ? v : mx;\n'
+    '    }\n'
+    '    long long *owner = (long long *)malloc((size_t)(mx + 1) * sizeof(long long));\n'
+    '    if (owner == nullptr) return 1;\n'
+    '    const long long c = detect_collision(idx, n, owner, mx + 1, parallel);\n'
+    '    free(owner);\n'
+    '    return c;\n'
     '}',
     'int_ceil':
     'template <typename T, typename U>\n'
@@ -1096,10 +1136,11 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     and the ``FindFirst`` expansion calls ``dace::find_first_index``, and CPF emits both functions
     itself rather than serializing a prefix sum or a cancelling search into a sequential loop.
 
-    In C the same pass also rewrites the two call shapes C cannot express as a call at all -- the
-    scan identities and the find-first over a lambda predicate (:func:`c_scan_identities`,
-    :func:`c_find_first`) -- and re-spells the ``std::`` names a pass wrote directly
-    (:func:`c_native_renames`), before the name table is consulted.
+    In C the same pass also rewrites the three call shapes C cannot express as a call at all -- the
+    scan identities, the find-first over a lambda predicate and the scatter guard's duplicate check
+    (:func:`c_scan_identities`, :func:`c_find_first`, :func:`c_detect_collision`) -- and re-spells
+    the ``std::`` names a body wrote directly (:func:`c_native_renames`), before the name table is
+    consulted.
 
     Textual by necessity, and deliberately conservative: only the qualified name is rewritten, only
     when the identifier is one CPF knows, and never with knowledge of the arguments. A
@@ -1116,7 +1157,7 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     code = rewrite_ctypes(code, dialect)
 
     if (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C:
-        code = c_native_renames(c_find_first(c_scan_identities(code)))
+        code = c_native_renames(c_numeric_limits(c_detect_collision(c_find_first(c_scan_identities(code)))))
 
     def replace(match: 're.Match') -> str:
         name = match.group(1)
@@ -1450,6 +1491,21 @@ C_REWRITES.update({
     'np_float_pow': (2, '(cpf_pow((double)({0}), (double)({1})))'),
 })
 
+#: The scalar types a cast can name once it has been through a SYMBOLIC expression. Sympy carries
+#: an unknown function by name, so ``static_cast<int64_t>(i)`` comes back out as ``int64_t(i)`` --
+#: a C++ functional cast, which C does not have. The expression printers are the only place that
+#: spelling can be answered: the text is built from the sympy tree, never from a hand-written body
+#: that :func:`c_cast_native_code` could reach.
+#:
+#: A closed list of the types with a C spelling. The ``dace::`` widths are deliberately absent, so
+#: a cast to one is left for ``dace.codegen.cpf.verify`` to report against the construct that wrote
+#: it rather than silently cast to something else.
+C_SYMBOLIC_CAST_TYPES: Tuple[str, ...] = ('bool', 'char', 'short', 'int', 'long', 'long long', 'unsigned int',
+                                          'unsigned long', 'unsigned long long', 'float', 'double', 'long double',
+                                          'int8_t', 'int16_t', 'int32_t', 'int64_t', 'uint8_t', 'uint16_t', 'uint32_t',
+                                          'uint64_t', 'size_t')
+C_REWRITES.update({name: (1, '((%s)({0}))' % name) for name in C_SYMBOLIC_CAST_TYPES})
+
 #: ``dace::``-namespaced C++ type -> its C spelling. Only the two complex types differ from the C++
 #: dialect's table: C spells a complex ``float _Complex`` rather than ``std::complex<float>``.
 C_CTYPE_RENAMES: Dict[str, str] = dict(CTYPE_RENAMES)
@@ -1763,6 +1819,106 @@ C_INLINE_DEFINITIONS['cpf_find_first'] = '\\\n'.join((
     '    } while (0)',
 ))
 
+#: The scatter guard's duplicate check. The tag array's element type and the index array's are
+#: both decided by the caller, so C dispatches on neither: the check is a statement macro that
+#: converts every index through ``long long``, which is what the C++ template's two type
+#: parameters amount to. A statement macro rather than a function for the same reason
+#: :data:`cpf_find_first` is one -- it owns loops and a result, and a C expression cannot.
+C_INLINE_DEFINITIONS['cpf_detect_collision'] = '\\\n'.join((
+    '#define cpf_detect_collision(out, dc_idx, dc_n, dc_owner, dc_capacity, dc_parallel) ',
+    '    do {',
+    '        const long long cpf_dc_len = (dc_n);',
+    '        const long long cpf_dc_cap = (dc_capacity);',
+    '        const bool cpf_dc_par = (dc_parallel);',
+    '        long long cpf_dc_c = 0;',
+    # Pass 1 tags each slot with its writer. The last-writer-wins race is the point: any winner
+    # will do, and the loser reads a tag that is not its own in pass 2.
+    '        _Pragma("omp parallel for if (parallel : cpf_dc_par)")',
+    '        for (long long cpf_dc_i = 0; cpf_dc_i < cpf_dc_len; ++cpf_dc_i) {',
+    '            const long long cpf_dc_v = (long long)(dc_idx)[cpf_dc_i];',
+    '            if (cpf_dc_v >= 0 && cpf_dc_v < cpf_dc_cap)',
+    '                (dc_owner)[cpf_dc_v] = (typeof((dc_owner)[0]))cpf_dc_i;',
+    '        }',
+    # Pass 2 verifies. Bitwise or is simd-safe and monotonic, so the fold carries simd.
+    '        _Pragma("omp parallel for simd if (parallel : cpf_dc_par) reduction(| : cpf_dc_c)")',
+    '        for (long long cpf_dc_i = 0; cpf_dc_i < cpf_dc_len; ++cpf_dc_i) {',
+    '            const long long cpf_dc_v = (long long)(dc_idx)[cpf_dc_i];',
+    '            if (cpf_dc_v >= 0 && cpf_dc_v < cpf_dc_cap)',
+    '                cpf_dc_c |= ((long long)(dc_owner)[cpf_dc_v] != cpf_dc_i) ? 1LL : 0LL;',
+    '        }',
+    '        (out) = cpf_dc_c;',
+    '    } while (0)',
+))
+
+#: The same check sizing its own tag buffer from ``max(idx)``, for a call site that wired no tag
+#: array. A failed allocation reports a collision, which is the answer that is never unsafe: the
+#: guard takes its sequential path instead of parallelizing a scatter nothing proved
+#: conflict-free.
+C_INLINE_DEFINITIONS['cpf_detect_collision_sized'] = '\\\n'.join((
+    '#define cpf_detect_collision_sized(out, ds_idx, ds_n, ds_parallel) ',
+    '    do {',
+    '        const long long cpf_ds_len = (ds_n);',
+    '        const bool cpf_ds_par = (ds_parallel);',
+    '        long long cpf_ds_mx = 0;',
+    '        long long *cpf_ds_owner;',
+    '        _Pragma("omp parallel for simd if (parallel : cpf_ds_par) reduction(max : cpf_ds_mx)")',
+    '        for (long long cpf_ds_j = 0; cpf_ds_j < cpf_ds_len; ++cpf_ds_j) {',
+    '            const long long cpf_ds_w = (long long)(ds_idx)[cpf_ds_j];',
+    '            cpf_ds_mx = cpf_ds_w > cpf_ds_mx ? cpf_ds_w : cpf_ds_mx;',
+    '        }',
+    '        cpf_ds_owner = (long long *)malloc((size_t)(cpf_ds_mx + 1) * sizeof(long long));',
+    '        if (cpf_ds_owner == NULL) {',
+    '            (out) = 1;',
+    '        } else {',
+    '            cpf_detect_collision(out, ds_idx, cpf_ds_len, cpf_ds_owner, cpf_ds_mx + 1, cpf_ds_par);',
+    '            free(cpf_ds_owner);',
+    '        }',
+    '    } while (0)',
+))
+
+#: ``std::copy`` over a contiguous range of a trivially copyable element type, which is what the
+#: expansions that write it copy. The C++ call returns the output end; nothing CPF renders reads
+#: it, and an expression macro has no way to return it, so the C form does not.
+C_INLINE_DEFINITIONS['cpf_copy'] = (
+    '#define cpf_copy(cp_first, cp_last, cp_out) \\\n'
+    '    memmove((cp_out), (cp_first), (size_t)((cp_last) - (cp_first)) * sizeof(*(cp_first)))')
+
+#: ``std::sort`` over a contiguous range. Heapsort rather than ``qsort``: the comparison stays
+#: inline and typed through C23 ``typeof``, where ``qsort`` would need a comparator function per
+#: element type and an indirect call per comparison. Same O(n log n) bound, and the order is the
+#: same total order ``<`` gives.
+C_INLINE_DEFINITIONS['cpf_sort'] = '\\\n'.join((
+    '#define cpf_sort(sr_first, sr_last) ',
+    '    do {',
+    '        typeof(*(sr_first)) *const cpf_sr_a = (sr_first);',
+    '        const long long cpf_sr_len = (long long)((sr_last) - (sr_first));',
+    '        long long cpf_sr_start = cpf_sr_len / 2;',
+    '        long long cpf_sr_end = cpf_sr_len;',
+    '        while (cpf_sr_end > 1) {',
+    '            typeof(*(sr_first)) cpf_sr_tmp;',
+    '            long long cpf_sr_root, cpf_sr_child;',
+    '            if (cpf_sr_start > 0) {',
+    '                --cpf_sr_start;',
+    '            } else {',
+    '                --cpf_sr_end;',
+    '                cpf_sr_tmp = cpf_sr_a[0];',
+    '                cpf_sr_a[0] = cpf_sr_a[cpf_sr_end];',
+    '                cpf_sr_a[cpf_sr_end] = cpf_sr_tmp;',
+    '            }',
+    '            cpf_sr_root = cpf_sr_start;',
+    '            while ((cpf_sr_child = 2 * cpf_sr_root + 1) < cpf_sr_end) {',
+    '                if (cpf_sr_child + 1 < cpf_sr_end && cpf_sr_a[cpf_sr_child] < cpf_sr_a[cpf_sr_child + 1])',
+    '                    ++cpf_sr_child;',
+    '                if (!(cpf_sr_a[cpf_sr_root] < cpf_sr_a[cpf_sr_child])) break;',
+    '                cpf_sr_tmp = cpf_sr_a[cpf_sr_root];',
+    '                cpf_sr_a[cpf_sr_root] = cpf_sr_a[cpf_sr_child];',
+    '                cpf_sr_a[cpf_sr_child] = cpf_sr_tmp;',
+    '                cpf_sr_root = cpf_sr_child;',
+    '            }',
+    '        }',
+    '    } while (0)',
+))
+
 #: Definitions each C definition calls -- macros included, since a macro must be ``#define``d before
 #: the function body that expands it is compiled.
 C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
@@ -1783,6 +1939,7 @@ C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     'scan_excl_min': ('cpf_min', ),
     'scan_excl_max': ('cpf_max', ),
     'cpf_find_first': ('find_first_chunk', ),
+    'cpf_detect_collision_sized': ('cpf_detect_collision', ),
 }
 
 #: What the C dialect refuses, and why. Empty: every construct CPF reaches has a C spelling.
@@ -1794,13 +1951,14 @@ C_UNSUPPORTED: Dict[str, str] = {}
 #: need the element type, which only the call site names (:func:`c_scan_identities`), and the
 #: find-first takes a predicate, which in C++ is a lambda and in C has to be pasted into the search
 #: as a macro argument (:func:`c_find_first`).
-C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset({'min_identity', 'max_identity', 'find_first_index'})
+C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset(
+    {'min_identity', 'max_identity', 'find_first_index', 'detect_collision'})
 
 #: Headers CPF's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
 #: ``true`` / ``false`` are C23 keywords. ``<tgmath.h>`` is deliberately absent too -- see the
 #: section header above.
-C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<stdlib.h>', '<string.h>', '<assert.h>',
-                                   '<complex.h>')
+C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<float.h>', '<stdlib.h>', '<string.h>',
+                                   '<assert.h>', '<complex.h>')
 
 #: ``<complex.h>`` defines ``I``, and ``I`` is a plausible loop-index name in scientific code. The
 #: macro is removed immediately after the include; complex literals are built with ``CMPLX``.
@@ -2171,27 +2329,164 @@ def c_find_first(code: str) -> str:
         (match.group(1).strip(), match.group(2).strip(), match.group(3), match.group(5), match.group(4).strip()), code)
 
 
-#: A ``std::`` name DaCe's own passes write STRAIGHT into a tasklet body, and the C spelling of it.
-#: These never reach an expression printer and are not ``dace::`` names either, so neither lowering
-#: lane sees them -- and in C a ``std::`` name is not a name at all.
+#: A ``std::`` name that reaches the emitted text WITHOUT passing an expression printer -- a
+#: library expansion's hand-written C++ body, or a pass that writes one. Neither lowering lane sees
+#: those, and in C a ``std::`` name is not a name at all, so this is the table that answers them.
 #:
-#: One entry, and it is the assumption guard: canonicalization's last pass traps a violated symbol
-#: assumption with ``if ((N < 0)) { std::abort(); }``, and that pass DEDUPS its own guards by
-#: searching tasklet bodies for the literal ``std::abort``, so the spelling is fixed at the source
-#: and cannot be changed there without breaking the dedup. C declares ``abort`` in ``<stdlib.h>``,
-#: which :data:`C_BASE_HEADERS` already includes.
-C_NATIVE_RENAMES: Dict[str, str] = {'std::abort': 'abort'}
+#: The elemental maths is DERIVED from the two printer tables rather than listed again: whatever
+#: C++ spells ``std::exp``, C spells the way :data:`C_STD_RENAMES` already spells ``exp``. Writing
+#: the pairs out by hand is how the two lanes drift, and a body that reached the wrong ``cpf_``
+#: macro would compile and compute something else.
+#:
+#: The rest are the names with no printer entry at all. ``std::abort`` is the assumption guard:
+#: canonicalization traps a violated symbol assumption with ``if ((N < 0)) { std::abort(); }`` and
+#: DEDUPS its own guards by searching tasklet bodies for that literal text, so the spelling is
+#: fixed at the source. The ``mem*`` trio and ``std::size_t`` are spelled the same in C once the
+#: namespace goes. ``std::copy`` and ``std::sort`` keep their argument shape and change name, so
+#: the macros CPF defines for them take iterator pairs exactly as the C++ algorithms do.
+C_NATIVE_RENAMES: Dict[str, str] = {
+    cpp: C_STD_RENAMES.get(runtime, runtime)
+    for runtime, cpp in STD_RENAMES.items() if cpp.startswith('std::')
+}
+C_NATIVE_RENAMES.update({
+    'std::abort': 'abort',
+    'std::memcpy': 'memcpy',
+    'std::memmove': 'memmove',
+    'std::memset': 'memset',
+    'std::size_t': 'size_t',
+    'std::min': 'cpf_min',
+    'std::max': 'cpf_max',
+    # ``fmod`` has no runtime name of its own -- ``cpp_mod`` is what the printers reach it through
+    # -- so it is absent from the two printer tables the renames above derive from, and a body that
+    # writes the C++ spelling directly needs the entry here.
+    'std::fmod': 'cpf_fmod',
+    'std::copy': 'cpf_copy',
+    'std::sort': 'cpf_sort',
+})
 
 
 def c_native_renames(code: str) -> str:
     """Spell the ``std::`` names a hand-written body carries the C way.
 
-    :param code: the body as the pass wrote it.
+    :param code: the body as the expansion or pass wrote it.
     :returns: the body with each :data:`C_NATIVE_RENAMES` name replaced.
     """
     for qualified, plain in C_NATIVE_RENAMES.items():
         code = re.sub(r'(?:::)?\b%s\b' % re.escape(qualified), plain, code)
     return code
+
+
+#: ``std::numeric_limits<T>::max()`` / ``::lowest()`` per element type, as C constants. The two
+#: reduction seeds a tile reduction writes, and the only two members CPF sees. C has no class
+#: template to ask, so the constant is spelled here from ``<limits.h>`` and ``<float.h>``;
+#: ``lowest()`` is the most negative FINITE value, which for a float type is ``-<T>_MAX`` and NOT
+#: ``<T>_MIN`` (that one is the smallest positive normal).
+C_NUMERIC_LIMITS: Dict[str, Tuple[str, str]] = {
+    'int': ('INT_MAX', 'INT_MIN'),
+    'unsigned int': ('UINT_MAX', '0'),
+    'long': ('LONG_MAX', 'LONG_MIN'),
+    'unsigned long': ('ULONG_MAX', '0'),
+    'long long': ('LLONG_MAX', 'LLONG_MIN'),
+    'unsigned long long': ('ULLONG_MAX', '0'),
+    'float': ('FLT_MAX', '-FLT_MAX'),
+    'double': ('DBL_MAX', '-DBL_MAX'),
+    'long double': ('LDBL_MAX', '-LDBL_MAX'),
+}
+
+#: ``std::numeric_limits<double>::lowest()`` as an expansion writes it, qualified or not.
+_C_NUMERIC_LIMIT_CALL = re.compile(r'(?:::)?(?:\w+::)*\bnumeric_limits\s*<\s*([A-Za-z_][A-Za-z_ ]*?)\s*>\s*'
+                                   r'::\s*(max|lowest)\s*\(\s*\)')
+
+
+def c_numeric_limits(code: str) -> str:
+    """Replace every ``numeric_limits<T>::max()`` / ``::lowest()`` with its C constant.
+
+    Must run BEFORE the qualified-name rewrite: the name carries an explicit template argument and
+    a member call, so it is not an ordinary call the name table could map. Any other member is left
+    alone and reaches ``dace.codegen.cpf.verify``, which reports it against the node that wrote it.
+
+    :param code: the C++ body, with its ctypes already renamed.
+    :returns: the body with the two extremes spelled as C.
+    :raises NotImplementedError: on an element type with no C constant for its extremes.
+    """
+
+    def replace(match: 're.Match') -> str:
+        ctype, member = match.group(1).strip(), match.group(2)
+        extremes = C_NUMERIC_LIMITS.get(ctype)
+        if extremes is None:
+            raise NotImplementedError(f'CPF cannot spell numeric_limits<{ctype}>::{member}() in C: the type has no '
+                                      'standard constant for its extremes.')
+        return extremes[0] if member == 'max' else extremes[1]
+
+    return _C_NUMERIC_LIMIT_CALL.sub(replace, code)
+
+
+#: ``target = dace::detect_collision(idx, (n)[, owner, (capacity)], parallel);`` -- the one
+#: statement the two ``ScatterConflictCheck`` CPU expansions write. Anchored on the whole
+#: statement, target included, because the C replacement is a statement macro and needs somewhere
+#: to put the result; the arguments are split by :func:`c_call_arguments` rather than by the
+#: pattern, so an argument carrying a comma inside parentheses cannot split the call.
+_C_DETECT_COLLISION_CALL = re.compile(r'([^;{}\n]+?)\s*=\s*(?:::)?(?:[A-Za-z_]\w*::)*detect_collision\s*\((.*?)\)\s*;',
+                                      re.S)
+
+
+def c_call_arguments(printed: str) -> Optional[Tuple[str, ...]]:
+    """Split one call's printed argument list on its TOP-LEVEL commas.
+
+    :param printed: the text between a call's outermost parentheses.
+    :returns: the arguments, or ``None`` if the brackets do not balance -- which means the pattern
+              that produced ``printed`` stopped inside a nested call, and the caller must leave the
+              text alone.
+    """
+    arguments: List[str] = []
+    depth = 0
+    current = []
+    for character in printed:
+        if character in '([':
+            depth += 1
+        elif character in ')]':
+            depth -= 1
+            if depth < 0:
+                return None
+        if character == ',' and depth == 0:
+            arguments.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(character)
+    if depth != 0:
+        return None
+    arguments.append(''.join(current).strip())
+    return tuple(arguments)
+
+
+def c_detect_collision(code: str) -> str:
+    """Rewrite a ``detect_collision`` call into the C statement macro that stands in for it.
+
+    C cannot spell the C++ overload pair as a call: the index and tag element types are the
+    template parameters, the two arities are two functions, and the body owns loops. The macro is
+    all three at once, and the call site is where the arity is known -- five arguments means a tag
+    array the caller wired, three means the macro sizes one of its own.
+
+    Must run BEFORE the qualified-name rewrite, which would otherwise leave the C++ call shape in
+    place with only its namespace stripped. A call of any other arity is LEFT ALONE, so it reaches
+    ``dace.codegen.cpf.verify`` and is reported against the node that emitted it.
+
+    :param code: the C++ body, with its ctypes already renamed.
+    :returns: the body with the check spelled as C.
+    """
+
+    def replace(match: 're.Match') -> str:
+        arguments = c_call_arguments(match.group(2))
+        if arguments is None:
+            return match.group(0)
+        target = match.group(1).strip()
+        if len(arguments) == 5:
+            return 'cpf_detect_collision(%s, %s);' % (target, ', '.join(arguments))
+        if len(arguments) == 3:
+            return 'cpf_detect_collision_sized(%s, %s);' % (target, ', '.join(arguments))
+        return match.group(0)
+
+    return _C_DETECT_COLLISION_CALL.sub(replace, code)
 
 
 def c_cast_native_code(code: str) -> str:
