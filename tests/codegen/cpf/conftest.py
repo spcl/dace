@@ -395,6 +395,33 @@ def assert_matches(reference: Dict[str, np.ndarray], cpf: Dict[str, np.ndarray],
             f'max|diff|={float(np.nanmax(np.abs(expected.astype(np.float64) - got.astype(np.float64)))):.3e}')
 
 
+def cast_extent_sdfg(name: str) -> dace.SDFG:
+    """An SDFG whose transient extent carries a numeric cast, which is what puts one into the
+    generated ``<array>_size`` helper.
+
+    The cast is the construct that does not survive the printers' own round trip: ``_sym2cpp``
+    prints C++ and hands the text back to the PYTHON parser, and ``static_cast<T>(x)`` re-parses as
+    a comparison chain. A transient is what makes the helper exist -- its extent is an allocation
+    count -- and two states keep the copy from being elided.
+    """
+    extent = dace.symbolic.pystr_to_symbolic('int64(la) + int64(lb) + 1')
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [extent], dace.float64)
+    sdfg.add_array('out', [extent], dace.float64)
+    sdfg.add_transient('tmp', [extent], dace.float64)
+    scale = sdfg.add_state('scale')
+    entry, exit_node = scale.add_map('m', {'i': '0:%s' % extent})
+    tasklet = scale.add_tasklet('scale', {'x'}, {'y'}, 'y = x * 2.0')
+    scale.add_memlet_path(scale.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[i]'))
+    scale.add_memlet_path(tasklet, exit_node, scale.add_write('tmp'), src_conn='y', memlet=dace.Memlet('tmp[i]'))
+    move = sdfg.add_state_after(scale, 'move')
+    entry, exit_node = move.add_map('m2', {'i': '0:%s' % extent})
+    tasklet = move.add_tasklet('move', {'x'}, {'y'}, 'y = x')
+    move.add_memlet_path(move.add_read('tmp'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('tmp[i]'))
+    move.add_memlet_path(tasklet, exit_node, move.add_write('out'), src_conn='y', memlet=dace.Memlet('out[i]'))
+    return sdfg
+
+
 def wcr_sdfg(name: str, resolution: str, length: int = 32) -> dace.SDFG:
     """A map whose every iteration resolves into its OWN element through ``resolution``.
 

@@ -23,7 +23,8 @@ import textwrap
 import numpy as np
 import pytest
 
-from dace import cpf_lowering
+from dace import cpf_lowering, symbolic
+from dace.codegen.common import sym2cpp
 from dace.cpf_lowering import Dialect
 from tests.codegen.cpf.conftest import (UNQUALIFIED_RUNTIME_FUNCTIONS, assert_standalone, build_standalone,
                                         compile_diagnostics, compile_standalone)
@@ -896,3 +897,24 @@ def test_the_c_lane_answers_every_cxx_name_a_selectable_expansion_writes(label, 
         assert rewritten == body, 'the fill is answered at expansion time, not here'
         return
     assert 'std::' not in rewritten, f'{label} kept a C++ spelling: {rewritten}'
+
+
+#: ``(dialect, the text a cast in a symbolic expression must print as)``. Both dialects are held to
+#: the same expression here for the reason the value cases above are: the C tables are a second
+#: spelling of one semantics, and a cast is where the two spellings genuinely differ.
+CAST_REPARSE_FORMS = {
+    Dialect.STANDALONE: '((int64_t(la) + int64_t(lb)) + 1)',
+    Dialect.STANDALONE_C: '((((int64_t)(la)) + ((int64_t)(lb))) + 1)',
+}
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+def test_a_cast_survives_the_printers_own_reparse(dialect):
+    """``sym2cpp`` prints C++ and hands the text back to the PYTHON parser on its way out. A cast is
+    the one construct whose C++ spelling does not survive that: ``static_cast<T>(x)`` re-parses as
+    the comparison chain ``(static_cast < T) > (x)`` and is emitted with its parentheses moved, so
+    the extent it computes is a different number and the unit does not compile."""
+    expression = symbolic.pystr_to_symbolic('int64(la) + int64(lb) + 1')
+    with cpf_lowering.dialect_scope(dialect):
+        rendered = sym2cpp(expression)
+    assert rendered == CAST_REPARSE_FORMS[dialect], rendered

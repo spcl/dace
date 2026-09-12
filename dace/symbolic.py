@@ -3639,10 +3639,20 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
 
-    def __init__(self, arrays, cpp_mode=False, dialect=cpf_lowering.Dialect.RUNTIME, fp_ctype=None, *args, **kwargs):
+    def __init__(self,
+                 arrays,
+                 cpp_mode=False,
+                 dialect=cpf_lowering.Dialect.RUNTIME,
+                 fp_ctype=None,
+                 reparsed=False,
+                 *args,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
         self.cpp_mode = cpp_mode
+        # Whether this text is parsed again by the PYTHON parser before it is emitted.
+        # ``static_cast<T>(x)`` does not survive that: it re-parses as ``(static_cast < T) > (x)``.
+        self.reparsed = reparsed
         # Which C++ vocabulary this printer may emit; see cpf_lowering.Dialect for why the
         # dialect is threaded through as an argument rather than read from configuration.
         self.dialect = dialect
@@ -3725,6 +3735,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # expression keeps its exact (truncating for int) semantics.
         if self.cpp_mode and str(expr.func) in _TYPECAST_CPP:
             target = _TYPECAST_CPP[str(expr.func)]
+            if self.reparsed:
+                return '%s(%s)' % (str(expr.func), self._print(expr.args[0]))
             if self.dialect is cpf_lowering.Dialect.STANDALONE_C:
                 # C has neither ``static_cast`` nor a functional cast.
                 return '((%s)(%s))' % (cpf_lowering.ctype_for(target, self.dialect), self._print(expr.args[0]))
@@ -4082,7 +4094,8 @@ def _symstr(sym,
             arrayexprs: Optional[FrozenSet[str]] = None,
             cpp_mode=False,
             dialect: Optional[cpf_lowering.Dialect] = None,
-            fp_ctype: Optional[str] = None) -> str:
+            fp_ctype: Optional[str] = None,
+            reparsed: bool = False) -> str:
     """The memoized body of :func:`symstr`. Every argument reaches the cache key, ``dialect``
     included, so nothing here may read an ambient value."""
 
@@ -4094,7 +4107,7 @@ def _symstr(sym,
         fp_ctype = infer_fp_ctype(sym)
 
     if isinstance(sym, SymExpr):
-        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode, dialect=dialect, fp_ctype=fp_ctype)
+        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode, dialect=dialect, fp_ctype=fp_ctype, reparsed=reparsed)
 
     # A natively-parsed (idxalg) expression is rendered by converting back to sympy and reusing the
     # printer below, rather than by a parallel printer that could drift from DaCe's spellings.
@@ -4108,14 +4121,14 @@ def _symstr(sym,
     # wrap them in parentheses that no longer round-trip. Print them bare instead.
     if isinstance(sym, (sympy.core.numbers.Infinity, sympy.core.numbers.NegativeInfinity, sympy.core.numbers.NaN,
                         sympy.logic.boolalg.BooleanAtom)):
-        return DaceSympyPrinter(arrayexprs, cpp_mode, dialect, fp_ctype).doprint(sym)
+        return DaceSympyPrinter(arrayexprs, cpp_mode, dialect, fp_ctype, reparsed).doprint(sym)
 
     try:
         sym = sympy_numeric_fix(sym)
         sym = sympy_intdiv_fix(sym)
         sym = sympy_divide_fix(sym)
 
-        sstr = DaceSympyPrinter(arrayexprs, cpp_mode, dialect, fp_ctype).doprint(sym)
+        sstr = DaceSympyPrinter(arrayexprs, cpp_mode, dialect, fp_ctype, reparsed).doprint(sym)
 
         if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
                 sym, (sympy.Number, TypedConstant)) or dtypes.isconstant(sym):
@@ -4131,7 +4144,8 @@ def symstr(sym,
            arrayexprs: Optional[FrozenSet[str]] = None,
            cpp_mode=False,
            dialect: Optional[cpf_lowering.Dialect] = None,
-           fp_ctype: Optional[str] = None) -> str:
+           fp_ctype: Optional[str] = None,
+           reparsed: bool = False) -> str:
     """
     Convert a symbolic expression to a compilable expression.
 
@@ -4151,11 +4165,15 @@ def symstr(sym,
                      (``x + 1/2`` otherwise reaches the compiler as ``x + 0``). ``None`` keeps
                      integer division, which index arithmetic needs. In the cache key for the
                      same reason ``dialect`` is.
+    :param reparsed: whether the caller hands this text to the PYTHON parser again before
+                     emitting it (``dace.codegen.common._sym2cpp`` does). Only a cast is spelled
+                     differently under it -- see :class:`DaceSympyPrinter`. In the cache key for
+                     the same reason ``dialect`` is.
     :return: Expression in string format depending on the value of ``cpp_mode``.
     """
     if dialect is None:
         dialect = cpf_lowering.active_dialect()
-    return _symstr(sym, arrayexprs, cpp_mode, dialect, fp_ctype)
+    return _symstr(sym, arrayexprs, cpp_mode, dialect, fp_ctype, reparsed)
 
 
 #: The wrapper is what callers hold, so the cache controls have to live on it too -- clearing
