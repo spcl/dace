@@ -35,7 +35,6 @@ from dace.transformation.passes.vectorization.enums import ISA, RemainderStrateg
 from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import scopes
-from dace.transformation.transformation import PatternTransformation
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
@@ -97,9 +96,9 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
 # then rewrites the raw tasklets between staged tiles into TileBinop / TileITE / TileReduce.
 from dace.transformation.dataflow import MapCollapse, MapFission, WCRToAugAssign
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
-from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, LoopToMap, RefineNestedAccess,
-                                            StateFusionExtended)
+from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusionExtended
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import (NormalizeMaskedWriteTasklets,
@@ -1220,9 +1219,8 @@ class VectorizeMultiDim(ppl.Pipeline):
         # -[wcr]→ sink`` and are left for TileReduce; everything else converts so no stray
         # WCR survives into the body.
         sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
-        # LoopToMap parallelises data-parallel `for` loops; RefineNestedAccess tightens the body's
-        # outer memlet to the per-iteration slice (LoopToMap on its own emits whole-array body edges).
-        self._refine_loop_to_map_bodies(sdfg, LoopToMap, RefineNestedAccess)
+        # ParallelizeLoops lifts the data-parallel `for` loops to Maps.
+        self._refine_loop_to_map_bodies(sdfg)
         # Inline wrapper NSDFGs + collapse adjacent perfectly-nested single-param maps so the K-dim
         # tile spans K genuine map dims.
         normalize_loop_nests(sdfg)
@@ -1374,17 +1372,14 @@ class VectorizeMultiDim(ppl.Pipeline):
         from dace.sdfg import infer_types
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG, loop_to_map: type[PatternTransformation],
-                                   refine_nested_access: type[PatternTransformation]) -> None:
-        """Parallelise data-parallel loops with ``LoopToMap``.
+    def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG) -> None:
+        """Parallelise data-parallel loops with ``ParallelizeLoops``.
 
         ``RefineNestedAccess`` is intentionally NOT run here (see body): under the
         staging-first design it is redundant (``ExpandNestedSDFGInputs`` re-widens the
         boundary memlets) and harmful (it rewrites per-lane gather indices ``idx[i] → idx[0]``).
 
         :param sdfg: SDFG to transform in place.
-        :param loop_to_map: The ``LoopToMap`` transformation class.
-        :param refine_nested_access: The ``RefineNestedAccess`` transformation class (unused).
         """
         pre = {id(n) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
         # DEFAULT non-permissive (``_loop_to_map_permissive`` defaults False): permissive
@@ -1396,7 +1391,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # ``kernels/test_forced_scatter_gather_scatter.py``). The knob stays honored so a
         # dedicated scatter/gather tile-lowering test can opt in (``loop_to_map_permissive=True``)
         # to force its for-loop scatter into a Map and exercise the tile path directly.
-        sdfg.apply_transformations_repeated(loop_to_map, permissive=self._loop_to_map_permissive, validate=False)
+        ParallelizeLoops(permissive=self._loop_to_map_permissive).apply_pass(sdfg, {})
         # ``RefineNestedAccess`` is skipped on the K-dim path (user 2026-06-10 audit): under
         # the staging-first design it is redundant and harmful:
         # * It narrows ``LoopToMap``'s whole-array memlets (``e[0:N]``) to per-iter (``e[i]``),

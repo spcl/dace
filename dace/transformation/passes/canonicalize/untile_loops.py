@@ -640,9 +640,9 @@ class UntileLoops(ppl.Pass):
         """Post-round-trip step: re-lift every parallelizable LoopRegion
         to a Map and re-fuse adjacent uni-dim Maps."""
         from dace.transformation.dataflow.map_collapse import MapCollapse
-        from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        applied = count_applied(PatternMatchAndApplyRepeated([LoopToMap()]).apply_pass(sdfg, {}))
+        applied = ParallelizeLoops().apply_pass(sdfg, {}) or 0
         applied += count_applied(PatternMatchAndApplyRepeated([MapCollapse()]).apply_pass(sdfg, {}))
         return applied
 
