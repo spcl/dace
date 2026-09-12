@@ -1110,7 +1110,10 @@ def render(sdfg: SDFG,
     # the C++ one, so every argmax over a transformed element failed the C rendering at the
     # self-containment check rather than at anything a caller could act on.
     with cpf_lowering.dialect_scope(dialect):
-        prepare(prepared, provenance)
+        # ``prepare`` expands library nodes into loops and tasklets on this throwaway copy; nothing
+        # CPF emits reads node.debuginfo, so the inspect.stack() walk behind it is pure overhead.
+        with set_temporary('compiler', 'lineinfo', value='none'):
+            prepare(prepared, provenance)
     # DACE_* environment variables outrank set_temporary, so a shell that pins the CPU generator to
     # ``legacy`` would silently render through the wrong one -- and the legacy generator emits
     # ``dace::CopyND`` and state-struct accesses that no dialect switch can take back. Refuse.
@@ -1122,7 +1125,10 @@ def render(sdfg: SDFG,
                                'variable outranks the in-process setting). Unset it to render.')
         with cpf_lowering.dialect_scope(dialect):
             with cpf_lowering.provenance_scope(provenance):
-                objects = codegen.generate_code(prepared, validate=validate)
+                # Same reasoning as the prepare() call above: codegen's own lowering passes (copy
+                # lifting, library expansion) add nodes whose debuginfo nothing here reads.
+                with set_temporary('compiler', 'lineinfo', value='none'):
+                    objects = codegen.generate_code(prepared, validate=validate)
                 body = frame_object(objects, sdfg.name).clean_code
                 # Type names reach the text from the entry signature and from declarations, neither
                 # of which goes through an expression printer, so the rename runs over the whole unit.
