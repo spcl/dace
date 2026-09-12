@@ -71,7 +71,7 @@ def _is_cleanup_stage(unit: ppl.Pass) -> bool:
 def _canonicalize(sdfg: dace.SDFG, with_cleanup: bool) -> dace.SDFG:
     """Run the real recipe, optionally with the cleanup stage skipped (the A/B reference)."""
     canon_pipeline.disable_openmp_sections(sdfg)
-    for _, unit in canon_pipeline._build_stages():
+    for label, unit in canon_pipeline._build_stages():
         if not with_cleanup and _is_cleanup_stage(unit):
             continue
         unit.apply_pass(sdfg, {})

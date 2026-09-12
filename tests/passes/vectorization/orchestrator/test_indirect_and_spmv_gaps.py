@@ -33,21 +33,21 @@ NNZ = dace.symbol("NNZ")
 
 
 @dace.program
-def _k1_indirect_kernel(a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]):
+def k1_indirect_kernel(a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]):
     """1D indirect stencil: ``a[i] = b[idx[i]] + 1.0``."""
     for i in dace.map[0:N]:
         a[i] = b[idx[i]] + 1.0
 
 
 @dace.program
-def _k2_indirect_kernel(a: dace.float64[M, N], c: dace.float64[M, N], idx: dace.int32[M, N]):
+def k2_indirect_kernel(a: dace.float64[M, N], c: dace.float64[M, N], idx: dace.int32[M, N]):
     """2D indirect stencil: ``c[i, j] = a[idx[i, j], j] + 1.0``."""
     for i, j in dace.map[0:M, 0:N]:
         c[i, j] = a[idx[i, j], j] + 1.0
 
 
 @dace.program
-def _spmv_kernel(y: dace.float64[N], A: dace.float64[N, NNZ], x: dace.float64[N], col: dace.int32[NNZ]):
+def spmv_kernel(y: dace.float64[N], A: dace.float64[N, NNZ], x: dace.float64[N], col: dace.int32[NNZ]):
     """SpMV-style: ``y[i] = sum_k A[i, k] * x[col[k]]``."""
     for i, k in dace.map[0:N, 0:NNZ]:
         y[i] += A[i, k] * x[col[k]]
@@ -55,17 +55,17 @@ def _spmv_kernel(y: dace.float64[N], A: dace.float64[N, NNZ], x: dace.float64[N]
 
 def _build_1d_indirect_stencil():
     """1D indirect (gather)."""
-    return _k1_indirect_kernel.to_sdfg(simplify=True)
+    return k1_indirect_kernel.to_sdfg(simplify=True)
 
 
 def _build_2d_indirect_stencil():
     """2D indirect on the leading dim (gather)."""
-    return _k2_indirect_kernel.to_sdfg(simplify=True)
+    return k2_indirect_kernel.to_sdfg(simplify=True)
 
 
 def _build_spmv():
     """SpMV (gather + reduction)."""
-    return _spmv_kernel.to_sdfg(simplify=True)
+    return spmv_kernel.to_sdfg(simplify=True)
 
 
 def test_classify_tile_access_indirect_returns_gather():

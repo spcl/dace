@@ -57,7 +57,7 @@ def _run_full(prog, **kw):
     body into a shape the einsum lift then mis-classifies.
     """
     sdfg = prog.to_sdfg(simplify=True)
-    for _, unit in _build_stages():
+    for label, unit in _build_stages():
         unit.apply_pass(sdfg, {})
     sdfg(**kw)
     return sdfg

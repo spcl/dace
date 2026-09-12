@@ -895,7 +895,7 @@ def _time_all_reps(ctx, sdfg):
     warmup = WARMUP if reps > MIN_REPS else min(WARMUP, 1)
     with dace.profile(repetitions=reps, warmup=warmup, print_results=False) as prof:
         cs(**kw)
-    _, times = prof.times[-1]
+    sdfg, times = prof.times[-1]
     # dace.profile reports per-call wall time in ms
     return np.asarray(times, dtype=float), False
 
@@ -958,11 +958,11 @@ def time_reference(ctx: dict) -> np.ndarray:
     if DENOMINATOR.get(suite) != 'reference':
         raise RuntimeError(f"{suite} has no timeable reference; its denominator is {DENOMINATOR[suite]!r}")
     fn, call = numpy_call(ctx)
-    for _ in range(WARMUP):
+    for warmup_iter in range(WARMUP):
         PB.restore_inputs(call, ctx['arrays'])
         fn(**call)
     times = []
-    for _ in range(REPS):
+    for rep in range(REPS):
         PB.restore_inputs(call, ctx['arrays'])
         t0 = time.perf_counter()
         fn(**call)
@@ -1020,7 +1020,7 @@ def geomeans(records: dict[tuple, dict], preset: str, key: str = 'speedup_vs_ref
     kernels actually behind the number. Kept per corpus because the denominator is per corpus.
     """
     per: dict[tuple, list[float]] = {}
-    for (suite, _), r in records.items():
+    for (suite, kernel), r in records.items():
         pres = r.get('presets', {}).get(preset) or {}
         for label, ratio in (pres.get(key) or {}).items():
             per.setdefault((suite, label), []).append(ratio)
@@ -1523,7 +1523,7 @@ def _md_geomean_block(records: dict[tuple, dict], preset: str) -> list[str]:
     if not gm:
         return []
     kinds = {}
-    for (suite, _), r in records.items():
+    for (suite, kernel), r in records.items():
         kind = ((r.get('presets', {}).get(preset) or {}).get('denominator') or {}).get('kind')
         if kind:
             kinds[suite] = kind

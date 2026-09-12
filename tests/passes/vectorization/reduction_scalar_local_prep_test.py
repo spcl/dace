@@ -106,7 +106,7 @@ def _tiled_map_steps(sdfg: dace.SDFG):
     A nonempty set means the widener strided some map by a tile width -- it TILED the kernel; an
     empty set means every map is still unit-step, i.e. the kernel was left un-tiled (a refusal)."""
     steps = set()
-    for node, _ in sdfg.all_nodes_recursive():
+    for node, graph in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry):
             for _, _, step in node.map.range:
                 if str(step) != "1":

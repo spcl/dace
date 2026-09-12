@@ -33,7 +33,7 @@ NNZ = dace.symbol("NNZ")
 
 
 @dace.program
-def _spmv(y: dace.float64[N], A: dace.float64[N, NNZ], x: dace.float64[N], col: dace.int32[NNZ]):
+def spmv(y: dace.float64[N], A: dace.float64[N, NNZ], x: dace.float64[N], col: dace.int32[NNZ]):
     """SpMV-style gather + reduction, in the canonical Option-B form: a product
     Map (``prod[i, k] = A[i, k] * x[col[k]]`` -- straight-line body with a gather)
     followed by a ``Reduce`` over the reduced ``k`` axis (``y[i] = sum_k prod[i, k]``).
@@ -73,7 +73,7 @@ def test_spmv_matches_numpy(n, nnz, widths):
 
     y_ref = _spmv_numpy(A, x, col)
 
-    vec = _spmv.to_sdfg(simplify=True)
+    vec = spmv.to_sdfg(simplify=True)
     vec.name = f"spmv_{n}_{nnz}_{'x'.join(map(str, widths))}"
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=widths, target_isa=ISA.SCALAR,

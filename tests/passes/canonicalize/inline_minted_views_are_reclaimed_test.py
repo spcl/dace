@@ -40,7 +40,7 @@ def flatten(unit: Pass):
 
 def stage_kinds():
     """``[{type names of every pass in the stage}]``, one entry per built stage, in order."""
-    return [{type(child).__name__ for child in flatten(unit)} for _, unit in _build_stages()]
+    return [{type(child).__name__ for child in flatten(unit)} for label, unit in _build_stages()]
 
 
 def test_the_reclaim_is_the_last_stage():

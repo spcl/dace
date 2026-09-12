@@ -50,7 +50,7 @@ def tile_node_count(sdfg: dace.SDFG) -> int:
 
 
 def test_a_strided_map_the_emitters_left_untiled_gets_its_unit_step_back():
-    sdfg, _, entry = strided_map_sdfg('untiled_strided', WIDTH)
+    sdfg, state, entry = strided_map_sdfg('untiled_strided', WIDTH)
 
     repaired = RestoreUntiledMapStride(widths=(WIDTH, )).apply_pass(sdfg, {})
 
@@ -117,7 +117,7 @@ def test_the_vectorizer_leaves_no_strided_map_without_a_tile_op():
 
 def test_a_strided_untiled_map_computes_every_element_after_the_repair():
     """The numbers, not only the shape: before the repair the map skips 7 of every 8 elements."""
-    sdfg, _, entry = strided_map_sdfg('numeric_untiled', WIDTH)
+    sdfg, state, entry = strided_map_sdfg('numeric_untiled', WIDTH)
     RestoreUntiledMapStride(widths=(WIDTH, )).apply_pass(sdfg, {})
 
     a = np.arange(1.0, 21.0)

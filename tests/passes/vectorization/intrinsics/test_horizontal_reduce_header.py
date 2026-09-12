@@ -116,7 +116,7 @@ def build_avx512(tmp_path):
 def test_avx512_horizontal_reduce_compiles(tmp_path):
     """Building the AVX-512 header needs the compiler, NOT the instruction set: an x86 box without
     an AVX-512 CPU used to skip this whole file's intrinsic path and report green."""
-    _, res = build_avx512(tmp_path)
+    exe, res = build_avx512(tmp_path)
     assert res.returncode == 0, f"compile failed:\n{res.stderr}"
 
 

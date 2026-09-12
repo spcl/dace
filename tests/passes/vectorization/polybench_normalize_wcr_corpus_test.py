@@ -70,7 +70,7 @@ def test_polybench_normalize_wcr(name, pipeline):
 @pytest.mark.parametrize("pipeline", PIPELINES)
 def test_polybench_normalize_wcr_idempotent(name, pipeline):
     """A second ``NormalizeWCR`` rewrites nothing (returns ``None``) and leaves a valid SDFG."""
-    kernel, _, _, _ = _prep(name)
+    kernel, call_arrays, psize, baseline_reference = _prep(name)
     sdfg = _pipelined_sdfg(kernel, pipeline)
     NormalizeWCR().apply_pass(sdfg, {})
     sdfg.validate()

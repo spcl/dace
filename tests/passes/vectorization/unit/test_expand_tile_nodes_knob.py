@@ -47,7 +47,7 @@ def _axpy_2d(a: dace.float64[KLEV, KLON], b: dace.float64[KLEV, KLON], c: dace.f
 
 def _count_tile_lib_nodes(sdfg: dace.SDFG) -> int:
     """Total number of ``Tile*`` library nodes anywhere in ``sdfg``."""
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TILE_LIB_NODE_TYPES))
+    return sum(1 for n, graph in sdfg.all_nodes_recursive() if isinstance(n, TILE_LIB_NODE_TYPES))
 
 
 def _vectorize(sdfg: dace.SDFG, *, expand_tile_nodes: bool) -> None:

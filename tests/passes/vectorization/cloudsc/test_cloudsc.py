@@ -148,7 +148,7 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
     # the vector width exists), not a bogus union.
     vw_step_maps = [
         n for n, _ in vectorized_sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and any(str(s) == "8" for _, _, s in n.map.range)
+        if isinstance(n, dace.nodes.MapEntry) and any(str(s) == "8" for start, end, s in n.map.range)
     ]
     assert vw_step_maps, ("cloudsc_two did not vectorize under fuse_overlapping_loads=True: no map strided by "
                           "the vector width was produced")
