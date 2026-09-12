@@ -21,6 +21,7 @@ import ctypes
 import re
 
 import numpy as np
+import pytest
 
 import dace
 from dace.codegen.cpf import readonly_entry_arrays, render, written_containers
@@ -104,3 +105,44 @@ def test_qualified_signature_still_computes_and_keeps_the_abi():
     # The read-only argument really was read-only.
     assert np.array_equal(src, np.arange(n, dtype=np.float64))
     assert isinstance(library, ctypes.CDLL)
+
+
+def entry_view_sdfg(name: str, written: bool) -> dace.SDFG:
+    """``out = 2 * a`` with a View on one entry array: on read-only ``a``, or on the written ``out``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('out', [N], dace.float64)
+    sdfg.add_view('v', [N], dace.float64)
+    state = sdfg.add_state()
+    view = state.add_access('v')
+    entry, exit_node = state.add_map('m', {'i': '0:N'})
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, 'y = 2.0 * x')
+    if written:
+        state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[i]'))
+        state.add_memlet_path(tasklet, exit_node, view, src_conn='y', memlet=dace.Memlet('v[i]'))
+        state.add_edge(view, 'views', state.add_write('out'), None, dace.Memlet('out[0:N]'))
+    else:
+        state.add_edge(state.add_read('a'), None, view, 'views', dace.Memlet('a[0:N]'))
+        state.add_memlet_path(view, entry, tasklet, dst_conn='x', memlet=dace.Memlet('v[i]'))
+        state.add_memlet_path(tasklet, exit_node, state.add_write('out'), src_conn='y', memlet=dace.Memlet('out[i]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('language', ['c++', 'c'])
+@pytest.mark.parametrize('written', [False, True], ids=['view_of_readonly_entry', 'written_view'])
+def test_a_view_is_const_exactly_when_its_entry_array_is_never_written(language, written):
+    """A view aliasing a ``const`` entry parameter must be ``const`` too (g++ rejects the conversion,
+    gcc warns), and a view that is written must keep a mutable pointer."""
+    name = f'cpf_qual_view_{"w" if written else "r"}_{"cpp" if language == "c++" else "c"}'
+    result = render(entry_view_sdfg(name, written), language=language)
+    declaration = re.search(r'^\s*((?:const\s+)?)double\s*\*\s*v\s*;', result.code, re.M)
+    assert declaration is not None, result.code
+    assert (declaration.group(1) == '') == written, declaration.group(0)
+    assert compile_diagnostics(result.code, name, language=language) == ''
+    library = build_standalone(result.code, name, language=language)
+    n = 16
+    src = np.arange(n, dtype=np.float64)
+    out = np.zeros(n, dtype=np.float64)
+    call_standalone(library, result.sdfg, {'a': src, 'out': out, 'N': n})
+    np.testing.assert_array_equal(out, 2.0 * np.arange(n, dtype=np.float64))
+    np.testing.assert_array_equal(src, np.arange(n, dtype=np.float64))

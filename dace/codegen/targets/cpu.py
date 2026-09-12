@@ -945,10 +945,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # the view edge's read/write *direction* does not imply the view's contents are never written
         # (reinterpret / same-name views are read-direction yet written), so const-ness is keyed off
         # the parent, not the direction. ``_mutated_descriptors`` guarantees a const parent is never
-        # written through any view, so mirroring is always sound.
+        # written through any view, so mirroring is always sound. A standalone entry signature gets
+        # its ``const`` after generation, so an unwritten entry array is asked about directly.
         const_view = (not isinstance(sdfg.arrays[viewed_dnode.data],
                                      (data.Structure, data.ContainerArray, data.ContainerView))
-                      and self._viewed_data_is_const(sdfg, viewed_dnode))
+                      and (self._viewed_data_is_const(sdfg, viewed_dnode)
+                           or self.standalone_readonly(sdfg, viewed_dnode.data)))
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
                                                         memlet,
