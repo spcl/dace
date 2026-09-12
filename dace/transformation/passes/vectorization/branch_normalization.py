@@ -83,9 +83,9 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int
 
     # Branch conditions live on the ConditionalBlock, not interstate edges;
     # collect sibling cond-block conditions (rule 2 excludes cb's own).
-    from dace.sdfg.state import ConditionalBlock as _CB
+    from dace.sdfg.state import ConditionalBlock
     for region in local_sdfg.all_control_flow_blocks():
-        if not isinstance(region, _CB) or region is cb:
+        if not isinstance(region, ConditionalBlock) or region is cb:
             continue
         for c, _ in region.branches:
             if c is None:

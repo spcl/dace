@@ -17,7 +17,7 @@ from dace.transformation.passes.analysis import scopes
 from dace.libraries.tileops import TileMaskGen
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
+from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_body_nodes
 from dace.transformation.passes.vectorization.utils.mask_scaffold import (prepend_dominating_init_state,
                                                                           thread_symbols_into_nsdfg)
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
@@ -97,7 +97,13 @@ class GenerateTileIterationMask(ppl.Pass):
         :returns: ``True`` when a mask was added; ``False`` if the body NSDFG
             already has a ``TileMaskGen`` (idempotent per-map).
         """
-        scope = parent_state.all_nodes_between(map_entry, parent_state.exit_node(map_entry)) or set()
+        # Scope membership, NOT ``all_nodes_between``: that walk discards its whole result on reaching a
+        # node with no out-edge -- a write-only scratch scalar is exactly one -- and the mask was then
+        # skipped over a body that HAS its NSDFG. ``ConvertTaskletsToTileOps`` finds that same NSDFG
+        # through ``scope_subgraph``, tiles it, and wires every tile op ``has_mask=False``, so the map
+        # ends up strided by W with nothing masking the lanes past the bound. (The ``or set()`` this
+        # replaces guarded a case that cannot happen: the walk returns ``set()``, never ``None``.)
+        scope = map_body_nodes(parent_state, map_entry)
         # The body NSDFG should exist inside the scope (NestInnermost runs first).
         body_nsdfgs = [n for n in scope if isinstance(n, dace.nodes.NestedSDFG)]
         if not body_nsdfgs:

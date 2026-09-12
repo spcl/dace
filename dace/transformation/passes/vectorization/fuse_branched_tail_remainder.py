@@ -175,6 +175,14 @@ class FuseBranchedTailRemainder(ppl.Pass):
     @staticmethod
     def _sole_body_nsdfg(state: dace.SDFGState, entry: MapEntry) -> NestedSDFG | None:
         """Return the single nested SDFG forming ``entry``'s body, or ``None`` if not that shape."""
+        # ``all_nodes_between`` deliberately, and it is inert here. The walk discards its whole result
+        # on a body node with no out-edge, but an emptied body only ever REFUSES this predicate --
+        # ``len(body) == 1`` fails on the empty list, both bodies must be recognised before anything is
+        # mutated, and the pair is left as two correct un-fused maps. The refusal also matches the
+        # scope-based body: a walk empties only through a dead-end node, which is either one of several
+        # body nodes (``len(body) == 1`` fails again) or the sole one -- and a sole body NSDFG with no
+        # out-edge writes nothing, which no ``__tile_main``/tail body does. Verified both ways on a body
+        # carrying a write-only scratch scalar; see ``tile_mask_and_tail_fusion_see_write_only_sink_test.py``.
         exit_node = state.exit_node(entry)
         body = [n for n in state.all_nodes_between(entry, exit_node)]
         nsdfgs = [n for n in body if isinstance(n, NestedSDFG)]

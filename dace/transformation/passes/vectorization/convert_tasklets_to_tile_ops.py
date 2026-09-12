@@ -1679,15 +1679,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         Reuses the producer's AccessNode as the input (so the SDFG scheduler orders the
         comparison tasklet before the broadcast tasklet).
         """
-        import dace.dtypes as _dtypes
-        from dace.memlet import Memlet as _Memlet
+        import dace.dtypes as dtypes
+        from dace.memlet import Memlet
         sdfg = inner_state.sdfg
         widths = tuple(int(w) for w in self.widths)
         arr_name, _ = sdfg.add_array("_cond_bcast",
                                      shape=widths,
                                      dtype=dtype,
                                      transient=True,
-                                     storage=_dtypes.StorageType.Register,
+                                     storage=dtypes.StorageType.Register,
                                      find_new_name=True)
         K = len(widths)
         parts = []
@@ -1717,13 +1717,13 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             inputs={"_in"},
             outputs={"_out"},
             code="\n".join(code_lines),
-            language=_dtypes.Language.CPP,
+            language=dtypes.Language.CPP,
         )
         # Wire from the source AN (reuse, not a fresh access) and to a fresh broadcast AN.
         inner_state.add_edge(src_edge.src, src_edge.src_conn, tasklet, "_in", dace.Memlet.from_memlet(src_edge.data))
         out_an = inner_state.add_access(arr_name)
         out_subset = ", ".join(f"0:{w}" for w in widths)
-        inner_state.add_edge(tasklet, "_out", out_an, None, _Memlet(f"{arr_name}[{out_subset}]"))
+        inner_state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
         return arr_name
 
     def _materialise_symbol_to_tile(self, inner_state: SDFGState, expr: str, iter_vars: Tuple[str, ...], out_edge):
@@ -1743,8 +1743,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """Mint a FULL-TILE transient = ``expr`` broadcast across every lane. Dtype matches
         the OUTPUT edge (so the TileITE's _t / _e operand dtype matches _o).
         """
-        import dace.dtypes as _dtypes
-        from dace.memlet import Memlet as _Memlet
+        import dace.dtypes as dtypes
+        from dace.memlet import Memlet
         sdfg = inner_state.sdfg
         widths = tuple(int(w) for w in self.widths)
         # Pick element dtype from the OUTPUT edge's array (the ITE's output dtype).
@@ -1754,7 +1754,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                                      shape=widths,
                                      dtype=dtype,
                                      transient=True,
-                                     storage=_dtypes.StorageType.Register,
+                                     storage=dtypes.StorageType.Register,
                                      find_new_name=True)
         K = len(widths)
         parts = []
@@ -1780,11 +1780,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             inputs=set(),
             outputs={"_out"},
             code="\n".join(code_lines),
-            language=_dtypes.Language.CPP,
+            language=dtypes.Language.CPP,
         )
         out_an = inner_state.add_access(arr_name)
         out_subset = ", ".join(f"0:{w}" for w in widths)
-        inner_state.add_edge(tasklet, "_out", out_an, None, _Memlet(f"{arr_name}[{out_subset}]"))
+        inner_state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
         return arr_name
 
     def _convert_binop(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
@@ -2042,8 +2042,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         tile-shape ``(W,)`` array. Per user direction: all-Scalar /
         Scalar-Symbol / Symbol-Symbol op -> Scalar output stays Scalar.
         """
-        from dace import data as _dd
-        from dace import subsets as _subsets
+        from dace import data
+        from dace import subsets
         from dace.sdfg.nodes import AccessNode
         if not isinstance(out_edge.dst, AccessNode):
             return False
@@ -2063,17 +2063,17 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 if not isinstance(e.src, AccessNode):
                     continue
                 src_desc = sdfg.arrays.get(e.src.data)
-                if src_desc is None or isinstance(src_desc, _dd.Scalar):
+                if src_desc is None or isinstance(src_desc, data.Scalar):
                     continue
-                if isinstance(src_desc, _dd.Array) and tuple(src_desc.shape) == widths:
+                if isinstance(src_desc, data.Array) and tuple(src_desc.shape) == widths:
                     any_tile_in = True
                     break
             if not any_tile_in:
                 return False
         is_widenable = False
-        if isinstance(desc, _dd.Scalar):
+        if isinstance(desc, data.Scalar):
             is_widenable = True
-        elif isinstance(desc, _dd.Array):
+        elif isinstance(desc, data.Array):
             shape = tuple(desc.shape)
             if shape:
                 if tuple(shape) == widths:
@@ -2084,21 +2084,21 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     is_widenable = False
         if not is_widenable:
             return False
-        new_desc = _dd.Array(dtype=desc.dtype, shape=widths, transient=True, storage=desc.storage)
+        new_desc = data.Array(dtype=desc.dtype, shape=widths, transient=True, storage=desc.storage)
         sdfg.arrays[out_edge.dst.data] = new_desc
         target_subset = ", ".join(f"0:{w}" for w in widths)
-        target_range = _subsets.Range.from_string(target_subset)
+        target_range = subsets.Range.from_string(target_subset)
         for state in sdfg.states():
             for edge in state.edges():
                 if edge.data is None or edge.data.data != out_edge.dst.data:
                     continue
-                new_sub = _subsets.Range(list(target_range.ranges))
+                new_sub = subsets.Range(list(target_range.ranges))
                 edge.data.subset = new_sub
                 edge.data.volume = new_sub.num_elements()
                 # Widen ``other_subset`` symmetrically (user 2026-06-12) so the AN→AN
                 # bridge ``a[0:W] → b[0:W]`` is well-formed.
                 if edge.data.other_subset is not None:
-                    edge.data.other_subset = _subsets.Range(list(target_range.ranges))
+                    edge.data.other_subset = subsets.Range(list(target_range.ranges))
         return True
 
     def _convert_unop_with_symbol(self, inner_state: SDFGState, tasklet: Tasklet, detected,

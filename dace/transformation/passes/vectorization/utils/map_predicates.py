@@ -12,8 +12,15 @@ from typing import Any
 import dace
 from dace import SDFGState, data as dt, subsets, symbolic
 from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.passes.analysis import map_scope
 from dace.transformation.passes.vectorization.utils.injectivity import scatter_write_is_injective
 from dace.transformation.passes.vectorization.utils.tasklets import LANE_ID_MATERIALISER_PREFIX
+
+# Same helper as dace.transformation.passes.analysis.map_scope.map_body_nodes; re-exported here
+# (not redefined) so every existing `from ...map_predicates import map_body_nodes` keeps working.
+# Canonicalization must not import from vectorization, so analysis/ is the shared home; this
+# module imports FROM it, never the reverse.
+map_body_nodes = map_scope.map_body_nodes
 
 
 def has_maps(sdfg: dace.SDFG) -> bool:
@@ -26,24 +33,6 @@ def has_maps(sdfg: dace.SDFG) -> bool:
         if isinstance(n, dace.nodes.MapEntry):
             return True
     return False
-
-
-def map_body_nodes(state: SDFGState, map_entry: dace.nodes.MapEntry) -> list[dace.nodes.Node]:
-    """Every node in the map's scope -- entry and exit excluded, inner scopes included.
-
-    Deliberately NOT ``SDFGState.all_nodes_between``: that walk abandons the ENTIRE result the
-    moment it reaches a node with no out-edge (``sdfg/graph.py:435`` returns an empty set), and a
-    write-only scratch scalar -- an ``AccessNode`` with one in-edge and none out -- is exactly such
-    a node. A body predicate reading that walk then reports a clean body having inspected nothing,
-    which for a safety gate means admitting whatever it was built to refuse. Scope membership has
-    no such failure mode: ``scope_children`` classifies every node in the state, and it is already
-    paid for, since ``state.exit_node`` reads the same cached scope dict.
-
-    :param state: the state holding ``map_entry``.
-    :param map_entry: the map whose body is wanted.
-    :returns: the scope's nodes, in state order.
-    """
-    return list(state.scope_subgraph(map_entry, include_entry=False, include_exit=False).nodes())
 
 
 def is_innermost_map(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:

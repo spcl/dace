@@ -38,12 +38,12 @@ def infer_edge_endpoints(edge: MultiConnectorEdge[Memlet], sdfg: dace.SDFG,
     :returns: ``(src_data_name, src_subset, dst_data_name, dst_subset)``; ``subset`` fields are fresh
         :class:`Range` copies (safe to mutate) or ``None`` for non-AN endpoints.
     """
-    from dace.sdfg.nodes import AccessNode as _AccessNode
+    from dace.sdfg.nodes import AccessNode
     mem = edge.data
     if mem is None:
         raise ValueError(f"infer_edge_endpoints: edge {edge} has no memlet")
-    src_an = edge.src if isinstance(edge.src, _AccessNode) else None
-    dst_an = edge.dst if isinstance(edge.dst, _AccessNode) else None
+    src_an = edge.src if isinstance(edge.src, AccessNode) else None
+    dst_an = edge.dst if isinstance(edge.dst, AccessNode) else None
     src_data = src_an.data if src_an is not None else None
     dst_data = dst_an.data if dst_an is not None else None
     src_subset: Range | None = None

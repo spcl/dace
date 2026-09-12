@@ -323,17 +323,17 @@ def _rhs_is_predicate(rhs: str) -> bool:
     :returns: ``True`` if top-level expr is Compare / BoolOp / ``not`` UnaryOp;
         ``False`` otherwise (incl. unparseable).
     """
-    import ast as _ast
+    import ast
     text = re.sub(r"\|\|", " or ", str(rhs))
     text = re.sub(r"&&", " and ", text)
     text = re.sub(r"!\s*\(", "not (", text)
     try:
-        node = _ast.parse(text.strip(), mode="eval").body
+        node = ast.parse(text.strip(), mode="eval").body
     except SyntaxError:
         return False
-    if isinstance(node, (_ast.Compare, _ast.BoolOp)):
+    if isinstance(node, (ast.Compare, ast.BoolOp)):
         return True
-    if isinstance(node, _ast.UnaryOp) and isinstance(node.op, _ast.Not):
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         return True
     return False
 
@@ -355,8 +355,8 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG,
         consumer being rewired away -> not external.
     :returns: ``True`` if an external consumer remains.
     """
-    from dace.sdfg.state import LoopRegion as _LoopRegion
-    from dace.sdfg.state import ConditionalBlock as _ConditionalBlock
+    from dace.sdfg.state import LoopRegion
+    from dace.sdfg.state import ConditionalBlock
 
     only = {sym_name}
     for cfg in sdfg.all_control_flow_regions(recursive=True):
@@ -381,7 +381,7 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG,
     # the shallow scan let the top-level rewrite delete the NESTED block's assignment while that
     # block still tested the symbol. The check must reach at least as deep as the deletion.
     for block in sdfg.all_control_flow_blocks(recursive=True):
-        if isinstance(block, _ConditionalBlock):
+        if isinstance(block, ConditionalBlock):
             if block is skip_cb:
                 continue
             for c, _ in block.branches:
@@ -392,7 +392,7 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG,
                     return True
 
     for region in sdfg.all_control_flow_regions(recursive=True):
-        if isinstance(region, _LoopRegion):
+        if isinstance(region, LoopRegion):
             for code in (region.loop_condition, region.update_statement, region.init_statement):
                 if code is None:
                     continue
@@ -949,7 +949,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         interstate-edge assignment (``(__tmp0 or __tmp1)``). Recursively lift each name,
         emit one combine tasklet whose body = ``cond_text`` with each name swapped for its
         in-connector."""
-        import ast as _ast
+        import ast
         # Upstream simplification may rewrite Python boolean operators to C++ (``||``,
         # ``&&``, ``!``). Normalise back for the AST parser; substituted form = emitted
         # tasklet body.
@@ -957,10 +957,10 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         py_text = re.sub(r"&&", " and ", py_text)
         py_text = re.sub(r"!\s*\(", "not (", py_text)
         try:
-            tree = _ast.parse(py_text, mode="eval").body
+            tree = ast.parse(py_text, mode="eval").body
         except SyntaxError:
             return None
-        names = sorted({n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)})
+        names = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name)})
         # Direct lift handles the bare-name case (``cond_text`` == one symbol). Zero names
         # (pure constant) can't be lifted here -> caller bakes inline.
         if not names or cond_text in names:

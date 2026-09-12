@@ -521,9 +521,9 @@ def _scalar_loaded_from_array(sdfg: SDFG, name: str, memo: dict[str, bool] | Non
 
 def _scan_scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
     """Uncached body of :func:`_scalar_loaded_from_array`."""
-    import dace.data as _dd
+    import dace.data as dt
     desc = sdfg.arrays.get(name)
-    if not (isinstance(desc, _dd.Scalar) and desc.transient):
+    if not (isinstance(desc, dt.Scalar) and desc.transient):
         return False
     for state in sdfg.states():
         for node in state.nodes():
@@ -541,7 +541,7 @@ def _scan_scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
                     sources = []
                 for sname in sources:
                     sdesc = sdfg.arrays.get(sname)
-                    if isinstance(sdesc, _dd.Array) and not isinstance(sdesc, _dd.Scalar):
+                    if isinstance(sdesc, dt.Array) and not isinstance(sdesc, dt.Scalar):
                         return True
     return False
 
@@ -560,7 +560,7 @@ def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG, memo: dict[str, bool] |
     """
     if expr is None:
         return False
-    import dace.data as _dd
+    import dace.data as dt
     try:
         if expr.atoms(symbolic.Subscript):
             return True
@@ -568,7 +568,7 @@ def expr_is_data_dependent(expr: sympy.Expr, sdfg: SDFG, memo: dict[str, bool] |
         pass
     for s in expr.free_symbols:
         desc = sdfg.arrays.get(str(s))
-        if isinstance(desc, _dd.Array) and not isinstance(desc, _dd.Scalar):
+        if isinstance(desc, dt.Array) and not isinstance(desc, dt.Scalar):
             return True
         if _scalar_loaded_from_array(sdfg, str(s), memo):  # gather-index scalar (copy-defined)
             return True

@@ -110,13 +110,13 @@ def emit_per_lane_symbol_fanout(
         if the symbol has no iedge definition / no iter-var dependency / no walkable RHS.
     :raises UndeterminedSymbolDType: when nothing declares ``sym_name``, not even the edge binding it.
     """
-    import itertools as _itertools
-    from dace import symbolic as _sym
+    import itertools
+    from dace import symbolic
     iedge, rhs_template = _find_iedge_defining_symbol(sdfg, sym_name)
     if iedge is None or rhs_template is None:
         return None
     try:
-        rhs_free = set(map(str, _sym.pystr_to_symbolic(rhs_template).free_symbols))
+        rhs_free = set(map(str, symbolic.pystr_to_symbolic(rhs_template).free_symbols))
     except Exception:  # noqa: BLE001
         return None
     dep_iter_var_indices = [d for d, iv in enumerate(iter_vars) if iv in rhs_free]
@@ -126,16 +126,16 @@ def emit_per_lane_symbol_fanout(
     dep_iter_var_names = tuple(iter_vars[d] for d in dep_iter_var_indices)
     per_lane_syms: dict[tuple[int, ...], str] = {}
     try:
-        rhs_sym = _sym.pystr_to_symbolic(rhs_template)
+        rhs_sym = symbolic.pystr_to_symbolic(rhs_template)
     except Exception:  # noqa: BLE001
         return None
-    import sympy as _sp
+    import sympy
     # Loop-invariant, and it must NOT fall back to int64: an interstate assignment DEFINES its
     # symbol, so a name absent from ``sdfg.symbols`` is still typed -- by the edge that binds it.
     # Every per-lane plane inherits this dtype, so one guess here forks the whole fanout onto a
     # second symbol of the same name, and Min(iv + lane, ub) stops folding against the map param.
     origin_dtype = (resolver or scopes.ScopedSymbolResolver()).resolve_dtype(sym_name, sdfg, interstate_edge=iedge.data)
-    for dep_idx in _itertools.product(*(range(w) for w in dep_widths_iter)):
+    for dep_idx in itertools.product(*(range(w) for w in dep_widths_iter)):
         chunks = tuple(zip(dep_iter_var_indices, dep_idx))
         plane = LaneIdScheme.make_multi(sym_name, chunks)
         per_lane_syms[dep_idx] = plane
@@ -144,12 +144,12 @@ def emit_per_lane_symbol_fanout(
         if plane not in iedge.data.assignments:
             repl: dict[Any, Any] = {}
             for iv, lane in zip(dep_iter_var_names, dep_idx):
-                shifted = _sym.symbol(iv) + lane
+                shifted = symbolic.symbol(iv) + lane
                 if iter_var_ubs is not None and iv in iter_var_ubs:
                     # Clamp in-bounds: lane-fanout never reads past source on the masked tail.
                     # Mask still gates the SCATTER write; safe-read only.
-                    shifted = _sp.Min(shifted, iter_var_ubs[iv])
-                repl[_sym.symbol(iv)] = shifted
+                    shifted = sympy.Min(shifted, iter_var_ubs[iv])
+                repl[symbolic.symbol(iv)] = shifted
             iedge.data.assignments[plane] = str(rhs_sym.xreplace(repl))
     return per_lane_syms
 

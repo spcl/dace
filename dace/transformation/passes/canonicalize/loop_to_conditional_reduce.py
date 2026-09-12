@@ -64,7 +64,7 @@ Scope
 Refusals leave the loop unmodified so downstream stages still see it.
 """
 import ast
-import copy as _copy_module
+import copy
 from typing import Dict, NamedTuple, Optional
 
 
@@ -72,7 +72,7 @@ def _copy_ast(node: ast.AST) -> ast.AST:
     """Return a deep copy of an AST subtree, so each substitution lands on a
     fresh node (otherwise multiple references to the same binding share the
     same node and ``fix_missing_locations`` mishandles them)."""
-    return _copy_module.deepcopy(node)
+    return copy.deepcopy(node)
 
 
 import numpy as np
@@ -465,7 +465,7 @@ class LoopToConditionalReduce(ppl.Pass):
         acc_subset = '0'  # scalar / length-1 carrier; matcher enforces this
         masked_an = true_state.add_access(masked_val)
         true_state.add_edge(addend_edge.src, addend_edge.src_conn, mask_tasklet, '__addend',
-                            _copy_module.deepcopy(addend_edge.data))
+                            copy.deepcopy(addend_edge.data))
         true_state.remove_edge(addend_edge)
         true_state.add_edge(mask_tasklet, '__out', masked_an, None, mm.Memlet(data=masked_val, subset=acc_subset))
         true_state.add_edge(masked_an, None, m.upd_tasklet, m.addend_in_conn,

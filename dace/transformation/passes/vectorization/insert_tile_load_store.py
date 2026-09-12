@@ -603,8 +603,8 @@ class InsertTileLoadStore(ppl.Pass):
                     # broadcast: collapsing to one Scalar drops the array + trips
                     # ``no_transient_scalar_stores``. Leave for the plain-copy path; the
                     # per-tile group is tile-loaded below.
-                    import dace.symbolic as _sym
-                    if const_sub is not None and any(bool(_sym.simplify(sz - 1) != 0) for sz in const_sub.size()):
+                    import dace.symbolic as symbolic
+                    if const_sub is not None and any(bool(symbolic.simplify(sz - 1) != 0) for sz in const_sub.size()):
                         continue
                     # ``a[i:i+W] = a0[0]`` -- a BARE copy straight into a global array, no
                     # tasklet anywhere to splat the value. A Scalar bridge is a dead end here:
@@ -901,7 +901,7 @@ class InsertTileLoadStore(ppl.Pass):
         :returns: ``{symbol_name: Subscript}``; empty when the index has no data-dependent
             symbol (not a tile-node gather index).
         """
-        import dace.symbolic as _sym
+        import dace.symbolic as symbolic
         defs = build_symbol_definition_map(inner_sdfg, state=inner_state)
 
         def _chase(name: str, seen: set):
@@ -911,14 +911,14 @@ class InsertTileLoadStore(ppl.Pass):
             d = defs.get(name)
             if d is None:
                 return None
-            if isinstance(d, _sym.Subscript):
+            if isinstance(d, symbolic.Subscript):
                 return d
             if d.is_Symbol:  # bare-symbol alias -> follow the chain
                 return _chase(str(d), seen)
             return None  # arithmetic definition -> not a pure array read
 
         out: Dict[str, Any] = {}
-        for s in _sym.pystr_to_symbolic(begin_str).free_symbols:
+        for s in symbolic.pystr_to_symbolic(begin_str).free_symbols:
             sub = _chase(str(s), set())
             if sub is not None:
                 out[str(s)] = sub
@@ -1012,13 +1012,13 @@ class InsertTileLoadStore(ppl.Pass):
         symbol / an inner read is itself a gather (caller raises -- no CPP fallback per user
         2026-06-14).
         """
-        import re as _re
-        import dace.symbolic as _sym
+        import re
+        import dace.symbolic as symbolic
         widths = tuple(int(w) for w in self.widths)
-        parsed = _sym.pystr_to_symbolic(begin_str)
+        parsed = symbolic.pystr_to_symbolic(begin_str)
         # A bare array read IS the index (``A[idx[ii]]`` -> Range begin ``idx[ii]``), not a hoisted
         # symbol: stage it directly (also covers the unit fixtures that skip frontend hoisting).
-        if isinstance(parsed, _sym.Subscript):
+        if isinstance(parsed, symbolic.Subscript):
             return self._stage_array_read_tile(inner_state,
                                                inner_sdfg,
                                                iter_vars,
@@ -1030,11 +1030,11 @@ class InsertTileLoadStore(ppl.Pass):
         # same ``{name: Subscript}`` machinery as frontend-promoted gather-index symbols:
         # substitute each distinct inline subscript with a fresh symbol so the arithmetic-combine
         # tasklet below treats an inline read identically to a hoisted one.
-        inline_subs = sorted(set(parsed.atoms(_sym.Subscript)), key=str)
+        inline_subs = sorted(set(parsed.atoms(symbolic.Subscript)), key=str)
         if inline_subs:
             for i, sub in enumerate(inline_subs):
                 fresh = f"__gidx_inl{i}"
-                parsed = parsed.xreplace({sub: _sym.symbol(fresh)})
+                parsed = parsed.xreplace({sub: symbolic.symbol(fresh)})
                 sym_subs[fresh] = sub
             begin_str = str(parsed)
         if not sym_subs:
@@ -1088,7 +1088,7 @@ class InsertTileLoadStore(ppl.Pass):
                 f"operate on a ONE broadcast dim (discuss ONE-aware TileBinop/TileUnop).")
         body = begin_str
         for sname, (conn, _tile) in sym_to_conn.items():
-            body = _re.sub(rf"\b{_re.escape(sname)}\b", conn, body)
+            body = re.sub(rf"\b{re.escape(sname)}\b", conn, body)
         idx_dtype = inner_sdfg.arrays[next(iter(sym_to_conn.values()))[1].data].dtype
         out_name, _ = inner_sdfg.add_array(name_hint,
                                            shape=common,

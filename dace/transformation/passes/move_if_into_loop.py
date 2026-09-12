@@ -413,7 +413,7 @@ def _guarded_loop(loop: LoopRegion, cond: CodeBlock) -> LoopRegion:
         inner.add_node(b, ensure_unique_name=True)
     for e in body_edges:
         inner.add_edge(e.src, e.dst, copy.deepcopy(e.data))
-    inner.start_block = inner.node_id(body_start)
+    keep_start_block(inner, body_start)
     icb = ConditionalBlock(label=f"{lp.label}_if")
     icb.add_branch(CodeBlock(cond.as_string), inner)
     lp.add_node(icb, is_start_block=True, ensure_unique_name=True)
@@ -510,9 +510,9 @@ class MoveIfIntoLoop(ppl.Pass):
             rc.add_edge(e.src, e.dst, copy.deepcopy(e.data))
         if edge_into_loop is not None:
             rc.add_edge(edge_into_loop.src, lb_start, copy.deepcopy(edge_into_loop.data))
-            rc.start_block = rc.node_id(order[0])
+            keep_start_block(rc, order[0])
         else:
-            rc.start_block = rc.node_id(lb_start)
+            keep_start_block(rc, lb_start)
 
         inner_cb = ConditionalBlock(label=f"{loop_c.label}_if")
         inner_cb.add_branch(CodeBlock(cond.as_string), rc)
@@ -533,7 +533,7 @@ class MoveIfIntoLoop(ppl.Pass):
             parent.remove_edge(e)
         parent.remove_node(cb)
         if is_start:
-            parent.start_block = parent.node_id(new_loop)
+            keep_start_block(parent, new_loop)
         if sunk:
             # ``sinkable_prep`` vetted the whole parent chain, so every edge left here carries
             # prep that now lives in the loop body; stripped, the chain's states splice away.
@@ -569,4 +569,4 @@ class MoveIfIntoLoop(ppl.Pass):
             parent.remove_edge(e)
         parent.remove_node(cb)
         if is_start:
-            parent.start_block = parent.node_id(units[0])
+            keep_start_block(parent, units[0])

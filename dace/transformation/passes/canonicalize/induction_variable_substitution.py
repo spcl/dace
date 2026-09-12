@@ -89,8 +89,8 @@ class _UnwrapTypecasts(ast.NodeTransformer):
     pattern matching; the codegen still emits the cast from the original tasklet
     body, only this pass's analysis treats it as a no-op.
     """
-    from dace import dtypes as _dtypes
-    _TYPECAST_NAMES = dict.fromkeys(_dtypes.TYPECLASS_STRINGS)
+    from dace import dtypes
+    _TYPECAST_NAMES = dict.fromkeys(dtypes.TYPECLASS_STRINGS)
 
     def visit_Call(self, node):
         self.generic_visit(node)
