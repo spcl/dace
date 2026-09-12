@@ -20,7 +20,7 @@ from dace import graphlib as nx
 from dace import graphlib as nxsp
 from dace.ordered import OrderedSet
 
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, reachability
 
 WriteScopeDict = Dict[str, Dict[Optional[Tuple[SDFGState, nd.AccessNode]],
                                 Set[Union[Tuple[SDFGState, nd.AccessNode], Tuple[ControlFlowBlock, InterstateEdge]]]]]
@@ -59,9 +59,9 @@ class StateReachability(ppl.Pass):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[SDFGState, OrderedSet[SDFGState]] = defaultdict(OrderedSet)
             for state in sdfg.states():
-                for reached in cf_block_reach_dict[state.parent_graph.cfg_id][state]:
-                    if isinstance(reached, SDFGState):
-                        result[state].add(reached)
+                states = reachability.states_only(cf_block_reach_dict[state.parent_graph.cfg_id][state])
+                if states is not None:
+                    result[state] = states
             reachable[sdfg.cfg_id] = result
         return reachable
 
@@ -97,6 +97,9 @@ class StatePositions:
 class ControlFlowBlockReachability(ppl.Pass):
     """
     Evaluates control flow block reachability (which control flow block can be executed after each control flow block)
+
+    Each reach set is a :class:`~dace.transformation.passes.analysis.reachability.ReachSet`: ``in`` and ``len`` are
+    answered from a bitset, and the items are laid out in their insertion order only when first iterated.
     """
 
     CATEGORY: str = 'Analysis'
@@ -114,158 +117,33 @@ class ControlFlowBlockReachability(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    @staticmethod
-    def blocks_within(region, memo: Dict[ControlFlowBlock,
-                                         OrderedSet[ControlFlowBlock]]) -> OrderedSet[ControlFlowBlock]:
-        """``region.all_control_flow_blocks()`` memoized per region, in that traversal order.
-
-        Every reachability entry naming a region expands it, so the unmemoized call re-walked the
-        same subtrees once per entry and dominated the pass on a deeply nested SDFG. The pass does
-        not modify the graph, so one expansion per region stays valid for the whole run.
-
-        Keyed by the region object, not ``id(region)``: the memo then holds a reference, so an
-        address cannot be recycled by a later allocation and alias a stale entry. Ordered, not a ``set``:
-        blocks hash by identity, so a set's order follows memory addresses, and every reach set this feeds
-        would inherit an insertion order that changes from run to run.
-        """
-        blocks = memo.get(region)
-        if blocks is None:
-            blocks = OrderedSet(region.all_control_flow_blocks())
-            memo[region] = blocks
-        return blocks
-
-    def _region_closure(
-        self,
-        region: ControlFlowRegion,
-        block_reach: Dict[int, Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]],
-        cached_closures: dict[int, OrderedSet[ControlFlowBlock]],
-        region_blocks: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]],
-    ) -> Set[ControlFlowBlock]:
-        closure: Set[SDFGState] = OrderedSet()
-        if isinstance(region, LoopRegion):
-            # Any point inside the loop may reach any other point inside the loop again.
-            # TODO(later): This is an overapproximation. A branch terminating in a break is excluded from this.
-            closure.update(self.blocks_within(region, region_blocks))
-            closure.add(region)  # The loop condition is also reachable.
-
-        # Add all states that this region can reach in its parent graph to the closure. A block already
-        # present came in with an enclosing region's blocks, which hold all of its own: nothing to add.
-        for reached_block in block_reach[region.parent_graph.cfg_id][region]:
-            if reached_block in closure:
-                continue
-            if isinstance(reached_block, ControlFlowRegion):
-                closure.update(self.blocks_within(reached_block, region_blocks))
-            closure.add(reached_block)
-
-        # Walk up the parent tree.
-        pivot = region.parent_graph
-        while pivot and not isinstance(pivot, SDFG):
-            graph_id = id(pivot)
-            if graph_id not in cached_closures:
-                cached_closures[graph_id] = self._region_closure(pivot, block_reach, cached_closures, region_blocks)
-            closure.update(cached_closures[graph_id])
-            pivot = pivot.parent_graph
-        return closure
-
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]]:
         """
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks.
         """
         top_sdfg.reset_cfg_list()
+        blocks = reachability.BlockReachability(top_sdfg)
 
         single_level_reachable: Dict[int, Dict[ControlFlowBlock,
                                                OrderedSet[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
-        region_blocks: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = {}
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
-            # In networkx this is currently implemented naively for directed graphs.
-            # The implementation below is faster
-            # tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
-            for n, v in reachable_nodes(cfg.nx):
-                reach = OrderedSet()
-                for nd in v:
-                    reach.add(nd)
-                    if isinstance(nd, AbstractControlFlowRegion):
-                        reach.update(self.blocks_within(nd, region_blocks))
+            for n, reach in blocks.single_level[cfg].items():
                 single_level_reachable[cfg.cfg_id][n] = reach
-                if isinstance(cfg, LoopRegion):
-                    single_level_reachable[cfg.cfg_id][n].update(cfg.nodes())
 
         if self.contain_to_single_level:
             return single_level_reachable
 
         reachable: Dict[int, Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]] = {}
-        cached_closures: dict[int, OrderedSet[ControlFlowBlock]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             for cfg in sdfg.all_control_flow_regions():
                 result: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = defaultdict(OrderedSet)
                 for block in cfg.nodes():
-                    reached_blocks = single_level_reachable[block.parent_graph.cfg_id][block]
-                    if reached_blocks:
-                        block_result = result[block]
-                        for reached in reached_blocks:
-                            # Present means added with an enclosing region's blocks, a superset of its own.
-                            if reached in block_result:
-                                continue
-                            if isinstance(reached, AbstractControlFlowRegion):
-                                block_result.update(self.blocks_within(reached, region_blocks))
-                            block_result.add(reached)
-                    if block.parent_graph is not sdfg:
-                        graph_id = id(block.parent_graph)
-                        if graph_id not in cached_closures:
-                            cached_closures[graph_id] = self._region_closure(block.parent_graph, single_level_reachable,
-                                                                             cached_closures, region_blocks)
-                        result[block].update(cached_closures[graph_id])
+                    single = single_level_reachable[block.parent_graph.cfg_id][block]
+                    if single or block.parent_graph is not sdfg:
+                        result[block] = blocks.full_set(block, single, sdfg)
                 reachable[cfg.cfg_id] = result
         return reachable
-
-
-def _single_shortest_path_length_no_self(adj, source):
-    """Yields (node, level) in a breadth first search, without the first level
-    unless a self-edge exists.
-
-    Adapted from Shortest Path Length helper function in NetworkX.
-
-    Parameters
-    ----------
-        adj : dict
-            Adjacency dict or view
-        firstlevel : dict
-            starting nodes, e.g. {source: 1} or {target: 1}
-        cutoff : int or float
-            level at which we stop the process
-    """
-    firstlevel = {source: 1}
-
-    seen = {}  # level (number of hops) when seen in BFS
-    level = 0  # the current level
-    nextlevel = OrderedSet(firstlevel)  # set of nodes to check at next level
-    n = len(adj)
-    while nextlevel:
-        thislevel = nextlevel  # advance to next level
-        nextlevel = OrderedSet()  # and start a new set (fringe)
-        found = []
-        for v in thislevel:
-            if v not in seen:
-                if level == 0 and v is source:  # Skip 0-length path to self
-                    found.append(v)
-                    continue
-                seen[v] = level  # set the level of vertex v
-                found.append(v)
-                yield (v, level)
-        if len(seen) == n:
-            return
-        for v in found:
-            nextlevel.update(adj[v])
-        level += 1
-    del seen
-
-
-def reachable_nodes(G):
-    """Computes the reachable nodes in G."""
-    adj = G.adj
-    for n in G:
-        yield (n, dict(_single_shortest_path_length_no_self(adj, n)))
 
 
 @properties.make_properties
