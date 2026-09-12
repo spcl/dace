@@ -37,22 +37,18 @@ def _fft_core(pv: 'ProgramVisitor',
     "transform along the last axis, batch the rest" semantics.
     """
     from dace.libraries.fft.nodes import FFT, IFFT  # Avoid import loops
+    from dace.libraries.fft.nodes.fft import normalize_fft_axes
     if not isinstance(a, str) or a not in sdfg.arrays:
         raise ValueError('Input must be a valid array')
 
     desc = sdfg.arrays[a]
     ndim = len(desc.shape)
-    axis = int(axis) if axis is not None else -1
-    axis_norm = axis if axis >= 0 else ndim + axis
-    if axis_norm < 0 or axis_norm >= ndim:
-        raise ValueError(f'axis {axis} out of range for ndim={ndim}')
+    axis_norm = normalize_fft_axes(ndim, [-1 if axis is None else axis])[0]
 
     libnode = FFT('fft') if not is_inverse else IFFT('ifft')
-    # 1-D input: no axis to set; the whole array IS the FFT.  Multi-D
-    # input: tag the lib node so the expansion runs a batched 1-D FFT
-    # along ``axis_norm`` (matching ``np.fft.fft(x, axis=k)``).
+    # A 1-D input is a whole-array transform; otherwise the other axes are batch dimensions.
     if ndim > 1:
-        libnode.axis = axis_norm
+        libnode.axes = [axis_norm]
 
     N = desc.shape[axis_norm]
 
@@ -126,16 +122,14 @@ def _fftn_core(pv: 'ProgramVisitor',
                axes=None,
                norm: StringLiteral = StringLiteral('backward'),
                is_inverse: bool = False):
-    """Full N-D FFT, matching the existing :class:`FFT` / :class:`IFFT` lib
-    node semantics (the lib node treats the input shape as the FFT extent).
+    """N-D FFT over ``axes`` (every axis when ``None``), matching ``numpy.fft.fftn``.
 
-    ``s`` (per-axis output size override) and ``axes`` (subset of axes) are
-    not yet supported -- the node always transforms over all axes of the
-    input. They are accepted for signature compatibility with numpy so
-    ``@dace.program`` code that passes ``axes=(0, 1)`` of an already-2-D
-    array doesn't fail at parse time.
+    Unlisted axes are batch dimensions and a repeated axis is transformed once per occurrence. A transform
+    over every axis, in any order, leaves the lib node's ``axes`` unset. ``s`` (padding/cropping) and an
+    empty ``axes`` are not supported.
     """
     from dace.libraries.fft.nodes import FFT, IFFT  # avoid import loop
+    from dace.libraries.fft.nodes.fft import normalize_fft_axes
 
     if not isinstance(a, str) or a not in sdfg.arrays:
         raise ValueError('Input must be a valid array')
@@ -144,25 +138,18 @@ def _fftn_core(pv: 'ProgramVisitor',
 
     desc = sdfg.arrays[a]
     ndim = len(desc.shape)
-    if axes is not None:
-        # Only the "all axes" identity case (matching numpy's default) is
-        # supported -- anything else would need a non-trivial axes-aware
-        # lib node, which the existing ``FFT`` connector layout does not
-        # express.
-        wanted = tuple(range(ndim))
-        provided = tuple(int(x) % ndim for x in axes)
-        if provided != wanted:
-            raise NotImplementedError('numpy.fft.fftn ``axes`` other than '
-                                      'the full input is not yet supported '
-                                      f'(got {axes}, expected {wanted})')
+    transformed = normalize_fft_axes(ndim, axes)
+    if not transformed:
+        raise NotImplementedError('numpy.fft.fftn over no axes (a copy) is not supported')
 
     libnode = FFT('fft') if not is_inverse else IFFT('ifft')
+    if sorted(transformed) != list(range(ndim)):
+        libnode.axes = transformed
 
-    # Total transform size for the normalisation factor (numpy normalises by
-    # the product of the transformed-axes sizes).
+    # numpy normalises by the product of the transformed extents.
     total = 1
-    for d in desc.shape:
-        total = total * d
+    for axis in transformed:
+        total = total * desc.shape[axis]
     if norm == 'forward':
         factor = (1 / total) if not is_inverse else 1
     elif norm == 'backward':
@@ -214,4 +201,28 @@ def _ifftn(pv: 'ProgramVisitor',
            axes=None,
            norm: StringLiteral = StringLiteral('backward')):
     """Full N-D inverse FFT (``numpy.fft.ifftn``)."""
+    return _fftn_core(pv, sdfg, state, a, s, axes, norm, is_inverse=True)
+
+
+@oprepo.replaces('numpy.fft.fft2')
+def numpy_fft2(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               a: str,
+               s=None,
+               axes=(-2, -1),
+               norm: StringLiteral = StringLiteral('backward')):
+    """2-D FFT (``numpy.fft.fft2``): ``numpy.fft.fftn`` over the last two axes by default."""
+    return _fftn_core(pv, sdfg, state, a, s, axes, norm, is_inverse=False)
+
+
+@oprepo.replaces('numpy.fft.ifft2')
+def numpy_ifft2(pv: 'ProgramVisitor',
+                sdfg: SDFG,
+                state: SDFGState,
+                a: str,
+                s=None,
+                axes=(-2, -1),
+                norm: StringLiteral = StringLiteral('backward')):
+    """2-D inverse FFT (``numpy.fft.ifft2``): ``numpy.fft.ifftn`` over the last two axes by default."""
     return _fftn_core(pv, sdfg, state, a, s, axes, norm, is_inverse=True)

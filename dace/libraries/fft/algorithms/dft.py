@@ -7,6 +7,8 @@ import sympy
 import numpy as np
 import math
 
+from dace.libraries.fft.nodes.fft import normalize_fft_axes
+
 
 # Native, naive version of the Discrete Fourier Transform
 @dace.program
@@ -49,22 +51,6 @@ def idft_explicit(_inp, _out, N: dace.compiletime, factor: dace.compiletime):
 ##################################################################################################
 # N-dimensional native DFT (separable, rank-generic)
 ##################################################################################################
-
-
-def _normalize_axes(ndim, axis):
-    """Resolve the FFT node's ``axis`` property to a concrete transform-axis list.
-
-    ``axis is None`` -> every axis (a true N-D ``fftn``); an integer (possibly
-    negative) -> a single batched 1-D transform along that axis.
-    """
-    if axis is None:
-        return list(range(ndim))
-    a = int(axis)
-    if a < 0:
-        a += ndim
-    if not 0 <= a < ndim:
-        raise ValueError(f'FFT axis {axis} out of range for rank-{ndim} input')
-    return [a]
 
 
 def _add_zero_state(sdfg, after, dst, shape):
@@ -119,33 +105,47 @@ def _add_dft_axis_state(sdfg, after, src, dst, shape, ax, inverse, factor):
     return state
 
 
-def dft_nd_sdfg(indesc, outdesc, factor, inverse, axis, name='dft_nd'):
+def dft_nd_sdfg(indesc, outdesc, factor, inverse, axes, name='dft_nd'):
     """Build a native (library-free) N-D / axis-batched DFT as a nested SDFG.
 
-    Separable: an ``fftn`` (``axis is None``) is a sequence of batched 1-D
-    DFTs, one per axis, ping-ponging through two transients; an ``axis``-set
-    node is a single batched 1-D DFT.  The input is cast to the (complex)
-    output dtype on the way in, so real->complex inputs work as in the 1-D
-    path.  Matches ``np.fft.fftn`` / ``np.fft.fft(x, axis=k)`` (forward) and
-    their unnormalised inverses (``factor`` carries any normalisation).
+    Separable: a sequence of batched 1-D DFTs, one per entry of ``axes`` (every
+    axis when ``None``), ping-ponging through two transients; unlisted axes are
+    batch dimensions.  The input is cast to the (complex) output dtype on the
+    way in, so real->complex inputs work as in the 1-D path.  Matches
+    ``np.fft.fftn(x, axes=...)`` (forward) and its unnormalised inverse
+    (``factor`` carries any normalisation).
     """
     ndim = len(indesc.shape)
-    axes = _normalize_axes(ndim, axis)
+    axes = normalize_fft_axes(ndim, axes)
+    if not axes:
+        raise NotImplementedError('A DFT over no axes is not supported')
     shape = list(outdesc.shape)
     ct = outdesc.dtype  # complex output type
     sdfg = dace.SDFG(name)
-    sdfg.add_array('_inp', indesc.shape, indesc.dtype, storage=indesc.storage)
-    sdfg.add_array('_out', outdesc.shape, outdesc.dtype, storage=outdesc.storage)
+    # The caller's strides: a column-major reshape view steps its axes differently from a C-order buffer.
+    sdfg.add_array('_inp',
+                   indesc.shape,
+                   indesc.dtype,
+                   storage=indesc.storage,
+                   strides=indesc.strides,
+                   offset=indesc.offset)
+    sdfg.add_array('_out',
+                   outdesc.shape,
+                   outdesc.dtype,
+                   storage=outdesc.storage,
+                   strides=outdesc.strides,
+                   offset=outdesc.offset)
     sdfg.add_transient('__buf0', shape, ct, storage=outdesc.storage)
     if len(axes) >= 2:
         sdfg.add_transient('__buf1', shape, ct, storage=outdesc.storage)
 
-    # Cast/copy _inp -> __buf0 (decouples from any in-place _inp == _out alias).
+    # Cast/copy _inp -> __buf0 (decouples from any in-place _inp == _out alias). The cast names the type: the
+    # write is inlined, so ``decltype(o)`` would become a reference to the target element.
     s = sdfg.add_state('copy_in')
     sub = ', '.join(f'__c{d}' for d in range(ndim))
     s.add_mapped_tasklet('cast_in', {f'__c{d}': f'0:{shape[d]}'
                                      for d in range(ndim)}, {'i': dace.Memlet(data='_inp', subset=sub)},
-                         'o = decltype(o)(i)', {'o': dace.Memlet(data='__buf0', subset=sub)},
+                         f'o = dace.{ct.to_string()}(i)', {'o': dace.Memlet(data='__buf0', subset=sub)},
                          external_edges=True)
 
     src = '__buf0'

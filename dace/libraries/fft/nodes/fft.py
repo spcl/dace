@@ -3,9 +3,24 @@
 Implements Forward and Inverse Fast Fourier Transform (FFT) library nodes
 """
 
+from typing import List, Optional, Sequence
+
 from dace import data, dtypes, SDFG, SDFGState, symbolic, library, nodes, properties
 from dace import transformation as xf
 from dace.libraries.fft import environments as env
+
+
+def normalize_fft_axes(ndim: int, axes: Optional[Sequence[int]]) -> List[int]:
+    """The axes an FFT over ``axes`` transforms, in order, as indices in ``0..ndim-1``; ``None`` means every axis."""
+    if axes is None:
+        return list(range(ndim))
+    result = []
+    for axis in axes:
+        index = int(axis) + ndim if int(axis) < 0 else int(axis)
+        if not 0 <= index < ndim:
+            raise ValueError(f'FFT axis {axis} out of range for rank-{ndim} input')
+        result.append(index)
+    return result
 
 
 # Define the library nodes
@@ -13,44 +28,42 @@ from dace.libraries.fft import environments as env
 class FFT(nodes.LibraryNode):
     """Forward FFT.
 
-    With ``axis is None`` (default) the lib node treats the input shape
-    as the FFT extent (so a rank-2 input drives a true 2-D FFT, matching
-    ``np.fft.fftn`` semantics).  With ``axis`` set to a non-negative
-    integer the lib node performs a 1-D FFT along that axis and treats
-    the remaining axes as a batch dimension -- matching
-    ``np.fft.fft(x, axis=k)`` semantics and the per-axis pencil pattern
-    Quantum ESPRESSO's ``cft_1z`` / ``cft_1y`` / ``cft_1x`` use.
+    With ``axes is None`` (default) the lib node transforms every axis of the input (``np.fft.fftn``).
+    With ``axes`` set it transforms the listed axes in order and treats the others as batch
+    dimensions, matching ``np.fft.fftn(x, axes=...)`` and ``np.fft.fft(x, axis=k)`` (``axes=[k]``).
     """
     implementations = {}
     default_implementation = 'pure'
 
     factor = properties.SymbolicProperty(desc='Coefficient to multiply outputs. Used for normalization', default=1.0)
-    axis = properties.Property(dtype=int,
-                               allow_none=True,
-                               default=None,
-                               desc="Axis to transform along (0..rank-1).  ``None`` means full N-D FFT.")
+    axes = properties.ListProperty(element_type=int,
+                                   allow_none=True,
+                                   default=None,
+                                   desc='Axes transformed in order (0..rank-1); unlisted axes are batch dimensions. '
+                                   '``None`` means every axis.')
 
-    def __init__(self, name, *args, schedule=None, axis=None, **kwargs):
+    def __init__(self, name, *args, schedule=None, axes=None, **kwargs):
         super().__init__(name, *args, schedule=schedule, inputs={'_inp'}, outputs={'_out'}, **kwargs)
-        self.axis = axis
+        self.axes = axes
 
 
 @library.node
 class IFFT(nodes.LibraryNode):
-    """Inverse FFT.  See :class:`FFT` for ``axis`` semantics."""
+    """Inverse FFT.  See :class:`FFT` for ``axes`` semantics."""
 
     implementations = {}
     default_implementation = 'pure'
 
     factor = properties.SymbolicProperty(desc='Coefficient to multiply outputs. Used for normalization', default=1.0)
-    axis = properties.Property(dtype=int,
-                               allow_none=True,
-                               default=None,
-                               desc="Axis to transform along (0..rank-1).  ``None`` means full N-D FFT.")
+    axes = properties.ListProperty(element_type=int,
+                                   allow_none=True,
+                                   default=None,
+                                   desc='Axes transformed in order (0..rank-1); unlisted axes are batch dimensions. '
+                                   '``None`` means every axis.')
 
-    def __init__(self, name, *args, schedule=None, axis=None, **kwargs):
+    def __init__(self, name, *args, schedule=None, axes=None, **kwargs):
         super().__init__(name, *args, schedule=schedule, inputs={'_inp'}, outputs={'_out'}, **kwargs)
-        self.axis = axis
+        self.axes = axes
 
 
 ##################################################################################################
@@ -68,8 +81,8 @@ class DFTExpansion(xf.ExpandTransformation):
         input, output = _get_input_and_output(parent_state, node)
         indesc = parent_sdfg.arrays[input]
         outdesc = parent_sdfg.arrays[output]
-        if len(indesc.shape) > 1 or getattr(node, 'axis', None) is not None:
-            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=False, axis=getattr(node, 'axis', None))
+        if len(indesc.shape) > 1 or node.axes is not None:
+            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=False, axes=node.axes)
 
         return dft.dft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
 
@@ -84,8 +97,8 @@ class IDFTExpansion(xf.ExpandTransformation):
         input, output = _get_input_and_output(parent_state, node)
         indesc = parent_sdfg.arrays[input]
         outdesc = parent_sdfg.arrays[output]
-        if len(indesc.shape) > 1 or getattr(node, 'axis', None) is not None:
-            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=True, axis=getattr(node, 'axis', None))
+        if len(indesc.shape) > 1 or node.axes is not None:
+            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=True, axes=node.axes)
 
         return dft.idft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
 
@@ -107,7 +120,7 @@ class cuFFTFFTExpansion(xf.ExpandTransformation):
         outdesc = parent_sdfg.arrays[output]
         if str(node.factor) != '1':
             raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_cufft_code(indesc, outdesc, parent_sdfg, False, getattr(node, 'axis', None))
+        return _generate_cufft_code(indesc, outdesc, parent_sdfg, False, node.axes)
 
 
 @library.register_expansion(IFFT, 'cuFFT')
@@ -122,11 +135,18 @@ class cuFFTIFFTExpansion(xf.ExpandTransformation):
         outdesc = parent_sdfg.arrays[output]
         if str(node.factor) != '1':
             raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_cufft_code(indesc, outdesc, parent_sdfg, True, getattr(node, 'axis', None))
+        return _generate_cufft_code(indesc, outdesc, parent_sdfg, True, node.axes)
 
 
-def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_inverse: bool, axis=None):
+def _generate_cufft_code(indesc: data.Data,
+                         outdesc: data.Data,
+                         sdfg: SDFG,
+                         is_inverse: bool,
+                         axes: Optional[List[int]] = None):
     from dace.codegen.targets import cpp  # Avoid import loops
+    if axes is not None and len(axes) != 1:
+        raise NotImplementedError(f'cuFFT expansion transforms every axis or a single one (got axes={axes})')
+    axis = None if axes is None else axes[0]
     if len(indesc.shape) not in (1, 2, 3):
         raise ValueError('cuFFT only supports 1/2/3-dimensional FFT')
     if indesc.storage != dtypes.StorageType.GPU_Global:
@@ -244,14 +264,7 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
 
 @library.register_expansion(FFT, 'FFTW3')
 class FFTW3FFTExpansion(xf.ExpandTransformation):
-    """CPU FFTW3 backend for :class:`FFT`.
-
-    Supports rank 1/2/3 over complex64 / complex128.  With ``node.axis``
-    set, performs a batched 1-D FFT along the named axis (matching
-    ``np.fft.fft(x, axis=k)``); axis must be the first or last
-    dimension (general intermediate axes need a copy or
-    ``fftw_plan_guru_dft``, deferred).
-    """
+    """CPU FFTW3 backend for :class:`FFT` over complex64 / complex128, for any ``node.axes`` without repeats."""
 
     environments = [env.FFTW3]
 
@@ -262,12 +275,12 @@ class FFTW3FFTExpansion(xf.ExpandTransformation):
         outdesc = parent_sdfg.arrays[output]
         if str(node.factor) != '1':
             raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_fftw3_code(indesc, outdesc, is_inverse=False, axis=node.axis)
+        return _generate_fftw3_code(indesc, outdesc, is_inverse=False, axes=node.axes)
 
 
 @library.register_expansion(IFFT, 'FFTW3')
 class FFTW3IFFTExpansion(xf.ExpandTransformation):
-    """CPU FFTW3 backend for :class:`IFFT`. Same shape/dtype/axis constraints as :class:`FFTW3FFTExpansion`."""
+    """CPU FFTW3 backend for :class:`IFFT`. Same shape/dtype/axes constraints as :class:`FFTW3FFTExpansion`."""
 
     environments = [env.FFTW3]
 
@@ -278,24 +291,21 @@ class FFTW3IFFTExpansion(xf.ExpandTransformation):
         outdesc = parent_sdfg.arrays[output]
         if str(node.factor) != '1':
             raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_fftw3_code(indesc, outdesc, is_inverse=True, axis=node.axis)
+        return _generate_fftw3_code(indesc, outdesc, is_inverse=True, axes=node.axes)
 
 
-def _generate_fftw3_code(indesc: data.Data, outdesc: data.Data, is_inverse: bool, axis=None):
-    """Emit a self-contained ``fftw_plan_*`` → ``execute`` → ``destroy_plan`` tasklet.
+def _generate_fftw3_code(indesc: data.Data,
+                         outdesc: data.Data,
+                         is_inverse: bool,
+                         axes: Optional[List[int]] = None) -> nodes.Tasklet:
+    """Emit a self-contained ``fftw_plan_*`` -> ``execute`` -> ``destroy_plan`` tasklet.
 
-    With ``axis is None`` -- the default -- we drive ``fftw_plan_dft_{rank}d``
-    for a full N-D transform.  With ``axis`` set we drive
-    ``fftw_plan_many_dft(rank=1, n=[N], howmany=...)`` for a batched 1-D
-    FFT along the named axis; the stride and dist are derived from the
-    descriptor shape assuming row-major C order.  Only axis = 0 or
-    axis = ndim-1 are supported (the contiguous-batch cases); general
-    intermediate axes would need ``fftw_plan_guru_dft`` or a copy.
+    A full transform of a rank 1-3 array drives ``fftw_plan_dft_{rank}d`` and a single leading or trailing axis
+    drives ``fftw_plan_many_dft``. Any other ``axes`` drives ``fftw_plan_guru_dft``: the transformed axes are the
+    plan dimensions, every other axis is a ``howmany`` batch dimension, and both step by the descriptors' strides.
     """
     from dace.codegen.targets import cpp  # avoid import loop
 
-    if len(indesc.shape) not in (1, 2, 3):
-        raise ValueError('FFTW3 only supports 1/2/3-dimensional FFTs')
     if indesc.dtype not in (dtypes.complex64, dtypes.complex128):
         raise ValueError(f'FFTW3 expansion requires complex inputs (got {indesc.dtype})')
     if outdesc.dtype != indesc.dtype:
@@ -306,38 +316,28 @@ def _generate_fftw3_code(indesc: data.Data, outdesc: data.Data, is_inverse: bool
     else:
         prefix, complex_t = 'fftwf_', 'fftwf_complex'
     direction = 'FFTW_BACKWARD' if is_inverse else 'FFTW_FORWARD'
+    ndim = len(indesc.shape)
 
-    if axis is None:
-        rank = len(indesc.shape)
+    if axes is None and ndim in (1, 2, 3):
         cdims = ', '.join(cpp.sym2cpp(s) for s in indesc.shape)
+        plan = f'{prefix}plan_dft_{ndim}d({cdims}, ({complex_t}*)_inp, ({complex_t}*)_out, {direction}, FFTW_ESTIMATE)'
         code = f"""
         {{
-            {prefix}plan __plan = {prefix}plan_dft_{rank}d({cdims},
-                ({complex_t}*)_inp, ({complex_t}*)_out, {direction}, FFTW_ESTIMATE);
+            {prefix}plan __plan = {plan};
             {prefix}execute(__plan);
             {prefix}destroy_plan(__plan);
         }}
         """
-    else:
-        ndim = len(indesc.shape)
-        # Axis was already normalised by the frontend; clamp here defensively.
-        axis_norm = int(axis) if axis >= 0 else ndim + int(axis)
-        if axis_norm not in (0, ndim - 1):
-            raise NotImplementedError(f"FFTW3 axis-aware expansion only handles axis=0 or axis=ndim-1 "
-                                      f"(got axis={axis} on shape {indesc.shape}); intermediate axes need "
-                                      f"``fftw_plan_guru_dft`` or a transposed copy.")
-        n_sym = indesc.shape[axis_norm]
-        # ``howmany`` = product of all OTHER dims.  For ``axis=ndim-1`` (the
-        # last axis) consecutive FFTs are contiguous in memory; for
-        # ``axis=0`` consecutive FFTs are interleaved with stride 1.
-        other_dims = [d for i, d in enumerate(indesc.shape) if i != axis_norm]
+    elif axes is not None and len(axes) == 1 and axes[0] in (0, ndim - 1):
+        axis = axes[0]
+        n_sym = indesc.shape[axis]
+        # Consecutive transforms along the last axis are contiguous; along axis 0 they interleave with stride howmany.
         howmany_sym = 1
-        for d in other_dims:
+        for d in (d for i, d in enumerate(indesc.shape) if i != axis):
             howmany_sym = howmany_sym * d
-        if axis_norm == ndim - 1:
+        if axis == ndim - 1:
             istride, idist = 1, n_sym
         else:
-            # axis == 0
             istride, idist = howmany_sym, 1
         code = f"""
         {{
@@ -349,6 +349,28 @@ def _generate_fftw3_code(indesc: data.Data, outdesc: data.Data, is_inverse: bool
                 ({complex_t}*)_out, /*onembed=*/NULL,
                 /*ostride=*/{cpp.sym2cpp(istride)}, /*odist=*/{cpp.sym2cpp(idist)},
                 {direction}, FFTW_ESTIMATE);
+            {prefix}execute(__plan);
+            {prefix}destroy_plan(__plan);
+        }}
+        """
+    else:
+        transformed = list(range(ndim)) if axes is None else list(axes)
+        if not transformed or len(set(transformed)) != len(transformed):
+            raise NotImplementedError(f'FFTW3 expansion transforms each of one or more axes once (got axes={axes})')
+        batch = [d for d in range(ndim) if d not in transformed]
+
+        def iodims(dims: List[int]) -> str:
+            return ', '.join(f'{{(int)({cpp.sym2cpp(indesc.shape[d])}), (int)({cpp.sym2cpp(indesc.strides[d])}), '
+                             f'(int)({cpp.sym2cpp(outdesc.strides[d])})}}' for d in dims)
+
+        batch_decl = f'{prefix}iodim __howmany[{len(batch)}] = {{{iodims(batch)}}};' if batch else ''
+        code = f"""
+        {{
+            {prefix}iodim __dims[{len(transformed)}] = {{{iodims(transformed)}}};
+            {batch_decl}
+            {prefix}plan __plan = {prefix}plan_guru_dft({len(transformed)}, __dims,
+                {len(batch)}, {'__howmany' if batch else 'NULL'},
+                ({complex_t}*)_inp, ({complex_t}*)_out, {direction}, FFTW_ESTIMATE);
             {prefix}execute(__plan);
             {prefix}destroy_plan(__plan);
         }}
