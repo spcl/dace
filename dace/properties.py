@@ -8,6 +8,7 @@ import json
 import pydoc
 import re
 import numpy as np
+import sympy
 import dace.subsets as sbs
 import dace
 import dace.serialize
@@ -67,6 +68,10 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
         if symbolic.has_serialized_symbol_escape(value):
             return symbolic.deserialize_symbolic(value)
         return pystr_to_symbolic(value, simplify=False)
+    # A plain decimal literal (most Range steps, tiles and starts) touches no rewrite regex and parses to
+    # ``Constant(int)``, which the wire parser returns as ``sympy.Integer``; skip the parse. "00" stays on the slow path.
+    if isinstance(value, str) and value.isascii() and value.isdecimal() and (value[0] != '0' or value == '0'):
+        return sympy.Integer(int(value))
     return symbolic.deserialize_symbolic(value)
 
 
@@ -208,7 +213,8 @@ class Property(Generic[T]):
         # ``_setter`` directly, for the same reason as ``_getter`` in ``__get__``.
         if self._setter is not None:
             return self._setter(obj, val)
-        if self.private_name is None:
+        private_name = self.private_name
+        if private_name is None:
             raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
         if val is None and not self.allow_none:
@@ -218,27 +224,30 @@ class Property(Generic[T]):
         if isinstance(val, np.number):
             val = val.item()
 
+        # Read once: every ``dtype`` override is a constant, and each read is a frame on every property write.
+        dtype = self.dtype
         # Edge cases for integer and float types
-        if isinstance(val, int) and self.dtype == float:
+        if isinstance(val, int) and dtype == float:
             val = float(val)
-        if isinstance(val, float) and self.dtype == int and val == int(val):
+        if isinstance(val, float) and dtype == int and val == int(val):
             val = int(val)
 
         # Check if type matches before setting
-        if (self.dtype is not None and not isinstance(val, self.dtype) and not (val is None and self.allow_none)):
+        if (dtype is not None and not isinstance(val, dtype) and not (val is None and self.allow_none)):
             if isinstance(val, str):
                 raise TypeError("Received str for property {} of type {}. Use "
-                                "from_string method of the property.".format(self.attr_name, self.dtype))
+                                "from_string method of the property.".format(self.attr_name, dtype))
             raise TypeError("Invalid type \"{}\" for property {}: expected {}".format(
-                type(val).__name__, self.attr_name, self.dtype.__name__))
+                type(val).__name__, self.attr_name, dtype.__name__))
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
-        if self.choices is not None \
-                and isinstance(self.choices,(list, tuple, set)) \
+        choices = self._choices
+        if choices is not None \
+                and isinstance(choices,(list, tuple, set)) \
                 and (val is not None or not self.allow_none):
-            if val not in self.choices:
-                raise ValueError("Value {} not present in choices: {}".format(val, self.choices))
-        setattr(obj, self.private_name, val)
+            if val not in choices:
+                raise ValueError("Value {} not present in choices: {}".format(val, choices))
+        setattr(obj, private_name, val)
 
     # Python Properties of this Property class
 
@@ -404,16 +413,20 @@ def make_properties(cls):
                     setattr(obj, name, prop.default)
         # Now call vanilla __init__, which can initialize members
         init(obj, *args, **kwargs)
-        # Assert that all properties have been set
+        # Assert that all properties have been set. A stored backing field is exactly what the
+        # getter-less descriptor would read, so only the rest pay for the read.
+        stored = obj.__dict__
         for name, prop in properties.items():
+            if prop._getter is None and prop.private_name in stored:
+                continue
             try:
                 getattr(obj, name)
             except AttributeError:
                 if not prop.unmapped:
                     raise PropertyError("Property {} is unassigned in __init__ for {}".format(name, cls.__name__))
         # Assert that there are no fields in the object not captured by properties, unless they are prefixed with "_"
-        for name, prop in obj.__dict__.items():
-            if (name not in properties and not name.startswith("_") and name not in dir(type(obj))):
+        for name, prop in stored.items():
+            if (not name.startswith("_") and name not in properties and name not in dir(type(obj))):
                 raise PropertyError("{} : Variable {} is neither a Property nor "
                                     "an internal variable (prefixed with \"_\")".format(str(type(obj)), name))
 
@@ -1039,6 +1052,16 @@ class CodeBlock(object):
         else:
             self.code = code
 
+    def __deepcopy__(self, memo):
+        # Same result as the generic ``__reduce_ex__`` copy, without its reconstruct machinery: every
+        # deserialized Tasklet deep-copies three empty C++ defaults.
+        result = object.__new__(type(self))
+        memo[id(self)] = result
+        copied = result.__dict__
+        for name, value in self.__dict__.items():
+            copied[name] = value if dace.serialize.deepcopy_returns_itself(value) else copy.deepcopy(value, memo)
+        return result
+
     def get_free_symbols(self, defined_syms: Set[str] = None) -> Set[str]:
         """
         Returns the set of free symbol names in this code block, excluding
@@ -1423,6 +1446,16 @@ class TypeProperty(Property):
             raise TypeError("Cannot parse type from: {}".format(obj))
 
 
+@lru_cache(maxsize=None, typed=True)
+def typeclass_from_name(name: str) -> typeclass:
+    # ``pydoc.locate`` walks the import machinery per call (~150us); a name always resolves to one module global.
+    # A failed lookup raises, so it is never cached.
+    dtype = pydoc.locate("dace.dtypes.{}".format(name))
+    if dtype is None or not isinstance(dtype, dace.dtypes.typeclass):
+        raise ValueError("Not a valid data type: {}".format(name))
+    return dtype
+
+
 class TypeClassProperty(Property[typeclass]):
     """ Custom property type for memory as defined in dace.types,
         e.g. `dace.float32`. """
@@ -1433,10 +1466,7 @@ class TypeClassProperty(Property[typeclass]):
 
     @staticmethod
     def from_string(s):
-        dtype = pydoc.locate("dace.dtypes.{}".format(s))
-        if dtype is None or not isinstance(dtype, dace.dtypes.typeclass):
-            raise ValueError("Not a valid data type: {}".format(s))
-        return dtype
+        return typeclass_from_name(s)
 
     @staticmethod
     def to_string(obj):

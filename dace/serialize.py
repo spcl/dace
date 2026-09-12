@@ -260,6 +260,11 @@ def all_properties_to_json(object_with_properties):
     return retdict
 
 
+def deepcopy_returns_itself(value) -> bool:
+    """True where ``copy.deepcopy(value) is value``, so the copy can be skipped."""
+    return value is None or type(value) in (bool, int, float, str)
+
+
 def set_properties_from_json(object_with_properties, json_obj, context=None, ignore_properties=None):
     ignore_properties = ignore_properties or set()
     try:
@@ -267,32 +272,15 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
     except KeyError:
         attrs = json_obj
 
-    # Apply properties
-    ps = dict(object_with_properties.__properties__)
-    source_properties = set(attrs.keys())
-    for prop_name, prop in ps.items():
+    # Membership, not a raised KeyError per absent property: a Tasklet leaves most of its ~20 unwritten.
+    properties = object_with_properties.__properties__
+    unknown_names = [name for name in attrs if name not in properties]
+    for prop_name, prop in properties.items():
         if prop_name in ignore_properties:
             continue
 
-        missing_prop = False
-        try:
+        if prop_name in attrs:
             val = attrs[prop_name]
-            # Make sure we use all properties
-            source_properties.remove(prop_name)
-        except KeyError:
-            missing_prop = True
-            # Allow a property to not be set if it has a default value
-            # TODO: is this really the job of serialize?
-            if prop.default is not None:
-                # Prevent shared mutable defaults from being aliased across deserialized objects.
-                val = copy.deepcopy(prop.default)
-            elif prop.allow_none:
-                val = None
-            else:
-                raise KeyError("Missing property for object of type " + type(object_with_properties).__name__ + ": " +
-                               prop_name)
-
-        if not missing_prop:
             if isinstance(val, dict):
                 val = prop.from_json(val, context)
             else:
@@ -306,12 +294,24 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
                     warnings.warn("Failed to parse object {}"
                                   " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
                     raise
+        else:
+            # Allow a property to not be set if it has a default value
+            # TODO: is this really the job of serialize?
+            default = prop.default
+            if default is not None:
+                # Prevent shared mutable defaults from being aliased across deserialized objects.
+                val = default if deepcopy_returns_itself(default) else copy.deepcopy(default)
+            elif prop.allow_none:
+                val = None
+            else:
+                raise KeyError("Missing property for object of type " + type(object_with_properties).__name__ + ": " +
+                               prop_name)
 
         setattr(object_with_properties, prop_name, val)
 
-    remaining_properties = source_properties - ignore_properties
     # Ignore all metadata "properties" saved for editing
-    remaining_properties = set(prop for prop in remaining_properties if not prop.startswith('_meta'))
+    remaining_properties = set(name for name in unknown_names
+                               if name not in ignore_properties and not name.startswith('_meta'))
     if len(remaining_properties) > 0:
         # TODO: elevate to error once #28 is fixed.
         warnings.warn("Unused properties: {}".format(", ".join(sorted(remaining_properties))))
