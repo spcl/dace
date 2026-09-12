@@ -11,11 +11,11 @@
 #define DACE_EXPORTED extern "C"
 #endif
 
-// Workaround (see unload_library). Guarded with its only use: GCC ships <omp.h> even without
-// -fopenmp, so an unguarded include is what let the call compile against a runtime that is not
-// there, and the stub then failed to load on a missing omp_get_max_threads.
+#ifdef _WIN32
+// Workaround (see unload_library), guarded with its only use.
 #ifdef _OPENMP
 #include <omp.h>
+#endif
 #endif
 
 // Loads a library and returns a handle to it, or NULL if there was an error
@@ -83,15 +83,23 @@ DACE_EXPORTED void *get_symbol(void *hLibrary, const char *symbol) {
 DACE_EXPORTED void unload_library(void *hLibrary) {
   if (!hLibrary) return;
 
-  // Workaround so that OpenMP does not go ballistic when calling dlclose(). Guarded because with no
-  // OpenMP in the build there is no runtime to placate, and the call would not link.
+  // Workaround so that OpenMP does not go ballistic when calling dlclose(): the runtime must be live
+  // and must outlive the library.
+#ifdef _WIN32
 #ifdef _OPENMP
   omp_get_max_threads();
 #endif
-
-#ifdef _WIN32
   FreeLibrary((HMODULE)hLibrary);
 #else
+  // The runtime is the one the LIBRARY links, found through the library rather than linked into the
+  // stub: a strong reference made a stub whose link line lacked the runtime fail to load on
+  // "undefined symbol: omp_get_max_threads". Pinned with RTLD_NODELETE, which is what a runtime on
+  // the stub's own link line used to guarantee; without it dlclose unmaps the runtime under its threads.
+  if (void *query = dlsym(hLibrary, "omp_get_max_threads")) {
+    reinterpret_cast<int (*)()>(query)();
+    Dl_info owner;
+    if (dladdr(query, &owner) && owner.dli_fname) dlopen(owner.dli_fname, RTLD_NOW | RTLD_NODELETE);
+  }
   dlclose(hLibrary);
 #endif
 }
