@@ -110,6 +110,10 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         """
         self.threshold = min_work_per_region()
         self.pinned = 0
+        # One pass's worth of enclosing-loop trip-count verdicts: this pass never mutates a
+        # LoopRegion's bounds, so a verdict computed under one scope stays valid for a sibling
+        # transfer under the same loop.
+        self.loop_cache: Dict[int, bool] = {}
         self.visit_region(sdfg, False)
         return self.pinned or None
 
@@ -139,7 +143,8 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
             if isinstance(node, nodes.MapEntry):
                 self.visit_scope(state, children, node, self.decide_map(node, in_parallel))
             elif isinstance(node, nodes.LibraryNode):
-                if node.schedule in CPU_PARALLEL_SCHEDULES and (in_parallel or is_reentered_cpu_transfer(node, state)):
+                if node.schedule in CPU_PARALLEL_SCHEDULES and (in_parallel or is_reentered_cpu_transfer(
+                        node, state, loop_cache=self.loop_cache)):
                     node.schedule = dtypes.ScheduleType.Sequential
                     self.pinned += 1
             elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:

@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared helpers for CopyLibraryNode and FillLibraryNode expansions."""
-from typing import Callable, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import dace
 from dace import dtypes
@@ -119,26 +119,44 @@ def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
 REENTRY_SHORT_LOOP_TRIPS = 8
 
 
-def is_short_loop(loop) -> bool:
+def is_short_loop(loop, cache: Optional[Dict[int, bool]] = None) -> bool:
     """Whether ``loop`` provably runs fewer than :data:`REENTRY_SHORT_LOOP_TRIPS` ascending trips.
 
     :param loop: the :class:`~dace.sdfg.state.LoopRegion` to measure.
+    :param cache: an optional ``id(loop) -> verdict`` map a caller reuses across many nodes sharing
+                 the same enclosing loops (a CPU-specialization pass visits one transfer at a time,
+                 but the loop nest above it repeats). Valid only for as long as the pass that owns
+                 it runs without mutating any ``LoopRegion``'s bounds -- neither
+                 :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
+                 nor
+                 :class:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes.SequentializeUnprofitableParallelScopes`
+                 does; both only set ``schedule``/``implementation`` on library and map nodes.
     :returns: ``True`` only when the trip count is provably short; an unanalyzable, descending or
               symbolic-length loop answers ``False``.
     """
+    if cache is not None:
+        cached = cache.get(id(loop))
+        if cached is not None:
+            return cached
     from dace.transformation.passes.analysis import loop_analysis
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
     if start is None or end is None or stride is None:
-        return False
-    if dace.symbolic.ask('positive', dace.symbolic.simplify(stride)) is not True:
-        return False
-    trips = dace.symbolic.int_floor(end - start, stride) + 1
-    return dace.symbolic.ask('negative', dace.symbolic.simplify(trips - REENTRY_SHORT_LOOP_TRIPS)) is True
+        verdict = False
+    elif dace.symbolic.ask('positive', dace.symbolic.simplify(stride)) is not True:
+        verdict = False
+    else:
+        trips = dace.symbolic.int_floor(end - start, stride) + 1
+        verdict = dace.symbolic.ask('negative', dace.symbolic.simplify(trips - REENTRY_SHORT_LOOP_TRIPS)) is True
+    if cache is not None:
+        cache[id(loop)] = verdict
+    return verdict
 
 
-def is_reentered_cpu_transfer(node: nodes.LibraryNode, state: dace.SDFGState) -> bool:
+def is_reentered_cpu_transfer(node: nodes.LibraryNode,
+                              state: dace.SDFGState,
+                              loop_cache: Optional[Dict[int, bool]] = None) -> bool:
     """Whether an enclosing parallel map or long loop re-enters ``node``, so its own OpenMP region
     would be re-opened on every entry.
 
@@ -150,6 +168,8 @@ def is_reentered_cpu_transfer(node: nodes.LibraryNode, state: dace.SDFGState) ->
 
     :param node: the library node to classify.
     :param state: the state containing ``node``.
+    :param loop_cache: forwarded to :func:`is_short_loop`; see its docstring for the invalidation
+                       contract.
     :returns: ``True`` if an enclosing parallel map or a not-provably-short loop re-enters ``node``.
     """
     from dace.sdfg.state import LoopRegion
@@ -158,13 +178,15 @@ def is_reentered_cpu_transfer(node: nodes.LibraryNode, state: dace.SDFGState) ->
         if isinstance(scope, nodes.MapEntry):
             if scope.map.schedule != dtypes.ScheduleType.Sequential:
                 return True
-        elif isinstance(scope, LoopRegion) and not is_short_loop(scope):
+        elif isinstance(scope, LoopRegion) and not is_short_loop(scope, cache=loop_cache):
             return True
     return False
 
 
-def cpu_transfer_parallelizes(node: nodes.LibraryNode, state: dace.SDFGState,
-                              num_elements: dace.symbolic.SymbolicType) -> bool:
+def cpu_transfer_parallelizes(node: nodes.LibraryNode,
+                              state: dace.SDFGState,
+                              num_elements: dace.symbolic.SymbolicType,
+                              loop_cache: Optional[Dict[int, bool]] = None) -> bool:
     """Whether a CPU transfer of ``num_elements`` at ``node`` keeps its own OpenMP region.
 
     Both reasons to take it away: provably too small to amortize a fork/join, or re-entered by an
@@ -174,6 +196,8 @@ def cpu_transfer_parallelizes(node: nodes.LibraryNode, state: dace.SDFGState,
     :param node: the library node to classify.
     :param state: the state containing ``node``.
     :param num_elements: total element count of the transfer (constant or symbolic).
+    :param loop_cache: forwarded to :func:`is_reentered_cpu_transfer`.
     :returns: ``True`` to keep the parallel element map, ``False`` to sequentialize it.
     """
-    return is_parallel_cpu_transfer_size(num_elements) and not is_reentered_cpu_transfer(node, state)
+    return is_parallel_cpu_transfer_size(num_elements) and not is_reentered_cpu_transfer(
+        node, state, loop_cache=loop_cache)

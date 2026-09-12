@@ -145,13 +145,17 @@ class SpecializeCpuTransfers(ppl.Pass):
         from dace.libraries.standard.nodes.copy import CopyLibraryNode
         from dace.libraries.standard.nodes.fill import FillLibraryNode
         changed = 0
+        # One pass's worth of enclosing-loop trip-count verdicts: many transfers share the same
+        # loop nest, and the pass does not touch LoopRegion bounds, so a verdict computed for one
+        # transfer's loop stays valid for the next transfer under the same loop.
+        loop_cache: Dict[int, bool] = {}
         for node, state in sdfg.all_nodes_recursive():
             is_copy = isinstance(node, CopyLibraryNode)
             if not is_copy and not isinstance(node, FillLibraryNode):
                 continue
             if not (copy_is_host(node, state) if is_copy else memset_is_host(node, state)):
                 continue
-            if node.schedule in PARALLEL_SCHEDULES and is_reentered_cpu_transfer(node, state):
+            if node.schedule in PARALLEL_SCHEDULES and is_reentered_cpu_transfer(node, state, loop_cache=loop_cache):
                 node.schedule = dtypes.ScheduleType.Sequential
                 changed += 1
             if node.schedule != dtypes.ScheduleType.Sequential or node.implementation not in UNCHOSEN:
