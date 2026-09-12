@@ -78,6 +78,12 @@ include_directories(${DACE_RUNTIME_DIR}/include)
 # Global DaCe external dependencies
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
+# FindOpenMP links the runtime only as a detected library, and a configure that already had -fopenmp in
+# CMAKE_CXX_FLAGS detects none: a later build reusing it, under other flags, linked no runtime at all.
+if(NOT MSVC)
+  set_property(TARGET OpenMP::OpenMP_CXX APPEND
+               PROPERTY INTERFACE_LINK_OPTIONS "$<$<LINK_LANGUAGE:CXX>:SHELL:${OpenMP_CXX_FLAGS}>")
+endif()
 
 list(APPEND DACE_LIBS Threads::Threads)
 list(APPEND DACE_LIBS OpenMP::OpenMP_CXX)
