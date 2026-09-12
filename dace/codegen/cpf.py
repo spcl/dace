@@ -31,7 +31,11 @@ What CPF refuses, it refuses loudly -- see :func:`prepare`, and the standalone p
 kernel would still compile and still produce numbers, just not the SDFG's.
 """
 import copy
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from dace.ordered import OrderedSet
@@ -962,6 +966,86 @@ def verify(code: str, name: str, dialect: cpf_lowering.Dialect = cpf_lowering.Di
                            f'self-contained:\n    {line}')
 
 
+#: Per HOST dialect: the language standard its output is defined against, the source suffix, the
+#: environment variable naming its compiler, and the compilers to try when that is unset.
+#:
+#: The DEVICE dialect is deliberately absent. Its compiler is not the host compiler and is not
+#: installed on every box a host render runs on, so gating it here would turn "hipcc is not
+#: installed" into "this SDFG cannot be rendered" -- and a gate that quietly skips instead would be
+#: the very shape this one exists to close.
+COMPILE_CHECK_TOOLCHAINS: Dict[cpf_lowering.Dialect, Tuple[str, str, str, Tuple[str, ...]]] = {
+    cpf_lowering.Dialect.STANDALONE: ('c++20', '.cpp', 'CXX', ('g++', 'c++')),
+    cpf_lowering.Dialect.STANDALONE_C: ('c23', '.c', 'CC', ('gcc', 'cc')),
+}
+
+#: What the gate compiles with. ``-fsyntax-only`` because the question is whether the TEXT is a
+#: valid translation unit, not how fast its object code is: it parses, resolves every name and
+#: type-checks, and skips optimization and object emission, which is where the time goes. NO
+#: ``-I``: a header the unit names must be a system header, which is half of what self-contained
+#: means. ``-fopenmp`` because the parallel form is OpenMP and its pragmas must parse.
+COMPILE_CHECK_FLAGS: Tuple[str, ...] = ('-fsyntax-only', '-fopenmp')
+
+
+def compile_check_compiler(dialect: cpf_lowering.Dialect) -> Optional[str]:
+    """The compiler the gate builds ``dialect``'s output with, or ``None`` if none is installed.
+
+    :param dialect: which standalone dialect rendered the unit.
+    :returns: an executable path, or ``None``.
+    """
+    _standard, _suffix, variable, fallbacks = COMPILE_CHECK_TOOLCHAINS[dialect]
+    candidate = os.environ.get(variable)
+    if not candidate and dialect is cpf_lowering.Dialect.STANDALONE:
+        candidate = Config.get('compiler', 'cpu', 'executable')
+    resolved = shutil.which(candidate) if candidate else None
+    for fallback in fallbacks:
+        if resolved is not None:
+            break
+        resolved = shutil.which(fallback)
+    return resolved
+
+
+def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect) -> None:
+    """Assert the rendered unit is one a bare host compiler accepts, or raise with its first error.
+
+    :func:`verify` answers "does this text name anything CPF may not name", which is a different
+    question from "is this text a translation unit". A form that passes the first and fails the
+    second is the worst outcome CPF has: it is written to disk, served as the canonical parallel
+    form, and read as good by whoever gets it -- and nothing between here and the compiler that
+    never runs says otherwise. So the render does not return text it has not compiled.
+
+    A no-op for the device dialect, which has no entry in :data:`COMPILE_CHECK_TOOLCHAINS`.
+
+    :param code: the rendered translation unit.
+    :param name: the SDFG's name, for the message.
+    :param dialect: which standalone dialect rendered it, choosing the compiler and the standard.
+    :raises RuntimeError: if the unit does not compile, or if its compiler is not installed --
+                          "could not be checked" must not read the same as "was checked".
+    """
+    toolchain = COMPILE_CHECK_TOOLCHAINS.get(dialect)
+    if toolchain is None:
+        return
+    standard, suffix, variable, fallbacks = toolchain
+    compiler = compile_check_compiler(dialect)
+    if compiler is None:
+        raise RuntimeError(f'CPF cannot check that {name} compiles: no {suffix[1:]} compiler found (tried '
+                           f'${variable} and {fallbacks}). A form that was never compiled must not be served as '
+                           'one that was, so the render refuses rather than hand back unchecked text.')
+    workdir = tempfile.mkdtemp(prefix=f'cpf_check_{name}_')
+    try:
+        source = os.path.join(workdir, name + suffix)
+        with open(source, 'w') as handle:
+            handle.write(code)
+        command = [compiler, '-std=' + standard, *COMPILE_CHECK_FLAGS, source]
+        proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
+        if proc.returncode == 0:
+            return
+        first = next((line for line in proc.stderr.splitlines() if ' error' in line), proc.stderr.strip())
+        raise RuntimeError(f'CPF rendered {name} as text that does not compile, so the form would have been '
+                           f'served as good and found broken by whoever built it:\n    {first.strip()}')
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 class Rendering(NamedTuple):
     """A rendered SDFG: the C++ text, and the SDFG that text was generated from.
 
@@ -989,7 +1073,8 @@ class Rendering(NamedTuple):
 def render(sdfg: SDFG,
            validate: bool = True,
            language: str = 'c++',
-           order: Optional[Sequence[str]] = None) -> Rendering:
+           order: Optional[Sequence[str]] = None,
+           check_compiles: bool = True) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
 
     :param sdfg: the SDFG to render. Not modified -- a copy is prepared and rendered.
@@ -1000,9 +1085,15 @@ def render(sdfg: SDFG,
                   caller whose calling convention is fixed elsewhere. ``None`` keeps CPF's own
                   order (``arglist()``: arrays by name, then scalars by name). Must name exactly
                   the parameters the prepared SDFG takes -- see :func:`reorder_entry_parameters`.
+    :param check_compiles: compile the finished unit before returning it (:func:`compile_check`).
+                           Default on: a form that renders clean text and does not compile is
+                           served as good and read as good, which is the one failure CPF has no
+                           other gate for. Pass ``False`` only where the caller compiles the
+                           result itself.
     :returns: the :class:`Rendering`.
     :raises NotImplementedError: if the SDFG needs anything a single host unit cannot hold; the
                                  message names the construct.
+    :raises RuntimeError: if the finished unit is not self-contained, or does not compile.
     :raises ValueError: if ``language`` is neither, or if ``order`` is not the entry's parameter
                         set.
     """
@@ -1043,11 +1134,17 @@ def render(sdfg: SDFG,
                     body = re.sub(r'\b__restrict__\b', 'restrict', body)
     code = preamble(body, dialect) + body
     verify(code, sdfg.name, dialect)
+    if check_compiles:
+        compile_check(code, sdfg.name, dialect)
     arguments = tuple(order) if order is not None else tuple(prepared.arglist())
     return Rendering(code, prepared, arguments)
 
 
-def cpf(sdfg: SDFG, validate: bool = True, language: str = 'c++', order: Optional[Sequence[str]] = None) -> str:
+def cpf(sdfg: SDFG,
+        validate: bool = True,
+        language: str = 'c++',
+        order: Optional[Sequence[str]] = None,
+        check_compiles: bool = True) -> str:
     """Render ``sdfg`` as one self-contained translation unit.
 
     The SDFG is copied first, so neither the lifetime demotions nor the code generator's own
@@ -1061,6 +1158,7 @@ def cpf(sdfg: SDFG, validate: bool = True, language: str = 'c++', order: Optiona
     :param language: ``'c++'`` (the default) or ``'c'``.
     :param order: the entry point's parameter names in the caller's own order; ``None`` keeps
                   CPF's (see :func:`render`).
+    :param check_compiles: compile the finished unit before returning it (see :func:`render`).
     :returns: the translation unit, defining ``extern "C" void <sdfg.name>(<arglist>)`` in C++ and
               ``void <sdfg.name>(<arglist>)`` in C, whose ABI is the same.
     :raises NotImplementedError: if the SDFG needs anything a single host unit cannot hold; the
@@ -1068,4 +1166,4 @@ def cpf(sdfg: SDFG, validate: bool = True, language: str = 'c++', order: Optiona
     :raises ValueError: if ``language`` is neither, or if ``order`` is not the entry's parameter
                         set.
     """
-    return render(sdfg, validate=validate, language=language, order=order).code
+    return render(sdfg, validate=validate, language=language, order=order, check_compiles=check_compiles).code

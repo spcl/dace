@@ -40,7 +40,10 @@ def find_outgoing_edges(node, dfg):
 
 @lru_cache(maxsize=16384, typed=True)
 def _sym2cpp(s, arrayexprs, dialect, fp_ctype):
-    return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True, dialect=dialect, fp_ctype=fp_ctype))
+    # ``pyexpr2cpp`` parses this text again with the PYTHON parser, which ``static_cast<T>(x)``
+    # does not survive: it comes back as ``(static_cast < T) > (x)``. ``reparsed`` says so.
+    return cppunparse.pyexpr2cpp(
+        symbolic.symstr(s, arrayexprs, cpp_mode=True, dialect=dialect, fp_ctype=fp_ctype, reparsed=True))
 
 
 def sym2cpp(s,

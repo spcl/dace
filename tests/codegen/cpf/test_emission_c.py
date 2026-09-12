@@ -25,12 +25,12 @@ from dace.transformation.passes.scatter_conflict_guard import insert_scatter_gua
 from dace import cpf, cpf_lowering
 from dace.codegen import cpf as cpf_module
 from dace.codegen.cpf import render as render_sdfg
-from dace.codegen.common import sym2cpp
+from dace.codegen.common import sym2cpp, unparse_interstate_edge
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.codegen.targets.experimental_cpu import format_index_helper
 
 from tests.codegen.cpf.conftest import (assert_matches, assert_standalone, build_standalone, call_standalone,
-                                        compile_diagnostics, compile_standalone, wcr_sdfg)
+                                        cast_extent_sdfg, compile_diagnostics, compile_standalone, wcr_sdfg)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -785,3 +785,43 @@ def test_the_expression_cache_does_not_serve_cpp_text_to_a_c_rendering():
     assert pyexpr2cpp(expression) == '(int64_t(cache_order_probe) + 1)'
     with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_C):
         assert pyexpr2cpp(expression) == '(((int64_t)(cache_order_probe)) + 1)'
+
+
+def test_a_cast_in_an_extent_renders_a_c_cast_expression_in_the_size_helper():
+    """The C sibling of the C++ extent-helper case. C has no functional cast, so the helper must
+    carry the cast-expression form -- and this is the control that says the C++ fix did not move
+    the C spelling."""
+    rendering = render_sdfg(cast_extent_sdfg('cpf_c_cast_extent'), language='c')
+    code = rendering.code
+    assert_standalone(code, 'cpf_c_cast_extent', language='c')
+    assert 'static_cast' not in code, 'static_cast is not a C construct'
+    assert '((int64_t)(la))' in code, f'the C dialect spells the cast as a cast expression:\n{code}'
+
+    la, lb = 5, 7
+    rng = np.random.default_rng(0)
+    a, out = rng.random(la + lb + 1), np.zeros(la + lb + 1)
+    library = build_standalone(code, 'cpf_c_cast_extent', language='c')
+    call_standalone(library, rendering.sdfg, {'a': a, 'out': out, 'la': la, 'lb': lb})
+    assert_matches({'out': a * 2.0}, {'out': out}, 'cpf_c_cast_extent')
+
+
+#: ``(dialect, the text the cast must print as)``. The runtime entry is the one that must NOT move:
+#: it is what every non-CPF caller already gets.
+ATTRIBUTE_CAST_FORMS = {
+    cpf_lowering.Dialect.RUNTIME: '(dace::int64(la) + 1)',
+    cpf_lowering.Dialect.STANDALONE: '(int64_t(la) + 1)',
+    cpf_lowering.Dialect.STANDALONE_C: '(((int64_t)(la)) + 1)',
+}
+
+
+@pytest.mark.parametrize('dialect', sorted(ATTRIBUTE_CAST_FORMS, key=lambda d: d.value), ids=lambda d: d.value)
+def test_a_dace_typed_cast_on_an_interstate_edge_is_spelled_by_the_dialect(dialect):
+    """A tasklet body's ``dace.int64(x)`` is rewritten to the bare ctype before any printer sees it;
+    an interstate edge's is not, and printed as ``dace::int64(x)`` it slips past the
+    self-containment gate -- the whole-unit type rename turns it into the C++ functional cast
+    ``int64_t(x)``, which is valid C++ and is not C, so the C form is served and does not build."""
+    sdfg = dace.SDFG('cpf_attribute_cast_%s' % dialect.value)
+    sdfg.add_array('a', [4], dace.float64)
+    with cpf_lowering.dialect_scope(dialect):
+        rendered = unparse_interstate_edge('dace.int64(la) + 1', sdfg)
+    assert rendered == ATTRIBUTE_CAST_FORMS[dialect], rendered

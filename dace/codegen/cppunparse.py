@@ -1377,6 +1377,15 @@ class CPPUnparser:
                 self.write(self.typecast(_typecast_func_to_cpp[t.func.id], ', '.join(self.render(e) for e in t.args)))
                 return
 
+        # A tasklet body's ``dace.int64(x)`` is rewritten to the bare ctype by
+        # ``cpp.DaCeKeywordRemover.visit_Attribute`` before any printer sees it; an interstate
+        # edge's is not, and printed as ``dace::int64(x)`` the whole-unit type rename turns it into
+        # the C++ functional cast ``int64_t(x)``, which is not C.
+        if (isinstance(t.func, ast.Attribute) and isinstance(t.func.value, ast.Name) and t.func.value.id == 'dace'
+                and t.func.attr in _typecast_func_to_cpp and len(t.args) == 1 and not t.keywords):
+            self.write(self.typecast(_typecast_func_to_cpp[t.func.attr], self.render(t.args[0])))
+            return
+
         if isinstance(t.func, ast.Name) and cpf_lowering.standalone() and not t.keywords:
             # ``dace.float32(x)`` reaches here as a call to the TYPE (cpp.py's visit_Attribute
             # rewrites the attribute to the typeclass's ctype), which is a C++ functional cast. C
@@ -1576,15 +1585,13 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _pyexpr2cpp(expr, dialect):
-    # ``dialect`` is read by nothing in here: it is the AMBIENT one, which the printers below take
-    # from :func:`~dace.cpf_lowering.active_dialect` at the point they need it. It is a PARAMETER so
-    # that it reaches this memoization key. Without it the first spelling of an expression wins for
-    # the life of the process, and a standalone-C rendering reads back the C++ text an earlier
-    # RUNTIME call cached -- which is how ``int64_t(i)``, a C++ functional cast, reached C output.
+def pyexpr2cpp_cached(expr, dialect):
+    # ``dialect`` is unread here and is a parameter only so that it reaches this memoization key.
+    # Without it the first spelling of an expression wins for the life of the process, and a
+    # standalone-C rendering reads back the C++ text an earlier RUNTIME call cached.
     return py2cpp(expr, expr_semicolon=False)
 
 
 def pyexpr2cpp(expr):
     """The C++ (or standalone C) spelling of a Python expression, memoized per dialect."""
-    return _pyexpr2cpp(expr, cpf_lowering.active_dialect())
+    return pyexpr2cpp_cached(expr, cpf_lowering.active_dialect())

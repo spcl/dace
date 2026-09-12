@@ -31,7 +31,7 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
                                                                                 set_symbol_nonnegative_assumptions)
 
 from tests.codegen.cpf.conftest import (assert_matches, assert_standalone, build_standalone, call_standalone,
-                                        compile_diagnostics, wcr_sdfg)
+                                        cast_extent_sdfg, compile_diagnostics, wcr_sdfg)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -838,3 +838,21 @@ def test_the_scatter_guard_renders_without_the_dace_runtime():
     library = build_standalone(rendering.code, sdfg.name)
     call_standalone(library, rendering.sdfg, {'a': a, 'b': b, 'ip': ip, 'N': n})
     assert_matches({'a': expected}, {'a': a}, sdfg.name)
+
+
+def test_a_cast_in_an_extent_renders_a_size_helper_that_compiles():
+    """The extent helper is built by printing the size expression and PARSING THE TEXT BACK, so a
+    cast in it came out as ``(la - static_cast) < int64_t > (lb ...)`` -- valid-looking text that
+    no C++ compiler accepts and that would have computed a different extent if it had."""
+    rendering = render_sdfg(cast_extent_sdfg('cpf_cpp_cast_extent'))
+    code = rendering.code
+    assert_standalone(code, 'cpf_cpp_cast_extent')
+    assert 'static_cast)' not in code, f'the cast was re-parsed as a comparison:\n{code}'
+    assert 'int64_t(la)' in code, f'the C++ dialect spells the cast as a functional cast:\n{code}'
+
+    la, lb = 5, 7
+    rng = np.random.default_rng(0)
+    a, out = rng.random(la + lb + 1), np.zeros(la + lb + 1)
+    library = build_standalone(code, 'cpf_cpp_cast_extent')
+    call_standalone(library, rendering.sdfg, {'a': a, 'out': out, 'la': la, 'lb': lb})
+    assert_matches({'out': a * 2.0}, {'out': out}, 'cpf_cpp_cast_extent')
