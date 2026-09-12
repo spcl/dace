@@ -65,7 +65,7 @@ from dace import SDFG, dtypes, nodes, properties, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import SDFGState
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
 #: Builtin names the closed-form expression may mention; it is spliced verbatim into a tasklet
 #: body. Probing ``builtins`` instead would admit ``open``, ``id``, ``sum``, ... as valid operands.
@@ -139,7 +139,7 @@ class InductionVariableSubstitution(ppl.Pass):
                 # exit-value substitution would corrupt them (e.g. rewriting a break guard's
                 # ``d_idx = d[i]`` to ``d[N-1]``). Skip -- the split passes can't handle these
                 # loops either; the early-exit lift runs before this stage instead.
-                if _loop_has_break_or_continue(node):
+                if loop_analysis.loop_jumps(node):
                     continue
                 # (1) whole-loop collapse ``acc = acc OP const`` -> closed form
                 #     (eliminates the loop; the exponentiation collapse s317);
@@ -162,28 +162,6 @@ class InductionVariableSubstitution(ppl.Pass):
             if not progressed:
                 break
         return count or None
-
-
-def _loop_has_break_or_continue(loop: LoopRegion) -> bool:
-    """True if ``loop`` has a ``break`` / ``continue`` targeting it.
-
-    A ``BreakBlock`` / ``ContinueBlock`` targets the innermost enclosing loop, so a break
-    inside a nested ``LoopRegion`` belongs to that inner loop -- descend through conditional
-    branches and non-loop regions, but not into nested loops.
-    """
-    stack = list(loop.nodes())
-    while stack:
-        blk = stack.pop()
-        if isinstance(blk, (BreakBlock, ContinueBlock)):
-            return True
-        if isinstance(blk, LoopRegion):
-            continue  # a break inside a nested loop targets that loop, not this one
-        if isinstance(blk, ConditionalBlock):
-            for _, branch in blk.branches:
-                stack.extend(branch.nodes())
-        elif isinstance(blk, ControlFlowRegion):
-            stack.extend(blk.nodes())
-    return False
 
 
 def _try_substitute(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> bool:
@@ -2014,7 +1992,7 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
         count = 0
         while True:
             for node, parent in list(sdfg.all_nodes_recursive()):
-                if not isinstance(node, LoopRegion) or _loop_has_break_or_continue(node):
+                if not isinstance(node, LoopRegion) or loop_analysis.loop_jumps(node):
                     continue
                 budget.setdefault(node, self.peel_limit)
                 if try_substitute_rotation(parent, node, sdfg, budget):

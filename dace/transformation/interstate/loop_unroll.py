@@ -69,6 +69,9 @@ class LoopUnroll(xf.MultiStateTransformation):
         itervar = self.loop.loop_variable
         if start is None or end is None or step is None or itervar is None:
             return False
+        # An unrolled iteration has no loop left for its break or continue to jump out of.
+        if loop_analysis.loop_jumps(self.loop):
+            return False
 
         # If loop stride is not specialized or constant-sized, fail
         if symbolic.issymbolic(step, sdfg.constants):

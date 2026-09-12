@@ -4,13 +4,14 @@ Various analyses concerning LopoRegions, and utility functions to get informatio
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 from dace.frontend.python import astutils
 
 import sympy
 
 from dace import symbolic
-from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion
+from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock,
+                             ControlFlowRegion, LoopRegion)
 
 if TYPE_CHECKING:
     # Import-time only: ``dace.sdfg.state`` reaches back into this module (LoopRegion.new_symbols does
@@ -82,6 +83,26 @@ def counter_used_outside_loop(name: str,
     inside.update(id(block) for block in loop.all_control_flow_blocks())
     inside.update(id(edge) for edge in loop.all_interstate_edges())
     return symbol_used_outside(name, inside, use_sites, descriptor_symbols)
+
+
+def loop_jumps(loop: LoopRegion) -> List[ControlFlowBlock]:
+    """The ``break`` and ``continue`` blocks that target ``loop``.
+
+    A jump targets its innermost enclosing loop, so the walk descends through conditional branches
+    and plain regions but not into nested loops.
+    """
+    jumps: List[ControlFlowBlock] = []
+    stack = list(loop.nodes())
+    while stack:
+        block = stack.pop()
+        if isinstance(block, (BreakBlock, ContinueBlock)):
+            jumps.append(block)
+        elif isinstance(block, ConditionalBlock):
+            for condition, branch in block.branches:
+                stack.extend(branch.nodes())
+        elif isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
+            stack.extend(block.nodes())
+    return jumps
 
 
 def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:

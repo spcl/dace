@@ -27,7 +27,7 @@ import sympy
 from dace import properties, symbolic
 from dace.config import Config
 from dace.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 
 #: Default trip-count threshold below which a constant-trip loop is unrolled
@@ -429,6 +429,10 @@ class BestEffortLoopPeeling(ppl.Pass):
         constant-size gate; infeasible loops simply raise and are skipped.
         """
         from dace.transformation.interstate.loop_peeling import LoopPeeling
+        from dace.transformation.passes.analysis import loop_analysis
+        # ``verify=False`` below skips LoopUnroll's own refusal of a loop with a break or continue.
+        if loop_analysis.loop_jumps(loop):
+            return False
         sides = {'front': [True], 'back': [False], 'both': [True, False]}[direction]
         # A loop short enough to be fully consumed by the peel is the unroll
         # pass's job, not peeling's.
@@ -854,6 +858,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         from dace.properties import CodeBlock
         from dace.sdfg.sdfg import InterstateEdge
         from dace.transformation.passes.analysis import loop_analysis
+        # A break leaves only its own segment, and every segment after it would still run.
+        if any(isinstance(block, BreakBlock) for block in loop_analysis.loop_jumps(loop)):
+            return False
         stride = loop_analysis.get_loop_stride(loop)
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
