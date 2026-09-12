@@ -22,6 +22,7 @@ from dace import dtypes
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.scope import is_in_scope
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
 
@@ -192,6 +193,9 @@ class InlineTaskletConnectors(ppl.Pass):
         # Only Python bodies are rewritten. A C++/other body is emitted verbatim (no subscript
         # flattening), so an inlined ``A[i, j]`` would become a comma-operator bug -- keep it classic.
         if node.language != dtypes.Language.Python:
+            return {}
+        # The SVE generator unparses its tasklets itself and types every name through the connectors.
+        if is_in_scope(osdfg, state, node, [dtypes.ScheduleType.SVE_Map]):
             return {}
         return accesses
 

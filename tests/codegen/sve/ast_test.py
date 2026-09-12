@@ -56,6 +56,24 @@ def test_compare_scalar_vector():
     assert 'svcmplt' in code
 
 
+def test_scalar_input_is_read_through_its_connector():
+    """The SVE unparser types every name through the tasklet's connectors, so a scalar read that
+    the readable CPU generator inlines as ``alpha[0]`` has no type and aborts code generation."""
+
+    @dace.program
+    def program(alpha: dace.float64, X: dace.float64[N], Y: dace.float64[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << alpha
+                x << X[i]
+                y >> Y[i]
+                y = a * x
+
+    code = get_code(program)
+
+    assert 'svdup_f64(a)' in code, code
+
+
 def test_if_block():
 
     @dace.program
