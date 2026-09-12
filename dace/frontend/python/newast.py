@@ -6572,7 +6572,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Set the index mapping for the broadcasted array
         for idx, s in zip(out_idx.split(','), advidx_shape):
             index_mapping[idx.strip()] = (0, s - 1, 1)
-            symidx = symbolic.symbol(idx.strip())
+            symidx = symbolic.pystr_to_symbolic(idx.strip())
             advidx_index.append((symidx, symidx, 1))
 
         # Loop over the advanced indexing expressions again to create the input memlets
@@ -6594,8 +6594,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Create the input memlet for this advanced indexing array based on broadcasting rules
             arr_idx = arr_idx.replace('__i', '__ind').split(',')
-            arr_subset = subsets.Range([(symbolic.symbol(idx.strip()), symbolic.symbol(idx.strip()), 1)
-                                        for idx in arr_idx])
+            # broadcast_together emits a literal 0 for a size-1 dimension, and a compound
+            # expression where it offsets one; symbol() accepts neither
+            arr_subset = subsets.Range([
+                (symbolic.pystr_to_symbolic(idx.strip()), symbolic.pystr_to_symbolic(idx.strip()), 1) for idx in arr_idx
+            ])
             index_memlets.append(Memlet(data=idxarrname, subset=arr_subset))
 
         # Replace the advanced indexing dimensions with the broadcasted shape
