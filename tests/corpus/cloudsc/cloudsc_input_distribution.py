@@ -1,6 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A physically-conditioned input distribution for the inlined CloudSC kernel.
 
+DRAFT, AND MEASURED AS A NET REGRESSION -- referenced by no test on purpose. It fixes what it aimed
+at: ``pfplsl`` and ``pfhpsl`` stop being identically zero, and the worst amplifier ``pfsqrf`` falls
+5.7x. It breaks three other things, and until those are fixed the existing generator is the better
+one. (1) The four ``pfcq*ng`` arrays go ALL-ZERO: they accumulate the mass the ``< rlmin`` guards
+dump, and a margin that floors condensate above ``rlmin`` removes every dump -- the margin has to
+STRADDLE ``rlmin``, not clear it. (2) ``tendency_loc_t`` amplification reaches 1.1e14 because purely
+relative ``tendency_tmp_*`` increments create cells whose contributions cancel to ~1e-15; they need
+an absolute floor. (3) ``prainfrac_toprfz`` is STILL identically zero -- the rain/snow split leaves
+the cell above the 273.16 K crossing pure snow, which is exactly where the detector reads ``qr``.
+
+Also worth knowing before trusting any tolerance on this kernel: the UN-TRANSFORMED reference
+already amplifies a 1e-13 input perturbation by 5.5e4 on ``pfsqrf``. A legal reassociation at 1e-14
+moves that output by 5e-10, past the 1e-10 the vectorize leg asserts. If that survives conditioning,
+the tolerance is measuring the kernel's conditioning rather than the transform.
+
 ``generate_data_for_cloudsc.generate_cloudsc_inputs`` draws every field uniformly inside the
 ``[min, max]`` bounding box the dwarf reference dataset happens to occupy. A bounding box of a whole
 three-dimensional field is not a pointwise constraint, and drawing from it independently per cell
