@@ -426,3 +426,66 @@ def test_wcr_producer_into_transient_is_not_bypassed():
     assert _bypass_count(outer) == 0
     assert _count_assign_tasklets(outer) == 1
     assert [e.data.wcr for e in state.out_edges(producer)] == ["lambda x, y: x + y"]
+
+
+def ordered_but_unwritten_transients(sdfg: dace.SDFG) -> list[str]:
+    """Transients that still sit on an ordering edge in a state where nothing writes them."""
+    stranded = []
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for state in nsdfg.states():
+            for node in state.data_nodes():
+                if not nsdfg.arrays[node.data].transient:
+                    continue
+                ordered = any(e.data.is_empty() for e in state.all_edges(node))
+                written = any(not e.data.is_empty() for e in state.in_edges(node))
+                if ordered and not written:
+                    stranded.append(node.data)
+    return stranded
+
+
+def test_a_copy_taken_before_its_source_is_overwritten_stays_written():
+    """``T = G`` must be taken before ``G`` is overwritten, and an ordering edge out of ``T`` says so.
+    Rerouting ``T``'s consumer onto ``G`` left that ordering on a ``T`` nothing wrote, so the consumer read
+    ``G`` after the overwrite -- CloudSC's ``ztold = ztp1`` before ``ztp1 += zdtforc``."""
+    outer, body, state, _ = _build_outer_with_body_nsdfg()
+    body.add_array("G", (1, ), dace.float64, transient=False)
+    body.add_array("T", (1, ), dace.float64, transient=True)
+    body.add_array("OUT", (1, ), dace.float64, transient=False)
+    saved = state.add_access("T")
+    written_g = state.add_access("G")
+    save = state.add_tasklet("save", {"_in"}, {"_out"}, "_out = _in")
+    state.add_edge(state.add_access("G"), None, save, "_in", Memlet("G[0]"))
+    state.add_edge(save, "_out", saved, None, Memlet("T[0]"))
+    keep = state.add_tasklet("keep", {"_in"}, {"_out"}, "_out = _in")
+    state.add_edge(saved, None, keep, "_in", Memlet("T[0]"))
+    state.add_edge(keep, "_out", state.add_access("OUT"), None, Memlet("OUT[0]"))
+    bump = state.add_tasklet("bump", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    state.add_edge(state.add_access("G"), None, bump, "_in", Memlet("G[0]"))
+    state.add_edge(bump, "_out", written_g, None, Memlet("G[0]"))
+    state.add_nedge(saved, written_g, Memlet())
+
+    _bypass_count(outer)
+
+    assert ordered_but_unwritten_transients(outer) == []
+
+
+def test_a_producer_ordered_after_another_node_is_not_spliced_past_its_transient():
+    """An ordering edge INTO ``T`` sequences its producer; splicing the producer onto ``D`` strands that
+    ordering on a ``T`` nothing writes and lets the write run unordered."""
+    outer, body, state, _ = _build_outer_with_body_nsdfg()
+    body.add_array("A", (1, ), dace.float64, transient=False)
+    body.add_array("Y", (1, ), dace.float64, transient=False)
+    body.add_array("T", (1, ), dace.float64, transient=True)
+    body.add_array("D", (1, ), dace.float64, transient=False)
+    staged = state.add_access("T")
+    double = state.add_tasklet("double", {"_in"}, {"_out"}, "_out = _in * 2.0")
+    state.add_edge(state.add_access("A"), None, double, "_in", Memlet("A[0]"))
+    state.add_edge(double, "_out", staged, None, Memlet("T[0]"))
+    copy = state.add_tasklet("copy", {"_in"}, {"_out"}, "_out = _in")
+    state.add_edge(staged, None, copy, "_in", Memlet("T[0]"))
+    state.add_edge(copy, "_out", state.add_access("D"), None, Memlet("D[0]"))
+    state.add_nedge(state.add_access("Y"), staged, Memlet())
+
+    _bypass_count(outer)
+
+    assert ordered_but_unwritten_transients(outer) == []

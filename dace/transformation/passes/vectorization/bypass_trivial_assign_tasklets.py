@@ -284,8 +284,12 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             # while the seed and the reduce sat in separate states; state fusion put them
             # in one, so the accumulation has to be checked for on its own terms.
             src_accumulated = any(_accumulates_into_destination(pe) for pe in istate.in_edges(src_an))
+            # Ordering-edge guard: an empty memlet into ``src_an`` sequences the producer's write after
+            # another node. Splicing the producer onto ``dst_an`` would leave that ordering on a node
+            # nothing writes, and the write would run unordered.
+            src_ordered = any(pe.data is None or pe.data.is_empty() for pe in istate.in_edges(src_an))
             if (src_desc.transient and istate.in_edges(src_an) and not src_xstate and not src_at_scope
-                    and not src_accumulated):
+                    and not src_accumulated and not src_ordered):
                 # P -> AN(src) -> [_out=_in] -> AN(dst) becomes P -> AN(dst).
                 # Carry BOTH sides of the bypassed chain on the new memlet so
                 # ``an_side_subset`` can return the lane-dep subset for the
@@ -322,7 +326,12 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                 # An ordering-only out-edge is not a consumer to reroute into; counting it skips
                 # the direct-copy fallback below and strands ``src_an`` isolated.
                 consumers = [e for e in istate.out_edges(dst_an) if not e.data.is_empty()]
-                if not consumers:
+                # An ordering edge out of ``dst_an`` sequences WHEN the copy's value is taken -- CloudSC's
+                # ``ztold = ztp1`` before ``ztp1`` is overwritten. Rerouting the consumers onto ``src_an``
+                # strands that ordering on a transient nothing writes, and the consumers then read ``src``
+                # after the overwrite. Keep ``dst_an`` written through the direct copy below instead.
+                dst_ordered = any(e.data is None or e.data.is_empty() for e in istate.out_edges(dst_an))
+                if not consumers or dst_ordered:
                     # No downstream consumer to reroute the source into. Dropping the
                     # tasklet here would strand ``src_an`` as an ISOLATED node (invalid
                     # SDFG) -- the tasklet's incoming edge was ``src_an``'s only edge.
