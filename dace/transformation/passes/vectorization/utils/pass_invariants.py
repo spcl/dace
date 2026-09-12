@@ -172,7 +172,7 @@ def mask_connectors_are_bool(scope: SDFG | SDFGState) -> str | None:
     lifted if-conditions produce ``bool``; every mask consumer (TileBinop / TileUnop / TileITE
     ``_mask``) defined over a boolean tile.
     """
-    import dace.dtypes as _dt
+    import dace.dtypes as dtypes
     for sd, state in _iter_states(scope):
         for edge in state.edges():
             if edge.dst_conn != "_mask":
@@ -183,7 +183,7 @@ def mask_connectors_are_bool(scope: SDFG | SDFGState) -> str | None:
             desc = sd.arrays.get(mem.data)
             if desc is None:
                 continue
-            if desc.dtype != _dt.bool_:
+            if desc.dtype != dtypes.bool_:
                 return (f"{sd.name}.{state.label}: ``_mask`` connector on "
                         f"{type(edge.dst).__name__} ``{edge.dst.label}`` is fed by "
                         f"``{mem.data}`` of dtype {desc.dtype} (must be bool)")
@@ -238,7 +238,7 @@ def logical_binops_are_bool(scope: SDFG | SDFGState) -> str | None:
     """Every ``TileBinop`` with a logical op (``&&`` / ``||``) must have ``bool`` inputs
     (``_a``, ``_b``) and ``bool`` output (``_c``): operands = predicates / masks, result = predicate.
     """
-    import dace.dtypes as _dt
+    import dace.dtypes as dtypes
     from dace.libraries.tileops import TileBinop
     for sd, state in _iter_states(scope):
         for node in state.nodes():
@@ -251,7 +251,7 @@ def logical_binops_are_bool(scope: SDFG | SDFGState) -> str | None:
                     if e.data is None or e.data.data is None:
                         continue
                     desc = sd.arrays.get(e.data.data)
-                    if desc is not None and desc.dtype != _dt.bool_:
+                    if desc is not None and desc.dtype != dtypes.bool_:
                         return (f"{sd.name}.{state.label}: logical TileBinop ``{node.label}`` (op {node.op}) "
                                 f"connector ``{conn}`` is ``{e.data.data}`` of dtype {desc.dtype} (must be bool)")
     return None
@@ -477,7 +477,7 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
     silently wrong per-lane value at worst. Neither is a result the vectorizer may hand back, so the
     orchestrator refuses the kernel and leaves it correct + scalar instead.
     """
-    import dace.data as _dd
+    import dace.data as data
     for _state, nsdfg_node, _map_entry in _tile_tagged_bodies(sdfg, K):
         inner_sdfg = nsdfg_node.sdfg
         for state in inner_sdfg.states():
@@ -491,7 +491,7 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
                     if edge.data is None or edge.data.data is None:
                         continue
                     desc = inner_sdfg.arrays.get(edge.data.data)
-                    if not isinstance(desc, _dd.Array) or tuple(desc.shape) != tuple(widths):
+                    if not isinstance(desc, data.Array) or tuple(desc.shape) != tuple(widths):
                         continue
                     return (f"{inner_sdfg.name}.{state.label}: tasklet ``{node.label}`` still holds "
                             f"the scalar body ``{node.code.as_string.strip()!r}`` while its operand "
@@ -510,7 +510,7 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
     lanes and the result is broadcast -- with no compile error and no other invariant tripped.
     Refuse the kernel instead of handing back a silently wrong per-lane value.
     """
-    import dace.data as _dd
+    import dace.data as data
     for _state, nsdfg_node, _map_entry in _tile_tagged_bodies(sdfg, K):
         inner_sdfg = nsdfg_node.sdfg
         for state in inner_sdfg.states():
@@ -523,7 +523,7 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
                     if edge.data is None or edge.data.data is None:
                         continue
                     outer = inner_sdfg.arrays.get(edge.data.data)
-                    if not isinstance(outer, _dd.Array) or tuple(outer.shape) != tuple(widths):
+                    if not isinstance(outer, data.Array) or tuple(outer.shape) != tuple(widths):
                         continue
                     inner = node.sdfg.arrays.get(conn)
                     if inner is None:
@@ -544,7 +544,7 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> 
     exempt bridge name (gather idx tile / ITE materialised tile / cond broadcast tile / Scalar
     bridge). Per user example 2026-06-12: all non-scalar non-gather dims widened.
     """
-    import dace.data as _dd
+    import dace.data as data
     from dace.transformation.passes.vectorization.utils.tile_access import data_is_lane_indexed
     for _state, nsdfg_node, map_entry in _tile_tagged_bodies(sdfg, K):
         inner_sdfg = nsdfg_node.sdfg
@@ -554,11 +554,11 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> 
                 continue
             if name.startswith("_idx_") or name.startswith("_ite_sym_tile") or name.startswith("_cond_bcast"):
                 continue
-            if isinstance(desc, _dd.Scalar):
+            if isinstance(desc, data.Scalar):
                 continue
-            if isinstance(desc, _dd.View):
+            if isinstance(desc, data.View):
                 continue  # alias of the viewed array: widened in place, never descriptor-swapped
-            if not isinstance(desc, _dd.Array):
+            if not isinstance(desc, data.Array):
                 continue
             shape = tuple(desc.shape)
             if shape == tuple(widths):
