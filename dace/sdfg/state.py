@@ -7,6 +7,7 @@ import collections.abc
 import copy
 import inspect
 import itertools
+import sys
 import warnings
 import sympy
 from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
@@ -56,7 +57,9 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
+        # ``inspect.stack()`` builds a FrameInfo, with source lookups, for every frame up to the root just to
+        # read one: two frames up is this function's caller's caller.
+        caller = inspect.getframeinfo(sys._getframe(2), context=0)
         return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
     return None
