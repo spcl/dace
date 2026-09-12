@@ -2,13 +2,14 @@
 """ File containing DaCe-serializable versions of graphs, nodes, and edges. """
 
 from collections import deque, OrderedDict
+import copy
 import itertools
 import uuid
 import networkx as nx
 from dace import graphlib
 from dace.dtypes import deduplicate
 import dace.serialize
-from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
 from dace.ordered import OrderedSet
 
 
@@ -886,6 +887,129 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
 
     def is_multigraph(self) -> bool:
         return True
+
+
+#: Values ``copy.deepcopy`` returns as-is; copying them through the dispatcher costs a call each.
+IMMUTABLE_COPY_TYPES = (type(None), bool, int, float, str)
+#: networkx graph classes whose adjacency :func:`copy_nx_graph` rebuilds directly.
+STRUCTURALLY_COPIED_NX_TYPES = (nx.DiGraph, nx.MultiDiGraph)
+NX_GRAPH_FIELDS = frozenset({'graph', '_node', '_adj', '_succ', '_pred', '__networkx_cache__'})
+
+
+def copy_value(value: Any, memo: Dict[int, Any]) -> Any:
+    """``copy.deepcopy(value, memo)``, without the dispatch for a value that copies to itself."""
+    if type(value) in IMMUTABLE_COPY_TYPES:
+        return value
+    return copy.deepcopy(value, memo)
+
+
+def keep_alive(value: Any, memo: Dict[int, Any]) -> None:
+    # Same contract as ``copy._keep_alive``: an id in the memo must not be recycled mid-copy.
+    memo.setdefault(id(memo), []).append(value)
+
+
+def copy_attribute_dict(source: Dict[Any, Any], memo: Dict[int, Any]) -> Dict[Any, Any]:
+    known = memo.get(id(source))
+    if known is None:
+        known = {key: copy_value(value, memo) for key, value in source.items()}
+        memo[id(source)] = known
+        keep_alive(source, memo)
+    return known
+
+
+def copy_graph_edge(edge: Edge, memo: Dict[int, Any]) -> Edge:
+    """``copy.deepcopy(edge, memo)`` for an edge object, which has no ``__deepcopy__`` of its own."""
+    known = memo.get(id(edge))
+    if known is None:
+        known = object.__new__(type(edge))
+        memo[id(edge)] = known
+        keep_alive(edge, memo)
+        known.__dict__.update({key: copy_value(value, memo) for key, value in edge.__dict__.items()})
+    return known
+
+
+def copy_nx_graph(graph: Any, memo: Dict[int, Any]) -> Any:
+    """``copy.deepcopy(graph, memo)`` for a networkx (multi)digraph, rebuilt dict by dict.
+
+    Same result as the generic copy: every dict keeps its own key order, and the adjacency objects networkx
+    shares (``_adj is _succ``, and one edge-key or attribute dict under both ``_succ[u][v]`` and
+    ``_pred[v][u]``) stay shared in the copy. Any other graph type takes the generic path."""
+    known = memo.get(id(graph))
+    if known is not None:
+        return known
+    if (type(graph) not in STRUCTURALLY_COPIED_NX_TYPES or graph.__dict__.keys() != NX_GRAPH_FIELDS
+            or graph._adj is not graph._succ):
+        return copy.deepcopy(graph, memo)
+    clone = type(graph).__new__(type(graph))
+    memo[id(graph)] = clone
+    keep_alive(graph, memo)
+    multigraph = graph.is_multigraph()
+
+    def copied_node(node: Any) -> Any:
+        found = memo.get(id(node))
+        return found if found is not None else copy.deepcopy(node, memo)
+
+    def copied_adjacency(outer: Dict[Any, Dict[Any, Any]]) -> Dict[Any, Dict[Any, Any]]:
+        result = {}
+        for node, neighbors in outer.items():
+            inner = {}
+            for neighbor, entry in neighbors.items():
+                if multigraph:
+                    shared = memo.get(id(entry))
+                    if shared is None:
+                        shared = {key: copy_attribute_dict(attributes, memo) for key, attributes in entry.items()}
+                        memo[id(entry)] = shared
+                        keep_alive(entry, memo)
+                    inner[copied_node(neighbor)] = shared
+                else:
+                    inner[copied_node(neighbor)] = copy_attribute_dict(entry, memo)
+            result[copied_node(node)] = inner
+        return result
+
+    fields = clone.__dict__
+    fields['graph'] = copy.deepcopy(graph.graph, memo)
+    fields['_node'] = {
+        copied_node(node): copy_attribute_dict(attributes, memo)
+        for node, attributes in graph._node.items()
+    }
+    successors = copied_adjacency(graph._succ)
+    fields['_adj'] = successors
+    fields['_succ'] = successors
+    fields['_pred'] = copied_adjacency(graph._pred)
+    fields['__networkx_cache__'] = copy.deepcopy(graph.__dict__['__networkx_cache__'], memo)
+    return clone
+
+
+def copy_edge_index(edges: 'OrderedDict[Any, Edge]', memo: Dict[int, Any]) -> 'OrderedDict[Any, Edge]':
+    """Deep copy of an ``{edge or (src, dst): edge}`` index, keeping its order."""
+    result = type(edges)()
+    for key, edge in edges.items():
+        clone = copy_graph_edge(edge, memo)
+        if key is edge:
+            result[clone] = clone
+        else:
+            result[tuple(copy_value(node, memo) for node in key)] = clone
+    return result
+
+
+def copy_node_index(nodes: 'OrderedDict[Any, Any]', memo: Dict[int, Any]) -> 'OrderedDict[Any, Any]':
+    """Deep copy of a ``{node: (in-edge index, out-edge index)}`` index, keeping every order."""
+    result = type(nodes)()
+    for node, (in_edges, out_edges) in nodes.items():
+        result[copy_value(node, memo)] = (copy_edge_index(in_edges, memo), copy_edge_index(out_edges, memo))
+    return result
+
+
+def copy_graph_field(owner: Any, name: str, value: Any, memo: Dict[int, Any]) -> Any:
+    """The deep copy of ``owner.<name>``, taking the structural copy for an ordered graph's containers."""
+    if isinstance(owner, OrderedDiGraph):
+        if name == '_nx':
+            return copy_nx_graph(value, memo)
+        if name == '_nodes':
+            return copy_node_index(value, memo)
+        if name == '_edges':
+            return copy_edge_index(value, memo)
+    return copy_value(value, memo)
 
 
 def generate_element_id(element) -> str:

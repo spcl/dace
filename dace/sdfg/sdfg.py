@@ -18,7 +18,7 @@ import warnings
 import sympy
 
 import dace
-from dace.sdfg.graph import generate_element_id, SubgraphView
+from dace.sdfg.graph import copy_edge_index, copy_graph_field, copy_node_index, generate_element_id, SubgraphView
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
 from dace.sdfg.replace import replace_properties_dict
@@ -753,10 +753,10 @@ class SDFG(ControlFlowRegion):
             if k in ('_start_block', '_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg',
                      '_parent_nsdfg_node', '_cfg_list', '_transformation_hist', 'guid'):
                 continue
-            setattr(result, k, copy.deepcopy(v, memo))
+            setattr(result, k, copy_graph_field(self, k, v, memo))
         # Copy edges and nodes
-        result._edges = copy.deepcopy(self._edges, memo)
-        result._nodes = copy.deepcopy(self._nodes, memo)
+        result._edges = copy_edge_index(self._edges, memo)
+        result._nodes = copy_node_index(self._nodes, memo)
         # Both name a block, so they are copied with the nodes to land on the copies rather than the originals.
         result._start_block = copy.deepcopy(self._start_block, memo)
         result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)

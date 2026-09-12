@@ -27,7 +27,7 @@ from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumPro
                              SymbolicProperty, CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
-                             OrderedDiGraph, Edge, generate_element_id)
+                             OrderedDiGraph, Edge, copy_graph_field, generate_element_id)
 from dace.sdfg import propagation as sdprop
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_state
@@ -1418,7 +1418,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         for k, v in self.__dict__.items():
             if k in ('_parent_graph', '_sdfg', '_cfg_list', 'guid'):  # Skip derivative attributes and GUID
                 continue
-            setattr(result, k, copy.deepcopy(v, memo))
+            setattr(result, k, copy_graph_field(self, k, v, memo))
 
         result._parent_graph = memo.get(id(self._parent_graph))
         result._sdfg = memo.get(id(self._sdfg))
