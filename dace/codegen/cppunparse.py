@@ -1077,10 +1077,25 @@ class CPPUnparser:
             return
 
         self.write("(")
-        self.write(self.unop[t.op.__class__.__name__])
+        # ``~`` is how sympy prints a logical NOT; C's bitwise ``~`` of a 0/1 value is never false.
+        if isinstance(t.op, ast.Invert) and self.is_boolean(t.operand):
+            self.write("!")
+        else:
+            self.write(self.unop[t.op.__class__.__name__])
         self.write(" ")
         self.dispatch(t.operand)
         self.write(")")
+
+    def is_boolean(self, node: ast.AST) -> bool:
+        """Whether ``node`` is a comparison or logical expression by its shape alone."""
+        if isinstance(node, (ast.Compare, ast.BoolOp)):
+            return True
+        if isinstance(node, ast.UnaryOp):
+            return isinstance(node.op, ast.Not) or (isinstance(node.op, ast.Invert) and self.is_boolean(node.operand))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            return (node.func.id in self.callcmps or node.func.id in self.callbools
+                    or self.callunaryops.get(node.func.id) is ast.Not)
+        return isinstance(node, ast.Constant) and isinstance(node.value, bool)
 
     binop = {
         "Add": "+",
@@ -1282,9 +1297,12 @@ class CPPUnparser:
         "Ge": ast.GtE,
         "GtE": ast.GtE,
     }
+    # ``AND``/``OR`` are the names ``str()`` prints for ``dace.symbolic``'s logical functions.
     callbools = {
         "And": ast.And,
         "Or": ast.Or,
+        "AND": ast.And,
+        "OR": ast.Or,
     }
 
     # Bitwise and shift functions arriving as a CALL rather than an operator. ``dace.symbolic``
@@ -1308,6 +1326,7 @@ class CPPUnparser:
     callunaryops = {
         "bitwise_invert": ast.Invert,
         "__bitwise_invert": ast.Invert,
+        "Not": ast.Not,
     }
 
     # First-grade numeric typecast functions (``int32(x)`` / ``float64(x)``

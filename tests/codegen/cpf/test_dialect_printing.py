@@ -7,15 +7,21 @@ read that entry back -- emitting ``dace::math::pow`` into a translation unit tha
 header. The failure is order-dependent and silent, so the tests here drive the same expression in
 BOTH orders and assert the two dialects never collapse onto one answer.
 """
+import re
+
 import dace
+import numpy as np
 import sympy
 
 import pytest
 
 from dace import cpf_lowering, symbolic
 from dace.codegen.common import sym2cpp
+from dace.codegen.cpf import render
 from dace.cpf_lowering import Dialect
-from tests.codegen.cpf.conftest import assert_standalone
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from tests.codegen.cpf.conftest import assert_standalone, build_standalone, call_standalone
 
 X = sympy.Symbol('x')
 Y = sympy.Symbol('y')
@@ -223,3 +229,66 @@ def test_memoization_does_not_mix_precisions(first):
     primed_second = symbolic.symstr(expression, cpp_mode=True, fp_ctype=second)
     assert first in primed_first and second not in primed_first, primed_first
     assert second in primed_second and first not in primed_second, primed_second
+
+
+#: ``(condition text, what it evaluates to)``. ``AND``/``OR`` are what ``str()`` prints for a symbolic
+#: ``and``/``or``; ``Not`` is a built-in user function. All three reach the C++ unparser as CALLS, and
+#: ``str()`` prints a ``not`` as ``~``, which on a 0/1 value is C's bitwise NOT and never false.
+LOGICAL_CALLS = [
+    (str(symbolic.pystr_to_symbolic('n < 10 and n >= 5')), lambda n: n < 10 and n >= 5),
+    (str(symbolic.pystr_to_symbolic('n < 3 or n > 7')), lambda n: n < 3 or n > 7),
+    ('Not(n < 3)', lambda n: not n < 3),
+    ('AND(n > 2, Not(OR(n == 4, n == 6)))', lambda n: n > 2 and not (n == 4 or n == 6)),
+    (str(symbolic.pystr_to_symbolic('n > 2 and not (n < 5 and n > 3)')), lambda n: n > 2 and not (n < 5 and n > 3)),
+]
+
+
+def guarded_write_sdfg(name: str, condition: str) -> dace.SDFG:
+    """``out[0] = 1.0`` inside a conditional block guarded by the text ``condition`` over symbol ``n``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol('n', dace.int64)
+    sdfg.add_array('out', [1], dace.float64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    block = ConditionalBlock('guard')
+    sdfg.add_node(block)
+    sdfg.add_edge(entry, block, dace.InterstateEdge())
+    body = ControlFlowRegion('body', sdfg=sdfg)
+    state = body.add_state('write', is_start_block=True)
+    tasklet = state.add_tasklet('write_one', {}, {'o'}, 'o = 1.0')
+    state.add_edge(tasklet, 'o', state.add_access('out'), None, dace.Memlet('out[0]'))
+    block.add_branch(CodeBlock(condition), body)
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize('language', ['c', 'c++'])
+@pytest.mark.parametrize('index', range(len(LOGICAL_CALLS)), ids=[text for text, _ in LOGICAL_CALLS])
+def test_a_logical_call_renders_as_an_operator_that_compiles_and_evaluates(index: int, language: str):
+    """A logical call written out as a call reaches the compiler as an undeclared function, and CPF's
+    compile check refuses the whole form. Rendered as operators, each condition must also keep its
+    precedence, which running the unit over every ``n`` checks."""
+    condition, expected = LOGICAL_CALLS[index]
+    name = 'cpf_logical_call_%d_%s' % (index, language.replace('+', 'x'))
+    rendering = render(guarded_write_sdfg(name, condition), language=language)
+    assert not re.search(r'\b(AND|OR|Not)\s*\(', rendering.code), rendering.code
+    library = build_standalone(rendering.code, name, language=language)
+    for n in range(10):
+        out = np.zeros(1)
+        call_standalone(library, rendering.sdfg, {'out': out, 'n': n})
+        assert out[0] == (1.0 if expected(n) else 0.0), (condition, n)
+
+
+@pytest.mark.parametrize('dialect,expected', [(Dialect.STANDALONE, '((not (b)))'), (Dialect.STANDALONE_C, '((! (b)))')],
+                         ids=['c++', 'c'])
+def test_logical_not_prints_as_an_operator_of_the_dialect(dialect: Dialect, expected: str):
+    """``not`` is a C++ alternative token and, in C, a macro from a header CPF does not include."""
+    assert printed(sympy.Not(sympy.Symbol('b')), dialect) == expected
+
+
+def test_python_printing_of_logical_operators_ignores_an_ambient_c_dialect():
+    """Python-mode text is parsed again by DaCe, so it must stay Python whichever dialect is rendering."""
+    expression = symbolic.pystr_to_symbolic('AND(n < 10, Not(b))')
+    with cpf_lowering.dialect_scope(Dialect.STANDALONE_C):
+        text = symbolic.symstr(expression)
+    assert '&&' not in text and '!' not in text, text
+    assert symbolic.symstr(symbolic.pystr_to_symbolic(text)) == text

@@ -3750,12 +3750,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return lowered
             return 'dace::math::conj(%s)' % self._print(expr.args[0])
         # ``and`` / ``or`` are C++ alternative tokens; in C they are macros from ``<iso646.h>``,
-        # which CPF does not include, so the C dialect spells the operators.
+        # which CPF does not include, so the C dialect spells the operators. Python text keeps them.
         if str(expr.func) == 'AND':
-            keyword = '&&' if self.dialect is cpf_lowering.Dialect.STANDALONE_C else 'and'
+            keyword = '&&' if self.c_operators() else 'and'
             return f'(({self._print(expr.args[0])}) {keyword} ({self._print(expr.args[1])}))'
         if str(expr.func) == 'OR':
-            keyword = '||' if self.dialect is cpf_lowering.Dialect.STANDALONE_C else 'or'
+            keyword = '||' if self.c_operators() else 'or'
             return f'(({self._print(expr.args[0])}) {keyword} ({self._print(expr.args[1])}))'
         if str(expr.func) == 'Attr':
             # TODO: We want to check that args[0] is a Structure.
@@ -3948,7 +3948,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return '((%s) != (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
 
     def _print_Not(self, expr):
-        return '(not (%s))' % self._print(expr.args[0])
+        return '(%s (%s))' % ('!' if self.c_operators() else 'not', self._print(expr.args[0]))
+
+    def c_operators(self) -> bool:
+        """Whether logical operators must be spelled with C's symbols rather than C++/Python keywords."""
+        return self.cpp_mode and self.dialect is cpf_lowering.Dialect.STANDALONE_C
 
     def _print_Infinity(self, expr):
         # Print as ``inf`` so it round-trips back to ``oo`` via ``pystr_to_symbolic``.
