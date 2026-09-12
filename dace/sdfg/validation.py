@@ -6,7 +6,7 @@ import os
 import re
 import warnings
 from collections import Counter, defaultdict
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from dace import dtypes, graphlib as nx, subsets, symbolic
 from dace.dtypes import DebugInfo
@@ -431,6 +431,27 @@ def _is_scalar(edge: 'gr.MultiConnectorEdge[Memlet]', memlet_path: List['gr.Mult
     return True
 
 
+def below_lower_bound(memo: Dict[Tuple[str, Any, Any], bool], minel: Any, offset: Any) -> bool:
+    """``((minel + offset) < 0) == True``, answered once per distinct pair in ``memo``: every memlet of a
+    state repeats the same few bounds, and each sympy comparison runs the assumption system."""
+    key = ('lower', minel, offset)
+    verdict = memo.get(key)
+    if verdict is None:
+        verdict = ((minel + offset) < 0) == True
+        memo[key] = verdict
+    return verdict
+
+
+def past_upper_bound(memo: Dict[Tuple[str, Any, Any], bool], maxel: Any, extent: Any, offset: Any) -> bool:
+    """``((maxel + offset) >= extent) == True``, memoized like :func:`below_lower_bound`."""
+    key = ('upper', maxel + offset, extent)
+    verdict = memo.get(key)
+    if verdict is None:
+        verdict = ((maxel + offset) >= extent) == True
+        memo[key] = verdict
+    return verdict
+
+
 def validate_state(state: 'dace.sdfg.SDFGState',
                    state_id: int = None,
                    sdfg: 'dace.sdfg.SDFG' = None,
@@ -493,6 +514,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         raise InvalidSDFGError('State should be acyclic but contains cycles', sdfg, state_id, cfg=cfg)
 
     scope = state.scope_dict()
+    # Memlet bounds verdicts for this state, keyed by the compared expressions.
+    bounds_memo: Dict[Tuple[str, Any, Any], bool] = {}
 
     for nid, node in enumerate(state.nodes()):
         # Reference check
@@ -906,14 +929,17 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                                cfg=cfg)
 
                 # Bounds
-                if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), arr.offset)):
+                if any(
+                        below_lower_bound(bounds_memo, minel, off)
+                        for minel, off in zip(e.data.subset.min_element(), arr.offset)):
                     # In case of dynamic memlet, only output a warning
                     if e.data.dynamic:
                         warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
                     else:
                         raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid, cfg=cfg)
-                if any(((maxel + off) >= s) == True
-                       for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
+                if any(
+                        past_upper_bound(bounds_memo, maxel, s, off)
+                        for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential out-of-bounds memlet subset: {e}')
                     else:
@@ -933,7 +959,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
                 # Bounds
                 if any(
-                    ((minel + off) < 0) == True for minel, off in zip(e.data.other_subset.min_element(), arr.offset)):
+                        below_lower_bound(bounds_memo, minel, off)
+                        for minel, off in zip(e.data.other_subset.min_element(), arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential negative out-of-bounds memlet other_subset: {e}')
                     else:
@@ -942,8 +969,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                                    state_id,
                                                    eid,
                                                    cfg=cfg)
-                if any(((maxel + off) >= s) == True
-                       for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, arr.offset)):
+                if any(
+                        past_upper_bound(bounds_memo, maxel, s, off)
+                        for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential out-of-bounds memlet other_subset: {e}')
                     else:
