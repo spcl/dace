@@ -825,6 +825,12 @@ def reshape(pv: ProgramVisitor,
     if not isinstance(newshape, (list, tuple)):
         newshape = [newshape]
     newshape = [symbolic.pystr_to_symbolic(s) for s in newshape]
+    unknown = [i for i, s in enumerate(newshape) if symbolic.equal_valued(-1, s)]
+    if len(unknown) > 1:
+        raise ValueError('can only specify one unknown dimension')
+    if unknown:
+        known = data._prod([s for i, s in enumerate(newshape) if i != unknown[0]])
+        newshape[unknown[0]] = symbolic.int_floor(data._prod(desc.shape), known)
     undecided = False
     if strides is None:
         # numpy's own rule: a view exactly when the new shape factors into the source's
@@ -835,7 +841,12 @@ def reshape(pv: ProgramVisitor,
         if strides is None:
             from dace.frontend.python.replacements.array_creation import _numpy_copy  # Avoid import loop
             source = arr  # the name a write through the result would have had to reach
-            arr = _numpy_copy(pv, sdfg, state, arr)
+            # numpy copies in the order it READS: a packed-C copy under Fortran strides is a permutation.
+            if fortran_strides:
+                packed = data.core.packed_fortran_strides(desc.shape)
+            else:
+                packed = data.core.packed_c_strides(desc.shape)
+            arr = _numpy_copy(pv, sdfg, state, arr, packed)
             desc = sdfg.arrays[arr]
             # A PROVABLE copy is what numpy itself does, writes to the result included -- they land in
             # the copy there too. Only an UNDECIDED one has to refuse a write, because view and copy

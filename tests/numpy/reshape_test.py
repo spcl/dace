@@ -394,6 +394,84 @@ def test_the_view_rule_agrees_with_numpy(source):
     assert checked, 'no shape was exercised'
 
 
+@pytest.mark.parametrize('name, shape, newshape, dtype', [
+    ('swap_2d', (3, 4), (4, 3), dace.float64),
+    ('flatten_2d', (3, 4), (12, ), dace.float64),
+    ('merge_3d', (3, 4, 5), (5, 12), dace.float64),
+    ('split_3d', (3, 4, 5), (2, 5, 3, 2), dace.float64),
+    ('fft_block_4d', (3, 4, 5, 2), (60, 2), dace.complex128),
+    ('merge_4d', (2, 3, 4, 5), (6, 4, 5), dace.float64),
+    ('unknown_flatten', (3, 4, 5), (-1, ), dace.float64),
+    ('unknown_extent', (3, 4, 5), (4, -1), dace.float64),
+],
+                         ids=lambda v: v if isinstance(v, str) else '')
+def test_a_fortran_reshape_of_a_c_contiguous_array_reads_column_major(name, shape, newshape, dtype):
+    """numpy walks a C-contiguous source in column-major order and copies it; a packed-C copy under
+    Fortran strides permutes the values, which is what cegterg reads right after its FFTs."""
+
+    @dace.program
+    def fortran_reshape(x: dtype[shape]):
+        return x.reshape(newshape, order='F')
+
+    sdfg = fortran_reshape.to_sdfg()
+    sdfg.name = f'fortran_reshape_{name}'
+    x = np.arange(np.prod(shape)).reshape(shape).astype(dtype.type)
+    if np.iscomplexobj(x):
+        x = x + 1j * x[::-1].reshape(shape)
+    want = x.reshape(newshape, order='F')
+    got = sdfg(x=x.copy())
+    assert got.shape == want.shape and np.array_equal(got, want), got
+
+
+fortran_strided_3x4 = dace.data.Array(dace.float64, (3, 4), strides=(1, 3))
+
+
+@dace.program
+def fortran_reshape_of_a_slice(x: dace.float64[6, 8]):
+    return x[1:4, 2:6].reshape((2, 6), order='F')
+
+
+@dace.program
+def fortran_reshape_of_a_strided_view(x: dace.float64[6, 8]):
+    return x[:, ::2].reshape((8, 3), order='F')
+
+
+@dace.program
+def fortran_reshape_through_np_reshape(x: dace.float64[3, 4, 5]):
+    return np.reshape(x, (5, 12), order='F')
+
+
+@dace.program
+def c_reshape_of_a_fortran_strided_array(x: fortran_strided_3x4):
+    return x.reshape((4, 3))
+
+
+@pytest.mark.parametrize('program, source, reference', [
+    (fortran_reshape_of_a_slice, np.arange(48.0).reshape(6, 8), lambda x: x[1:4, 2:6].reshape((2, 6), order='F')),
+    (fortran_reshape_of_a_strided_view, np.arange(48.0).reshape(6, 8), lambda x: x[:, ::2].reshape((8, 3), order='F')),
+    (fortran_reshape_through_np_reshape, np.arange(60.0).reshape(3, 4, 5), lambda x: np.reshape(x, (5, 12), order='F')),
+    (c_reshape_of_a_fortran_strided_array, np.asfortranarray(np.arange(12.0).reshape(3, 4)), lambda x: x.reshape(
+        (4, 3))),
+],
+                         ids=lambda v: v.name if isinstance(v, dace.frontend.python.parser.DaceProgram) else '')
+def test_a_copying_reshape_lays_its_copy_out_in_the_order_it_reads(program, source, reference):
+    """A reshape that is not a view copies its source first, and the copy must be packed in the
+    reshape's own order. A copy keeping the source's layout reads a permutation of the values."""
+    got = program(source.copy(order='K'))
+    want = reference(source)
+    assert got.shape == want.shape and np.array_equal(got, want), got
+
+
+def test_a_reshape_with_two_unknown_extents_is_refused():
+
+    @dace.program
+    def two_unknowns(x: dace.float64[3, 4]):
+        return x.reshape((-1, -1))
+
+    with pytest.raises(ValueError, match='one unknown dimension'):
+        two_unknowns.to_sdfg()
+
+
 if __name__ == "__main__":
     test_reshape()
     test_reshape_dst()
@@ -415,3 +493,6 @@ if __name__ == "__main__":
     test_a_contiguous_source_reshapes_to_any_shape_as_a_view()
     test_a_provable_copy_takes_the_write_like_numpy()
     test_the_view_rule_agrees_with_numpy('row slice')
+    test_a_fortran_reshape_of_a_c_contiguous_array_reads_column_major('fft_block_4d', (3, 4, 5, 2), (60, 2),
+                                                                      dace.complex128)
+    test_a_reshape_with_two_unknown_extents_is_refused()

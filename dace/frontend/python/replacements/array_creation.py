@@ -23,13 +23,23 @@ import sympy as sp
 
 
 @oprepo.replaces('numpy.copy')
-def _numpy_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str):
+def _numpy_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, strides: Optional[Sequence[Any]] = None):
     """ Creates a copy of array a.
+
+        :param strides: Layout of the copy, e.g. packed in the order a reshape reads it. ``None`` keeps
+                        the layout of ``a``.
     """
     if a not in sdfg.arrays.keys():
         raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
     sample = sdfg.arrays[a]
-    if isinstance(sample, data.Array) and isinstance(sample, data.View):
+    if strides is not None:
+        name, desc = sdfg.add_transient(pv.get_target_name(),
+                                        sample.shape,
+                                        sample.dtype,
+                                        storage=sample.storage,
+                                        strides=strides,
+                                        find_new_name=True)
+    elif isinstance(sample, data.Array) and isinstance(sample, data.View):
         # A slice (e.g. path[:, 1]) is an ArrayView, a concrete subclass that the
         # generic transient dispatch below does not recognize (it keys on exact
         # type). The view's own shape is already the sliced shape, so materialize
