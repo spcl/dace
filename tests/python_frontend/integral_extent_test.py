@@ -113,3 +113,51 @@ def test_integer_only_operations_on_symbols_are_accepted_as_extents():
     integer_operation_extents(a, out)
     size = a.size
     assert out.tolist() == [a[0] * (size >> 1), a[1] * (size % 3 + 1), a[2] * ((size & 7) + 1)], out
+
+
+def test_an_extent_divided_by_an_integer_allocates_by_integer_division():
+    """``N / 4`` built through the SDFG API is a Rational coefficient, not a float, and codegen sizes it with C
+    integer division exactly as main does."""
+    sdfg = dace.SDFG('rational_extent')
+    sdfg.add_array('x', [N / 4], dace.float64)
+    sdfg.add_transient('t', [N / 4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', {'i': '0:N/4'})
+    tasklet = state.add_tasklet('copy', {'a'}, {'b'}, 'b = a')
+    state.add_memlet_path(state.add_read('x'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('x[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('t'), src_conn='b', memlet=dace.Memlet('t[i]'))
+
+    code = sdfg.generate_code()[0].clean_code
+
+    assert sdfg.arrays['t'].shape == (N / 4, )
+    assert '{ return (N / 4); }' in code, code  # the allocation's size helper
+    assert 'i < (N / 4);' in code, code
+
+
+def test_a_float_symbol_divided_by_an_integer_is_still_refused():
+    """Reading a Rational as integer division covers the coefficient only, never a float-typed operand."""
+    sdfg = dace.SDFG('rational_float_extent')
+
+    with pytest.raises(TypeError, match='integral'):
+        sdfg.add_array('x', [FN / 4], dace.float64)
+
+
+def test_an_integer_cast_divided_by_an_integer_is_accepted_as_an_extent():
+    """The cast is integral whatever it reads and the Rational reads as integer division, so both must count."""
+    extent = dace.symbolic.int64(FN) / 2
+    sdfg = dace.SDFG('cast_division_extent')
+
+    sdfg.add_array('x', [extent], dace.float64)
+
+    assert sdfg.arrays['x'].shape == (extent, )
+
+
+def test_an_extent_behind_integer_casts_survives_an_sdfg_json_round_trip():
+    """The reload rebuilt ``int64`` as an opaque function of unknown integrality and refused the extent."""
+    extent = dace.symbolic.pystr_to_symbolic('int64(la) + int64(lb) + 1')
+    sdfg = dace.SDFG('cast_extent')
+    sdfg.add_array('x', [extent], dace.float64)
+
+    reloaded = dace.SDFG.from_json(sdfg.to_json())
+
+    assert reloaded.arrays['x'].shape == (extent, )

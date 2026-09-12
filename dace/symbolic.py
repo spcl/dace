@@ -3079,6 +3079,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'diag': sympy.Symbol('diag'),
         'jn': sympy.Symbol('jn'),
         **_SERIALIZED_OPERATOR_FUNCTIONS,
+        # ``int64(x)`` must come back as the cast class: an opaque ``Function`` loses ``is_integer``.
+        **_CAST_CLASSES,
     }
     _constants = {
         'True': sympy.true,
@@ -4038,12 +4040,16 @@ INTEGRAL_INDEX_OPS = (sympy.Add, sympy.Mul, sympy.Pow, sympy.Min, sympy.Max, sym
 ROUNDING_INDEX_OPS = (sympy.floor, sympy.ceiling, int_floor, int_ceil)
 
 
-def integral_index_expression(expr) -> bool:
+def integral_index_expression(expr, rational_is_integer_division: bool = False) -> bool:
     """Whether ``expr`` is integer arithmetic -- an extent, a range end, a shape.
 
     Not the same question as :func:`infer_fp_ctype`, which reads the ATOMS: every atom of
     ``sin(n)`` is an integer symbol, and the value is a double. Answered from the operations
     instead, so an unrecognized function is floating by default.
+
+    :param rational_is_integer_division: Count a ``Rational`` such as the ``1/4`` of ``n/4`` as integral.
+                                         Without a floating context the printer emits it as C integer
+                                         division, which is how an array extent has always read it.
     """
     if not isinstance(expr, sympy.Basic):
         return False
@@ -4051,13 +4057,15 @@ def integral_index_expression(expr) -> bool:
         return True
     traversal = sympy.preorder_traversal(expr)
     for node in traversal:
-        if isinstance(node, ROUNDING_INDEX_OPS):
-            traversal.skip()  # its own argument need not be integral
+        if isinstance(node, ROUNDING_INDEX_OPS) or (isinstance(node, sympy.Function) and node.is_integer):
+            traversal.skip()  # an integer-valued call such as ``int64(x)``: its argument need not be integral
             continue
         if isinstance(node, (symbol, TypedConstant)):
             if node.dtype not in dtypes.INTEGER_TYPES:
                 return False
         elif isinstance(node, sympy.Integer):
+            continue
+        elif rational_is_integer_division and isinstance(node, sympy.Rational):
             continue
         elif isinstance(node, sympy.Symbol):
             if node.is_integer is not True:

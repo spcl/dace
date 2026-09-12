@@ -97,7 +97,7 @@ class Data:
                 raise TypeError('Shape must be a list or tuple of integer values '
                                 'or symbols')
             extent = s.expr if isinstance(s, symbolic.SymExpr) else s
-            if not symbolic.integral_index_expression(extent):
+            if not symbolic.integral_index_expression(extent, rational_is_integer_division=True):
                 raise TypeError(f'Array extent {s} is not integral: a shape entry must be an int '
                                 'or an integer-valued symbolic expression')
         if any((shp < 0) == True for shp in self.shape):

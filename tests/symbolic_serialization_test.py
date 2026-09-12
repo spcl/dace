@@ -828,6 +828,18 @@ def test_operator_derived_function_roundtrip_preserves_class_identity(expr_str):
     assert type(restored) is type(expr)
 
 
+@pytest.mark.parametrize('cast_name', ['int64', 'uint16', 'bool_', 'float32'])
+def test_typecast_roundtrip_preserves_class_identity(cast_name):
+    """A ``dace.<type>(x)`` cast deserializes to its cast class, not an opaque ``sympy.Function`` of unknown kind."""
+    expr = symbolic.pystr_to_symbolic(f'{cast_name}(a)')
+
+    restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
+
+    assert type(restored) is type(expr)
+    assert type(expr).__name__ == cast_name
+    assert restored.is_integer is expr.is_integer
+
+
 def test_ceiling_of_roundtripped_floor_division_simplifies():
     """The symbolic expression: ``ceiling(__int_floor(a, b) - c)`` must collapse
     back to ``__int_floor(a, b) - c`` after a serialize/deserialize round-trip,
