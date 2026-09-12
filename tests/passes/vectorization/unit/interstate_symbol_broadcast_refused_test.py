@@ -11,9 +11,9 @@ loop-invariant"; the assignment chain has to be resolved before the operand can 
 
 Pack/expand is not vectorizable by broadcast in any case: ``if (b[i] > 0) { a[++j] = b[i]; }``
 advances ``j`` under a data-dependent predicate, so a lane-parallel form needs a real prefix sum of
-the mask. Canonicalization does build that scan; the tile widener then miscompiled the MASK map
-feeding it. The contract pinned here is the honest one -- refuse, leave the kernel scalar and
-correct -- not a silent wrong answer.
+the mask. Canonicalization builds that scan, and the MASK map feeding it may tile only when its
+comparison reads the array through a per-lane ``TileLoad``. That is the structural contract pinned
+here, beside the numeric one.
 
 The over-refusal control matters as much as the refusal: an interstate assignment that reads a
 LOOP-INVARIANT element (``alpha = c[0]``) is a genuine broadcast and must still tile, or the guard
@@ -30,7 +30,9 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.tileops import TileBinop, TileLoad
 from dace.libraries.tileops._dispatch import detect_host_isa
+from dace.libraries.tileops.nodes.tile_binop import COMPARISON_OPS
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -119,6 +121,22 @@ def map_steps(sdfg):
     return [str(m.map.range[-1][2]) for m, _ in sdfg.all_nodes_recursive() if isinstance(m, nd.MapEntry)]
 
 
+def comparison_operand_loads(sdfg: dace.SDFG) -> list[tuple[str, list[str]]]:
+    """For every tiled comparison, its ``_a`` operand kind and the arrays a ``TileLoad`` writes into that operand."""
+    found = []
+    for node, state in sdfg.all_nodes_recursive():
+        if not (isinstance(node, TileBinop) and node.op in COMPARISON_OPS):
+            continue
+        # The operand may be a copy of the tile the load wrote (``b_tile -> b_index``); follow the copies.
+        producers = [e.src for e in state.in_edges(node) if e.dst_conn == "_a"]
+        while producers and all(isinstance(p, nd.AccessNode) for p in producers):
+            producers = [e.src for p in producers for e in state.in_edges(p)]
+        loads = [p for p in producers if isinstance(p, TileLoad)]
+        sources = sorted(e.data.data for load in loads for e in state.in_edges(load) if e.dst_conn == "_src")
+        found.append((node.kind_a, sources))
+    return found
+
+
 def run(sdfg, kwargs, buf, ref, label):
     """Compile + run in-process and compare.
 
@@ -156,18 +174,23 @@ def test_expand_matches_numpy(n):
     run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref, f'expand n={n}')
 
 
-def test_pack_is_refused_rather_than_broadcast():
-    """Structural half: the mask map must stay unstrided. Before the guard it was strided by 8 and
-    its predicate read ``b`` at the TILE BASE only, so all 8 lanes shared lane 0's verdict."""
-    assert set(map_steps(vectorized(pack_kernel, 'pack_struct'))) == {'1'}, \
-        'pack kernel was tiled; its mask predicate broadcasts the tile-base element across the lanes'
+def test_pack_mask_compares_every_lane_of_b():
+    """Structural half: the mask map tiles, and its predicate compares ``b`` loaded per lane. The
+    broadcast this guards against read ``b`` at the TILE BASE only, so all 8 lanes shared lane 0's
+    verdict -- that form has no ``TileLoad`` feeding the comparison."""
+    sdfg = vectorized(pack_kernel, 'pack_struct')
+
+    assert str(W) in map_steps(sdfg), 'the pack mask map did not tile'
+    assert comparison_operand_loads(sdfg) == [('Tile', ['b'])]
 
 
-def test_expand_is_refused_rather_than_broadcast():
-    """Structural half for TSVC s342 (the docstring's second named hazard): the mask map feeding
-    the gather index must stay unstrided, the same refusal the pack (s341) kernel gets."""
-    assert set(map_steps(vectorized(expand_kernel, 'expand_struct'))) == {'1'}, \
-        'expand kernel was tiled; its mask predicate broadcasts the tile-base element across the lanes'
+def test_expand_mask_compares_every_lane_of_a():
+    """Structural half for TSVC s342: the mask map feeding the gather index tiles, and its predicate
+    compares ``a`` loaded per lane, the same contract the pack (s341) kernel gets."""
+    sdfg = vectorized(expand_kernel, 'expand_struct')
+
+    assert str(W) in map_steps(sdfg), 'the expand mask map did not tile'
+    assert comparison_operand_loads(sdfg) == [('Tile', ['a'])]
 
 
 def test_invariant_interstate_symbol_still_tiles():
@@ -192,6 +215,7 @@ if __name__ == '__main__':
     test_pack_matches_numpy(61)
     test_expand_matches_numpy(64)
     test_expand_matches_numpy(61)
-    test_pack_is_refused_rather_than_broadcast()
+    test_pack_mask_compares_every_lane_of_b()
+    test_expand_mask_compares_every_lane_of_a()
     test_invariant_interstate_symbol_still_tiles()
     test_invariant_interstate_symbol_matches_numpy()

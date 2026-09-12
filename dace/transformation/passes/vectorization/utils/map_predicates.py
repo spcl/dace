@@ -402,30 +402,38 @@ def map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry) 
 
     Body states are enumerated with ``all_states()`` so a write nested inside a control-flow region
     (loop / conditional) of the body NSDFG is not missed (top-level ``states()`` would skip it).
+
+    :raises StopIteration: at the CALL, not on first iteration, when ``map_entry`` has no exit in its
+        scope. Raised inside a generator it would surface as ``RuntimeError`` (PEP 479), past every
+        caller that refuses such a map by catching ``StopIteration``.
     """
     mx = state.exit_node(map_entry)
-    sdfg = state.sdfg
-    outer_params = tuple(map_entry.map.params)
-    flat_aliases = {p: p for p in outer_params}
-    for e in list(state.in_edges(mx)):  # writes OUT of the body
-        if e.data is not None and e.data.data is not None and e.data.subset is not None:
-            desc = sdfg.arrays.get(e.data.data)
-            if desc is not None and not desc.transient:
-                yield PerLaneWrite(e.data.subset, sdfg, state, outer_params, desc, flat_aliases)
-    for node in map_body_nodes(state, map_entry):
-        if isinstance(node, dace.nodes.NestedSDFG):
-            inner_iter = _inner_lane_vars(outer_params, node)
-            inner_aliases = lane_param_aliases(outer_params, node)
-            for ist in node.sdfg.all_states():
-                for an in ist.nodes():
-                    if not isinstance(an, dace.nodes.AccessNode):
-                        continue
-                    d = node.sdfg.arrays.get(an.data)
-                    if d is None or d.transient:
-                        continue
-                    for e in ist.in_edges(an):  # writes into the AN
-                        if e.data is not None and e.data.subset is not None:
-                            yield PerLaneWrite(e.data.subset, node.sdfg, ist, inner_iter, d, inner_aliases)
+
+    def writes() -> Iterator[PerLaneWrite]:
+        sdfg = state.sdfg
+        outer_params = tuple(map_entry.map.params)
+        flat_aliases = {p: p for p in outer_params}
+        for e in list(state.in_edges(mx)):  # writes OUT of the body
+            if e.data is not None and e.data.data is not None and e.data.subset is not None:
+                desc = sdfg.arrays.get(e.data.data)
+                if desc is not None and not desc.transient:
+                    yield PerLaneWrite(e.data.subset, sdfg, state, outer_params, desc, flat_aliases)
+        for node in map_body_nodes(state, map_entry):
+            if isinstance(node, dace.nodes.NestedSDFG):
+                inner_iter = _inner_lane_vars(outer_params, node)
+                inner_aliases = lane_param_aliases(outer_params, node)
+                for ist in node.sdfg.all_states():
+                    for an in ist.nodes():
+                        if not isinstance(an, dace.nodes.AccessNode):
+                            continue
+                        d = node.sdfg.arrays.get(an.data)
+                        if d is None or d.transient:
+                            continue
+                        for e in ist.in_edges(an):  # writes into the AN
+                            if e.data is not None and e.data.subset is not None:
+                                yield PerLaneWrite(e.data.subset, node.sdfg, ist, inner_iter, d, inner_aliases)
+
+    return writes()
 
 
 def map_body_is_tile_lowerable(state: SDFGState,
