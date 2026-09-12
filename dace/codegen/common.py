@@ -42,8 +42,14 @@ def find_outgoing_edges(node, dfg):
 def _sym2cpp(s, arrayexprs, dialect, fp_ctype):
     # ``pyexpr2cpp`` parses this text again with the PYTHON parser, which ``static_cast<T>(x)``
     # does not survive: it comes back as ``(static_cast < T) > (x)``. ``reparsed`` says so.
-    return cppunparse.pyexpr2cpp(
-        symbolic.symstr(s, arrayexprs, cpp_mode=True, dialect=dialect, fp_ctype=fp_ctype, reparsed=True))
+    text = symbolic.symstr(s, arrayexprs, cpp_mode=True, dialect=dialect, fp_ctype=fp_ctype, reparsed=True)
+    try:
+        ast.parse(text)
+    except SyntaxError:
+        # Already C++ (a ``dace::math::ipow`` beside the cast, say), so ``pyexpr2cpp`` hands it back
+        # untouched and a bare ``int64(x)`` would reach the compiler: spell the cast for it instead.
+        return symbolic.symstr(s, arrayexprs, cpp_mode=True, dialect=dialect, fp_ctype=fp_ctype, reparsed=False)
+    return cppunparse.pyexpr2cpp(text)
 
 
 def sym2cpp(s,

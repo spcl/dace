@@ -11,6 +11,8 @@ reasoning, and print to the matching ``dace::<type>(x)`` C++ cast
 (truncating for int) -- so the SAME bare spelling round-trips through the
 sympy printer and cppunparse to identical code.
 """
+import re
+import numpy as np
 import pytest
 
 import dace
@@ -87,3 +89,33 @@ def test_all_int_width_casts_are_integer():
         assert pystr_to_symbolic(f"{name}(x)").is_integer is True
     for name in ("float16", "float32", "float64"):
         assert pystr_to_symbolic(f"{name}(x)").is_real is True
+
+
+def test_a_cast_beside_a_qualified_call_in_a_view_offset_is_spelled_for_cpp():
+    """``int(index[i, 2])`` indexing a flattened block array puts ``int64(bid) * K**2`` in the view's
+    pointer offset. Its reparsed printing carries ``dace::math::ipow``, which the Python reparse cannot
+    read and hands back untouched, so a bare ``int64(`` reached the compiler (dbcsr)."""
+    N = dace.symbol('N', dtype=dace.int64)
+    K = dace.symbol('K', dtype=dace.int64)
+
+    @dace.program
+    def block_matmul(index: dace.int32[N, 3], blocks: dace.float64[N, K, K], out: dace.float64[K, K]):
+        for i in range(N):
+            bid = int(index[i, 2])
+            if bid < 0:
+                continue
+            out[:, :] += blocks[bid] @ blocks[bid]
+
+    sdfg = block_matmul.to_sdfg(simplify=True)
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    offsets = [line for line in code.splitlines() if "= &blocks[" in line]
+    assert offsets, "no view offset into blocks was emitted"
+    assert all("dace::int64(" in line for line in offsets), offsets
+    assert not re.search(r"(?<![:\w])int64\(", code), "a bare int64( cast reached the C++ code"
+
+    index = np.array([[0, 0, 1], [0, 0, -1], [0, 0, 0]], dtype=np.int32)
+    blocks = np.random.default_rng(3).standard_normal((3, 2, 2))
+    out = np.zeros((2, 2))
+    sdfg(index=index, blocks=blocks, out=out, N=3, K=2)
+    expected = blocks[1] @ blocks[1] + blocks[0] @ blocks[0]
+    np.testing.assert_allclose(out, expected, rtol=1e-12)
