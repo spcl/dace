@@ -90,10 +90,16 @@ class Data:
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.SymbolicBasic))
-               for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer values '
-                            'or symbols')
+        for s in self.shape:
+            if isinstance(s, Integral):
+                continue
+            if not isinstance(s, (symbolic.SymExpr, symbolic.symbol, symbolic.SymbolicBasic)):
+                raise TypeError('Shape must be a list or tuple of integer values '
+                                'or symbols')
+            extent = s.expr if isinstance(s, symbolic.SymExpr) else s
+            if not symbolic.integral_index_expression(extent):
+                raise TypeError(f'Array extent {s} is not integral: a shape entry must be an int '
+                                'or an integer-valued symbolic expression')
         if any((shp < 0) == True for shp in self.shape):
             raise TypeError(f'Found negative shape in Data, its shape was {self.shape}')
         return True

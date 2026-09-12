@@ -4025,7 +4025,13 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 #: Node types an index expression is built from. A whitelist, not a list of floating functions to
 #: avoid: ``sin(n)`` over an integer symbol is a double, and so is any function added later, so
 #: anything unrecognized has to count as floating.
-INTEGRAL_INDEX_OPS = (sympy.Add, sympy.Mul, sympy.Pow, sympy.Min, sympy.Max)
+INTEGRAL_INDEX_OPS = (sympy.Add, sympy.Mul, sympy.Pow, sympy.Min, sympy.Max, sympy.Mod, sympy.Abs, bitwise_and,
+                      bitwise_or, bitwise_xor, bitwise_invert, left_shift, right_shift)
+
+#: Rounding nodes that make ANY real argument an integer, regardless of whether the argument
+#: itself is integral -- a strided-slice extent such as ``ceiling((j - i) / step)`` stays integral
+#: even though ``(j - i) / step`` carries a Rational coefficient.
+ROUNDING_INDEX_OPS = (sympy.floor, sympy.ceiling, int_floor, int_ceil)
 
 
 def integral_index_expression(expr) -> bool:
@@ -4039,7 +4045,11 @@ def integral_index_expression(expr) -> bool:
         return False
     if expr.is_integer:
         return True
-    for node in sympy.preorder_traversal(expr):
+    traversal = sympy.preorder_traversal(expr)
+    for node in traversal:
+        if isinstance(node, ROUNDING_INDEX_OPS):
+            traversal.skip()  # its own argument need not be integral
+            continue
         if isinstance(node, (symbol, TypedConstant)):
             if node.dtype not in dtypes.INTEGER_TYPES:
                 return False

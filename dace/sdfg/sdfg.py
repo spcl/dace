@@ -38,6 +38,20 @@ from typing import BinaryIO
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
+
+def normalize_shape_entry(entry: Union[Integral, str, symbolic.SymbolicType]) -> Union[int, symbolic.SymbolicType]:
+    """One shape entry as an ``int`` or a symbolic expression, never truncated: ``int(4.7)`` floors, so only
+    integers and integer strings go through ``int`` and the descriptor's integral check sees everything else."""
+    if isinstance(entry, Integral):
+        return int(entry)
+    if isinstance(entry, str):
+        try:
+            return int(entry)
+        except ValueError:
+            pass
+    return dace.symbolic.pystr_to_symbolic(entry)
+
+
 #: How an MPI launcher tells a rank its rank, most specific first. Read instead of importing
 #: mpi4py, which is optional and initializes MPI. All are job-unique; node-local counters are not.
 #: Only these mean "this process is a rank of an MPI job" -- a Slurm task is not.
@@ -2114,14 +2128,7 @@ class SDFG(ControlFlowRegion):
                   may_alias=False) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
-        # convert strings to int if possible
-        newshape = []
-        for s in shape:
-            try:
-                newshape.append(int(s))
-            except:
-                newshape.append(dace.symbolic.pystr_to_symbolic(s))
-        shape = newshape
+        shape = [normalize_shape_entry(s) for s in shape]
         strides = strides or None
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
@@ -2158,14 +2165,7 @@ class SDFG(ControlFlowRegion):
                  may_alias=False) -> Tuple[str, dt.ArrayView]:
         """ Adds a view to the SDFG data descriptor store. """
 
-        # convert strings to int if possible
-        newshape = []
-        for s in shape:
-            try:
-                newshape.append(int(s))
-            except:
-                newshape.append(dace.symbolic.pystr_to_symbolic(s))
-        shape = newshape
+        shape = [normalize_shape_entry(s) for s in shape]
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
@@ -2200,14 +2200,7 @@ class SDFG(ControlFlowRegion):
                       may_alias=False) -> Tuple[str, dt.Reference]:
         """ Adds a reference to the SDFG data descriptor store. """
 
-        # convert strings to int if possible
-        newshape = []
-        for s in shape:
-            try:
-                newshape.append(int(s))
-            except:
-                newshape.append(dace.symbolic.pystr_to_symbolic(s))
-        shape = newshape
+        shape = [normalize_shape_entry(s) for s in shape]
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
