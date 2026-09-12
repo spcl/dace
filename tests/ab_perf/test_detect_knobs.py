@@ -4,8 +4,8 @@ Runs each non-blocked canonicalize knob A/B on a detected target device
 (``cpu`` is always available; ``gpu`` runs only when cupy + a CUDA device
 are present) and emits a recommended per-target preset table. Use the
 output to verify (or update) the in-source presets at
-``dace.transformation.passes.canonicalize.pipeline._CPU_DEFAULTS`` /
-``_GPU_DEFAULTS``.
+``dace.transformation.passes.canonicalize.pipeline.CPU_DEFAULTS`` /
+``GPU_DEFAULTS``.
 
 Knob coverage:
 
@@ -32,7 +32,7 @@ from typing import Dict
 import numpy as np
 import pytest
 
-from dace.transformation.passes.canonicalize.pipeline import (_CPU_DEFAULTS, _GPU_DEFAULTS)
+from dace.transformation.passes.canonicalize.pipeline import (CPU_DEFAULTS, GPU_DEFAULTS)
 
 from tests.ab_perf._harness import time_cpu, time_gpu, to_gpu
 from tests.ab_perf.test_for_1133_ab import (_build_variant_a as _for1133_a, _build_variant_b as _for1133_b, _to_gpu_sdfg
@@ -270,7 +270,7 @@ def test_detect_knobs(target, ab_iters, ab_warmup, ab_gpu_enabled, capsys):
         'scatter_to_guarded_maps': _measure_scatter(target, iters, warmup),
     }
 
-    in_source = _CPU_DEFAULTS if target == 'cpu' else _GPU_DEFAULTS
+    in_source = CPU_DEFAULTS if target == 'cpu' else GPU_DEFAULTS
 
     lines = ['', f'== detect_knobs target={target}  iters={iters} ==']
     lines.append(f'  recommended:                 {recommended}')

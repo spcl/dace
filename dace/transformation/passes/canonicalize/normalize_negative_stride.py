@@ -41,7 +41,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 
 #: Prefix for the fresh positive-direction iterator the rewrite introduces.
-_POS_ITER_PREFIX = '_loop_pos_'
+POS_ITER_PREFIX = '_loop_pos_'
 
 
 def _is_negative(value) -> bool:
@@ -58,13 +58,13 @@ def _next_id(sdfg: SDFG) -> int:
     used: Dict[int, None] = {}
     for sd in sdfg.all_sdfgs_recursive():
         for s in list(sd.symbols.keys()) + list(sd.free_symbols):
-            if s.startswith(_POS_ITER_PREFIX):
-                tail = s[len(_POS_ITER_PREFIX):]
+            if s.startswith(POS_ITER_PREFIX):
+                tail = s[len(POS_ITER_PREFIX):]
                 if tail.isdigit():
                     used[int(tail)] = None
         for cfg in sd.all_control_flow_regions():
-            if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(_POS_ITER_PREFIX):
-                tail = cfg.loop_variable[len(_POS_ITER_PREFIX):]
+            if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(POS_ITER_PREFIX):
+                tail = cfg.loop_variable[len(POS_ITER_PREFIX):]
                 if tail.isdigit():
                     used[int(tail)] = None
     n = 0
@@ -115,7 +115,7 @@ class NormalizeNegativeStride(ppl.Pass):
             return False
 
         old_var = loop.loop_variable
-        new_var = f"{_POS_ITER_PREFIX}{_next_id(sdfg)}"
+        new_var = f"{POS_ITER_PREFIX}{_next_id(sdfg)}"
         # Declare the new iterator. Inherit the old variable's dtype where
         # known so downstream type-inference doesn't have to redo the work.
         new_var_dtype = sdfg.symbols.get(old_var, dace.int64)

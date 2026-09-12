@@ -223,7 +223,7 @@ class RerollUnrolledLoops(ppl.Pass):
     #: Sympy class names of associative binary operations recognised as the
     #: merge tasklet's reduction op. Indexed via ``type(expr).__name__`` so we
     #: stay on the :mod:`dace.symbolic` interface (no direct ``import sympy``).
-    _ASSOC_SYMPY_KIND = {'Add': '+', 'Mul': '*', 'Min': 'min', 'Max': 'max'}
+    ASSOC_SYMPY_KIND = {'Add': '+', 'Mul': '*', 'Min': 'min', 'Max': 'max'}
 
     def _associative_op_kind(self, node) -> Optional[str]:
         """If ``node`` is a binary associative-op tasklet over its two inputs,
@@ -253,7 +253,7 @@ class RerollUnrolledLoops(ppl.Pass):
             return None
         if len(expr.args) != 2:
             return None
-        return self._ASSOC_SYMPY_KIND.get(type(expr).__name__)
+        return self.ASSOC_SYMPY_KIND.get(type(expr).__name__)
 
     def _is_transparent_spine(self, state: SDFGState, node) -> bool:
         """Whether ``node`` carries a value through the reduction without itself

@@ -13,7 +13,7 @@ from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, _SKEW_T_PREFIX, _SKEW_P_PREFIX)
+from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, SKEW_T_PREFIX, SKEW_P_PREFIX)
 
 # The corpus program itself, imported as a package: its ``@dace.tasklet`` bodies lower to the
 # exact 2-D wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew.
@@ -58,13 +58,13 @@ def test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_ma
 
     loops = _loops(sdfg)
     assert len(loops) == 1, f"expected 1 outer t-loop after skew + inner-map; got {len(loops)}"
-    assert loops[0].loop_variable.startswith(_SKEW_T_PREFIX), \
+    assert loops[0].loop_variable.startswith(SKEW_T_PREFIX), \
         f"surviving loop should be the diagonal ``t``; got {loops[0].loop_variable}"
 
     map_entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert len(map_entries) == 1, f"expected exactly 1 inner Map; got {len(map_entries)}"
     map_node = map_entries[0].map
-    assert len(map_node.params) == 1 and map_node.params[0].startswith(_SKEW_P_PREFIX), \
+    assert len(map_node.params) == 1 and map_node.params[0].startswith(SKEW_P_PREFIX), \
         f"inner Map should iterate over ``p``; got params={map_node.params}"
 
 
@@ -104,7 +104,7 @@ def test_wavefront_skew_then_l2m_parallelises_inner():
     # ``LoopToMap`` lifted the sequential diagonal, which is the race this test exists to forbid.
     loops = _loops(sdfg)
     assert n_loops == 1, f"the diagonal t-loop must survive LoopToMap; got {[c.loop_variable for c in loops]}"
-    assert loops[0].loop_variable.startswith(_SKEW_T_PREFIX), \
+    assert loops[0].loop_variable.startswith(SKEW_T_PREFIX), \
         f"the surviving loop should be the diagonal ``t``; got {loops[0].loop_variable}"
 
 
@@ -204,8 +204,8 @@ def test_wavefront_skew_refuses_when_inner_already_parallel():
     # later ``LoopToMap`` stage will lift it.
     loops = _loops(sdfg)
     assert len(loops) == 2
-    assert not any(l.loop_variable.startswith(_SKEW_T_PREFIX) for l in loops)
-    assert not any(l.loop_variable.startswith(_SKEW_P_PREFIX) for l in loops)
+    assert not any(l.loop_variable.startswith(SKEW_T_PREFIX) for l in loops)
+    assert not any(l.loop_variable.startswith(SKEW_P_PREFIX) for l in loops)
 
 
 def test_wavefront_skew_runtime_guard_traps_on_violation(tmp_path):
@@ -268,10 +268,10 @@ def test_wavefront_skew_steep_gauss_seidel_lifts_inner_to_map():
     assert res == 1
 
     loops = _loops(sdfg)
-    assert len(loops) == 1 and loops[0].loop_variable.startswith(_SKEW_T_PREFIX)
+    assert len(loops) == 1 and loops[0].loop_variable.startswith(SKEW_T_PREFIX)
     map_entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert len(map_entries) == 1
-    assert map_entries[0].map.params[0].startswith(_SKEW_P_PREFIX)
+    assert map_entries[0].map.params[0].startswith(SKEW_P_PREFIX)
 
 
 def test_wavefront_skew_steep_gauss_seidel_value_preserving():
@@ -307,7 +307,7 @@ def test_wavefront_skew_steep_then_l2m_keeps_one_sequential_loop():
     assert n_maps >= 1
     loops = _loops(sdfg)
     assert len(loops) == 1, f"the diagonal t-loop must survive LoopToMap; got {[c.loop_variable for c in loops]}"
-    assert loops[0].loop_variable.startswith(_SKEW_T_PREFIX), \
+    assert loops[0].loop_variable.startswith(SKEW_T_PREFIX), \
         f"the surviving loop should be the diagonal ``t``; got {loops[0].loop_variable}"
 
 
@@ -353,9 +353,9 @@ def test_wavefront_skew_five_point_gauss_seidel_forward_reads_lifts_to_map():
     sdfg.validate()
     assert res == 1
     loops = _loops(sdfg)
-    assert len(loops) == 1 and loops[0].loop_variable.startswith(_SKEW_T_PREFIX)
+    assert len(loops) == 1 and loops[0].loop_variable.startswith(SKEW_T_PREFIX)
     map_entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert len(map_entries) == 1 and map_entries[0].map.params[0].startswith(_SKEW_P_PREFIX)
+    assert len(map_entries) == 1 and map_entries[0].map.params[0].startswith(SKEW_P_PREFIX)
 
 
 def test_wavefront_skew_five_point_gauss_seidel_value_preserving():
@@ -453,7 +453,7 @@ def test_wavefront_skew_five_point_absorbs_split_snapshot_through_full_pipeline(
     nonpinned = [l for l in _loops(sdfg) if not getattr(l, 'pinned_sequential', False)]
     assert not nonpinned, f"expected no non-pinned residual loop; got {[l.loop_variable for l in nonpinned]}"
     maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert any(m.map.params[0].startswith(_SKEW_P_PREFIX) for m in maps), \
+    assert any(m.map.params[0].startswith(SKEW_P_PREFIX) for m in maps), \
         f"expected a parallel wavefront p-Map; got maps={[m.map.params for m in maps]}"
     # The absorbed snapshot must be gone -- no ``_split_snap`` access node, copy,
     # nor descriptor survives (the terminal SimplifyPass runs ArrayElimination).
@@ -957,7 +957,7 @@ def residual_loops(sdfg):
 
 def skew_diagonals(sdfg):
     """The ``_skew_t_`` diagonal loops a successful :class:`WavefrontSkew` leaves behind."""
-    return [c for c in residual_loops(sdfg) if c.loop_variable.startswith(_SKEW_T_PREFIX)]
+    return [c for c in residual_loops(sdfg) if c.loop_variable.startswith(SKEW_T_PREFIX)]
 
 
 # --------------------------------------------------------------------------- #

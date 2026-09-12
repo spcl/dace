@@ -521,7 +521,7 @@ def _boundary_axis_order(edges, probe: SDFG, transient_ok: bool):
 
 #: Index letters, in the order ``LiftEinsum`` hands them out (kept identical so a
 #: directly-matched einsum string is spelled the way the post-LoopToMap lift spells it).
-_EINSUM_CHARS = 'ijklmnopqrstuvwxyzabcdefgh'
+EINSUM_CHARS = 'ijklmnopqrstuvwxyzabcdefgh'
 
 
 class _Axis(NamedTuple):
@@ -921,7 +921,7 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Einsu
             if i == '0':
                 continue
             if i not in mapping:
-                mapping[i] = _EINSUM_CHARS[len(mapping)]
+                mapping[i] = EINSUM_CHARS[len(mapping)]
             out += mapping[i]
         return out
 

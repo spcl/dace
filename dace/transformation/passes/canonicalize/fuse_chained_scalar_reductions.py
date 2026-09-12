@@ -55,7 +55,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: AST binop type -> operator source string. Only associative+commutative ops.
-_FOLDABLE_OPS = {ast.Add: '+', ast.Mult: '*'}
+FOLDABLE_OPS = {ast.Add: '+', ast.Mult: '*'}
 
 
 def _binop_op(tasklet: nodes.Tasklet) -> Optional[type]:
@@ -67,7 +67,7 @@ def _binop_op(tasklet: nodes.Tasklet) -> Optional[type]:
     if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
         return None
     rhs = stmt.value
-    if isinstance(rhs, ast.BinOp) and type(rhs.op) in _FOLDABLE_OPS:
+    if isinstance(rhs, ast.BinOp) and type(rhs.op) in FOLDABLE_OPS:
         return type(rhs.op)
     return None
 
@@ -281,7 +281,7 @@ class FuseChainedScalarReductions(ppl.Pass):
     def _apply_fusion(self, sdfg: SDFG, st: SDFGState, op_type: type, chain: List[_Step]) -> None:
         from dace import Memlet
 
-        op_str = _FOLDABLE_OPS[op_type]
+        op_str = FOLDABLE_OPS[op_type]
         first = chain[0]
         last = chain[-1]
         acc_name = first.acc_name

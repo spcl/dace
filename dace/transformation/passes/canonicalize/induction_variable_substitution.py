@@ -76,7 +76,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses
 
 #: AST binop type -> closed-form template ``(init, c, n) -> str``.
-_CLOSED_FORM = {
+CLOSED_FORM = {
     ast.Add: lambda init, c, n: f"(({init}) + ({c}) * ({n}))",
     ast.Mult: lambda init, c, n: f"(({init}) * (({c}) ** ({n})))",
 }
@@ -90,13 +90,13 @@ class _UnwrapTypecasts(ast.NodeTransformer):
     body, only this pass's analysis treats it as a no-op.
     """
     from dace import dtypes
-    _TYPECAST_NAMES = dict.fromkeys(dtypes.TYPECLASS_STRINGS)
+    TYPECAST_NAMES = dict.fromkeys(dtypes.TYPECLASS_STRINGS)
 
     def visit_Call(self, node):
         self.generic_visit(node)
         # Match ``dace.<typeclass>(x)``: ``func`` is Attribute(value=Name('dace'), attr=typeclass)
         if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == 'dace' and node.func.attr in self._TYPECAST_NAMES and len(node.args) == 1
+                and node.func.value.id == 'dace' and node.func.attr in self.TYPECAST_NAMES and len(node.args) == 1
                 and not node.keywords):
             return node.args[0]
         return node
@@ -196,7 +196,7 @@ def _try_substitute(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdf
     # The closed-form RHS reads the seed via the tasklet's ``__in`` connector,
     # NOT via a bare ``accum[subset]`` expression -- the SDFG dataflow is what
     # actually wires the read.
-    closed = _CLOSED_FORM[op_type]("__in", const_val, symbolic.symstr(trip_count))
+    closed = CLOSED_FORM[op_type]("__in", const_val, symbolic.symstr(trip_count))
 
     _replace_loop_with_closed_form(parent, loop, accum, accum_subset, closed, sdfg)
     return True
@@ -330,7 +330,7 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
     # Strip the frontend's defensive ``dace.<typeclass>(...)`` casts before pattern
     # matching, so ``__in1 + dace.float64(step)`` matches identically to ``__in1 + step``.
     rhs = _UnwrapTypecasts().visit(tree.body[0].value)
-    if not isinstance(rhs, ast.BinOp) or type(rhs.op) not in _CLOSED_FORM:
+    if not isinstance(rhs, ast.BinOp) or type(rhs.op) not in CLOSED_FORM:
         return None
 
     # Identify the carrier side (a bare ``ast.Name`` whose id is one of the
@@ -673,7 +673,7 @@ def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, sta
     for reads, applied in ((plan.pre_reads, t), (plan.post_reads, symbolic.simplify(t + 1))):
         count = symbolic.symstr(applied)
         for e in reads:
-            splice_closed_form(e.dst, e.dst_conn, _CLOSED_FORM[iv.op_type](e.dst_conn, iv.const_val, count))
+            splice_closed_form(e.dst, e.dst_conn, CLOSED_FORM[iv.op_type](e.dst_conn, iv.const_val, count))
     # Post-update readers now compute from the entry value, so they read the entry version. Remove
     # before adding so the consumer's input connector is never momentarily fed by two edges.
     for e in plan.post_reads:
@@ -692,7 +692,7 @@ def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, sta
 
     # The loop no longer updates the accumulator; materialise the value it used to leave behind.
     trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    closed = _CLOSED_FORM[iv.op_type]("__in", iv.const_val, symbolic.symstr(trip_count))
+    closed = CLOSED_FORM[iv.op_type]("__in", iv.const_val, symbolic.symstr(trip_count))
     iv_post = closed_form_state(parent, loop.label + '_iv_use_post', iv.accum, iv.subset, closed)
     for oe in list(parent.out_edges(loop)):
         parent.add_edge(iv_post, oe.dst, oe.data)
@@ -1404,7 +1404,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
 #: How far the update's stored value may be chased back through staging transients before giving up.
 #: Bounds both the shifted-read chase and the rematerialization chain; the corpus shapes are one or
 #: two stages deep, and an unbounded walk on a cyclic body would not terminate.
-_ROTATION_CHASE_LIMIT = 4
+ROTATION_CHASE_LIMIT = 4
 
 
 class RematInput(NamedTuple):
@@ -1617,10 +1617,10 @@ def remat_source(sdfg: SDFG, chain: List[SDFGState], loop_var, stride, reader_si
     Recursive over the producer's own inputs: one the body writes is recomputed in turn rather than
     re-read, because the clone runs LATE and would otherwise see the overwritten version. Descending
     re-applies :func:`staged_write` and :func:`pure_producer` at every level, so nothing is inherited
-    from the level above. ``depth`` is bounded by ``_ROTATION_CHASE_LIMIT``: refusing a long chain
+    from the level above. ``depth`` is bounded by ``ROTATION_CHASE_LIMIT``: refusing a long chain
     costs a parallelization, guessing at one costs correctness. Mutates nothing.
     """
-    if depth >= _ROTATION_CHASE_LIMIT:
+    if depth >= ROTATION_CHASE_LIMIT:
         return None
     found = staged_write(sdfg, chain, reader_si, reader_node, reader_sub)
     if found is None:
@@ -1732,7 +1732,7 @@ def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain
         #     dead-end here rather than being mistaken for a delay.
         cur_si, cur_node, cur_sub = wsi, write_edge.src, _subset_at(write_edge, write_edge.src)
         src_subset = None
-        for _ in range(_ROTATION_CHASE_LIMIT):
+        for _ in range(ROTATION_CHASE_LIMIT):
             if not isinstance(cur_node, nodes.AccessNode) or cur_sub is None:
                 return None
             cdesc = sdfg.arrays.get(cur_node.data)
@@ -1746,13 +1746,13 @@ def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain
             staged = _body_writes(chain, cur_node.data)
             if len(staged) != 1:
                 return None
-            ssi, _sstate, snode, sedge = staged[0]
+            ssi, _, snode, sedge = staged[0]
             if ssi > cur_si or (ssi == cur_si and snode is not cur_node):
                 return None  # written LATER in the body -> a carried value, not this iteration's
             if _one_elem(_subset_at(sedge, snode)) != 1:
                 return None
             # The whole staging container dies with the update; (6) below proves nothing else reads it.
-            chase.extend((st, n) for _si, st, n in _body_nodes(chain, cur_node.data))
+            chase.extend((st, n) for _, st, n in _body_nodes(chain, cur_node.data))
             touched[cur_node.data] = None
             cur_si, cur_node, cur_sub = ssi, sedge.src, _subset_at(sedge, sedge.src)
         if src_data is None:
@@ -1802,7 +1802,7 @@ def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain
     for container in touched:
         if container in (accum, src_data):
             continue
-        if sum(len(_data_edges(st.out_edges(n))) for _si, st, n in _body_nodes(chain, container)) != 1:
+        if sum(len(_data_edges(st.out_edges(n))) for _, st, n in _body_nodes(chain, container)) != 1:
             return None
         if _read_after_loop(parent, loop, sdfg, container):
             return None

@@ -52,7 +52,7 @@ from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symb
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 
 #: ``(map_state, inner_loop)``: the two stateful siblings of a reconstruction candidate.
-_Candidate = Tuple[SDFGState, LoopRegion]
+Candidate = Tuple[SDFGState, LoopRegion]
 
 
 def _top_level_maps(state: SDFGState) -> List[nodes.MapEntry]:
@@ -60,7 +60,7 @@ def _top_level_maps(state: SDFGState) -> List[nodes.MapEntry]:
     return [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and state.entry_node(n) is None]
 
 
-def _find_candidate(outer: LoopRegion) -> Optional[_Candidate]:
+def _find_candidate(outer: LoopRegion) -> Optional[Candidate]:
     """``(map_state, inner_loop)`` if ``outer``'s body is EXACTLY one ``SDFGState`` holding a
     top-level Map plus one sibling ``LoopRegion`` -- the imperfect two-statement shape
     ``WavefrontSkew.extract_two_level_nest`` refuses. ``None`` for any other shape."""

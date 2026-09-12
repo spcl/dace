@@ -18,7 +18,7 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, _SKEW_P_PREFIX, _SKEW_T_PREFIX,
+from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, SKEW_P_PREFIX, SKEW_T_PREFIX,
                                                                     tiling_legal, Dependence)
 
 N = dace.symbol('N')
@@ -103,11 +103,11 @@ def test_tiled_wavefront_emits_pinned_diagonal_over_map_over_unit_stride_nest(pr
 
     emitted = loops(sdfg)
     assert len(emitted) == 3, f'{prog.name}: expected T + intra-tile i + j; got {[l.loop_variable for l in emitted]}'
-    diag = [l for l in emitted if l.loop_variable.startswith(_SKEW_T_PREFIX)]
+    diag = [l for l in emitted if l.loop_variable.startswith(SKEW_T_PREFIX)]
     assert len(diag) == 1 and diag[0].pinned_sequential, 'the tile diagonal must be the one sequential-pinned axis'
 
     maps = [n.map for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert len(maps) == 1 and maps[0].params[0].startswith(_SKEW_P_PREFIX), \
+    assert len(maps) == 1 and maps[0].params[0].startswith(SKEW_P_PREFIX), \
         f'{prog.name}: expected one parallel tile-column Map; got {[m.params for m in maps]}'
 
     intra = [l for l in emitted if l is not diag[0]]
@@ -146,7 +146,7 @@ def test_dependence_outrunning_the_tile_falls_back_to_the_untiled_lowering():
     loop, one Map); with 4-row tiles the very same nest tiles. The pair is what makes this a
     test of the guard rather than of the nest."""
     small, _ = skewed(far_carry, bi=2, bj=64)
-    assert len(loops(small)) == 1 and loops(small)[0].loop_variable.startswith(_SKEW_T_PREFIX), \
+    assert len(loops(small)) == 1 and loops(small)[0].loop_variable.startswith(SKEW_T_PREFIX), \
         f'a distance longer than the tile must keep the untiled diagonal; got {[l.loop_variable for l in loops(small)]}'
 
     big, fired = skewed(far_carry, bi=4, bj=64)
@@ -179,13 +179,13 @@ def test_both_targets_block_and_the_gpu_also_skews_the_tile(prog):
         f'{prog.name}: the cpu interior stays sequential; got {[m.params for m in cpu_maps]}'
 
     gpu_loops = loops(gpu)
-    assert len(gpu_loops) == 2 and all(l.loop_variable.startswith(_SKEW_T_PREFIX) for l in gpu_loops), \
+    assert len(gpu_loops) == 2 and all(l.loop_variable.startswith(SKEW_T_PREFIX) for l in gpu_loops), \
         f'{prog.name}: gpu runs a tile diagonal over an intra-tile diagonal; ' \
         f'got {[l.loop_variable for l in gpu_loops]}'
 
     gpu_maps = [n.map for n, _ in gpu.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert len(gpu_maps) == 2, f'{prog.name}: grid Map over thread-block Map; got {[m.params for m in gpu_maps]}'
-    assert all(m.params[0].startswith(_SKEW_P_PREFIX) for m in gpu_maps), \
+    assert all(m.params[0].startswith(SKEW_P_PREFIX) for m in gpu_maps), \
         f'{prog.name}: both Maps are skewed parallel axes; got {[m.params for m in gpu_maps]}'
     assert sum(m.is_warp_tile for m in gpu_maps) == 1, \
         f'{prog.name}: exactly the interior Map is tagged; got {[(m.params, m.is_warp_tile) for m in gpu_maps]}'

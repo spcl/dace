@@ -87,7 +87,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
 #: AST binop class -> associative reduction operator string.
-_BINOP_TO_OP: Dict[type, str] = {
+BINOP_TO_OP: Dict[type, str] = {
     ast.Add: '+',
     ast.Sub: '-',
     ast.Mult: '*',
@@ -99,7 +99,7 @@ _BINOP_TO_OP: Dict[type, str] = {
 #: hand-maintained per-op identity table. ``-`` maps to ``+`` because
 #: ``acc - x1 - x2`` masks against the SAME additive identity ``0``
 #: (``acc - 0 == acc``).
-_OP_TO_WCR: Dict[str, str] = {
+OP_TO_WCR: Dict[str, str] = {
     '+': 'lambda a, b: a + b',
     '-': 'lambda a, b: a + b',
     '*': 'lambda a, b: a * b',
@@ -113,7 +113,7 @@ def _identity_value(op_str: str, dtype: dtypes.typeclass):
     masked-out iteration contributes this value, which ``OP`` leaves the
     accumulator unchanged -- exactly the sequential semantics of the original
     guarded update. Returns ``None`` if the op has no known identity."""
-    redtype = operations.detect_reduction_type(_OP_TO_WCR[op_str])
+    redtype = operations.detect_reduction_type(OP_TO_WCR[op_str])
     ident = dtypes.reduction_identity(dtype, redtype)
     if ident is None:
         return None
@@ -193,7 +193,7 @@ class LoopToConditionalReduce(ppl.Pass):
         if len(non_else) != 1:
             return None
         cond_codeblock, true_branch = non_else[0]
-        for _c, br in else_branches:
+        for _, br in else_branches:
             if self._branch_has_content(br):
                 return None
 
@@ -264,7 +264,7 @@ class LoopToConditionalReduce(ppl.Pass):
         rhs = assign.value
         if not isinstance(rhs, ast.BinOp):
             return None
-        op_str = _BINOP_TO_OP.get(type(rhs.op))
+        op_str = BINOP_TO_OP.get(type(rhs.op))
         if op_str is None:
             return None
         identity_value = _identity_value(op_str, sdfg.arrays[acc_name].dtype)
@@ -569,7 +569,7 @@ class LoopToConditionalReduce(ppl.Pass):
             arr_name, sub = gather
             if sub is not None:
                 try:
-                    key = tuple(str(lo) for lo, _hi, _st in sub.ranges)
+                    key = tuple(str(lo) for lo, _, _ in sub.ranges)
                     connector_for_access[(arr_name, key)] = addend_conn_name
                 except Exception:
                     pass

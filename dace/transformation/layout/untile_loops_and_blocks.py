@@ -18,7 +18,7 @@ from dace.transformation.passes.canonicalize.tracked_assumptions import record_a
 from dace.transformation.passes.canonicalize.untile_loops import (_audit_combined_access, _diff_is_zero,
                                                                   _intermediate_chain_clean, _iter_candidate_inners,
                                                                   _match_inner_case, _next_id, _tile_size,
-                                                                  _UNTILE_PREFIX, count_applied)
+                                                                  UNTILE_PREFIX, count_applied)
 
 
 @properties.make_properties
@@ -272,7 +272,7 @@ class UntileLoopsAndBlocks(ppl.Pass):
         if needs_div_assumption:
             record_assumption(sdfg, sympy.Eq(sympy.Mod(K_expr, inner_stride), 0))
 
-        k_var = f"{_UNTILE_PREFIX}{_next_id(sdfg)}"
+        k_var = f"{UNTILE_PREFIX}{_next_id(sdfg)}"
         sdfg.add_symbol(k_var, sdfg.symbols.get(outer.loop_variable, dace.int64))
         stop_excl = symbolic.simplify(outer_end + 1)
         span = symbolic.simplify(stop_excl - outer_start_sym)

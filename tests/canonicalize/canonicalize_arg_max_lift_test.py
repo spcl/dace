@@ -188,7 +188,7 @@ def test_refuses_non_comparison_condition():
 
 
 def test_refuses_subtraction_op():
-    """``Sub`` is not in :data:`_CMP_AST_TO_RTYPE`; only ``>``, ``<``, ``>=``, ``<=``."""
+    """``Sub`` is not in :data:`CMP_AST_TO_RTYPE`; only ``>``, ``<``, ``>=``, ``<=``."""
 
     @dace.program
     def kernel(a: dace.float64[N], result: dace.float64[1]):

@@ -84,8 +84,8 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (WAVEFRO
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import (commit_guarded_fusion, plan_guarded_fusion)
 
 #: Prefix for the synthesised skewed iterators.
-_SKEW_T_PREFIX = '_skew_t_'
-_SKEW_P_PREFIX = '_skew_p_'
+SKEW_T_PREFIX = '_skew_t_'
+SKEW_P_PREFIX = '_skew_p_'
 
 #: Default extent of a skewed tile on each axis. 64x64 doubles on the paper shapes
 #: at N=768: measured 2.04-2.16x over the sequential nest on 4 threads, against
@@ -143,15 +143,15 @@ DEFAULT_GPU_TILE_SIZE = 64
 #: parameters (rather than ``int_ceil(N - 1, B)`` inline) keeps the projected diagonal
 #: bound affine; an inline integer division comes back as an ISL existential that
 #: ``pwaff_bound`` cannot render, and the whole tiling would be refused.
-_TILE_I_PROBE = '_skew_ti_probe'
-_TILE_J_PROBE = '_skew_tj_probe'
-_TILE_NI_PROBE = '_skew_ni_probe'
-_TILE_NJ_PROBE = '_skew_nj_probe'
+TILE_I_PROBE = '_skew_ti_probe'
+TILE_J_PROBE = '_skew_tj_probe'
+TILE_NI_PROBE = '_skew_ni_probe'
+TILE_NJ_PROBE = '_skew_nj_probe'
 
 #: Suffix ``BreakAntiDependence`` gives the per-iteration anti-dependence snapshot it
 #: inserts (``arr`` -> ``arr_split_snap``). Recognising it lets the skew absorb
 #: the snapshot back into the live array (see :func:`commit_split_snapshots`).
-_SPLIT_SNAP_SUFFIX = '_split_snap'
+SPLIT_SNAP_SUFFIX = '_split_snap'
 
 #: Candidate diagonal skews, in preference order. ``tau = (a, b)``; the skew is
 #: unimodular when ``|a| == 1`` (``p = v``, ``u = a*(t - b*p)``) or ``|b| == 1``
@@ -162,7 +162,7 @@ _SPLIT_SNAP_SUFFIX = '_split_snap'
 #: ``a > b > 0`` (seidel_2d), the ``(1, +-2)`` transposes cover the reflected
 #: nests. ``b = 0`` / ``a = 0`` is not a skew (that is the axis-aligned schedule
 #: tested for refusal).
-_SKEW_CANDIDATES: Tuple[Tuple[int, int], ...] = ((1, 1), (1, -1), (2, 1), (2, -1), (1, 2), (1, -2))
+SKEW_CANDIDATES: Tuple[Tuple[int, int], ...] = ((1, 1), (1, -1), (2, 1), (2, -1), (1, 2), (1, -2))
 
 
 def sym(name: str):
@@ -327,7 +327,7 @@ def split_snapshot_window(state: SDFGState) -> Optional[subsets.Range]:
     e = edges[0]
     if not (isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)):
         return None
-    if e.dst.data != f'{e.src.data}{_SPLIT_SNAP_SUFFIX}':
+    if e.dst.data != f'{e.src.data}{SPLIT_SNAP_SUFFIX}':
         return None
     src_desc = state.sdfg.arrays.get(e.src.data)
     dst_desc = state.sdfg.arrays.get(e.dst.data)
@@ -341,7 +341,7 @@ def split_snapshot_window(state: SDFGState) -> Optional[subsets.Range]:
     dst_sub = e.data.get_dst_subset(e, state)
     if src_sub is None or (dst_sub is not None and dst_sub != src_sub):
         return None
-    if any(symbolic.simplify(step - 1) != 0 for (_lo, _hi, step) in src_sub.ndrange()):
+    if any(symbolic.simplify(step - 1) != 0 for (_, _, step) in src_sub.ndrange()):
         return None
     return src_sub
 
@@ -452,10 +452,10 @@ def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: Tuple[str, 'Writ
     dependence, sits on a non-carrier array, or has an undecidable distance."""
     if not snap_reads:
         return True
-    arr, wmap, _deps = carrier
+    arr, wmap, _ = carrier
     if wmap is None:
         return False  # a reduced (one-axis) carrier does not name the writing iteration
-    for (_st, _node, _e, ridx, src_name, _win) in snap_reads:
+    for (_, _, _, ridx, src_name, _) in snap_reads:
         if src_name != arr or len(ridx) != 2:
             return False  # snapshot not on the 2-D carrier -> cannot reason
         u_r, v_r = wmap.invert(ridx[0], ridx[1])
@@ -473,11 +473,11 @@ def snapshot_reads_in_window(snap_reads: List[SnapRead], u: str, v: str, domain:
     whatever ISL cannot decide."""
     dims = [u, v]
     iters = (u, v)
-    for (_st, _node, _e, ridx, _src, window) in snap_reads:
+    for (_, _, _, ridx, _, window) in snap_reads:
         rng = window.ndrange()
         if len(rng) != len(ridx):
             return False
-        for idx, (lo, hi, _step) in zip(ridx, rng):
+        for idx, (lo, hi, _) in zip(ridx, rng):
             below = symbolic.simplify(canonical_iterators(lo, iters) - idx - 1)
             above = symbolic.simplify(idx - canonical_iterators(hi, iters) - 1)
             for outside in (below, above):
@@ -494,13 +494,13 @@ def commit_split_snapshots(snap_reads: List[SnapRead], copy_states: List[SDFGSta
     """Rewire the planned snapshot reads onto the live array and drop the copies.
     Called only after a legal skew is confirmed. Structural cleanup then removes
     the emptied copy states and eliminates the dead ``arr_split_snap`` arrays."""
-    for (state, _snap_node, e, _ridx, src_name, _win) in snap_reads:
+    for (state, _, e, _, src_name, _) in snap_reads:
         reader = live_reader(state, src_name)
         redirected = copy.deepcopy(e.data)
         redirected.data = src_name
         state.add_edge(reader, None, e.dst, e.dst_conn, redirected)
         state.remove_edge(e)
-    for (state, snap_node, _e, _ridx, _src, _win) in snap_reads:
+    for (state, snap_node, _, _, _, _) in snap_reads:
         if snap_node in state.nodes() and state.degree(snap_node) == 0:
             state.remove_node(snap_node)
     for st in copy_states:
@@ -516,7 +516,7 @@ def point_index(subset, iters: tuple[str, ...]) -> Optional[List[object]]:
     iterators named in ``iters`` are re-keyed (:func:`canonical_iterators`) -- everything
     downstream then works in one symbol spelling."""
     idx = []
-    for (start, end, _step) in subset.ndrange():
+    for (start, end, _) in subset.ndrange():
         if start != end:
             return None
         idx.append(canonical_iterators(start, iters))
@@ -1334,7 +1334,7 @@ class WavefrontSkew(ppl.Pass):
         carrier = collect_carrier(inners, sdfg, u, v, snap_src=snap_src)
         if carrier is None:
             return False
-        _arr, _wmap, deps = carrier
+        _, _, deps = carrier
 
         # Redirecting a snapshot read is only value-preserving when it is a FORWARD
         # (anti) dependence in iteration space -- the writer runs on a strictly
@@ -1366,7 +1366,7 @@ class WavefrontSkew(ppl.Pass):
         assume_annotated = [s - 1 for s in off_syms if s.is_positive]
         tau = None
         guard_syms: List[object] = []
-        for cand in _SKEW_CANDIDATES:
+        for cand in SKEW_CANDIDATES:
             if schedule_legal(cand, deps, u, v, domain, assume_annotated):
                 tau = cand
                 break
@@ -1374,7 +1374,7 @@ class WavefrontSkew(ppl.Pass):
             # Optimistic retry: also assume the unannotated offset symbols are
             # positive, and plant a runtime guard for them.
             assume_all = [s - 1 for s in off_syms]
-            for cand in _SKEW_CANDIDATES:
+            for cand in SKEW_CANDIDATES:
                 if schedule_legal(cand, deps, u, v, domain, assume_all):
                     tau = cand
                     guard_syms = [s for s in off_syms if not s.is_positive]
@@ -1382,8 +1382,8 @@ class WavefrontSkew(ppl.Pass):
         if tau is None:
             return False
 
-        probe_t = f'{_SKEW_T_PREFIX}probe'
-        probe_p = f'{_SKEW_P_PREFIX}probe'
+        probe_t = f'{SKEW_T_PREFIX}probe'
+        probe_p = f'{SKEW_P_PREFIX}probe'
         bounds = poly.skew_bounds((u, v), params_of(domain, dims), domain, tau, probe_t, probe_p)
         if bounds is None:
             return False
@@ -1429,16 +1429,16 @@ class WavefrontSkew(ppl.Pass):
             return None
         if bi < 1 or bj < 1 or not tiling_legal(deps, tau, bi, bj):
             return None
-        ti, tj = sym(_TILE_I_PROBE), sym(_TILE_J_PROBE)
-        tdims = [_TILE_I_PROBE, _TILE_J_PROBE]
+        ti, tj = sym(TILE_I_PROBE), sym(TILE_J_PROBE)
+        tdims = [TILE_I_PROBE, TILE_J_PROBE]
         # I in [0, NI - 1], J in [0, NJ - 1] over the OPAQUE counts (see the probe names).
-        tile_domain = [ti, sym(_TILE_NI_PROBE) - 1 - ti, tj, sym(_TILE_NJ_PROBE) - 1 - tj]
+        tile_domain = [ti, sym(TILE_NI_PROBE) - 1 - ti, tj, sym(TILE_NJ_PROBE) - 1 - tj]
         try:
             box = domain_bbox(u, v, params_of(domain, dims), domain)
             if box is None:
                 return None
             bounds = poly.skew_bounds(tuple(tdims), params_of(tile_domain, tdims), tile_domain, tau,
-                                      f'{_SKEW_T_PREFIX}probe', f'{_SKEW_P_PREFIX}probe')
+                                      f'{SKEW_T_PREFIX}probe', f'{SKEW_P_PREFIX}probe')
         except ValueError:
             return None  # not renderable for ISL -> keep the untiled lowering
         if bounds is None:
@@ -1456,11 +1456,11 @@ class WavefrontSkew(ppl.Pass):
         family ``skew_bounds`` used: ``p = v`` when ``|a| == 1``, else ``p = u``."""
         a, b = tau
         nid = _next_id(sdfg)
-        t_var = f"{_SKEW_T_PREFIX}{nid}"
-        p_var = f"{_SKEW_P_PREFIX}{nid}"
+        t_var = f"{SKEW_T_PREFIX}{nid}"
+        p_var = f"{SKEW_P_PREFIX}{nid}"
         sdfg.add_symbol(t_var, dace.int64)
         sdfg.add_symbol(p_var, dace.int64)
-        subs = {f'{_SKEW_T_PREFIX}probe': sym(t_var), f'{_SKEW_P_PREFIX}probe': sym(p_var)}
+        subs = {f'{SKEW_T_PREFIX}probe': sym(t_var), f'{SKEW_P_PREFIX}probe': sym(p_var)}
 
         t_lo = bound_expr(bounds.t_lo_terms, subs, 'max')
         t_hi = bound_expr(bounds.t_hi_terms, subs, 'min')
@@ -1531,15 +1531,15 @@ class WavefrontSkew(ppl.Pass):
         a, b = tau
         v = inner.loop_variable
         nid = _next_id(sdfg)
-        t_var = f"{_SKEW_T_PREFIX}{nid}"
-        p_var = f"{_SKEW_P_PREFIX}{nid}"
+        t_var = f"{SKEW_T_PREFIX}{nid}"
+        p_var = f"{SKEW_P_PREFIX}{nid}"
         sdfg.add_symbol(t_var, dace.int64)
         sdfg.add_symbol(p_var, dace.int64)
         subs = {
-            f'{_SKEW_T_PREFIX}probe': sym(t_var),
-            f'{_SKEW_P_PREFIX}probe': sym(p_var),
-            _TILE_NI_PROBE: plan.n_i,
-            _TILE_NJ_PROBE: plan.n_j,
+            f'{SKEW_T_PREFIX}probe': sym(t_var),
+            f'{SKEW_P_PREFIX}probe': sym(p_var),
+            TILE_NI_PROBE: plan.n_i,
+            TILE_NJ_PROBE: plan.n_j,
         }
         bounds = plan.bounds
 
@@ -1655,8 +1655,8 @@ class WavefrontSkew(ppl.Pass):
                                       params_of(interior, list(dims)),
                                       interior,
                                       tau,
-                                      f'{_SKEW_T_PREFIX}probe',
-                                      f'{_SKEW_P_PREFIX}probe',
+                                      f'{SKEW_T_PREFIX}probe',
+                                      f'{SKEW_P_PREFIX}probe',
                                       t_range=(symbolic.simplify(d_lo), symbolic.simplify(d_hi)))
         except ValueError:
             return  # not renderable for ISL -> the interior stays sequential
@@ -1682,11 +1682,11 @@ class WavefrontSkew(ppl.Pass):
         """
         a, b = tau
         nid = _next_id(sdfg)
-        d_var = f'{_SKEW_T_PREFIX}{nid}'
-        k_var = f'{_SKEW_P_PREFIX}{nid}'
+        d_var = f'{SKEW_T_PREFIX}{nid}'
+        k_var = f'{SKEW_P_PREFIX}{nid}'
         sdfg.add_symbol(d_var, dace.int64)
         sdfg.add_symbol(k_var, dace.int64)
-        subs = {f'{_SKEW_T_PREFIX}probe': sym(d_var), f'{_SKEW_P_PREFIX}probe': sym(k_var)}
+        subs = {f'{SKEW_T_PREFIX}probe': sym(d_var), f'{SKEW_P_PREFIX}probe': sym(k_var)}
         p_lo = bound_expr(bounds.p_lo_terms, subs, 'max')
         p_hi = bound_expr(bounds.p_hi_terms, subs, 'min')
 
@@ -1815,12 +1815,12 @@ def _next_id(sdfg: SDFG) -> int:
     used: Dict[int, None] = {}
     for sd in sdfg.all_sdfgs_recursive():
         for s in list(sd.symbols.keys()):
-            for pre in (_SKEW_T_PREFIX, _SKEW_P_PREFIX):
+            for pre in (SKEW_T_PREFIX, SKEW_P_PREFIX):
                 if s.startswith(pre) and s[len(pre):].isdigit():
                     used[int(s[len(pre):])] = None
         for cfg in sd.all_control_flow_regions():
             if isinstance(cfg, LoopRegion) and cfg.loop_variable:
-                for pre in (_SKEW_T_PREFIX, _SKEW_P_PREFIX):
+                for pre in (SKEW_T_PREFIX, SKEW_P_PREFIX):
                     lv = cfg.loop_variable
                     if lv.startswith(pre) and lv[len(pre):].isdigit():
                         used[int(lv[len(pre):])] = None

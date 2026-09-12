@@ -122,7 +122,7 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
         # substitutions happen to commute here, but sorting makes determinism provable.
         for name in sorted(g.free_symbols):
             dtype = g.symbols.get(name)
-            if dtype not in _SIGNED_INTEGER_DTYPES:
+            if dtype not in SIGNED_INTEGER_DTYPES:
                 continue
             if name not in plain:
                 continue
@@ -154,12 +154,12 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
 
 #: Label of the guard state. NOT the idempotence marker -- state fusion absorbs the guard state
 #: into its successor, so re-running dedups on the emitted trap code instead.
-_GUARD_STATE_LABEL = '_assume_nonneg_syms'
+GUARD_STATE_LABEL = '_assume_nonneg_syms'
 
 #: Symbols with these dtypes can be negative and so are worth guarding. Unsigned
 #: integer symbols are nonnegative by construction; float symbols are not part
 #: of the offset/size nonnegativity contract.
-_SIGNED_INTEGER_DTYPES = dict.fromkeys([dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64])
+SIGNED_INTEGER_DTYPES = dict.fromkeys([dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64])
 
 
 @xf.explicit_cf_compatible
@@ -202,7 +202,7 @@ def is_assumption_guard_block(block) -> bool:
     trip guards. Exposed so tests / audits recognize the guard without importing
     the private label constant.
     """
-    return isinstance(block, SDFGState) and block.label == _GUARD_STATE_LABEL
+    return isinstance(block, SDFGState) and block.label == GUARD_STATE_LABEL
 
 
 def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
@@ -215,7 +215,7 @@ def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
     inlining), and guarding those put them in the signature -- ``Missing program argument``.
     """
     args = sdfg.used_symbols(all_symbols=False)
-    return sorted(s for s in args if sdfg.symbols.get(s) in _SIGNED_INTEGER_DTYPES)
+    return sorted(s for s in args if sdfg.symbols.get(s) in SIGNED_INTEGER_DTYPES)
 
 
 def collect_assumptions(sdfg: SDFG) -> List:
@@ -298,7 +298,7 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     # (LoopToScan's scan-init, reduction init, ...) and resets the top-level
     # start, leaving the guard a disconnected source that dominator analyses
     # KeyError on. Running last -- nothing reshapes the start after -- is safe.
-    guard_state = sdfg.add_state_before(sdfg.start_block, _GUARD_STATE_LABEL, is_start_block=True)
+    guard_state = sdfg.add_state_before(sdfg.start_block, GUARD_STATE_LABEL, is_start_block=True)
     for i, code in enumerate(checks):
         guard = guard_state.add_tasklet(
             f'check_assumption_{i}',

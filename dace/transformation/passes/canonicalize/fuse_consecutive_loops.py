@@ -49,14 +49,14 @@ ScratchIndex = dict[str, OrderedSet]
 
 #: Placeholder the iteration variable is normalised to when comparing two loop
 #: bodies, so ``a[_loop_it_0]`` and ``a[_loop_it_1]`` compare equal.
-_ITER_PLACEHOLDER = '__lv__'
+ITER_PLACEHOLDER = '__lv__'
 
 #: Placeholder every body-local scratch transient name is normalised to, so two
 #: bodies differing only in a frontend-generated intermediate name (e.g.
 #: ``s0_plus_a_slice`` vs ``s0_plus_a_slice_0``) compare equal. The carried
 #: accumulator and the read/written arrays -- which are referenced OUTSIDE the
 #: body and so are not body-local -- keep their real names and must match.
-_SCRATCH_PLACEHOLDER = '__scratch__'
+SCRATCH_PLACEHOLDER = '__scratch__'
 
 
 def _int_floor_to_sympy(expr):
@@ -96,13 +96,13 @@ def _symbolically_equal(a, b) -> bool:
 def _normalize(text: str, loop_var: str) -> str:
     """Replace whole-word occurrences of ``loop_var`` in ``text`` with the
     canonical placeholder so two bodies differing only in iterator name match."""
-    return re.sub(r'\b%s\b' % re.escape(loop_var), _ITER_PLACEHOLDER, text)
+    return re.sub(r'\b%s\b' % re.escape(loop_var), ITER_PLACEHOLDER, text)
 
 
 def _canon_data(name: str, local_scratch: dict) -> str:
     """Map a body-local scratch transient to the canonical placeholder; leave
     carried / external names (accumulator, arrays) untouched."""
-    return _SCRATCH_PLACEHOLDER if name in local_scratch else name
+    return SCRATCH_PLACEHOLDER if name in local_scratch else name
 
 
 def _node_key(node, loop_var: str, local_scratch: dict) -> Tuple:

@@ -110,9 +110,9 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: Python AST op -> WCR operator symbol for the associative/commutative reductions.
-_REDUCTION_OPS = {ast.Add: '+', ast.Mult: '*'}
+REDUCTION_OPS = {ast.Add: '+', ast.Mult: '*'}
 #: min / max reductions arrive as a 2-argument Call.
-_REDUCTION_FUNCS = ('min', 'max')
+REDUCTION_FUNCS = ('min', 'max')
 
 
 def _reduction_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, Tuple[ast.AST, ast.AST]]]:
@@ -134,9 +134,9 @@ def _reduction_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, Tuple[ast
     if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
         return None
     rhs = stmt.value
-    if isinstance(rhs, ast.BinOp) and type(rhs.op) in _REDUCTION_OPS:
-        return _REDUCTION_OPS[type(rhs.op)], (rhs.left, rhs.right)
-    if (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id in _REDUCTION_FUNCS
+    if isinstance(rhs, ast.BinOp) and type(rhs.op) in REDUCTION_OPS:
+        return REDUCTION_OPS[type(rhs.op)], (rhs.left, rhs.right)
+    if (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id in REDUCTION_FUNCS
             and len(rhs.args) == 2):
         return rhs.func.id, (rhs.args[0], rhs.args[1])
     return None
@@ -355,7 +355,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
 
     def _apply_lift(self, c: _AccumulatorCandidate) -> None:
         st = c.state
-        wcr = f'lambda a, b: {c.op}(a, b)' if c.op in _REDUCTION_FUNCS else f'lambda a, b: a {c.op} b'
+        wcr = f'lambda a, b: {c.op}(a, b)' if c.op in REDUCTION_FUNCS else f'lambda a, b: a {c.op} b'
         # Rewrite the tasklet to emit only the increment (drop the accumulator operand).
         inc = _increment_ast(c.tasklet, c.acc_conn)
         stmt = c.tasklet.code.code[0]

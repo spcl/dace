@@ -22,7 +22,7 @@ from dace import symbolic
 from dace.sdfg import SDFG
 
 #: Attribute under which recorded assumptions hang off the SDFG's ``__dict__``.
-_ATTR = '_tracked_assumptions'
+ATTR = '_tracked_assumptions'
 
 
 def record_assumption(sdfg: SDFG, relation) -> None:
@@ -37,17 +37,17 @@ def record_assumption(sdfg: SDFG, relation) -> None:
     relation = symbolic.simplify(relation)
     if relation == True:  # noqa: E712 -- sympy ``S.true`` compares equal to ``True``
         return
-    store = vars(sdfg).get(_ATTR)
+    store = vars(sdfg).get(ATTR)
     if store is None:
         store = []
-        vars(sdfg)[_ATTR] = store
+        vars(sdfg)[ATTR] = store
     if relation not in store:
         store.append(relation)
 
 
 def tracked_assumptions(sdfg: SDFG) -> List:
     """The relations recorded on ``sdfg`` via :func:`record_assumption` (a copy)."""
-    return list(vars(sdfg).get(_ATTR, ()))
+    return list(vars(sdfg).get(ATTR, ()))
 
 
 __all__ = ['record_assumption', 'tracked_assumptions']

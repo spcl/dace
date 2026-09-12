@@ -59,7 +59,7 @@ from dace.transformation.passes.analysis import loop_analysis
 
 #: Prefix for the materialised post-loop symbol; self-identifying in dumps and
 #: collision-free against frontend or user-chosen names.
-_POST_PREFIX = "_loop_exit_"
+POST_PREFIX = "_loop_exit_"
 
 
 def _parse_affine_update(rhs_str: str, lhs: str) -> Optional[Tuple[type, str]]:
@@ -188,7 +188,7 @@ def _next_post_id(sdfg: SDFG, sdfg_free_symbols: Set[str]) -> int:
     """Lowest ``<N>`` not in use among existing ``_loop_exit_*_<N>`` symbols."""
     used: Dict[int, None] = {}
     for s in list(sdfg.symbols.keys()) + list(sdfg_free_symbols):
-        if s.startswith(_POST_PREFIX):
+        if s.startswith(POST_PREFIX):
             tail = s.rsplit('_', 1)[-1]
             if tail.isdigit():
                 used[int(tail)] = None
@@ -343,7 +343,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             closed = _closed_form(op_type, seed, c_expr, trip)
             if closed is None:
                 continue
-            new_name = f"{_POST_PREFIX}{sym_name}_{next_id}"
+            new_name = f"{POST_PREFIX}{sym_name}_{next_id}"
             next_id += 1
             sdfg.add_symbol(new_name, sdfg.symbols.get(sym_name, dace.int64))
             # Splice a post-loop state right after ``loop`` that assigns

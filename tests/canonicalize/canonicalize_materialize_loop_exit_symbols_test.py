@@ -12,14 +12,14 @@ import pytest
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import (MaterializeLoopExitSymbols,
-                                                                                   _POST_PREFIX)
+                                                                                   POST_PREFIX)
 
 N = dace.symbol('N')
 step = dace.symbol('step')
 
 
 def _has_loop_exit_sym(sdfg, base_name):
-    return any(s.startswith(f"{_POST_PREFIX}{base_name}_") for s in sdfg.symbols)
+    return any(s.startswith(f"{POST_PREFIX}{base_name}_") for s in sdfg.symbols)
 
 
 def test_post_loop_iv_symbol_materialised_with_unique_name():

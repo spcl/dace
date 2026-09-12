@@ -29,7 +29,7 @@ from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     AssumeSymbolConstraints, AssumeSymbolsNonnegative, insert_assumption_guards, insert_symbol_nonnegative_guard,
-    set_symbol_nonnegative_assumptions, _GUARD_STATE_LABEL)
+    set_symbol_nonnegative_assumptions, GUARD_STATE_LABEL)
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption, tracked_assumptions
 
 N = dace.symbol('N', dtype=dace.int64)
@@ -56,7 +56,7 @@ def _trap_tasklets(sdfg):
 def test_emits_guard_as_first_state():
     sdfg = _axpy_sdfg()
     assert insert_symbol_nonnegative_guard(sdfg) == 1
-    assert sdfg.start_block.label == _GUARD_STATE_LABEL
+    assert sdfg.start_block.label == GUARD_STATE_LABEL
     traps = _trap_tasklets(sdfg)
     assert len(traps) == 1
     assert 'N < 0' in traps[0].code.as_string
@@ -173,10 +173,10 @@ def test_guard_leads_the_block_list_on_every_canonicalize():
     sdfg = _axpy_sdfg()
     canonicalize(sdfg)
     first = sdfg.nodes()
-    assert first[0].label == _GUARD_STATE_LABEL and first[0] is sdfg.start_block
+    assert first[0].label == GUARD_STATE_LABEL and first[0] is sdfg.start_block
     canonicalize(sdfg)
     second = sdfg.nodes()
-    assert second[0].label == _GUARD_STATE_LABEL and second[0] is sdfg.start_block
+    assert second[0].label == GUARD_STATE_LABEL and second[0] is sdfg.start_block
     assert len(first) == len(second)
     sdfg.validate()
 

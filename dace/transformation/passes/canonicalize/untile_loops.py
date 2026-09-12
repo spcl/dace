@@ -85,7 +85,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
-_UNTILE_PREFIX = '_untile_k_'
+UNTILE_PREFIX = '_untile_k_'
 
 
 def count_applied(result) -> int:
@@ -103,13 +103,13 @@ def _next_id(sdfg: SDFG) -> int:
     used: Dict[int, None] = {}
     for sd in sdfg.all_sdfgs_recursive():
         for s in list(sd.symbols.keys()):
-            if s.startswith(_UNTILE_PREFIX):
-                tail = s[len(_UNTILE_PREFIX):]
+            if s.startswith(UNTILE_PREFIX):
+                tail = s[len(UNTILE_PREFIX):]
                 if tail.isdigit():
                     used[int(tail)] = None
         for cfg in sd.all_control_flow_regions():
-            if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(_UNTILE_PREFIX):
-                tail = cfg.loop_variable[len(_UNTILE_PREFIX):]
+            if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(UNTILE_PREFIX):
+                tail = cfg.loop_variable[len(UNTILE_PREFIX):]
                 if tail.isdigit():
                     used[int(tail)] = None
     n = 0
@@ -793,7 +793,7 @@ class UntileLoops(ppl.Pass):
         # ``inner_stride > 1`` is an intermediate cascade rung that the
         # fixpoint pass collapses with its own inner on a subsequent
         # iteration.
-        k_var = f"{_UNTILE_PREFIX}{_next_id(sdfg)}"
+        k_var = f"{UNTILE_PREFIX}{_next_id(sdfg)}"
         sdfg.add_symbol(k_var, sdfg.symbols.get(outer.loop_variable, dace.int64))
         # Exclusive upper bound for the collapsed iterator is the union of the
         # tile spans the original nest actually visits. The outer walks tile

@@ -105,7 +105,7 @@ from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 #: Safety bound on fixpoint rounds -- a perfect nest is at most this deep in
 #: practice; the loop breaks as soon as a round changes nothing.
-_MAX_ROUNDS = 8
+MAX_ROUNDS = 8
 
 
 def level_parallel(blocks: list, loop_var: str | None, arrays: dict[str, Any]) -> bool:
@@ -235,7 +235,7 @@ class PerfectLoopNesting(ppl.Pass):
         uniq = UniqueLoopIterators(assign_loop_iterator_post_value=False)
         trivial = PatternMatchAndApplyRepeated([TrivialLoopElimination()])
         rounds = 0
-        for _ in range(_MAX_ROUNDS):
+        for _ in range(MAX_ROUNDS):
             # ``apply_pass`` returns differ by pass type (an int count for MoveIfIntoLoop, a results
             # ``defaultdict`` for the PatternMatchAndApplyRepeated-wrapped TrivialLoopElimination),
             # so test each for truthiness rather than summing.

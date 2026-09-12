@@ -62,7 +62,7 @@ def three_stage(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
 
 @dace.program
 def over_the_limit(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
-    """One stage past ``_ROTATION_CHASE_LIMIT``, so the chain is refused rather than guessed at."""
+    """One stage past ``ROTATION_CHASE_LIMIT``, so the chain is refused rather than guessed at."""
     t = 0.0
     for i in range(N):
         s = b[i] * c[i]

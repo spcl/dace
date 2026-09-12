@@ -176,7 +176,7 @@ from dace.transformation.passes.canonicalize.induction_variable_substitution imp
 from dace.libraries.standard.nodes.reduce import Reduce
 
 #: Map AST comparison op class -> DaCe reduction type.
-_CMP_AST_TO_RTYPE = {
+CMP_AST_TO_RTYPE = {
     ast.Gt: dtypes.ReductionType.Max,
     ast.GtE: dtypes.ReductionType.Max,
     ast.Lt: dtypes.ReductionType.Min,
@@ -388,9 +388,9 @@ class GuardReadWiring(ast.NodeTransformer):
 
 
 #: Right-hand operand values that make a binary op the identity on its left operand.
-_IDENTITY_RHS = ((ast.Add, 0), (ast.Sub, 0), (ast.Mult, 1), (ast.Div, 1))
+IDENTITY_RHS = ((ast.Add, 0), (ast.Sub, 0), (ast.Mult, 1), (ast.Div, 1))
 #: ... and the mirrored form, for the commutative ops only.
-_IDENTITY_LHS = ((ast.Add, 0), (ast.Mult, 1))
+IDENTITY_LHS = ((ast.Add, 0), (ast.Mult, 1))
 
 
 def strip_identity(expr: ast.AST) -> ast.AST:
@@ -410,12 +410,12 @@ def strip_identity(expr: ast.AST) -> ast.AST:
         right, left = expr.right, expr.left
         if (isinstance(right, ast.Constant) and isinstance(right.value,
                                                            (int, float)) and not isinstance(right.value, bool)
-                and any(isinstance(expr.op, op) and right.value == v for op, v in _IDENTITY_RHS)):
+                and any(isinstance(expr.op, op) and right.value == v for op, v in IDENTITY_RHS)):
             expr = left
             continue
         if (isinstance(left, ast.Constant) and isinstance(left.value,
                                                           (int, float)) and not isinstance(left.value, bool)
-                and any(isinstance(expr.op, op) and left.value == v for op, v in _IDENTITY_LHS)):
+                and any(isinstance(expr.op, op) and left.value == v for op, v in IDENTITY_LHS)):
             expr = right
             continue
         return expr
@@ -475,7 +475,7 @@ class ArgMaxLift(ppl.Pass):
         if isinstance(block, BreakBlock):
             return True
         if isinstance(block, ConditionalBlock):
-            return any(self._contains_break(br) for _c, br in block.branches)
+            return any(self._contains_break(br) for _, br in block.branches)
         if isinstance(block, ControlFlowRegion):
             return any(self._contains_break(n) for n in block.nodes())
         return False
@@ -614,7 +614,7 @@ class ArgMaxLift(ppl.Pass):
                     gather_sym_name = None
         if op_ast is None:
             return None
-        op = _CMP_AST_TO_RTYPE[op_ast]
+        op = CMP_AST_TO_RTYPE[op_ast]
 
         # Resolve the gather ``arr[b + c*i]``: either the inline subscript parsed
         # above, or (the tmp-symbol / bound-name case) an iedge one level back.
@@ -823,7 +823,7 @@ class ArgMaxLift(ppl.Pass):
         # rewrite lifts by arg-reducing over the reversed flat order (the flat
         # ArgReduce itself is strict / first-wins).
         last_wins = self._resolve_last_wins(op_ast, True)
-        op = _CMP_AST_TO_RTYPE[op_ast]
+        op = CMP_AST_TO_RTYPE[op_ast]
 
         outer_var, inner_var = outer_loop.loop_variable, inner_loop.loop_variable
         array = self._resolve_gather_2d(inner_loop, gather_sym, outer_var, inner_var, sdfg)
@@ -973,10 +973,10 @@ class ArgMaxLift(ppl.Pass):
             # Symbolic bounds and subsets, never a rendered string: ``sym2cpp`` spells a symbolic
             # extent as C++ (``dace::math::ipow(R, K)``), and the range parser splits on ':', so
             # the qualified name comes back as bogus tokens.
-            _i, _j = symbolic.symbol('_i'), symbolic.symbol('_j')
-            rev_i = symbolic.simplify(nrows - 1) - _i
-            rev_j = symbolic.simplify(ncols_sym - 1) - _j
-            flat = _i * ncols_sym + _j
+            row_sym, col_sym = symbolic.symbol('_i'), symbolic.symbol('_j')
+            rev_i = symbolic.simplify(nrows - 1) - row_sym
+            rev_j = symbolic.simplify(ncols_sym - 1) - col_sym
+            flat = row_sym * ncols_sym + col_sym
             mat_state.add_mapped_tasklet(
                 name='reverse_gather2d',
                 map_ranges={
@@ -1058,7 +1058,7 @@ class ArgMaxLift(ppl.Pass):
         if not (isinstance(tree, ast.Compare) and len(tree.ops) == 1 and len(tree.comparators) == 1):
             return None, None, None, None
         op_cls = type(tree.ops[0])
-        if op_cls not in _CMP_AST_TO_RTYPE:
+        if op_cls not in CMP_AST_TO_RTYPE:
             return None, None, None, None
         transform, lhs_name = self._extract_transform(tree.left)
         rhs_name = self._extract_name(tree.comparators[0])
@@ -1082,14 +1082,14 @@ class ArgMaxLift(ppl.Pass):
         if not (isinstance(tree, ast.Compare) and len(tree.ops) == 1 and len(tree.comparators) == 1):
             return None
         op_cls = type(tree.ops[0])
-        if op_cls not in _CMP_AST_TO_RTYPE:
+        if op_cls not in CMP_AST_TO_RTYPE:
             return None
         carrier = self._extract_name(tree.comparators[0])
         if carrier is None:
             return None
         left, transform = tree.left, None
-        if (isinstance(left, ast.Call) and isinstance(left.func, ast.Name)
-                and left.func.id in self._SUPPORTED_TRANSFORMS and len(left.args) == 1 and not left.keywords):
+        if (isinstance(left, ast.Call) and isinstance(left.func, ast.Name) and left.func.id in self.SUPPORTED_TRANSFORMS
+                and len(left.args) == 1 and not left.keywords):
             transform, left = left.func.id, left.args[0]
         if not (isinstance(left, ast.Subscript) and isinstance(left.value, ast.Name)):
             return None
@@ -1238,7 +1238,7 @@ class ArgMaxLift(ppl.Pass):
     #: Recognised unary gather transforms ``f(g)`` -> the Python builtin name.
     #: Adding one here is not enough for the transform+index shape: that rewrite hands the name to
     #: ``ArgReduce.transform``, whose own set is what decides how it is spelled in C++.
-    _SUPPORTED_TRANSFORMS = dict.fromkeys(['abs'])
+    SUPPORTED_TRANSFORMS = dict.fromkeys(['abs'])
 
     def _extract_transform(self, node) -> Tuple[Optional[str], Optional[str]]:
         """Return ``(transform, name)`` for a possibly-transformed operand.
@@ -1248,8 +1248,8 @@ class ArgMaxLift(ppl.Pass):
         """
         if isinstance(node, ast.Name):
             return None, node.id
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id in self._SUPPORTED_TRANSFORMS and len(node.args) == 1 and not node.keywords):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in self.SUPPORTED_TRANSFORMS
+                and len(node.args) == 1 and not node.keywords):
             inner = self._extract_name(node.args[0])
             if inner is not None:
                 return node.func.id, inner
@@ -1707,12 +1707,12 @@ class ArgMaxLift(ppl.Pass):
         #  * scalar / length-1 carrier -> keep ``identity=None``: it WCR-folds
         #    into the pre-loop ``x = a[start]`` seed already in the carrier AN.
         if m.carrier_kind == 'symbol':
-            _nt = sdfg.arrays[m.input_array].dtype.type
-            if np.issubdtype(_nt, np.floating):
-                _info = np.finfo(_nt)
+            numeric_type = sdfg.arrays[m.input_array].dtype.type
+            if np.issubdtype(numeric_type, np.floating):
+                limits = np.finfo(numeric_type)
             else:
-                _info = np.iinfo(_nt)
-            identity = (_info.min if m.op == dtypes.ReductionType.Max else _info.max).item()
+                limits = np.iinfo(numeric_type)
+            identity = (limits.min if m.op == dtypes.ReductionType.Max else limits.max).item()
         else:
             identity = None
         node = Reduce(name=f'{m.loop.label}_argmax_reduce', wcr=wcr_str, axes=[0], identity=identity)
@@ -1897,8 +1897,8 @@ class ArgMaxLift(ppl.Pass):
         read = reduce_state.add_read(buf)
         write = reduce_state.add_write(out_name)
         wcr_str = 'lambda a, b: max(a, b)' if m.op == dtypes.ReductionType.Max else 'lambda a, b: min(a, b)'
-        _info = np.finfo(arr_dtype.type) if np.issubdtype(arr_dtype.type, np.floating) else np.iinfo(arr_dtype.type)
-        identity = (_info.min if m.op == dtypes.ReductionType.Max else _info.max).item()
+        limits = np.finfo(arr_dtype.type) if np.issubdtype(arr_dtype.type, np.floating) else np.iinfo(arr_dtype.type)
+        identity = (limits.min if m.op == dtypes.ReductionType.Max else limits.max).item()
         node = Reduce(name=f'{m.loop.label}_argf_reduce', wcr=wcr_str, axes=[0], identity=identity)
         node.add_in_connector('_in')
         node.add_out_connector('_out')
@@ -2045,7 +2045,7 @@ class ArgMaxLift(ppl.Pass):
         skeleton = skeleton if skeleton is not None else self.guarded_loop_skeleton(loop)
         if skeleton is None:
             return None
-        start, end, _cond_block, cond_codeblock, true_branch = skeleton
+        start, end, _, cond_codeblock, true_branch = skeleton
 
         idx_carrier = self.true_branch_writes_index_only(true_branch, loop.loop_variable)
         if idx_carrier is None or idx_carrier not in sdfg.symbols:
@@ -2117,7 +2117,7 @@ class ArgMaxLift(ppl.Pass):
             return None
         # One round per binding suffices for an acyclic chain; the bound stops a
         # cyclic one (``x := y`` on one edge, ``y := x`` on another).
-        for _round in range(len(bindings) + 1):
+        for _ in range(len(bindings) + 1):
             finder = astutils.ASTFindReplace(dict(bindings))
             tree = finder.visit(tree)
             if finder.replace_count == 0:
@@ -2129,7 +2129,7 @@ class ArgMaxLift(ppl.Pass):
         tree = wiring.visit(tree)
         if wiring.refused:
             return None
-        connectors = dict.fromkeys(conn for conn, _memlet in wiring.reads.values())
+        connectors = dict.fromkeys(conn for conn, _ in wiring.reads.values())
         for node in ast.walk(tree):
             if not isinstance(node, ast.Name):
                 continue

@@ -45,14 +45,14 @@ from dace.transformation.dataflow import OTFMapFusion
 from dace.transformation import helpers as xfh
 
 #: Map the canonicalize target string to the codegen device type.
-_TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
+TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
 
 #: Per-dimension matmul extent at or below which canonicalization picks an inlined expansion over
 #: a BLAS call. MEASURED against OpenBLAS at 64/128/256 cubed: OpenBLAS wins at every one of them
 #: (0.1/13/25 ms against 36/48/75 ms for plain ``'pure'``), because the plain nest emits one
 #: ``reduce_atomic`` per multiply-add. So the override is worth taking only where the BLAS call
 #: overhead really dominates, and only in the ``'rowwise'`` form, which carries no atomic.
-_SMALL_MATMUL_DIM = 32
+SMALL_MATMUL_DIM = 32
 
 
 def _all_matmul_extents_small(state, node, limit: int) -> bool:
@@ -126,7 +126,7 @@ def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG
         for scope in xfh.get_parent_map_and_loop_scopes(sdfg, node, state))
 
 
-def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, small_dim: int = _SMALL_MATMUL_DIM):
+def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, small_dim: int = SMALL_MATMUL_DIM):
     """Select library-node implementations for the canonicalize perf tail.
 
     Delegates to :func:`~dace.transformation.auto.auto_optimize.set_fast_implementations` with the
@@ -502,9 +502,9 @@ def finalize_for_target(sdfg: SDFG,
     :returns: The same ``sdfg`` instance, finalized.
     :raises ValueError: If ``target='gpu'`` and ``sdfg`` was never offloaded.
     """
-    if target not in _TARGET_DEVICE:
-        raise ValueError(f"target must be one of {sorted(_TARGET_DEVICE)}; got {target!r}")
-    device = _TARGET_DEVICE[target]
+    if target not in TARGET_DEVICE:
+        raise ValueError(f"target must be one of {sorted(TARGET_DEVICE)}; got {target!r}")
+    device = TARGET_DEVICE[target]
 
     # Offload is NOT part of this tail: the caller runs it, so passes can be inserted between
     # canonicalization and the device move (see :func:`offload_to_gpu`). Everything below still

@@ -7,7 +7,7 @@ of several equal extremes depending on the guard's strictness: a strict ``>`` /
 ``>=`` / ``<=`` DOES update, so it keeps the LAST. The lifted ``ArgReduce`` scans
 with a strict comparison (``_OP_CPP['max'] == '>'``) and so is first-occurrence
 only, while ``ArgMaxLift`` maps BOTH ``ast.Gt`` and ``ast.GtE`` to Max (see
-``_CMP_AST_TO_RTYPE``).
+``CMP_AST_TO_RTYPE``).
 
 ArgMaxLift resolves this by arg-reducing over the REVERSED gather for the
 non-strict shape (first-of-reversed == last-of-forward), so both forms lift and

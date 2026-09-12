@@ -322,7 +322,7 @@ def run_structural_cleanup(sdfg: SDFG) -> None:
 
     :param sdfg: The SDFG to clean up in place.
     """
-    for _label, unit in _structural_cleanup('structural_cleanup'):
+    for _, unit in _structural_cleanup('structural_cleanup'):
         unit.apply_pass(sdfg, {})
 
 
@@ -430,7 +430,7 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
 #: refused it for the other 157) and every one of the 48 came out identical. That is the evidence
 #: the fixpoint converges at one round, which is exactly what the second round is here to confirm;
 #: it is not a reason to stop confirming it. The cost is one no-op round on 23% of compiles.
-_IV_SPLIT_MAX_ROUNDS = 2
+IV_SPLIT_MAX_ROUNDS = 2
 
 #: Rounds of the terminal ``end`` symbol cleanup (``SymbolDedup`` -> ``SymbolPropagation`` ->
 #: ``ConstantPropagation``). Two, so a merge that only the folded spelling exposes is still caught
@@ -439,7 +439,7 @@ _IV_SPLIT_MAX_ROUNDS = 2
 #: ``scatter_accum_dup`` canary where round 1 merges 2 symbols) round 2 found nothing left to do.
 #: It costs three no-op whole-graph walks per compile. Raise the pin only against a case that
 #: shows a second round doing work.
-_TERMINAL_SYMBOL_ROUNDS = 2
+TERMINAL_SYMBOL_ROUNDS = 2
 
 
 @properties.make_properties
@@ -469,11 +469,11 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
     CATEGORY: str = 'Canonicalization'
 
     max_rounds = properties.Property(dtype=int,
-                                     default=_IV_SPLIT_MAX_ROUNDS,
+                                     default=IV_SPLIT_MAX_ROUNDS,
                                      desc='Cap on alternation rounds; the loop breaks earlier when '
                                      'a round changes nothing.')
 
-    def __init__(self, max_rounds: int = _IV_SPLIT_MAX_ROUNDS) -> None:
+    def __init__(self, max_rounds: int = IV_SPLIT_MAX_ROUNDS) -> None:
         super().__init__()
         self.max_rounds = max_rounds
 
@@ -645,7 +645,7 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
 # become the identical ``0:N-3`` once both are rebased. Corpus verdict (transform-only,
 # ``tests/corpus/measure_parallelization.py``, 4 corpora): see the AB note on the knob's wiring
 # below for the measured totals and default.
-_CPU_DEFAULTS: Dict[str, Any] = {
+CPU_DEFAULTS: Dict[str, Any] = {
     'interchange_carry_with_map': True,
     'peel_limit': 4,
     'break_anti_dependence': True,
@@ -654,7 +654,7 @@ _CPU_DEFAULTS: Dict[str, Any] = {
     'reconstruct_wavefront_nest': False,
     'normalize_loop_and_map_origin': False,
 }
-_GPU_DEFAULTS: Dict[str, Any] = {
+GPU_DEFAULTS: Dict[str, Any] = {
     'interchange_carry_with_map': False,
     'peel_limit': 4,
     'break_anti_dependence': True,
@@ -663,7 +663,7 @@ _GPU_DEFAULTS: Dict[str, Any] = {
     'reconstruct_wavefront_nest': False,
     'normalize_loop_and_map_origin': False,
 }
-_TARGET_DEFAULTS: Dict[str, Dict[str, Any]] = {'cpu': _CPU_DEFAULTS, 'gpu': _GPU_DEFAULTS}
+TARGET_DEFAULTS: Dict[str, Dict[str, Any]] = {'cpu': CPU_DEFAULTS, 'gpu': GPU_DEFAULTS}
 
 
 def _resolve_target_default(target: str, knob: str, explicit: Optional[Any], fallback: Any) -> Any:
@@ -671,7 +671,7 @@ def _resolve_target_default(target: str, knob: str, explicit: Optional[Any], fal
     ``fallback``. Used to resolve every per-target knob in one place."""
     if explicit is not None:
         return explicit
-    return _TARGET_DEFAULTS.get(target, {}).get(knob, fallback)
+    return TARGET_DEFAULTS.get(target, {}).get(knob, fallback)
 
 
 def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
@@ -684,7 +684,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   normalize_loop_and_map_origin: bool = False,
                   assume_parallel_guards: bool = False,
                   perfect_loop_nesting: bool = True,
-                  iv_split_rounds: int = _IV_SPLIT_MAX_ROUNDS,
+                  iv_split_rounds: int = IV_SPLIT_MAX_ROUNDS,
                   target: str = 'cpu',
                   lift: bool = True,
                   lift_copy: bool = True,
@@ -704,7 +704,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                                   on by default (it adds a transient + a copy, but
                                   unlocks read-ahead WAR loops for ``LoopToMap``).
     :param interchange_carry_with_map: ``LoopToScan`` knob (see
-                                       ``_CPU_DEFAULTS`` / ``_GPU_DEFAULTS``
+                                       ``CPU_DEFAULTS`` / ``GPU_DEFAULTS``
                                        above): relocate the carry LoopRegion
                                        INTO the per-column Map so the scan runs
                                        sequential-per-thread. On for CPU, off
@@ -713,13 +713,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                                        body into the single loop ``WavefrontSkew`` requires
                                        (``ReconstructWavefrontNest``), right before it in the
                                        ``loop_fuse`` stage; commits only on a proven skew.
-                                       Off by default on both targets (see ``_CPU_DEFAULTS``).
+                                       Off by default on both targets (see ``CPU_DEFAULTS``).
     :param normalize_loop_and_map_origin: Rebase every Map range / ``LoopRegion`` counter to a
                                           0-based begin, keeping the stride
                                           (``NormalizeLoopAndMapOrigin``), right before the
                                           ``loop_to_x`` stage -- BEFORE every ``LoopTo*`` lift so
                                           they see the normalized shape. Off by default on both
-                                          targets (see ``_CPU_DEFAULTS``).
+                                          targets (see ``CPU_DEFAULTS``).
 
     Every map is lowered to a ``LoopRegion`` up front so all canonicalization
     runs on a single representation (one fission/normalize/reduce path, no
@@ -747,10 +747,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # assignment that keeps the original symbol declaration live across
     # NestedSDFG boundaries and re-introduces the alias hazard the pass
     # exists to remove.
-    _uniq = UniqueLoopIterators(assign_loop_iterator_post_value=False)
-    _uniq2 = UniqueLoopIterators(assign_loop_iterator_post_value=False)
-    _uniq_fis = UniqueLoopIterators(assign_loop_iterator_post_value=False)
-    _uniq_unroll = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+    unique_loop_iterators = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+    unique_loop_iterators_ssa = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+    unique_loop_iterators_fission = UniqueLoopIterators(assign_loop_iterator_post_value=False)
+    unique_loop_iterators_unroll = UniqueLoopIterators(assign_loop_iterator_post_value=False)
 
     # clean: unique loop iterators -> split tasklets -> the leading SimplifyPass
     # (only here and, twice, in 'reduce'). Trivial-tasklet elimination now opens the
@@ -850,7 +850,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # assignment first is what lets that Simplify fold the copy away in the same block. A
     # genuine cast (differing dtypes) fails the pass's own equality check and is kept.
     s += [('clean', CollapseNoOpCast()), ('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()),
-          ('clean', _uniq), ('clean', ContinueToCondition()), ('clean', SimplifyPass())]
+          ('clean', unique_loop_iterators), ('clean', ContinueToCondition()), ('clean', SimplifyPass())]
 
     # loop_to_syrk / loop_to_syr2k (semantic lift, gated like loop_to_symm): the
     # hand-written symmetric rank-k / rank-2k update nests (polybench syrk / syr2k) are
@@ -962,7 +962,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     #     trip counts for unroll);
     #   ShortLoopUnroll       -- fully unroll tiny constant-trip loops to straight-
     #     line code (now that ConstProp has revealed the constant trip counts);
-    #   _uniq_unroll          -- give the loops that survive (and any the unroll
+    #   unique_loop_iterators_unroll -- give the loops that survive (and any the unroll
     #     cloned) unique ``_loop_it_<N>`` names before reduction passes read them;
     #   InductionVariableSubstitution -- collapse single-tasklet 'acc = acc OP const'
     #     loops to their O(1) closed form (the classical IV / scalar-evolution shape;
@@ -992,7 +992,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # outer iterator alone would change semantics under collapse.
     s += [('reduce', UntileLoops())]
     if unroll_limit > 0:
-        s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', _uniq_unroll)]
+        s += [('reduce', ShortLoopUnroll(unroll_limit)), ('reduce', unique_loop_iterators_unroll)]
         # Version the index symbols the unroll just multiplied: every replay reassigns the same
         # frontend-materialized ``idx = arr[k]`` on the edge feeding its copy, so one name carries
         # one value per replay. That false dependence pins the chain in place -- it is what stops
@@ -1179,7 +1179,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``canonicalize_mixed_parallelism_test`` exercises the collapsed-2D-map contract here.
     if perfect_loop_nesting:
         s += [('fission', PerfectLoopNesting(target=target))]
-    s += [('fission', _uniq_fis)]
+    s += [('fission', unique_loop_iterators_fission)]
 
     # untrivialize: splice out the single-iteration trivial-loop scaffold (the
     # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,
@@ -1314,7 +1314,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # cascade_iedges_up (pre-parallelize): re-run after fission / normalize rewrite
     # the CFG; MUST precede LoopToMap. Re-unique the iterators (ssa) so the
     # distributed siblings are independent.
-    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp()), ('ssa', _uniq2)]
+    s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp()), ('ssa', unique_loop_iterators_ssa)]
 
     # NOTE: MoveLoopInvariantIfUp is deliberately NOT wired here. It is the dual of
     # the earlier ``MoveIfIntoLoop`` stage, so hoisting guards back out here would
@@ -1847,7 +1847,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # value while leaving its defining name behind. No SimplifyPass runs past the ``reduce`` stage,
     # so this is the ONLY thing that prunes those. BEFORE AssumeSymbolConstraints, which must stay
     # the terminal stage.
-    for _ in range(_TERMINAL_SYMBOL_ROUNDS):
+    for _ in range(TERMINAL_SYMBOL_ROUNDS):
         s += [('end', SymbolDedup()), ('end', SymbolPropagation()), ('end', ConstantPropagation())]
     s += [('end', RemoveUnusedSymbols())]
 
@@ -1994,7 +1994,7 @@ def _stage_runs() -> List[Tuple[str, int, int]]:
     :returns: ``(label, start, stop)`` index ranges into the flat recipe.
     """
     runs: List[List] = []
-    for i, (lbl, _p) in enumerate(_build_stages()):
+    for i, (lbl, _) in enumerate(_build_stages()):
         if runs and runs[-1][0] == lbl and runs[-1][2] == i:
             runs[-1][2] = i + 1
         else:
@@ -2009,7 +2009,7 @@ def _stage_factory(start: int, stop: int) -> StageFactory:
     :param stop: Index one past the run's last pass.
     :returns: A factory that builds that run's passes in order.
     """
-    return lambda: [p for _lbl, p in _build_stages()[start:stop]]
+    return lambda: [p for _, p in _build_stages()[start:stop]]
 
 
 #: Grouped view of :func:`_build_stages`: ``(label,
@@ -2074,7 +2074,7 @@ class CanonicalizationPipeline(ppl.Pass):
     :param perfect_loop_nesting: Run ``PerfectLoopNesting`` at the fission stage. ON by
                                  default -- see the ruling at the fission stage below.
     :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
-                   preset (see ``_CPU_DEFAULTS`` / ``_GPU_DEFAULTS``). Any
+                   preset (see ``CPU_DEFAULTS`` / ``GPU_DEFAULTS``). Any
                    explicit knob argument (e.g. ``interchange_carry_with_map=...``)
                    overrides the preset for that knob.
     :param interchange_carry_with_map: ``LoopToScan`` knob: relocate the carry
@@ -2084,10 +2084,10 @@ class CanonicalizationPipeline(ppl.Pass):
     :param reconstruct_wavefront_nest: Run ``ReconstructWavefrontNest`` right before
                                        ``WavefrontSkew`` in the ``loop_fuse`` stage.
                                        ``None`` (default) -> per-target preset (off on
-                                       both targets; see ``_CPU_DEFAULTS``).
+                                       both targets; see ``CPU_DEFAULTS``).
     :param normalize_loop_and_map_origin: Run ``NormalizeLoopAndMapOrigin`` right before the
                                           ``loop_to_x`` stage. ``None`` (default) -> per-target
-                                          preset (off on both targets; see ``_CPU_DEFAULTS``).
+                                          preset (off on both targets; see ``CPU_DEFAULTS``).
     :param specialize_constants: Optional ``{symbol: value}`` map (e.g. CloudSC's
                              ``{'nclv': 5}``, or a kernel's shape symbols like
                              ``{'Norb': 3}``) baked into the SDFG via
@@ -2153,13 +2153,13 @@ class CanonicalizationPipeline(ppl.Pass):
         default=False,
         desc='Run ReconstructWavefrontNest right before WavefrontSkew in the loop_fuse stage, rebuilding '
         'an imperfect Map-plus-LoopRegion stencil body into the single loop WavefrontSkew requires. '
-        'Off by default on both targets (unproven corpus benefit; see _CPU_DEFAULTS).')
+        'Off by default on both targets (unproven corpus benefit; see CPU_DEFAULTS).')
     normalize_loop_and_map_origin = properties.Property(
         dtype=bool,
         default=False,
         desc='Run NormalizeLoopAndMapOrigin right before the loop_to_x stage, rebasing every Map range / '
         'LoopRegion counter to a 0-based begin while keeping the stride. Off by default on both targets '
-        '(see _CPU_DEFAULTS).')
+        '(see CPU_DEFAULTS).')
     perfect_loop_nesting = properties.Property(
         dtype=bool,
         default=True,
@@ -2207,8 +2207,8 @@ class CanonicalizationPipeline(ppl.Pass):
                  lift_copy: bool = True,
                  semantic_lifting: bool = True,
                  dump_dir: Optional[str] = None):
-        if target not in _TARGET_DEFAULTS:
-            raise ValueError(f"target must be one of {sorted(_TARGET_DEFAULTS)}; got {target!r}")
+        if target not in TARGET_DEFAULTS:
+            raise ValueError(f"target must be one of {sorted(TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
         self.validate_all = validate_all
         self.dump_dir = dump_dir
@@ -2294,7 +2294,7 @@ class CanonicalizationPipeline(ppl.Pass):
         # since the last one; the graph starts dirty, and only NON-cleanup units re-dirty it, so a
         # cleanup that tidies something does not thereby earn the next one.
         dirty = True
-        for index, (_label, unit) in enumerate(stages, start=1):
+        for index, (label, unit) in enumerate(stages, start=1):
             is_cleanup = isinstance(unit, StructuralCleanup)
             if is_cleanup and not dirty:
                 continue
@@ -2316,7 +2316,7 @@ class CanonicalizationPipeline(ppl.Pass):
             # Dump AFTER every stage, including no-ops: a bisect needs a dense index, and a stage
             # that reports no change can still have rewritten the graph (5 units do exactly that).
             if self.dump_dir:
-                sdfg.save(os.path.join(self.dump_dir, f'{index:03d}_{_label}.sdfgz'), compress=True)
+                sdfg.save(os.path.join(self.dump_dir, f'{index:03d}_{label}.sdfgz'), compress=True)
         disable_openmp_sections(sdfg)
         if self.validate:
             sdfg.validate()
@@ -2369,7 +2369,7 @@ def canonicalize(sdfg: SDFG,
                                   (default) -> per-target preset
                                   (CPU=True, GPU=True).
     :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
-                   preset (see ``_CPU_DEFAULTS`` / ``_GPU_DEFAULTS``). Explicit
+                   preset (see ``CPU_DEFAULTS`` / ``GPU_DEFAULTS``). Explicit
                    knob args override the preset.
     :param interchange_carry_with_map: ``LoopToScan`` knob; ``None`` (default) ->
                                        per-target preset (CPU=True, GPU=False).

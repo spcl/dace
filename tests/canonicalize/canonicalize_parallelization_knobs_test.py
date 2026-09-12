@@ -3,8 +3,8 @@
 pipeline: ``break_anti_dependence`` (snapshot-rename a read-ahead WAR) and
 ``peel_limit`` (best-effort loop peeling). Both target loops that ``LoopToMap``
 would otherwise refuse; the per-target presets (see
-``dace.transformation.passes.canonicalize.pipeline._CPU_DEFAULTS`` /
-``_GPU_DEFAULTS``) now turn both on by default. Each test pins the OFF
+``dace.transformation.passes.canonicalize.pipeline.CPU_DEFAULTS`` /
+``GPU_DEFAULTS``) now turn both on by default. Each test pins the OFF
 baseline explicitly (``peel_limit=0, break_anti_dependence=False``) so the
 "without the knob the loop stays sequential" contract is robust against
 future default changes; the ON case enables the relevant knob and asserts
