@@ -8,6 +8,13 @@ falls, so the two meet part way through any state that started with more nodes t
 and a graph that was converging is reported as a node that expands into itself. What separates the
 cases is whether the census of library nodes ever CHANGES, which is what these tests hold.
 """
+import copy
+import json
+import os
+import subprocess
+import sys
+from typing import Dict
+
 import numpy as np
 import pytest
 
@@ -114,5 +121,55 @@ def test_a_library_node_that_expands_into_itself_is_reported_by_what_was_observe
         f'the refusal asserts a cause it has not established: {message}')
 
 
+def render_many_fills() -> Dict[str, str]:
+    """CPF's C and C++ text, plus the pre-CPF codegen text, for one fresh build of the fills SDFG.
+
+    All three go through :func:`force_renderable_expansions` on ``many_fills_sdfg`` (24
+    independent fills in one state), which is what used to pick the node to expand next by
+    ``node.guid`` -- a fresh ``uuid4()`` -- so the fill order, and with it the emitted
+    comments/loop order, changed on every process.
+    """
+    from dace.codegen import codegen as dace_codegen
+    from dace.codegen.cpf import cpf_lowering, dialect_for, frame_object, prepare
+
+    cpp = render(many_fills_sdfg(), language='c++').code
+    c = render(many_fills_sdfg(), language='c').code
+
+    raw = copy.deepcopy(many_fills_sdfg())
+    with cpf_lowering.dialect_scope(dialect_for('c++')):
+        prepare(raw)
+        objects = dace_codegen.generate_code(raw)
+    codegen_cpp = frame_object(objects, raw.name).clean_code
+    return {'cpf_c': c, 'cpf_cpp': cpp, 'codegen_cpp': codegen_cpp}
+
+
+def test_the_same_sdfg_renders_byte_identically_across_fresh_processes():
+    """The same SDFG rendered in two fresh, ``PYTHONHASHSEED=0`` interpreters must come out
+    byte-identical: node GUIDs are fresh ``uuid4()`` values (dace/sdfg/graph.py), so a hash-seed
+    pin alone does not make :func:`force_renderable_expansions` deterministic if it still picks
+    the next node to expand by GUID -- it must pick by graph order instead.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(dace.__file__)))
+    env = dict(os.environ, PYTHONHASHSEED='0', PYTHONPATH=repo_root)
+    runs = []
+    for _ in range(2):
+        proc = subprocess.run([sys.executable, __file__, '--render-worker'],
+                              cwd=repo_root,
+                              env=env,
+                              capture_output=True,
+                              text=True,
+                              timeout=300)
+        assert proc.returncode == 0, f'render worker failed:\n{proc.stderr}'
+        runs.append(json.loads(proc.stdout))
+    first, second = runs
+    for key in first:
+        assert first[key] == second[key], (
+            f'{key}: CPF output differs between two PYTHONHASHSEED=0 renders of the same SDFG in fresh '
+            'processes -- expansion order is not deterministic')
+
+
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == '--render-worker':
+        print(json.dumps(render_many_fills()))
+        sys.exit(0)
     pytest.main([__file__, '-q'])

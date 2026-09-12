@@ -409,8 +409,13 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
                                       f'the same nodes pending ({counted}). Expansion is making no progress; '
                                       f'check whether one of these expands into a node of its own type.')
 
-        # One per state, by GUID so the pick does not depend on graph iteration order.
-        chosen = [sorted(group, key=lambda pair: pair[0].guid)[0] for group in pending.values()]
+        # One per state, by graph insertion order -- GUIDs are fresh uuid4() per node
+        # (dace/sdfg/graph.py) so sorting by them reorders randomly run to run.
+        chosen = []
+        for group in pending.values():
+            state = group[0][1]
+            order = {id(node): index for index, node in enumerate(state.nodes())}
+            chosen.append(min(group, key=lambda pair: order[id(pair[0])]))
         described: Dict[int, Tuple[str, str, set]] = {}
         for node, state in chosen:
             available = type(node).implementations
