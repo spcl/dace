@@ -568,6 +568,39 @@ def test_prune_connectors_keeps_tasklet_code_reference():
     sdfg.validate()
 
 
+def test_prune_connectors_drops_input_the_body_only_writes():
+    """An in/out container the body only writes loses its input connector: an access node is not a read."""
+    sdfg = dace.SDFG('write_only_tester')
+    A, A_desc = sdfg.add_array('A', [4], dace.float64)
+    B, B_desc = sdfg.add_array('B', [4], dace.float64)
+
+    nsdfg = dace.SDFG('nested')
+    a, _ = nsdfg.add_scalar('a', A_desc.dtype)
+    b, _ = nsdfg.add_scalar('b', B_desc.dtype)
+    nstate = nsdfg.add_state('body', is_start_block=True)
+    tasklet = nstate.add_tasklet('copy', {'__in': None}, {'__out': None}, '__out = __in')
+    nstate.add_edge(nstate.add_access(b), None, tasklet, '__in', dace.Memlet('b[0]'))
+    nstate.add_edge(tasklet, '__out', nstate.add_access(a), None, dace.Memlet('a[0]'))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a: None, b: None}, outputs={a: None})
+    me, mx = state.add_map('map', dict(i="0:4"))
+    state.add_memlet_path(state.add_access(A), me, nsdfg_node, dst_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+    state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))
+    state.add_memlet_path(nsdfg_node, mx, state.add_access(A), src_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+
+    assert 1 == sdfg.apply_transformations_repeated(PruneConnectors)
+    assert a not in nsdfg_node.in_connectors
+    assert a in nsdfg_node.out_connectors
+    assert b in nsdfg_node.in_connectors
+    sdfg.validate()
+
+    np_a = np.zeros(4)
+    np_b = np.random.random(4)
+    sdfg(A=np_a, B=np_b)
+    assert np.array_equal(np_a, np_b)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=64)
@@ -586,3 +619,4 @@ if __name__ == "__main__":
     test_prune_connectors_keeps_inner_wcr_accumulator()
     test_prune_connectors_keeps_memlet_subset_index()
     test_prune_connectors_keeps_tasklet_code_reference()
+    test_prune_connectors_drops_input_the_body_only_writes()

@@ -6,6 +6,27 @@ from dace import dtypes, SDFG, SDFGState, symbolic, properties
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
+from dace.ordered import OrderedSet
+
+
+def connectors_used_by_dataflow(nsdfg: nodes.NestedSDFG) -> bool:
+    """Whether ``SDFGState.read_and_write_sets``' access-node test already reads every input and writes every output."""
+    inputs = nsdfg.in_connectors
+    outputs = nsdfg.out_connectors
+    read: OrderedSet[str] = OrderedSet()
+    written: OrderedSet[str] = OrderedSet()
+    for inner_state in nsdfg.sdfg.all_states():
+        for node in inner_state.data_nodes():
+            name = node.data
+            if (name in inputs and name not in read
+                    and any(not e.data.is_empty() for e in inner_state.out_edges(node))):
+                read.add(name)
+            if (name in outputs and name not in written
+                    and any(not e.data.is_empty() for e in inner_state.in_edges(node))):
+                written.add(name)
+            if len(read) == len(inputs) and len(written) == len(outputs):
+                return True
+    return len(read) == len(inputs) and len(written) == len(outputs)
 
 
 @properties.make_properties
@@ -23,6 +44,9 @@ class PruneConnectors(pm.SingleStateTransformation):
         return [utils.node_path_graph(cls.nsdfg)]
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        # Exact refusal before the full read/write sets, which every probe of every sweep would rebuild.
+        if connectors_used_by_dataflow(self.nsdfg):
+            return False
 
         prune_in, prune_out = self._get_prune_sets(graph)
         if not prune_in and not prune_out:
