@@ -3,14 +3,18 @@
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, SDFGState
 from dace.transformation import transformation
+from dace.transformation.interstate.state_fusion import is_start_block, keep_start_block
 
 
 @transformation.explicit_cf_compatible
 class BlockFusion(transformation.MultiStateTransformation):
     """ Implements the block-fusion transformation.
 
-        Block-fusion takes two control flow blocks that are connected through a single edge, where either one or both
-        blocks are 'no-op' control flow blocks, and fuses them into one.
+        Block-fusion takes two control flow blocks connected by a single edge, where at least one is a
+        'no-op' block (an empty ``SDFGState``), and splices the no-op one out. It never merges two
+        blocks that both carry semantics -- two loops or two conditionals are always refused -- so it
+        reaches exactly the case ``StateFusion`` cannot: an empty state next to a LoopRegion or a
+        ConditionalBlock, which are not ``SDFGState`` and so never match that transformation.
     """
 
     first_block = transformation.PatternNode(ControlFlowBlock)
@@ -25,11 +29,14 @@ class BlockFusion(transformation.MultiStateTransformation):
         return [sdutil.node_path_graph(cls.first_block, cls.second_block)]
 
     def _is_noop(self, block: ControlFlowBlock) -> bool:
-        if isinstance(block, SDFGState):
-            return block.is_empty()
-        elif type(block) == ControlFlowBlock:
-            return True
-        return False
+        """Whether ``block`` carries no semantics, so fusing it away changes nothing.
+
+        Only an empty ``SDFGState`` qualifies. A bare ``ControlFlowBlock`` would too, but nothing
+        constructs one outside the ``__DACE_dummy_sink`` scratch node ``dace.sdfg.analysis.cfg``
+        adds and removes within a single call, so that case was dead and is gone. Every other
+        block type -- regions, conditionals, break/continue/return -- carries semantics.
+        """
+        return isinstance(block, SDFGState) and block.is_empty()
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # First block must have only one unconditional output edge (with dst the second block).
@@ -41,9 +48,9 @@ class BlockFusion(transformation.MultiStateTransformation):
         if len(in_edges_second) != 1 or in_edges_second[0].src is not self.first_block:
             return False
 
-        # Ensure that either that both blocks are fusable blocks, meaning that at least one of the two blocks must be
-        # a 'no-op' block. That can be an empty SDFGState or a general control flow block without further semantics
-        # (no loop, conditional, break, continue, control flow region, etc.).
+        # At least one of the two blocks must be a 'no-op' block, i.e. an empty SDFGState. A block
+        # that carries semantics -- a loop, conditional, break, continue, region -- is never fused
+        # away here.
         if not self._is_noop(self.first_block) and not self._is_noop(self.second_block):
             return False
 
@@ -80,7 +87,7 @@ class BlockFusion(transformation.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg):
-        first_is_start = graph.start_block is self.first_block
+        first_is_start = is_start_block(graph, self.first_block)
         connecting_edge = graph.edges_between(self.first_block, self.second_block)[0]
         assignments_to_absorb = connecting_edge.data.assignments
         graph.remove_edge(connecting_edge)
@@ -89,12 +96,15 @@ class BlockFusion(transformation.MultiStateTransformation):
                 ie.data.assignments.update(assignments_to_absorb)
 
         if self._is_noop(self.first_block):
-            # We remove the first block and let the second one remain.
+            # We remove the first block and let the second one remain. Resolve the pattern-node
+            # handles BEFORE remove_node: they re-resolve by node id on every access, and removing
+            # a node shifts the ids of everything after it.
+            second_block = self.second_block
             for ie in graph.in_edges(self.first_block):
-                graph.add_edge(ie.src, self.second_block, ie.data)
-            if first_is_start:
-                graph.start_block = self.second_block.block_id
+                graph.add_edge(ie.src, second_block, ie.data)
             graph.remove_node(self.first_block)
+            if first_is_start:
+                keep_start_block(graph, second_block)
         else:
             # We remove the second block and let the first one remain.
             for oe in graph.out_edges(self.second_block):

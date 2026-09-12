@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple, TYPE_CHECKING
 import numpy as np
 
 import dace
+from dace import cpf_lowering
 from dace.libraries.standard.helper import collapse_shape_and_strides
 
 if TYPE_CHECKING:
@@ -40,6 +41,38 @@ def byte_pattern(value, dtype: dace.dtypes.typeclass) -> Optional[int]:
     """
     raw = numpy_scalar(value, dtype).tobytes()
     return raw[0] if len(set(raw)) == 1 else None
+
+
+def memset_is_exact(value, dtype: dace.dtypes.typeclass) -> bool:
+    """Whether one ``memset`` over ``count * sizeof(element)`` bytes writes exactly this fill.
+
+    Two conditions, both on the value's OBJECT REPRESENTATION rather than on its type. Every byte
+    of it must be the same byte, because ``memset`` writes one byte over the range: ``0.0`` on an
+    IEEE double is all-zero and qualifies, ``1.0f`` is ``0000803f`` and does not. And that
+    representation must be as wide as the element the byte count is computed from, so a padded
+    aggregate -- whose padding the fill value does not define -- takes the loop instead.
+
+    :param value: The Python constant held by the node.
+    :param dtype: Destination element type.
+    :returns: Whether ``memset`` expresses the fill.
+    """
+    return byte_pattern(value, dtype) is not None and numpy_scalar(value, dtype).nbytes == dtype.bytes
+
+
+def c_literal(value, dtype: dace.dtypes.typeclass) -> str:
+    """Render the fill value as a C literal of ``dtype``.
+
+    Differs from :func:`cpp_literal` only where C++ writes a constructor call: a complex constant,
+    which C builds with CPF's component-wise builder function for its width.
+
+    :param value: The Python constant held by the node.
+    :param dtype: Destination element type.
+    :returns: A C expression of type ``dtype.ctype``.
+    """
+    narrowed = numpy_scalar(value, dtype).item()
+    if isinstance(narrowed, complex):
+        return f"{cpf_lowering.C_COMPLEX_BUILDERS[str(dtype)]}({narrowed.real!r}, {narrowed.imag!r})"
+    return cpp_literal(value, dtype)
 
 
 def cpp_literal(value, dtype: dace.dtypes.typeclass) -> str:

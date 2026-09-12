@@ -218,15 +218,6 @@ def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename
         mem.other_subset = subsets.Range.from_string('0')
 
 
-def descriptor_is_read(sdfg: SDFG, name: str) -> bool:
-    """True if ``name`` is read anywhere in ``sdfg`` (some AccessNode of it has an out-edge)."""
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == name and state.out_degree(node) > 0:
-                return True
-    return False
-
-
 def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has an in-edge)."""
     for state in sdfg.all_states():
@@ -234,6 +225,28 @@ def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
             if isinstance(node, nodes.AccessNode) and node.data == name and state.in_degree(node) > 0:
                 return True
     return False
+
+
+def descriptor_access_summary(sdfg: SDFG) -> Tuple[Set[str], Set[str], Set[str]]:
+    """``(read, written, written_by_gpu_map)`` name sets for every descriptor of ``sdfg``, in one
+    walk -- the same answers as the three predicates above, asked for all names at once."""
+    read: Set[str] = set()
+    written: Set[str] = set()
+    gpu_written: Set[str] = set()
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.AccessNode):
+                continue
+            if state.out_degree(node) > 0:
+                read.add(node.data)
+            in_edges = state.in_edges(node)
+            if in_edges:
+                written.add(node.data)
+                if any(
+                        isinstance(e.src, nodes.MapExit) and e.src.map.schedule in dtypes.GPU_SCHEDULES
+                        for e in in_edges):
+                    gpu_written.add(node.data)
+    return read, written, gpu_written
 
 
 def _copyin_state(sdfg: SDFG) -> SDFGState:
@@ -322,37 +335,33 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _blocked_sources(self, sdfg: SDFG) -> Set[str]:
-        """Descriptor names that must stay ``Array`` regardless of shape: a ``View`` cannot carry the
-        ``views`` alias edge, and a length-1 array that BACKS a view must stay an aliasable source."""
-        blocked: Set[str] = set()
-        for state in sdfg.states():
-            for node in state.nodes():
-                if not isinstance(node, nodes.AccessNode):
-                    continue
-                if isinstance(sdfg.arrays.get(node.data), dace.data.View):
-                    ve = sdutil.get_view_edge(state, node)
-                    if ve is None:
-                        continue
-                    other = ve.src if ve.dst is node else ve.dst
-                    if isinstance(other, nodes.AccessNode):
-                        blocked.add(other.data)
-        return blocked
+    def _blocked_descriptors(self, sdfg: SDFG) -> Set[str]:
+        """Descriptor names that must stay ``Array`` regardless of shape.
 
-    def _blocked_by_unscalarizable_neighbors(self, sdfg: SDFG) -> Set[str]:
-        """Descriptor names that must stay ``Array`` because a neighbor generates code we cannot
-        rewrite from ``buf[0]`` to ``buf``: an unexpanded library node, a non-Python (C++) tasklet,
-        or a GPU-scheduled map that uses the buffer as a multi-thread collective.
+        Two reasons, decided in one walk over the access nodes:
+
+        * a ``View`` cannot carry the ``views`` alias edge, so a length-1 array that BACKS a view
+          must stay an aliasable source;
+        * a neighbor generates code we cannot rewrite from ``buf[0]`` to ``buf``: an unexpanded
+          library node, a non-Python (C++) tasklet, or a GPU-scheduled map that uses the buffer as a
+          multi-thread collective.
 
         For GPU maps we only block the *input* side (edges into a ``MapEntry``) and the *partial* side
         (edges from an inside node into a ``MapExit``). A ``MapExit``-to-outside edge is a normal map
-        output; it can be scalarized and is widened back by ``PromoteGPUScalarsToArrays`` when needed."""
+        output; it can be scalarized and is widened back by ``PromoteGPUScalarsToArrays`` when needed.
+        """
         blocked: Set[str] = set()
         for state in sdfg.states():
             for node in state.nodes():
                 if not isinstance(node, nodes.AccessNode):
                     continue
                 arr = sdfg.arrays.get(node.data)
+                if isinstance(arr, dace.data.View):
+                    ve = sdutil.get_view_edge(state, node)
+                    if ve is not None:
+                        other = ve.src if ve.dst is node else ve.dst
+                        if isinstance(other, nodes.AccessNode):
+                            blocked.add(other.data)
                 if not isinstance(arr, dace.data.Array):
                     continue
                 for edge in itertools.chain(state.in_edges(node), state.out_edges(node)):
@@ -364,13 +373,13 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         blocked.add(node.data)
                         break
                     if isinstance(nb, nodes.MapEntry) and nb.map.schedule in dtypes.GPU_SCHEDULES:
-                        # Block arrays that feed the map entry (node -> MapEntry) or that live inside the
-                        # map body and receive an input from the entry (MapEntry -> node).
+                        # Blocks arrays feeding the entry (node -> MapEntry) and arrays living inside
+                        # the body that receive an input from it (MapEntry -> node).
                         blocked.add(node.data)
                         break
                     if isinstance(nb, nodes.MapExit) and nb.map.schedule in dtypes.GPU_SCHEDULES:
-                        # Partial WCR outputs from inside the map body (node -> MapExit) are always
-                        # blocked because the code generator cannot emit them as a scalar collective.
+                        # Partial WCR outputs from inside the body (node -> MapExit) are always
+                        # blocked: codegen cannot emit them as a scalar collective.
                         if edge.src is node:
                             blocked.add(node.data)
                             break
@@ -379,9 +388,6 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         # round-trip. Transient outputs are scalarized and widened back by the GPU-scalar
                         # promotion pass when they live in device memory.
                         if self.skip_gpu_outputs and edge.dst is node and not arr.transient:
-                            blocked.add(node.data)
-                            break
-                        if edge.src is node:
                             blocked.add(node.data)
                             break
         return blocked
@@ -419,7 +425,10 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         :param stage_nontransients: Whether to stage non-transient arrays (top level only).
         :returns: Names of the descriptors that are now scalar-referenced in the body.
         """
-        blocked = self._blocked_sources(sdfg) | self._blocked_by_unscalarizable_neighbors(sdfg)
+        blocked = self._blocked_descriptors(sdfg)
+        # Hoisted: the loop below only calls ``remove_data`` / ``add_scalar``; the state rewrite is
+        # after it, so no access node moves and these name sets cannot go stale.
+        is_read_set, is_written_set, gpu_written_set = descriptor_access_summary(sdfg)
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
@@ -440,13 +449,16 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                                 find_new_name=False)
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = descriptor_is_read(sdfg, arr_name)
-                is_written = descriptor_is_written(sdfg, arr_name)
+                is_read = arr_name in is_read_set
+                is_written = arr_name in is_written_set
+                # The staged scalar is what the BODY accesses, and the copy edges below are the
+                # transfer; inheriting device storage makes every host reference to it invalid.
+                storage = arr.storage if arr_name in gpu_written_set else dtypes.StorageType.Default
                 # Fresh name every time (find_new_name): a re-run over an already-staged array never
                 # collides with the scalar an earlier run created.
                 scal_name, _ = sdfg.add_scalar(f'scal_{arr_name}',
                                                dtype=arr.dtype,
-                                               storage=arr.storage,
+                                               storage=storage,
                                                transient=True,
                                                lifetime=arr.lifetime,
                                                debuginfo=arr.debuginfo,
@@ -560,6 +572,8 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         """
         rename: Dict[str, str] = {}
         staged: List[Tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
+        # Hoisted for the same reason as in the forward pass.
+        is_read_set, is_written_set, _ = descriptor_access_summary(sdfg)
 
         for name, desc in list(sdfg.arrays.items()):
             if not isinstance(desc, dace.data.Scalar) or isinstance(desc.dtype, dace.dtypes.opaque):
@@ -578,8 +592,8 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                                find_new_name=False)
                 rename[name] = name
             elif stage_nontransients:
-                is_read = descriptor_is_read(sdfg, name)
-                is_written = descriptor_is_written(sdfg, name)
+                is_read = name in is_read_set
+                is_written = name in is_written_set
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
                 # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.

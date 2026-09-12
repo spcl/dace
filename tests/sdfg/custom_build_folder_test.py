@@ -13,6 +13,11 @@ def customprog(A: dace.float64[20]):
     return A + 1
 
 
+@dace.program
+def customprog2(A: dace.float64[20]):
+    return A * 2
+
+
 @pytest.fixture
 def unlaunched(monkeypatch):
     """Drop the rank and cache settings the surrounding environment exports, which override config."""
@@ -193,6 +198,43 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
     # A rank that only loads is free to hold no SDFG at all, as tests/library/mpi does.
     csdfg = sdfg_utils.distributed_compile(None, loader)
     del csdfg
+
+
+def test_hash_cache_is_stable_across_identical_builds(unlaunched, tmp_path):
+    """`cache: hash` names the build folder from the SDFG's contents, so a rebuild of the SAME
+    program must land in the SAME folder -- otherwise every run is a cache miss and old build
+    folders pile up forever.
+
+    `to_json()` embeds a fresh `uuid4` `guid` on every SDFG/state/node/edge construction
+    (`generate_element_id`, dace/sdfg/graph.py), so two parses of one unchanged program produce
+    two different JSON strings even in the same process with no hash randomization involved --
+    the guids are random regardless of `PYTHONHASHSEED`. `hash_sdfg()` already strips `guid`
+    (and other derived/non-identity keys) before hashing.
+    """
+    unlaunched.setenv('DACE_default_build_folder', str(tmp_path))
+    with dace.config.set_temporary('cache', value='hash'):
+        sdfg1 = customprog.to_sdfg(simplify=False)
+        sdfg2 = customprog.to_sdfg(simplify=False)
+
+        # Confirms the reproducer is actually exercising the instability, not a vacuous check.
+        assert sdfg1.to_json() != sdfg2.to_json(), 'guids no longer vary between builds -- update this reproducer'
+        assert sdfg1.hash_sdfg() == sdfg2.hash_sdfg()
+        assert sdfg1.build_folder == sdfg2.build_folder
+
+
+def test_hash_cache_differs_for_a_different_program(unlaunched, tmp_path):
+    """The flip side of the stability check: a cache key that collided across genuinely different
+    SDFGs would serve a stale binary, which is worse than a miss. Names are pinned equal so the
+    only thing left to tell the folders apart is the hash component itself.
+    """
+    unlaunched.setenv('DACE_default_build_folder', str(tmp_path))
+    with dace.config.set_temporary('cache', value='hash'):
+        sdfg1 = customprog.to_sdfg(simplify=False)
+        sdfg2 = customprog2.to_sdfg(simplify=False)
+        sdfg1.name = sdfg2.name = 'probe'
+
+        assert sdfg1.hash_sdfg() != sdfg2.hash_sdfg()
+        assert sdfg1.build_folder != sdfg2.build_folder
 
 
 if __name__ == '__main__':

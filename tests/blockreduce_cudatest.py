@@ -2,7 +2,6 @@
 import numpy as np
 import pytest
 import dace
-from dace.transformation.interstate import GPUTransformSDFG
 from dace.memlet import Memlet
 
 
@@ -31,8 +30,8 @@ def test_blockreduce():
     state.add_edge(A, None, me, None, Memlet.simple(A, '0:128'))
     state.add_edge(me, None, mei, None, Memlet.simple(A, '(64*bi):(64*bi+64)'))
     state.add_edge(mei, None, tA, None, Memlet.simple('A', '(64*bi+2*i):(64*bi+2*i+2)'))
-    state.add_edge(tA, None, red, None, Memlet.simple(tA, '0:2'))
-    state.add_edge(red, None, tB, None, Memlet.simple(tB, '0'))
+    state.add_edge(tA, None, red, '_in', Memlet.simple(tA, '0:2'))
+    state.add_edge(red, '_out', tB, None, Memlet.simple(tB, '0'))
     state.add_edge(tB, None, write_tasklet, 'inp', Memlet.simple(tB, '0'))
     state.add_edge(write_tasklet, 'out', mxi, None, Memlet.simple('B', 'bi', num_accesses=-1))
     state.add_edge(mxi, None, mx, None, Memlet.simple(B, 'bi'))
@@ -41,7 +40,7 @@ def test_blockreduce():
 
     Adata = np.random.rand(128).astype(np.float32)
     Bdata = np.random.rand(2).astype(np.float32)
-    sdfg.apply_transformations(GPUTransformSDFG, options={'sequential_innermaps': False})
+    sdfg.apply_gpu_transformations()
     sdfg(A=Adata, B=Bdata)
 
     B_regression = np.zeros(2, dtype=np.float32)

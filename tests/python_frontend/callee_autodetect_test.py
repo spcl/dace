@@ -90,9 +90,11 @@ def test_nested_function_method():
 
 def test_function_that_needs_replacement():
 
+    # A buffer-aliasing query, not a computation: it can never gain a replacement, so it stays a
+    # stand-in for "numpy function the frontend has to call back into Python for".
     @dace
     def notworking(a: dace.float64[20]):
-        return np.allclose(a, a)
+        return np.shares_memory(a, a)
 
     A = np.random.rand(20)
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
@@ -105,7 +107,7 @@ def test_function_that_needs_replacement():
 def test_nested_autoparse(typed_callbacks):
 
     def notworking_nested(a):
-        return np.allclose(a, a)
+        return np.shares_memory(a, a)
 
     @dace
     def notworking2(a: dace.float64[20]):
@@ -115,7 +117,7 @@ def test_nested_autoparse(typed_callbacks):
 
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=typed_callbacks):
         if typed_callbacks:
-            with pytest.raises(DaceSyntaxError, match='numpy.allclose'):
+            with pytest.raises(DaceSyntaxError, match='numpy.shares_memory'):
                 with pytest.warns(match="Automatically creating callback"):
                     notworking2(A)
         else:

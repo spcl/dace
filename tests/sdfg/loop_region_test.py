@@ -4,6 +4,7 @@ import numpy as np
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as tn
+from dace.transformation.dataflow import PruneConnectors
 
 
 def _make_regular_for_loop() -> SDFG:
@@ -154,8 +155,8 @@ def _make_triple_nested_for_loop() -> SDFG:
     tmpnode2 = reduce_state.add_access('tmp')
     cnode = reduce_state.add_access('C')
     red = reduce_state.add_reduce('lambda a, b: a + b', (2, ), 0)
-    reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
-    reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
+    reduce_state.add_edge(tmpnode2, None, red, '_in', dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
+    reduce_state.add_edge(red, '_out', cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
     return sdfg
 
 
@@ -314,6 +315,37 @@ def test_loop_to_stree_triple_nested_for():
     assert [type(n) for n in po_nodes] == [tn.ForScope, tn.ForScope, tn.ForScope, tn.TaskletNode, tn.LibraryCall]
 
 
+def test_loop_region_read_and_write_sets_bound_scalar():
+    """A LoopRegion's own condition/init/update reads (here a scalar loop bound) are invisible to
+    ``nodes()``/``edges()``, which only see the body -- they must still show up in read_and_write_sets().
+    """
+    nsdfg = dace.SDFG('nested')
+    nsdfg.add_array('n', [1], dace.int32)
+    nsdfg.add_array('a', [10], dace.float64)
+
+    loop = LoopRegion('loop', condition_expr='i < n[0]', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    nsdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    body.add_edge(body.add_tasklet('t', {}, {'o'}, 'o = 1'), 'o', body.add_write('a'), None, dace.Memlet('a[i]'))
+    nsdfg.validate()
+
+    read_set, _ = loop.read_and_write_sets()
+    assert 'n' in read_set
+
+    sdfg = dace.SDFG('outer')
+    sdfg.add_array('N_arr', [1], dace.int32)
+    sdfg.add_array('A', [10], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={'n'}, outputs={'a'})
+    state.add_edge(state.add_read('N_arr'), None, nsdfg_node, 'n', dace.Memlet('N_arr[0]'))
+    state.add_edge(nsdfg_node, 'a', state.add_write('A'), None, dace.Memlet('A[0:10]'))
+    sdfg.validate()
+
+    # Non-regression guard: PruneConnectors reads via SDFG.read_and_write_sets(), which already
+    # special-cases control-flow regions on its own; this just locks in that it stays sound.
+    assert not PruneConnectors.can_be_applied_to(sdfg=sdfg, nsdfg=nsdfg_node, expr_index=0, permissive=False)
+
+
 if __name__ == '__main__':
     test_loop_regular_for()
     test_loop_regular_while()
@@ -327,3 +359,4 @@ if __name__ == '__main__':
     test_loop_to_stree_do_for()
     test_loop_to_stree_do_for_inverted_cond()
     test_loop_to_stree_triple_nested_for()
+    test_loop_region_read_and_write_sets_bound_scalar()

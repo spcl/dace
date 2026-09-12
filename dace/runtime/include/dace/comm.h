@@ -6,28 +6,30 @@
 
 namespace dace {
 
-    namespace comm {
+namespace comm {
 
-        static DACE_HDFI int cart_rank(int grid_length, const int* grid, const int* coords) {
-            int rank = coords[0];
-            for (auto i = 1; i < grid_length; ++i) {
-                rank *= grid[i];
-                rank += coords[i];
-            }
-            return rank;
-        }
+static DACE_HDFI int cart_rank(int grid_length, const int* grid,
+                               const int* coords) {
+  int rank = coords[0];
+  for (auto i = 1; i < grid_length; ++i) {
+    rank *= grid[i];
+    rank += coords[i];
+  }
+  return rank;
+}
 
-        static DACE_HDFI void cart_coords(int rank, int grid_length, const int* grid, int* coords) {
-            int tmp = rank;
-            for (auto i = grid_length - 1; i > 0; --i) {
-                coords[i] = tmp % grid[i];
-                tmp /= grid[i];
-            }
-            coords[0] = tmp;
-        }
+static DACE_HDFI void cart_coords(int rank, int grid_length, const int* grid,
+                                  int* coords) {
+  int tmp = rank;
+  for (auto i = grid_length - 1; i > 0; --i) {
+    coords[i] = tmp % grid[i];
+    tmp /= grid[i];
+  }
+  coords[0] = tmp;
+}
 
-    } // namespace comm
+}  // namespace comm
 
-} // namespace dace
+}  // namespace dace
 
 #endif  // __DACE_COMM_H

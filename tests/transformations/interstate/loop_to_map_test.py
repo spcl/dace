@@ -452,7 +452,48 @@ def test_symbol_array_mix_2(parallel):
     body_start.add_edge(t, 'o', body_start.add_write('B'), None, dace.Memlet('B[i]'))
 
     sdfg.apply_transformations_repeated([LoopLifting])
-    assert sdfg.apply_transformations(LoopToMap) == (1 if parallel else 0)
+    # Both variants carry ``sym`` (read in ``B[i]`` before the body edge reassigns it
+    # to ``A[i-1]``), so LoopToMap must refuse: a Map would pin ``sym`` to 0.0 and
+    # compute ``B[i]=0``. The ``parallel`` variant only adds an ``A`` write.
+    assert sdfg.apply_transformations(LoopToMap) == 0
+
+
+_CN = dace.symbol('_CN')
+
+
+@dace.program
+def _carried_symbol_loop(a: dace.float64[_CN], b: dace.float64[_CN]):
+    im = _CN - 1
+    for i in range(_CN):
+        a[i] = b[i] + b[im]
+        im = i
+
+
+@dace.program
+def _peeled_affine_loop(a: dace.float64[_CN], b: dace.float64[_CN]):
+    a[0] = b[0] + b[_CN - 1]  # wrapping first iteration, peeled off
+    for i in range(1, _CN):
+        a[i] = b[i] + b[i - 1]  # induction substituted -> affine
+
+
+def _only_loop(sdfg: dace.SDFG) -> LoopRegion:
+    return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
+
+
+def test_loop2map_rejects_unpeeled_carried_symbol():
+    """Wrap-around induction ``im = N-1; a[i] = b[i] + b[im]; im = i`` (TSVC s291):
+    ``im`` is read (in ``b[im]``) before it is reassigned, so it is loop-carried and
+    LoopToMap must refuse -- a Map would pin ``im`` to ``N-1`` and compute
+    ``b[i] + b[N-1]`` everywhere."""
+    sdfg = _carried_symbol_loop.to_sdfg(simplify=True)
+    assert not LoopToMap.can_be_applied_to(sdfg, loop=_only_loop(sdfg))
+
+
+def test_loop2map_accepts_peeled_affine_form():
+    """Once peeled and the induction substituted, ``a[i] = b[i] + b[i-1]`` is affine
+    and LoopToMap accepts it."""
+    sdfg = _peeled_affine_loop.to_sdfg(simplify=True)
+    assert LoopToMap.can_be_applied_to(sdfg, loop=_only_loop(sdfg))
 
 
 @pytest.mark.parametrize('overwrite', (False, True))
@@ -940,6 +981,110 @@ def test_dynamic_write_slab_separated_by_iteration_var():
     assert not any(isinstance(n, LoopRegion) for n, _ in sdfg.all_nodes_recursive())
 
 
+def test_loop_to_map_with_loop_invariant_if():
+    """A loop whose body is guarded by a loop-invariant condition is
+    parallelizable: ``for i: if c: b[i]=a[i]+1`` -> one map, value-preserving
+    for the guard taken and not-taken. (The guard becomes a per-iteration
+    ``NestedSDFG``-wrapped conditional inside the map.)"""
+    N = dace.symbol('N')
+
+    @dace.program
+    def loop_invariant_if(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1]):
+        for i in range(N):
+            if c[0] > 0:
+                b[i] = a[i] + 1.0
+
+    for cv in (1, 0):
+        sdfg = loop_invariant_if.to_sdfg(simplify=True)
+        assert sdfg.apply_transformations_repeated(LoopToMap) == 1
+        sdfg.validate()
+        assert not any(isinstance(n, LoopRegion) for n, _ in sdfg.all_nodes_recursive())
+        n = 12
+        a = np.random.rand(n)
+        b = np.zeros(n)
+        sdfg(a=a.copy(), b=b, c=np.array([cv], np.int32), N=n)
+        assert np.allclose(b, a + 1.0 if cv > 0 else 0.0), f"mismatch c={cv}"
+
+
+def test_loop_to_map_round_trip_through_nested_sdfg_recovers_map():
+    """Parallelizing a loop-invariant-guarded loop, de-parallelizing it, then
+    re-parallelizing recovers the map. The ``LoopToMap->MapToForLoop`` round-
+    trip propagates a whole-array external write memlet (``b[i]`` -> ``b[0:N]``)
+    on the ``NestedSDFG`` the guard forces; the write-pattern check now looks
+    *past* the connector at the inner per-iteration write
+    (:func:`_nested_writes_iter_indexed`), so independence is still proven."""
+    from dace.transformation.dataflow.map_for_loop import MapToForLoop
+    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+    N = dace.symbol('N')
+
+    @dace.program
+    def loop_invariant_if(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1]):
+        for i in range(N):
+            if c[0] > 0:
+                b[i] = a[i] + 1.0
+
+    sdfg = loop_invariant_if.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, "first LoopToMap must fire"
+    PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, \
+        "re-parallelize must recover the map after the round-trip"
+
+
+def test_refuse_when_body_assigns_loop_range_symbol():
+    """A loop whose range expression reads a symbol that the loop body
+    re-assigns via an interstate-edge assignment must NOT be converted to
+    a Map: the assignment would move into the new ``loop_body`` NestedSDFG
+    with the body, but the Map's range stays at the outer scope -- so the
+    range ends up referencing a symbol defined only inside the new NSDFG
+    (``Missing symbols on nested SDFG: ['KP1']`` at validation time).
+
+    This pattern shows up in the canonicalized cloudsc SDFG (the
+    ``kfdia_plus_1_N = kfdia + 1`` interstate-edge assignment ends up
+    inside a loop whose condition reads ``kfdia_plus_1_N``). The check is
+    a structural-soundness gate -- a strictly additive ``return False``
+    that leaves the loop as a ``LoopRegion`` (sequential codegen still
+    handles it cleanly).
+    """
+    from dace.memlet import Memlet
+
+    sdfg = dace.SDFG("refuse_body_assigns_loop_range_symbol")
+    sdfg.add_symbol("K", dace.int32)
+    sdfg.add_symbol("KP1", dace.int32)
+    sdfg.add_array("a", (dace.symbol("K"), ), dace.float32)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    # ``KP1`` defined before the loop -- the body's interstate-edge
+    # ``KP1 = K + 1`` is a redundant re-assignment that nonetheless
+    # creates the bad-pattern shape.
+    sdfg.add_edge(init, init, dace.InterstateEdge(assignments={}))  # placeholder no-op
+
+    loop = LoopRegion("for_j", condition_expr="j < KP1", loop_var="j", initialize_expr="j = 0", update_expr="j = j + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"KP1": "K + 1"}))
+
+    # Body: a single state with a write to ``a[j]``. Critically, an
+    # interstate edge inside the loop reassigns ``KP1`` (loop-invariant
+    # value, but structurally placed inside the loop body).
+    body = loop.add_state("body", is_start_block=True)
+    after = loop.add_state("after")
+    loop.add_edge(body, after, dace.InterstateEdge(assignments={"KP1": "K + 1"}))
+    t = body.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    w = body.add_write("a")
+    body.add_edge(t, "o", w, None, Memlet("a[j]"))
+
+    sdfg.validate()
+
+    # The loop's range reads ``KP1``; the body has an interstate edge
+    # assigning ``KP1``. ``LoopToMap.can_be_applied`` must refuse.
+    applied = sdfg.apply_transformations_repeated(LoopToMap)
+    assert applied == 0, "LoopToMap must refuse to convert a loop whose range reads a body-assigned symbol"
+
+    # The loop remains as a LoopRegion; SDFG stays valid.
+    assert any(isinstance(c, LoopRegion) for c in sdfg.all_control_flow_regions(recursive=True))
+    sdfg.validate()
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -981,4 +1126,6 @@ if __name__ == "__main__":
     test_self_loop_to_map()
     test_nested_sdfg_nested_loop()
     test_stride_symbol_propagated_to_nested_sdfg()
+    test_loop_to_map_with_loop_invariant_if()
     test_dynamic_write_slab_separated_by_iteration_var()
+    test_refuse_when_body_assigns_loop_range_symbol()

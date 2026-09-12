@@ -21,6 +21,28 @@ from dace import dtypes, symbolic
 from dace.data.core import Array, Data, Scalar
 
 
+def add_mask(sdfg, name: str, vector_width: int) -> str:
+    """Allocates a transient boolean lane-mask on ``sdfg``.
+
+    The mask is a plain ``Array(dtype=bool_, shape=(vector_width,),
+    storage=Register, transient=True)``. There is intentionally no
+    typeclass flag — the upcoming branch-normalization and
+    map-preparation passes identify masks by their connection topology,
+    not by a tag on the descriptor.
+
+    Returns the name that was actually assigned (``find_new_name=True``
+    so collisions are resolved automatically).
+    """
+    if vector_width <= 0:
+        raise ValueError(f"vector_width must be positive, got {vector_width}")
+    return sdfg.add_array(name=name,
+                          shape=(vector_width, ),
+                          dtype=dtypes.bool_,
+                          storage=dtypes.StorageType.Register,
+                          transient=True,
+                          find_new_name=True)[0]
+
+
 def create_datadescriptor(obj, no_custom_desc=False):
     """ Creates a data descriptor from various types of objects.
 

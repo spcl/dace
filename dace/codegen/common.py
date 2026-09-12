@@ -2,13 +2,14 @@
 import ast
 from copy import deepcopy
 import ctypes.util
-from dace import config, data, dtypes, sdfg as sd, symbolic
+from dace import config, data, dtypes, cpf_lowering, sdfg as sd, symbolic
 from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
 from dace.codegen.tools import gpu_runtime
 from functools import lru_cache
 from io import StringIO
+import numpy as np
 import os
 import subprocess
 from typing import List, Optional, Set, Union
@@ -38,22 +39,61 @@ def find_outgoing_edges(node, dfg):
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _sym2cpp(s, arrayexprs):
-    return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True))
+def _sym2cpp(s, arrayexprs, dialect, fp_ctype):
+    # ``pyexpr2cpp`` parses this text again with the PYTHON parser, which ``static_cast<T>(x)``
+    # does not survive: it comes back as ``(static_cast < T) > (x)``. ``reparsed`` says so.
+    text = symbolic.symstr(s, arrayexprs, cpp_mode=True, dialect=dialect, fp_ctype=fp_ctype, reparsed=True)
+    try:
+        ast.parse(text)
+    except SyntaxError:
+        # Already C++ (a ``dace::math::ipow`` beside the cast, say), so ``pyexpr2cpp`` hands it back
+        # untouched and a bare ``int64(x)`` would reach the compiler: spell the cast for it instead.
+        return symbolic.symstr(s, arrayexprs, cpp_mode=True, dialect=dialect, fp_ctype=fp_ctype, reparsed=False)
+    return cppunparse.pyexpr2cpp(text)
 
 
-def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
+def sym2cpp(s,
+            arrayexprs: Optional[Set[str]] = None,
+            dialect: Optional[cpf_lowering.Dialect] = None,
+            fp_ctype: Optional[str] = None) -> Union[str, List[str]]:
     """
     Converts an array of symbolic variables (or one) to C++ strings.
 
     :param s: Symbolic expression to convert.
     :param arrayexprs: Set of names of arrays, used to convert SymPy
                        user-functions back to array expressions.
+    :param dialect: which C++ vocabulary may be emitted. ``None`` (the default) takes the ambient
+                    dialect (:func:`~dace.cpf_lowering.active_dialect`), which is ``RUNTIME``
+                    unless an CPF rendering is in progress -- so the several hundred call sites in
+                    the code generators need no change. Resolved HERE and passed down as an
+                    argument, so it still reaches the ``_sym2cpp`` memoization key; nothing inside
+                    the cached function reads the ambient value. See
+                    :class:`~dace.cpf_lowering.Dialect`.
+    :param fp_ctype: C++ floating type the expression evaluates in, so a sympy ``Rational``
+                     becomes a division of THAT type instead of a truncating integer division.
+                     ``None`` (the default) keeps integer division, which index arithmetic
+                     needs. In the memoization key for the same reason ``dialect`` is.
     :return: C++-compilable expression or list thereof.
     """
-    if not isinstance(s, list):
-        return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
-    return [sym2cpp(d, arrayexprs) for d in s]
+    if dialect is None:
+        dialect = cpf_lowering.active_dialect()
+    if isinstance(s, list):
+        return [sym2cpp(d, arrayexprs, dialect, fp_ctype) for d in s]
+    # Two literal kinds symstr cannot carry: a bool round-trips as Python 'True' (or as the
+    # integer 1, which loses the type), and a complex loses its width -- a complex64 constant
+    # would be emitted as dace::complex128.
+    if isinstance(s, (bool, np.bool_)):
+        return 'true' if s else 'false'
+    if isinstance(s, (complex, np.complexfloating)):
+        ctype = str(dtypes.dtype_to_typeclass(type(s)))
+        if dialect is cpf_lowering.Dialect.STANDALONE_C:
+            # ``a + b*I`` is not the same literal: it evaluates, so a NaN or an infinite component
+            # propagates through the multiplication. The builder takes the two components.
+            return f'{cpf_lowering.C_COMPLEX_BUILDERS[ctype]}({s.real}, {s.imag})'
+        if dialect is cpf_lowering.Dialect.STANDALONE:
+            ctype = cpf_lowering.ctype_for(ctype, dialect)
+        return f'{ctype}({s.real}, {s.imag})'
+    return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs), dialect, fp_ctype)
 
 
 def codeblock_to_cpp(cb: CodeBlock):
@@ -112,18 +152,90 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
     return f'__state->gpu_context->streams[{stream}]'
 
 
-@lru_cache()
-def get_gpu_backend() -> str:
+def cpp_standard() -> str:
+    """The C++ standard version to build with, per ``compiler.cpp_standard`` -- clamped to a minimum
+    of 20. DaCe assumes C++20 or newer everywhere (aligned ``operator new``, ``consteval``, ...), so a
+    lower configured value is raised to 20 rather than passed through to the compiler invocation."""
+    try:
+        standard = int(str(config.Config.get('compiler', 'cpp_standard')).strip())
+    except ValueError:
+        standard = 20
+    return str(max(standard, 20))
+
+
+#: GCC releases whose auto-vectorizer mislowers a select whose operands are loaded inline. It builds
+#: the lane mask for one operand by sign-extending the low half of an int32 compare and then reuses
+#: that same mask for the high-half ``vmaskmovpd``, which zeroes the lanes it believes are masked
+#: off. A ``mask[i] ? t[i] : f[i]`` over int32/float64 therefore returns zeros for the upper half of
+#: every vector -- a silent wrong answer, not a crash. Reproduced on 13.3.0 at ``-O3`` with any
+#: vectorizing ``-march``; ``-fno-tree-vectorize`` avoids it and GCC 14 fixed it.
+_MISCOMPILING_GCC_MAJORS = (13, )
+
+
+def warn_if_cxx_miscompiles_inline_selects() -> None:
+    """Warn when the configured host compiler is a release known to miscompile the inlined select
+    the readable code generator emits.
+
+    Checked here, at emission time, rather than left to the build: the pattern is emitted for every
+    ``a if c else b`` tasklet, the wrong answer is silent, and by the time a test compares numbers
+    there is nothing left pointing at the toolchain. The lowering itself is correct C++ and stays as
+    it is -- what is reported is the compiler.
     """
-    Returns the currently-selected GPU backend. If automatic,
-    will perform a series of checks to see if an NVIDIA device exists,
-    then if an AMD device exists, or fail.
-    Otherwise, chooses the configured backend in ``compiler.cuda.backend``.
+    from dace.codegen import compiler_family  # Avoid import loop
+    if config.Config.get('compiler', 'cpu', 'implementation') != 'experimental_readable':
+        return  # classic codegen keeps the operands in connector locals, so the pattern never forms
+    executable = compiler_family.host_compiler()
+    if compiler_family.detect(executable) != 'gnu':
+        return
+    version = compiler_family.detect_version(executable)
+    if version is None or version[0] not in _MISCOMPILING_GCC_MAJORS:
+        return
+    warnings.warn(f'Host C++ compiler {executable} is GCC {".".join(str(v) for v in version)}, whose '
+                  'auto-vectorizer mislowers a masked select and silently returns zeros for the upper '
+                  'half of each vector. Build with GCC 14 or newer, or add -fno-tree-vectorize to '
+                  'compiler.cpu.args.')
+
+
+def emits_tree_reductions(experimental: bool) -> bool:
+    """Whether a WCR accumulator folds into a tree reduction rather than a per-thread atomic.
+
+    Always on for the experimental targets -- the fold IS how they lower a reduction, so there is
+    nothing to opt into. The legacy targets keep it behind ``compiler.emit_tree_reductions``.
+    """
+    return experimental or config.Config.get_bool('compiler', 'emit_tree_reductions')
+
+
+def cuda_emits_tree_reductions() -> bool:
+    """:func:`emits_tree_reductions` for whichever CUDA codegen ``compiler.cuda.implementation`` picks.
+
+    For callers outside codegen (a pass sizing thread blocks for a fold that codegen may or may not
+    emit) that have no code generator to ask.
+    """
+    return emits_tree_reductions(config.Config.get('compiler', 'cuda', 'implementation') == 'experimental')
+
+
+def get_gpu_backend() -> str:
+    """Returns the currently-selected GPU backend in ``compiler.cuda.backend``.
+
+    If automatic, will perform a series of checks to see if an NVIDIA device exists,
+    then if an AMD device exists, or fail. Note that the automatically detected case
+    will never be revisited.
+
+    NOT cached as a whole: that would freeze the first answer, so a later
+    ``set_temporary('compiler', 'cuda', 'backend', ...)`` could never take effect. Only the
+    probing is expensive, and it carries its own cache.
     """
     backend: str = config.Config.get('compiler', 'cuda', 'backend')
     if backend and backend != 'auto':
         return backend
 
+    return _probing_for_gpu_backend()
+
+
+@lru_cache(maxsize=None, typed=True)
+def _probing_for_gpu_backend() -> str:
+    # Probe the system for the GPU backend. Called by ``get_gpu_backend()`` when
+    # the backend is unset, not directly; the cached result never changes.
     def _try_execute(cmd: str) -> bool:
         process = subprocess.Popen(cmd.split(' '), stderr=subprocess.STDOUT, stdout=subprocess.PIPE, shell=True)
         errcode = process.wait()
@@ -159,12 +271,19 @@ def get_gpu_backend() -> str:
                        'to either "cuda" or "hip".')
 
 
-@lru_cache()
 def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     """
     Returns the GPU runtime library (CUDA / HIP) if exists. The result is cached for performance.
     """
     backend = get_gpu_backend()
+    return _look_for_runtime_file(backend)
+
+
+@lru_cache(maxsize=None, typed=True)
+def _look_for_runtime_file(backend: str) -> gpu_runtime.GPURuntime:
+    # Locate a GPU backend's runtime. Called indirectly by ``get_gpu_runtime()``,
+    # not directly.
+
     if backend == 'cuda':
         libpath = ctypes.util.find_library('cudart')
         if os.name == 'nt' and not libpath:  # Windows-based search
@@ -185,7 +304,7 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     return gpu_runtime.GPURuntime(backend, libpath)
 
 
-@lru_cache()
+@lru_cache(maxsize=None, typed=True)
 def get_gpu_chiplet_count() -> Optional[int]:
     """
     Returns the number of chiplets (XCDs) of the GPU of this machine, or None if it cannot be determined.

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.libraries.linalg.nodes.cholesky import SOLVER_BLAS
 import dace.libraries.lapack as lapack
 import dace.libraries.linalg as linalg
 import numpy as np
@@ -41,7 +42,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         Bin = state.add_access("B" + suffix)
         Bout = state.add_access("B" + suffix)
         transpose_in = linalg.Transpose("transpose_in", dtype=dtype)
-        transpose_in.implementation = "cuBLAS"
+        transpose_in.implementation = SOLVER_BLAS[implementation]
         state.add_nedge(Ahi, Ai, Memlet.from_array(*Ahost_arr))
         state.add_nedge(Bhi, Bin, Memlet.from_array(*Bhost_arr))
         state.add_nedge(Bout, Bho, Memlet.from_array(*Bhost_arr))
@@ -87,6 +88,8 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
     pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
     pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    pytest.param("rocSOLVER", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    pytest.param("rocSOLVER", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
 ])
 def test_getrs(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)

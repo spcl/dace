@@ -129,6 +129,36 @@ def test_optional_array_inference():
                 assert node.sdfg.arrays['tmp'].optional is False
 
 
+def test_optional_ordering_only_access_node():
+    """An access node whose only edge is an ordering memlet never dereferences the pointer,
+    so it must not make the array non-optional and delete the None-handling branch."""
+    sdfg = dace.SDFG('optional_ordering')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('R', [1], dace.float64)
+    sdfg.add_transient('Z', [1], dace.float64)
+
+    state = sdfg.add_state()
+    znode = state.add_access('Z')
+    state.add_edge(state.add_tasklet('w', {}, {'o': None}, 'o = 1.0'), 'o', znode, None, dace.Memlet('Z[0]'))
+    state.add_edge(znode, None, state.add_access('A'), None, dace.Memlet())
+
+    for label, cond, value in (('s_none', 'A is None', 1.0), ('s_other', 'not (A is None)', 2.0)):
+        branch = sdfg.add_state(label)
+        sdfg.add_edge(state, branch, dace.InterstateEdge(cond))
+        branch.add_edge(branch.add_tasklet('r', {}, {'o': None}, f'o = {value}'), 'o', branch.add_access('R'), None,
+                        dace.Memlet('R[0]'))
+    sdfg.validate()
+
+    OptionalArrayInference().apply_pass(sdfg, {})
+    assert sdfg.arrays['A'].optional is None
+
+    # The observable symptom: marking A non-optional deletes the branch and refuses A=None.
+    DeadStateElimination().apply_pass(sdfg, {})
+    R = np.zeros(1)
+    sdfg(A=None, R=R)
+    assert R[0] == 1.0
+
+
 if __name__ == '__main__':
     test_type_hint()
     test_optional_arg_hint()
@@ -136,3 +166,4 @@ if __name__ == '__main__':
     test_optional_dead_state(False)
     test_optional_dead_state(True)
     test_optional_array_inference()
+    test_optional_ordering_only_access_node()

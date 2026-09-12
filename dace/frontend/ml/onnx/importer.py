@@ -98,6 +98,11 @@ from dace.transformation.onnx import expand_onnx_nodes as onnx_node_expander
 from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
 from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
 from dace.libraries.onnx.schema import ONNXParameterType
+# ``GPU_RESIDENT_STORAGES`` ({GPU_Global, GPU_Shared}) lives in the standard-library helper,
+# not in ``dace.dtypes``. ``dtypes.GPU_STORAGES`` is a narrower set ({GPU_Shared}) and
+# ``dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES`` additionally includes host CPU_Pinned, so neither
+# is a substitute for deciding whether data is device-resident.
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 
 #: Mapping from NumPy dtypes to PyTorch dtypes for tensor conversion
 if TORCH_AVAILABLE:
@@ -358,6 +363,9 @@ class ONNXModel:
 
         # add weights
         self.weights: Dict[str, torch.Tensor] = {}  #: mapping from weight name to array
+        #: mapping from a staged copy of a weight to the weight it copies; see
+        #: :meth:`register_staged_weights`
+        self.staged_weights: Dict[str, str] = {}
         for init in graph.initializer:
             self._add_constant_tensor(init, storage)
 
@@ -472,7 +480,8 @@ class ONNXModel:
                                         dace.Memlet.from_array(clean_onnx_name(name), data_desc))
 
         # scalars need to be promoted to arrays so that we can return them from the dace program
-        # however, this is only for CPU: on GPU, scalars are already pointers
+        # (top-level scalar "__return" descriptors are rejected by SDFG validation); the caller
+        # reshapes them back to () after the call
         self._promoted_scalars = set()
 
         # insert copies from outputs to __return arrays
@@ -486,8 +495,8 @@ class ONNXModel:
             new_output_names.append(new_output_name)
 
             desc = copy.deepcopy(self.sdfg.arrays[clean_name])
-            if isinstance(desc, dt.Scalar) and not self.cuda:
-                desc = dt.Array(desc.dtype, (1, ))
+            if isinstance(desc, dt.Scalar):
+                desc = dt.Array(desc.dtype, (1, ), storage=desc.storage)
                 self._promoted_scalars.add(new_output_name)
 
             # insert new descriptor
@@ -503,7 +512,16 @@ class ONNXModel:
         sdfg_utils.fuse_states(self.sdfg)
 
         if self.cuda:
-            self.sdfg.apply_gpu_transformations()
+            # GPU-transform, then simplify -- but SKIP the array-elimination / reference-to-view
+            # passes. Those inline a reshape's copy (``expanded[:] = np.reshape(data)``) into a view;
+            # the single-state autodiff engine (``make_backward_function``) can only build a correct
+            # backward for a reshape *copy* -- a view has no gradient-accumulation buffer, so the
+            # reshaped tensor's gradient silently comes out zero (e.g. ``test_reshape_on_memlet_path``,
+            # HF decoders). ``FuseStates`` still runs, so the graph stays the single state the backward
+            # generator expects.
+            self.sdfg.apply_gpu_transformations(simplify=False)
+            self.sdfg.simplify(skip={'ArrayElimination', 'ReferenceToView'})
+            self.register_staged_weights()
 
     def _add_constant_tensor(self, tensor: Union[onnx.TensorProto, Tuple[str, np.ndarray]],
                              storage: dtypes.StorageType):
@@ -594,9 +612,40 @@ class ONNXModel:
                                 transient=transient,
                                 storage=storage)
 
+    def register_staged_weights(self) -> None:
+        """Record every transient that only ever holds a whole copy of a weight.
+
+        Offloading stages a host-read constant into a new transient and repoints the host readers
+        at it, so the constant survives under a name the model never chose. The ONNX pure
+        expansions gate on ``clean_weights[edge.src.data]`` to read a compile-time input (an
+        ``axes``, a ``starts``), so without the staged name they decline on GPU and leave autodiff
+        an ONNX node with no differentiable form.
+        """
+        weights = {clean_onnx_name(name): value for name, value in self.weights.items()}
+        writes = collections.Counter(edge.dst.data for state in self.sdfg.states() for edge in state.edges()
+                                     if isinstance(edge.dst, nodes.AccessNode) and not edge.data.is_empty())
+        for state in self.sdfg.states():
+            for edge in state.edges():
+                # An empty memlet is an ordering edge: it writes nothing and has no subset to measure.
+                if not (isinstance(edge.src, nodes.AccessNode)
+                        and isinstance(edge.dst, nodes.AccessNode)) or edge.data.is_empty():
+                    continue
+                source, staged = edge.src.data, edge.dst.data
+                if source not in weights or staged in weights:
+                    continue
+                desc = self.sdfg.arrays[staged]
+                # Only a transient written exactly once, by a copy of the whole weight, is that
+                # weight under another name. Anything else can hold a different value by the time
+                # a reader reaches it, and a constant read out of it would be a wrong number.
+                if not desc.transient or writes[staged] != 1 or edge.data.num_elements() != desc.total_size:
+                    continue
+                self.staged_weights[staged] = source
+
     @property
     def clean_weights(self):
-        return {clean_onnx_name(k): v for k, v in self.weights.items()}
+        weights = {clean_onnx_name(k): v for k, v in self.weights.items()}
+        weights.update((staged, weights[source]) for staged, source in self.staged_weights.items())
+        return weights
 
     def compile_and_init(self) -> compiled_sdfg.CompiledSDFG:
         """ Compile the SDFG and load parameters into GPU memory. """
@@ -608,7 +657,7 @@ class ONNXModel:
         for name, arr in self.weights.items():
             if clean_onnx_name(name) in compiled_sdfg.sdfg.arrays:
                 desc = self.sdfg.arrays[clean_onnx_name(name)]
-                cuda = desc.storage in dace.dtypes.GPU_STORAGES
+                cuda = desc.storage in GPU_RESIDENT_STORAGES
                 if type(desc) is dt.Scalar:
                     self.initialized_parameters[clean_onnx_name(name)] = arr.cuda() if cuda else arr.cpu().numpy()[()]
                 else:
@@ -713,7 +762,7 @@ class ONNXModel:
         inferred_symbols = {k: int(v) for k, v in inferred_symbols.items()}
 
         if torch_outputs is None:
-            torch_outputs = any(self.sdfg.arrays[clean_onnx_name(o)].storage in dace.dtypes.GPU_STORAGES
+            torch_outputs = any(self.sdfg.arrays[clean_onnx_name(o)].storage in GPU_RESIDENT_STORAGES
                                 for o in self.outputs) or any(
                                     isinstance(inp, torch.Tensor) for _, inp in clean_inputs.items())
 
@@ -765,7 +814,7 @@ def create_output_array(inferred_symbols: Dict[str, int],
             dim = dim.subs(sym, inferred_symbols[sym.name])
         return dim
 
-    cuda = desc.storage in dace.dtypes.GPU_STORAGES
+    cuda = desc.storage in GPU_RESIDENT_STORAGES
     if cuda and not use_torch:
         raise ValueError("Got use_torch=False, but received a GPU descriptor")
 

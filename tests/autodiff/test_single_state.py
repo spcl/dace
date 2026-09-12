@@ -14,17 +14,28 @@ from dace.transformation.interstate import StateFusion
 import dace.libraries.onnx as donnx
 from dace.autodiff import add_backward_pass
 
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu
+
 
 ##################################
 # Testing utilities
-def run_correctness(func):
+def run_correctness(func=None, *, xfail_gpu=None):
+    """Decorator turning a ``(runner, torch_func, inputs)`` factory into a
+    device-parametrized correctness test. ``xfail_gpu`` (a reason string) marks
+    only the ``gpu`` variant as expected-to-fail (e.g. a pre-existing lowering
+    limitation)."""
+    if func is None:
+        return lambda f: run_correctness(f, xfail_gpu=xfail_gpu)
 
-    def test_correctness():
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_correctness(device):
+        if device == "gpu" and xfail_gpu is not None:
+            pytest.xfail(xfail_gpu)
         runner, pytorch_func, inputs = func()
         sdfg_dict = {name: arr.copy() for name, arr in inputs.items()}
         torch_dict = {name: torch.tensor(arr.copy(), requires_grad=True) for name, arr in inputs.items()}
 
-        sdfg_results = runner.run(**sdfg_dict)
+        sdfg_results = runner.run(device, **sdfg_dict)
         torch_results = pytorch_func(**torch_dict)
 
         for k, v in torch_results.items():
@@ -33,6 +44,23 @@ def run_correctness(func):
             assert diff < 1e-5, f"Gradient mismatch for '{k}': normalized difference {diff:.2e} exceeds tolerance 1e-5"
 
     return test_correctness
+
+
+def _pin_reduce_to_pure(sdfg):
+    """Pin every ``Reduce`` library node to its ``pure`` expansion before lowering.
+
+    These tests expand library nodes and *then* differentiate the lowered graph. ``Reduce``
+    defaults to the ``auto`` implementation, which lowers to a C++ tasklet (OpenMP / CUDA tree
+    reduction); ``dace.autodiff`` can only reverse Python tasklets, so differentiating after
+    that expansion fails with "Expected tasklet with language Python, got language
+    Language.CPP". The ``pure`` expansion stays in Python and is differentiable. This mirrors
+    what these tests already do for ONNX ops via ``donnx.default_implementation = "pure"``.
+    """
+    from dace.libraries.standard.nodes import Reduce
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, Reduce):
+                node.implementation = 'pure'
 
 
 class SDFGBackwardRunner:
@@ -57,7 +85,7 @@ class SDFGBackwardRunner:
 
         add_backward_pass(sdfg=self.sdfg, outputs=[self.target], inputs=required_grads, simplify=simplify)
 
-    def run(self, **inputs):
+    def run(self, device="cpu", **inputs):
 
         # Zero out all arrays
         intermediate_arrs = {}
@@ -75,7 +103,17 @@ class SDFGBackwardRunner:
         inputs["gradient_" + self.target] = np.ones((1, ),
                                                     dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string()))
 
-        self.sdfg(**inputs)
+        if is_gpu(device):
+            # Isolate the GPU build folder from the CPU variant, lower the (already
+            # backward-augmented) SDFG onto the GPU, and generate/run with the
+            # experimental CUDA code generator. Host (numpy) arrays above are copied
+            # in/out by the generated copy states.
+            self.sdfg.name = f"{self.sdfg.name}_gpu"
+            self.sdfg.apply_gpu_transformations()
+            with experimental_cuda():
+                self.sdfg(**inputs)
+        else:
+            self.sdfg(**inputs)
 
         results = {name: arr for name, arr in inputs.items()}
         return results
@@ -187,7 +225,7 @@ def test_complex_tasklet():
             z << Z[i, j]
 
             z1 = z + 1
-            log(3)  # random expr
+            log(3.0)  # random expr (float literal: log(int) is an ambiguous overload in GPU device code)
             z2 = z - 1 * (2 / 2)
             # hello world 1, 2, 3
             s = z1 * z2
@@ -556,6 +594,7 @@ def test_reshape_on_memlet_path():
 
     sdfg = single_state_reshape_memlet_path.to_sdfg(simplify=False)
 
+    _pin_reduce_to_pure(sdfg)
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated([StateFusion])
 
@@ -582,7 +621,10 @@ def test_reshape_on_memlet_path():
 
 
 @pytest.mark.autodiff
-@run_correctness
+@run_correctness(xfail_gpu="dace.elementwise + StateFusion produces an '_elementwise__map' that "
+                 "violates the MapEntry/MapExit IN_/OUT_ connector pairing invariant, so GPU "
+                 "thread-block tiling (StripMining, sdfg/state.py:432) raises StopIteration. "
+                 "Pre-existing: this variant failed on the base branch too (different error).")
 def test_reshape_reuse_in_same_state():
     old_default = donnx.default_implementation
     donnx.default_implementation = "pure"
@@ -597,6 +639,7 @@ def test_reshape_reuse_in_same_state():
 
     sdfg = single_state_reshape_same_state.to_sdfg(simplify=False)
 
+    _pin_reduce_to_pure(sdfg)
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated([StateFusion])
 
@@ -620,16 +663,16 @@ def test_reshape_reuse_in_same_state():
 
 
 if __name__ == "__main__":
-    test_gemm()
-    test_sum()
-    test_complex_tasklet()
-    test_tasklets_only_reuse()
-    test_tasklets_multioutput()
-    test_tasklets_only()
-    test_add_mmul_transpose_log()
-    test_reduce_node_1_axis_and_none_axis()
-    test_reduce_max_simple()
-    test_reduce_max_node_1_axis()
-    test_reshape()
-    test_reshape_on_memlet_path()
-    test_reshape_reuse_in_same_state()
+    test_gemm(device="cpu")
+    test_sum(device="cpu")
+    test_complex_tasklet(device="cpu")
+    test_tasklets_only_reuse(device="cpu")
+    test_tasklets_multioutput(device="cpu")
+    test_tasklets_only(device="cpu")
+    test_add_mmul_transpose_log(device="cpu")
+    test_reduce_node_1_axis_and_none_axis(device="cpu")
+    test_reduce_max_simple(device="cpu")
+    test_reduce_max_node_1_axis(device="cpu")
+    test_reshape(device="cpu")
+    test_reshape_on_memlet_path(device="cpu")
+    test_reshape_reuse_in_same_state(device="cpu")

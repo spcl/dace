@@ -81,8 +81,34 @@ def test_cpp_shadow_of_a_map_parameter_deduces():
     assert 'auto i = k;' in tasklet.code.as_string, tasklet.code.as_string
 
 
+def test_cpp_same_name_rebind_emits_no_shadow():
+    """A symbol re-minted with new sympy assumptions (``AssumeSymbolConstraints`` stamps
+    ``nonnegative=True``) keeps its NAME. Shadowing it would emit ``int64_t i = i;`` -- a local
+    initialized from itself, i.e. an uninitialized read -- and every use in the tasklet would then
+    see garbage. Measured: a canonicalization trap guard built this way aborted at runtime on a
+    valid input."""
+    sdfg = dace.SDFG('cpp_same_name_rebind')
+    sdfg.add_symbol('i', dace.int64)
+    sdfg.add_array('out', [1], dace.int64)
+
+    state = sdfg.add_state('s', is_start_block=True)
+    tasklet = state.add_tasklet('w', {}, {'o'}, 'o = i + 1;', language=dace.Language.CPP)
+    state.add_edge(tasklet, 'o', state.add_write('out'), None, dace.Memlet('out[0]'))
+
+    state.replace_dict({'i': dace.symbolic.symbol('i', dtype=dace.int64, nonnegative=True)})
+
+    code = tasklet.code.as_string
+    assert 'i = i;' not in code, code
+    assert code == 'o = i + 1;', code
+
+    out = np.zeros(1, dtype=np.int64)
+    sdfg(out=out, i=7)
+    assert out[0] == 8, f'the tasklet must read the real symbol, got {out[0]}'
+
+
 if __name__ == '__main__':
     test_cpp_shadow_declares_the_symbol_type()
     test_cpp_shadow_of_a_scalar_declares_the_descriptor_type()
     test_cpp_shadow_keeps_the_integer_semantics_of_the_symbol()
     test_cpp_shadow_of_a_map_parameter_deduces()
+    test_cpp_same_name_rebind_emits_no_shadow()

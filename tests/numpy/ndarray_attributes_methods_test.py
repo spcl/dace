@@ -39,6 +39,19 @@ def test_astype(A: dace.int32[M, N]):
 
 
 @compare_numpy_output()
+def test_astype_copy_false(A: dace.int32[M, N]):
+    # The copy is forced whichever value is passed: numpy's copy=False may return the operand
+    # ITSELF when the dtype matches, and an SDFG cannot hand back an alias. Here the dtype differs,
+    # so numpy copies too and the two agree. Missing the parameter raised TypeError outright.
+    return A.astype(np.float32, copy=False)
+
+
+@compare_numpy_output()
+def test_astype_copy_true(A: dace.int32[M, N]):
+    return A.astype(np.float32, copy=True)
+
+
+@compare_numpy_output()
 def test_fill(A: dace.int32[M, N]):
     A.fill(5)
     return A  # return A.fill(5) doesn't work because A is not copied
@@ -159,6 +172,8 @@ if __name__ == "__main__":
     test_copy()
     test_lhs_flat()
     test_astype()
+    test_astype_copy_false()
+    test_astype_copy_true()
     test_fill()
     test_fill2()
     test_fill3()

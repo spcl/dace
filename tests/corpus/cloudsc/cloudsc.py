@@ -7,6 +7,7 @@ SDFG that compiles and runs standalone. Input data generation lives in
 """
 import numpy as np
 import dace
+from pathlib import Path
 
 klon = dace.symbol('klon', dtype=dace.int32)
 klev = dace.symbol('klev', dtype=dace.int32)
@@ -1361,3 +1362,48 @@ def cloudsc_py(
         for jl in range(kidia, kfdia + 1):
             pfhpsl[jk - 1, jl - 1] = -ydcst_rlvtt * pfplsl[jk - 1, jl - 1]
             pfhpsn[jk - 1, jl - 1] = -ydcst_rlstt * pfplsn[jk - 1, jl - 1]
+
+
+if __name__ == '__main__':
+    # Imported here, not at module scope: this file is also the kernel corpus, and
+    # importing it to reach `cloudsc_py` must not require the transformation stack.
+    from dace.transformation.passes import ScalarToSymbolPromotion
+    from dace.transformation.layout.split_array import SplitArray
+
+    NAME_ORDER = ["ncldql", "ncldqi", "ncldqr", "ncldqs", "ncldqv"]
+    NAME_MAP = {i: NAME_ORDER[i] for i in range(5)}
+    # Split along the first dimension (size = nclv-1) into separate 2D arrays
+    symbol_map = {
+        "nclv": 5,
+        "ncldql": 1,
+        "ncldqi": 2,
+        "ncldqr": 3,
+        "ncldqs": 4,
+        "ncldqv": 5,
+    }
+    name_map = {"nclv": NAME_ORDER}
+
+    load_if_existing = False
+
+    if load_if_existing and Path('./cloudsc_pydace_unsimplified.sdfgz').exists():
+        print('SDFG already exists, skipping generation')
+        sdfg = dace.SDFG.from_file('cloudsc_pydace_unsimplified.sdfgz')
+        sdfg.validate()
+    else:
+        sdfg = cloudsc_py.to_sdfg(simplify=False)
+        sdfg.save('cloudsc_pydace_unsimplified.sdfgz', compress=True)
+        sdfg.validate()
+
+    if load_if_existing and Path('./cloudsc_pydace_simplified_symbolic.sdfgz').exists():
+        sdfg = dace.SDFG.from_file('cloudsc_pydace_simplified_symbolic.sdfgz')
+        sdfg.validate()
+    else:
+        sdfg.simplify(skip={'ScalarToSymbolPromotion'})
+        sdfg.save('cloudsc_pydace_simplified.sdfgz', compress=True)
+        sdfg.validate()
+        ScalarToSymbolPromotion().apply_pass(sdfg, {})
+        sdfg.save('cloudsc_pydace_simplified_symbolic.sdfgz', compress=True)
+
+    sdfg.validate()
+    SplitArray(symbol_map=symbol_map, name_map=name_map).apply_pass(sdfg, {})
+    sdfg.save("cloudsc_split.sdfgz", compress=True)

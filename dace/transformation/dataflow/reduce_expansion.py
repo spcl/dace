@@ -240,12 +240,12 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         # replace inner map with new reduction node
         edge_tmp = graph.in_edges(inner_entry)[0]
         memlet_src_reduce = dcpy(edge_tmp.data)
-        graph.add_edge(edge_tmp.src, edge_tmp.src_conn, reduce_node_new, None, memlet_src_reduce)
+        graph.add_edge(edge_tmp.src, edge_tmp.src_conn, reduce_node_new, '_in', memlet_src_reduce)
 
         edge_tmp = graph.out_edges(inner_exit)[0]
         memlet_reduce_dst = Memlet(data=edge_tmp.data.data, volume=1, subset=edge_tmp.data.subset)
 
-        graph.add_edge(reduce_node_new, None, edge_tmp.dst, edge_tmp.dst_conn, memlet_reduce_dst)
+        graph.add_edge(reduce_node_new, '_out', edge_tmp.dst, edge_tmp.dst_conn, memlet_reduce_dst)
 
         identity_tasklet = graph.out_edges(inner_entry)[0].dst
         graph.remove_node(inner_entry)
@@ -368,10 +368,6 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             nstate.add_memlet_path(t, imx, w, src_conn='out', memlet=outm)
 
         # Rename outer connectors and add to node
-        inedge._dst_conn = '_in'
-        outedge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
 
         nsdfg = state.add_nested_sdfg(nsdfg, node.in_connectors, node.out_connectors, name=node.name)
 

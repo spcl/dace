@@ -5,8 +5,8 @@ kernel in ``tests/corpus/cloudsc/cloudsc.py``, for end-to-end numerical tests.
 The inlined ``cloudsc_py`` program requires no callbacks, so it compiles and
 runs standalone. These helpers build a runnable SDFG, generate a
 physically-realistic input set, and run two SDFGs on identical inputs to check
-that a transformation (simplify, ConstantPropagation, ...) is numerically
-faithful to a non-transformed reference.
+that a transformation (simplify, SymbolPropagation, vectorization, ...) is
+numerically faithful to a non-transformed reference.
 
 Typical use::
 
@@ -19,10 +19,16 @@ Data generation **follows the dwarf-p-cloudsc reference dataset**
 (``config-files/input.h5`` of the upstream ECMWF dwarf): the YDCST/YDTHF/YRECLDP
 physical constants in :data:`CLOUDSC_CONSTANTS` are the exact values from that
 file, and every input array is filled with random values inside the ``[min,
-max]`` range observed there (:data:`CLOUDSC_INPUT_RANGES`), with the dwarf's
-``ncldtop = 15`` so the vertical microphysics loop runs over a realistic depth.
-We do **not** load ``input.h5`` at runtime -- the harness is self-contained and
-only mirrors its values -- so it stays runnable without the external dataset.
+max]`` range observed there (:data:`CLOUDSC_INPUT_RANGES`). The grid is SMALLER
+than the dwarf's (``klev = klon = 32`` against its ``137`` by ``100``) to keep a
+compiled run short; ``ncldtop = 15`` is the dwarf's own, so the vertical
+microphysics loop still runs over a realistic depth. We do **not** load
+``input.h5`` at runtime -- the harness is self-contained and only mirrors its
+values -- so it stays runnable without the external dataset.
+
+Every array is built ROW-MAJOR, matching the SDFG descriptors. See
+:func:`generate_cloudsc_inputs` for what column-major memory does here, and
+``cloudsc_input_data_test.py`` for the assertion that holds the line.
 
 Filling thresholds and latent heats with the real constants (rather than
 uniform ``[0, 1)`` noise) keeps the kernel out of its degenerate branch regimes,
@@ -31,13 +37,18 @@ constant set sits on every ``MIN``/``MAX`` and ``< rlmin`` boundary, so a
 harmless floating-point reassociation flips branches and masquerades as a bug.
 """
 import copy
+import hashlib
+import os
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import sympy
 
 import dace
-from dace import dtypes, symbolic
+from dace import dtypes
 from dace.sdfg import nodes
+from dace.config import set_temporary
 from tests.corpus.cloudsc.cloudsc import cloudsc_py
 
 #: Shape symbols and named integer index scalars. The cloud species ``ncldq*``
@@ -226,20 +237,136 @@ IEEE_CPU_ARGS: str = '-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract
 #: cleanly -- so the suite never enables it.
 O3_CPU_ARGS: str = '-std=c++14 -fPIC -O3 -fopenmp -fno-fast-math -ffp-contract=off'
 
-PARSED_CLOUDSC: Dict[bool, dace.SDFG] = {}
+#: Files whose contents change the parsed SDFG. The program itself, and this builder -- an edit to
+#: either must mint a fresh cache entry rather than resume a stale one.
+CACHE_SOURCE_FILES = (Path(__file__), Path(cloudsc_py.f.__code__.co_filename))
+
+
+def cloudsc_cache_dir() -> Optional[Path]:
+    """Directory holding parsed-SDFG cache entries, or ``None`` when caching is off.
+
+    Off by setting ``DACE_CLOUDSC_SDFG_CACHE=0``. Otherwise ``DACE_CLOUDSC_SDFG_CACHE`` names the
+    directory, defaulting to ``~/.cache/dace_cloudsc_sdfg`` -- a stable location, deliberately NOT a
+    per-run pytest tmp dir, since the whole point is to survive across runs.
+    """
+    value = os.environ.get('DACE_CLOUDSC_SDFG_CACHE', '')
+    if value in ('0', 'off', 'false', 'no'):
+        return None
+    return Path(value) if value else Path.home() / '.cache' / 'dace_cloudsc_sdfg'
+
+
+def cloudsc_cache_key(simplify: bool) -> str:
+    """Digest of everything that decides the parsed SDFG: the source files, the ``simplify`` flag,
+    and the dace version (``to_sdfg`` semantics and the ``.sdfgz`` format both move with it)."""
+    hasher = hashlib.sha256()
+    hasher.update(f'dace={dace.__version__};simplify={simplify}'.encode())
+    for path in CACHE_SOURCE_FILES:
+        try:
+            hasher.update(path.read_bytes())
+        except OSError:
+            # A source we cannot read cannot be proven unchanged, so fold its absence in and let the
+            # entry differ from any run that could read it.
+            hasher.update(f'<unreadable:{path}>'.encode())
+    return hasher.hexdigest()[:16]
 
 
 def build_cloudsc_sdfg(simplify: bool = False) -> dace.SDFG:
-    """A private copy of the CloudSC SDFG: parsed once per process, deepcopied per caller.
+    """Build a runnable SDFG from the inlined CloudSC program, persistently cached.
 
-    The deepcopy is not optional: the parse costs minutes so it is memoized, and every consumer
-    transforms the SDFG it gets.
+    The ``to_sdfg`` parse is minutes, and its result is a pure function of the program source, the
+    ``simplify`` flag and the dace version -- so it is cached across runs under
+    :func:`cloudsc_cache_dir`, keyed by :func:`cloudsc_cache_key`. The cache is advisory: an entry is
+    written only after the freshly built SDFG validates, loaded STRICTLY (any element the reader
+    cannot rebuild raises rather than being silently dropped), and validated again on load. A miss, a
+    stale key, or an entry that fails either check just rebuilds. It can never substitute a wrong SDFG
+    for the right one -- at worst it costs the parse it was meant to save.
+
+    :param simplify: Whether to run the simplify pipeline while building.
+    :returns: A validated CloudSC SDFG.
     """
-    if simplify not in PARSED_CLOUDSC:
-        sdfg = cloudsc_py.to_sdfg(simplify=simplify)
-        sdfg.validate()
-        PARSED_CLOUDSC[simplify] = sdfg
-    return copy.deepcopy(PARSED_CLOUDSC[simplify])
+    cache_dir = cloudsc_cache_dir()
+    entry = cache_dir / f'cloudsc_{"simplified" if simplify else "nosimplify"}_{cloudsc_cache_key(simplify)}.sdfgz' \
+        if cache_dir else None
+
+    if entry is not None and entry.is_file():
+        try:
+            # Strict load: a checkpoint that lost anything through JSON raises here instead of loading
+            # a quietly-degraded graph that then validates and runs subtly wrong.
+            with set_temporary('testing', 'deserialize_exception', value=True):
+                sdfg = dace.SDFG.from_file(str(entry))
+            sdfg.validate()
+            return sdfg
+        except Exception:
+            # Unusable entry -- drop it and fall through to a fresh build, which re-publishes.
+            try:
+                entry.unlink()
+            except OSError:
+                pass
+
+    sdfg = cloudsc_py.to_sdfg(simplify=simplify)
+    sdfg.validate()
+
+    if entry is not None:
+        # Publish atomically via a private temp name so a concurrent reader never sees a half-written
+        # file. A failure to cache is never fatal -- the built SDFG is already correct.
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            staging = entry.with_suffix(f'.sdfgz.{os.getpid()}')
+            sdfg.save(str(staging), compress=True)
+            os.replace(staging, entry)
+        except Exception:
+            try:
+                staging.unlink()
+            except (OSError, NameError):
+                pass
+    return sdfg
+
+
+def _instantiate_dim(dim) -> int:
+    """Resolve one array-shape dimension to a concrete size via
+    :data:`CLOUDSC_SYMBOLS`.
+
+    :param dim: A shape dimension (int, ``dace.symbol``, or symbolic expr).
+    :returns: The instantiated integer size.
+    """
+    if isinstance(dim, (int, sympy.Number)):
+        return int(dim)
+    if isinstance(dim, dace.symbol):
+        return CLOUDSC_SYMBOLS[str(dim)]
+    return int(sympy.sympify(dim).subs(CLOUDSC_SYMBOLS))
+
+
+def pressure_profile(name: str, dims: List[int]) -> np.ndarray:
+    """A monotone hydrostatic pressure profile for ``pap`` / ``paph``.
+
+    Pressure at half levels has to INCREASE from the model top to the surface, because the kernel
+    takes the layer thickness as a difference of consecutive ones (``zdp = paph[jk+1] - paph[jk]``,
+    cloudsc.py:489) and divides by it. Drawing each element uniformly, as every other input is
+    drawn, makes that difference negative on about half the levels; ``zdtgdp`` then goes negative,
+    the ``sign`` factor in the precipitation-evaporation divisor flips, and ``zbeta1**0.5777``
+    takes a fractional power of a negative number -- a NaN, out of physically impossible input.
+
+    So these two are built rather than sampled: half levels stretch from the model top to a
+    per-column surface pressure, and full levels sit at the midpoint of the half levels bracketing
+    them, which is the arrangement the dwarf's own data has. Values stay inside
+    :data:`CLOUDSC_INPUT_RANGES`. Deterministic -- the profile carries no information a random
+    draw would add.
+
+    :param name: ``'pap'`` (full levels) or ``'paph'`` (half levels).
+    :param dims: the instantiated shape, levels first.
+    :returns: the filled array, in the row-major order every input uses.
+    """
+    nlev = dims[0] - 1 if name == 'paph' else dims[0]
+    columns = int(np.prod(dims[1:])) if len(dims) > 1 else 1
+    top, surface = 1.0, CLOUDSC_INPUT_RANGES['paph'][1]
+
+    # Stretched so the layers thin towards the top, as a hybrid-sigma coordinate does, and a small
+    # per-column spread in surface pressure so the columns are not identical.
+    sigma = (np.arange(nlev + 1) / nlev)**1.5
+    spread = 1.0 - 0.03 * (np.arange(columns) / max(columns - 1, 1))
+    half = top + np.outer(sigma, spread * surface - top)
+    levels = half if name == 'paph' else 0.5 * (half[:-1] + half[1:])
+    return np.array(levels.reshape(dims), dtype=np.float64, order='C')
 
 
 def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[np.ndarray, int, float]]:
@@ -252,6 +379,15 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
     :data:`CLOUDSC_INT_RANGES`, and the named index scalars / shape symbols from
     :data:`CLOUDSC_SYMBOLS`. Length-1 arrays are passed as scalars.
 
+    Every array is built ROW-MAJOR. The kernel is a port of a Fortran dwarf, so
+    column-major is the tempting choice, but DaCe describes these arrays with
+    row-major strides (``pt`` is ``(klon, 1)``) and hands the buffer to the
+    compiled function as a bare pointer -- nothing transposes and nothing
+    complains. Column-major memory is therefore read as its own transpose: the
+    level index walks columns, the vertical profiles that ``pressure_profile``
+    builds are destroyed, and the microphysics runs away to ``5e9`` and to NaN
+    on physically impossible input.
+
     :param sdfg: The CloudSC SDFG whose non-transient arrays are filled.
     :param seed: Seed for the random number generator (reproducible runs).
     :returns: A kwargs dict of arrays, scalars, and symbol values.
@@ -261,7 +397,7 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
     for name, desc in sdfg.arrays.items():
         if desc.transient:
             continue
-        dims: List[int] = [int(symbolic.evaluate(d, CLOUDSC_SYMBOLS)) for d in desc.shape]
+        dims: List[int] = [_instantiate_dim(d) for d in desc.shape]
         is_int = 'int' in str(desc.dtype)
 
         if name in CLOUDSC_CONSTANTS:
@@ -269,22 +405,24 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
             arrays[name] = np.full(dims,
                                    int(value) if is_int else value,
                                    dtype=np.int32 if is_int else np.float64,
-                                   order='F')
+                                   order='C')
         elif is_int:
             if name in CLOUDSC_SYMBOLS:
-                data = np.zeros(dims, order='F').astype(np.int32)
+                data = np.zeros(dims, order='C').astype(np.int32)
                 data.flat[0] = CLOUDSC_SYMBOLS[name]
                 arrays[name] = data
             else:
                 lo, hi = CLOUDSC_INT_RANGES.get(name, (1, 1))
-                arrays[name] = rng.integers(lo, hi + 1, size=dims).astype(np.int32, order='F')
+                arrays[name] = rng.integers(lo, hi + 1, size=dims).astype(np.int32, order='C')
+        elif name in ('pap', 'paph'):
+            arrays[name] = pressure_profile(name, dims)
         else:
             value_range: Optional[Tuple[float, float]] = CLOUDSC_INPUT_RANGES.get(name)
             if value_range is None:
-                arrays[name] = np.zeros(dims, order='F')  # kernel output / no reference range
+                arrays[name] = np.zeros(dims, order='C')  # kernel output / no reference range
             else:
                 lo, hi = value_range
-                arrays[name] = (lo + (hi - lo) * rng.random(dims)).astype(np.float64, order='F')
+                arrays[name] = (lo + (hi - lo) * rng.random(dims)).astype(np.float64, order='C')
 
     inputs: Dict[str, Union[np.ndarray, int, float]] = {
         name: (data.flat[0] if data.size == 1 else data)
@@ -312,7 +450,8 @@ def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
             node.map.schedule = dtypes.ScheduleType.Sequential
             n_maps += 1
         elif isinstance(node, nodes.LibraryNode):
-            node.schedule = dtypes.ScheduleType.Sequential
+            if hasattr(node, 'schedule'):
+                node.schedule = dtypes.ScheduleType.Sequential
             n_lib += 1
     return n_maps, n_lib
 

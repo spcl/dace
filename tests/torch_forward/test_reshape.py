@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
 class Model(nn.Module):
@@ -20,19 +21,28 @@ class Model(nn.Module):
 
 
 @pytest.mark.torch
-def test_reshape_module():
+@pytest.mark.parametrize("device", DEVICES)
+def test_reshape_module(device):
 
-    ptmodel = Model([5, 5])
-    x = torch.rand([25])
+    dev = torch_device(device)
+
+    ptmodel = Model([5, 5]).to(dev)
+    x = torch.rand([25]).to(dev)
 
     torch_output = ptmodel(torch.clone(x))
 
-    dace_model = DaceModule(ptmodel, sdfg_name="test_reshape_module", auto_optimize=False, dummy_inputs=(x, ))
+    # dummy_inputs triggers compilation at construction time, so build under the experimental backend.
+    with experimental_cuda():
+        dace_model = DaceModule(ptmodel,
+                                sdfg_name=f"test_reshape_module_{device}",
+                                auto_optimize=False,
+                                dummy_inputs=(x, ),
+                                cuda=is_gpu(device))
 
-    dace_output = dace_model(x)
+        dace_output = dace_model(x)
 
     torch_tensors_close("output", torch_output, dace_output)
 
 
 if __name__ == "__main__":
-    test_reshape_module()
+    test_reshape_module(device="cpu")

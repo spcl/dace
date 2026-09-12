@@ -260,7 +260,14 @@ class CompiledSDFG(object):
         # Cache SDFG argument properties
         self._typedict = self._sdfg.arglist()
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
-        self._free_symbols = self._sdfg.free_symbols
+        # The set the init arguments are filtered by BELOW must be the one the generated
+        # ``__dace_init_`` signature was built from -- `SDFG.init_signature` takes
+        # `used_symbols(all_symbols=False)`, the symbols the code actually needs as arguments. The
+        # wider `free_symbols` additionally carries symbols that only appear in descriptor shapes,
+        # and passing one of those hands ctypes an extra positional value that shifts every later
+        # parameter: pgemv's `GM` sorts ahead of `Px`, so `Cblacs_gridinit` received an array extent
+        # as the process-grid width and BLACS aborted the whole job.
+        self._init_symbols = self._sdfg.used_symbols(all_symbols=False)
         self._constants = self._sdfg.constants
         self.argnames = argnames
 
@@ -413,7 +420,9 @@ class CompiledSDFG(object):
     def _initialize(self, argtuple):
         if self._init is not None:
             res = ctypes.c_void_p(self._init(*argtuple))
-            if res == ctypes.c_void_p(0):
+            # ctypes pointers compare by identity, so the old ``== c_void_p(0)`` never matched and a
+            # failed initializer went on to be called with a null handle.
+            if res.value is None:
                 raise RuntimeError('DaCe application failed to initialize')
 
             self._libhandle = res
@@ -674,7 +683,7 @@ with open(r"{temp_path}", "wb") as f:
                                     argument_to_pyobject=self._argument_to_pyobject)
             for aval, atype, aname in zip(arglist, argtypes, argnames))
 
-        symbols = self._free_symbols
+        symbols = self._init_symbols
         callparams = tuple((carg, aname) for arg, carg, aname in zip(arglist, cargs, argnames)
                            if not ((hasattr(arg, 'name') and arg.name in self._constants) and symbolic.issymbolic(arg)))
         newargs = tuple(carg for carg, _aname in callparams)

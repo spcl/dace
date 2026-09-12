@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
-from dace.transformation.interstate import GPUTransformSDFG
 
 import pytest
 
@@ -45,8 +44,8 @@ def create_test_sdfg():
 
     beta_max_reduce = state.add_reduce(wcr="lambda a, b: max(a, b)", axes=(0, ), identity=-999999)
     beta_max_reduce.implementation = 'CUDA (device)'
-    state.add_edge(BETA, None, beta_max_reduce, None, dace.memlet.Memlet.simple(BETA.data, '0:10'))
-    state.add_edge(beta_max_reduce, None, BETA_MAX, None, dace.memlet.Memlet.simple(BETA_MAX.data, '0:1'))
+    state.add_edge(BETA, None, beta_max_reduce, '_in', dace.memlet.Memlet.simple(BETA.data, '0:10'))
+    state.add_edge(beta_max_reduce, '_out', BETA_MAX, None, dace.memlet.Memlet.simple(BETA_MAX.data, '0:1'))
 
     return sdfg
 
@@ -55,7 +54,7 @@ def create_test_sdfg():
 def test():
     my_max_sdfg = create_test_sdfg()
     my_max_sdfg.validate()
-    my_max_sdfg.apply_transformations(GPUTransformSDFG)
+    my_max_sdfg.apply_gpu_transformations()
 
     BETA = np.random.rand(10).astype(np.float32)
     BETA_MAX = np.zeros(1).astype(np.float32)

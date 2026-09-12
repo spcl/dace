@@ -275,6 +275,57 @@ def test_unbounded_method():
     assert np.allclose(tester(aa), aa + 1)
 
 
+class SharedFieldLeg:
+    """One of two objects holding the SAME array, as a pyFV3 stencil pair does."""
+
+    def __init__(self, field: np.ndarray) -> None:
+        self.field = field
+
+    @dace.method
+    def __call__(self, q: dace.float64[16], out: dace.float64[16]):
+        out[:] = q * self.field
+
+
+class SharedFieldPair:
+
+    def __init__(self, field: np.ndarray) -> None:
+        self.first = SharedFieldLeg(field)
+        self.second = SharedFieldLeg(field)
+
+    @dace.method
+    def __call__(self, q: dace.float64[16], out: dace.float64[16]):
+        self.first(q, out)
+        self.second(out, out)
+
+
+def test_shared_closure_field_is_one_argument():
+    """The same array reached through two objects must not become two closure arguments."""
+    field = np.full(16, 2.0)
+    pair = SharedFieldPair(field)
+    q = np.arange(16, dtype=np.float64)
+    out = np.zeros(16, dtype=np.float64)
+
+    sdfg = pair.__call__.to_sdfg(q, out)
+    closure_args = [name for name in sdfg.arglist() if name.startswith('__g_')]
+    assert closure_args == ['__g_self_field'], closure_args
+
+    pair(q, out)
+    assert np.allclose(out, q * 4.0)
+
+
+def test_view_closure_field_is_refused():
+    """A view reached through the closure is refused, not silently copied behind the kernel's back."""
+    if dace.Config.get('compiler', 'allow_view_arguments'):
+        pytest.skip('view arguments are allowed in this configuration')
+
+    pair = SharedFieldPair(np.full((4, 16), 2.0)[1])
+    q = np.arange(16, dtype=np.float64)
+    out = np.zeros(16, dtype=np.float64)
+
+    with pytest.raises(TypeError, match='numpy view'):
+        pair(q, out)
+
+
 if __name__ == '__main__':
     test_method_jit()
     test_method()
@@ -292,3 +343,5 @@ if __name__ == '__main__':
     test_nested_field_in_map()
     test_nested_callback_in_map()
     test_unbounded_method()
+    test_shared_closure_field_is_one_argument()
+    test_view_closure_field_is_refused()

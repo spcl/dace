@@ -57,8 +57,8 @@ class ReverseReduce(BackwardImplementation):
         return True
 
     @staticmethod
-    def backward(forward_node: Node, context: BackwardContext, given_gradients: typing.List[typing.Optional[str]],
-                 required_gradients: typing.List[typing.Optional[str]]) -> typing.Tuple[Node, BackwardResult]:
+    def backward(forward_node: Node, context: BackwardContext, given_gradients: list[typing.Optional[str]],
+                 required_gradients: list[typing.Optional[str]]) -> tuple[Node, BackwardResult]:
         """Generate the backward pass for a reduction node.
 
         :param forward_node: The forward reduction node.
@@ -84,20 +84,19 @@ class ReverseReduce(BackwardImplementation):
         output_name = next(iter(given_gradients))
         out_desc = out_desc_with_name(forward_node, context.forward_state, context.forward_sdfg, output_name)
 
-        all_axes: typing.List[int] = list(range(len(in_desc.shape)))
-        reduce_axes: typing.List[int] = all_axes if forward_node.axes is None else forward_node.axes
-        non_reduce_axes: typing.List[int] = [i for i in all_axes if i not in reduce_axes]
+        all_axes: list[int] = list(range(len(in_desc.shape)))
+        reduce_axes: list[int] = all_axes if forward_node.axes is None else forward_node.axes
+        non_reduce_axes: list[int] = [i for i in all_axes if i not in reduce_axes]
 
         result = BackwardResult.empty()
 
-        return ReverseReduce._backward_reduction(forward_node, context, result, reduction_type, input_name, output_name,
-                                                 in_desc, out_desc, all_axes, non_reduce_axes)
+        return ReverseReduce.backward_reduction(forward_node, context, result, reduction_type, input_name, output_name,
+                                                in_desc, out_desc, all_axes, non_reduce_axes)
 
     @staticmethod
-    def _backward_reduction(forward_node: Node, context: BackwardContext, result: BackwardResult,
-                            reduction_type: dtypes.ReductionType, input_name: str, output_name: str, in_desc, out_desc,
-                            all_axes: typing.List[int],
-                            non_reduce_axes: typing.List[int]) -> typing.Tuple[Node, BackwardResult]:
+    def backward_reduction(forward_node: Node, context: BackwardContext, result: BackwardResult,
+                           reduction_type: dtypes.ReductionType, input_name: str, output_name: str, in_desc, out_desc,
+                           all_axes: list[int], non_reduce_axes: list[int]) -> tuple[Node, BackwardResult]:
         """Backward pass for Sum/Max/Min reductions.
 
         - Sum: Broadcasts gradients uniformly across reduced dimensions
@@ -128,20 +127,24 @@ class ReverseReduce(BackwardImplementation):
         rev_input_conn_name = "input_gradient"
         rev_output_conn_name = "output_gradient"
 
-        result.required_grad_names[output_name] = rev_output_conn_name
-        result.given_grad_names[input_name] = rev_input_conn_name
+        # Keyed by the FORWARD node's connectors: a required gradient is looked up by the input
+        # connector it flows back to, a given gradient by the output connector it arrives from.
+        # Reduce used to declare no connectors, so both keys were None and the two were
+        # indistinguishable; now that it declares ``_in`` and ``_out`` the distinction is load-bearing.
+        result.required_grad_names[input_name] = rev_output_conn_name
+        result.given_grad_names[output_name] = rev_input_conn_name
 
         sdfg.add_array(rev_input_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
         sdfg.add_array(rev_output_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
 
-        nsdfg_inputs = {rev_input_conn_name}
+        nsdfg_inputs = [rev_input_conn_name]
 
         if is_extremal:
-            extremal_conn_name = f"input_{type_name}"
-            extremal_idx_conn_name = f"input_{type_name}_idx"
+            extremal_conn_name = f"input_{type_name}_val"
+            extremal_idx_conn_name = f"input_{type_name}_arr"
             sdfg.add_array(extremal_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
             sdfg.add_array(extremal_idx_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
-            nsdfg_inputs.update({extremal_conn_name, extremal_idx_conn_name})
+            nsdfg_inputs += [extremal_conn_name, extremal_idx_conn_name]
 
             # Add transient array to count matching elements per output position. State lifetime,
             # because ``setzero`` clears the counter where it is ALLOCATED: a Scope-lifetime heap

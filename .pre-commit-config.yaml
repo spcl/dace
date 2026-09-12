@@ -22,3 +22,13 @@ repos:
       language: python
       entry: yapf
       types: [python]
+- repo: local
+  hooks:
+    # No leading-underscore module/variable/parameter names, no `import x as x` (redundant
+    # alias), `import x as _y`, or `from m import _name`. Diff mode (the default, no flag
+    # needed) checks only lines this commit adds, so pre-existing `_private` code is untouched.
+    - id: no-leading-underscore-names
+      name: no leading-underscore names / redundant import aliases (added lines)
+      entry: python tools/check_names.py
+      language: system
+      files: '\.py$'

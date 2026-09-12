@@ -4,6 +4,7 @@ on: workflow_dispatch
 jobs:
   copilot-setup-steps:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -12,27 +13,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+      - uses: ./.github/actions/setup-dace
         with:
           python-version: '3.11'
-          enable-cache: true
-          pyproject-file: pyproject.toml
-          cache-dependency-glob: pyproject.toml
+          # g++-aarch64-linux-gnu enables the NEON/SVE -fsyntax-only intrinsic-header
+          # tests (tests/passes/vectorization/intrinsics/test_horizontal_reduce_header.py)
+          # to run instead of skip in the agent environment.
+          apt-packages: g++ build-essential g++-aarch64-linux-gnu cmake
+          pip-packages: pytest pytest-cov flake8 pytest-xdist coverage
+          groups: testing,linting
+          extras: ml
 
-      - name: Set up C++ compiler
+      - name: Set up pre-commit
         run: |
-          sudo apt-get update
-          sudo apt-get install -y g++ build-essential
-
-      - name: Set up CMake
-        run: |
-          sudo apt-get install -y cmake
-
-      - name: Install Python dependencies
-        run: uv sync --extra ml
-
-      - name: Install DaCe in development mode
-        run: |
-          uv run pre-commit install
-          uv run pre-commit run
+          pre-commit install
+          pre-commit run

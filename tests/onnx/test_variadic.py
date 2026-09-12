@@ -7,10 +7,13 @@ import numpy as np
 import dace
 import dace.libraries.onnx as donnx
 
+from tests.ml_gpu_utils import DEVICES, run_sdfg
+
 
 @pytest.mark.onnx
-def test_sum():
-    sdfg = dace.SDFG("test_sum")
+@pytest.mark.parametrize("device", DEVICES)
+def test_sum(device):
+    sdfg = dace.SDFG(f"test_sum_{device}")
 
     sdfg.add_array("A_arr", [2, 2], dace.float32)
     sdfg.add_array("B_arr", [2, 2], dace.float32)
@@ -41,7 +44,7 @@ def test_sum():
 
     sdfg.validate()
 
-    result = sdfg(A_arr=A, B_arr=B, C_arr=C)
+    result = run_sdfg(sdfg, device, A_arr=A, B_arr=B, C_arr=C)
 
     numpy_result = A + B + C
 
@@ -50,4 +53,4 @@ def test_sum():
 
 
 if __name__ == "__main__":
-    test_sum()
+    test_sum(device="cpu")

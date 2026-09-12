@@ -5,3 +5,4 @@ from .mpi import MPICodeGen
 from .mlir.mlir import MLIRCodeGen
 from .sve.codegen import SVECodeGen
 from .snitch import SnitchCodeGen
+from .experimental_cuda import ExperimentalCUDACodeGen

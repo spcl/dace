@@ -8,7 +8,7 @@ import warnings
 import sympy
 
 from dace import Config, dtypes
-from dace.properties import make_properties
+from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes, utils as sdutil
 from dace.transformation import helpers, transformation
 from dace.transformation.dataflow.tiling import MapTiling
@@ -104,6 +104,10 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     or persistent kernels) are skipped and left to be handled by the `CUDACodeGen` backend.
     """
     map_entry = transformation.PatternNode(nodes.MapEntry)
+    divides_evenly = Property(dtype=bool,
+                              default=False,
+                              allow_none=False,
+                              desc="If the tblock-map devides the maps evenly")
 
     @classmethod
     def expressions(cls):
@@ -183,7 +187,8 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                                "prefix": "b",
                                "tile_sizes": tile_sizes,
                                "tile_trivial": True,
-                               "skew": False
+                               "skew": False,
+                               "divides_evenly": self.divides_evenly,
                            },
                            map_entry=kernel_map_entry)
 

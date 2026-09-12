@@ -1,11 +1,57 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Regression test for std::numeric_limits<dace::half>/<dace::bfloat16>. Unspecialized, the primary
-template makes max()/lowest() both zero, so a min/max reduction seeded from them gets stuck at 0.
-"""
+"""``std::numeric_limits`` must be specialized for ``dace::half`` and ``dace::bfloat16``. Unspecialized
+class types get the primary template, whose ``max()``/``lowest()``/``infinity()`` are all ``T()`` --
+zero -- so identity-seeded min/max reductions silently produce zeros instead of failing to build."""
+import os
+import shutil
+import subprocess
+
 import ml_dtypes
 import numpy as np
+import pytest
 
 import dace
+from dace.config import Config
+
+INCLUDE = os.path.join(os.path.dirname(os.path.abspath(dace.__file__)), 'runtime', 'include')
+
+#: Every check would pass trivially against the primary template if it compared to zero, so each one
+#: is a value the primary template cannot produce.
+PROBE_SOURCE = r'''
+#include "dace/types.h"
+template <typename T>
+static bool ok() {
+    using L = std::numeric_limits<T>;
+    return L::is_specialized && (float)L::max() > 0.0f && (float)L::lowest() < 0.0f &&
+           (float)L::infinity() > (float)L::max() && (float)L::denorm_min() > 0.0f;
+}
+int main() {
+    if (!ok<dace::half>() || !ok<dace::bfloat16>()) return 1;
+    // The exact finite bounds of IEEE binary16 and bfloat16.
+    if ((float)std::numeric_limits<dace::half>::max() != 65504.0f) return 2;
+    if ((float)std::numeric_limits<dace::bfloat16>::lowest() != -3.38953139e+38f) return 3;
+    return 0;
+}
+'''
+
+
+def test_numeric_limits_is_specialized(tmp_path):
+    executable = Config.get('compiler', 'cpu', 'executable') or 'c++'
+    assert shutil.which(executable), f'configured compiler {executable!r} is not on PATH'
+    source, binary = tmp_path / 'probe.cpp', tmp_path / 'probe'
+    source.write_text(PROBE_SOURCE)
+    build = subprocess.run([
+        executable, f'-std=c++{Config.get("compiler", "cpp_standard")}', '-I', INCLUDE,
+        str(source), '-o',
+        str(binary)
+    ],
+                           capture_output=True,
+                           text=True,
+                           timeout=300)
+    assert build.returncode == 0, f'probe did not compile:\n{build.stderr}'
+    assert subprocess.run([str(binary)], timeout=60).returncode == 0, \
+        'std::numeric_limits is unspecialized for a low-precision type, so its identities are zero'
+
 
 # ctype names, matching dace.dtypes.TYPECLASS_TO_STRING for float16/bfloat16.
 _CASES = [(dace.float16, 'dace::half', np.float16), (dace.bfloat16, 'dace::bfloat16', ml_dtypes.bfloat16)]
@@ -13,7 +59,7 @@ _CASES = [(dace.float16, 'dace::half', np.float16), (dace.bfloat16, 'dace::bfloa
 
 def _build_sdfg(dace_dtype: dace.typeclass, ctype: str) -> dace.SDFG:
     """SDFG with a CPP tasklet seeding a wcr_fixed min/max reduction from numeric_limits, mirroring
-    dace/libraries/tileops/nodes/tile_reduce.py on the `extended` branch (not present on `main`)."""
+    what ``dace/libraries/tileops/nodes/tile_reduce.py`` emits."""
     sdfg = dace.SDFG(f'lowp_minmax_{dace_dtype.type.__name__}')
     for name in ('data', 'out_min', 'out_max'):
         sdfg.add_array(name, [5 if name == 'data' else 1], dace_dtype)
@@ -63,4 +109,4 @@ def test_numeric_limits_seeds_correct_lowp_reduction():
 
 
 if __name__ == '__main__':
-    test_numeric_limits_seeds_correct_lowp_reduction()
+    pytest.main([__file__, '-v'])

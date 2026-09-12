@@ -62,6 +62,25 @@ def make_sdfg(implementation,
     return sdfg
 
 
+@pytest.mark.parametrize('size', (4, 5))
+def test_inv_pure(size):
+    """The pure inverse, run for real.
+
+    A separate test rather than three more parameters on ``test_inv``: that one is skipped whole,
+    so anything added to it would never execute.
+    """
+    sdfg = make_sdfg('pure',
+                     np.float64,
+                     in_shape=[size, size],
+                     out_shape=[size, size],
+                     in_subset='0:%d, 0:%d' % (size, size),
+                     out_subset='0:%d, 0:%d' % (size, size))
+    matrix = np.random.rand(size, size) + size * np.eye(size)
+    result = np.zeros((size, size), dtype=np.float64)
+    sdfg(xin=matrix.copy(), xout=result, n=size)
+    assert np.allclose(result, np.linalg.inv(matrix))
+
+
 @pytest.mark.parametrize("implementation, dtype, size, shape, overwrite, getri", [
     pytest.param(
         'MKL', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True, marks=pytest.mark.mkl),

@@ -1,44 +1,154 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
 import typing
 import dace
 import re
 import copy
-from dace.transformation.passes.split_tasklets import SplitTasklets
 import numpy
 import pytest
 import ast
+from dace.transformation.passes.split_tasklets import SplitTasklets, to_ssa
+from dace.transformation.passes.canonicalize import canonicalize
 
+# Format: (expression, expected_num_statements_after_split)
+# One case per ASTSplitter branch / operator family: Compare, Constant- and Name-RHS assignment,
+# long chain, unary, division, power, calls, bitwise-on-int, BoolOp. Ids are the original ones;
+# gaps are shapes another id already covers (same branch, longer chain or same operator family).
 example_expressions = [
-    "cfl_w_limit_out = (0.85 / dtime_0_in)",
-    "z_w_con_c_out_0 = 0.0",
-    "p_diag_out_w_concorr_c_0 = ((p_metrics_0_in_wgtfac_c_0 * z_w_concorr_mc_0_in_0) + ((1.0 - p_metrics_1_in_wgtfac_c_0) * z_w_concorr_mc_1_in_0))",
-    "rot_vec_out_0 = ((((((vec_e_0_in_0 * ptr_int_0_in_geofac_rot_0) + (vec_e_1_in_0 * ptr_int_1_in_geofac_rot_0)) + (vec_e_2_in_0 * ptr_int_2_in_geofac_rot_0)) + (vec_e_3_in_0 * ptr_int_3_in_geofac_rot_0)) + (vec_e_4_in_0 * ptr_int_4_in_geofac_rot_0)) + (vec_e_5_in_0 * ptr_int_5_in_geofac_rot_0))",
-    "p_diag_out_ddt_w_adv_pc_0 = (- (z_w_con_c_0_in_0 * (((p_prog_0_in_w_0 * p_metrics_0_in_coeff1_dwdz_0) - (p_prog_1_in_w_0 * p_metrics_1_in_coeff2_dwdz_0)) + (p_prog_2_in_w_0 * (p_metrics_2_in_coeff2_dwdz_0 - p_metrics_3_in_coeff1_dwdz_0)))))",
-    "z_w_con_c_out_0 = ((0.85 * p_metrics_0_in_ddqz_z_half_0) / dtime_0_in)",
-    "p_diag_out_max_vcfl_dyn = max_vcfl_dyn_var_152_0_in",
-    "tmp_call_2_out = (p_diag_0_in_vt_0 ** 2)",
-    "z_w_concorr_me_out_0 = ((p_prog_0_in_vn_0 * p_metrics_0_in_ddxn_z_full_0) + (p_diag_0_in_vt_0 * p_metrics_1_in_ddxt_z_full_0))",
-    "_if_cond_23_out = global_data_0_in_lextra_diffu",
-    "tmp_arg_18_out = (0.85 - (cfl_w_limit_0_in * dtime_0_in))",
-    "levmask_out_0 = 0",
-    "z_v_grad_w_out_0 = (((z_v_grad_w_0_in_0 * p_metrics_0_in_deepatmo_gradh_ifc_0) + (p_diag_0_in_vn_ie_0 * ((p_diag_1_in_vn_ie_0 * p_metrics_1_in_deepatmo_invr_ifc_0) - p_patch_0_in_edges_ft_e_0))) + (z_vt_ie_0_in_0 * ((z_vt_ie_1_in_0 * p_metrics_2_in_deepatmo_invr_ifc_0) + p_patch_1_in_edges_fn_e_0)))",
-    "p_diag_out_ddt_w_adv_pc_0 = (p_diag_0_in_ddt_w_adv_pc_0 + ((difcoef_0_in * p_patch_0_in_cells_area_0) * ((((p_prog_0_in_w_0 * p_int_0_in_geofac_n2s_0) + (p_prog_1_in_w_0 * p_int_1_in_geofac_n2s_0)) + (p_prog_2_in_w_0 * p_int_2_in_geofac_n2s_0)) + (p_prog_3_in_w_0 * p_int_3_in_geofac_n2s_0))))",
-    #"tmp_call_17_out = abs(w_con_e_0_in) * 2.0", # abs tasklets have issues in main branch currently, TODO: reenable after that bug is fixed
-    #"tmp_call_15_out = abs(w_con_e_0_in)", # abs tasklets have issues in main branch currently, TODO: reenable after that bug is fixed
+    (1, "_out_float__if_cond = ((_if_cond == 1) == 0)", 2),  # 2 ==, bool intermediate
+    (4, "z_w_con_c_out_0 = 0.0", 1),  # Constant RHS, no operation
+    (6,
+     "rot_vec_out_0 = ((((((vec_e_0_in_0 * ptr_int_0_in_geofac_rot_0) + (vec_e_1_in_0 * ptr_int_1_in_geofac_rot_0)) + (vec_e_2_in_0 * ptr_int_2_in_geofac_rot_0)) + (vec_e_3_in_0 * ptr_int_3_in_geofac_rot_0)) + (vec_e_4_in_0 * ptr_int_4_in_geofac_rot_0)) + (vec_e_5_in_0 * ptr_int_5_in_geofac_rot_0))",
+     11),  # 6 * and 5 +, longest chain
+    (7,
+     "p_diag_out_ddt_w_adv_pc_0 = (- (z_w_con_c_0_in_0 * (((p_prog_0_in_w_0 * p_metrics_0_in_coeff1_dwdz_0) - (p_prog_1_in_w_0 * p_metrics_1_in_coeff2_dwdz_0)) + (p_prog_2_in_w_0 * (p_metrics_2_in_coeff2_dwdz_0 - p_metrics_3_in_coeff1_dwdz_0)))))",
+     8),  # 4 *, 2 -, 1 +, 1 unary -
+    (8, "z_w_con_c_out_0 = ((0.85 * p_metrics_0_in_ddqz_z_half_0) / dtime_0_in)", 2),  # *, /, constant operand
+    (9, "p_diag_out_max_vcfl_dyn = max_vcfl_dyn_var_152_0_in", 1),  # Name RHS, no operation
+    (10, "tmp_call_2_out = (p_diag_0_in_vt_0 ** 2)", 1),  # Single **
+    (17, "tmp_call_15_out = abs(w_con_e_0_in) * 2.0", 2),  # abs(), * -- call result feeds a binop
+    (18, "tmp_call_15_out = min(min(w_con_e_0_in, w_con_e_1_in), 0.0)", 2),  # 2 min(), nested 2-arg call
+    (19, "tmp_call_15_out = exp(exp(a))", 2),  # 2 exp(), nested 1-arg call
+    (22, "out = a << 2", 1),  # 1 <<, integer arrays
+    (25, "out = (a or True) and (b and True)", 3),  # 2 and, 1 or
 ]
 
-# Double-split tasklet test case
-example_double_expressions = [("out1 = in1 * in2 * in3", "out2 = in4 * in5 * tmp")]
+# Double-split tasklet test case - Format: ((expr1, expr2), expected_total_statements)
+example_double_expressions = [(1, ("out1 = in1 * in2 * in3", "out2 = in4 * in5 * tmp"), 4)  # 2 * in expr1, 2 * in expr2
+                              ]
+
+example_symbol_only_expressions = [
+    (1, "_out_float__if_cond = ((_if_cond == 1) == 0)", 2),  # 2 ==
+]
 
 
+def _get_complex_expression_sdfg(some_scalars: bool = False):
+    rhs = "(_in1 + _in2 < _in3) or (_in4 < _in5)"
+    lhs = "_out"
+    sdfg = dace.SDFG(f"single_complex_expression_sdfg_{_single_tasklet_sdfg_counter}")
+    state1 = sdfg.add_state("complex_tasklet_state")
+
+    for inm in ["ramin", "rlmin", "os"]:
+        if not some_scalars:
+            sdfg.add_array(inm, (1, ), dace.float64, dace.dtypes.StorageType.Default, transient=False)
+        else:
+            sdfg.add_scalar(inm, dace.float64, dace.dtypes.StorageType.Default, transient=False)
+
+    sdfg.add_array("za", (
+        5,
+        5,
+    ), dace.float64, dace.dtypes.StorageType.Default, transient=False)
+    sdfg.add_array("zqx", (5, 5, 2), dace.float64, dace.dtypes.StorageType.Default, transient=False)
+
+    t = state1.add_tasklet("t", {"_in1", "_in2", "_in3", "_in4", "_in5"}, {"_out"}, lhs + " = " + rhs)
+
+    ramin = state1.add_access("ramin")
+    rlmin = state1.add_access("rlmin")
+    za = state1.add_access("za")
+    zqx = state1.add_access("zqx")
+
+    state1.add_edge(ramin, None, t, "_in3", dace.memlet.Memlet("ramin[0]"))
+    state1.add_edge(rlmin, None, t, "_in5", dace.memlet.Memlet("rlmin[0]"))
+    state1.add_edge(za, None, t, "_in1", dace.memlet.Memlet("za[2,2]"))
+    state1.add_edge(zqx, None, t, "_in2", dace.memlet.Memlet("zqx[2,2,0]"))
+    state1.add_edge(zqx, None, t, "_in4", dace.memlet.Memlet("zqx[2,2,1]"))
+    state1.add_edge(t, "_out", state1.add_access("os"), None, dace.memlet.Memlet("os[0]"))
+
+    sdfg.validate()
+    return sdfg
+
+
+# This just intendeded to be used with these tests!
 def _get_vars(ssa_line):
     lhs, rhs = ssa_line.split('=', 1)
     lhs_var = lhs.strip()
-    rhs_vars = re.findall(r'\b[a-zA-Z_]\w*\b', rhs)
+    rhs_vars = list(
+        set(re.findall(r'\b[a-zA-Z_]\w*\b', rhs)) - {
+            "min", "abs", "exp", "log", "max", "round", "sum", "sqrt", "sin", "cos", "tan", "ceil", "floor", "or",
+            "and", "True", "False"
+        })
     return [lhs_var], rhs_vars
 
 
 _single_tasklet_sdfg_counter = 0
+
+
+def count_operators(expr: str):
+    """
+    Count the number of operators in a Python expression.
+
+    Args:
+        expr (str): A Python expression (e.g., "a + b * -c == f(x)").
+
+    Returns:
+        tuple[int, int]: A tuple (num_ops, num_assignments), where:
+            - num_ops: Number of all operators (binary, unary, boolean, comparison, function calls, etc.).
+            - num_assignments: Number of assignment operations ('=').
+    """
+    tree = ast.parse(expr)
+
+    num_ops = 0
+    num_assignments = 0
+
+    for node in ast.walk(tree):
+        # Count assignments separately
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            num_assignments += 1
+
+        # Binary ops: +, -, *, /, %, **, <<, >>, &, |, ^
+        elif isinstance(node, ast.BinOp):
+            num_ops += 1
+
+        # Unary ops: -, +, ~, not
+        elif isinstance(node, ast.UnaryOp):
+            num_ops += 1
+
+        # Bool ops: and, or
+        elif isinstance(node, ast.BoolOp):
+            num_ops += 1
+
+        # Comparisons: ==, !=, <, >, <=, >=, is, is not, in, not in
+        elif isinstance(node, ast.Compare):
+            num_ops += len(node.ops)
+
+        # Function calls (count as one operator per call)
+        elif isinstance(node, ast.Call):
+            num_ops += 1
+
+    return num_ops, num_assignments
+
+
+def assert_all_tasklets_are_ssa(sdfg: dace.SDFG):
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.Tasklet):
+            assert n.code.language == dace.dtypes.Language.Python
+            num_ops, num_assignments = count_operators(n.code.as_string)
+            assert num_ops <= 1, f"{n.code.as_string} has {num_ops} ops, needs to be less than 1 after SSA"  # Might be just an assignment
+            assert num_assignments == 1
 
 
 def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
@@ -49,9 +159,13 @@ def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
 
     lhs_vars, rhs_vars = _get_vars(expression_str)
 
+    gen_integer = "<<" in expression_str or ">>" in expression_str or "|" in expression_str
+
     assert len(lhs_vars) == 1, f"{lhs_vars} = {rhs_vars}"
     for var in lhs_vars + rhs_vars:
-        sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
+        if var + "_ARR" in sdfg.arrays:
+            continue
+        sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64 if not gen_integer else dace.int64)
 
     state = sdfg.add_state(label="main")
     state.add_mapped_tasklet(
@@ -77,6 +191,46 @@ def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
     return sdfg
 
 
+def _generate_single_tasklet_symbol_only_sdfg(expression_str: str) -> dace.SDFG:
+    global _single_tasklet_sdfg_counter
+    _single_tasklet_sdfg_counter += 1
+
+    sdfg = dace.SDFG(f"single_tasklet_sdfg_symbol_only_sdfg_{_single_tasklet_sdfg_counter}")
+
+    lhs_vars, rhs_vars = _get_vars(expression_str)
+
+    gen_integer = "<<" in expression_str or ">>" in expression_str or "|" in expression_str
+
+    assert len(lhs_vars) == 1, f"{lhs_vars} = {rhs_vars}"
+    for var in lhs_vars:
+        if var + "_ARR" in sdfg.arrays:
+            continue
+        sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64 if not gen_integer else dace.int64)
+    for var in rhs_vars:
+        sdfg.add_symbol(name=var, stype=dace.float64 if not gen_integer else dace.int64)
+
+    state = sdfg.add_state(label="main")
+    state.add_mapped_tasklet(
+        name="wrapper_map",
+        map_ranges={"i": dace.subsets.Range([(0, 0, 1)])},
+        inputs={},
+        code=expression_str,
+        outputs={lhs_var: dace.memlet.Memlet(expr=f"{lhs_var}_ARR[i]")
+                 for lhs_var in lhs_vars},
+        external_edges=True,
+        input_nodes={},
+        output_nodes={lhs_var: state.add_access(f"{lhs_var}_ARR")
+                      for lhs_var in lhs_vars},
+    )
+
+    for n in state.nodes():
+        if state.degree(n) == 0:
+            state.remove_node(n)
+
+    sdfg.validate()
+    return sdfg
+
+
 _double_tasklet_sdfg_counter = 0
 
 
@@ -85,8 +239,13 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
     global _double_tasklet_sdfg_counter
     _double_tasklet_sdfg_counter += 1
 
+    gen_integer = False
+    for i, expression_str in enumerate(expression_strs):
+        if "<<" in expression_str or ">>" in expression_str or "|" in expression_str:
+            gen_integer = True
+
     sdfg = dace.SDFG(f"double_tasklet_sdfg_{_double_tasklet_sdfg_counter}")
-    sdfg.add_scalar(name="tmp_Scalar", dtype=dace.float64, transient=True)
+    sdfg.add_scalar(name="tmp_Scalar", dtype=dace.float64 if not gen_integer else dace.int64, transient=True)
     state = sdfg.add_state(label="main")
 
     in_accesses = set()
@@ -95,7 +254,7 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
         lhs_vars, rhs_vars = _get_vars(expression_str)
         for var in lhs_vars:
             assert var != "tmp"
-            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
+            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64 if not gen_integer else dace.int64)
         if i == len(expression_strs) - 1:
             for var in lhs_vars:
                 out_accesses.add(state.add_access(var + "_ARR"))
@@ -103,7 +262,7 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
         for var in rhs_vars:
             if var == "tmp":
                 continue
-            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
+            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64 if not gen_integer else dace.int64)
             in_accesses.add(state.add_access(var + "_ARR"))
 
     if not direct_connection_between_tasklets:
@@ -178,27 +337,17 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
     return sdfg
 
 
-def _one_assign_one_op(code: str) -> bool:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return False
-
-    assigns = sum(isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)) for n in ast.walk(tree))
-    ops = sum(
-        isinstance(n, (ast.Call, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.Lambda)) for n in ast.walk(tree))
-    return (assigns, ops)
-
-
-def _check_tasklet_properties(sdfg: dace.SDFG):
+def _count_tasklets_in_map(sdfg: dace.SDFG) -> int:
+    """Count the number of tasklets inside maps in the SDFG."""
+    total_tasklets = 0
     for n, g in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.nodes.Tasklet):
-            assert n.language == dace.dtypes.Language.Python
-            assert _one_assign_one_op(n.code.as_string) == (1, 1) or _one_assign_one_op(n.code.as_string) == (
-                1, 0), f"{n.code.as_string} has (assigns, ops): {_one_assign_one_op(n.code.as_string)}"
+        if isinstance(n, dace.nodes.MapEntry):
+            num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
+            total_tasklets += len(num_tasklets)
+    return total_tasklets
 
 
-def _run_compile_and_comparison_test(sdfg: dace.SDFG):
+def _run_compile_and_comparison_test(sdfg: dace.SDFG, expected_num_statements: int = None):
     sdfg.compile()
     original_sdfg = copy.deepcopy(sdfg)
     SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
@@ -206,14 +355,25 @@ def _run_compile_and_comparison_test(sdfg: dace.SDFG):
     sdfg.compile()
 
     array_names = {array_name for array_name, arr in original_sdfg.arrays.items() if arr.transient is False}
-    arr_dict = {arr_name: numpy.random.rand(1) for arr_name in array_names}
+    arr_dict = {arr_name: numpy.random.choice([3.0, 6.0], (1, )) for arr_name in array_names}
+    symbol_names = {symbol_name for symbol_name in original_sdfg.free_symbols}
+    symbol_dict = {symbol_name: 1.0 for symbol_name in symbol_names}
     cp_arr_dict = copy.deepcopy(arr_dict)
+    cp_sym_dict = symbol_dict
 
+    arr_dict.update(symbol_dict)
+    cp_arr_dict.update(cp_sym_dict)
     original_sdfg(**arr_dict)
     sdfg(**cp_arr_dict)
 
     # Assert that all tasklets have a single op inside
-    _check_tasklet_properties(sdfg)
+    assert_all_tasklets_are_ssa(sdfg)
+
+    # Check expected number of statements if provided
+    if expected_num_statements is not None:
+        actual_num_statements = _count_tasklets_in_map(sdfg)
+        assert actual_num_statements == expected_num_statements, \
+            f"Expected {expected_num_statements} statements after split, but got {actual_num_statements}"
 
     for name in arr_dict:
         a = arr_dict[name]
@@ -221,22 +381,246 @@ def _run_compile_and_comparison_test(sdfg: dace.SDFG):
         assert numpy.allclose(a, b), f"Arrays for '{name}' differ:\n{a}\nvs\n{b}"
 
 
-@pytest.mark.parametrize("expression_str", example_expressions)
-def test_single_tasklet_split(expression_str: str):
+@pytest.mark.parametrize("id,expression_str,expected_num_statements", example_expressions)
+def test_single_tasklet_split(id: int, expression_str: str, expected_num_statements: int):
     sdfg = _generate_single_tasklet_sdfg(expression_str)
-    _run_compile_and_comparison_test(sdfg)
+    sdfg.name = sdfg.name + f"_id{id}"
+    sdfg.validate()
+    sdfg.compile()
+
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry):
+            num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
+            assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
+
+    assert_all_tasklets_are_ssa(sdfg)
+    _run_compile_and_comparison_test(sdfg, expected_num_statements)
 
 
-@pytest.mark.parametrize("expression_strs", example_double_expressions)
-def test_double_tasklet_split(expression_strs: typing.Tuple[str, str]):
+@pytest.mark.parametrize("id,expression_str,expected_num_statements", example_symbol_only_expressions)
+def test_single_tasklet_symbol_only_split(id: int, expression_str: str, expected_num_statements: int):
+    sdfg = _generate_single_tasklet_symbol_only_sdfg(expression_str)
+    sdfg.name = sdfg.name + f"_id{id}"
+    sdfg.validate()
+    sdfg.compile()
+
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry):
+            num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
+            assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
+
+    assert_all_tasklets_are_ssa(sdfg)
+    _run_compile_and_comparison_test(sdfg, expected_num_statements)
+
+
+@pytest.mark.parametrize("body,inputs", [
+    ("_o = ITE(_c, _t, _e)", {"_c", "_t", "_e"}),
+    ("_o = ITE((LEN_1D > 10), _t, _e)", {"_t", "_e"}),
+    ("_o = ITE(_c, _t + 1.0, _e * 2.0)", {"_c", "_t", "_e"}),
+])
+def test_split_does_not_treat_ite_as_variable(body: str, inputs: set):
+    """``ITE`` is a registered SymPy ``Function`` (the ternary blend the
+    branch-normalization passes emit, lowered to ``dace/ITE.h``). It must
+    be classified as a function, not a per-lane variable, by the tasklet
+    splitter. The regression: ``split_tasklets._get_vars`` extracted the
+    function name as an RHS variable, so a sub-tasklet got an input
+    connector named after the function (a ``double``) while its body
+    still called ``ITE(...)`` -> gcc "cannot be used as a function" (TSVC
+    s2710, a nested-if kernel whose inner cond stays inline)."""
+    from dace.transformation.passes.split_tasklets import _get_vars as prod_get_vars, to_ssa
+
+    # Unit level: the function name is never an RHS variable, in the raw
+    # form and in every SSA line the splitter would emit.
+    for line in to_ssa(body):
+        _, rhs_vars = prod_get_vars(line)
+        assert "ITE" not in rhs_vars, f"{line!r} -> rhs_vars {rhs_vars} wrongly contains 'ITE'"
+
+    # Behavioural: build the ITE tasklet with explicit connectors (the
+    # file-local _get_vars / _generate_single_tasklet_sdfg helper has the
+    # same name-as-variable bug and cannot be used to construct this case)
+    # then assert SplitTasklets keeps ``ITE`` a function call.
+    sdfg = dace.SDFG(f"ite_split_{abs(hash(body))}")
+    if "LEN_1D" in body:
+        sdfg.add_symbol("LEN_1D", dace.int64)
+    state = sdfg.add_state("main")
+    for arr in sorted(inputs) + ["_o"]:
+        sdfg.add_array(arr + "_ARR", shape=(1, ), dtype=dace.float64, transient=False)
+    t = state.add_tasklet(name="t_ite", inputs=set(inputs), outputs={"_o"}, code=body)
+    for c in sorted(inputs):
+        state.add_edge(state.add_access(f"{c}_ARR"), None, t, c, dace.Memlet(f"{c}_ARR[0]"))
+    state.add_edge(t, "_o", state.add_access("_o_ARR"), None, dace.Memlet("_o_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    assert_all_tasklets_are_ssa(sdfg)
+
+    saw_ite_call = False
+    for n, _ in sdfg.all_nodes_recursive():
+        if not isinstance(n, dace.nodes.Tasklet):
+            continue
+        assert "ITE" not in n.in_connectors, \
+            f"tasklet {n.name!r} has 'ITE' as an input connector: {set(n.in_connectors)}"
+        assert "ITE" not in n.out_connectors, \
+            f"tasklet {n.name!r} has 'ITE' as an output connector: {set(n.out_connectors)}"
+        tbody = n.code.as_string
+        lhs = tbody.split("=", 1)[0].strip() if "=" in tbody else ""
+        assert lhs != "ITE", f"tasklet {n.name!r} rebinds 'ITE': {tbody!r}"
+        if re.search(r"\bITE\s*\(", tbody):
+            saw_ite_call = True
+    assert saw_ite_call, "the ITE(...) call did not survive splitting"
+
+
+def test_split_comparison_intermediate_is_bool():
+    """A split-out comparison / boolean sub-expression must be typed ``bool``, not the
+    numeric ``input_type``. Regression: SplitTasklets typed every intermediate with the
+    inputs' dtype, so ``__t0 = (_a > 0.0)`` became ``double`` and, fed to a ``TileITE``
+    ``_mask`` connector downstream, tripped ConvertTaskletsToTileOps'
+    ``mask_connectors_are_bool`` invariant (the K=2 cond-mask tests)."""
+    sdfg = dace.SDFG("split_cmp_bool")
+    for arr in ("_a", "_c", "_b"):
+        sdfg.add_array(arr + "_ARR", shape=(1, ), dtype=dace.float64, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", {"_a", "_c"}, {"_b"}, "_b = _c if (_a > 0.0) else 0.0")
+    state.add_edge(state.add_access("_a_ARR"), None, t, "_a", dace.Memlet("_a_ARR[0]"))
+    state.add_edge(state.add_access("_c_ARR"), None, t, "_c", dace.Memlet("_c_ARR[0]"))
+    state.add_edge(t, "_b", state.add_access("_b_ARR"), None, dace.Memlet("_b_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    # The intermediate produced by the comparison ``_a > 0.0`` must be a bool scalar
+    # (without the fix every split transient was the numeric ``input_type``).
+    bool_transients = [name for name, desc in sdfg.arrays.items() if desc.transient and desc.dtype == dace.bool_]
+    assert bool_transients, ("the split comparison intermediate was not typed bool; transient dtypes: " + str({
+        n: d.dtype
+        for n, d in sdfg.arrays.items() if d.transient
+    }))
+
+
+def test_split_cast_intermediate_is_double():
+    """``sqrt(double(N))`` must split into ``tmp = double(N)`` (a float64 intermediate)
+    then ``sqrt(tmp)`` -- the cast intermediate takes the CAST target type, not the
+    promotion of its int argument N. Regression: ``infer_types`` returned ``None`` for
+    the ``double`` C-alias cast, the fallback typed the intermediate by its int argument,
+    and the following ``sqrt(int)`` truncated (polybench correlation centered ``data`` by
+    ``sqrt(int(N))=5`` instead of ``sqrt(double(N))=5.65``). Now typed by ``_infer_dtype``."""
+    sdfg = dace.SDFG("split_cast_double")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("_b_ARR", shape=(1, ), dtype=dace.float64, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", set(), {"_b"}, "_b = sqrt(double(N))")
+    state.add_edge(t, "_b", state.add_access("_b_ARR"), None, dace.Memlet("_b_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    # The whole ``sqrt(double(N))`` chain is float; every split intermediate must be
+    # float64 -- an integer-typed cast intermediate would truncate the sqrt.
+    split_transients = {n: d.dtype for n, d in sdfg.arrays.items() if d.transient and "_split_" in n}
+    assert split_transients, "no split intermediate was produced (the cast was not split out)"
+    assert all(dt == dace.float64 for dt in split_transients.values()), \
+        f"a cast intermediate was mistyped (an int type truncates the sqrt): {split_transients}"
+
+
+def test_to_ssa_preserves_int_floor_call():
+    """A two-arg ``int_floor(a, b)`` must be split as a function call, not
+    mangled into an infix ``a int_floor b`` or have its divisor dropped.
+    Regression: a comparison RHS ``int_floor(LEN_1D, 2)`` lost the ``2``
+    (TSVC s276 condition ``(i + 1) < int_floor(LEN_1D, 2)``)."""
+    from dace.transformation.passes.split_tasklets import to_ssa
+
+    lines = to_ssa("_o = merge((i + 1) < int_floor(LEN_1D, 2), _t, _e)")
+    joined = "\n".join(lines)
+    # The whole call (with the divisor) survives as its own statement.
+    assert any("int_floor(LEN_1D, 2)" in ln for ln in lines), joined
+    # The divisor is never dropped to a bare ``< LEN_1D`` comparison.
+    assert "< LEN_1D)" not in joined and "< LEN_1D\n" not in joined, joined
+
+
+def test_to_ssa_temp_names_do_not_collide_with_input():
+    """The temp counter must start past any ``__t<N>`` already in the input.
+    Regression: a fresh ``__t0`` aliased the existing left operand and turned
+    ``__t0 < int_floor(LEN_1D, 2)`` into ``__t0 = int_floor(LEN_1D, 2)`` plus
+    ``__t1 = __t0 < __t0`` — silently comparing the divisor against itself."""
+    from dace.transformation.passes.split_tasklets import to_ssa
+
+    lines = to_ssa("__t1 = (__t0 < int_floor(LEN_1D, 2))")
+    joined = "\n".join(lines)
+    # The left operand ``__t0`` is never overwritten by an emitted temp.
+    assert not any(ln.strip().startswith("__t0 =") for ln in lines), joined
+    # No self-comparison ``__t0 < __t0``; the divisor keeps its own temp.
+    assert "__t0 < __t0" not in joined, joined
+    assert any("int_floor(LEN_1D, 2)" in ln for ln in lines), joined
+
+
+@pytest.mark.parametrize(
+    "code,n_lines",
+    [
+        # A function call with trivial (name/constant) args is NOT split: a
+        # multi-input function ``foo(a, b, c, d)`` stays a single statement.
+        ("out = foo(a, b, c, d)", 1),
+        # Each non-trivial arg is lifted into its own tasklet *before* the call,
+        # so ``foo(a+1, b+1, c+1, d+1)`` needs 4 arg tasklets + the call = 5.
+        ("out = foo(a + 1, b + 1, c + 1, d + 1)", 5),
+        # Only the non-trivial arg is lifted.
+        ("out = foo(a, b + 1, c, d)", 2),
+        # Two-arg builtin function: ``int_floor(a + 1, 2)`` lifts the ``a + 1``.
+        ("out = int_floor(a + 1, 2)", 2),
+    ])
+def test_to_ssa_multi_input_function_split(code: str, n_lines: int):
+    """A function with multiple inputs is split only where its arguments are
+    non-trivial: trivial args (names/constants) keep the call as one
+    statement; each compound arg becomes its own tasklet before the call."""
+    from dace.transformation.passes.split_tasklets import to_ssa
+
+    lines = to_ssa(code)
+    assert len(lines) == n_lines, f"{code!r} -> {lines}"
+    # The final statement is still the function call over (lifted) operands.
+    func = code.split("=", 1)[1].strip().split("(", 1)[0].strip()
+    assert lines[-1].split("=", 1)[1].strip().startswith(f"{func}("), lines
+
+
+@pytest.mark.parametrize("id,expression_strs,expected_num_statements", example_double_expressions)
+def test_double_tasklet_split(id: int, expression_strs: typing.Tuple[str, str], expected_num_statements: int):
     sdfg = _generate_double_tasklet_sdfg(expression_strs, False)
-    _run_compile_and_comparison_test(sdfg)
+    sdfg.name = sdfg.name + f"_id{id}"
+    sdfg.validate()
+    sdfg.compile()
+
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry):
+            num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
+            assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
+
+    assert_all_tasklets_are_ssa(sdfg)
+    _run_compile_and_comparison_test(sdfg, expected_num_statements)
 
 
-@pytest.mark.parametrize("expression_strs", example_double_expressions)
-def test_double_tasklet_split_direct_tasklet_connection(expression_strs: typing.Tuple[str, str]):
+@pytest.mark.parametrize("id, expression_strs,expected_num_statements", example_double_expressions)
+def test_double_tasklet_split_direct_tasklet_connection(id: int, expression_strs: typing.Tuple[str, str],
+                                                        expected_num_statements: int):
     sdfg = _generate_double_tasklet_sdfg(expression_strs, True)
-    _run_compile_and_comparison_test(sdfg)
+    sdfg.name = sdfg.name + f"_id{id}"
+    sdfg.validate()
+    sdfg.compile()
+
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry):
+            num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
+            assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
+
+    assert_all_tasklets_are_ssa(sdfg)
+    _run_compile_and_comparison_test(sdfg, expected_num_statements)
 
 
 S1 = dace.symbol("S1")
@@ -256,9 +640,164 @@ def tasklet_in_nested_sdfg(
 
 
 @dace.program
+def tasklets_in_if_two(
+    a: dace.float64[S, S],
+    b: dace.float64,
+    c: dace.float64[S, S],
+    e: dace.float64[S, S],
+    f: dace.float64,
+):
+    for i in dace.map[0:S - 1:1]:
+        for j in dace.map[0:S - 1:1]:
+            if a[i, j] + a[i + 1, j + 1] < b:
+                e[i, j] = c[i, j] * f * a[i, j] * 2.0 - a[i, j]
+
+
+@dace.program
 def cast_tasklet_first_in_a_map(a: dace.float64[S, S], ):
     for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
         a[i, j] = dace.float64(i) + ((dace.float64(j) + 5.2) * 2.7)
+
+
+@dace.program
+def tasklets_in_if(
+    a: dace.float64[S, S],
+    b: dace.float64[S, S],
+    d: dace.float64[S, S],
+    c: dace.float64,
+):
+    for i in dace.map[S1:S2:1]:
+        for j in dace.map[S1:S2:1]:
+            if a[i, j] > c:
+                b[i, j] = b[i, j] + d[i, j]
+            else:
+                b[i, j] = b[i, j] - d[i, j]
+            b[i, j] = (1 - a[i, j]) * c
+
+
+def _get_sdfg_with_symbol_use_in_tasklet() -> dace.SDFG:
+    sdfg = dace.SDFG("sd1")
+    state = sdfg.add_state("s1")
+
+    sdfg.add_symbol("zfac", dace.float64, find_new_name=False)
+    sdfg.add_array("A", shape=(1, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("B", shape=(1, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("C", shape=(1, ), dtype=dace.float64, transient=False)
+
+    t = state.add_tasklet(name="t1", inputs={"_in1", "_in2"}, outputs={"_out1"}, code="_out1 = _in1 + _in2 + zfac")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    c = state.add_access("C")
+
+    state.add_edge(a, None, t, "_in1", dace.memlet.Memlet("A[0]"))
+    state.add_edge(b, None, t, "_in2", dace.memlet.Memlet("B[0]"))
+    state.add_edge(t, "_out1", c, None, dace.memlet.Memlet("C[0]"))
+
+    return sdfg
+
+
+def _assert_no_math_dot_call_in_tasklets(sdfg: dace.SDFG):
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.Tasklet):
+            assert "math." not in n.code.as_string
+
+
+def test_branch_fusion_tasklets():
+    try:
+        from dace.transformation.passes.eliminate_branches import EliminateBranches
+        st = EliminateBranches()
+    except Exception as e:
+        return
+
+    _S1 = 0
+    _S2 = 64
+    _S = _S2 - _S1
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((_S, _S))
+    C = numpy.random.random((1, ))
+    D = numpy.random.random((_S, _S))
+
+    # Create copies for comparison
+    A_orig = A.copy()
+    B_orig = B.copy()
+    C_orig = C.copy()
+    D_orig = D.copy()
+    A_vec = A.copy()
+    B_vec = B.copy()
+    C_vec = C.copy()
+    D_vec = D.copy()
+
+    # Original SDFG
+    sdfg = tasklets_in_if.to_sdfg()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    st.apply_pass(copy_sdfg, {})
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    _assert_no_math_dot_call_in_tasklets(copy_sdfg)
+    c_copy_sdfg = copy_sdfg.compile()
+
+    c_sdfg(a=A_orig, b=B_orig, c=C_orig[0], d=D_orig, S=_S, S1=_S1, S2=_S2)
+    c_copy_sdfg(a=A_vec, b=B_vec, c=C_vec[0], d=D_vec, S=_S, S1=_S1, S2=_S2)
+
+    assert_all_tasklets_are_ssa(copy_sdfg)
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec)
+    assert numpy.allclose(B_orig, B_vec)
+    assert numpy.allclose(C_orig, C_vec)
+    assert numpy.allclose(D_orig, D_vec)
+
+
+def test_branch_fusion_tasklets_two():
+    try:
+        from dace.transformation.passes.eliminate_branches import EliminateBranches
+        st = EliminateBranches()
+    except Exception as e:
+        return
+
+    _S1 = 0
+    _S2 = 64
+    _S = _S2 - _S1
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((1, ))
+    C = numpy.random.random((_S, _S))
+    E = numpy.random.random((_S, _S))
+    F = numpy.random.random((1, ))
+
+    # Create copies for comparison
+    A_orig = A.copy()
+    B_orig = B.copy()
+    C_orig = C.copy()
+    E_orig = E.copy()
+    F_orig = F.copy()
+    A_vec = A.copy()
+    B_vec = B.copy()
+    C_vec = C.copy()
+    E_vec = E.copy()
+    F_vec = F.copy()
+
+    # Original SDFG
+    sdfg = tasklets_in_if_two.to_sdfg()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    st.apply_pass(copy_sdfg, {})
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    _assert_no_math_dot_call_in_tasklets(copy_sdfg)
+    c_copy_sdfg = copy_sdfg.compile()
+
+    c_sdfg(a=A_orig, b=B_orig[0], c=C_orig, e=E_orig, f=F_orig[0], S=_S)
+    c_copy_sdfg(a=A_vec, b=B_vec[0], c=C_vec, e=E_vec, f=F_vec[0], S=_S)
+
+    assert_all_tasklets_are_ssa(sdfg)
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec)
+    assert numpy.allclose(B_orig, B_vec)
+    assert numpy.allclose(C_orig, C_vec)
+    assert numpy.allclose(E_orig, E_vec)
+    assert numpy.allclose(F_orig, F_vec)
 
 
 def test_expressions_with_nested_sdfg_and_explicit_typecast():
@@ -281,11 +820,13 @@ def test_expressions_with_nested_sdfg_and_explicit_typecast():
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
     SplitTasklets().apply_pass(copy_sdfg, {})
+    _assert_no_math_dot_call_in_tasklets(copy_sdfg)
     c_copy_sdfg = copy_sdfg.compile()
 
     c_sdfg(a=A_orig, b=B_orig, S=_S, S1=_S1, S2=_S2, offset1=-1, offset2=-1)
     c_copy_sdfg(a=A_vec, b=B_vec, S=_S, S1=_S1, S2=_S2, offset1=-1, offset2=-1)
 
+    assert_all_tasklets_are_ssa(copy_sdfg)
     # Compare results
     assert numpy.allclose(A_orig, A_vec)
     assert numpy.allclose(B_orig, B_vec)
@@ -309,22 +850,551 @@ def test_expressions_with_typecast_first_in_map():
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
     SplitTasklets().apply_pass(copy_sdfg, {})
+    _assert_no_math_dot_call_in_tasklets(copy_sdfg)
     c_copy_sdfg = copy_sdfg.compile()
     copy_sdfg.validate()
 
     c_sdfg(a=A_orig, S1=_S1, S2=_S2, S=_S)
     c_copy_sdfg(a=A_vec, S1=_S1, S2=_S2, S=_S)
 
+    assert_all_tasklets_are_ssa(sdfg)
     # Compare results
     assert numpy.allclose(A_orig, A_vec)
 
 
+def test_symbol_in_tasklet():
+    A = numpy.random.random((1, ))
+    B = numpy.random.random((1, ))
+    C = numpy.random.random((1, ))
+
+    # Create copies for comparison
+    A_orig = A.copy()
+    A_vec = A.copy()
+    B_orig = B.copy()
+    B_vec = B.copy()
+    C_orig = C.copy()
+    C_vec = C.copy()
+
+    # Original SDFG
+    sdfg = _get_sdfg_with_symbol_use_in_tasklet()
+    sdfg.validate()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    _assert_no_math_dot_call_in_tasklets(copy_sdfg)
+    c_copy_sdfg = copy_sdfg.compile()
+    copy_sdfg.validate()
+
+    c_sdfg(A=A_orig, B=B_orig, C=C_orig, zfac=0.25)
+    c_copy_sdfg(A=A_vec, B=B_vec, C=C_vec, zfac=0.25)
+
+    assert_all_tasklets_are_ssa(copy_sdfg)
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec)
+    assert numpy.allclose(B_orig, B_vec)
+    assert numpy.allclose(C_orig, C_vec)
+
+
+def test_complex_expression():
+    za = numpy.random.random((
+        5,
+        5,
+    ))
+    zqx = numpy.random.random((5, 5, 2))
+    rlmin = numpy.random.random((1, ))
+    ramin = numpy.random.random((1, ))
+    os = numpy.random.random((1, ))
+
+    # Create copies for comparison
+    za_orig = za.copy()
+    za_vec = za.copy()
+    zqx_orig = zqx.copy()
+    zqx_vec = zqx.copy()
+    rlmin_orig = rlmin.copy()
+    rlmin_vec = rlmin.copy()
+    ramin_orig = ramin.copy()
+    ramin_vec = ramin.copy()
+    os_orig = os.copy()
+    os_vec = os.copy()
+    # Original SDFG
+    sdfg = _get_complex_expression_sdfg(some_scalars=False)
+    sdfg.validate()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    _assert_no_math_dot_call_in_tasklets(copy_sdfg)
+    c_copy_sdfg = copy_sdfg.compile()
+    copy_sdfg.validate()
+
+    c_sdfg(za=za_orig, zqx=zqx_orig, rlmin=rlmin_orig, ramin=ramin_orig, os=os_orig)
+    c_copy_sdfg(za=za_vec, zqx=zqx_vec, rlmin=rlmin_vec, ramin=ramin_vec, os=os_vec)
+
+    assert_all_tasklets_are_ssa(copy_sdfg)
+    # Compare results
+    assert numpy.allclose(os_orig, os_vec)
+
+
+def test_complex_expression_with_scalars():
+    za = numpy.random.random((
+        5,
+        5,
+    ))
+    zqx = numpy.random.random((5, 5, 2))
+    rlmin = numpy.random.random((1, ))
+    ramin = numpy.random.random((1, ))
+    os = numpy.random.random((1, ))
+
+    # Create copies for comparison
+    za_orig = za.copy()
+    za_vec = za.copy()
+    zqx_orig = zqx.copy()
+    zqx_vec = zqx.copy()
+    rlmin_orig = rlmin.copy()
+    rlmin_vec = rlmin.copy()
+    ramin_orig = ramin.copy()
+    ramin_vec = ramin.copy()
+    os_orig = os.copy()
+    os_vec = os.copy()
+    # Original SDFG
+    sdfg = _get_complex_expression_sdfg(some_scalars=True)
+    sdfg.name += "_some_scalars"
+    sdfg.validate()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    _assert_no_math_dot_call_in_tasklets(copy_sdfg)
+    c_copy_sdfg = copy_sdfg.compile()
+    copy_sdfg.validate()
+
+    c_sdfg(za=za_orig, zqx=zqx_orig, rlmin=rlmin_orig[0], ramin=ramin_orig[0], os=os_orig[0])
+    c_copy_sdfg(za=za_vec, zqx=zqx_vec, rlmin=rlmin_vec[0], ramin=ramin_vec[0], os=os_vec[0])
+
+    assert_all_tasklets_are_ssa(copy_sdfg)
+    # Compare results
+    assert numpy.allclose(os_orig, os_vec)
+
+
+def test_split_infers_complex_intermediate_with_int_symbol():
+    """A complex value combined with integer symbols (contour_integral's
+    ``z ** (slab_per_bc / 2 - n)``) must keep its complex intermediates.
+
+    Regression: the old single ``input_type`` stamped the WHOLE split chain with one
+    dtype; for a complex base mixed with int symbols (no float operand) that bucket
+    was ``int64``, so the power result became an int64 register and dropped the
+    imaginary part. Rigorous per-intermediate inference types the power result complex.
+    """
+    sdfg = dace.SDFG("split_complex_int")
+    sdfg.add_symbol("S", dace.int64)
+    sdfg.add_symbol("Ncnt", dace.int64)
+    sdfg.add_array("z_ARR", (1, ), dace.complex128, transient=False)
+    sdfg.add_array("o_ARR", (1, ), dace.complex128, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", {"z"}, {"o"}, "o = z ** (S - Ncnt) + z")
+    state.add_edge(state.add_access("z_ARR"), None, t, "z", dace.Memlet("z_ARR[0]"))
+    state.add_edge(t, "o", state.add_access("o_ARR"), None, dace.Memlet("o_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    split_dtypes = {n: d.dtype for n, d in sdfg.arrays.items() if d.transient and "_split_" in n}
+    assert split_dtypes, "expected at least one split intermediate"
+    # The power result is complex (was collapsed to int64 by the coarse input_type).
+    assert dace.complex128 in split_dtypes.values(), f"complex intermediate lost to coarse typing: {split_dtypes}"
+
+
+@pytest.mark.parametrize("dt", [dace.float16, dace.int8, dace.complex64])
+def test_split_infers_intermediate_dtype_rigorously(dt):
+    """Each split intermediate is typed by rigorous per-operand inference -- one dtype per
+    kind the old heuristic got wrong (narrow float / narrow int / complex) -- not stamped
+    with one coarse ``input_type``. The old heuristic widened any float to ``float64`` (so a
+    float16 chain lost precision) and typed anything non-float as ``int64`` (so int8 widened
+    and complex64 was mistyped). ``a * a + a`` over a single dtype must stay that dtype.
+    """
+    name = re.sub(r"\W", "_", dt.ctype)
+    sdfg = dace.SDFG(f"split_dtype_{name}")
+    sdfg.add_array("a_ARR", (1, ), dt, transient=False)
+    sdfg.add_array("o_ARR", (1, ), dt, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", {"a"}, {"o"}, "o = a * a + a")
+    state.add_edge(state.add_access("a_ARR"), None, t, "a", dace.Memlet("a_ARR[0]"))
+    state.add_edge(t, "o", state.add_access("o_ARR"), None, dace.Memlet("o_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    split_dtypes = {n: d.dtype for n, d in sdfg.arrays.items() if d.transient and "_split_" in n}
+    assert split_dtypes, "expected at least one split intermediate"
+    assert all(d == dt for d in split_dtypes.values()), f"split intermediates not typed {dt}: {split_dtypes}"
+
+
+def test_split_function_call_intermediate_uses_operand_type():
+    """An un-inferable function-call intermediate takes the promotion of its OWN
+    operands, not the coarse whole-tasklet type. ``tanh(a)`` with ``a`` float32 stays
+    float32 even though the tasklet also reads a float64 ``b`` (whose presence would
+    make the whole-tasklet fallback float64). Same float in -> same float out."""
+    sdfg = dace.SDFG("split_fncall_operand")
+    sdfg.add_array("a_ARR", (1, ), dace.float32, transient=False)
+    sdfg.add_array("b_ARR", (1, ), dace.float64, transient=False)
+    sdfg.add_array("o_ARR", (1, ), dace.float64, transient=False)
+    state = sdfg.add_state("main")
+    t = state.add_tasklet("t", {"a", "b"}, {"o"}, "o = tanh(a) + b")
+    state.add_edge(state.add_access("a_ARR"), None, t, "a", dace.Memlet("a_ARR[0]"))
+    state.add_edge(state.add_access("b_ARR"), None, t, "b", dace.Memlet("b_ARR[0]"))
+    state.add_edge(t, "o", state.add_access("o_ARR"), None, dace.Memlet("o_ARR[0]"))
+    sdfg.validate()
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+    split_dtypes = {n: d.dtype for n, d in sdfg.arrays.items() if d.transient and "_split_" in n}
+    assert dace.float32 in split_dtypes.values(), \
+        f"function-call intermediate not typed from its float32 operand: {split_dtypes}"
+
+
+def test_second_run_does_not_reuse_first_runs_split_scalars():
+    """A later run must not re-issue the earlier run's split-scalar names.
+
+    The names are ``<ssa_var>_split_<index>`` with the index restarting per run, so a second
+    run over the same SDFG used to hand an unrelated intermediate the first run's descriptor:
+    one register scalar aliased by two independent SSA values (here also with the wrong dtype,
+    and -- since the two live in different map scopes -- an outright codegen failure).
+    """
+    sdfg = dace.SDFG('split_rerun')
+    sdfg.add_array('a', [4], dace.float64)
+    sdfg.add_array('c', [4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', dict(i='0:4'))
+    tasklet = state.add_tasklet('t', {'inp'}, {'out'}, 'out = inp * 2.0 + 3.0')
+    state.add_memlet_path(state.add_access('a'), entry, tasklet, dst_conn='inp', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_access('c'), src_conn='out', memlet=dace.Memlet('c[i]'))
+
+    SplitTasklets().apply_pass(sdfg, {})
+    first_run = {name for name in sdfg.arrays if SplitTasklets.tmp_access_identifier in name}
+    assert first_run, 'the first run is expected to introduce split scalars'
+
+    # A second splittable tasklet in the SAME state, over a different dtype -- exactly what the
+    # vectorizer produces after canonicalize has already run the pass once.
+    sdfg.add_array('ai', [4], dace.int64)
+    sdfg.add_array('ci', [4], dace.int64)
+    entry2, exit2 = state.add_map('m2', dict(j='0:4'))
+    tasklet2 = state.add_tasklet('t2', {'inp'}, {'out'}, 'out = inp * 2 + 3')
+    state.add_memlet_path(state.add_access('ai'), entry2, tasklet2, dst_conn='inp', memlet=dace.Memlet('ai[j]'))
+    state.add_memlet_path(tasklet2, exit2, state.add_access('ci'), src_conn='out', memlet=dace.Memlet('ci[j]'))
+
+    SplitTasklets().apply_pass(sdfg, {})
+    second_run = {name for name in sdfg.arrays if SplitTasklets.tmp_access_identifier in name} - first_run
+    assert second_run, 'the second run is expected to introduce split scalars of its own'
+
+    for name in first_run:
+        occurrences = [n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == name]
+        assert len(occurrences) == 1, f'{name} reused by the second run: {len(occurrences)} access nodes'
+    for name in second_run:
+        assert sdfg.arrays[name].dtype == dace.int64, f'{name} inherited the first run dtype {sdfg.arrays[name].dtype}'
+
+    sdfg.validate()
+    a = numpy.arange(4, dtype=numpy.float64)
+    c = numpy.zeros(4, dtype=numpy.float64)
+    ai = numpy.arange(4, dtype=numpy.int64)
+    ci = numpy.zeros(4, dtype=numpy.int64)
+    sdfg(a=a, c=c, ai=ai, ci=ci)
+    assert numpy.allclose(c, a * 2.0 + 3.0)
+    assert numpy.array_equal(ci, ai * 2 + 3)
+
+
+#: Tasklet bodies the splitter must DECLINE: more than one statement, so lowering only the first
+#: would drop the rest. The annotated form is what the Fortran frontend emits for a typed local.
+declined_bodies = [
+    "_out: dace.float64\n_out = ((_in_a * _in_b) * _in_c)",
+    "_tmp = (_in_a * _in_b)\n_out = (_tmp * _in_c)",
+]
+
+
+@pytest.mark.parametrize("body", declined_bodies)
+def test_to_ssa_declines_multi_statement_body(body: str):
+    """``to_ssa`` reads a single statement, so a multi-statement body must return ``[]`` ("declined")
+    rather than the SSA of its first statement only -- which the caller would then substitute for the
+    WHOLE tasklet, silently dropping the remaining statements."""
+    from dace.transformation.passes.split_tasklets import to_ssa
+
+    assert to_ssa(body) == [], f"{body!r} must be declined, got {to_ssa(body)}"
+
+
+@pytest.mark.parametrize("body", declined_bodies)
+def test_split_keeps_tasklet_the_splitter_declines(body: str):
+    """A tasklet whose body ``to_ssa`` declines must be left INTACT.
+
+    Regression: ``apply_pass`` gated on ``len(ssa_statements) != 1``, which an empty list also
+    satisfies. The tasklet was removed (with all of its edges) and the rebuild loop then iterated
+    over nothing, so the tasklet vanished and every access node that fed only it was orphaned --
+    ``InvalidSDFGNodeError: Isolated node``. Seen on CloudSC (gpu_scc / multistep, canon_cpu and
+    canon_gpu) on a frontend tasklet whose body is a type annotation plus the assignment.
+    """
+    sdfg = dace.SDFG(f"declined_{abs(hash(body))}")
+    state = sdfg.add_state("main", is_start_block=True)
+    for name in ("_in_a", "_in_b", "_in_c", "_out"):
+        sdfg.add_array(f"{name}_ARR", shape=(1, ), dtype=dace.float64)
+    t = state.add_tasklet(name="declined", inputs={"_in_a", "_in_b", "_in_c"}, outputs={"_out"}, code=body)
+    for conn in ("_in_a", "_in_b", "_in_c"):
+        state.add_edge(state.add_access(f"{conn}_ARR"), None, t, conn, dace.Memlet(f"{conn}_ARR[0]"))
+    state.add_edge(t, "_out", state.add_access("_out_ARR"), None, dace.Memlet("_out_ARR[0]"))
+    sdfg.validate()
+
+    SplitTasklets().apply_pass(sdfg, {})
+
+    tasklets = [n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)]
+    assert len(tasklets) == 1, f"declined tasklet was rewritten into {[t.label for t in tasklets]}"
+    assert tasklets[0].code.as_string == body
+    # No source access node was orphaned.
+    for node in state.nodes():
+        assert state.in_degree(node) + state.out_degree(node) > 0, f"{node} was left isolated"
+    sdfg.validate()
+
+
 if __name__ == "__main__":
+    for _body in declined_bodies:
+        test_to_ssa_declines_multi_statement_body(_body)
+        test_split_keeps_tasklet_the_splitter_declines(_body)
+    test_split_infers_complex_intermediate_with_int_symbol()
+    test_split_function_call_intermediate_uses_operand_type()
+    for _dt in [dace.float16, dace.int8, dace.complex64]:
+        test_split_infers_intermediate_dtype_rigorously(_dt)
+    test_symbol_in_tasklet()
+    test_branch_fusion_tasklets()
+    test_branch_fusion_tasklets_two()
     test_expressions_with_nested_sdfg_and_explicit_typecast()
     test_expressions_with_typecast_first_in_map()
-    for expression_str in example_expressions:
-        test_single_tasklet_split(expression_str)
-    for expression_strs in example_double_expressions:
-        test_double_tasklet_split(expression_strs)
-    for expression_strs in example_double_expressions:
-        test_double_tasklet_split_direct_tasklet_connection(expression_strs)
+    for expression_str, expected_num_statements in example_expressions:
+        test_single_tasklet_split(expression_str, expected_num_statements)
+    for expression_strs, expected_num_statements in example_double_expressions:
+        test_double_tasklet_split(expression_strs, expected_num_statements)
+    for expression_strs, expected_num_statements in example_double_expressions:
+        test_double_tasklet_split_direct_tasklet_connection(expression_strs, expected_num_statements)
+    for expression_strs, expected_num_statements in example_symbol_only_expressions:
+        test_single_tasklet_symbol_only_split(expression_str, expected_num_statements)
+    test_complex_expression()
+    test_complex_expression_with_scalars()
+
+# Per user direction 2026-06-09: ensure SplitTasklets handles ANY function call by lifting
+# arguments to SSA. The legacy allowlist (``log`` / ``exp`` / ...) made unfamiliar function
+# names (``sqrt``, ``tanh``, user-defined) leak as stale input connectors -- now fixed via
+# AST-detection of function-position names in ``_get_vars``.
+
+
+@pytest.mark.parametrize(
+    "body_expr",
+    [
+        "_c = sqrt(_a * _a + _b * _b)",  # function over nested expr (the user's exact example)
+        "_c = tanh(_a) * _b",  # function output feeds another binop
+        "_c = my_custom_func(_a, _b)",  # arbitrary user function name
+        "_c = sin(cos(_a + _b))",  # nested function calls
+    ],
+)
+def test_split_handles_arbitrary_function_calls(body_expr):
+    """SplitTasklets handles ANY function call by lifting each argument sub-expression to
+    its own intermediate transient. The function name is detected via AST (no allowlist
+    required).
+
+    For ``_c = sqrt(_a * _a + _b * _b)`` the expected split is:
+       __t0 = _a * _a
+       __t1 = _b * _b
+       __t2 = __t0 + __t1
+       _c = sqrt(__t2)
+
+    Per user direction 2026-06-09: "Ensure that we split all function expressions like
+    this regardless of what function it was".
+    """
+    import dace as _d
+    from dace.transformation.passes.split_tasklets import SplitTasklets
+    sdfg = _d.SDFG("split_func_fixture")
+    sdfg.add_array("A", (4, ), _d.float64, transient=False)
+    sdfg.add_array("B", (4, ), _d.float64, transient=False)
+    sdfg.add_array("C", (4, ), _d.float64, transient=False)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("k", {"ii": "0:4"})
+    a = state.add_access("A")
+    b = state.add_access("B")
+    c = state.add_access("C")
+    t = state.add_tasklet("body", {"_a", "_b"}, {"_c"}, body_expr)
+    state.add_memlet_path(a, me, t, dst_conn="_a", memlet=_d.Memlet("A[ii]"))
+    state.add_memlet_path(b, me, t, dst_conn="_b", memlet=_d.Memlet("B[ii]"))
+    state.add_memlet_path(t, mx, c, src_conn="_c", memlet=_d.Memlet("C[ii]"))
+    # Pass should run without raising. validate() at the tail of apply_pass is the gate.
+    SplitTasklets().apply_pass(sdfg, {})
+    # No tasklet should have an "_<func>" or function-name in-connector.
+    for n in state.nodes():
+        if isinstance(n, _d.nodes.Tasklet):
+            for in_conn in n.in_connectors.keys():
+                # Connector names that match a known function name suggest the function
+                # leaked through as a variable.
+                assert in_conn not in {"sqrt", "tanh", "sin", "cos", "my_custom_func"}, \
+                    f"function name {in_conn!r} leaked as an in-connector on {n.label!r}"
+
+
+def test_split_anchors_symbol_only_substatement_into_map_scope():
+    """A multi-op tasklet whose SSA decomposition contains a SYMBOL-ONLY sub-statement
+    (e.g. ``__t1 = double(N)`` -- ``N`` is a symbol inlined into the body, so the
+    sub-tasklet has no data inputs) must keep that zero-input sub-tasklet INSIDE the map
+    scope by anchoring it to the MapEntry with an empty dependency memlet.
+
+    Regression: correlation's ``center_data`` tasklet
+    ``oud = (ind - m) / (math.sqrt(double(N)) * sd)`` split a symbol-only
+    ``__t1 = double(N)`` sub-tasklet that floated outside the map, corrupting scope_dict
+    and producing 'Memlet creates an invalid path (sink node ... should be a data node)'
+    at the tail ``sdfg.validate()``.
+    """
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("split_symbol_only")
+    for nm in ("ind", "m", "sd", "oud"):
+        sdfg.add_array(nm, [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("mymap", dict(i="0:N"))
+    t = state.add_tasklet("center_data", {"cind", "cm", "csd"}, {"coud"},
+                          "coud = (cind - cm) / (math.sqrt(double(N)) * csd)")
+    for nm, conn in (("ind", "cind"), ("m", "cm"), ("sd", "csd")):
+        state.add_memlet_path(state.add_access(nm), me, t, dst_conn=conn, memlet=dace.Memlet(f"{nm}[i]"))
+    state.add_memlet_path(t, mx, state.add_access("oud"), src_conn="coud", memlet=dace.Memlet("oud[i]"))
+
+    SplitTasklets().apply_pass(sdfg, {})  # used to raise InvalidSDFGEdgeError at validate()
+
+    # Every resulting sub-tasklet must live under the MapEntry (in_degree >= 1), including
+    # the symbol-only ``__t1 = double(N)`` one (anchored via an empty memlet).
+    scope = state.scope_dict()
+    for n in state.nodes():
+        if isinstance(n, dace.nodes.Tasklet):
+            assert state.in_degree(n) >= 1, f"sub-tasklet {n.label!r} has no incoming edge (floats outside map)"
+            assert scope[n] is me, f"sub-tasklet {n.label!r} is not inside the map scope"
+
+
+def test_add_missing_symbols_honors_integer_cast():
+    """A scalar defined as ``dace.int64(<float expr>)`` (a whole-statement integer typecast,
+    e.g. the azimint_hist ``compute_bin`` histogram-bin index) gets lifted to an SDFG symbol by
+    ``SplitTasklets._add_missing_symbols`` when canonicalize's interstate-edge fission leaves it
+    undeclared. Every atom in ``<float expr>`` is float64, so the atom-priority dtype heuristic
+    (which always prefers float64 over int64) used to hand back a FLOAT-typed symbol despite the
+    explicit int64 cast wrapping the whole right-hand side. That symbol then reaches
+    ``min(int64_symbol, BINS - 1)`` as a histogram index: codegen emits ``Min(double, int64_t)``,
+    which trips the ``dace::Min`` static_assert (mixing floating-point and integer arguments) at
+    COMPILE time -- this is a compile-time regression, not just a numeric one.
+
+    Regression test for the ``compute_bin``/``histogram`` shape in
+    ``tests/corpus/npbench/map_reduce/azimint_hist.py``, reduced to its essentials: a
+    single-argument int64 cast of a float expression, called through a nested ``@dace.program``,
+    then min'd against an integer symbol and used to index+increment an array.
+    """
+    N = dace.symbol('N', dtype=dace.int64)
+    BINS = dace.symbol('BINS', dtype=dace.int64)
+
+    @dace.program
+    def _compute_bin(x: dace.float64, lo: dace.float64, hi: dace.float64):
+        return dace.int64(BINS * (x - lo) / (hi - lo))
+
+    @dace.program
+    def cast_min_index_kernel(a: dace.float64[N], lo: dace.float64, hi: dace.float64, hist: dace.int64[BINS]):
+        hist[:] = 0
+        for i in dace.map[0:N]:
+            b = min(_compute_bin(a[i], lo, hi, BINS=BINS), BINS - 1)
+            hist[b] += 1
+
+    n, bins = 200, 10
+    lo, hi = 0.0, 1.0
+    rng = numpy.random.default_rng(0)
+    a = rng.random(n)
+
+    sdfg = cast_min_index_kernel.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+
+    # The promoted symbol carrying the ``int64(...)`` cast must be integer-typed, not
+    # float64 -- this is the direct regression assertion (compilation below would also
+    # catch it, via the C++ static_assert, but this pins the root cause).
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for name, dtype in nsdfg.symbols.items():
+            if name.lower().startswith('int64_'):
+                assert dtype in dace.dtypes.INTEGER_TYPES, \
+                    f"symbol {name!r} promoted from an int64(...) cast has non-integer dtype {dtype}"
+
+    hist = numpy.zeros(bins, dtype=numpy.int64)
+    sdfg(a=a.copy(), lo=lo, hi=hi, hist=hist, N=n, BINS=bins)
+
+    idx = numpy.minimum((bins * (a - lo) / (hi - lo)).astype(numpy.int64), bins - 1)
+    ref = numpy.bincount(idx, minlength=bins).astype(numpy.int64)
+    assert numpy.array_equal(hist, ref), f"hist={hist} ref={ref}"
+
+
+def test_split_is_deterministic_under_a_randomised_hash_seed():
+    """The connectors the pass emits, and the in-edges it wires to them, come from the names it
+    collects while walking a statement's right-hand side. Collected into a plain set, that order is
+    the hash order of the strings, so the same tasklet split into a different SDFG per interpreter
+    run -- seed 1 disagreed with seeds 0 and 2 on this very kernel. Run in children because
+    ``PYTHONHASHSEED`` is only read at interpreter start."""
+    src = textwrap.dedent('''
+        import dace
+        from dace.sdfg import nodes
+        from dace.transformation.passes.split_tasklets import SplitTasklets
+        N = dace.symbol('N')
+
+        @dace.program
+        def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+            for i in dace.map[0:N]:
+                with dace.tasklet:
+                    av << a[i]
+                    bv << b[i]
+                    cv >> c[i]
+                    dv >> d[i]
+
+                    cv = av * 2.0 + bv * 3.0 + av * bv
+                    dv = cv + av - bv * 4.0
+
+        sdfg = prog.to_sdfg(simplify=True)
+        SplitTasklets().apply_pass(sdfg, {})
+        sig = sorted((n.label, tuple(n.in_connectors), tuple(n.out_connectors))
+                     for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet))
+        print('SIG', sig, flush=True)
+    ''')
+    with tempfile.TemporaryDirectory() as tmp:
+        script = os.path.join(tmp, 'split_tasklets_seed_child.py')
+        with open(script, 'w') as fh:
+            fh.write(src)
+        sigs = []
+        for seed in ('0', '1', '2'):
+            env = dict(os.environ, PYTHONHASHSEED=seed)
+            res = subprocess.run([sys.executable, script], capture_output=True, timeout=600, env=env)
+            lines = [l for l in res.stdout.decode().splitlines() if l.startswith('SIG')]
+            assert lines, f'child with PYTHONHASHSEED={seed} produced no signature: {res.stderr[-500:]!r}'
+            sigs.append(lines[0])
+    assert len(dict.fromkeys(sigs)) == 1, 'hash-seed dependent split:\n' + '\n'.join(sigs)
+
+
+def test_if_then_statement_folds_to_ite():
+    """``if c: y = a`` is an ITE whose false case is the value ``y`` already held.
+
+    The earlier write has to be versioned away, or the result is two assignments to one name and
+    the chain builder downstream sees one register written twice.
+    """
+    statements = to_ssa('y = 0.0\nif (x > 0.5):\n    y = x')
+    assert statements, 'the if-then body was declined'
+    assert statements[-1].startswith('y = ITE('), statements
+    targets = [line.split(' = ')[0] for line in statements]
+    assert len(targets) == len(set(targets)), f'not single-assignment: {statements}'
+
+
+def test_if_then_else_statement_folds_to_ite():
+    """With both branches present there is no earlier value to preserve, and no versioning needed."""
+    statements = to_ssa('if (x > 0.5):\n    y = x\nelse:\n    y = 0.0')
+    assert statements[-1] == 'y = ITE(__t0, x, 0.0)', statements
+
+
+def test_if_then_without_a_previous_value_is_declined():
+    """``if c: y = a`` alone would read an undefined ``y`` on the false path."""
+    assert to_ssa('if (x > 0.5):\n    y = x') == []
+
+
+def test_conditional_with_an_unassignable_branch_is_declined():
+    """A branch that is not a plain assignment cannot be blended, so the whole body is declined."""
+    assert to_ssa('y = 0.0\nif (x > 0.5):\n    z[0] = x') == []
+
+
+def test_multi_statement_body_without_a_conditional_is_still_declined():
+    """The annotation-then-assignment shape must keep being left intact."""
+    assert to_ssa('_out: dace.float64\n_out = a * b') == []

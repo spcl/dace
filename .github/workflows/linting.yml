@@ -7,15 +7,16 @@ on:
     branches: [ main, ci-fix ]
 
 env:
+  PYTHONHASHSEED: '0'
   UV_FROZEN: 1 # sync without updating uv.lock
   UV_NO_DEV: 1 # don't install dev dependency group by default
-  UV_NO_EDITABLE: 1 # don't install dace in editable mode
 
 jobs:
   linting:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     name: pre-commit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
     - name: Check repository
@@ -37,3 +38,7 @@ jobs:
     - name: Run linting tools
       id: lint
       run: uv run --only-group=linting pre-commit run --show-diff-on-failure --color=always --all-files
+
+    - name: Check for undefined names in code generation
+      id: undefined-names
+      run: uv run --only-group=linting ruff check --select F821 dace/codegen/

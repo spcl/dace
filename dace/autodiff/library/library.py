@@ -4,7 +4,6 @@ Dace library for autodiff
 
 Includes the BackwardPass library node, and the replacements for the python frontend
 """
-from typing import Dict, Set
 
 import dace
 import dace.library
@@ -120,6 +119,13 @@ class BackwardPass(nodes.LibraryNode):
     }
     default_implementation = "differentiate"
 
+    # Differentiating the forward subgraph uses per-library-node backward rules (e.g. the
+    # registered ``pure`` rule for ``dace.libraries.standard.nodes.Reduce``), which only apply
+    # while those nodes are still library nodes. Once a peer has been expanded, all autodiff
+    # sees is its lowered body -- a C++ tasklet it cannot reverse. So this node must expand
+    # before its peers; ``SDFG.expand_library_nodes`` honours the flag.
+    expand_before_peers = True
+
     given_gradients = properties.DictProperty(
         key_type=str,
         value_type=str,
@@ -137,12 +143,12 @@ class BackwardPass(nodes.LibraryNode):
         " buffer need to be with write-conflict-resolution. Note: this field is automatically populated upon expansion."
     )
 
-    def __init__(self, name, given_gradients: Dict[str, str], *args, **kwargs):
+    def __init__(self, name, given_gradients: dict[str, str], *args, **kwargs):
         super().__init__(name, *args, **kwargs)
         self.given_gradients = given_gradients
         self.required_gradients = {}
 
-    def outer_names_given_gradients(self, state: SDFGState) -> Set[str]:
+    def outer_names_given_gradients(self, state: SDFGState) -> set[str]:
         """
         Returns the names of the arrays that are passed as given gradients.
         """

@@ -718,6 +718,173 @@ def test_hdiff():
     assert np.allclose(out_field, out_field_)
 
 
+@dace.program
+def read_ahead_war(A: dace.float64[20], B: dace.float64[20]):
+    tmp = dace.define_local([19], dtype=A.dtype)
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            a << A[i + 1]
+            t >> tmp[i]
+
+            t = a * 2.0
+
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            t << tmp[i]
+            b << B[i]
+            a >> A[i]
+
+            a = t + b
+
+
+@dace.program
+def read_ahead_no_conflict(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20]):
+    tmp = dace.define_local([19], dtype=A.dtype)
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            a << A[i + 1]
+            t >> tmp[i]
+
+            t = a * 2.0
+
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            t << tmp[i]
+            b << B[i]
+            c >> C[i]
+
+            c = t + b
+
+
+def test_read_ahead_write_is_not_fused():
+    """The producer reads ``A[i + 1]``, the consumer writes ``A[i]``: an anti-dependence that the
+    intermediate transient orders. Fused, both land in one map where lane ``i`` reads what lane
+    ``i + 1`` writes, so the transformation must refuse. The conflict-free twin -- identical apart
+    from the consumer writing ``C`` -- must still fuse, which is what makes this a test of the
+    hazard guard rather than of the shape."""
+    sdfg = read_ahead_war.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 2
+
+    assert sdfg.apply_transformations(OTFMapFusion) == 0, 'the read-ahead anti-dependence must refuse fusion'
+    assert count_maps(sdfg) == 2
+
+    free = read_ahead_no_conflict.to_sdfg()
+    free.simplify()
+    assert count_maps(free) == 2
+    assert free.apply_transformations(OTFMapFusion) == 1, 'non-vacuity: the same shape fuses when nothing clashes'
+    assert count_maps(free) == 1
+
+    rng = np.random.default_rng(20260823)
+    A = rng.random(20)
+    B = rng.random(20)
+    ref = A.copy()
+    ref[0:19] = A[1:20] * 2.0 + B[0:19]  # whole-RHS-then-assign, the semantics the two maps keep
+
+    got = A.copy()
+    sdfg(A=got, B=B)
+    assert np.allclose(got, ref)
+
+
+@dace.program
+def seidel_2d_like_war(A: dace.float64[N, N]):
+    """polybench seidel_2d reduced to the OTF hazard: the producer map reads
+    ``A[i, j + 2]`` and the consumer map writes ``A[i, j + 1]``. The intermediate
+    transient orders them, but fusing into one map creates a lane-crossing WAR."""
+    tmp = dace.define_local([N, N], dtype=A.dtype)
+    for i, j in dace.map[1:N - 1, 0:N - 3]:
+        with dace.tasklet:
+            a << A[i, j + 2]
+            t >> tmp[i, j]
+
+            t = a
+
+    for i, j in dace.map[1:N - 1, 0:N - 3]:
+        with dace.tasklet:
+            t << tmp[i, j]
+            a >> A[i, j + 1]
+
+            a = t
+
+
+def test_seidel_2d_like_war_refuses_fusion():
+    """The canonical seidel_2d pattern is a self-array WAR: fusing the producer
+    and consumer maps lets lane ``(i, j)`` read the value lane ``(i, j + 1)`` just
+    wrote, so OTFMapFusion must refuse."""
+    sdfg = seidel_2d_like_war.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 2
+
+    assert sdfg.apply_transformations(OTFMapFusion) == 0, 'seidel_2d WAR must refuse fusion'
+    assert count_maps(sdfg) == 2
+
+    n = 8
+    A = np.random.default_rng(20260829).random((n, n))
+    ref = A.copy()
+    for i in range(1, n - 1):
+        for j in range(0, n - 3):
+            ref[i, j + 1] = ref[i, j + 2]
+
+    got = A.copy()
+    sdfg(A=got, N=n)
+    assert np.allclose(got, ref)
+
+
+@dace.program
+def masked_inplace_intermediate(rdo: dace.float64[N], eps: dace.float64, repl: dace.float64, out: dace.float64[N]):
+    """polybench correlation's stddev step: a producer defines every element of ``s``, and a later
+    map overwrites only the elements the mask selects, so the rest keep the producer's values."""
+    s = np.sqrt(rdo / N)
+    s[s <= eps] = repl
+    out[:] = s
+
+
+@dace.program
+def masked_other_intermediate(rdo: dace.float64[N], eps: dace.float64, repl: dace.float64, out: dace.float64[N]):
+    """The conflict-free twin: same producer, same mask, but the masked write lands in another array,
+    so the producer really is ``s``'s only definition."""
+    s = np.sqrt(rdo / N)
+    out[:] = np.where(s <= eps, repl, s)
+
+
+def test_second_writer_of_the_intermediate_is_not_fused():
+    """Fusion deletes the producer once the consumer stops reading it, which is sound only while
+    that producer is the intermediate's whole definition. Here a masked write reaches some elements
+    of ``s`` and leaves the rest holding what the producer wrote, so deleting it reads those
+    uninitialized -- wrong numbers on a graph that still validates."""
+    rng = np.random.default_rng(20260830)
+    n = 8
+    rdo = rng.random(n)
+    # Chosen so the mask is PARTIAL: an eps above every element writes the whole array and the bug
+    # cannot show, which is what makes the numeric half of this test load-bearing.
+    eps, repl = 0.15, 9.0
+    ref = np.sqrt(rdo / n)
+    assert 0 < np.count_nonzero(ref <= eps) < n, 'the mask must be partial for this to test anything'
+    ref = np.where(ref <= eps, repl, ref)
+
+    sdfg = masked_inplace_intermediate.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 4
+    # The producer of ``rdo / N`` still fuses -- only the one that would delete ``s``'s definition
+    # is refused, so a blanket refusal would pass the numbers below and still be a regression.
+    assert sdfg.apply_transformations_repeated(OTFMapFusion) == 1
+    assert count_maps(sdfg) == 3
+
+    got = np.zeros(n)
+    sdfg(rdo=rdo.copy(), eps=eps, repl=repl, out=got, N=n)
+    assert np.allclose(got, ref), f'expected {ref}, got {got}'
+
+    free = masked_other_intermediate.to_sdfg()
+    free.simplify()
+    assert count_maps(free) == 3
+    assert free.apply_transformations_repeated(OTFMapFusion) == 2, 'non-vacuity: one writer still fuses through'
+    assert count_maps(free) == 2
+
+    got = np.zeros(n)
+    free(rdo=rdo.copy(), eps=eps, repl=repl, out=got, N=n)
+    assert np.allclose(got, ref), f'expected {ref}, got {got}'
+
+
 if __name__ == '__main__':
     # Solver
     test_solve()
@@ -751,3 +918,7 @@ if __name__ == '__main__':
     # Applications
     test_matmuls()
     test_hdiff()
+
+    # Data hazards
+    test_read_ahead_write_is_not_fused()
+    test_second_writer_of_the_intermediate_is_not_fused()

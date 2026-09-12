@@ -1,17 +1,32 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import sympy as sp
 from dace import sdfg as sd, symbolic, properties
 from dace import data as dt
 from dace.sdfg.state import LoopRegion
 from dace.data import Scalar
+from dace.ordered import OrderedSet
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates, ConditionUniqueWrites
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace.subsets import Range
 import copy
-from typing import Union, Set, Optional, Dict, Any
+from typing import Union, Optional, Dict, Any
+
+
+def canonicalize_index_symbols(*index_groups: list[list[Union[tuple, None]]]) -> None:
+    """Collapse same-named free symbols across all (a, b) index pairs onto one instance each, in place.
+
+    Reads and writes come from different edges, so a non-itervar symbol (e.g. an outer loop
+    variable) can show up as two distinct sympy instances of the same name (one plain, one
+    assumption-flavored). Min/Max/subtraction over such pairs then never cancels, even though they
+    denote the same value.
+    """
+    slots = [(edge_indices, i) for group in index_groups for edge_indices in group
+             for i, entry in enumerate(edge_indices) if entry is not None]
+    flat = symbolic.equalize_symbols_across(*[x for edge_indices, i in slots for x in edge_indices[i]])
+    for (edge_indices, i), lo, hi in zip(slots, flat[::2], flat[1::2]):
+        edge_indices[i] = (lo, hi)
 
 
 @properties.make_properties
@@ -104,6 +119,18 @@ class LoopLocalMemoryReduction(ppl.Pass):
                                                   default=False,
                                                   desc="Assume symbols are positive when checking for applicability.")
 
+    skip_arrays = properties.SetProperty(
+        element_type=str,
+        default=set(),
+        desc="Set of array names to skip for this optimization.",
+    )
+
+    annotation_postfix = properties.Property(
+        dtype=str,
+        default="_circular",
+        desc="Postfix to add to the annotation of arrays that have been reduced.",
+    )
+
     num_applications = 0  # To track number of applications for testing
 
     def modifies(self) -> ppl.Modifies:
@@ -116,9 +143,18 @@ class LoopLocalMemoryReduction(ppl.Pass):
     def depends_on(self):
         return [StateReachability, FindAccessStates, ConditionUniqueWrites]
 
-    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Shrink loop-local arrays to the circular buffer their access pattern needs.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results of prior passes, reused as analyses when present.
+        :returns: Number of arrays reduced (also kept on ``self.num_applications``), or ``None`` if none were.
+        """
+        # Kept as an instance attribute as well: tests read ``num_applications`` off the pass object.
         self.num_applications = 0
         self.out_of_loop_states_cache = {}
+        self.write_before_read_cache = {}
+        self.intra_loop_reach_cache = {}
 
         # Get analysis results
         if StateReachability.__name__ in pipeline_results:
@@ -148,20 +184,32 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     changing_syms.update(edge.data.assignments.keys())
 
                 arrays = set(acc_node.data for acc_node in node.data_nodes())
-                for arr in arrays:
+                for arr in arrays - self.skip_arrays:
                     self._apply_for_array(arr, sdfg, node, changing_syms)
 
         self.out_of_loop_states_cache = {}
+        self.write_before_read_cache = {}
+        self.intra_loop_reach_cache = {}
+
+        return self.num_applications or None
 
     def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[Union[tuple, None]]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
         indices = list()
         itervar = loop.loop_variable
         itersym = symbolic.pystr_to_symbolic(itervar)
-        a = sp.Wild("a", exclude=[itersym])
-        b = sp.Wild("b", exclude=[itersym])
+        a = symbolic.sympy.Wild("a", exclude=[itersym])
+        b = symbolic.sympy.Wild("b", exclude=[itersym])
 
         for rb, re, _ in subset.ndrange():
+            # Constant-index subsets carry plain Python ints, which have no .match.
+            rb = symbolic.pystr_to_symbolic(str(rb)) if isinstance(rb, int) else rb
+            re = symbolic.pystr_to_symbolic(str(re)) if isinstance(re, int) else re
+            # Subsets may carry an assumption-flavored instance of the iteration symbol
+            # (e.g. nonnegative), which Wild(exclude=[itersym]) does NOT exclude; the
+            # match then silently misbinds b := a*i+b. Unify by name first.
+            rb = rb.xreplace({s: itersym for s in rb.free_symbols if s.name == itervar})
+            re = re.xreplace({s: itersym for s in re.free_symbols if s.name == itervar})
             m = rb.match(a * itersym + b)
             if m is not None and rb == re:
                 indices.append((m[a], m[b]))
@@ -178,12 +226,14 @@ class LoopLocalMemoryReduction(ppl.Pass):
         uncond_write_indices = list()
         all_write_indices = list()
 
-        read_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
-                         for e in st.out_edges(an))
-        uncond_write_edges = set(e for st in loop.all_states() for an in st.data_nodes()
-                                 if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an))
-        all_write_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
-                              for e in st.in_edges(an))
+        # Empty memlets are ordering edges: they access no element, so they carry no indices.
+        read_edges = OrderedSet(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
+                                for e in st.out_edges(an) if not e.data.is_empty())
+        uncond_write_edges = OrderedSet(e for st in loop.all_states() for an in st.data_nodes()
+                                        if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an)
+                                        if not e.data.is_empty())
+        all_write_edges = OrderedSet(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
+                                     for e in st.in_edges(an) if not e.data.is_empty())
 
         for edge in read_edges:
             eri = self._get_edge_indices(edge.data.src_subset, loop)
@@ -196,6 +246,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         for edge in all_write_edges:
             ewi = self._get_edge_indices(edge.data.dst_subset, loop)
             all_write_indices.append(ewi)
+
+        canonicalize_index_symbols(read_indices, uncond_write_indices, all_write_indices)
 
         return read_indices, uncond_write_indices, all_write_indices
 
@@ -238,11 +290,11 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 continue
 
             # Get the minimum read index and maximum write index
-            read_lb = sp.Min(*[i[1] for i in dim_read_indices])
-            read_ub = sp.Max(*[i[1] for i in dim_read_indices])
-            write_ub = sp.Max(*[i[1] for i in dim_write_indices])
-            uncond_write_lb = sp.Min(*[i[1] for i in dim_uncond_write_indices])
-            uncond_write_ub = sp.Max(*[i[1] for i in dim_uncond_write_indices])
+            read_lb = symbolic.sympy.Min(*[i[1] for i in dim_read_indices])
+            read_ub = symbolic.sympy.Max(*[i[1] for i in dim_read_indices])
+            write_ub = symbolic.sympy.Max(*[i[1] for i in dim_write_indices])
+            uncond_write_lb = symbolic.sympy.Min(*[i[1] for i in dim_uncond_write_indices])
+            uncond_write_ub = symbolic.sympy.Max(*[i[1] for i in dim_uncond_write_indices])
 
             # We assume a is the same for all indices, so we can just take the first one.
             a = dim_read_indices[0][0] * step
@@ -256,20 +308,29 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 span = (read_ub - write_ub) / (-a)
                 cond = (uncond_write_ub < read_lb)  # At least one write index must be lower than all read indices
 
-            # If we have a span of one, it's enough that reads happen after writes in the loop.
-            if span == 0:
-                cond = all(
-                    st.in_degree(an) > 0 and st.out_degree(an) > 0 for st in loop.all_states()
-                    for an in st.data_nodes() if an.data == array_name)
+            # Relaxation: when writes are not strictly past all reads, the buffer can
+            # still be safely reused if every read happens after every write within the
+            # loop iteration. This generalises the K=1 (scalar collapse) case to any K
+            # and handles split-state patterns (e.g. unconditional init + conditional
+            # override + later read in a separate state). Only attempted when cond is
+            # a definite Python False — symbolic conds are left to the existing
+            # try/except below.
+            cond_is_concrete_false = False
+            try:
+                cond_is_concrete_false = bool(cond) is False
+            except TypeError:
+                pass
+            if cond_is_concrete_false:
+                cond = self._writes_precede_reads_in_loop(array_name, sdfg, loop)
 
             # Add positive symbol assumption
             if self.assume_positive_symbols and issymbolic(cond):
-                pos_syms = {s: sp.Symbol(s.name, positive=True) for s in cond.free_symbols}
+                pos_syms = {s: symbolic.symbol(s.name, positive=True) for s in cond.free_symbols}
                 cond = cond.xreplace(pos_syms)
 
             # Take maximum from previous accesses into account
             try:
-                k = sp.Max(span, max_indices[dim])
+                k = symbolic.sympy.Max(span, max_indices[dim])
                 not cond  # XXX: This ensures the condition can be evaluated. Do not remove.
             except TypeError:
                 k_values.append(None)
@@ -295,6 +356,131 @@ class LoopLocalMemoryReduction(ppl.Pass):
             else:
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
         return k_values
+
+    def _lift_to_loop_top(self, block, loop: LoopRegion):
+        # Walk up parent_graph from block until we hit a direct child of `loop`.
+        # Used so that a state inside a nested region (e.g. a conditional branch)
+        # can be matched against the loop's top-level CFG.
+        cur = block
+        while cur is not None:
+            parent = getattr(cur, 'parent_graph', None)
+            if parent is loop:
+                return cur
+            if parent is None:
+                return None
+            cur = parent
+        return None
+
+    def _intra_loop_block_reach(self, loop: LoopRegion):
+        # Forward reachability among the loop's *direct* children, using only the
+        # loop's own top-level edges. This deliberately omits the implicit back-edge
+        # to the loop entry, so reachability here means "in the same iteration".
+        if loop in self.intra_loop_reach_cache:
+            return self.intra_loop_reach_cache[loop]
+
+        children = set(loop.nodes())
+        succ = {c: set() for c in children}
+        for e in loop.edges():
+            if e.src in children and e.dst in children:
+                succ[e.src].add(e.dst)
+
+        reach = {}
+        for c in children:
+            visited = set()
+            stack = [c]
+            while stack:
+                n = stack.pop()
+                if n in visited:
+                    continue
+                visited.add(n)
+                for s in succ.get(n, ()):
+                    stack.append(s)
+            reach[c] = visited
+
+        self.intra_loop_reach_cache[loop] = reach
+        return reach
+
+    def _writes_precede_reads_in_loop(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion) -> bool:
+        # Returns True if every read of array_name within one iteration of `loop` happens
+        # after every write of array_name. This is the relaxed precondition for reusing
+        # a slot whose offset is also read in the same iteration: as long as the read
+        # observes the just-produced value, the buffer can collapse to size K = (write_ub
+        # - read_lb)/a + 1 (and to a Scalar when K == 1). Handles split-state patterns
+        # (unconditional init + conditional override + later read) by lifting each
+        # access state to the loop's direct child that contains it and walking the
+        # loop's own top-level CFG (no back-edge).
+        cache_key = (id(loop), array_name)
+        if cache_key in self.write_before_read_cache:
+            return self.write_before_read_cache[cache_key]
+
+        read_locations = []
+        write_locations = []
+        for st in loop.all_states():
+            for an in st.data_nodes():
+                if an.data != array_name:
+                    continue
+                if st.in_degree(an) > 0:
+                    write_locations.append((st, an))
+                if st.out_degree(an) > 0:
+                    read_locations.append((st, an))
+
+        if not read_locations or not write_locations:
+            self.write_before_read_cache[cache_key] = False
+            return False
+
+        intra_reach = self._intra_loop_block_reach(loop)
+        result = True
+        for st_r, an_r in read_locations:
+            r_lifted = self._lift_to_loop_top(st_r, loop)
+            if r_lifted is None:
+                result = False
+                break
+            for st_w, an_w in write_locations:
+                if an_w is an_r:
+                    # SDFG semantics: a single AccessNode synchronises its in-edges
+                    # (writes) before its out-edges (reads).
+                    continue
+                w_lifted = self._lift_to_loop_top(st_w, loop)
+                if w_lifted is None:
+                    result = False
+                    break
+                if w_lifted is r_lifted:
+                    # Both lifted to the same loop-direct block.
+                    if st_w is st_r:
+                        # Same state, different access nodes: traverse forward in
+                        # the state's data flow from the write node to the read node.
+                        visited = set()
+                        stack = [an_w]
+                        found = False
+                        while stack:
+                            n = stack.pop()
+                            if n is an_r:
+                                found = True
+                                break
+                            if n in visited:
+                                continue
+                            visited.add(n)
+                            for e in st_w.out_edges(n):
+                                stack.append(e.dst)
+                        if not found:
+                            result = False
+                            break
+                    else:
+                        # Different states inside the same nested region (e.g. two
+                        # branches of a conditional). We can't guarantee ordering.
+                        result = False
+                        break
+                else:
+                    # Different top-level blocks of the loop body. The read block
+                    # must be reachable from the write block via the loop's own CFG.
+                    if r_lifted not in intra_reach.get(w_lifted, set()):
+                        result = False
+                        break
+            if not result:
+                break
+
+        self.write_before_read_cache[cache_key] = result
+        return result
 
     def _write_is_loop_local(self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG,
                              loop: LoopRegion) -> bool:
@@ -335,8 +521,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 replacement.update(sdfg.constants)
 
                 for acc in access_nodes:
-                    write_subsets = set(e.data.dst_subset for e in k2.in_edges(acc))
-                    read_subsets = set(e.data.src_subset for e in k2.out_edges(acc))
+                    write_subsets = set(e.data.dst_subset for e in k2.in_edges(acc) if not e.data.is_empty())
+                    read_subsets = set(e.data.src_subset for e in k2.out_edges(acc) if not e.data.is_empty())
                     for s in write_subsets.union(read_subsets):
                         s2 = copy.deepcopy(s)
                         s2.replace(replacement)
@@ -392,8 +578,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
             new_rd = pystr_to_symbolic("0")
             for (a, b), s in zip(rd, sdfg.arrays[array_name].strides):
                 new_rd += (a * itervar + b) * s
-            a = sp.Wild("a", exclude=[itervar])
-            b = sp.Wild("b", exclude=[itervar])
+            a = symbolic.sympy.Wild("a", exclude=[itervar])
+            b = symbolic.sympy.Wild("b", exclude=[itervar])
             m = new_rd.match(a * itervar + b)
             if m is None:
                 return
@@ -405,8 +591,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
             new_wr = pystr_to_symbolic("0")
             for (a, b), s in zip(wr, sdfg.arrays[array_name].strides):
                 new_wr += (a * itervar + b) * s
-            a = sp.Wild("a", exclude=[itervar])
-            b = sp.Wild("b", exclude=[itervar])
+            a = symbolic.sympy.Wild("a", exclude=[itervar])
+            b = symbolic.sympy.Wild("b", exclude=[itervar])
             m = new_wr.match(a * itervar + b)
             if m is None:
                 return
@@ -418,8 +604,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
             new_wr = pystr_to_symbolic("0")
             for (a, b), s in zip(wr, sdfg.arrays[array_name].strides):
                 new_wr += (a * itervar + b) * s
-            a = sp.Wild("a", exclude=[itervar])
-            b = sp.Wild("b", exclude=[itervar])
+            a = symbolic.sympy.Wild("a", exclude=[itervar])
+            b = symbolic.sympy.Wild("b", exclude=[itervar])
             m = new_wr.match(a * itervar + b)
             if m is None:
                 return
@@ -465,9 +651,9 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         # Replace all read and write edges in the loop with modulo accesses.
         read_edges = set(e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name
-                         for e in st.out_edges(an))
+                         for e in st.out_edges(an) if not e.data.is_empty())
         write_edges = set(e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name
-                          for e in st.in_edges(an))
+                          for e in st.in_edges(an) if not e.data.is_empty())
 
         # XXX: We use abs() because pystr_to_symbolic() rewrites modulo operations, e.g. (-i + 32) % 31 -> Mod(1 - i, 31), which changes the behavior as C++ modulo differs from Python for negative numbers.
         for edge in read_edges:
@@ -533,6 +719,27 @@ class LoopLocalMemoryReduction(ppl.Pass):
             if k is not None:
                 new_shape[i] = k
         array.set_shape(tuple(new_shape))
+
+        # Rename the array to indicate it has been circularly reduced.
+        if self.annotation_postfix:
+            new_name, _ = sdfg.add_array(
+                f"{array_name}{self.annotation_postfix}",
+                shape=array.shape,
+                dtype=array.dtype,
+                storage=array.storage,
+                location=array.location,
+                transient=array.transient,
+                strides=array.strides,
+                offset=array.offset,
+                lifetime=array.lifetime,
+                debuginfo=array.debuginfo,
+                allow_conflicts=array.allow_conflicts,
+                total_size=array.total_size,
+                find_new_name=True,
+                alignment=array.alignment,
+                may_alias=array.may_alias,
+            )
+            sdfg.replace(array_name, new_name)
 
         # If the new shape is a single element, we can replace the array with a scalar.
         if all(s == 1 for s in new_shape):

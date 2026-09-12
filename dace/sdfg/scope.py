@@ -8,7 +8,7 @@ from dace import dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import StateSubgraphView
-from ordered_set import OrderedSet
+from dace.ordered import OrderedSet
 
 ScopeDictType = Dict[nd.Node, List[nd.Node]]
 

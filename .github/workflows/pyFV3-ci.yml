@@ -8,6 +8,11 @@ on:
   merge_group:
     branches: [ main, ci-fix, romanc/stree-v2 ]
 
+env:
+  PYTHONHASHSEED: '0'
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
+
 defaults:
     run:
       shell: bash
@@ -16,14 +21,10 @@ concurrency:
   group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
 
-env:
-  UV_FROZEN: 1 # sync without updating uv.lock
-  UV_NO_DEV: 1 # don't install dev dependency group by default
-  UV_NO_EDITABLE: 1 # don't install dace in editable mode
-
 jobs:
   configure:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     name: "Read test configuration"
     outputs:
@@ -43,6 +44,7 @@ jobs:
 
   build_and_validate_pyFV3:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: configure
     strategy:
       fail-fast: false
@@ -75,10 +77,27 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libopenmpi-dev openmpi-bin
 
+    # Duplicated from .github/actions/setup-dace rather than taken from it: this job checks dace out
+    # into a subdirectory and installs pyFV3 before dace on purpose, which the action's fused install
+    # step would undo. Only the compiler selection is needed here.
+    - name: Select a C++ compiler without the GCC 13 vectorizer miscompile
+      run: |
+        # GCC 13's auto-vectorizer mislowers the select the readable code generator emits: it reuses
+        # the low-half lane mask for the high-half vmaskmovpd, so the upper half of each vector reads
+        # back as zeros. A silent wrong answer, fixed in GCC 14.
+        sudo apt-get install -y g++-14
+        echo "CXX=g++-14" >> $GITHUB_ENV
+        echo "CC=gcc-14" >> $GITHUB_ENV
+        echo "DACE_compiler_cpu_executable=$(command -v g++-14)" >> $GITHUB_ENV
+
     # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
     - name: Install pyFV3 and dace
       run: |
-        uv venv
+        uv venv .venv
+        export VIRTUAL_ENV="$PWD/.venv"
+        export PATH="$VIRTUAL_ENV/bin:$PATH"
+        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> "$GITHUB_ENV"
+        echo "$VIRTUAL_ENV/bin" >> "$GITHUB_PATH"
         uv pip install ./pyFV3[ndsl,test]
         uv pip install ./dace
 
@@ -99,7 +118,9 @@ jobs:
         FV3_DACEMODE: BuildAndRun
         NDSL_LOGLEVEL: Debug
       run: |
-        source .venv/bin/activate
+        ulimit -s 65536 || true
+        export OMP_STACKSIZE=64M
+        export DACE_compiler_max_stack_array_size=65536
         pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
             --backend=orch:dace:cpu:KIJ --which_modules=${{ matrix.module }} \
             ${{ matrix.extra_args }} \

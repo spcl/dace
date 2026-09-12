@@ -16,10 +16,36 @@
     #undef __out
     #define DACE_EXPORTED extern "C" __declspec(dllexport)
     #define DACE_PRAGMA(x) __pragma(x)
+    // A symbol is not exported from a DLL unless it is explicitly dllexport'ed, so
+    // "hidden" is already the default and the attribute has no MSVC equivalent.
+    #define DACE_HIDDEN
 #else
     #define DACE_ALIGN(N) __attribute__((aligned(N)))
     #define DACE_EXPORTED extern "C"
     #define DACE_PRAGMA(x) _Pragma(#x)
+    // Internal linkage-visibility for a definition that is shared ACROSS generated
+    // translation units but must not appear in the shared library's public ABI --
+    // specifically a nested-SDFG function emitted to its own .cpp under
+    // ``compiler.cpu.codegen_params.split_nsdfg_translation_units``. The function
+    // keeps EXTERNAL linkage (so the static linker resolves the call from the frame
+    // object), while hidden visibility keeps it out of the dynamic symbol table and
+    // lets the linker/ThinLTO re-inline it. Applied per-declaration on purpose: a
+    // global -fvisibility=hidden would also hide __dace_init_* / __dace_exit_* (only
+    // ``extern "C"`` via DACE_EXPORTED on Linux, not dllexport-annotated) and break
+    // loading the program.
+    #define DACE_HIDDEN __attribute__((visibility("hidden")))
+#endif
+
+// Portable full-unroll hint for fixed-width (constexpr-bounded) lane loops in
+// vectorized intrinsics. Clang / NVCC accept a bare ``#pragma unroll``; GCC
+// needs an explicit factor (64 covers every vector width we emit and fully
+// unrolls any shorter constexpr-bounded loop); MSVC has no equivalent.
+#if defined(__clang__) || defined(__CUDACC__) || defined(__INTEL_LLVM_COMPILER)
+    #define DACE_UNROLL DACE_PRAGMA(unroll)
+#elif defined(__GNUC__)
+    #define DACE_UNROLL DACE_PRAGMA(GCC unroll 64)
+#else
+    #define DACE_UNROLL
 #endif
 
 // Visual Studio (<=2017) + CUDA support
@@ -36,7 +62,7 @@
     #include <cuda_bf16.h>
     #include <cuda_fp8.h>
     #include <thrust/complex.h>
-    #include "cuda/multidim_gbar.cuh"
+    #define DACE_THRUST_COMPLEX
 
     // Workaround so that the native low-precision types are scalars (for reductions)
     namespace std {
@@ -54,6 +80,11 @@
     #include <hip/hip_fp16.h>
     #include <hip/hip_bf16.h>
     #include <hip/hip_fp8.h>
+    // rocThrust, the AMD port. Optional: without it the complex types below fall back to std.
+    #if __has_include(<thrust/complex.h>)
+        #include <thrust/complex.h>
+        #define DACE_THRUST_COMPLEX
+    #endif
 
     namespace std {
         template <> struct is_scalar<half> : std::integral_constant<bool, true> {};
@@ -109,9 +140,13 @@ namespace dace
     typedef double float64;
 
     #if defined(__CUDACC__) || defined(__HIPCC__)
-    #ifdef __CUDACC__
+    // std::complex is not usable in device code, so thrust's is preferred wherever it exists.
+    #ifdef DACE_THRUST_COMPLEX
     typedef thrust::complex<float> complex64;
     typedef thrust::complex<double> complex128;
+    #else
+    typedef std::complex<float> complex64;
+    typedef std::complex<double> complex128;
     #endif
     // GPU native low-precision types. Bit-identical to the CPU structs below (checked next).
     // e4m3fn == the OCP finite E4M3 (max +-448): __nv_fp8_e4m3 / __hip_fp8_e4m3, NOT the fnuz form.
@@ -136,13 +171,20 @@ namespace dace
 
     // Native _Float16 for the float<->half CONVERSIONS only -- confined to the two routines below,
     // never a member/signature/operand, so ABI and mangling are untouched; arithmetic still runs in
-    // float. Gate on the ISA that has a hardware convert (any compiler advertising it also provides
-    // _Float16), so NVHPC / Intel LLVM / GCC / Clang are all covered; everything else stays on the
-    // (correct) emulation. x86: AVX512-FP16 (not plain F16C, whose _Float16 lowers to a slow libcall).
+    // float. Gate on the ISA that has a hardware convert; everything else stays on the (correct)
+    // emulation, because without one _Float16 lowers to a libgcc call (__truncsfhf2 /
+    // __extendhfsf2) that is slower than the inline emulation.
+    // x86: F16C (VCVTPS2PH/VCVTPH2PS, Ivy Bridge+) or AVX512-FP16 -- verified on GCC 15 that -mf16c
+    // emits the instructions rather than the libcall, and measured ~1.8x on half->float.
+    // The compiler-version guard is required: __F16C__ says nothing about _Float16 being usable,
+    // which x86 GCC only gained in 12 and Clang in 15.
     // AArch64: FCVT is base ARMv8-A. Override with -DDACE_HALF_FORCE_NATIVE / -DDACE_HALF_NO_NATIVE.
-    #if !defined(DACE_HALF_NO_NATIVE) &&                                            \
-        (defined(DACE_HALF_FORCE_NATIVE) ||                                         \
-         ((defined(__x86_64__) || defined(__i386__)) && defined(__AVX512FP16__)) || \
+    #if !defined(DACE_HALF_NO_NATIVE) &&                                                     \
+        (defined(DACE_HALF_FORCE_NATIVE) ||                                                  \
+         ((defined(__x86_64__) || defined(__i386__)) && defined(__SSE2__) &&                 \
+          (defined(__F16C__) || defined(__AVX512FP16__)) &&                                  \
+          ((defined(__clang__) && __clang_major__ >= 15) ||                                  \
+           (!defined(__clang__) && defined(__GNUC__) && __GNUC__ >= 12))) ||                 \
          (defined(__aarch64__) && defined(__ARM_FP16_FORMAT_IEEE)))
     #define DACE_HALF_NATIVE_T _Float16
     #endif
@@ -318,14 +360,16 @@ namespace dace
 }
 
 #if !defined(__CUDACC__) && !defined(__HIPCC__)
-// std::numeric_limits for the low-precision structs; unspecialized, max()/lowest()/infinity() are
-// all T() (zero), silently breaking a min/max reduction seeded from them. IEEE binary16 / bfloat16 values.
-#define DACE_LP_LIMITS(TYPE, DIGITS, DIG10, MAXDIG10, MINEXP, MINEXP10, MAXEXP, MAXEXP10, IEC, MAXV, MINV, EPSV,    \
-                       DENV)                                                                                        \
+// ``std::numeric_limits`` for the 16-bit low-precision structs. Without these the PRIMARY template
+// answers ``max() == lowest() == infinity() == T()``, i.e. ZERO -- so a consumer that seeds a
+// min/max reduction identity that way (``libraries/torch/dispatchers``) silently folds into zero
+// instead of failing. Values are the IEEE binary16 / bfloat16 ones.
+#define DACE_LP_LIMITS(TYPE, DIGITS, DIG10, MAXDIG10, MINEXP, MINEXP10, MAXEXP, MAXEXP10, IEC, HAS_INF, MAXV, MINV, \
+                       EPSV, DENV)                                                                                  \
     template <>                                                                                                     \
     struct numeric_limits<::dace::TYPE> {                                                                           \
         static constexpr bool is_specialized = true, is_signed = true, is_integer = false;                          \
-        static constexpr bool is_exact = false, has_infinity = true, has_quiet_NaN = true;                          \
+        static constexpr bool is_exact = false, has_infinity = HAS_INF, has_quiet_NaN = true;                         \
         static constexpr bool has_signaling_NaN = false, is_bounded = true, is_modulo = false;                      \
         static constexpr bool is_iec559 = IEC, traps = false, tinyness_before = false;                              \
         static constexpr int radix = 2, digits = DIGITS, digits10 = DIG10, max_digits10 = MAXDIG10;                 \
@@ -344,18 +388,27 @@ namespace dace
     }
 namespace std
 {
-    DACE_LP_LIMITS(half, 11, 3, 5, -13, -4, 16, 4, true, 6.5504e+4, 6.103515625e-05, 9.765625e-04,
-                   5.9604644775390625e-08);
-    DACE_LP_LIMITS(bfloat16, 8, 2, 4, -125, -37, 128, 38, false, 3.38953139e+38, 1.17549435e-38, 7.8125e-03,
-                   9.18354962e-41);
+    DACE_LP_LIMITS(half, 11, 3, 5, -13, -4, 16, 4, true, true, 6.5504e+4f, 6.103515625e-05f, 9.765625e-04f,
+                   5.9604644775390625e-08f);
+    DACE_LP_LIMITS(bfloat16, 8, 2, 4, -125, -37, 128, 38, false, true, 3.38953139e+38f, 1.17549435e-38f, 7.8125e-03f,
+                   9.18354962e-41f);
+    DACE_LP_LIMITS(float8_e5m2, 3, 0, 1, -13, -4, 16, 4, false, true, 5.7344e+4f, 6.103515625e-05f, 2.5e-01f,
+                   1.52587890625e-05f);
+    DACE_LP_LIMITS(float8_e4m3fn, 4, 0, 2, -5, -2, 9, 2, false, false, 4.48e+2f, 1.5625e-02f, 1.25e-01f,
+                   1.953125e-03f);
 }
 #undef DACE_LP_LIMITS
 
-// Pin the bit patterns so a typo in a literal above can't pass as plausible.
+// The finite bounds are the whole point of the specializations; pin their bit patterns so a typo in
+// a literal above cannot pass as a plausible-looking value.
 static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::max()) == 0x7BFF &&
               std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::denorm_min()) == 0x0001, "half limits");
 static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::max()) == 0x7F7F &&
               std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::denorm_min()) == 0x0001, "bf16 limits");
+static_assert(std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e5m2>::max()) == 0x7B &&
+              std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e5m2>::denorm_min()) == 0x01, "e5m2 limits");
+static_assert(std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e4m3fn>::max()) == 0x7E &&
+              std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e4m3fn>::denorm_min()) == 0x01, "e4m3fn limits");
 #endif
 
 #endif  // __DACE_TYPES_H

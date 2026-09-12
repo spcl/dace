@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 
 def test_strides():
@@ -65,9 +66,43 @@ def test_strides_alignment_symbolic_uses_int_ceil():
     assert dace.data.Array(dace.float32, [N, N]).strides_from_layout(0, 1)[1] == N * N
 
 
+def test_free_symbols_follow_a_reassigned_shape():
+    """``free_symbols`` is memoized, so every write that feeds it has to drop the memo.
+
+    The sources are tuples and sympy expressions -- immutable -- so they can only change by being
+    reassigned through the property, which is the single funnel the invalidation hangs on. A memo
+    that outlived one of those writes would report symbols the descriptor no longer has, and a
+    scope built from it would bind an extent nothing defines.
+    """
+    N, M = dace.symbol('N'), dace.symbol('M')
+    desc = dace.data.Array(dace.float64, [N])
+    assert {str(s) for s in desc.free_symbols} == {'N'}
+
+    desc.shape = (M, )
+    desc.strides = (1, )
+    desc.total_size = M
+    assert {str(s) for s in desc.free_symbols} == {'M'}
+
+    K = dace.symbol('K')
+    desc.strides = (K, )
+    assert {str(s) for s in desc.free_symbols} == {'M', 'K'}
+
+
+def test_free_symbols_cannot_be_edited_by_a_reader():
+    """The memoized set is shared, so it is frozen: one caller's edit would be every later
+    caller's answer."""
+    desc = dace.data.Array(dace.float64, [dace.symbol('N')])
+    first = desc.free_symbols
+    assert first is desc.free_symbols, 'the second read must not recompute'
+    with pytest.raises(AttributeError):
+        first.add(dace.symbol('Q'))
+
+
 if __name__ == '__main__':
     test_strides()
     test_strides_alignment()
     test_numpy_integral_properties()
     test_numpy_integral_shape_program()
     test_strides_alignment_symbolic_uses_int_ceil()
+    test_free_symbols_follow_a_reassigned_shape()
+    test_free_symbols_cannot_be_edited_by_a_reader()

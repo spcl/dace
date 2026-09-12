@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+
 import dace
 from dace.sdfg.validation import InvalidSDFGEdgeError
 import pytest
@@ -57,6 +59,43 @@ def test_invalid_empty_memlet():
         sdfg.validate()
 
 
+def test_access_node_deepcopy_keeps_every_property():
+    """``AccessNode.__deepcopy__`` assigns fields by hand; none may be missed.
+
+    The hand-written copy is a hot-path shortcut over the base class's copy of ``__dict__``, so a
+    Property added to ``Node`` afterwards is not copied unless someone remembers to add a line --
+    and reading an unassigned Property raises ``AttributeError`` rather than returning its default.
+    ``specialization_hint`` went missing exactly that way and took the whole canonicalize pipeline
+    with it, since it deepcopies graph parts constantly.
+    """
+    sdfg = dace.SDFG("access_node_deepcopy")
+    sdfg.add_array("a", [8], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_access("a")
+
+    clone = copy.deepcopy(node)
+
+    missing = [name for name in type(node).__properties__ if f"_{name}" not in vars(clone)]
+    assert not missing, f"deepcopy dropped {missing}"
+    # Reading them must not raise, and the values must survive.
+    assert clone.data == node.data
+    assert clone.specialization_hint == node.specialization_hint
+    assert clone.guid != node.guid, "a copy is a new element and needs its own id"
+
+
+def test_access_node_deepcopy_carries_a_set_property():
+    """A property with a VALUE must arrive on the copy, not just exist on it."""
+    sdfg = dace.SDFG("access_node_deepcopy_value")
+    sdfg.add_array("a", [8], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_access("a")
+    node.specialization_hint = "kept sequential on the host; a device pass could tile it"
+
+    assert copy.deepcopy(node).specialization_hint == node.specialization_hint
+
+
 if __name__ == "__main__":
     test_add_scope_connectors()
     test_invalid_empty_memlet()
+    test_access_node_deepcopy_keeps_every_property()
+    test_access_node_deepcopy_carries_a_set_property()

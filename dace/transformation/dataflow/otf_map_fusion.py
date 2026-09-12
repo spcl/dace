@@ -5,7 +5,7 @@ This module contains classes that implement the OTF map fusion transformation.
 import copy
 import sympy
 
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState, StateSubgraphView
@@ -52,6 +52,46 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         for dnode in subgraph.data_nodes():
             if not sdfg.arrays[dnode.data].transient:
                 return False
+
+        # Condition: the two maps share no data hazard other than the intermediate itself.
+        # NOT covered by the scope walk above -- what a map reads through its ENTRY has its access
+        # node OUTSIDE the scope subgraph, so the walk never sees it. Fusion moves the first map's
+        # computation inside the second and deletes the intermediate that ordered them, so any
+        # hazard the intermediate used to separate becomes an intra-map, cross-LANE one:
+        #   * WAR -- first reads what second writes. polybench seidel_2d is exactly this: the
+        #     producer reads ``A[i, j+2]``, the consumer writes ``A[i, j+1]``, and the fused map
+        #     races above two threads while each map on its own is correct.
+        #   * RAW -- first writes what second reads: a consumer lane can reach the value before
+        #     the replicated producer that makes it.
+        #   * WAW -- both write the same element from different lanes.
+        # The intermediate is excluded on the write side only: producing it is the flow dependence
+        # this transformation exists to consume. RAW and WAW are unreachable while the single
+        # ``out_degree(first_map_exit) > 1`` condition above holds -- the first map then writes
+        # nothing but the intermediate -- and are kept so the hazard test stays complete if that
+        # condition is ever relaxed.
+        def touched(edges) -> Dict[str, None]:
+            return dict.fromkeys(e.data.data for e in edges if e.data is not None and e.data.data is not None)
+
+        first_reads = touched(graph.in_edges(first_map_entry))
+        first_writes = touched(graph.out_edges(self.first_map_exit))
+        first_writes.pop(self.array.data, None)
+        second_reads = touched(graph.in_edges(self.second_map_entry))
+        second_writes = touched(graph.out_edges(graph.exit_node(self.second_map_entry)))
+        # Condition: the producer is the intermediate's ONLY writer in the state. Fusion deletes that
+        # producer once the consumer stops reading it, which is sound only if the write it removes was
+        # the array's whole definition. polybench correlation is the counterexample: ``stddev =
+        # sqrt(...)`` followed by ``stddev[stddev <= eps] = replacement``, whose masked write reaches
+        # some elements and leaves the rest holding what the producer wrote. Deleting the producer
+        # leaves those elements uninitialized -- wrong numbers, and a graph that still validates.
+        written = 0
+        for dnode in graph.data_nodes():
+            if dnode.data == self.array.data and graph.in_degree(dnode) > 0:
+                written += 1
+                if written > 1:
+                    return False
+        if (not first_reads.keys().isdisjoint(second_writes) or not first_writes.keys().isdisjoint(second_reads)
+                or not first_writes.keys().isdisjoint(second_writes)):
+            return False
 
         # Condition: Equations solvable (dims(first map) <= dims(second map))
         if len(first_map_entry.map.params) > len(self.second_map_entry.map.params):
@@ -123,6 +163,17 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                                                self.second_map_entry.map.params, consume_subset)
 
             if param_mapping is None:
+                return False
+
+            # Condition: every producer parameter is SOLVED from the consumer's read. Fusion re-executes
+            # the producer body once per consumer iteration, so a parameter the read cannot pin down is
+            # one the copied body still names with nothing left to bind it -- the fused graph then reads
+            # a free symbol (or, worse, the same name a surviving sibling map defines, which validates
+            # and computes the wrong element). A producer whose body is a nested SDFG is exactly this
+            # case: it writes its whole output range ``t[0:N]`` from every iteration, which ``solve``
+            # answers with a constant-interval entry that binds no parameter at all.
+            solved = {str(param) for param in param_mapping if not isinstance(param, tuple)}
+            if not solved.issuperset(first_map_entry.map.params):
                 return False
 
         return True
@@ -318,7 +369,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         if graph.out_degree(intermediate_access_node) == 0:
             graph.remove_node(intermediate_access_node)
 
-            subgraph = graph.scope_subgraph(first_map_entry, include_entry=True, include_exit=True)
             obsolete_nodes = graph.all_nodes_between(first_map_entry,
                                                      first_map_exit) | {first_map_entry, first_map_exit}
             graph.remove_nodes_from(obsolete_nodes)
@@ -328,7 +378,11 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         inter_nodes = list(graph.all_nodes_between(first_map_entry, first_map_exit) - {first_map_entry})
 
         # Add new nodes
-        new_inter_nodes = [copy.deepcopy(node) for node in inter_nodes]
+        # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+        # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+        # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+        memo = {}
+        new_inter_nodes = [copy.deepcopy(node, memo) for node in inter_nodes]
         for node in new_inter_nodes:
             graph.add_node(node)
 
@@ -475,8 +529,22 @@ def advanced_replace(subgraph: StateSubgraphView, s: str, s_: str) -> None:
             params = [s_ if p == s else p for p in node.map.params]
             node.map.params = params
         elif isinstance(node, nodes.NestedSDFG):
+            # A nested SDFG is its own symbol namespace, joined to this one only by ``symbol_mapping``
+            # (callee name -> caller expression). ``subgraph.replace`` already rewrote the values, which
+            # is the whole of an outer rename; descending renames the CALLEE's symbol instead, so the key
+            # binding it has to move with it -- and substituting an EXPRESSION (a solved index such as
+            # ``_i0 -> j - 1``) has no callee name to rename, so it must not descend at all.
+            if not dtypes.validate_name(s_):
+                continue
             for nsdfg in node.sdfg.all_sdfgs_recursive():
                 nsdfg.replace(s, s_)
+                nested_node = nsdfg.parent_nsdfg_node
+                if nested_node is not None and s in nested_node.symbol_mapping:
+                    # Rebuilt, not popped: mapping order is the order codegen defines the symbols in.
+                    nested_node.symbol_mapping = {
+                        (s_ if k == s else k): v
+                        for k, v in nested_node.symbol_mapping.items()
+                    }
                 for cfg in nsdfg.all_control_flow_regions():
                     cfg.replace(s, s_)
                     for nblock in cfg.nodes():

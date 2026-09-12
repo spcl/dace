@@ -2,25 +2,82 @@
 #ifndef __DACE_CUDACOMMON_CUH
 #define __DACE_CUDACOMMON_CUH
 
+#include <cstddef>  // size_t
+
+// The ONE place the two GPU runtimes are reconciled. A library node emits ``gpuMalloc`` /
+// ``gpuMemcpyAsync`` / ``gpuError_t`` and compiles under either backend unchanged, which is what
+// keeps an expansion from needing a second, hand-maintained AMD copy of itself.
 #if defined(__HIPCC__) || defined(WITH_HIP)
+// The precompiled runtime header is force-included ahead of the generated file's own includes.
+#include <hip/hip_runtime.h>
 typedef hipStream_t gpuStream_t;
 typedef hipEvent_t gpuEvent_t;
 typedef hipError_t gpuError_t;
 #define gpuGetLastError hipGetLastError
+#define gpuPeekAtLastError hipPeekAtLastError
 #define gpuGetErrorString hipGetErrorString
 #define gpuStreamSynchronize hipStreamSynchronize
 #define gpuDeviceSynchronize hipDeviceSynchronize
 #define gpuEventSynchronize hipEventSynchronize
+#define gpuSuccess hipSuccess
+#define gpuErrorMemoryAllocation hipErrorOutOfMemory
+#define gpuLaunchKernel hipLaunchKernel
+#define gpuMalloc hipMalloc
+#define gpuMallocAsync hipMallocAsync
+#define gpuFree hipFree
+#define gpuFreeAsync hipFreeAsync
+#define gpuMemset hipMemset
+#define gpuMemsetAsync hipMemsetAsync
+#define gpuMemcpy hipMemcpy
+#define gpuMemcpyAsync hipMemcpyAsync
+#define gpuMemcpyHostToDevice hipMemcpyHostToDevice
+#define gpuMemcpyDeviceToHost hipMemcpyDeviceToHost
+#define gpuMemcpyDeviceToDevice hipMemcpyDeviceToDevice
+// hipFreeHost is deprecated in favour of hipHostFree; the pair of gpuMallocHost.
+#define gpuFreeHost hipHostFree
 #else
+// nvcc implies this, a host .cpp translation unit does not -- and the aliases below are consumed
+// from both.
+#include <cuda_runtime.h>
 typedef cudaStream_t gpuStream_t;
 typedef cudaEvent_t gpuEvent_t;
 typedef cudaError_t gpuError_t;
 #define gpuGetLastError cudaGetLastError
+#define gpuPeekAtLastError cudaPeekAtLastError
 #define gpuGetErrorString cudaGetErrorString
 #define gpuStreamSynchronize cudaStreamSynchronize
 #define gpuDeviceSynchronize cudaDeviceSynchronize
 #define gpuEventSynchronize cudaEventSynchronize
+#define gpuSuccess cudaSuccess
+#define gpuErrorMemoryAllocation cudaErrorMemoryAllocation
+#define gpuLaunchKernel cudaLaunchKernel
+#define gpuMalloc cudaMalloc
+#define gpuMallocAsync cudaMallocAsync
+#define gpuFree cudaFree
+#define gpuFreeAsync cudaFreeAsync
+#define gpuMemset cudaMemset
+#define gpuMemsetAsync cudaMemsetAsync
+#define gpuMemcpy cudaMemcpy
+#define gpuMemcpyAsync cudaMemcpyAsync
+#define gpuMemcpyHostToDevice cudaMemcpyHostToDevice
+#define gpuMemcpyDeviceToHost cudaMemcpyDeviceToHost
+#define gpuMemcpyDeviceToDevice cudaMemcpyDeviceToDevice
+#define gpuFreeHost cudaFreeHost
 #endif
+
+// Pinned-host allocation, in the shape the code generator emits. ``cudaMallocHost`` is a TEMPLATE
+// accepting any ``T**``; the HIP spelling takes a bare ``void**`` and is deprecated in favour of
+// ``hipHostMalloc``, so emitting the vendor name directly fails to compile for any non-void
+// pointer (measured on an ``int**`` index array). One wrapper gives both backends the same
+// signature, so codegen names one function rather than branching.
+template <typename T>
+static inline gpuError_t gpuMallocHost(T **ptr, size_t size) {
+#if defined(__HIPCC__) || defined(WITH_HIP)
+  return hipHostMalloc(reinterpret_cast<void **>(ptr), size);
+#else
+  return cudaMallocHost(reinterpret_cast<void **>(ptr), size);
+#endif
+}
 
 // The context guard covers the calls checked during __dace_init_cuda before the context has been
 // constructed (the runtime warm-up allocation). The message is printed either way; only the

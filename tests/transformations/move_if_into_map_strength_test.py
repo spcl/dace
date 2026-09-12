@@ -1,0 +1,168 @@
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+""" Tests for the generalized ``MoveIfIntoMap`` transformation.
+
+    A conditional that guards inner maps inside an outer map's body is pushed
+    into each inner map, exposing the maps to fusion/collapse. The pass now
+    accepts the common Python-frontend shape where inner ``dace.map`` bodies
+    are plain ``Tasklet`` subgraphs (normalized into a ``NestedSDFG`` first),
+    and pushes a condition that depends on an outer-map parameter down into the
+    inner map (the guard sits above the inner map, so per-iteration evaluation
+    inside it is value-identical to the original whole-inner-map guard). All
+    kernels use the dace Python frontend only.
+"""
+import copy
+
+import numpy as np
+import pytest
+
+import dace
+from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
+
+N, M = dace.symbol('N'), dace.symbol('M')
+
+
+@dace.program
+def guarded_two(flag: dace.int32, A: dace.float64[N, M], B: dace.float64[N, M], C: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        if flag > 0:
+            for i in dace.map[0:N]:
+                B[i, j] = A[i, j] + 1.0
+            for i in dace.map[0:N]:
+                C[i, j] = A[i, j] * 2.0
+
+
+@dace.program
+def guarded_one(flag: dace.int32, A: dace.float64[N, M], B: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        if flag > 0:
+            for i in dace.map[0:N]:
+                B[i, j] = A[i, j] + 1.0
+
+
+@dace.program
+def guarded_three(flag: dace.int32, A: dace.float64[N, M], B: dace.float64[N, M], C: dace.float64[N, M],
+                  D: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        if flag > 0:
+            for i in dace.map[0:N]:
+                B[i, j] = A[i, j] + 1.0
+            for i in dace.map[0:N]:
+                C[i, j] = A[i, j] * 2.0
+            for i in dace.map[0:N]:
+                D[i, j] = A[i, j] - 3.0
+
+
+@dace.program
+def guarded_by_outer_param(A: dace.float64[N, M], B: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        if j > 0:
+            for i in dace.map[0:N]:
+                B[i, j] = A[i, j] + 1.0
+
+
+def _num_conditional_blocks(sdfg: dace.SDFG) -> int:
+    return sum(1 for s in sdfg.all_sdfgs_recursive() for b in s.all_control_flow_blocks()
+               if isinstance(b, ConditionalBlock))
+
+
+def test_two_sibling_guarded_maps_pushed_in():
+    n, m = 6, 5
+    a = np.random.rand(n, m)
+    sdfg = guarded_two.to_sdfg(simplify=True)
+
+    def run(s, flag):
+        b = np.zeros((n, m))
+        c = np.zeros((n, m))
+        s(flag=np.int32(flag), A=a.copy(), B=b, C=c, N=n, M=m)
+        return b, c
+
+    ref_on = run(copy.deepcopy(sdfg), 1)
+    ref_off = run(copy.deepcopy(sdfg), 0)
+
+    conds_before = _num_conditional_blocks(sdfg)
+    applied = sdfg.apply_transformations_repeated(MoveIfIntoMap)
+    assert applied >= 1
+    sdfg.validate()
+
+    # Structural check: the single outer guard is pushed *into* each of the two
+    # sibling maps -- so the conditional-block count strictly increases (one
+    # copy per sibling), it is never dropped, and no outer-level guard remains
+    # separating the maps.
+    assert _num_conditional_blocks(sdfg) > conds_before
+
+    b_on, c_on = run(sdfg, 1)
+    b_off, c_off = run(sdfg, 0)
+    assert np.allclose(b_on, ref_on[0]) and np.allclose(c_on, ref_on[1])
+    assert np.allclose(b_off, ref_off[0]) and np.allclose(c_off, ref_off[1])
+    assert np.allclose(b_on, a + 1.0) and np.allclose(c_on, a * 2.0)
+    assert np.allclose(b_off, 0.0) and np.allclose(c_off, 0.0)
+
+
+def test_single_guarded_map_pushed_in():
+    n, m = 7, 4
+    a = np.random.rand(n, m)
+    sdfg = guarded_one.to_sdfg(simplify=True)
+
+    ref = np.zeros((n, m))
+    copy.deepcopy(sdfg)(flag=np.int32(1), A=a.copy(), B=ref, N=n, M=m)
+
+    assert sdfg.apply_transformations_repeated(MoveIfIntoMap) >= 1
+    sdfg.validate()
+
+    out = np.zeros((n, m))
+    sdfg(flag=np.int32(1), A=a.copy(), B=out, N=n, M=m)
+    assert np.allclose(out, ref) and np.allclose(out, a + 1.0)
+
+
+def test_condition_on_outer_param_pushed_in():
+    """A condition that varies with the outer map parameter (``if j > 0``) is
+    pushed DOWN into the inner map, not hoisted up: the guard is replicated
+    inside the inner body and re-evaluated per inner-map iteration with ``j``
+    (the outer param, constant across the inner iterations) threaded in. This
+    reproduces the original whole-inner-map guard exactly, so the push is
+    sound and value-preserving."""
+    n, m = 5, 6
+    a = np.random.rand(n, m)
+    sdfg = guarded_by_outer_param.to_sdfg(simplify=True)
+
+    ref = np.zeros((n, m))
+    copy.deepcopy(sdfg)(A=a.copy(), B=ref, N=n, M=m)
+
+    conds_before = _num_conditional_blocks(sdfg)
+    assert sdfg.apply_transformations_repeated(MoveIfIntoMap) >= 1
+    sdfg.validate()
+    # The guard is pushed inside the inner map (never dropped, no outer-level
+    # guard left separating the maps).
+    assert _num_conditional_blocks(sdfg) >= conds_before
+
+    out = np.zeros((n, m))
+    sdfg(A=a.copy(), B=out, N=n, M=m)
+    assert np.allclose(out, ref)
+    expected = a + 1.0
+    expected[:, 0] = 0.0
+    assert np.allclose(out, expected)
+
+
+def test_three_sibling_guarded_maps_pushed_in():
+    n, m = 5, 4
+    a = np.random.rand(n, m)
+    sdfg = guarded_three.to_sdfg(simplify=True)
+
+    def run(s, flag):
+        b, c, d = (np.zeros((n, m)) for _ in range(3))
+        s(flag=np.int32(flag), A=a.copy(), B=b, C=c, D=d, N=n, M=m)
+        return b, c, d
+
+    ref_on = run(copy.deepcopy(sdfg), 1)
+
+    assert sdfg.apply_transformations_repeated(MoveIfIntoMap) >= 1
+    sdfg.validate()
+
+    b1, c1, d1 = run(sdfg, 1)
+    assert np.allclose(b1, ref_on[0]) and np.allclose(c1, ref_on[1]) and np.allclose(d1, ref_on[2])
+    assert np.allclose(b1, a + 1.0) and np.allclose(c1, a * 2.0) and np.allclose(d1, a - 3.0)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

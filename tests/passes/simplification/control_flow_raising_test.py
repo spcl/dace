@@ -188,6 +188,67 @@ def test_unstructured_control_flow_sibling_loops():
     assert np.allclose(B_test, B_valid)
 
 
+def test_unconditional_edge_lifted_as_last_branch():
+    """The branch with ``cond is None`` (the ``else``) must always be the
+    LAST entry of the resulting ``ConditionalBlock`` so the downstream
+    ``DeadStateElimination._find_dead_branches`` invariant and the
+    codegen branch emitter both accept it.
+
+    Regression: when the graph's ``out_edges()`` returned the
+    unconditional edge BEFORE the conditional ones, the historical
+    code emitted ``cond = None`` at an early iteration index, so the
+    lifted ``ConditionalBlock`` had the ``else`` branch in slot 0 and
+    the conditional branches after it. ``DeadStateElimination`` then
+    aborted with ``InvalidSDFGNodeError(Conditional block ... else
+    branch is not the last branch)``. The fix is a stable-sort of the
+    out-edges so unconditional edges fall at the tail before
+    branch population."""
+    sdfg = dace.SDFG('uncond_branch_sort')
+    sdfg.add_array('A', (4, ), dace.int32)
+    sdfg.add_scalar('i', dace.int64, transient=False)
+
+    start = sdfg.add_state('start', is_start_block=True)
+    body_if = sdfg.add_state('body_if')
+    body_else = sdfg.add_state('body_else')
+    merge = sdfg.add_state('merge')
+
+    # Add the UNCONDITIONAL edge FIRST so it lands at index 0 in
+    # graph.out_edges() iteration order, then the conditional edge.
+    sdfg.add_edge(start, body_else, dace.InterstateEdge())
+    sdfg.add_edge(start, body_if, dace.InterstateEdge('i < 2'))
+    sdfg.add_edge(body_if, merge, dace.InterstateEdge())
+    sdfg.add_edge(body_else, merge, dace.InterstateEdge())
+
+    # Some side-effect-bearing dataflow so the regions aren't empty.
+    wa_if = body_if.add_write('A')
+    ti = body_if.add_tasklet('mark_if', {}, {'a_out'}, 'a_out = 1')
+    body_if.add_edge(ti, 'a_out', wa_if, None, dace.Memlet('A[0]'))
+    wa_else = body_else.add_write('A')
+    te = body_else.add_tasklet('mark_else', {}, {'a_out'}, 'a_out = 0')
+    body_else.add_edge(te, 'a_out', wa_else, None, dace.Memlet('A[0]'))
+
+    ppl = FixedPointPipeline([ControlFlowRaising()])
+    ppl.apply_pass(sdfg, {})
+
+    # Exactly one ConditionalBlock must surface at the SDFG root.
+    cb_nodes = [n for n in sdfg.nodes() if isinstance(n, ConditionalBlock)]
+    assert len(cb_nodes) == 1, f'expected one lifted ConditionalBlock, got {len(cb_nodes)}'
+    cb = cb_nodes[0]
+
+    # The else branch (cond is None) must be the LAST entry.
+    none_positions = [i for i, (c, _) in enumerate(cb.branches) if c is None]
+    assert len(none_positions) == 1, f'expected exactly one else branch, got {len(none_positions)}'
+    assert none_positions[0] == len(cb.branches) - 1, \
+        (f'else branch must be last; got index {none_positions[0]} of '
+         f'{len(cb.branches)}: {[str(c) if c is not None else "None" for c, _ in cb.branches]}')
+
+    # Subsequent DeadStateElimination would abort on an else-not-last
+    # CB. Run it here as the end-to-end contract check.
+    from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+    DeadStateElimination().apply_pass(sdfg, {})
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
@@ -196,3 +257,4 @@ if __name__ == '__main__':
     test_elif_chain(False)
     test_elif_chain(True)
     test_unstructured_control_flow_sibling_loops()
+    test_unconditional_edge_lifted_as_last_branch()

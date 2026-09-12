@@ -107,7 +107,10 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         tile_o_dim_new = self._find_new_dim(sdfg, graph, o_entry, new_dim_prefix, o_entry.map.params[0])
         tile_i_dim_new = self._find_new_dim(sdfg, graph, i_entry, new_dim_prefix, i_entry.map.params[0])
 
-        grid_dim = sympy.Min(max_grid_dim, (o_to + 1 - o_from) // o_step)
+        # int_CEIL, and int_ceil rather than `//`: with a step wider than one element -- which is what a
+        # strip-mined kernel map has -- a floor rounds a domain shorter than one block down to a grid of
+        # ZERO blocks, and the codegen's `grid <= 0` guard then skips the launch and computes nothing.
+        grid_dim = sympy.Min(max_grid_dim, symbolic.int_ceil(o_to + 1 - o_from, o_step))
 
         # TODO: how to deal with approximated values?
         # begin, end, step of all four maps

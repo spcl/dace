@@ -1,12 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import re
 from collections import defaultdict
-from dace import data, dtypes
+from dace import data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
+from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
 from dace.sdfg.graph import Edge, SubgraphView
 from dace.sdfg.utils import dfs_topological_sort
-from typing import Callable, Dict, List, Optional, Set, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 #############################################################################
 # Connector type inference
@@ -243,8 +245,13 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
         exit_node = state.exit_node(node)
         memlets.update(e.data.data for e in state.in_edges(exit_node) if not e.data.is_empty())
     else:
-        # Other nodes only need neighboring memlets
-        memlets = set(e.data.data for e in state.all_edges(node) if not e.data.is_empty())
+        # A library node's ``host_connectors`` are the ones its expansion writes from host code even
+        # when the rest of it runs on the device -- ArgReduce's CUB call answers into host scalars.
+        # Their storage says nothing about where the node runs, and counting it makes every such
+        # node read as conflicted, so a CUDA ArgReduce could not be compiled at all.
+        host = node.host_connectors if isinstance(node, nodes.LibraryNode) else frozenset()
+        memlets = set(e.data.data for e in state.all_edges(node)
+                      if not e.data.is_empty() and (e.dst_conn if e.dst is node else e.src_conn) not in host)
 
     # From memlets, use non-scalar data descriptors for decision
     constraints: Set[dtypes.ScheduleType] = set()
@@ -261,7 +268,7 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
             continue
         constraints.add(sched)
 
-    # Copy/Memset library nodes legitimately bridge storages; schedule on the GPU if involved.
+    # Copy/Fill library nodes legitimately bridge storages; schedule on the GPU if involved.
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
     from dace.libraries.standard.nodes.fill import FillLibraryNode
     if isinstance(node, (CopyLibraryNode, FillLibraryNode)) and dtypes.ScheduleType.GPU_Device in constraints:
@@ -282,6 +289,144 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
         child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[None]
 
     return child_schedule
+
+
+#: ``name = expression``, with the comparisons that are not assignments (``<=``, ``==``, ...) left
+#: alone, so a loop condition keeps its whole text and a loop step yields only its right-hand side.
+ASSIGNMENT = re.compile(r'^\s*[A-Za-z_]\w*\s*=(?!=)\s*(?P<rhs>.+)$', re.S)
+
+
+def assigned_expression(statement: str) -> str:
+    """The right-hand side of ``statement`` when it assigns, else ``statement`` unchanged."""
+    match = ASSIGNMENT.match(statement)
+    return match.group('rhs') if match else statement
+
+
+def symbol_origins(definitions: List[Tuple[str, str]]) -> Dict[str, Set[str]]:
+    """``symbol -> the symbols its value is a function of``, resolved transitively.
+
+    ``definitions`` pairs a symbol with the source text that gives it a value: a nested SDFG's
+    symbol mapping, or a loop's init / condition / update. A loop iterator bounded by ``p`` is a
+    function of ``p``, which is what makes a write indexed by that iterator move with ``p``.
+    """
+    direct: Dict[str, Set[str]] = {}
+    for name, expression in definitions:
+        try:
+            symbols = {str(s) for s in symbolic.pystr_to_symbolic(expression).free_symbols}
+        except Exception:  # not a symbolic expression (a call, a subscript): nothing to resolve
+            symbols = set()
+        direct.setdefault(name, set()).update(symbols - {name})
+
+    origins: Dict[str, Set[str]] = {}
+    for name in direct:
+        reached: Set[str] = set()
+        stack = list(direct[name])
+        while stack:
+            symbol = stack.pop()
+            if symbol in reached:
+                continue
+            reached.add(symbol)
+            stack.extend(direct.get(symbol, ()))
+        origins[name] = reached or {name}
+    return origins
+
+
+#: How far :func:`map_scope_carries_dependency` follows a write down through nested scopes before it
+#: gives up and refuses the schedule. Three levels reach the shape canonicalization produces (map ->
+#: NestedSDFG -> inner map or loop body).
+WRITE_DESCENT_LIMIT = 3
+
+
+def write_moves_with(state: SDFGState, edge, varying: Set[str], depth: int = 0) -> Optional[bool]:
+    """Whether the write arriving on ``edge`` moves with every symbol in ``varying``.
+
+    ``None`` means undecidable, which the caller reads as a conflict.
+
+    A memlet arriving at a scope exit FROM A NESTED SCOPE has been propagated over that scope: the
+    per-iteration ``aa[j, 0:N]`` of a row-wise map reads back as the whole ``aa[0:N, 0:N]``, whose
+    free symbols name no map parameter at all. Judging that memlet directly calls every such map a
+    carried dependency, which is how the gate below turned seven parallel TSVC kernels sequential.
+    So a write that comes out of a nested scope is followed to the accesses that produced it, and a
+    write this cannot follow stays undecided rather than being read off the widened subset.
+    """
+    memlet = edge.data
+    if isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) and depth >= WRITE_DESCENT_LIMIT:
+        return None
+
+    if isinstance(edge.src, nodes.MapExit):
+        inner = [e for e in state.in_edges(edge.src) if not e.data.is_empty() and e.data.data == memlet.data]
+        if not inner:
+            return None
+        verdicts = [write_moves_with(state, e, varying, depth + 1) for e in inner]
+        return None if None in verdicts else all(verdicts)
+
+    if isinstance(edge.src, nodes.NestedSDFG):
+        # Inside the nested SDFG the container is named by the connector and indexed in the nested
+        # SDFG's own symbols, so a write index is asked what its value is a FUNCTION of rather than
+        # which names it spells. A skewed wavefront writes ``a[_loop_it_0, _loop_it_1]``, whose
+        # symbols are inner loop iterators; they move with the enclosing map because the loops that
+        # define them are bounded by its parameter.
+        conn = edge.src_conn
+        if conn is None:
+            return None
+        definitions = [(str(name), str(outer)) for name, outer in edge.src.symbol_mapping.items()]
+        for region in edge.src.sdfg.all_control_flow_regions(recursive=True):
+            if not isinstance(region, LoopRegion) or not region.loop_variable:
+                continue
+            for block in (region.init_statement, region.loop_condition, region.update_statement):
+                if block is not None:
+                    definitions.append((region.loop_variable, assigned_expression(block.as_string)))
+        origins = symbol_origins(definitions)
+
+        verdicts = []
+        for nested_state in edge.src.sdfg.all_states():
+            for access in nested_state.data_nodes():
+                if access.data != conn:
+                    continue
+                for inner_edge in nested_state.in_edges(access):
+                    if inner_edge.data.is_empty() or inner_edge.data.wcr is not None:
+                        continue
+                    if inner_edge.data.subset is None:
+                        return None
+                    written_by = set()
+                    for symbol in inner_edge.data.subset.free_symbols:
+                        written_by |= origins.get(str(symbol), {str(symbol)})
+                    verdicts.append(not (varying - written_by))
+        if not verdicts:
+            return None
+        return all(verdicts)
+
+    if memlet.subset is None:
+        return None
+    return not (varying - {str(s) for s in memlet.subset.free_symbols})
+
+
+def map_scope_carries_dependency(state: SDFGState, entry: nodes.MapEntry) -> bool:
+    """Whether ``entry``'s scope reads a container it also writes at an index that does not move with
+    every map parameter -- a loop-carried dependency, which no parallel schedule preserves.
+
+    Only the edges INSIDE the scope are read. The ones outside it are propagated, so a per-iteration
+    write ``B[i]`` reads back as the whole ``B[0:N]`` and every map would look conflicted. The same
+    widening happens one level down, on a write arriving from a nested scope, and there
+    :func:`write_moves_with` follows the write to the accesses that produced it. A write that
+    carries write-conflict resolution is a reduction the code generator already makes atomic, and a
+    parameter with a single iteration cannot carry anything.
+    """
+    varying = {param for param, size in zip(entry.map.params, entry.map.range.size()) if size != 1}
+    if not varying:
+        return False
+    try:
+        exit_node = state.exit_node(entry)
+    except (KeyError, StopIteration):  # scope without an exit: undecidable, so refuse the schedule
+        return True
+    read = {e.data.data for e in state.out_edges(entry) if not e.data.is_empty()}
+    for edge in state.in_edges(exit_node):
+        memlet = edge.data
+        if memlet.is_empty() or memlet.wcr is not None or memlet.data not in read:
+            continue
+        if write_moves_with(state, edge, varying) is not True:
+            return True
+    return False
 
 
 def _set_default_schedule_in_scope(state: SDFGState,
@@ -315,6 +460,12 @@ def _set_default_schedule_in_scope(state: SDFGState,
                     local_child_schedule = _determine_schedule_from_storage(state, node)
                 else:
                     local_child_schedule = child_schedule
+                # An OpenMP team over a loop-carried dependency is a data race, and the wrong answer
+                # it gives is silent. Never CHOOSE that schedule here; an explicit one is the
+                # author's to defend.
+                if (local_child_schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
+                        and isinstance(node, nodes.MapEntry) and map_scope_carries_dependency(state, node)):
+                    local_child_schedule = dtypes.ScheduleType.Sequential
                 node.schedule = local_child_schedule
         elif isinstance(node, nodes.LibraryNode):
             if node.schedule == dtypes.ScheduleType.Default:

@@ -7,11 +7,14 @@ import numpy as np
 import dace
 import dace.libraries.onnx as donnx
 
+from tests.ml_gpu_utils import DEVICES, run_sdfg
+
 
 @pytest.mark.onnx
-def test_sqrt_expansion():
+@pytest.mark.parametrize("device", DEVICES)
+def test_sqrt_expansion(device):
     # sqrt expansion makes use of the program_for_node function
-    sdfg = dace.SDFG("test_sqrt_expansion")
+    sdfg = dace.SDFG(f"test_sqrt_expansion_{device}")
 
     sdfg.add_array("inp", [2, 4], dace.float32)
     sdfg.add_array("__return", [2, 4], dace.float32)
@@ -33,10 +36,10 @@ def test_sqrt_expansion():
     # check that the expansion worked. The default ORT expansion wouldn't produce a map
     assert any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
 
-    result = sdfg(inp=X)
+    result = run_sdfg(sdfg, device, inp=X)
 
     assert np.allclose(np.sqrt(X), result)
 
 
 if __name__ == "__main__":
-    test_sqrt_expansion()
+    test_sqrt_expansion(device="cpu")

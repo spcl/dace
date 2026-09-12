@@ -1,0 +1,19 @@
+# Everything a sweep WRITES. None of it has ever been tracked, and none of it should be: a results
+# directory is one machine's measurement of one preset, so committing it makes the repo the place
+# two machines' numbers get silently mixed. Copy the directory off the cluster instead.
+
+# Results, both the current naming (results_<corpus>_<preset>/) and every older one.
+results_*/
+corpus_perf_results*/
+verify_*/
+flow_results/
+
+# Generated tables and figures, which the plot scripts write next to the scripts.
+*_numpy-reference.md
+*_numpy-reference.png
+*_seq-cpp.md
+*_seq-cpp.png
+*_speedup.png
+*.log
+
+__pycache__/

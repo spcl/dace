@@ -4,6 +4,10 @@ import dace
 from dace import sourcemap
 from dace.properties import (Property, DictProperty, SetProperty, make_properties)
 
+#: Trailing provenance annotation ``CodeIOStream`` pads onto every line it writes (see
+#: :mod:`dace.codegen.prettycode`). Strip it to recover the line's own code.
+CODE_ANNOTATION = re.compile(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*')
+
 
 @make_properties
 class CodeObject(object):
@@ -54,7 +58,7 @@ class CodeObject(object):
 
     @property
     def clean_code(self):
-        return re.sub(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*', '', self.code)
+        return CODE_ANNOTATION.sub('', self.code)
 
     def create_source_map(self, sdfg: 'dace.SDFG') -> None:
         sourcemap.create_maps(sdfg, self.code, self.target.target_name)

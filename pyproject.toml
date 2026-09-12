@@ -9,7 +9,7 @@ dev = [
     {include-group = 'testing'}
 ]
 docs = ["jinja2<3.2.0", "sphinx-autodoc-typehints", "sphinx-rtd-theme>=0.5.1"]
-linting = ["pre-commit==4.1.0", "yapf==0.43.0"]
+linting = ["pre-commit==4.1.0", "yapf==0.43.0", "ruff==0.15.5"]
 ml-testing = [
     "coverage",
     "pytest-cov",
@@ -31,6 +31,7 @@ testing = [
     "pytest-cov>=4.0",
     "pytest-timeout>=2.0",
     "pytest-xdist>=3.0",
+    "flake8",
     "scipy",
     "absl-py",
     "opt-einsum>=3.0",
@@ -38,6 +39,8 @@ testing = [
     "ipykernel",
     "nbformat",
     "nbconvert",
+    # Plotting the corpus perf results; analysis only, never imported by dace itself.
+    "matplotlib",
 ]
 
 [project]
@@ -57,7 +60,14 @@ classifiers = [
 ]
 dependencies = [
     "numpy",
-    "networkx>=2.5,<=3.5",
+    # Cap is <3.7, not <=3.5. networkx 3.6 dropped the root from ``immediate_dominators``
+    # (it computes with ``{start: None}``, then ``del idom[start]`` before returning), and
+    # every caller here reads that map as total over the reachable blocks, so an entry block
+    # raised ``KeyError`` and the whole canonicalize pipeline died. The backend layer
+    # (``dace/graphlib/networkx_backend.py``) restores the entry, which is what a backend
+    # layer is for, so 3.6 is supported. The cap stays so the NEXT contract change surfaces
+    # as a pip resolution error rather than as a KeyError mid-pipeline.
+    "networkx>=2.5,<3.7",
     "astunparse",
     "sympy>=1.9",
     "pyyaml",
@@ -69,6 +79,15 @@ dependencies = [
     "typing-extensions",
     "ml_dtypes",
     "ordered-set>=4.0.0",
+    # SMT-backed dependence oracle. Not optional: LoopToMap and the canonicalize
+    # parallelization band query it, so an install without it silently refuses
+    # loops the shipped analysis can otherwise prove parallel.
+    "z3-solver",
+    # Exact-integer polyhedral engine. Not optional for the same reason: WavefrontSkew is a silent
+    # no-op without it, so a wavefront nest (polybench nussinov, seidel_2d, the fdtd family) keeps
+    # its sequential loops and the canonical form an install produces depends on which extras were
+    # picked. Whether a scope is parallel is not allowed to be an install-time accident.
+    "islpy",
     "scikit-build",
     "cmake",
     "ninja",
@@ -79,6 +98,8 @@ dependencies = [
 ml = ["onnx", "torch", "onnxsim", "onnxscript", "onnxruntime", "protobuf", "ninja"]
 mpi = ["mpi4py", "pytest-mpi"]
 gpu = ["cupy-cuda13x", "cutensor-cu13"]
+# Optional: rustworkx-backed graph implementation (dace.graph.backends.rustworkx).
+fastgraph = ["rustworkx"]
 
 [project.scripts]
 dacelab = "dace.cli.dacelab:main"

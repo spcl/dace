@@ -3,7 +3,7 @@
 
 import dace
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
+from dace.transformation.passes.symbol_ssa import StrictSymbolSSA, SymbolSSA
 
 
 def test_loop_iter_symbol_reused_split():
@@ -335,3 +335,119 @@ if __name__ == '__main__':
     test_loop_iter_symbol_reused_fused()
     test_branch_subscope_nofission()
     test_branch_subscope_fission()
+
+
+def unrolled_index_chain_sdfg() -> dace.SDFG:
+    """The shape short-loop unrolling leaves behind: one index symbol reassigned per replay.
+
+    ``s0 -[idx=arr[0]]-> s1 -[idx=arr[1]]-> s2 -[idx=arr[2]]-> s3``, each state reading ``idx``.
+    """
+    sdfg = dace.SDFG('unrolled_index_chain')
+    sdfg.add_array('arr', [3], dace.int64)
+    sdfg.add_array('out', [3], dace.float64)
+    sdfg.add_symbol('idx', dace.int64)
+
+    states = [sdfg.add_state(f's{i}', is_start_block=(i == 0)) for i in range(4)]
+    for i in range(3):
+        sdfg.add_edge(states[i], states[i + 1], dace.InterstateEdge(assignments={'idx': f'arr[{i}]'}))
+    # Every state after the first reads the symbol, so each replay has a consumer.
+    for i in range(1, 4):
+        tasklet = states[i].add_tasklet(f't{i}', {}, {'o'}, 'o = 1.0')
+        access = states[i].add_access('out')
+        states[i].add_edge(tasklet, 'o', access, None, dace.Memlet(data='out', subset='idx'))
+    return sdfg
+
+
+def test_symbol_ssa_versions_an_unrolled_index_chain():
+    """Each replay's definition gets its own symbol, and each consumer reads its own version."""
+    sdfg = unrolled_index_chain_sdfg()
+    result = SymbolSSA().apply_pass(sdfg, {})
+
+    assert result is not None and 'idx' in result
+    # Three definitions; the last is live at the region exit and must keep the original name.
+    assert len(result['idx']) == 2, result
+    defined = [set(e.data.assignments.keys()) for e in sdfg.edges()]
+    assert all(len(names) == 1 for names in defined), defined
+    assert len({next(iter(names)) for names in defined}) == 3, defined
+
+    # Each state reads exactly the version the edge above it defines.
+    for edge in sdfg.edges():
+        version = next(iter(edge.data.assignments))
+        reads = {str(s) for s in edge.dst.free_symbols}
+        assert version in reads, (version, reads)
+    sdfg.validate()
+
+
+def test_symbol_ssa_leaves_an_ambiguous_definition_alone():
+    """A symbol whose versions merge at a join would need a phi, so nothing is renamed."""
+    sdfg = dace.SDFG('ambiguous_join')
+    sdfg.add_array('out', [4], dace.float64)
+    sdfg.add_symbol('idx', dace.int64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    left, right, join = sdfg.add_state('left'), sdfg.add_state('right'), sdfg.add_state('join')
+    sdfg.add_edge(entry, left, dace.InterstateEdge(condition='idx < 1', assignments={'idx': '1'}))
+    sdfg.add_edge(entry, right, dace.InterstateEdge(condition='idx >= 1', assignments={'idx': '2'}))
+    # Both definitions reach the join, so neither may be renamed to it.
+    sdfg.add_edge(left, join, dace.InterstateEdge())
+    sdfg.add_edge(right, join, dace.InterstateEdge())
+    tasklet = join.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    join.add_edge(tasklet, 'o', join.add_access('out'), None, dace.Memlet(data='out', subset='idx'))
+
+    assert SymbolSSA().apply_pass(sdfg, {}) is None
+    assert all(set(e.data.assignments) <= {'idx'} for e in sdfg.edges())
+
+
+def test_symbol_ssa_leaves_a_loop_carried_increment_alone():
+    """``k = k + 1`` around a back edge must keep its name: it is the induction variable.
+
+    The body is reached both by the initializing edge and by the back edge, so the read inside it
+    has two reaching definitions -- versioning either one would break the recurrence, and would
+    also destroy the self-referential shape ``InductionVariableSubstitution`` matches on.
+    """
+    sdfg = dace.SDFG('loop_carried_increment')
+    sdfg.add_array('out', [16], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    init, body, done = sdfg.add_state('init', is_start_block=True), sdfg.add_state('body'), sdfg.add_state('done')
+    sdfg.add_edge(init, body, dace.InterstateEdge(assignments={'k': '0'}))
+    tasklet = body.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_access('out'), None, dace.Memlet(data='out', subset='k'))
+    sdfg.add_edge(body, body, dace.InterstateEdge(condition='k < 15', assignments={'k': 'k + 1'}))
+    sdfg.add_edge(body, done, dace.InterstateEdge(condition='k >= 15'))
+
+    assert SymbolSSA().apply_pass(sdfg, {}) is None
+    assert {k for e in sdfg.edges() for k in e.data.assignments} == {'k'}
+
+
+def test_symbol_ssa_versions_an_unrolled_accumulator_chain():
+    """The same increment, once unrolling has laid it out straight, does version.
+
+    Each definition then has exactly one reaching predecessor, so the chain becomes
+    ``k_1 = k + 1; k_2 = k_1 + 1; ...`` -- with the exit-live definition keeping the original name
+    so whatever reads ``k`` after the region still finds it.
+    """
+    sdfg = dace.SDFG('unrolled_accumulator')
+    sdfg.add_array('out', [8], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    states = [sdfg.add_state(f's{i}', is_start_block=(i == 0)) for i in range(4)]
+    for i in range(3):
+        sdfg.add_edge(states[i], states[i + 1], dace.InterstateEdge(assignments={'k': 'k + 1'}))
+    for state in states[1:]:
+        tasklet = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+        state.add_edge(tasklet, 'o', state.add_access('out'), None, dace.Memlet(data='out', subset='k'))
+
+    result = SymbolSSA().apply_pass(sdfg, {})
+    assert result is not None and len(result['k']) == 2, result
+    # Every definition is distinct, and the last one still writes the escaping name.
+    defined = [next(iter(e.data.assignments)) for e in sdfg.edges()]
+    assert len(set(defined)) == 3, defined
+    assert 'k' in defined, defined
+    # Each increment reads exactly the version defined immediately above it, never a later one.
+    # Compare symbols, not substrings: 'k' occurs inside 'k_0'.
+    chain = [next(iter(e.data.assignments)) for e in sdfg.edges()]
+    for position, edge in enumerate(sdfg.edges()):
+        target = next(iter(edge.data.assignments))
+        rhs = edge.data.assignments[target]
+        read = {str(sym) for sym in dace.symbolic.pystr_to_symbolic(rhs).free_symbols}
+        expected = 'k' if position == 0 else chain[position - 1]
+        assert read == {expected}, (target, rhs, expected)
+    sdfg.validate()

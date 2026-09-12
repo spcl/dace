@@ -2,14 +2,117 @@
 """ Various analyses related to control flow in SDFGs. """
 from collections import defaultdict
 from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
-import networkx as nx
+from dace import graphlib as nx
+from dace import symbolic
 import sympy as sp
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
+from dace.ordered import OrderedSet
 
 
-def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+def collect_enclosing_conditions(block: ControlFlowBlock, stop: Optional[ControlFlowRegion] = None) -> sp.Basic:
+    """The conjunction of branch conditions that must hold for ``block`` to execute.
+
+    Walks out through every enclosing :class:`ConditionalBlock`, accumulating the guard of the
+    branch that contains ``block``; an ``else`` branch (``cond is None``) contributes the
+    negation of all preceding conditions. Returns ``sp.true`` when nothing guards ``block``.
+
+    ``stop`` bounds the walk at a region: guards at or above it are not collected. Pass the
+    enclosing loop when the caller reasons in that loop's iteration space, so a condition
+    written in terms of symbols an interstate edge reassigns on the way in never enters the
+    answer. Left ``None`` the walk runs to the root.
+
+    A condition that does not parse is dropped rather than guessed at. Every consumer uses the
+    result to SHRINK the set of states it must consider, so a missing conjunct can only make an
+    answer more conservative, never wrong.
+    """
+    conditions: List[sp.Basic] = []
+    current: Optional[ControlFlowBlock] = block
+    while current is not None and current is not stop:
+        parent = current.parent_graph
+        if parent is None or parent is stop:
+            break
+        # ``block`` lives inside a branch region; the ConditionalBlock is that region's parent.
+        cond_block = parent.parent_graph
+        if isinstance(cond_block, ConditionalBlock):
+            our_cond: Optional[str] = None
+            seen_else = False
+            for cond_codeblock, branch in cond_block.branches:
+                if branch is parent:
+                    if cond_codeblock is not None and cond_codeblock.as_string:
+                        our_cond = cond_codeblock.as_string
+                    else:
+                        seen_else = True
+                    break
+            if our_cond is not None:
+                parsed = parse_condition(our_cond)
+                if parsed is not None:
+                    conditions.append(parsed)
+            elif seen_else:
+                negs: List[sp.Basic] = []
+                for cond_codeblock, _branch in cond_block.branches:
+                    if cond_codeblock is None:
+                        break
+                    if cond_codeblock.as_string:
+                        parsed = parse_condition(cond_codeblock.as_string)
+                        negated = negate_condition(parsed) if parsed is not None else None
+                        if negated is not None:
+                            negs.append(negated)
+                if negs:
+                    conditions.append(sp.And(*negs) if len(negs) > 1 else negs[0])
+        current = parent
+    if not conditions:
+        return sp.true
+    if len(conditions) == 1:
+        return conditions[0]
+    try:
+        return sp.And(*conditions)
+    except TypeError:
+        # ``sp.And`` rejects DaCe's own ``AND`` / ``OR`` nodes -- ``pystr_to_symbolic`` builds
+        # them with ``evaluate=False`` and sympy does not count a Function as Boolean. Fold with
+        # DaCe's connective instead of dropping the guard; both consumers understand it.
+        out = conditions[0]
+        for cond in conditions[1:]:
+            out = symbolic.AND(out, cond)
+        return out
+
+
+def parse_condition(cond_str: str) -> Optional[sp.Basic]:
+    """``cond_str`` as a sympy expression, or ``None`` if it does not parse."""
+    try:
+        return symbolic.pystr_to_symbolic(cond_str)
+    except Exception:
+        return None
+
+
+def negate_condition(expr: sp.Basic) -> Optional[sp.Basic]:
+    """``not expr``, or ``None`` when it has no form the callers can use.
+
+    ``sp.Not`` RAISES on DaCe's own ``AND`` / ``OR`` nodes: ``pystr_to_symbolic`` builds them with
+    ``evaluate=False`` to keep parse trees verbatim, and sympy does not count a Function as
+    Boolean. So the connectives are negated by De Morgan here instead of being handed to sympy,
+    and only a bare relational reaches ``sp.Not``.
+    """
+    func = str(expr.func) if isinstance(expr, sp.Basic) else ''
+    if func == 'NOT':
+        return expr.args[0]
+    if func in ('AND', 'OR'):
+        parts = [negate_condition(a) for a in expr.args]
+        if any(part is None for part in parts):
+            return None
+        joiner = symbolic.OR if func == 'AND' else symbolic.AND
+        out = parts[0]
+        for part in parts[1:]:
+            out = joiner(out, part)
+        return out
+    try:
+        return sp.Not(expr)
+    except TypeError:
+        return None  # not a form sympy can negate; dropping the guard stays conservative
+
+
+def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, OrderedSet]:
     """
     Finds the dominance frontier for a CFG while ignoring any back edges.
 
@@ -21,12 +124,12 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     """
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
 
-    dom_frontiers = {block: set() for block in cfg.nodes()}
+    dom_frontiers = {block: OrderedSet() for block in cfg.nodes()}
     for u in idom:
         if len(cfg.nx.pred[u]) >= 2:
             for v in cfg.nx.pred[u]:
                 if v in idom:
-                    df_candidates = set()
+                    df_candidates = OrderedSet()
                     while v != idom[u]:
                         if v == u:
                             df_candidates = None
@@ -40,33 +143,64 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     return dom_frontiers
 
 
-def all_dominators(
-        cfg: ControlFlowRegion,
-        idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+def block_immediate_dominators(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+    """ Returns the immediate dominator of every block, including those unreachable from the start block.
+
+    ``nx.immediate_dominators`` only covers what the start block reaches, which leaves a legitimately
+    unreachable block -- dead code the frontend emitted, a branch never taken -- absent from the map
+    rather than mapped. A block nothing can reach is dominated by nothing, so it is its own immediate
+    dominator: a root, exactly like the start block. That keeps every dominator-based analysis total
+    over the whole CFG instead of raising ``KeyError`` on part of it.
+
+    Note that this deliberately does not distinguish dead code from a region some transformation
+    severed by mistake -- the two are the same graph shape, and nothing local to the CFG can tell them
+    apart. Codegen is what catches the severed case, by refusing to emit a program that is missing a
+    block (see ``DaCeCodeGenerator.generate_code``).
+
+    :param cfg: The control flow graph to compute immediate dominators for.
+    :return: A dictionary mapping each block to its immediate dominator.
+    """
+    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+    for block in cfg.nodes():
+        idom.setdefault(block, block)
+    return idom
+
+
+def all_dominators(cfg: ControlFlowRegion,
+                   idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, OrderedSet]:
     """ Returns a mapping between each control flow block and all its dominators. """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
-    # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
-    g = nx.DiGraph()
+    idom = idom or block_immediate_dominators(cfg)
+    # The idoms are a forest, so a block's dominators are just its idom chain -- 7x cheaper than the
+    # transitive closure this used to build. Nearest-first is a STABLE order; the closure's was
+    # ``set`` order over block objects, i.e. addresses, so nothing may depend on it.
+    # Seeded with every block: a root is dominated by nothing, and an unreachable block is a root.
+    alldoms: Dict[ControlFlowBlock, OrderedSet] = {block: OrderedSet() for block in cfg.nodes()}
     for node, dom in idom.items():
         if node is dom:  # Skip root
             continue
-        g.add_edge(node, dom)
-    tc = nx.transitive_closure_dag(g)
-    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {cfg.start_block: set()}
-    for node in tc:
-        alldoms[node] = set(dst for _, dst in tc.out_edges(node))
+        doms = alldoms.setdefault(node, OrderedSet())
+        alldoms.setdefault(dom, OrderedSet())  # A dominator that is not itself a key still gets an entry
+        while True:
+            doms.add(dom)
+            nextdom = idom.get(dom, dom)  # Absent key = root, matching the closure's leaf
+            if nextdom is dom:  # Root reached
+                break
+            if nextdom in doms:
+                # utils.get_control_flow_block_dominators merges idom maps by hand and can cycle.
+                raise nx.NetworkXUnfeasible('Immediate dominator map contains a cycle')
+            dom = nextdom
 
     return alldoms
 
 
 def all_postdominators(cfg: ControlFlowRegion,
                        ipostdom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-                       sink: Optional[ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+                       sink: Optional[ControlFlowBlock] = None) -> Dict[ControlFlowBlock, OrderedSet]:
     """ Returns a mapping between each control flow block and all its postdominators. """
     remove_sink = False
     if sink is None:
         remove_sink = True
-        sinks = set()
+        sinks = OrderedSet()
         for block in cfg.nodes():
             if cfg.out_degree(block) == 0 or isinstance(block, (ContinueBlock, BreakBlock, ReturnBlock)):
                 sinks.add(block)
@@ -85,9 +219,9 @@ def all_postdominators(cfg: ControlFlowRegion,
             continue
         g.add_edge(node, pdom)
     tc = nx.transitive_closure_dag(g)
-    all_postdoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = defaultdict(set)
+    all_postdoms: Dict[ControlFlowBlock, OrderedSet] = defaultdict(OrderedSet)
     for node in tc:
-        all_postdoms[node] = set(dst for _, dst in tc.out_edges(node))
+        all_postdoms[node] = OrderedSet(dst for _, dst in tc.out_edges(node))
 
     if remove_sink:
         cfg.remove_node(sink)
@@ -96,8 +230,8 @@ def all_postdominators(cfg: ControlFlowRegion,
 
 
 def find_sese_region(
-    graph: ControlFlowRegion, target_nodes: Set[ControlFlowBlock]
-) -> Tuple[Set[ControlFlowBlock], Optional[ControlFlowBlock], Optional[ControlFlowBlock]]:
+        graph: ControlFlowRegion,
+        target_nodes: OrderedSet) -> Tuple[OrderedSet, Optional[ControlFlowBlock], Optional[ControlFlowBlock]]:
     """
     Find the smallest SESE region containing the target nodes.
 
@@ -112,122 +246,124 @@ def find_sese_region(
     :raises ValueError: If no start node or end nodes are found and none are provided.
     """
     if not target_nodes:
-        return set(), None, None
+        return OrderedSet(), None, None
 
-    sinks = set()
+    sinks = OrderedSet()
     for block in graph.nodes():
         if graph.out_degree(block) == 0 or isinstance(block, (ContinueBlock, BreakBlock, ReturnBlock)):
             sinks.add(block)
     sink = ControlFlowBlock('__DACE_dummy_sink')
     graph.add_node(sink)
-    for s in sinks:
-        graph.add_edge(s, sink, InterstateEdge())
+    # The sink is a scratch node this function owns, and three of the returns below are early
+    # exits taken after it was added -- so the removal belongs in a ``finally``. Leaving it
+    # behind puts a bare ControlFlowBlock in a real CFG, which nothing downstream expects.
+    try:
+        for s in sinks:
+            graph.add_edge(s, sink, InterstateEdge())
 
-    # Compute dominators and post-dominators
-    dominators = all_dominators(graph)
-    post_dominators = all_postdominators(graph, sink=sink)
+        # Compute dominators and post-dominators
+        dominators = all_dominators(graph)
+        post_dominators = all_postdominators(graph, sink=sink)
 
-    # Find the entry node: the lowest common dominator of all target nodes
-    common_dominators = None
-    for node in target_nodes:
-        if node not in dominators:
-            continue
-        if common_dominators is None:
-            common_dominators = dominators[node].copy()
-        else:
-            common_dominators &= dominators[node]
+        # Find the entry node: the lowest common dominator of all target nodes
+        common_dominators = None
+        for node in target_nodes:
+            if node not in dominators:
+                continue
+            if common_dominators is None:
+                common_dominators = dominators[node].copy()
+            else:
+                common_dominators &= dominators[node]
 
-    if not common_dominators:
-        return set(), None, None
+        if not common_dominators:
+            return OrderedSet(), None, None
 
-    # The entry is the dominator closest to the target nodes
-    entry_node = None
-    min_distance = float('inf')
-    for dom in common_dominators:
-        # Find maximum distance to any target node
-        max_dist_to_targets = 0
-        for target in target_nodes:
-            if target in dominators and dom in dominators[target]:
-                # Count nodes between dom and target
-                try:
-                    dist = nx.shortest_path_length(graph.nx, dom, target)
-                    max_dist_to_targets = max(max_dist_to_targets, dist)
-                except nx.NetworkXNoPath:
-                    max_dist_to_targets = float('inf')
-
-        if max_dist_to_targets < min_distance:
-            min_distance = max_dist_to_targets
-            entry_node = dom
-
-    # Find the exit node: the lowest common post-dominator of all target nodes
-    common_post_dominators = None
-    for node in target_nodes:
-        if node not in post_dominators:
-            continue
-        if common_post_dominators is None:
-            common_post_dominators = post_dominators[node].copy()
-        else:
-            common_post_dominators &= post_dominators[node]
-
-    if not common_post_dominators:
-        return set(), entry_node, None
-
-    # The exit is the post-dominator closest to the target nodes, from which none of the target nodes can be reached
-    # anymore.
-    exit_node = None
-    min_distance = float('inf')
-    for post_dom in common_post_dominators:
-        max_dist_from_targets = 0
-        if any(nx.has_path(graph.nx, post_dom, t) for t in target_nodes):
-            continue
-        for target in target_nodes:
-            if target in post_dominators and post_dom in post_dominators[target]:
-                path_exists = nx.has_path(graph.nx, target, post_dom)
-                if path_exists:
+        # The entry is the dominator closest to the target nodes
+        entry_node = None
+        min_distance = float('inf')
+        for dom in common_dominators:
+            # Find maximum distance to any target node
+            max_dist_to_targets = 0
+            for target in target_nodes:
+                if target in dominators and dom in dominators[target]:
+                    # Count nodes between dom and target
                     try:
-                        dist = nx.shortest_path_length(graph.nx, target, post_dom)
-                        max_dist_from_targets = max(max_dist_from_targets, dist)
+                        dist = nx.shortest_path_length(graph.nx, dom, target)
+                        max_dist_to_targets = max(max_dist_to_targets, dist)
                     except nx.NetworkXNoPath:
-                        max_dist_from_targets = float('inf')
+                        max_dist_to_targets = float('inf')
 
-        if max_dist_from_targets < min_distance:
-            min_distance = max_dist_from_targets
-            exit_node = post_dom
+            if max_dist_to_targets < min_distance:
+                min_distance = max_dist_to_targets
+                entry_node = dom
 
-    # Find all nodes in the SESE region
-    if entry_node is None or exit_node is None:
-        return target_nodes.copy(), entry_node, exit_node
+        # Find the exit node: the lowest common post-dominator of all target nodes
+        common_post_dominators = None
+        for node in target_nodes:
+            if node not in post_dominators:
+                continue
+            if common_post_dominators is None:
+                common_post_dominators = post_dominators[node].copy()
+            else:
+                common_post_dominators &= post_dominators[node]
 
-    # The region includes all nodes on paths from entry to exit
-    # that are reachable from entry and can reach exit
-    region_nodes = set()
+        if not common_post_dominators:
+            return OrderedSet(), entry_node, None
 
-    # Add all nodes reachable from entry that can also reach exit
-    reachable_from_entry = set()
-    if entry_node in graph:
-        reachable_from_entry = set(nx.descendants(graph.nx, entry_node)) | {entry_node}
-
-    can_reach_exit = set()
-    # Find all nodes that can reach the exit
-    reverse_graph = graph.nx.reverse()
-    can_reach_exit = set(nx.descendants(reverse_graph, exit_node)) | {exit_node}
-
-    # Region is intersection of reachable from entry and can reach exit
-    region_nodes = reachable_from_entry & can_reach_exit
-
-    # Remove the dummy sink
-    graph.remove_node(sink)
-    if sink in region_nodes:
-        region_nodes.remove(sink)
-    if exit_node == sink:
+        # The exit is the post-dominator closest to the target nodes, from which none of the target nodes can be reached
+        # anymore.
         exit_node = None
+        min_distance = float('inf')
+        for post_dom in common_post_dominators:
+            max_dist_from_targets = 0
+            if any(nx.has_path(graph.nx, post_dom, t) for t in target_nodes):
+                continue
+            for target in target_nodes:
+                if target in post_dominators and post_dom in post_dominators[target]:
+                    path_exists = nx.has_path(graph.nx, target, post_dom)
+                    if path_exists:
+                        try:
+                            dist = nx.shortest_path_length(graph.nx, target, post_dom)
+                            max_dist_from_targets = max(max_dist_from_targets, dist)
+                        except nx.NetworkXNoPath:
+                            max_dist_from_targets = float('inf')
 
-    return region_nodes, entry_node, exit_node
+            if max_dist_from_targets < min_distance:
+                min_distance = max_dist_from_targets
+                exit_node = post_dom
+
+        # Find all nodes in the SESE region
+        if entry_node is None or exit_node is None:
+            return target_nodes.copy(), entry_node, exit_node
+
+        # The region includes all nodes on paths from entry to exit that are reachable from entry and
+        # can reach exit. ``nx.descendants`` answers with a plain set, whose iteration order follows
+        # allocation addresses; the caller REMOVES these nodes from the graph and codegen structures
+        # what is left, so that order reaches the emitted program. Rank both by the graph's own block
+        # order, which is insertion order, before intersecting.
+        reachable = OrderedSet()
+        if entry_node in graph:
+            descendants = nx.descendants(graph.nx, entry_node)
+            reachable = OrderedSet(b for b in graph.nodes() if b is entry_node or b in descendants)
+
+        backwards = nx.descendants(graph.nx.reverse(), exit_node)
+        can_reach_exit = OrderedSet(b for b in graph.nodes() if b is exit_node or b in backwards)
+
+        region_nodes = reachable & can_reach_exit
+
+        if sink in region_nodes:
+            region_nodes.remove(sink)
+        if exit_node == sink:
+            exit_node = None
+
+        return region_nodes, entry_node, exit_node
+    finally:
+        graph.remove_node(sink)
 
 
 def back_edges(cfg: ControlFlowRegion,
                idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-               alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None) -> List[gr.Edge[InterstateEdge]]:
+               alldoms: Optional[Dict[ControlFlowBlock, OrderedSet]] = None) -> List[gr.Edge[InterstateEdge]]:
     """ Returns a list of back-edges in a control flow graph. """
     alldoms = alldoms or all_dominators(cfg, idom)
     return [e for e in cfg.edges() if e.dst in alldoms[e.src]]
@@ -236,12 +372,19 @@ def back_edges(cfg: ControlFlowRegion,
 def branch_merges(
         cfg: ControlFlowRegion,
         idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-        alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+        alldoms: Optional[Dict[ControlFlowBlock, OrderedSet]] = None) -> Dict[ControlFlowBlock, ControlFlowBlock]:
     alldoms = alldoms or all_dominators(cfg, idom)
 
     # Annotate branches
     result: Dict[SDFGState, SDFGState] = {}
-    adf = acyclic_dominance_frontier(cfg)
+    # Reuse idom if the caller already computed it, instead of a second nx.immediate_dominators
+    # pass over the same graph. block_immediate_dominators() maps every block unreachable from
+    # start to itself as a placeholder root (see its docstring), and acyclic_dominance_frontier's
+    # walk assumes a single-rooted tree: a second root never reaches idom[u] and spins forever.
+    # Strip those placeholders so the reused map has exactly the entries a fresh
+    # nx.immediate_dominators(cfg.nx, cfg.start_block) call would produce.
+    adf_idom = {k: v for k, v in idom.items() if k is cfg.start_block or v is not k} if idom else None
+    adf = acyclic_dominance_frontier(cfg, adf_idom)
     # ipostdom = sdutil.postdominators(cfg)
     for block in cfg.nodes():
         oedges = cfg.out_edges(block)
@@ -263,12 +406,13 @@ def branch_merges(
                 continue
 
         # Try to obtain common DF to find merge state
-        common_frontier = set()
-        descendants_blacklist = set()
-        disjoint_edges = set()
+        common_frontier = OrderedSet()
+        descendants_blacklist = OrderedSet()
+        disjoint_edges = OrderedSet()
+        # Deferred: the blacklist is read only in the empty-frontier arm, which a diamond never
+        # enters. Expanding ``pending`` in edge order there gives the same content and order.
+        pending: List[gr.Edge[InterstateEdge]] = []
         for oedge in oedges:
-            branch_descendants = set(cfg.dfs_edges(oedge.dst))
-            branch_descendants.add(oedge.dst)
             frontier = adf[oedge.dst]
             if not frontier:
                 # If no dominance frontier is found for this edge, there are two possible scenarios under which this
@@ -278,13 +422,22 @@ def branch_merges(
                 #    common frontier block.
                 # 2: The edge leads to a completely separate control flow path that does not reconnect to the branch
                 #    merge state and can not reach any of the other branch descendants.
+                for pending_edge in pending:
+                    descendants_blacklist.update(cfg.dfs_edges(pending_edge.dst))
+                    descendants_blacklist.add(pending_edge.dst)
+                pending.clear()
+                branch_descendants = OrderedSet(cfg.dfs_edges(oedge.dst))
+                branch_descendants.add(oedge.dst)
                 if not (branch_descendants & descendants_blacklist):
-                    disjoint_edges.add(oedge)
+                    disjoint_edges.add(oedge)  # Deliberately NOT blacklisted
                     continue
                 else:
-                    frontier = {oedge.dst}
+                    frontier = OrderedSet((oedge.dst, ))
+                common_frontier |= frontier
+                descendants_blacklist.update(branch_descendants)
+                continue
             common_frontier |= frontier
-            descendants_blacklist.update(branch_descendants)
+            pending.append(oedge)
         if len(common_frontier) == 1:
             merge = next(iter(common_frontier))
             if block in alldoms[merge]:
@@ -295,10 +448,13 @@ def branch_merges(
     return result
 
 
-def block_parent_tree(cfg: ControlFlowRegion,
-                      loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
-                      idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-                      with_loops: bool = True) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+def block_parent_tree(
+        cfg: ControlFlowRegion,
+        loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+        idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+        with_loops: bool = True,
+        merges: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+        alldoms: Optional[Dict[ControlFlowBlock, OrderedSet]] = None) -> Dict[ControlFlowBlock, ControlFlowBlock]:
     """
     Computes an upward-pointing tree of each control flow block, pointing to the "parent block" it belongs to (in terms
     of structured control flow). More formally, each block is either mapped to its immediate dominator with out
@@ -309,12 +465,16 @@ def block_parent_tree(cfg: ControlFlowRegion,
     :param idom: An optional, pre-computed immediate dominator dictionary.
     :param with_loops: Respect loops in the parent computation, mapping blocks to a parent one block upwards of a loop
                        if the block occurs after a loop. Defaults to true.
+    :param merges: An optional, pre-computed branch merge dictionary (from ``branch_merges``).
+    :param alldoms: An optional, pre-computed full dominator dictionary (from ``all_dominators``).
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
-    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
-    merges = branch_merges(cfg, idom)
+    idom = idom or block_immediate_dominators(cfg)
+    if merges is None:
+        merges = branch_merges(cfg, idom, alldoms)
     if with_loops:
-        alldoms = all_dominators(cfg, idom)
+        if alldoms is None:
+            alldoms = all_dominators(cfg, idom)
         loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
 
         # First, annotate loops
@@ -404,7 +564,7 @@ def block_parent_tree(cfg: ControlFlowRegion,
 
     # Get dominators
     parents: Dict[ControlFlowBlock, ControlFlowBlock] = {}
-    step_up: Set[ControlFlowBlock] = set()
+    step_up: OrderedSet = OrderedSet()
     for block in cfg.nodes():
         curdom = idom[block]
         if curdom == block:
@@ -441,7 +601,7 @@ def _blockorder_topological_sort(
         ptree: Dict[ControlFlowBlock, ControlFlowBlock],
         branch_merges: Dict[ControlFlowBlock, ControlFlowBlock],
         stop: ControlFlowBlock = None,
-        visited: Set[ControlFlowBlock] = None,
+        visited: Optional[OrderedSet] = None,
         loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None) -> Iterator[ControlFlowBlock]:
     """
     Helper function for ``blockorder_topological_sort``.
@@ -458,7 +618,7 @@ def _blockorder_topological_sort(
     loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
 
     # Traverse blocks in custom order
-    visited = visited or set()
+    visited = visited if visited is not None else OrderedSet()
     stack = [start]
     while stack:
         node = stack.pop()
@@ -530,6 +690,45 @@ def _blockorder_topological_sort(
         stack.append(mergeblock)
 
 
+def _chain_order(cfg: ControlFlowRegion) -> Optional[List[ControlFlowBlock]]:
+    """The execution order of a region whose blocks form a single straight chain, or ``None``.
+
+    A chain has exactly ONE topological order -- the one its edges already spell out -- so the
+    general path below would run an immediate-dominator pass, a dominator closure, a branch-merge
+    scan and a parent tree only to rediscover it. This walks the edges instead, in ``O(V + E)``.
+
+    It bails to the general path on anything that is not a chain: a block with two successors (a
+    branch, where the order is a real question), a block already seen (a back edge), or a leftover
+    block the walk never reached (unreachable code, which the general path still orders). So it
+    changes no answer -- it only declines to ask an expensive question about a region with one
+    possible answer.
+
+    Worth its own path because the callers recurse: every nested region pays the dominator
+    machinery separately, and in a structured CFG most of them -- loop bodies, conditional
+    branches, specialized single-block regions -- are chains.
+    """
+    blocks = cfg.nodes()
+    if not blocks:
+        return []
+    order: List[ControlFlowBlock] = []
+    seen = set()
+    block = cfg.start_block
+    while True:
+        if id(block) in seen:
+            return None  # a back edge: this region loops, so let the general path order it
+        seen.add(id(block))
+        order.append(block)
+        out_edges = cfg.out_edges(block)
+        if not out_edges:
+            break
+        if len(out_edges) > 1:
+            return None  # a branch: which successor comes first is a real question
+        block = out_edges[0].dst
+    if len(order) != len(blocks):
+        return None  # blocks the walk never reached; the general path still orders them
+    return order
+
+
 def blockorder_topological_sort(cfg: ControlFlowRegion,
                                 recursive: bool = True,
                                 ignore_nonstate_blocks: bool = False) -> Iterator[ControlFlowBlock]:
@@ -542,15 +741,17 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
     :param ignore_nonstate_blocks: If true, only produce basic blocks / SDFGStates. Defaults to False.
     :return: Generator that yields control flow blocks in execution-order.
     """
-    # Get parent states
-    loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
-    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
-    ptree = block_parent_tree(cfg, loopexits, idom=idom)
+    ordered = _chain_order(cfg)
+    if ordered is None:
+        # Get parent states. Computed once and handed down: block_parent_tree derives both internally.
+        loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
+        idom = block_immediate_dominators(cfg)
+        alldoms = all_dominators(cfg, idom)
+        merges = branch_merges(cfg, idom, alldoms)
+        ptree = block_parent_tree(cfg, loopexits, idom=idom, merges=merges, alldoms=alldoms)
+        ordered = _blockorder_topological_sort(cfg, cfg.start_block, ptree, merges, loopexits=loopexits)
 
-    # Annotate branches
-    merges = branch_merges(cfg, idom)
-
-    for block in _blockorder_topological_sort(cfg, cfg.start_block, ptree, merges, loopexits=loopexits):
+    for block in ordered:
         if isinstance(block, ControlFlowRegion):
             if not ignore_nonstate_blocks:
                 yield block

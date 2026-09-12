@@ -1,0 +1,55 @@
+name: Set up DaCe (self-hosted venv)
+description: Clean ~/.venv and dependency install shared by the self-hosted runner jobs.
+
+# Callers must run ``actions/checkout@v7`` themselves, first (see .github/actions/setup-dace).
+# Every later step has to re-run ``source ~/.venv/bin/activate``: each step gets its own shell.
+# uv is pointed at that same ~/.venv path (UV_PROJECT_ENVIRONMENT) precisely so those activate
+# lines keep working unchanged.
+
+inputs:
+  pip-packages:
+    description: Extra packages installed into the venv before DaCe itself.
+    default: pytest-xdist
+  groups:
+    description: Dependency groups (comma-separated) to sync -- see [dependency-groups] in pyproject.toml.
+    default: testing
+  extras:
+    description: DaCe extras (comma-separated) to sync -- see [project.optional-dependencies].
+    default: ''
+  codecov:
+    description: Also fetch the codecov uploader into the workspace.
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        rm -f ~/.dace.conf
+        rm -rf .dacecache tests/.dacecache
+        export UV_PROJECT_ENVIRONMENT="$HOME/.venv"
+        echo "UV_PROJECT_ENVIRONMENT=$HOME/.venv" >> "$GITHUB_ENV"
+        # `testing` / `ml-testing` / `linting` / `docs` are dependency GROUPS, not extras
+        # (upstream moved them in spcl/dace#2514); `ml` / `mpi` / `gpu` / `fastgraph` are extras.
+        sync_args=()
+        IFS=',' read -ra _groups <<< "${{ inputs.groups }}"
+        for g in "${_groups[@]}"; do [ -n "$g" ] && sync_args+=(--group "$g"); done
+        IFS=',' read -ra _extras <<< "${{ inputs.extras }}"
+        for e in "${_extras[@]}"; do [ -n "$e" ] && sync_args+=(--extra "$e"); done
+        uv sync "${sync_args[@]}"
+        uv pip install ${{ inputs.pip-packages }}
+
+    - name: Install codecov uploader
+      if: inputs.codecov == 'true'
+      shell: bash
+      run: |
+        curl -Os https://uploader.codecov.io/latest/linux/codecov
+        chmod +x codecov

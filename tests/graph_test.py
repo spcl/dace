@@ -47,6 +47,28 @@ class TestOrderedGraphs(unittest.TestCase):
         self.assertEqual(g.number_of_edges(), 1)
         self.assertEqual(len(edges[0]), 3)
 
+    def test_reorder_nodes(self):
+        """A permutation must move the node list AND the backing networkx node order together --
+        the two disagreeing is how a traversal tie-break stops matching ``nodes()`` -- while
+        leaving edges, adjacency and degrees alone."""
+        g = OrderedDiGraph()
+        g.add_edge(0, 1, "a")
+        g.add_edge(1, 2, "b")
+        g.add_edge(0, 2, "c")
+        g.reorder_nodes([2, 0, 1])
+        self.assertEqual(list(g.nodes()), [2, 0, 1])
+        self.assertEqual(list(g.nx.nodes()), [2, 0, 1])
+        self.assertEqual(g.node_id(2), 0)
+        self.assertEqual([e.data for e in g.edges()], ["a", "b", "c"])
+        self.assertEqual([e.data for e in g.out_edges(0)], ["a", "c"])
+        self.assertEqual(g.in_degree(2), 2)
+        self.assertEqual(g.out_degree(0), 2)
+        # Not a permutation: refuse rather than drop or duplicate a node.
+        self.assertRaises(ValueError, g.reorder_nodes, [2, 0])
+        self.assertRaises(ValueError, g.reorder_nodes, [2, 2, 0])
+        self.assertRaises(KeyError, g.reorder_nodes, [2, 0, 9])
+        self.assertEqual(list(g.nodes()), [2, 0, 1])
+
     def test_ordered_multidigraph(self):
 
         g = OrderedMultiDiGraph()

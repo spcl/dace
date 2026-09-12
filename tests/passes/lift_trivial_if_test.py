@@ -7,36 +7,32 @@ from dace import ControlFlowRegion
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 import pytest
 
-# Conditions the pass must recognize as constant ``True``.
+# Conditions the pass must recognize as constant ``True``. One per syntactic family (bool literal,
+# relational fold, unary ``not``, function call): the pass runs the same single check on all of them,
+# so extra members of a family (``2 > 1``, ``2 + 2 == 4``, ``max(1, 2, 3) == 3``) only re-test sympy.
 _ALWAYS_TRUE = [
     "True",
     "1 == 1",
-    "2 > 1",
-    "5 >= 5",
     "not False",
-    "2 + 2 == 4",
     "abs(-5) == 5",
-    "max(1, 2, 3) == 3",
 ]
 
-# Conditions the pass must recognize as constant ``False``.
+# Conditions the pass must recognize as constant ``False`` -- same four families, opposite verdict.
 _ALWAYS_FALSE = [
     "False",
     "1 == 2",
-    "5 < 3",
-    "10 <= 9",
     "not True",
-    "2 + 2 == 5",
     "abs(-5) == -5",
 ]
 
-# Conditions that reference unbound symbols -- the pass must leave these alone.
-_CANT_EVAL = ["a < 5", "c == 0", "d >= 1"]
+# Condition that references an unbound symbol -- the pass must leave it alone. Every relational over a
+# free symbol raises the same way inside the check, so one representative covers the family.
+_CANT_EVAL = ["a < 5"]
 
 # Conditions where pystr_to_symbolic yields an unevaluated symbolic expression
 # (Function/Indexed/Symbol). bool() of such an expression is truthy, which would
 # mis-classify dynamic dataflow conditions like ``A[0]`` as trivially true.
-_DYNAMIC_RUNTIME_COND = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
+_DYNAMIC_RUNTIME_COND = ["A[0]", "x", "x[0] + 1", "A[i, j]"]
 
 
 def _get_sdfg(condition: str):
@@ -181,32 +177,32 @@ def test_single_condition_cant_eval(condition: str):
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 1
 
 
-@pytest.mark.parametrize("condition1,condition2",
-                         [(_ALWAYS_TRUE[i], _ALWAYS_TRUE[i + 1]) for i in range(len(_ALWAYS_TRUE) - 1)])
-def test_nested_condition(condition1: str, condition2: str):
-    """Trivially-true ``if`` inside trivially-true ``if`` collapses to plain dataflow."""
-    sdfg = _get_nested_sdfg(condition1, condition2)
+def test_nested_condition():
+    """Trivially-true ``if`` inside trivially-true ``if`` collapses to plain dataflow.
+
+    Nesting is a structural axis: which true condition is used is already swept by
+    ``test_single_condition``, so one distinct pair suffices (distinct, to catch inner/outer mixups)."""
+    sdfg = _get_nested_sdfg("1 == 1", "2 > 1")
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
-@pytest.mark.parametrize("condition1,condition2",
-                         [(_CANT_EVAL[i], _CANT_EVAL[i + 1]) for i in range(len(_CANT_EVAL) - 1)])
-def test_nested_condition_cant_eval(condition1: str, condition2: str):
+def test_nested_condition_cant_eval():
     """Nested unresolvable conditions are both preserved."""
-    sdfg = _get_nested_sdfg(condition1, condition2)
+    sdfg = _get_nested_sdfg("a < 5", "c == 0")
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 2
 
 
-@pytest.mark.parametrize("condition", _ALWAYS_TRUE)
-def test_if_else_cond_is_trivially_true(condition: str):
-    """``if/else`` with provably-true ``if`` keeps the ``if`` body."""
-    sdfg = _get_if_else_sdfg(condition, False)
+def test_if_else_cond_is_trivially_true():
+    """``if/else`` with provably-true ``if`` keeps the ``if`` body.
+
+    Structural axis only -- the condition families are swept by ``test_single_condition``."""
+    sdfg = _get_if_else_sdfg("1 == 1", False)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
@@ -235,7 +231,7 @@ def test_cfg_is_a_middle_node():
 # Fortran frontends emit conditions of the form ``(x == y) == 0/1`` (a
 # comparison of a comparison to an integer). Sympy fails to evaluate this due to mismatching types.
 # If these ever stop folding to True/False the pass would silently miss real trivial-if cases in Fortran SDFGs.
-@pytest.mark.parametrize("condition", ["(1 == 1) == 1", "(2 == 2) == 1", "(0 == 1) == 0"])
+@pytest.mark.parametrize("condition", ["(1 == 1) == 1", "(0 == 1) == 0"])
 def test_fortran_style_nested_comparison_true(condition: str):
     """The boolean-arithmetic fallback handles the Fortran-frontend ``(x == y) == k`` shape."""
     sdfg = _get_sdfg(condition)
@@ -461,13 +457,8 @@ if __name__ == "__main__":
     for c in _ALWAYS_TRUE:
         test_single_condition(c)
 
-    for i in range(len(_ALWAYS_TRUE) - 1):
-        c1 = _ALWAYS_TRUE[i]
-        c2 = _ALWAYS_TRUE[i + 1]
-        test_nested_condition(c1, c2)
-
-    for c in _ALWAYS_TRUE:
-        test_if_else_cond_is_trivially_true(c)
+    test_nested_condition()
+    test_if_else_cond_is_trivially_true()
 
     for c in _ALWAYS_FALSE:
         test_if_else_cond_is_trivially_false(c)

@@ -19,8 +19,8 @@ def test_nested_reduction():
 
     # Edges
     state.add_edge(A, None, me, None, Memlet.simple(A, '0:40'))
-    state.add_edge(me, None, red, None, Memlet.simple(A, '(2*i):(2*i+2)'))
-    state.add_edge(red, None, mx, None, Memlet.simple(B, 'i'))
+    state.add_edge(me, None, red, '_in', Memlet.simple(A, '(2*i):(2*i+2)'))
+    state.add_edge(red, '_out', mx, None, Memlet.simple(B, 'i'))
     state.add_edge(mx, None, B, None, Memlet.simple(B, '0:20'))
     sdfg.fill_scope_connectors()
 

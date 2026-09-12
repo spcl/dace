@@ -1,0 +1,1356 @@
+% references.bib -- bibliography for the layout-suite research collection.
+% Compiles every external work cited across report1-3 and coverage_gap_addendum.
+% Curation notes:
+%   - Titles/venues are taken verbatim from the reports where the reports state them;
+%     "et al." author lists are expanded only where independently confirmed (2026-07 web sweep).
+%     Where a report names a work without a title, a descriptive title in [brackets] is used
+%     (never fabricated as if verbatim) -- consistent with the reports' own [RECONSTRUCTED] convention.
+%   - Entries flagged `note = {unconfirmed ...}` could not be verified this sweep; fields present
+%     are best-effort from the citing report's text.
+
+% ===================================================================
+% 0. THE TARGET PAPER (this collection's subject)
+% ===================================================================
+
+@misc{sc26layout,
+  title        = {Why Schedule Transformations Are Not Enough: Layout Optimizations for Block-Granular {I/O}},
+  howpublished = {Submission, SC26 (Intl. Conf. for High Performance Computing, Networking, Storage and Analysis)},
+  year         = {2026},
+  note         = {The paper this research collection supports; authors omitted here (under review)}
+}
+
+% ===================================================================
+% 1. COST MODELS -- Family A: LogP / message-based (report1 Part I.A)
+% ===================================================================
+
+@inproceedings{culler1993logp,
+  author    = {Culler, David and Karp, Richard and Patterson, David and Sahay, Abhijit and Schauser, Klaus Erik and Santos, Eunice and Subramonian, Ramesh and von Eicken, Thorsten},
+  title     = {{LogP}: Towards a Realistic Model of Parallel Computation},
+  booktitle = {Proc. 4th ACM SIGPLAN Symp. on Principles and Practice of Parallel Programming (PPoPP)},
+  year      = {1993}
+}
+
+@inproceedings{alexandrov1995loggp,
+  author    = {Alexandrov, Albert and Ionescu, Mihai F. and Schauser, Klaus E. and Scheiman, Chris},
+  title     = {{LogGP}: Incorporating Long Messages into the {LogP} Model},
+  booktitle = {Proc. 7th ACM Symp. on Parallel Algorithms and Architectures (SPAA)},
+  year      = {1995}
+}
+
+@inproceedings{ino2001loggps,
+  author    = {Ino, Fumihiko and Fujimoto, Noriyuki and Hagihara, Kenichi},
+  title     = {{LogGPS}: A Parallel Computational Model for Synchronization Analysis},
+  booktitle = {Proc. 8th ACM SIGPLAN Symp. on Principles and Practices of Parallel Programming (PPoPP)},
+  year      = {2001}
+}
+
+@inproceedings{hoefler2010loggopsim,
+  author    = {Hoefler, Torsten and Schneider, Timo and Lumsdaine, Andrew},
+  title     = {{LogGOPSim}: Simulating Large-Scale Applications in the {LogGOPS} Model},
+  booktitle = {Proc. 19th ACM Intl. Symp. on High Performance Distributed Computing (HPDC)},
+  year      = {2010}
+}
+
+@inproceedings{kielmann2000plogp,
+  author    = {Kielmann, Thilo and Bal, Henri E. and Verstoep, Kees},
+  title     = {Fast Measurement of {LogP} Parameters for Message Passing Platforms},
+  booktitle = {Proc. IPDPS Workshops (LNCS 1800)},
+  year      = {2000}
+}
+
+@inproceedings{cameron2003memlogp,
+  author    = {Cameron, Kirk W. and Sun, Xian-He},
+  title     = {Quantifying Locality Effect in Data Access Delay: Memory {logP}},
+  booktitle = {Proc. Intl. Parallel and Distributed Processing Symp. (IPDPS)},
+  year      = {2003}
+}
+
+@inproceedings{altafwood2017logca,
+  author    = {Altaf, M. Shoaib Bin and Wood, David A.},
+  title     = {{LogCA}: A High-Level Performance Model for Hardware Accelerators},
+  booktitle = {Proc. 44th Intl. Symp. on Computer Architecture (ISCA)},
+  year      = {2017}
+}
+
+% ===================================================================
+% 2. COST MODELS -- Family B: memory/cache-hierarchy analytical models
+% ===================================================================
+
+@inproceedings{stengel2015ecm,
+  author    = {Stengel, Holger and Treibig, Jan and Hager, Georg and Wellein, Gerhard},
+  title     = {Quantifying Performance Bottlenecks of Stencil Computations Using the Execution-Cache-Memory Model},
+  booktitle = {Proc. 29th ACM Intl. Conf. on Supercomputing (ICS)},
+  year      = {2015},
+  note      = {ECM model; report1 attributes the family to Hager/Wellein/Stengel/Hofmann collectively}
+}
+
+@article{williams2009roofline,
+  author  = {Williams, Samuel and Waterman, Andrew and Patterson, David},
+  title   = {Roofline: An Insightful Visual Performance Model for Multicore Architectures},
+  journal = {Communications of the ACM},
+  volume  = {52},
+  number  = {4},
+  year    = {2009}
+}
+
+@article{ilic2014carm,
+  author  = {Ilic, Aleksandar and Pratas, Frederico and Sousa, Leonel},
+  title   = {Cache-Aware Roofline Model: Upgrading the Loft},
+  journal = {IEEE Computer Architecture Letters},
+  volume  = {13},
+  number  = {1},
+  year    = {2014}
+}
+
+@inproceedings{gysi2019haystack,
+  author    = {Gysi, Tobias and Grosser, Tobias and Hoefler, Torsten},
+  title     = {A Fast Analytical Model of Fully Associative Caches},
+  booktitle = {Proc. 40th ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {2019},
+  note      = {Referred to as HAYSTACK in report1}
+}
+
+@article{bao2018cachemodel,
+  author  = {Bao, Wenlei and Krishnamoorthy, Sriram and Pouchet, Louis-No{\"e}l and Sadayappan, P.},
+  title   = {Analytical Modeling of Cache Behavior for Affine Programs},
+  journal = {Proc. ACM on Programming Languages (POPL)},
+  volume  = {2},
+  year    = {2018}
+}
+
+@inproceedings{hongkim2009mwpcwp,
+  author    = {Hong, Sunpyo and Kim, Hyesoon},
+  title     = {An Analytical Model for a {GPU} Architecture with Memory-Level and Thread-Level Parallelism Awareness},
+  booktitle = {Proc. 36th Intl. Symp. on Computer Architecture (ISCA)},
+  year      = {2009},
+  note      = {MWP-CWP model}
+}
+
+@inproceedings{huang2014gpumech,
+  author    = {Huang, Jen-Cheng and Lee, Joo Hwan and Kim, Hyesoon and Lee, Hsien-Hsin S.},
+  title     = {{GPUMech}: {GPU} Performance Modeling Technique Based on Interval Analysis},
+  booktitle = {Proc. 47th Annual IEEE/ACM Intl. Symp. on Microarchitecture (MICRO)},
+  year      = {2014}
+}
+
+@inproceedings{wang2020mdm,
+  author    = {Wang, Lu and Jahre, Magnus and Adileh, Almutaz and Eeckhout, Lieven},
+  title     = {{MDM}: The {GPU} Memory Divergence Model},
+  booktitle = {Proc. 53rd Annual IEEE/ACM Intl. Symp. on Microarchitecture (MICRO)},
+  year      = {2020}
+}
+
+@inproceedings{lee2022gcom,
+  title     = {{GCoM}: A Detailed {GPU} Core Model for Accurate Analytical Modeling of Modern {GPUs}},
+  booktitle = {Proc. 49th Annual Intl. Symp. on Computer Architecture (ISCA)},
+  year      = {2022},
+  note      = {Authors not confirmed this sweep (Yonsei Univ. / Seoul Nat'l Univ. group); report1 lists venue as ISPASS, confirmed here as ISCA'22}
+}
+
+@phdthesis{volkov2016latency,
+  author = {Volkov, Vasily},
+  title  = {Understanding Latency Hiding on {GPUs}},
+  school = {University of California, Berkeley, EECS Department},
+  year   = {2016},
+  note   = {Technical Report No.\ UCB/EECS-2016-143}
+}
+
+% ===================================================================
+% 3. COST MODELS -- Family C: I/O-complexity / pebble-game models
+% ===================================================================
+
+@inproceedings{hongkung1981pebble,
+  author    = {Hong, Jia-Wei and Kung, H. T.},
+  title     = {{I/O} Complexity: The Red-Blue Pebble Game},
+  booktitle = {Proc. 13th Annual ACM Symp. on Theory of Computing (STOC)},
+  year      = {1981}
+}
+
+@inproceedings{demaineliu2018pspace,
+  author    = {Demaine, Erik D. and Liu, Quanquan C.},
+  title     = {Red-Blue Pebble Game: Complexity of Computing the Trade-Off Between Cache Size and Memory Transfers},
+  booktitle = {Proc. 30th ACM Symp. on Parallelism in Algorithms and Architectures (SPAA)},
+  year      = {2018}
+}
+
+@article{aggarwalvitter1988iocomplexity,
+  author  = {Aggarwal, Alok and Vitter, Jeffrey S.},
+  title   = {The Input/Output Complexity of Sorting and Related Problems},
+  journal = {Communications of the ACM},
+  volume  = {31},
+  number  = {9},
+  year    = {1988}
+}
+
+@inproceedings{savage1995hongkungextend,
+  author    = {Savage, John E.},
+  title     = {Extending the Hong-Kung Model to Memory Hierarchies},
+  booktitle = {Proc. Intl. Computing and Combinatorics Conf. (COCOON)},
+  year      = {1995},
+  note      = {"Savage red-blue-white" pebble-game extension per report1}
+}
+
+@inproceedings{olivry2020iolb,
+  author    = {Olivry, Auguste and Langou, Julien and Pouchet, Louis-No{\"e}l and Sadayappan, P. and Rastello, Fabrice},
+  title     = {Automated Derivation of Parametric Data Movement Lower Bounds for Affine Programs},
+  booktitle = {Proc. 41st ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {2020},
+  note      = {IOLB; HiPEAC Paper Award}
+}
+
+@inproceedings{olivry2021ioopt,
+  author    = {Olivry, Auguste and others},
+  title     = {{IOOpt}: Automatic Derivation of {I/O} Complexity Bounds for Affine Programs},
+  booktitle = {Proc. 42nd ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {2021},
+  note      = {Full author list not independently confirmed this sweep}
+}
+
+@inproceedings{kwasniewski2019cosma,
+  author    = {Kwasniewski, Grzegorz and Kabi{\'c}, Marko and Besta, Maciej and VandeVondele, Joost and Solc{\`a}, Raffaele and Hoefler, Torsten},
+  title     = {Red-Blue Pebbling Revisited: Near Optimal Parallel Matrix-Matrix Multiplication},
+  booktitle = {Proc. Intl. Conf. for High Performance Computing, Networking, Storage and Analysis (SC)},
+  year      = {2019},
+  note      = {COSMA}
+}
+
+@inproceedings{kwasniewski2021soap,
+  author    = {Kwasniewski, Grzegorz and others},
+  title     = {Pebbles, Graphs, and a Pinch of Combinatorics: Towards Tight {I/O} Lower Bounds for Statically Analyzable Programs},
+  booktitle = {Proc. 33rd ACM Symp. on Parallelism in Algorithms and Architectures (SPAA)},
+  year      = {2021},
+  note      = {SOAP; full author list not independently confirmed this sweep}
+}
+
+@inproceedings{bohnlein2025multiprocessor,
+  author    = {B{\"o}hnlein, Toni and Papp, P{\'a}l Andr{\'a}s and Yzelman, Albert-Jan N.},
+  title     = {Red-Blue Pebbling with Multiple Processors: Time, Communication and Memory Trade-Offs},
+  booktitle = {Proc. Intl. Colloquium on Structural Information and Communication Complexity (SIROCCO)},
+  year      = {2025}
+}
+
+@misc{anon2025disaggregated,
+  title        = {[Disaggregated-Memory Pebble Games]},
+  howpublished = {MEMSYS},
+  year         = {2025},
+  note         = {Authors not stated in report1; descriptive title, not verbatim}
+}
+
+% ===================================================================
+% 4. COST MODELS -- Family D: layout-parametric sparse traffic models
+% ===================================================================
+
+@article{kreutzer2014sellcsigma,
+  author  = {Kreutzer, Moritz and Hager, Georg and Wellein, Gerhard and Fehske, Holger and Bishop, Alan R.},
+  title   = {A Unified Sparse Matrix Data Format for Efficient General Sparse Matrix-Vector Multiplication on Modern Processors with Wide {SIMD} Units},
+  journal = {SIAM Journal on Scientific Computing},
+  volume  = {36},
+  number  = {5},
+  year    = {2014},
+  note    = {SELL-C-$\sigma$; report cites venue shorthand SISC/SISM}
+}
+
+@inproceedings{vuduc2002bounds,
+  author    = {Vuduc, Richard and Demmel, James W. and Yelick, Katherine A. and Kamil, Shoaib and Nishtala, Rajesh and Lee, Benjamin},
+  title     = {Performance Optimizations and Bounds for Sparse Matrix-Vector Multiply},
+  booktitle = {Proc. Intl. Conf. for High Performance Computing, Networking, Storage and Analysis (SC)},
+  year      = {2002}
+}
+
+@article{im2004sparsity,
+  author  = {Im, Eun-Jin and Yelick, Katherine and Vuduc, Richard},
+  title   = {{SPARSITY}: Optimization Framework for Sparse Matrix Kernels},
+  journal = {International Journal of High Performance Computing Applications},
+  volume  = {18},
+  number  = {1},
+  year    = {2004}
+}
+
+@article{vuduc2005oski,
+  author  = {Vuduc, Richard and Demmel, James W. and Yelick, Katherine A.},
+  title   = {{OSKI}: A Library of Automatically Tuned Sparse Matrix Kernels},
+  journal = {Journal of Physics: Conference Series (SciDAC)},
+  volume  = {16},
+  year    = {2005}
+}
+
+@inproceedings{choi2010bcsr,
+  author    = {Choi, Jee Whan and Singh, Amik and Vuduc, Richard W.},
+  title     = {Model-Driven Autotuning of Sparse Matrix-Vector Multiply on {GPUs}},
+  booktitle = {Proc. 15th ACM SIGPLAN Symp. on Principles and Practice of Parallel Programming (PPoPP)},
+  year      = {2010}
+}
+
+% ===================================================================
+% 5. COST MODELS -- Family E: accelerator mapping / dataplacement
+% ===================================================================
+
+@inproceedings{parashar2019timeloop,
+  author    = {Parashar, Angshuman and Raina, Priyanka and Shao, Yakun Sophia and Chen, Yu-Hsin and Ying, Victor A. and Mukkara, Anurag and Venkatesan, Rangharajan and Khailany, Brucek and Keckler, Stephen W. and Emer, Joel},
+  title     = {Timeloop: A Systematic Approach to {DNN} Accelerator Evaluation},
+  booktitle = {Proc. IEEE Intl. Symp. on Performance Analysis of Systems and Software (ISPASS)},
+  year      = {2019}
+}
+
+@inproceedings{kwon2019maestro,
+  author    = {Kwon, Hyoukjun and Chatarasi, Prasanth and Pellauer, Michael and Parashar, Angshuman and Sarkar, Vivek and Krishna, Tushar},
+  title     = {Understanding Reuse, Performance, and Hardware Cost of {DNN} Dataflow: A Data-Centric Approach},
+  booktitle = {Proc. 52nd Annual IEEE/ACM Intl. Symp. on Microarchitecture (MICRO)},
+  year      = {2019},
+  note      = {MAESTRO; also IEEE Micro Top Picks 2020}
+}
+
+@article{mei2021zigzag,
+  author  = {Mei, Linyan and Houshmand, Pouya and Jain, Vikram and Giraldo, Sebastian and Verhelst, Marian},
+  title   = {{ZigZag}: Enlarging Joint Architecture-Mapping Design Space Exploration for {DNN} Accelerators},
+  journal = {IEEE Transactions on Computers},
+  volume  = {70},
+  number  = {8},
+  year    = {2021}
+}
+
+@misc{anon2026tcm,
+  title        = {The Turbo-Charged Mapper: Fast and Optimal Mapping for Energy-Efficient and Low-Latency Accelerator Design},
+  howpublished = {arXiv:2602.15172},
+  year         = {2026},
+  note         = {Authors not listed in report1/addendum text; introduces the "dataplacement" concept (TCM)}
+}
+
+@misc{shi2024cmds,
+  author       = {Shi, Man and Colleman, Steven and VanDeMieroop, Charlotte and Joseph, Antony and Meijer, Maurice and Dehaene, Wim and Verhelst, Marian},
+  title        = {{CMDS}: Cross-Layer Dataflow Optimization for {DNN} Accelerators Exploiting Multi-Bank Memories},
+  howpublished = {arXiv:2406.14574},
+  year         = {2024}
+}
+
+% ===================================================================
+% 6. COST MODELS -- Family F: learned cost models
+% ===================================================================
+
+@inproceedings{won2023waco,
+  author    = {Won, Jaeyeon and Mendis, Charith and Emer, Joel S. and Amarasinghe, Saman},
+  title     = {{WACO}: Learning Workload-Aware Co-Optimization of the Format and Schedule of a Sparse Tensor Program},
+  booktitle = {Proc. 28th ACM Intl. Conf. on Architectural Support for Programming Languages and Operating Systems (ASPLOS)},
+  year      = {2023}
+}
+
+@inproceedings{kaufman2021learned,
+  author    = {Kaufman, Sam and Phothilimthana, Phitchaya Mangpo and Zhou, Yanqi and Mendis, Charith and Roy, Sudip and Sabne, Amit and Burrows, Mike},
+  title     = {A Learned Performance Model for Tensor Processing Units},
+  booktitle = {Proc. Machine Learning and Systems (MLSys)},
+  year      = {2021}
+}
+
+@inproceedings{phothilimthana2023tpugraphs,
+  author       = {Phothilimthana, Phitchaya Mangpo and others},
+  title        = {{TpuGraphs}: A Performance Prediction Dataset on Large Tensor Computational Graphs},
+  booktitle    = {Proc. Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track},
+  year         = {2023},
+  note         = {arXiv:2308.13490}
+}
+
+@inproceedings{ahrens2022asymptotic,
+  author    = {Ahrens, Willow and Kjolstad, Fredrik and Amarasinghe, Saman},
+  title     = {Autoscheduling for Sparse Tensor Algebra with an Asymptotic Cost Model},
+  booktitle = {Proc. 43rd ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {2022},
+  note      = {Published under the name Peter Ahrens}
+}
+
+@inproceedings{ragankelley2013halide,
+  author    = {Ragan-Kelley, Jonathan and Barnes, Connelly and Adams, Andrew and Paris, Sylvain and Durand, Fr{\'e}do and Amarasinghe, Saman},
+  title     = {Halide: A Language and Compiler for Optimizing Parallelism, Locality, and Recomputation in Image Processing Pipelines},
+  booktitle = {Proc. 34th ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {2013}
+}
+
+@inproceedings{chen2018tvm,
+  author    = {Chen, Tianqi and Moreau, Thierry and Jiang, Ziheng and Zheng, Lianmin and Yan, Eddie and Shen, Haichen and Cowan, Meghan and Wang, Leyuan and Hu, Yuwei and Ceze, Luis and Guestrin, Carlos and Krishnamurthy, Arvind},
+  title     = {{TVM}: An Automated End-to-End Optimizing Compiler for Deep Learning},
+  booktitle = {Proc. 13th USENIX Symp. on Operating Systems Design and Implementation (OSDI)},
+  year      = {2018}
+}
+
+% ===================================================================
+% 7. HARDNESS RESULTS / OPTIMALITY THEORY (report1 Part II)
+% ===================================================================
+
+@inproceedings{petrank2002hardness,
+  author    = {Petrank, Erez and Rawitz, Dror},
+  title     = {The Hardness of Cache Conscious Data Placement},
+  booktitle = {Proc. 29th ACM SIGPLAN-SIGACT Symp. on Principles of Programming Languages (POPL)},
+  year      = {2002},
+  note      = {Extended version: Nordic Journal of Computing 12(3), 2005}
+}
+
+@misc{wu_gpu_repositioning,
+  author = {Wu, [initials unconfirmed] and others},
+  title  = {[{GPU} Data Repositioning is {NP}-Hard]},
+  note   = {Cited in report1 for the NP-hardness of GPU data repositioning; not independently located this sweep -- do not treat title as verbatim}
+}
+
+@inproceedings{kremer1993dynamicremap,
+  author    = {Kremer, Ulrich},
+  title     = {{NP}-Completeness of Dynamic Remapping},
+  booktitle = {Proc. 4th Workshop on Compilers for Parallel Computers},
+  address   = {Delft, The Netherlands},
+  year      = {1993}
+}
+
+@article{gareyjohnsonstockmeyer1976minla,
+  author  = {Garey, M. R. and Johnson, D. S. and Stockmeyer, L.},
+  title   = {Some Simplified {NP}-Complete Graph Problems},
+  journal = {Theoretical Computer Science},
+  volume  = {1},
+  number  = {3},
+  year    = {1976},
+  note    = {NP-hardness of minimum linear arrangement (as a corollary)}
+}
+
+@article{kennedykremer1998ilp,
+  author  = {Kennedy, Ken and Kremer, Ulrich},
+  title   = {Automatic Data Layout for Distributed-Memory Machines},
+  journal = {ACM Transactions on Programming Languages and Systems},
+  volume  = {20},
+  number  = {4},
+  year    = {1998},
+  note    = {The 0-1 ILP formulation cited in report1's Route 1}
+}
+
+% ===================================================================
+% 8. INSPECTOR-EXECUTOR / RUNTIME REORDERING
+% ===================================================================
+
+@inproceedings{dingkennedy1999pldi,
+  author    = {Ding, Chen and Kennedy, Ken},
+  title     = {Improving Cache Performance in Dynamic Applications Through Data and Computation Reorganization at Run Time},
+  booktitle = {Proc. ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {1999}
+}
+
+@article{mellorcrummey2001ijpp,
+  author  = {Mellor-Crummey, John and Whalley, David and Kennedy, Ken},
+  title   = {Improving Memory Hierarchy Performance for Irregular Applications},
+  journal = {International Journal of Parallel Programming},
+  volume  = {29},
+  number  = {3},
+  year    = {2001}
+}
+
+% ===================================================================
+% 9. LAYOUT TRANSFORMATIONS -- Padding (survey Family 1)
+% ===================================================================
+
+@inproceedings{riveratseng1998pldi,
+  author    = {Rivera, Gabriel and Tseng, Chau-Wen},
+  title     = {Data Transformations for Eliminating Conflict Misses},
+  booktitle = {Proc. ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {1998}
+}
+
+@inproceedings{hong2016pldi,
+  author    = {Hong, Changwan and Sadayappan, P. and others},
+  title     = {Effective Padding of Multi-Dimensional Arrays to Avoid Cache Conflict Misses},
+  booktitle = {Proc. 37th ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {2016},
+  note      = {Introduces PAdvisor; full author list not independently confirmed this sweep}
+}
+
+@misc{harris2013transpose,
+  author       = {Harris, Mark},
+  title        = {An Efficient Matrix Transpose in {CUDA} {C/C++}},
+  howpublished = {NVIDIA Technical Blog},
+  year         = {2013}
+}
+
+@misc{mao_bankconflict_blog,
+  author       = {Mao, Lei},
+  title        = {{CUDA} Shared Memory Bank Conflict Reproduction (Padding vs.\ {XOR} Swizzle)},
+  howpublished = {Lei Mao's Log Book (blog)},
+  note         = {Reports padding and XOR-swizzle giving identical latency on RTX 3090; exact post date not confirmed this sweep}
+}
+
+@misc{jep142_contended,
+  title        = {{JEP} 142: Reduce Cache Contention on Specified Fields (\texttt{@Contended})},
+  howpublished = {OpenJDK JDK Enhancement Proposal},
+  note         = {Targeted for JDK 8}
+}
+
+@misc{linux_falsesharing_doc,
+  title        = {False Sharing},
+  howpublished = {Linux Kernel Documentation, \url{https://docs.kernel.org/kernel-hacking/false-sharing.html}},
+  note         = {Cites Linux commits 91b6d3256356, 7b1002f7cfe5, 292648ac5cf1, 520f897a3554, 56f3547bfa4d as further examples (not individually verified in report3)}
+}
+
+% ===================================================================
+% 10. LAYOUT TRANSFORMATIONS -- Permutation / transposition (survey Family 2)
+% ===================================================================
+
+@inproceedings{kandemir1998micro,
+  author    = {Kandemir, Mahmut and Ramanujam, J. and Choudhary, Alok and Banerjee, Prithviraj},
+  title     = {Improving Locality Using Loop and Data Transformations in an Integrated Framework},
+  booktitle = {Proc. 31st Annual ACM/IEEE Intl. Symp. on Microarchitecture (MICRO)},
+  year      = {1998},
+  note      = {Journal version in J. Parallel and Distributed Computing (JPDC), 1999; nonsingular data-transformation-matrix framework}
+}
+
+@article{oboyle1999ijpp,
+  author  = {O'Boyle, Michael F. P. and Knijnenburg, Peter M. W.},
+  title   = {Nonsingular Data Transformations: Definition, Validity, Applications},
+  journal = {International Journal of Parallel Programming},
+  volume  = {27},
+  number  = {3},
+  year    = {1999}
+}
+
+@misc{pytorch_channelslast_blog,
+  author       = {{PyTorch}},
+  title        = {Channels Last Memory Format in {PyTorch}},
+  howpublished = {PyTorch tutorials/engineering blog},
+  year         = {2021}
+}
+
+@article{trott2022kokkos,
+  author  = {Trott, Christian R. and others},
+  title   = {Kokkos 3: Programming Model Extensions for the Exascale Era},
+  journal = {IEEE Transactions on Parallel and Distributed Systems},
+  volume  = {33},
+  number  = {4},
+  year    = {2022}
+}
+
+@misc{openxla_docs,
+  title        = {{XLA}: {GPU} Architecture -- Layout Assignment},
+  howpublished = {OpenXLA project documentation},
+  note         = {Layout Assignment pass: per-op physical layout choice, propagation, and copy/transpose materialization at conflicts}
+}
+
+@misc{jiang2026raggedattention,
+  author       = {Jiang, Jevin and Chen, Ying and Hechtman, Blake and Zhang, Fenghui and Mu, Yarong},
+  title        = {Ragged Paged Attention: A High-Performance and Flexible {LLM} Inference Kernel for {TPU}},
+  howpublished = {arXiv:2604.15464},
+  year         = {2026},
+  note         = {Documents XLA layout assignment overriding user layout constraints}
+}
+
+% ===================================================================
+% 11. LAYOUT TRANSFORMATIONS -- Blocking / tiling / Morton (survey Family 3)
+% ===================================================================
+
+@inproceedings{chatterjee1999ics,
+  author    = {Chatterjee, Siddhartha and Jain, Vibhor V. and Lebeck, Alvin R. and Mundhra, Shyam and Thottethodi, Mithuna},
+  title     = {Nonlinear Array Layouts for Hierarchical Memory Systems},
+  booktitle = {Proc. 13th Intl. Conf. on Supercomputing (ICS)},
+  year      = {1999}
+}
+
+@inproceedings{yount2015hpcc,
+  author    = {Yount, Charles},
+  title     = {Vector Folding: Improving Stencil Performance via Multi-Dimensional {SIMD}-Vector Representation},
+  booktitle = {Proc. IEEE Intl. Conf. on High Performance Computing and Communications (HPCC)},
+  year      = {2015}
+}
+
+@inproceedings{yount2016yask,
+  author    = {Yount, Charles and Tobin, Josh and Breuer, Alexander and Duran, Alejandro},
+  title     = {{YASK}---Yet Another Stencil Kernel: A Framework for {HPC} Stencil Code-Generation and Tuning},
+  booktitle = {Proc. 6th Intl. Workshop on Domain-Specific Languages and High-Level Frameworks for HPC (WOLFHPC), held with SC},
+  year      = {2016}
+}
+
+@inproceedings{henretty2011cc,
+  author    = {Henretty, Tom and Stock, Kevin and Pouchet, Louis-No{\"e}l and Franchetti, Franz and Ramanujam, J. and Sadayappan, P.},
+  title     = {Data Layout Transformation for Stencil Computations on Short-Vector {SIMD}},
+  booktitle = {Proc. Intl. Conf. on Compiler Construction (CC)},
+  year      = {2011}
+}
+
+@misc{iree_datatiling_blog,
+  title        = {Data Tiling in {IREE} (\texttt{linalg.mmt4d}, \texttt{tensor.pack}/\texttt{unpack})},
+  howpublished = {IREE project blog},
+  note         = {GEMM operand packing into a compiler-inserted, fused mmt4d layout}
+}
+
+@misc{vendor_texture_tiling_docs,
+  title        = {{VK\_IMAGE\_TILING\_OPTIMAL}: Opaque Morton/Z-Order Texture Tiling},
+  howpublished = {Vulkan / GPU vendor documentation}
+}
+
+% ===================================================================
+% 12. LAYOUT TRANSFORMATIONS -- Shuffles / swizzles / reordering (survey Family 4)
+% ===================================================================
+
+@misc{nvidia_cutlass_cute_docs,
+  title        = {{CUTLASS}/{CuTe} \texttt{Swizzle<B,M,S>}},
+  howpublished = {NVIDIA CUTLASS documentation}
+}
+
+@inproceedings{gonzalez1997ics,
+  author    = {Gonzalez, Antonio and others},
+  title     = {[Bank-Conflict-Free {XOR}-Based Memory Interleaving]},
+  booktitle = {Proc. Intl. Conf. on Supercomputing (ICS)},
+  year      = {1997},
+  note      = {Descriptive title, not verified verbatim; full author list not confirmed this sweep}
+}
+
+@inproceedings{rau1991isca,
+  author    = {Rau, B. Ramakrishna},
+  title     = {Pseudo-Randomly Interleaved Memory},
+  booktitle = {Proc. 18th Annual Intl. Symp. on Computer Architecture (ISCA)},
+  year      = {1991}
+}
+
+@misc{zhou2025linearlayouts,
+  author       = {Zhou, Keren and Lezcano, Mario and Goucher, Adam and Rakhmati, Akhmed and Niu, Jeff and Lebar, Justin and Szczerbuk, Pawel and Bell, Peter and Tillet, Phil and Raoux, Thomas and Moudallal, Zahi},
+  title        = {Linear Layouts: Robust Code Generation of Efficient Tensor Computation Using {$\mathbb{F}_2$}},
+  howpublished = {arXiv:2505.23819},
+  year         = {2025},
+  note         = {Revised 2026; also ASPLOS 2026}
+}
+
+@inproceedings{wei2016gorder,
+  author    = {Wei, Hao and Yu, Jeffrey Xu and Lu, Can and Lin, Xuemin},
+  title     = {Speedup Graph Processing by Graph Ordering},
+  booktitle = {Proc. ACM SIGMOD Intl. Conf. on Management of Data},
+  year      = {2016},
+  note      = {Gorder}
+}
+
+@inproceedings{arai2016rabbit,
+  author    = {Arai, Junya and Shiokawa, Hiroaki and Yamamuro, Takeshi and Onizuka, Makoto and Iwamura, Sotetsu},
+  title     = {Rabbit Order: Just-in-Time Parallel Reordering for Fast Graph Analysis},
+  booktitle = {Proc. IEEE Intl. Parallel and Distributed Processing Symp. (IPDPS)},
+  year      = {2016}
+}
+
+@inproceedings{cuthillmckee1969,
+  author    = {Cuthill, Elizabeth and McKee, James},
+  title     = {Reducing the Bandwidth of Sparse Symmetric Matrices},
+  booktitle = {Proc. 1969 24th ACM National Conference},
+  publisher = {ACM / Brandon Systems Press},
+  year      = {1969},
+  pages     = {157--172},
+  note      = {RCM; report3 flags the original as referenced-not-independently-verified in its own sweep, kept here on report2's direct citation}
+}
+
+@inproceedings{zhang2011gstreamline,
+  author    = {Zhang, Eddy Z. and Jiang, Yunlian and Guo, Ziyu and Tian, Kai and Shen, Xipeng},
+  title     = {On-the-Fly Elimination of Dynamic Irregularities for {GPU} Computing},
+  booktitle = {Proc. 16th ACM Intl. Conf. on Architectural Support for Programming Languages and Operating Systems (ASPLOS)},
+  year      = {2011},
+  note      = {G-Streamline}
+}
+
+@article{baderzenger2006peano,
+  author  = {Bader, Michael and Zenger, Christoph},
+  title   = {Cache Oblivious Matrix Multiplication Using an Element Ordering Based on a {Peano} Curve},
+  journal = {Linear Algebra and its Applications},
+  year    = {2006}
+}
+
+@article{sulyok2019jpdc,
+  author  = {Sulyok, Csaba and others},
+  title   = {[Space-Filling-Curve Mesh/Particle Ordering]},
+  journal = {Journal of Parallel and Distributed Computing},
+  year    = {2019},
+  note    = {Descriptive title, not verified verbatim; full author list not confirmed this sweep}
+}
+
+% ===================================================================
+% 13. LAYOUT TRANSFORMATIONS -- AoS/SoA/AoSoA, Zip/Unzip (survey Family 5)
+% ===================================================================
+
+@inproceedings{sung2012inpar,
+  author    = {Sung, I-Jui and Liu, Geng Daniel and Hwu, Wen-Mei W.},
+  title     = {{DL}: A Data Layout Transformation System for Heterogeneous Computing},
+  booktitle = {Proc. Innovative Parallel Computing (InPar)},
+  year      = {2012}
+}
+
+@article{slattery2022joss,
+  author  = {Slattery, Stuart R. and others},
+  title   = {Cabana: A Performance Portable Library for Particle-Based Simulations},
+  journal = {Journal of Open Source Software},
+  volume  = {7},
+  number  = {70},
+  year    = {2022}
+}
+
+@article{pallhess2013gromacs,
+  author  = {P{\'a}ll, Szil{\'a}rd and Hess, Berk},
+  title   = {A Flexible Algorithm for Calculating Pair Interactions on {SIMD} Architectures},
+  journal = {Computer Physics Communications},
+  volume  = {184},
+  number  = {12},
+  year    = {2013}
+}
+
+@inproceedings{zhong2004pldi,
+  author    = {Zhong, Yutao and Orlovich, Maksim and Shen, Xipeng and Ding, Chen},
+  title     = {Array Regrouping and Structure Splitting Using Whole-Program Reference Affinity},
+  booktitle = {Proc. ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {2004}
+}
+
+@inproceedings{chilimbi1999pldi,
+  author    = {Chilimbi, Trishul M. and Hill, Mark D. and Larus, James R.},
+  title     = {Cache-Conscious Structure Layout},
+  booktitle = {Proc. ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {1999}
+}
+
+@inproceedings{zhang2018graphit,
+  author    = {Zhang, Yunming and Yang, Mengjiao and Baghdadi, Riyadh and Kamil, Shoaib and Shun, Julian and Amarasinghe, Saman},
+  title     = {{GraphIt}: A High-Performance Graph {DSL}},
+  booktitle = {Proc. ACM on Programming Languages (OOPSLA)},
+  year      = {2018}
+}
+
+@misc{unity_dots_docs,
+  author       = {{Unity Technologies}},
+  title        = {Unity Data-Oriented Technology Stack ({DOTS}) / Entities},
+  howpublished = {Unity documentation}
+}
+
+@misc{acton2014cppcon,
+  author       = {Acton, Mike},
+  title        = {Data-Oriented Design and {C++}},
+  howpublished = {CppCon},
+  year         = {2014}
+}
+
+@misc{rust_soa_derive,
+  title        = {\texttt{soa\_derive}},
+  howpublished = {Rust crate, crates.io}
+}
+
+@misc{zig_multiarraylist,
+  title        = {\texttt{std.MultiArrayList}},
+  howpublished = {Zig standard library documentation}
+}
+
+@misc{gcc_ipa_struct_reorg,
+  title        = {\texttt{-fipa-struct-reorg}},
+  howpublished = {GCC compiler documentation}
+}
+
+@inproceedings{copeland1985dsm,
+  author    = {Copeland, George P. and Khoshafian, Setrag N.},
+  title     = {A Decomposition Storage Model},
+  booktitle = {Proc. ACM SIGMOD Intl. Conf. on Management of Data},
+  year      = {1985}
+}
+
+% ===================================================================
+% 14. DOMAIN-SPECIFIC PACKED FORMATS (survey Family 6)
+% ===================================================================
+
+@inproceedings{georganas2018sc,
+  author    = {Georganas, Evangelos and Avancha, Sasikanth and Banerjee, Kunal and Kalamkar, Dhiraj and Henry, Greg and Pabst, Hans and Heinecke, Alexander},
+  title     = {Anatomy of High-Performance Deep Learning Convolutions on {SIMD} Architectures},
+  booktitle = {Proc. Intl. Conf. for High Performance Computing, Networking, Storage and Analysis (SC)},
+  year      = {2018}
+}
+
+@misc{intel_onednn_docs,
+  author       = {{Intel}},
+  title        = {one{DNN} Memory Format Propagation},
+  howpublished = {Intel oneDNN developer documentation}
+}
+
+@misc{nvidia_tensorrt_docs,
+  author       = {{NVIDIA}},
+  title        = {{TensorRT} Developer Guide (Reformat Layers, Tensor Formats)},
+  howpublished = {NVIDIA documentation}
+}
+
+@misc{nvidia_cublaslt_docs,
+  author       = {{NVIDIA}},
+  title        = {{cuBLASLt} Library ({IMMA} Orders)},
+  howpublished = {NVIDIA documentation}
+}
+
+@misc{nvidia_hopper_tma_docs,
+  author       = {{NVIDIA}},
+  title        = {Hopper Architecture: {TMA} Swizzle Modes},
+  howpublished = {NVIDIA technical blog / whitepaper}
+}
+
+@misc{amd_rocm_mfma_blog,
+  author       = {{AMD}},
+  title        = {Matrix Cores ({MFMA}) / {LDS} Layouts},
+  howpublished = {ROCm / GPUOpen technical blog}
+}
+
+@article{laszlo2016toms,
+  author  = {L{\'a}szl{\'o}, Endre and Giles, Mike and Appleyard, Jeremy},
+  title   = {Manycore Algorithms for Batch Scalar and Block Tridiagonal Solvers},
+  journal = {ACM Transactions on Mathematical Software},
+  volume  = {42},
+  number  = {4},
+  year    = {2016}
+}
+
+@misc{magma_batched,
+  author = {Abdelfattah, Ahmad and others},
+  title  = {{MAGMA} Batched Linear Algebra (Interleaved / Strided-Batch Layouts)},
+  note   = {Flagged unverified in report2/coverage_gap_addendum (MAGMA specifics not checked)}
+}
+
+% ===================================================================
+% 15. JOINT LAYOUT+SCHEDULE / LAYOUT-PROPAGATION FRAMEWORKS (survey Family 7)
+% ===================================================================
+
+@inproceedings{shirako2022lcpc,
+  author    = {Shirako, Jun and Sarkar, Vivek},
+  title     = {[Integrated Polyhedral Loop and Data-Layout Optimization]},
+  booktitle = {Proc. Intl. Workshop on Languages and Compilers for Parallel Computing (LCPC)},
+  year      = {2022},
+  note      = {Descriptive title, not verified verbatim}
+}
+
+@inproceedings{shirako2019impact,
+  author    = {Shirako, Jun and others},
+  title     = {[Integrated Loop and Data-Layout Transformation]},
+  booktitle = {Proc. Intl. Workshop on Polyhedral Compilation Techniques (IMPACT)},
+  year      = {2019},
+  note      = {Descriptive title, not verified verbatim}
+}
+
+@inproceedings{xu2023alt,
+  author    = {Xu, Zhen and others},
+  title     = {{ALT}: Breaking the Wall Between Data Layout and Loop Optimizations},
+  booktitle = {Proc. 18th European Conf. on Computer Systems (EuroSys)},
+  year      = {2023},
+  note      = {Full author list not independently confirmed this sweep}
+}
+
+@inproceedings{bennun2023cgo,
+  author    = {Ben-Nun, Tal and Ates, Berke and Calotoiu, Alexandru and Hoefler, Torsten},
+  title     = {Bridging Control-Centric and Data-Centric Optimization},
+  booktitle = {Proc. 21st ACM/IEEE Intl. Symp. on Code Generation and Optimization (CGO)},
+  year      = {2023},
+  note      = {DaCe}
+}
+
+@inproceedings{kjolstad2017taco,
+  author    = {Kjolstad, Fredrik and Kamil, Shoaib and Chou, Stephen and Lugato, David and Amarasinghe, Saman},
+  title     = {The Tensor Algebra Compiler},
+  booktitle = {Proc. ACM on Programming Languages (OOPSLA)},
+  year      = {2017}
+}
+
+@inproceedings{chou2018formatabstraction,
+  author    = {Chou, Stephen and Kjolstad, Fredrik and Amarasinghe, Saman},
+  title     = {Format Abstraction for Sparse Tensor Algebra Compilers},
+  booktitle = {Proc. ACM on Programming Languages (OOPSLA)},
+  year      = {2018}
+}
+
+@inproceedings{liu2024unisparse,
+  author    = {Liu, Jie and others},
+  title     = {{UniSparse}: An Intermediate Language for General Sparse Format Customization},
+  booktitle = {Proc. ACM on Programming Languages (OOPSLA)},
+  year      = {2024},
+  note      = {Full author list not independently confirmed this sweep}
+}
+
+% ===================================================================
+% 16. ALGORITHMIC / STRUCTURE LAYOUTS -- search trees, databases (survey Family 8)
+% ===================================================================
+
+@article{khuongmorin2017jea,
+  author  = {Khuong, Paul-Virak and Morin, Pat},
+  title   = {Array Layouts for Comparison-Based Searching},
+  journal = {ACM Journal of Experimental Algorithmics},
+  volume  = {22},
+  year    = {2017},
+  note    = {arXiv:1509.05053; Eytzinger, B-tree, van Emde Boas layouts}
+}
+
+@misc{slotin_algorithmica,
+  author       = {Slotin, Sergey},
+  title        = {Eytzinger Binary Search},
+  howpublished = {Algorithmica (blog/book)}
+}
+
+@inproceedings{benderdemainefarachcolton2000,
+  author    = {Bender, Michael A. and Demaine, Erik D. and Farach-Colton, Martin},
+  title     = {Cache-Oblivious B-Trees},
+  booktitle = {Proc. 41st Annual Symp. on Foundations of Computer Science (FOCS)},
+  year      = {2000}
+}
+
+@inproceedings{kim2010sigmod,
+  author    = {Kim, Changkyu and Chhugani, Jatin and Satish, Nadathur and Sedlar, Eric and Nguyen, Anthony D. and Kaldewey, Tim and Lee, Victor W. and Brandt, Scott A. and Dubey, Pradeep},
+  title     = {{FAST}: Fast Architecture Sensitive Tree Search on Modern {CPUs} and {GPUs}},
+  booktitle = {Proc. ACM SIGMOD Intl. Conf. on Management of Data},
+  year      = {2010}
+}
+
+@inproceedings{raoross2000sigmod,
+  author    = {Rao, Jun and Ross, Kenneth A.},
+  title     = {Making {B+-Trees} Cache Conscious in Main Memory},
+  booktitle = {Proc. ACM SIGMOD Intl. Conf. on Management of Data},
+  year      = {2000},
+  note      = {CSB+-tree}
+}
+
+@inproceedings{stonebraker2005cstore,
+  author    = {Stonebraker, Michael and others},
+  title     = {{C-Store}: A Column-Oriented {DBMS}},
+  booktitle = {Proc. 31st Intl. Conf. on Very Large Data Bases (VLDB)},
+  year      = {2005}
+}
+
+@inproceedings{ailamaki2001pax,
+  author    = {Ailamaki, Anastassia and DeWitt, David J. and Hill, Mark D. and Skounakis, Marios},
+  title     = {Weaving Relations for Cache Performance},
+  booktitle = {Proc. 27th Intl. Conf. on Very Large Data Bases (VLDB)},
+  year      = {2001},
+  note      = {PAX}
+}
+
+@inproceedings{melnik2010dremel,
+  author    = {Melnik, Sergey and Gubarev, Andrey and Long, Jing Jing and Romer, Geoffrey and Shivakumar, Shiva and Tolton, Matt and Vassilakis, Theo},
+  title     = {Dremel: Interactive Analysis of Web-Scale Datasets},
+  booktitle = {Proc. 36th Intl. Conf. on Very Large Data Bases (VLDB)},
+  year      = {2010}
+}
+
+% ===================================================================
+% 17. FOUNDATIONAL LAYOUT PAPERS -- pre-2000 lineage (report3 sec.2, foundational)
+% ===================================================================
+
+@inproceedings{lam1991asplos,
+  author    = {Lam, Monica S. and Rothberg, Edward E. and Wolf, Michael E.},
+  title     = {The Cache Performance and Optimizations of Blocked Algorithms},
+  booktitle = {Proc. 4th Intl. Conf. on Architectural Support for Programming Languages and Operating Systems (ASPLOS)},
+  year      = {1991}
+}
+
+@inproceedings{cierniaklic1995pldi,
+  author    = {Cierniak, Micha{\l} and Li, Wei},
+  title     = {Unifying Data and Control Transformations for {DSM} Machines},
+  booktitle = {Proc. ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {1995}
+}
+
+@inproceedings{anderson1995ppopp,
+  author    = {Anderson, Jennifer M. and Amarasinghe, Saman P. and Lam, Monica S.},
+  title     = {Data and Computation Transformations for Multiprocessors},
+  booktitle = {Proc. 5th ACM SIGPLAN Symp. on Principles and Practice of Parallel Programming (PPoPP)},
+  year      = {1995}
+}
+
+@inproceedings{colemanmckinley1995pldi,
+  author    = {Coleman, Sylvia and McKinley, Kathryn S.},
+  title     = {Tile Size Selection Using Cache Organization and Data Layout},
+  booktitle = {Proc. ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {1995}
+}
+
+@article{kandemir1999tc,
+  author  = {Kandemir, Mahmut and Choudhary, Alok and Ramanujam, J. and Banerjee, Prithviraj},
+  title   = {Improving Cache Locality by a Combination of Loop and Data Transformations},
+  journal = {IEEE Transactions on Computers},
+  volume  = {48},
+  number  = {2},
+  year    = {1999}
+}
+
+@article{chatterjee2002tpds,
+  author  = {Chatterjee, Siddhartha and Lebeck, Alvin R. and Patnala, Praveen K. and Thottethodi, Mithuna},
+  title   = {Recursive Array Layouts and Fast Parallel Matrix Multiplication},
+  journal = {IEEE Transactions on Parallel and Distributed Systems},
+  volume  = {13},
+  number  = {11},
+  year    = {2002},
+  note    = {Conference version: SPAA 1999}
+}
+
+@inproceedings{che2011dymaxion,
+  author    = {Che, Shuai and Sheaffer, Jeremy W. and Skadron, Kevin},
+  title     = {Dymaxion: Optimizing Memory Access Patterns for Heterogeneous Systems},
+  booktitle = {Proc. Intl. Conf. for High Performance Computing, Networking, Storage and Analysis (SC)},
+  year      = {2011}
+}
+
+@incollection{intel_xeonphi_book_sdlt,
+  editor    = {Jeffers, Jim and Reinders, James},
+  title     = {Vectorization with {SDLT}},
+  booktitle = {Intel Xeon Phi Processor High Performance Programming},
+  edition   = {2nd},
+  publisher = {Morgan Kaufmann / Elsevier},
+  year      = {2016},
+  note      = {The citable artifact for "Intel SDLT"; report3 found no independent SDLT paper. Jeffers/Reinders edit the book series; the specific chapter author is not identified in report3}
+}
+
+% ===================================================================
+% 18. RECENT LAYOUT PAPERS 2023-2026 (report3 sec.2, "our competition")
+% ===================================================================
+
+@misc{zhang2025hexcute,
+  author       = {Zhang, Xiao and Ding, Yaoyao and Sun, Bolin and Hu, Yang and Shpeisman, Tatiana and Pekhimenko, Gennady},
+  title        = {Hexcute: Automating Layout Synthesis in {GPU} Programs},
+  howpublished = {arXiv:2504.16214},
+  year         = {2025},
+  note         = {Published forms carry slightly different titles: "A Compiler Framework for Automating Layout Synthesis in GPU Programs" / "A Tile-based Programming Language with Automatic Layout and Task-Mapping Synthesis"}
+}
+
+@misc{carlisle2026categorical,
+  author       = {Carlisle, M. C. and Shah, J. and Stern, R. and VanKoughnett, J.},
+  title        = {Categorical Foundations for {CuTe} Layouts},
+  howpublished = {arXiv:2601.05972},
+  year         = {2026}
+}
+
+@misc{swatman2023evolutionary,
+  author       = {Swatman, ... and others},
+  title        = {Evolutionary Algorithms to Find Cache-Friendly Generalized {Morton} Layouts},
+  howpublished = {arXiv:2309.07002},
+  year         = {2023},
+  note         = {First name/initials not confirmed this sweep}
+}
+
+@inproceedings{singhal2024marmoset,
+  author    = {Singhal, Vidush and Koparkar, Chaitanya and Zullo, Joseph and Pelenitsyn, Artem and Vollmer, Michael and Rainey, Mike and Newton, Ryan and Kulkarni, Milind},
+  title     = {Optimizing Layout of Recursive Datatypes with Marmoset},
+  booktitle = {Proc. European Conf. on Object-Oriented Programming (ECOOP)},
+  year      = {2024},
+  note      = {arXiv:2405.17590}
+}
+
+@misc{singhal2026socal,
+  author       = {Singhal, Vidush and others},
+  title        = {[{SoCal}: Whole-Program {ADT} Layout, {SoA} for Tree-Shaped Data]},
+  howpublished = {arXiv:2605.01140},
+  year         = {2026},
+  note         = {Descriptive title, not verified verbatim this sweep}
+}
+
+@misc{radtke2024ppam,
+  author       = {Radtke, ... and Weinzierl, Tobias},
+  title        = {[Annotation-Guided {AoS} $\to$ {SoA} Transformation with {GPU} Offload]},
+  howpublished = {PPAM 2024; Concurrency and Computation: Practice and Experience, 2025; arXiv:2512.05516},
+  note         = {Descriptive title, not verified verbatim; reports 2.6x on GH200}
+}
+
+@inproceedings{idreos2018datacalculator,
+  author    = {Idreos, Stratos and Zoumpatianos, Kostas and Hentschel, Brad and Kester, Michael S. and Guo, Demi},
+  title     = {The Data Calculator: Data Structure Design and Cost Synthesis from First Principles and Learned Cost Models},
+  booktitle = {Proc. ACM SIGMOD Intl. Conf. on Management of Data},
+  year      = {2018},
+  note      = {Flagged unverified in coverage_gap_addendum}
+}
+
+% ===================================================================
+% 19. PERFORMANCE-BUG EMPIRICAL STUDIES (report3 sec.1)
+% ===================================================================
+
+@inproceedings{jin2012pldi,
+  author    = {Jin, Guoliang and Song, Linhai and Shi, Xiaoming and Scherpelz, Joel and Lu, Shan},
+  title     = {Understanding and Detecting Real-World Performance Bugs},
+  booktitle = {Proc. ACM SIGPLAN Conf. on Programming Language Design and Implementation (PLDI)},
+  year      = {2012}
+}
+
+@inproceedings{zaman2012msr,
+  author    = {Zaman, Shahed and Adams, Bram and Hassan, Ahmed E.},
+  title     = {A Qualitative Study on Performance Bugs},
+  booktitle = {Proc. 9th IEEE Working Conf. on Mining Software Repositories (MSR)},
+  year      = {2012}
+}
+
+@inproceedings{nistor2013msr,
+  author    = {Nistor, Adrian and Jiang, Tian and Tan, Lin},
+  title     = {Discovering, Reporting, and Fixing Performance Bugs},
+  booktitle = {Proc. 10th IEEE Working Conf. on Mining Software Repositories (MSR)},
+  year      = {2013}
+}
+
+@inproceedings{hanyu2016esem,
+  author    = {Han, Xue and Yu, Tingting},
+  title     = {An Empirical Study on Performance Bugs for Highly Configurable Software Systems},
+  booktitle = {Proc. ACM/IEEE Intl. Symp. on Empirical Software Engineering and Measurement (ESEM)},
+  year      = {2016}
+}
+
+@inproceedings{songlu2014oopsla,
+  author    = {Song, Linhai and Lu, Shan},
+  title     = {Statistical Debugging for Real-World Performance Problems},
+  booktitle = {Proc. ACM Intl. Conf. on Object Oriented Programming Systems Languages \& Applications (OOPSLA)},
+  year      = {2014},
+  note      = {Verification status: unconfirmed (\st{}) in report3}
+}
+
+@inproceedings{selakovic2016icse,
+  author    = {Selakovic, Marija and Pradel, Michael},
+  title     = {Performance Issues and Optimizations in JavaScript: An Empirical Study},
+  booktitle = {Proc. 38th Intl. Conf. on Software Engineering (ICSE)},
+  year      = {2016}
+}
+
+@inproceedings{liu2014icse,
+  author    = {Liu, Yepang and Xu, Chang and Cheung, Shing-Chi},
+  title     = {Characterizing and Detecting Performance Bugs for Smartphone Applications},
+  booktitle = {Proc. 36th Intl. Conf. on Software Engineering (ICSE)},
+  year      = {2014}
+}
+
+@article{mazuera2020emse,
+  author  = {Mazuera-Rozo, Alejandro and Bautista-Mora, Juli{\'a}n and Linares-V{\'a}squez, Mario and Rueda, Sandra and Bavota, Gabriele},
+  title   = {Types and Survivability of Performance Bugs in Mobile Apps},
+  journal = {Empirical Software Engineering},
+  volume  = {25},
+  number  = {3},
+  year    = {2020}
+}
+
+@article{zhao2022tse,
+  author  = {Zhao, Xin and Xiao, ... and Bondi, ... and Chen, ... and Liu, ...},
+  title   = {Large-Scale Empirical Study of Real-Life Performance Issues},
+  journal = {IEEE Transactions on Software Engineering},
+  year    = {2022},
+  note    = {Full author list not independently confirmed this sweep}
+}
+
+@inproceedings{azad2023msr,
+  author    = {Azad, Sabreen and Iqbal, Mohammad Shahriar and Hassan, Foyzul and Roy, Banani},
+  title     = {An Empirical Study of {HPC} Performance Bugs},
+  booktitle = {Proc. 20th IEEE/ACM Intl. Conf. on Mining Software Repositories (MSR)},
+  year      = {2023}
+}
+
+@inproceedings{makkouk2022icsme,
+  author    = {Makkouk, Taher and Kim, Dong Jae and Chen, Tse-Hsun},
+  title     = {An Empirical Study of Performance Bugs in Deep Learning Frameworks},
+  booktitle = {Proc. IEEE Intl. Conf. on Software Maintenance and Evolution (ICSME)},
+  year      = {2022}
+}
+
+@inproceedings{cao2022fse,
+  author    = {Cao, Jinqiu and others},
+  title     = {Understanding Performance Problems in Deep Learning Systems},
+  booktitle = {Proc. 30th ACM Joint European Software Engineering Conf. and Symp. on the Foundations of Software Engineering (ESEC/FSE)},
+  year      = {2022}
+}
+
+@article{liao2025tosem,
+  author  = {Liao, Dianshu and others},
+  title   = {Android Performance Issues in Real-World Apps vs.\ Literature},
+  journal = {ACM Transactions on Software Engineering and Methodology},
+  year    = {2025}
+}
+
+@inproceedings{bi2026fse,
+  author    = {Bi, ... and others},
+  title     = {Understanding Performance Problems in {CUDA} Programs},
+  booktitle = {Proc. ACM on Software Engineering (PACMSE) / FSE},
+  year      = {2026},
+  note      = {Taxonomy not accessible this sweep (ACM DL 403, no preprint found)}
+}
+
+@article{muse2024emse,
+  author  = {Muse, Biruk Asmare and Nafi, Kawser Wazed and Khomh, Foutse and Antoniol, Giuliano},
+  title   = {Data-Access Performance Anti-Patterns in Data-Intensive Systems},
+  journal = {Empirical Software Engineering},
+  volume  = {29},
+  number  = {144},
+  year    = {2024},
+  note    = {arXiv:2208.08918 is a registered-report v1; cite the EMSE version}
+}
+
+@article{yi2026oopsla,
+  author  = {Yi, Jiwon and Ding, ... and Shi, ... and Gligoric, Milos},
+  title   = {Understanding and Finding {JIT} Compiler Performance Bugs},
+  journal = {Proc. ACM on Programming Languages (PACMPL), OOPSLA1},
+  year    = {2026},
+  note    = {jittery tool; 0 layout-taxonomy hits}
+}
+
+@misc{rathnasuriya2026tile,
+  author = {Rathnasuriya, ... and others},
+  title  = {Real-World Bugs in Tile Programs},
+  year   = {2026},
+  note   = {301 codegen bugs / 8 frameworks; "Indexing and Stride ... layout transformations" 35/301, but a correctness taxonomy, not performance}
+}
+
+@article{zhou2021jss,
+  author  = {Zhou, Zhide and Ren, Zhilei and Gao, Guojun and Jiang, He},
+  title   = {An Empirical Study of Optimization Bugs in {GCC} and {LLVM}},
+  journal = {Journal of Systems and Software},
+  volume  = {174},
+  year    = {2021},
+  note    = {Report3 cites as JSS'20; publication year confirmed 2021 this sweep}
+}
+
+@inproceedings{theodoridis2022asplos,
+  author    = {Theodoridis, Theodoros and Grosser, Tobias and Su, Zhendong},
+  title     = {Understanding and Exploiting Optimal Function Inlining},
+  booktitle = {Proc. 27th ACM Intl. Conf. on Architectural Support for Programming Languages and Operating Systems (ASPLOS)},
+  year      = {2022},
+  note      = {Best Paper Award}
+}
+
+@inproceedings{zhang2023mod,
+  author    = {Zhang, Yi},
+  title     = {Detection of Optimizations Missed by the Compiler},
+  booktitle = {Proc. 31st ACM Joint European Software Engineering Conf. and Symp. on the Foundations of Software Engineering (ESEC/FSE)},
+  year      = {2023},
+  note      = {MOD tool; single-author attribution per search this sweep, not cross-checked further}
+}
+
+@misc{garg2025perfbench,
+  author       = {Garg, ... and others},
+  title        = {{PerfBench}: Can Agents Resolve Real-World Performance Bugs?},
+  howpublished = {arXiv:2509.24091},
+  year         = {2025}
+}
+
+@misc{yi2025dream,
+  author       = {Yi, Jiwon and Gay, Gregory and Leitner, Philipp},
+  title        = {Do {AI} Models Dream of Faster Code?},
+  howpublished = {arXiv:2510.15494},
+  year         = {2025}
+}
+
+% ===================================================================
+% 20. REAL-WORLD LAYOUT BUGS -- repos / issues / commits (report3 sec.3a, R1-R12)
+% ===================================================================
+
+@misc{r1_pytorchvision_6619,
+  title        = {No Channels-Last {RoIAlign} {CPU} Kernel (Scalar Fallback on {NCHW}); {Conv2d} Reorder Thrash},
+  howpublished = {GitHub issue pytorch/vision \#6619, \url{https://github.com/pytorch/vision/issues/6619}},
+  note         = {Measured: RoIAlign 82.6s to 2.3s (~36x); Conv2d 88.3 to 63.1s; fixed}
+}
+
+@misc{r2_tvm_1585,
+  title        = {Per-Layer Schedule Tuning Injects a Layout Transform Between Every Pair of Layers},
+  howpublished = {GitHub issue apache/tvm (incubator-tvm) \#1585, \url{https://github.com/apache/incubator-tvm/issues/1585}},
+  note         = {Measured: ResNet50 v1 +29\%, SSD-ResNet50 +35\%; fixed via graph tuner}
+}
+
+@misc{r3_linux_3a6358c,
+  title        = {\texttt{pcpu\_chunk}: Hot-Read \texttt{base\_addr} Sharing a Line with Hot-Write \texttt{free\_bytes}/\texttt{chunk\_md}},
+  howpublished = {Linux kernel commit 3a6358c0dbe6, \url{https://github.com/torvalds/linux/commit/3a6358c0dbe6}},
+  note         = {Measured: +24\% at 160-way parallelism; merged v6.5-rc1}
+}
+
+@misc{r4_linux_802f1d5,
+  title        = {\texttt{page\_counter}: Hot-Write \texttt{usage} Adjacent to Hot-Read \texttt{parent}},
+  howpublished = {Linux kernel commit 802f1d522d5f, \url{https://github.com/torvalds/linux/commit/802f1d522d5fdaefc2b935141bc8fe03d43a99ab}},
+  note         = {Measured: will-it-scale/malloc1 +8.9\%, pagefault2 +9.9\%, fio write +4.5\%; merged}
+}
+
+@misc{r5_folly_378,
+  title        = {{SPSC} \texttt{readIndex\_}/\texttt{writeIndex\_} Co-Location Causes Line Ping-Pong},
+  howpublished = {GitHub PR facebook/folly \#378, \url{https://github.com/facebook/folly/pull/378}},
+  note         = {Measured: +10\% ops/ms, L1 store misses -95\%; merged}
+}
+
+@misc{r6_scipy_13211,
+  title        = {\texttt{\_\_rmatmul\_\_} Transposes Internally, Giving an Inefficient Access Pattern for Transposed Data},
+  howpublished = {GitHub issue scipy/scipy \#13211, \url{https://github.com/scipy/scipy/issues/13211}},
+  note         = {Measured: 846ms vs.\ 70.5{\textmu}s (~1e5x); open}
+}
+
+@misc{r7_numpy_19650,
+  title        = {\texttt{np.dot} on Strided Views Misses the {BLAS} Fast Path},
+  howpublished = {GitHub issue numpy/numpy \#19650, \url{https://github.com/numpy/numpy/issues/19650}},
+  note         = {Measured: 1.59s to 8.06ms (~197x) via ascontiguousarray; open}
+}
+
+@misc{r8_pytorch_37142,
+  title        = {Channels-Last Propagates Through Autograd, Forcing Slow Backward Paths},
+  howpublished = {GitHub issue pytorch/pytorch \#37142, \url{https://github.com/pytorch/pytorch/issues/37142}},
+  note         = {Measured: CPU 5.07 to 21.5s; GPU 0.665 to 3.31s; open}
+}
+
+@misc{r9_pytorch_50036,
+  title        = {Incomplete Channels-Last Op Coverage Treats {NHWC} Input as Non-Contiguous {NCHW}},
+  howpublished = {GitHub issue pytorch/pytorch \#50036, \url{https://github.com/pytorch/pytorch/issues/50036}},
+  note         = {Measured: NCHW 0.97s vs.\ NHWC 2.35s (the better layout loses); open}
+}
+
+@misc{r10_onnxruntime_18128,
+  title        = {{SD} 2.1 {VAE} Decoder Degenerates to a Transpose/Conv/Reshape Chain},
+  howpublished = {GitHub issue microsoft/onnxruntime \#18128, \url{https://github.com/microsoft/onnxruntime/issues/18128}},
+  note         = {No numbers given; closed, not planned}
+}
+
+@misc{r11_cutlass_281,
+  title        = {Epilogue Shared-Memory Pad \texttt{[0,16]} Instead of \texttt{[0,8]} Drops {128-bit} Access to \texttt{st.shared.u32}},
+  howpublished = {GitHub discussion NVIDIA/cutlass \#281, \url{https://github.com/NVIDIA/cutlass/discussions/281}},
+  note         = {No numbers in thread; partly resolved}
+}
+
+@misc{r12_rust_37429,
+  title        = {Struct Field Reordering (Least- to Most-Aligned) to Eliminate Padding Holes},
+  howpublished = {GitHub PR rust-lang/rust \#37429, \url{https://github.com/rust-lang/rust/pull/37429}},
+  note         = {Merged then disabled by \#38523 (broke Servo, repr(C,packed) size bug); reverted}
+}
+
+% ===================================================================
+% 21. BENCHMARK SUITES (report3 sec.3b)
+% ===================================================================
+
+@misc{mccalpin1995stream,
+  author       = {McCalpin, John D.},
+  title        = {Memory Bandwidth and Machine Balance in Current High Performance Computers},
+  howpublished = {IEEE Computer Society Technical Committee on Computer Architecture (TCCA) Newsletter},
+  year         = {1995},
+  note         = {STREAM benchmark}
+}
+
+@misc{babelstream_repo,
+  author       = {{UoB-HPC}},
+  title        = {{BabelStream}},
+  howpublished = {GitHub repository, \url{https://github.com/UoB-HPC/BabelStream}},
+  note         = {STREAM across every parallel programming model, CPU+GPU}
+}
+
+@misc{pouchet_polybench,
+  author       = {Pouchet, Louis-No{\"e}l},
+  title        = {{PolyBench/C}: The Polyhedral Benchmark Suite},
+  howpublished = {Software, \url{https://github.com/MatthiasJReisinger/PolyBenchC-4.2.1}},
+  note         = {30 SCoP kernels with directly controllable dimension sizes/padding}
+}
+
+@inproceedings{lai2025tsvcriscv,
+  author    = {Lai, Hung-Ming and Lin, Pei-Hung and Gokhale, Maya and Peng, Ivy and Patel, Hiren and Lee, Jenq-Kuen},
+  title     = {{RISC-V} Vectorization Coverage for {HPC}: A {TSVC}-Based Analysis},
+  booktitle = {Proc. SC'25 Workshops, Intl. Conf. for High Performance Computing, Networking, Storage and Analysis},
+  year      = {2025}
+}
+
+@inproceedings{che2009rodinia,
+  author    = {Che, Shuai and Boyer, Michael and Meng, Jiayuan and Tarjan, David and Sheaffer, Jeremy W. and Lee, Sang-Ha and Skadron, Kevin},
+  title     = {Rodinia: A Benchmark Suite for Heterogeneous Computing},
+  booktitle = {Proc. IEEE Intl. Symp. on Workload Characterization (IISWC)},
+  year      = {2009}
+}
+
+@article{davis2011suitesparse,
+  author  = {Davis, Timothy A. and Hu, Yifan},
+  title   = {The University of Florida Sparse Matrix Collection},
+  journal = {ACM Transactions on Mathematical Software},
+  volume  = {38},
+  number  = {1},
+  year    = {2011},
+  note    = {Now the SuiteSparse Matrix Collection}
+}
+
+@misc{kobzol_bankconflicts,
+  author       = {Kobzol, Jakub},
+  title        = {hardware-effects-gpu: bank-conflicts},
+  howpublished = {GitHub repository, \url{https://github.com/Kobzol/hardware-effects-gpu}},
+  note         = {Measured: offset=1 -> 0 conflicts, 95.74\% efficiency; offset=32 -> ~310000 conflicts, 3.14\% efficiency}
+}
+
+@misc{perfcurator2024,
+  title        = {{PerfCurator}: Curating a Large-Scale Dataset of Performance Bug-Related Commits from Public Repositories},
+  howpublished = {arXiv:2406.11731},
+  year         = {2024},
+  note         = {Authors not confirmed this sweep; 408.5K mined perf commits / 322K repos}
+}

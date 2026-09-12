@@ -1,3 +1,5 @@
+import re
+
 import numpy as np
 import pytest
 
@@ -218,6 +220,46 @@ def test_the_indirectly_referenced_arguments_reach_the_kernel():
     assert np.allclose(cp.asnumpy(d), expected.T), 'the second output, reached only indirectly, is wrong'
 
 
+def make_init_symbol_sdfg() -> dace.SDFG:
+    """An SDFG whose init signature is a strict subset of its free symbols.
+
+    ``GM`` appears only in a descriptor shape, so it is not needed as an argument to the generated
+    code and ``__dace_init_`` does not take it; ``Px`` is read by a tasklet, so it is. The name
+    ordering matters: both signatures are sorted, so ``GM`` sitting first is what makes a set
+    mismatch land as a value shift rather than a harmless extra trailing argument.
+    """
+    sdfg = dace.SDFG('init_symbol_signature')
+    GM = dace.symbol(sdfg.add_symbol('GM', dace.int32))
+    sdfg.add_symbol('Px', dace.int32)
+    sdfg.add_array('out', (GM, ), dace.float64, transient=False)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet('write_px', {}, {'o'}, 'o = Px')
+    state.add_edge(tasklet, 'o', state.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def test_init_receives_the_symbols_its_signature_declares():
+    """``__dace_init_`` takes only the symbols the code needs, so the caller must filter its init
+    arguments by the same set. Filtering by the wider ``free_symbols`` passes one value too many and
+    silently shifts every later parameter -- ctypes cannot catch it, and pgemv handed
+    ``Cblacs_gridinit`` an array extent as the process-grid width."""
+    sdfg = make_init_symbol_sdfg()
+    # Non-vacuity: without this gap the two filters agree and the test proves nothing.
+    assert sdfg.used_symbols(all_symbols=False) != sdfg.free_symbols, 'the two symbol sets must differ here'
+
+    code = sdfg.generate_code()[0].clean_code
+    params = re.search(r'__dace_init_' + sdfg.name + r'\(([^)]*)\)', code).group(1)
+    assert [p.split()[-1] for p in params.split(',')] == ['Px'], f'unexpected init signature: {params}'
+
+    # The init code runs with the init parameters in scope, so a wrong value for ``Px`` there is
+    # observable: a non-zero ``__result`` makes the initializer return a null handle.
+    sdfg.append_init_code('if (Px != 3) { __result = 1; }')
+    out = np.zeros(4)
+    sdfg(out=out, GM=4, Px=3)
+    assert out[0] == 3, f'the tasklet wrote {out[0]}, so the program itself got the wrong Px'
+
+
 if __name__ == "__main__":
     test_argument_signature_test()
     test_the_indirectly_referenced_arguments_reach_the_kernel()
+    test_init_receives_the_symbols_its_signature_declares()
