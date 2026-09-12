@@ -11,6 +11,7 @@ cases is whether the census of library nodes ever CHANGES, which is what these t
 import copy
 import json
 import os
+import pathlib
 import subprocess
 import sys
 from typing import Dict
@@ -143,7 +144,7 @@ def render_many_fills() -> Dict[str, str]:
     return {'cpf_c': c, 'cpf_cpp': cpp, 'codegen_cpp': codegen_cpp}
 
 
-def test_the_same_sdfg_renders_byte_identically_across_fresh_processes():
+def test_the_same_sdfg_renders_byte_identically_across_fresh_processes(tmp_path: pathlib.Path) -> None:
     """The same SDFG rendered in two fresh, ``PYTHONHASHSEED=0`` interpreters must come out
     byte-identical: node GUIDs are fresh ``uuid4()`` values (dace/sdfg/graph.py), so a hash-seed
     pin alone does not make :func:`force_renderable_expansions` deterministic if it still picks
@@ -152,15 +153,18 @@ def test_the_same_sdfg_renders_byte_identically_across_fresh_processes():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(dace.__file__)))
     env = dict(os.environ, PYTHONHASHSEED='0', PYTHONPATH=repo_root)
     runs = []
-    for _ in range(2):
-        proc = subprocess.run([sys.executable, __file__, '--render-worker'],
-                              cwd=repo_root,
-                              env=env,
-                              capture_output=True,
-                              text=True,
-                              timeout=300)
+    for run_index in range(2):
+        # A file, not stdout: DACE_testing_serialization=1 makes generate_code print to stdout.
+        result_path = tmp_path / f'render_{run_index}.json'
+        proc = subprocess.run(
+            [sys.executable, __file__, '--render-worker', str(result_path)],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300)
         assert proc.returncode == 0, f'render worker failed:\n{proc.stderr}'
-        runs.append(json.loads(proc.stdout))
+        runs.append(json.loads(result_path.read_text()))
     first, second = runs
     for key in first:
         assert first[key] == second[key], (
@@ -169,7 +173,8 @@ def test_the_same_sdfg_renders_byte_identically_across_fresh_processes():
 
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1] == '--render-worker':
-        print(json.dumps(render_many_fills()))
+    if len(sys.argv) > 2 and sys.argv[1] == '--render-worker':
+        with open(sys.argv[2], 'w') as result_file:
+            json.dump(render_many_fills(), result_file)
         sys.exit(0)
     pytest.main([__file__, '-q'])
