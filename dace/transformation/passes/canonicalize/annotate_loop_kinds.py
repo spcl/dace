@@ -168,7 +168,7 @@ class AnnotateLoopKinds(ppl.Pass):
         # Comments only. No pass reads a hint, so nothing needs rerunning because one appeared.
         return ppl.Modifies.Nothing
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:

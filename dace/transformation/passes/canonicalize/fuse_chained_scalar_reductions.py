@@ -153,7 +153,7 @@ class FuseChainedScalarReductions(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:

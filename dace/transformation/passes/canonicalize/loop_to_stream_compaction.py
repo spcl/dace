@@ -225,7 +225,7 @@ class LoopToStreamCompaction(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def depends_on(self) -> Dict[type, ppl.Pass]:

@@ -60,7 +60,7 @@ class HoistLoopRangeCalls(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.InterstateEdges | ppl.Modifies.Nodes
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:

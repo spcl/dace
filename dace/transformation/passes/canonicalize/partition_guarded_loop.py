@@ -227,7 +227,7 @@ class PartitionGuardedLoop(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Symbols
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def depends_on(self):

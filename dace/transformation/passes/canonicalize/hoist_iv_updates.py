@@ -238,7 +238,7 @@ class HoistInductionVariableUpdates(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:

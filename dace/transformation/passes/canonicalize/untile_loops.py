@@ -590,7 +590,7 @@ class UntileLoops(ppl.Pass):
         # Nodes: the Map round trip creates and removes Map scopes (and the NSDFGs around them).
         return ppl.Modifies.CFG | ppl.Modifies.Symbols | ppl.Modifies.Memlets | ppl.Modifies.Nodes
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def _maps_to_loops(self, sdfg: SDFG) -> int:

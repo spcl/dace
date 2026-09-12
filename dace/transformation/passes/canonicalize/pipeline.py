@@ -480,7 +480,7 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def round_units(self) -> Tuple[ppl.Pass, ...]:

@@ -145,7 +145,7 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
@@ -179,7 +179,7 @@ class AssumeSymbolConstraints(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes
 
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
         # Single-shot: the emitted-trap dedup below makes a re-run a no-op anyway.
         return False
 
