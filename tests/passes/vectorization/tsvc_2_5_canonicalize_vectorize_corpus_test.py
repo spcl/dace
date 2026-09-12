@@ -22,6 +22,7 @@ would unroll 512x, so ``unroll_limit`` is capped, matching the canonicalize
 sibling :mod:`tests.canonicalize.tsvc_2_5_corpus_test`.
 """
 import contextlib
+import copy
 import inspect
 import io
 import os
@@ -45,6 +46,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
 _PEEL_LIMIT = 4
@@ -53,6 +55,29 @@ _UNROLL_LIMIT = 4
 _TOL = 1e-9
 
 _CORPUS = tsvc_2_5.collect()
+
+#: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
+#: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
+UNTILED_KERNELS = frozenset({
+    "tests_corpus_tsvc_2_5_tsvc_2_5_argmax_value",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_argmax_with_index",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_argmin_value",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_capture",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_find_first",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_post_body",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_ext_scatter_store",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_fission_scatter_2body",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_iv_additive",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_iv_multiplicative",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_loop_to_map_overlap_seq",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_quasi_affine_reduce_even",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_quasi_affine_reduce_odd",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_reduce_inner_carry",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_thomas_solve",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_wavefront2d",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_wf_north_west",
+    "tests_corpus_tsvc_2_5_tsvc_2_5_wf_triangular",
+})
 
 # Round-robin knob set for the multidim tile-op vectorizer (valid combinations
 # only; see the VectorizeCPUMultiDim constructor). The legacy 1-D VectorizeCPU
@@ -176,8 +201,10 @@ def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
     else:
         vec = VectorizeCPUMultiDim(
             VectorizeConfig(widths=(8, ), validate_all=True, **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)]))
+    untransformed = copy.deepcopy(sdfg)
     vec.apply_pass(sdfg, {})
     sdfg.validate()
+    assert_tiled_unless_pinned(sdfg, untransformed, program.name, UNTILED_KERNELS)
     _run_and_check(program, sdfg, arrays, scalars, ref, "multidim vectorization")
 
 

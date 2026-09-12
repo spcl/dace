@@ -28,6 +28,8 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
+import copy
+
 import numpy as np
 import pytest
 
@@ -37,10 +39,41 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 _KERNELS = [k.name for k in tsvc.collect()]
+
+#: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
+#: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
+UNTILED_KERNELS = frozenset({
+    "s123_d_single",
+    "s13110_d_single",
+    "s141_d_single",
+    "s161_d_single",
+    "s2111_d_single",
+    "s232_d_single",
+    "s257_d_single",
+    "s258_d_single",
+    "s277_d_single",
+    "s3110_d_single",
+    "s3112_d_single",
+    "s311_d_single",
+    "s312_d_single",
+    "s314_d_single",
+    "s316_d_single",
+    "s317_d_single",
+    "s318_d_single",
+    "s321_d_single",
+    "s322_d_single",
+    "s332_d_single",
+    "s343_d_single",
+    "s481_d_single",
+    "s482_d_single",
+    "va_d_single",
+    "vsumr_d_single",
+})
 
 # Round-robin knob sets (valid combinations only; see VectorizeCPU /
 # VectorizeCPUMultiDim constructors). The SIMD ISA is the HOST's best runnable one
@@ -101,8 +134,10 @@ def _canonicalized(name, tag="cvc"):
 
 
 def _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec_pass):
+    untransformed = copy.deepcopy(sdfg)
     vec_pass.apply_pass(sdfg, {})
     sdfg.validate()
+    assert_tiled_unless_pinned(sdfg, untransformed, name, UNTILED_KERNELS)
     work = {n: a.copy() for n, a in arrays.items()}
     sdfg.compile()(**work, **ck)
     _assert_matches(name, work, ref, "vectorization")

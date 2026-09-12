@@ -160,6 +160,9 @@ _SYMBOL = "Symbol"
 _SCALAR = "Scalar"
 _VALID_KINDS = (_TILE, _SYMBOL, _SCALAR)
 
+#: Ops that answer ``bool`` whatever their operands are.
+COMPARISON_OPS = frozenset({"<", "<=", ">", ">=", "==", "!="})
+
 _OP_CPP = {
     "+": ("(", " + ", ")"),
     "-": ("(", " - ", ")"),
@@ -587,7 +590,10 @@ class TileBinop(nodes.LibraryNode):
                 # before the op (the expansion casts on lowering). Widening
                 # (int -> float/double, int -> wider int, float -> double) is
                 # allowed; a narrowing conversion (e.g. double -> int) raises.
-                if kind == _TILE:
+                # A comparison is exempt: the expansion compares a Tile operand at its own dtype and
+                # stores the ``bool`` it answers, which every numeric output holds exactly. The
+                # operand never meets the output, so ``b_index > 0.0`` into an int8 mask narrows nothing.
+                if kind == _TILE and self.op not in COMPARISON_OPS:
                     src = sdfg.arrays[in_e[label].data.data].dtype
                     if not _promotion_ok(src, c_arr.dtype):
                         raise NotImplementedError(

@@ -30,10 +30,26 @@ from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 from tests.corpus.polybench import polybench
 
 _KERNELS = [k.name for k in polybench.collect()]
 _PHASES = ("canon", "canon_vec")
+
+#: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
+#: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
+UNTILED_KERNELS = frozenset({
+    "adi",
+    "atax",
+    "bicg",
+    "correlation",
+    "doitgen",
+    "k3mm",
+    "lu",
+    "syr2k",
+    "syrk",
+    "trisolv",
+})
 
 
 def _cases():
@@ -79,6 +95,7 @@ def test_polybench_corpus(name, phase):
     sdfg = copy.deepcopy(canon)
     if phase == "canon_vec":
         _multidim_pass(name).apply_pass(sdfg, {})
+        assert_tiled_unless_pinned(sdfg, canon, name, UNTILED_KERNELS)
     # Per-(kernel, phase) name: concurrent xdist builds must not share .dacecache (race -> spurious
     # CompilationError), matching the ``*_simplify_multidim`` sibling.
     sdfg.name = f"{sdfg.name}_{phase}"

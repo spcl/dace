@@ -41,3 +41,23 @@ def assert_tiled(vectorized: dace.SDFG, untransformed: dace.SDFG, what: str = ""
         f"This counter cannot read zero, so a non-empty count proves nothing.")
     emitted = tile_library_nodes(vectorized)
     assert emitted, f"{tag}the vectorizer emitted ZERO tile lib nodes into {vectorized.name!r}. {REFUSAL_HINT}"
+
+
+def assert_tiled_unless_pinned(vectorized: dace.SDFG, untransformed: dace.SDFG, kernel: str,
+                               untiled: frozenset[str]) -> None:
+    """Assert a corpus kernel tiled, or -- if ``kernel`` is pinned in ``untiled`` -- that it still did not.
+
+    Pinned in both directions, so a corpus comparison can no longer pass on a refusal, and a kernel the
+    vectorizer starts tiling is a failure until it leaves the pinned set.
+
+    :param vectorized: SDFG the pass ran on -- read after ``apply_pass``, before ``compile()`` expands it.
+    :param untransformed: The same kernel with the pass NOT run.
+    :param kernel: Corpus kernel name, as the pinned set spells it.
+    :param untiled: Kernels measured to come back with no tile lib node.
+    """
+    if kernel not in untiled:
+        assert_tiled(vectorized, untransformed, kernel)
+        return
+    emitted = tile_library_nodes(vectorized)
+    assert not emitted, (f"{kernel}: pinned as un-tiled, but the vectorizer now emits {len(emitted)} tile lib "
+                         f"node(s). Remove it from the pinned set.")
