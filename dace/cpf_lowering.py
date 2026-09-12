@@ -1114,17 +1114,26 @@ def rewrite_ctypes(code: str, dialect: Optional[Dialect] = None) -> str:
     (:data:`CTYPE_RENAMES` / :data:`C_CTYPE_RENAMES`) both callers share, so a container's type and
     a tasklet's cast cannot be spelled differently.
 
+    The rename itself is one alternation over every ``ctype_renames`` key
+    (:attr:`~Tables.ctype_pattern`, built once per dialect at import time) rather than one
+    ``re.sub`` per entry: every entry is a distinct literal name that cannot appear in another
+    entry's REPLACEMENT text (none of ``bool``, ``uint32_t``, ``std::complex<float>``, ... contains
+    a ``dace::``-qualified name), so the entries never interacted and folding them into one pass
+    changes nothing they could produce. The refusal check stays its own small loop, in TABLE
+    order, so two unsupported types in one unit are still reported in the same order as before.
+
     :param code: emitted text, of any size.
     :param dialect: which standalone dialect emitted it; ambient when omitted.
     :returns: the text with DaCe type names replaced.
     :raises NotImplementedError: if the text names a type with no standalone spelling.
     """
+    tables = tables_for(dialect)
+    if '::' not in code:
+        return code
     for qualified, reason in UNSUPPORTED_CTYPES.items():
         if re.search(r'(?:::)?\b%s\b' % re.escape(qualified), code):
             raise NotImplementedError(f'CPF cannot emit the type {qualified!r}: {reason}')
-    for qualified, plain in tables_for(dialect).ctype_renames.items():
-        code = re.sub(r'(?:::)?\b%s\b' % re.escape(qualified), plain, code)
-    return code
+    return tables.ctype_pattern.sub(lambda match: tables.ctype_renames[match.group(1)], code)
 
 
 def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
@@ -1984,6 +1993,11 @@ class Tables(NamedTuple):
     unsupported: Dict[str, str]
     #: ``dace::``-namespaced type -> its plain spelling.
     ctype_renames: Dict[str, str]
+    #: One alternation over every ``ctype_renames`` key, longest first so a prefix
+    #: (``dace::uint``) cannot pre-empt a longer name (``dace::uint64``) -- the trailing ``\b``
+    #: already prevents that, this only keeps the intent explicit. Lets :func:`rewrite_ctypes`
+    #: rename every ctype in one pass instead of one pass per table entry.
+    ctype_pattern: 're.Pattern'
     #: Headers every unit includes.
     base_headers: Tuple[str, ...]
     #: Definition -> the definitions it calls.
@@ -2004,12 +2018,14 @@ _EXPLICIT_TEMPLATE_ARGUMENTS = r'(?:<[^<>();{}\n]*>\s*)?'
 
 def _tables(std_renames, rewrites, inline_definitions, minmax, unsupported, ctype_renames, base_headers, dependencies,
             definition_headers) -> Tables:
+    ctype_names = sorted(ctype_renames, key=len, reverse=True)
     return Tables(std_renames=std_renames,
                   rewrites=rewrites,
                   inline_definitions=inline_definitions,
                   variadic_minmax=minmax,
                   unsupported=unsupported,
                   ctype_renames=ctype_renames,
+                  ctype_pattern=re.compile(r'(?:::)?\b(' + '|'.join(re.escape(name) for name in ctype_names) + r')\b'),
                   base_headers=base_headers,
                   definition_dependencies=dependencies,
                   definition_headers=definition_headers,
@@ -2364,6 +2380,13 @@ C_NATIVE_RENAMES.update({
     'std::sort': 'cpf_sort',
 })
 
+#: One alternation over every :data:`C_NATIVE_RENAMES` key, longest first. Every key is a distinct
+#: literal ``std::`` name and no replacement value contains ``std::``, so the tens of sequential
+#: passes this used to be never interacted -- folding them into one pass over the original text
+#: changes nothing they could produce.
+_C_NATIVE_RENAME_PATTERN = re.compile(r'(?:::)?\b(' + '|'.join(
+    re.escape(name) for name in sorted(C_NATIVE_RENAMES, key=len, reverse=True)) + r')\b')
+
 
 def c_native_renames(code: str) -> str:
     """Spell the ``std::`` names a hand-written body carries the C way.
@@ -2371,9 +2394,9 @@ def c_native_renames(code: str) -> str:
     :param code: the body as the expansion or pass wrote it.
     :returns: the body with each :data:`C_NATIVE_RENAMES` name replaced.
     """
-    for qualified, plain in C_NATIVE_RENAMES.items():
-        code = re.sub(r'(?:::)?\b%s\b' % re.escape(qualified), plain, code)
-    return code
+    if 'std::' not in code:
+        return code
+    return _C_NATIVE_RENAME_PATTERN.sub(lambda match: C_NATIVE_RENAMES[match.group(1)], code)
 
 
 #: ``std::numeric_limits<T>::max()`` / ``::lowest()`` per element type, as C constants. The two
