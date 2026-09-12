@@ -12,6 +12,7 @@ CPU instance, so these changes also apply inside ``__global__`` kernels.
 """
 import ast
 import re
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 import numpy
@@ -23,18 +24,19 @@ from dace import dtypes, cpf_lowering, symbolic
 from dace.codegen import cppunparse
 from dace.codegen.codeobject import CODE_ANNOTATION
 from dace.codegen.common import emits_tree_reductions, sym2cpp
+from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import (CPUCodeGen, aligned_new_value, counter_init_assigns_only,
-                                      counter_used_outside_loop, decl_placement, hoist_loop_decls,
-                                      loop_region_index_ctype, map_schedule_is_sequential, scalar_init_style,
-                                      use_aligned_operator_new)
+from dace.codegen.targets.cpu import (CPUCodeGen, LoopCounterIndex, aligned_new_value, decl_placement, hoist_loop_decls,
+                                      loop_counter_index, loop_local_counter_loop, loop_region_index_ctype,
+                                      map_schedule_is_sequential, scalar_init_style, use_aligned_operator_new)
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes, type_inference
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. Exact-width
@@ -77,7 +79,28 @@ PREPROCESSOR_IF = re.compile(r'^\s*#\s*if')
 PREPROCESSOR_ENDIF = re.compile(r'^\s*#\s*endif')
 
 
-def _experimental_loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> Optional[str]:
+@dataclass(slots=True)
+class InstrumentReferences:
+    """Instrumentation code that may name a loop counter outside its loop, collected in one walk of
+    ``sdfg``: the text of every access-node and state symbol-instrumentation condition, and every symbol
+    a symbol-instrumented state dumps."""
+    sdfg: SDFG
+    condition_texts: List[str]
+    dumped_symbols: OrderedSet[str]
+
+
+@dataclass(slots=True)
+class DeclarationRun:
+    """Counter-gate indices for one run of interstate declarations. ``framecode`` emits every declaration
+    of one SDFG back to back into the fresh callsite stream of that SDFG, before any state is generated,
+    so the SDFG is not mutated while ``(sdfg, stream)`` stays the pair asked about."""
+    sdfg: SDFG
+    stream: CodeIOStream
+    counters: LoopCounterIndex
+    instruments: Optional[InstrumentReferences] = None
+
+
+def experimental_loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, run: DeclarationRun) -> Optional[str]:
     """C++ type to declare a LoopRegion counter INSIDE its ``for``-init clause in the readable
     generator, ignoring the ``decl_placement`` knob (which otherwise leaves it hoisted by default).
 
@@ -86,49 +109,47 @@ def _experimental_loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, s
     and it must not be read outside that loop. ``loop_index_type``/``loop_region_index_ctype`` still
     apply.
     """
-    owners = [
-        cfr for cfr in sdfg.all_control_flow_regions()
-        if isinstance(cfr, LoopRegion) and cfr.loop_variable == name and cfr.init_statement is not None
-    ]
-    if len(owners) != 1:
-        return None
-    loop = owners[0]
-    if loop.inverted or not counter_init_assigns_only(loop) or counter_used_outside_loop(name, loop, sdfg):
+    loop = loop_local_counter_loop(name, run.counters)
+    if loop is None:
         return None
     # Instrumentation conditions (e.g. data-instrument ``i == 0``) are emitted around access-node
     # uses that may be outside the loop body, so the counter must stay in function scope.
-    if _loop_variable_in_instrument_conditions(loop, name):
+    loop_sdfg = loop.sdfg
+    if run.instruments is None or run.instruments.sdfg is not loop_sdfg:
+        run.instruments = instrument_references(loop_sdfg)
+    if loop_variable_in_instrument_conditions(name, run.instruments):
         return None
     return loop_region_index_ctype() or dtype.ctype
 
 
-def _loop_variable_in_instrument_conditions(loop: LoopRegion, name: str) -> bool:
-    """Return True if ``name`` may be referenced by instrumentation code emitted outside ``loop``.
-
-    Data-instrumentation conditions and state-level symbol dumps are emitted around state
-    boundaries; the loop variable is not in scope before the ``for``-init clause, so any such
-    reference forces a hoisted declaration.
-    """
-    sdfg = loop.sdfg
-    name_re = re.compile(r'\b' + re.escape(name) + r'\b')
-
-    # Access-node instrumentation conditions anywhere in the SDFG may reference the loop variable.
-    for node, _state in sdfg.all_nodes_recursive():
-        cond = getattr(node, 'instrument_condition', None)
-        if isinstance(cond, CodeBlock) and cond.as_string and name_re.search(cond.as_string):
-            return True
-
-    # State-level symbol instrumentation dumps every symbol in state.defined_symbols(); if the loop
-    # variable is among them the dump is emitted at the top of the state, which can be before the
-    # ``for``-init clause that declares it.
+def instrument_references(sdfg: SDFG) -> InstrumentReferences:
+    """Data-instrumentation conditions and state-level symbol dumps are emitted around state
+    boundaries; the loop variable is not in scope before the ``for``-init clause, so any reference
+    there forces a hoisted declaration. Access-node conditions count anywhere in the SDFG tree."""
+    condition_texts: List[str] = []
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.AccessNode):
+            cond = node.instrument_condition
+            if isinstance(cond, CodeBlock) and cond.as_string:
+                condition_texts.append(cond.as_string)
+    # A symbol-instrumented state dumps every symbol in state.defined_symbols() at its top, which can
+    # be before the ``for``-init clause that declares the counter.
+    dumped_symbols: OrderedSet[str] = OrderedSet()
     for state in sdfg.states():
-        sym_instr = state.symbol_instrument
-        if sym_instr != dtypes.DataInstrumentationType.No_Instrumentation and name in state.defined_symbols():
-            return True
+        if state.symbol_instrument != dtypes.DataInstrumentationType.No_Instrumentation:
+            dumped_symbols.update(state.defined_symbols())
         sym_cond = state.symbol_instrument_condition
-        if isinstance(sym_cond, CodeBlock) and sym_cond.as_string and name_re.search(sym_cond.as_string):
-            return True
-    return False
+        if isinstance(sym_cond, CodeBlock) and sym_cond.as_string:
+            condition_texts.append(sym_cond.as_string)
+    return InstrumentReferences(sdfg, condition_texts, dumped_symbols)
+
+
+def loop_variable_in_instrument_conditions(name: str, refs: InstrumentReferences) -> bool:
+    """Return True if ``name`` may be referenced by instrumentation code emitted outside its loop."""
+    if name in refs.dumped_symbols:
+        return True
+    name_re = re.compile(r'\b' + re.escape(name) + r'\b')
+    return any(name_re.search(text) for text in refs.condition_texts)
 
 
 def code_blocks_of(value) -> Tuple[CodeBlock, ...]:
@@ -389,12 +410,19 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # by ORIGIN GUID: one expansion produces many nodes that share a description, and two
         # separate nodes of the same kind each deserve their own comment.
         self._emitted_provenance: Set[str] = set()
+        # Counter-gate indices of the declaration run in progress; a query naming another SDFG or
+        # callsite stream starts a new run (see DeclarationRun), so no index outlives its run.
+        self.declaration_run: Optional[DeclarationRun] = None
 
     def emit_interstate_variable_declaration(self, name, dtype, callsite_stream, sdfg):
         """LoopRegion counters are declared inside their own ``for``-init clause in the readable
         generator (``for (T i = ...)``); only non-loop interstate symbols keep the hoisted declaration.
         """
-        local_ctype = _experimental_loop_local_counter_ctype(name, dtype, sdfg)
+        run = self.declaration_run
+        if run is None or run.sdfg is not sdfg or run.stream is not callsite_stream:
+            run = DeclarationRun(sdfg, callsite_stream, loop_counter_index(sdfg))
+            self.declaration_run = run
+        local_ctype = experimental_loop_local_counter_ctype(name, dtype, run)
         if local_ctype is not None:
             self._frame.loop_local_counters[(sdfg.cfg_id, name)] = local_ctype
             self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, local_ctype)

@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from copy import deepcopy
+from dataclasses import dataclass
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, StateSubgraphView
 import functools
@@ -24,8 +25,8 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop
-from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, Union
+from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop, symbol_use_sites
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 import re
 
@@ -153,16 +154,45 @@ def loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> 
     """
     if decl_placement() != 'late':
         return None
-    owners = [
-        cfr for cfr in sdfg.all_control_flow_regions()
-        if isinstance(cfr, LoopRegion) and cfr.loop_variable == name and cfr.init_statement is not None
-    ]
+    if loop_local_counter_loop(name, loop_counter_index(sdfg)) is None:
+        return None
+    return loop_region_index_ctype() or dtype.ctype
+
+
+@dataclass(slots=True)
+class LoopCounterIndex:
+    """What the loop-local counter gates read off one SDFG, for a run of queries the SDFG is not mutated
+    during. ``owners`` maps a counter name to its LoopRegions (with an init statement) in region order;
+    the symbol use-site index is built on the first query that gets past the cheap gates."""
+    sdfg: SDFG
+    owners: Dict[str, List[LoopRegion]]
+    use_sites: Optional[Dict[str, Set[int]]] = None
+    descriptor_symbols: Optional[Set[str]] = None
+
+
+def loop_counter_index(sdfg: SDFG) -> LoopCounterIndex:
+    """One region walk of ``sdfg`` answering "which LoopRegions own this counter" for every name."""
+    owners: Dict[str, List[LoopRegion]] = {}
+    for cfr in sdfg.all_control_flow_regions():
+        if isinstance(cfr, LoopRegion) and cfr.init_statement is not None:
+            owners.setdefault(cfr.loop_variable, []).append(cfr)
+    return LoopCounterIndex(sdfg, owners)
+
+
+def loop_local_counter_loop(name: str, index: LoopCounterIndex) -> Optional[LoopRegion]:
+    """The loop whose ``for``-init clause may declare counter ``name``, or ``None`` when a gate of
+    :func:`loop_local_counter_ctype` refuses. ``decl_placement`` is not read here."""
+    owners = index.owners.get(name, ())
     if len(owners) != 1:
         return None
     loop = owners[0]
-    if loop.inverted or not counter_init_assigns_only(loop) or counter_used_outside_loop(name, loop, sdfg):
+    if loop.inverted or not counter_init_assigns_only(loop):
         return None
-    return loop_region_index_ctype() or dtype.ctype
+    if index.use_sites is None or index.descriptor_symbols is None:
+        index.use_sites, index.descriptor_symbols = symbol_use_sites(index.sdfg)
+    if counter_used_outside_loop(name, loop, index.sdfg, index.use_sites, index.descriptor_symbols):
+        return None
+    return loop
 
 
 def map_schedule_is_sequential(node: nodes.MapEntry) -> bool:
