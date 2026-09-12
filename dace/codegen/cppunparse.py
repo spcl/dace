@@ -1576,5 +1576,15 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
 
 
 @lru_cache(maxsize=16384, typed=True)
-def pyexpr2cpp(expr):
+def _pyexpr2cpp(expr, dialect):
+    # ``dialect`` is read by nothing in here: it is the AMBIENT one, which the printers below take
+    # from :func:`~dace.cpf_lowering.active_dialect` at the point they need it. It is a PARAMETER so
+    # that it reaches this memoization key. Without it the first spelling of an expression wins for
+    # the life of the process, and a standalone-C rendering reads back the C++ text an earlier
+    # RUNTIME call cached -- which is how ``int64_t(i)``, a C++ functional cast, reached C output.
     return py2cpp(expr, expr_semicolon=False)
+
+
+def pyexpr2cpp(expr):
+    """The C++ (or standalone C) spelling of a Python expression, memoized per dialect."""
+    return _pyexpr2cpp(expr, cpf_lowering.active_dialect())

@@ -20,9 +20,13 @@ import pytest
 
 import dace
 from dace.libraries.standard.nodes import FindFirst
+from dace.libraries.standard.nodes.fill import FillLibraryNode
+from dace.transformation.passes.scatter_conflict_guard import insert_scatter_guard
 from dace import cpf, cpf_lowering
 from dace.codegen import cpf as cpf_module
 from dace.codegen.cpf import render as render_sdfg
+from dace.codegen.common import sym2cpp
+from dace.codegen.cppunparse import pyexpr2cpp
 from dace.codegen.targets.experimental_cpu import format_index_helper
 
 from tests.codegen.cpf.conftest import (assert_matches, assert_standalone, build_standalone, call_standalone,
@@ -671,3 +675,113 @@ def test_custom_conflict_resolution_needs_no_lambda_in_c():
     expected = out * a + 1.0
     run_c(rendering.sdfg, rendering.code, {'a': a, 'out': out}, 'cpf_c_resolve')
     assert_matches({'out': expected}, {'out': out}, 'cpf_c_resolve')
+
+
+@dace.program
+def c_scatter(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N]):
+    for i in range(N):
+        a[ip[i]] = b[i]
+
+
+def scatter_sdfg(name: str) -> dace.SDFG:
+    """``a[ip[i]] = b[i]`` with the runtime permutation guard the parallelizer needs inserted."""
+    sdfg = c_scatter.to_sdfg(simplify=True)
+    sdfg.name = name
+    insert_scatter_guard(sdfg, 'ip')
+    return sdfg
+
+
+#: A fill small enough that the ``Auto`` selector keeps the single-call CPU expansion rather than
+#: the OpenMP element map, so these tests reach the expansion whose body they are about.
+FILL_EXTENT = 32
+
+
+def fill_sdfg(name: str, value, dtype=dace.float64) -> dace.SDFG:
+    """An SDFG whose one node fills a contiguous host array with ``value``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('B', [FILL_EXTENT], dtype, storage=dace.dtypes.StorageType.CPU_Heap)
+    state = sdfg.add_state('main')
+    node = FillLibraryNode(name='fill_b', value=value)
+    state.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access('B'), None,
+                   dace.Memlet('B[0:%d]' % FILL_EXTENT))
+    return sdfg
+
+
+def test_a_zero_fill_renders_without_the_cxx_standard_library():
+    """The single-call fill is ``std::fill_n``, which C cannot name and libstdc++ is what turns
+    into a memset. A zero double is byte-splat, so the C dialect spells that memset itself."""
+    rendering = render_sdfg(fill_sdfg('cpf_c_fill_zero', 0.0), language='c')
+    code = rendering.code
+    assert_standalone(code, 'cpf_c_fill_zero', language='c')
+    assert re.search(r'memset\(B, 0, \(%d\) \* sizeof\(B\[0\]\)\);' % FILL_EXTENT,
+                     code), f'a byte-splat fill must be one memset:\n{code}'
+
+    b = np.full(FILL_EXTENT, 7.0)
+    call_standalone(build_standalone(code, 'cpf_c_fill_zero', language='c'), rendering.sdfg, {'B': b})
+    assert_matches({'B': np.zeros(FILL_EXTENT)}, {'B': b}, 'cpf_c_fill_zero')
+
+
+def test_a_non_byte_splat_fill_renders_as_a_loop_rather_than_a_memset():
+    """``memset`` writes ONE byte over the range, so it can only express a value whose object
+    representation repeats that byte. ``1.0`` is ``3ff0000000000000`` and does not."""
+    rendering = render_sdfg(fill_sdfg('cpf_c_fill_one', 1.0), language='c')
+    code = rendering.code
+    assert_standalone(code, 'cpf_c_fill_one', language='c')
+    assert 'memset(B' not in code, f'1.0 is not byte-splat, so memset would write the wrong value:\n{code}'
+    assert re.search(
+        r'for \(long long __fill_i = 0; __fill_i < \(%d\); \+\+__fill_i\) '
+        r'\{ B\[__fill_i\] = 1\.0; \}' % FILL_EXTENT, code), f'the fill must be a loop:\n{code}'
+
+    b = np.zeros(FILL_EXTENT)
+    call_standalone(build_standalone(code, 'cpf_c_fill_one', language='c'), rendering.sdfg, {'B': b})
+    assert_matches({'B': np.ones(FILL_EXTENT)}, {'B': b}, 'cpf_c_fill_one')
+
+
+def test_the_scatter_guard_renders_without_the_dace_runtime():
+    """The guard's duplicate check is ``dace::detect_collision``, a runtime template CPF may not
+    name. C has neither the template nor the overload pair, so the call becomes the statement macro
+    CPF defines, and the scatter it guards still writes what the index says."""
+    sdfg = scatter_sdfg('cpf_c_scatter_guard')
+    rendering = render_sdfg(sdfg, language='c')
+    code = rendering.code
+    assert_standalone(code, 'cpf_c_scatter_guard', language='c')
+    assert re.search(r'cpf_detect_collision\(\w+, ip, \(N\), \w+, \(N\), false\);',
+                     code), f'the check did not become the C statement macro:\n{code}'
+    assert 'reduction(| : cpf_dc_c)' in code, 'the C check lost its OR-reduced verify pass'
+
+    n = 64
+    ip = np.random.default_rng(0).permutation(n).astype(np.int32)
+    a, b = np.zeros(n), np.random.default_rng(1).random(n)
+    expected = np.zeros(n)
+    expected[ip] = b
+    call_standalone(build_standalone(code, 'cpf_c_scatter_guard', language='c'), rendering.sdfg, {
+        'a': a,
+        'b': b,
+        'ip': ip,
+        'N': n
+    })
+    assert_matches({'a': expected}, {'a': a}, 'cpf_c_scatter_guard')
+
+
+@pytest.mark.parametrize('ctype', ['int64_t', 'int', 'double', 'size_t'])
+def test_a_cast_carried_through_a_symbolic_expression_renders_as_a_c_cast(ctype):
+    """Sympy carries an unknown function by its name, so a cast that has been through a symbolic
+    expression reaches the printer as a CALL to the type. That spelling is a C++ functional cast,
+    and C has none -- a rendering that kept it is text no C compiler accepts."""
+    expression = dace.symbolic.pystr_to_symbolic('%s(x) + 3' % ctype)
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_C):
+        assert sym2cpp(expression) == '(((%s)(x)) + 3)' % ctype
+    # C++ has the functional cast, so its spelling is the one the printers already emit.
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE):
+        assert sym2cpp(expression) == '(%s(x) + 3)' % ctype
+
+
+def test_the_expression_cache_does_not_serve_cpp_text_to_a_c_rendering():
+    """``pyexpr2cpp`` is memoized, so the dialect has to reach its key. Canonicalization prints
+    expressions under the RUNTIME dialect long before CPF renders; without the dialect in the key
+    the first spelling wins for the life of the process and the C rendering reads back a C++
+    functional cast, which no C compiler accepts."""
+    expression = 'int64_t(cache_order_probe) + 1'
+    assert pyexpr2cpp(expression) == '(int64_t(cache_order_probe) + 1)'
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_C):
+        assert pyexpr2cpp(expression) == '(((int64_t)(cache_order_probe)) + 1)'
