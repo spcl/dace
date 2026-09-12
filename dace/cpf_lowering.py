@@ -1376,6 +1376,9 @@ def c_typed_family(name: str,
 #:     the integer, floating and complex absolute values, which C spells with five different names.
 #: ``complex``
 #:     ``conjf`` / ``conj`` / ``conjl``.
+#: ``elementary``
+#:     ``real``, plus the ``<complex.h>`` counterpart (``cexp``, ``cpow``) for a complex argument, which
+#:     the ``real`` association would silently convert to its real part.
 #:
 #: Arity 1 dispatches on ``+(a0)``; the unary plus applies the integer promotions, so a ``short`` or
 #: an ``int8_t`` selects the ``int`` association instead of failing to select. Arity 2 and 3
@@ -1398,23 +1401,23 @@ C_MATH_SPEC: Tuple[Tuple[str, str, str, object], ...] = (
     ('frexp', 'frexp', 'real', 'first2'),
     ('ldexp', 'ldexp', 'real', 'first2'),
     ('ilogb', 'ilogb', 'real', 1),
-    ('sin', 'sin', 'real', 1),
-    ('cos', 'cos', 'real', 1),
-    ('tan', 'tan', 'real', 1),
-    ('asin', 'asin', 'real', 1),
-    ('acos', 'acos', 'real', 1),
-    ('atan', 'atan', 'real', 1),
+    ('sin', 'sin', 'elementary', 1),
+    ('cos', 'cos', 'elementary', 1),
+    ('tan', 'tan', 'elementary', 1),
+    ('asin', 'asin', 'elementary', 1),
+    ('acos', 'acos', 'elementary', 1),
+    ('atan', 'atan', 'elementary', 1),
     ('atan2', 'atan2', 'real', 2),
-    ('sinh', 'sinh', 'real', 1),
-    ('cosh', 'cosh', 'real', 1),
-    ('tanh', 'tanh', 'real', 1),
-    ('exp', 'exp', 'real', 1),
+    ('sinh', 'sinh', 'elementary', 1),
+    ('cosh', 'cosh', 'elementary', 1),
+    ('tanh', 'tanh', 'elementary', 1),
+    ('exp', 'exp', 'elementary', 1),
     ('fabs', 'fabs', 'real', 1),
-    ('log', 'log', 'real', 1),
+    ('log', 'log', 'elementary', 1),
     ('log10', 'log10', 'real', 1),
-    ('sqrt', 'sqrt', 'real', 1),
+    ('sqrt', 'sqrt', 'elementary', 1),
     ('cbrt', 'cbrt', 'real', 1),
-    ('pow', 'pow', 'real', 2),
+    ('pow', 'pow', 'elementary', 2),
     ('fma', 'fma', 'real', 3),
     ('erf', 'erf', 'real', 1),
     ('erfc', 'erfc', 'real', 1),
@@ -1448,6 +1451,8 @@ _C_FAMILY_DISPATCH: Dict[str, Tuple[Tuple[str, str], ...]] = {
     'abs':
     (('int', 'abs'), ('long', 'labs'), ('long long', 'llabs'), ('float', 'fabsf'), ('long double', 'fabsl'),
      ('float _Complex', 'cabsf'), ('double _Complex', 'cabs'), ('long double _Complex', 'cabsl'), ('default', 'fabs')),
+    'elementary': (('float', '{base}f'), ('long double', '{base}l'), ('float _Complex', 'c{base}f'),
+                   ('double _Complex', 'c{base}'), ('long double _Complex', 'c{base}l'), ('default', '{base}')),
     'complex': (('float _Complex', '{base}f'), ('long double _Complex', '{base}l'), ('default', '{base}')),
     # A real argument has no imaginary part to read, and C's ``creal``/``cimag`` accept one, so the
     # default association keeps working for a complex-valued expression that folded to a real type.

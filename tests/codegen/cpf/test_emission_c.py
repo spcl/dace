@@ -859,3 +859,28 @@ def test_a_complex_constant_keeps_its_width_in_c(value, builder: str):
         assert sym2cpp(value) == '%s(1.0, -2.0)' % builder
     assert '#define' not in cpf_lowering.C_INLINE_DEFINITIONS[builder]
 
+
+@dace.program
+def fft_1d_forward(x: dace.complex128[N], y: dace.complex128[N]):
+    for k in range(N):
+        y[k] = 0j
+        for m in range(N):
+            y[k] += x[m] * np.exp(-1j * (2.0 * 3.141592653589793 * k * m / np.float64(N)))
+
+
+@pytest.mark.parametrize('language', ['c', 'c++'])
+def test_a_complex_exponential_keeps_its_imaginary_part(language: str):
+    """fft_1d's transform: C's ``exp`` takes a ``double``, so a complex argument dispatched to it
+    compiles and silently drops its imaginary part; C must call ``cexp``."""
+    name = 'cpf_fft_1d_forward_%s' % language.replace('+', 'x')
+    sdfg = fft_1d_forward.to_sdfg(simplify=True)
+    sdfg.name = name
+    rendering = render_sdfg(sdfg, language=language)
+    assert_standalone(rendering.code, name, language=language)
+    n = 16
+    rng = np.random.default_rng(0)
+    x = rng.random(n) + 1j * rng.random(n)
+    y = np.zeros(n, dtype=np.complex128)
+    call_standalone(build_standalone(rendering.code, name, language=language), rendering.sdfg, {'x': x, 'y': y, 'N': n})
+    k, m = np.meshgrid(np.arange(n), np.arange(n), indexing='ij')
+    assert_matches({'y': (x[m] * np.exp(-2j * np.pi * k * m / n)).sum(axis=1)}, {'y': y}, name)
