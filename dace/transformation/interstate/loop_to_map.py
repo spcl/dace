@@ -936,7 +936,8 @@ class LoopToMap(xf.MultiStateTransformation):
         if range_syms & body_assigned_syms:
             return refuse(f"loop range references symbol(s) {range_syms & body_assigned_syms} assigned inside the body")
 
-        loop_states = set(self.loop.all_states())
+        # Block order, not address order: companion passes act on the FIRST refusal reason.
+        loop_states = OrderedSet(self.loop.all_states())
 
         # Cannot have StructView in loop body. ``any``, not a list build, and skipped entirely when
         # the SDFG holds no StructureView descriptor at all -- then no loop state can hold one.
@@ -1476,7 +1477,7 @@ class LoopToMap(xf.MultiStateTransformation):
         nsdfg = None
 
         # Nest loop-body states
-        states = set(self.loop.all_states())
+        states = OrderedSet(self.loop.all_states())
         # Find read/write sets
         read_set, write_set = set(), set()
         for state in self.loop.all_states():

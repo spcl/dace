@@ -39,7 +39,7 @@ loop, so a caller that lifts on this verdict must also know the seed fits.
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Sequence, Tuple
 
-from dace.transformation.passes.analysis import smt_body
+from dace.transformation.passes.analysis import smt_body, smt_dependence
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,14 +118,16 @@ def z3_simplify(term: Any) -> Any:
     return smt_body.z3.simplify(term)
 
 
-def prove_equal(lhs: Any, rhs: Any, assumptions: Sequence[Any] = (), timeout_ms: int = 5000) -> Optional[bool]:
+def prove_equal(lhs: Any,
+                rhs: Any,
+                assumptions: Sequence[Any] = (),
+                rlimit: int = smt_dependence.DEFAULT_RLIMIT) -> Optional[bool]:
     """Whether ``lhs == rhs`` holds for every assignment satisfying ``assumptions``.
 
     ``True`` on a proof, ``False`` on a counterexample, ``None`` when the solver gives up -- an
     ``unknown`` is not a proof and must not be read as one.
     """
-    solver = smt_body.z3.Solver()
-    solver.set('timeout', timeout_ms)
+    solver = smt_dependence.bounded_solver(rlimit)
     for a in assumptions:
         solver.add(a)
     solver.add(lhs != rhs)

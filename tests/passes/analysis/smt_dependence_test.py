@@ -7,10 +7,14 @@ affine classifier cannot decide, and each asserts the exact verdict rather than 
 a wrong verdict here is a miscompile (``RAW`` reported as ``none`` parallelizes a recurrence),
 not a missed optimization.
 """
+from typing import Callable, Optional
+
+import pytest
 import sympy as sp
+import z3
 
 from dace import symbolic
-from dace.transformation.passes.analysis import smt_dependence
+from dace.transformation.passes.analysis import carried_state, smt_dependence
 
 #: ``z3-solver`` is a hard dependency of this branch (``pyproject.toml`` marks it "Not optional":
 #: LoopToMap and the canonicalize parallelization band query the oracle), so an absent solver is a
@@ -226,6 +230,35 @@ def test_one_name_read_at_two_ranks_is_refused():
                                                    symbolic.pystr_to_symbolic('IDX[i, i]'), 'i', 0, N) is None
 
 
+def test_a_starved_solver_budget_abstains_on_every_call():
+    """A budget no query fits abstains identically each time; the default budget proves the same query."""
+    starved = [smt_dependence.prove_injective_write(I * I, 'i', 0, N, 1, rlimit=1) for attempt in range(20)]
+    assert starved == [None] * 20
+    assert smt_dependence.prove_injective_write(I * I, 'i', 0, N, 1) is True
+
+
+@pytest.mark.parametrize('prove', [
+    lambda: smt_dependence.prove_injective_write(I * I, 'i', 0, N, 1),
+    lambda: carried_state.prove_equal(z3.BitVec('x', 8) ^ 0, z3.BitVec('x', 8)),
+],
+                         ids=['index_oracle', 'carried_state_oracle'])
+def test_the_solver_budget_is_resource_units_not_wall_clock(monkeypatch: pytest.MonkeyPatch,
+                                                            prove: Callable[[], Optional[bool]]):
+    """A wall-clock limit lets machine load flip a verdict; a resource budget cannot."""
+    option_names = []
+    original_set = z3.Solver.set
+
+    def recording_set(solver: z3.Solver, *args: object, **keys: object) -> None:
+        option_names.extend(str(name) for name in args[::2])
+        option_names.extend(keys)
+        original_set(solver, *args, **keys)
+
+    monkeypatch.setattr(z3.Solver, 'set', recording_set)
+    assert prove() is True
+    assert 'rlimit' in option_names
+    assert 'timeout' not in option_names
+
+
 if __name__ == '__main__':
     test_injective_writes_are_proven()
     test_colliding_write_is_refused()
@@ -249,3 +282,4 @@ if __name__ == '__main__':
     test_boxes_of_different_rank_are_inconclusive()
     test_an_indirect_read_reaches_the_solver()
     test_one_name_read_at_two_ranks_is_refused()
+    test_a_starved_solver_budget_abstains_on_every_call()

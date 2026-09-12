@@ -1085,6 +1085,35 @@ def test_refuse_when_body_assigns_loop_range_symbol():
     sdfg.validate()
 
 
+def loop_writing_a_fixed_element_per_state(state_count: int) -> LoopRegion:
+    sdfg = dace.SDFG("refusal_order")
+    sdfg.add_symbol("N", dace.int64)
+    loop = LoopRegion("for_i", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    states = [loop.add_state(f"s{k}", is_start_block=k == 0) for k in range(state_count)]
+    for k, state in enumerate(states):
+        sdfg.add_array(f"A{k}", (dace.symbol("N"), ), dace.float64)
+        tasklet = state.add_tasklet("w", {}, {"o": dace.float64}, "o = 1.0")
+        state.add_edge(tasklet, "o", state.add_write(f"A{k}"), None, dace.Memlet(f"A{k}[0]"))
+    for src, dst in zip(states, states[1:]):
+        loop.add_edge(src, dst, dace.InterstateEdge())
+    return loop
+
+
+def test_refusal_reason_follows_block_order_not_memory_addresses():
+    """Companion passes act on the first refusal, so every rebuild must name the first state's write."""
+    keep_alive = []
+    reasons = []
+    for rebuild in range(12):
+        keep_alive.append([object() for _ in range(rebuild * 1543)])
+        loop = loop_writing_a_fixed_element_per_state(8)
+        sut = LoopToMap()
+        sut.loop = loop
+        assert not sut.can_be_applied(loop.parent_graph, 0, loop.sdfg)
+        reasons.append(sut.last_refusal_reason)
+    assert all(reason.startswith("write to A0 ") for reason in reasons), reasons
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -1129,3 +1158,4 @@ if __name__ == "__main__":
     test_loop_to_map_with_loop_invariant_if()
     test_dynamic_write_slab_separated_by_iteration_var()
     test_refuse_when_body_assigns_loop_range_symbol()
+    test_refusal_reason_follows_block_order_not_memory_addresses()

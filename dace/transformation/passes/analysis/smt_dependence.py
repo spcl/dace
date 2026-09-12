@@ -25,9 +25,17 @@ def has_z3() -> bool:
     return _HAS_Z3
 
 
-# Default SMT timeout in milliseconds. Keep short: this runs inside the
-# canonicalize pipeline, not a verification bench.
-DEFAULT_TIMEOUT_MS = 5000
+# Solver budget in z3 resource units, not milliseconds: a wall-clock limit lets machine load flip
+# a verdict. 50M units is ~8 CPU seconds at the ~6M units/s measured here, above the old 5 s
+# budget; the largest oracle query measured on CloudSC ParallelizeLoops used 505 units.
+DEFAULT_RLIMIT = 50_000_000
+
+
+def bounded_solver(rlimit: int = DEFAULT_RLIMIT) -> Any:
+    """A z3 solver limited to ``rlimit`` resource units, with no wall-clock limit."""
+    solver = z3.Solver()
+    solver.set('rlimit', rlimit)
+    return solver
 
 
 def _z3_int(expr):
@@ -298,7 +306,7 @@ def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> List[Any]:
     return cons
 
 
-def _prove_unsat(antecedent: Any, consequent: Any, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Optional[bool]:
+def prove_unsat(antecedent: Any, consequent: Any, rlimit: int = DEFAULT_RLIMIT) -> Optional[bool]:
     """Return ``True`` if ``antecedent => consequent`` is valid (consequent holds
     for every model of antecedent), ``False`` if a counter-model exists, and
     ``None`` if the solver gives up or the encoding failed."""
@@ -307,8 +315,7 @@ def _prove_unsat(antecedent: Any, consequent: Any, timeout_ms: int = DEFAULT_TIM
     # single untranslatable subterm can leave a non-boolean behind.
     if not (z3.is_bool(antecedent) and z3.is_bool(consequent)):
         return None
-    s = z3.Solver()
-    s.set('timeout', timeout_ms)
+    s = bounded_solver(rlimit)
     s.add(antecedent)
     s.add(z3.Not(consequent))
     try:
@@ -345,7 +352,7 @@ def prove_injective_write(write_expr: sp.Basic,
                           end: Any,
                           step: Any = 1,
                           domain_assumptions: Optional[sp.Basic] = None,
-                          timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Optional[bool]:
+                          rlimit: int = DEFAULT_RLIMIT) -> Optional[bool]:
     """Prove that distinct iterations write to distinct locations.
 
     :param write_expr: The write-index expression in terms of ``itervar``.
@@ -377,7 +384,7 @@ def prove_injective_write(write_expr: sp.Basic,
             antecedent = z3.And(antecedent, dom)
 
     consequent = w1 != w2
-    return _prove_unsat(antecedent, consequent, timeout_ms)
+    return prove_unsat(antecedent, consequent, rlimit)
 
 
 def prove_disjoint_write_ranges(lo_expr: sp.Basic,
@@ -387,7 +394,7 @@ def prove_disjoint_write_ranges(lo_expr: sp.Basic,
                                 end: Any,
                                 step: Any = 1,
                                 domain_assumptions: Optional[sp.Basic] = None,
-                                timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Optional[bool]:
+                                rlimit: int = DEFAULT_RLIMIT) -> Optional[bool]:
     """Prove that distinct iterations write to non-overlapping RANGES.
 
     The range form of :func:`prove_injective_write`: an iteration writes the inclusive interval
@@ -433,7 +440,7 @@ def prove_disjoint_write_ranges(lo_expr: sp.Basic,
             antecedent = z3.And(antecedent, dom)
 
     consequent = z3.Not(z3.And(lo1 <= hi2, lo2 <= hi1))
-    return _prove_unsat(antecedent, consequent, timeout_ms)
+    return prove_unsat(antecedent, consequent, rlimit)
 
 
 def prove_disjoint_access_boxes(box1: List[Any],
@@ -443,7 +450,7 @@ def prove_disjoint_access_boxes(box1: List[Any],
                                 end: Any,
                                 step: Any = 1,
                                 domain_assumptions: Optional[sp.Basic] = None,
-                                timeout_ms: int = DEFAULT_TIMEOUT_MS) -> Optional[bool]:
+                                rlimit: int = DEFAULT_RLIMIT) -> Optional[bool]:
     """Prove that two MULTI-DIMENSIONAL range accesses never touch the same element on
     two different iterations.
 
@@ -512,7 +519,7 @@ def prove_disjoint_access_boxes(box1: List[Any],
         if dom is not None:
             antecedent = z3.And(antecedent, dom)
 
-    return _prove_unsat(antecedent, z3.Not(z3.And(*intersects)), timeout_ms)
+    return prove_unsat(antecedent, z3.Not(z3.And(*intersects)), rlimit)
 
 
 def _overlap_pair(write_expr: sp.Basic,
@@ -561,7 +568,7 @@ def _overlap_pair(write_expr: sp.Basic,
             antecedent = z3.And(antecedent, dom)
 
     consequent = wz != rz
-    return _prove_unsat(antecedent, consequent, timeout_ms=DEFAULT_TIMEOUT_MS)
+    return prove_unsat(antecedent, consequent, rlimit=DEFAULT_RLIMIT)
 
 
 def prove_read_ahead(read_expr: sp.Basic,
