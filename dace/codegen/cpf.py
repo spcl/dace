@@ -32,6 +32,7 @@ kernel would still compile and still produce numbers, just not the SDFG's.
 """
 import copy
 import re
+from collections import Counter
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from dace.ordered import OrderedSet
@@ -250,13 +251,13 @@ RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {'ArgReduce': ('OpenMP', )}
 #: for the host.
 RENDERABLE_BY_NODE_DEVICE: Dict[str, Tuple[str, ...]] = {'FindFirst': ('CUDA', ), 'Scan': ('CUDA', )}
 
-#: Slack in the expand-and-reselect loop of :func:`force_renderable_expansions`, on top of the one
-#: round
-#: per library node a single state holds. A node may expand into further library nodes (``MatMul``
-#: -> ``Gemm`` -> its own expansion), so each generation needs a round of its own; the slack covers
-#: that nesting depth. The bound exists only so a node that expands to itself fails with a message
-#: instead of looping forever.
-MAX_EXPANSION_ROUNDS = 16
+#: How many CONSECUTIVE rounds of :func:`force_renderable_expansions` may leave the library-node
+#: census unchanged before the loop refuses. Not a bound on the total number of rounds: a state
+#: holding many library nodes needs one round per node, and a node may expand into further library
+#: nodes (``MatMul`` -> ``Gemm`` -> its own expansion), so a healthy graph takes as many rounds as
+#: it takes. What no healthy graph does is expand and arrive back at the same census, which is the
+#: one shape that would otherwise loop forever.
+MAX_EXPANSION_STALLED_ROUNDS = 16
 
 LIFETIME_DEMOTIONS = {
     dtypes.AllocationLifetime.Persistent: dtypes.AllocationLifetime.SDFG,
@@ -385,9 +386,10 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
     :param provenance: filled in with ``node GUID -> (origin GUID, description)`` for the code each
                        expansion produced, so the rendering can say what the loops used to be.
                        Descriptions come from :data:`LIBRARY_NODE_DESCRIPTIONS`.
-    :raises NotImplementedError: if expansion has not converged (see :data:`MAX_EXPANSION_ROUNDS`).
+    :raises NotImplementedError: if expansion has stalled (see :data:`MAX_EXPANSION_STALLED_ROUNDS`).
     """
-    rounds = 0
+    census: Optional[Counter] = None
+    stalled = 0
     while True:
         pending: Dict[int, List] = {}
         for node, state in sdfg.all_nodes_recursive():
@@ -395,11 +397,22 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
                 pending.setdefault(id(state), []).append((node, state))
         if not pending:
             return
-        rounds += 1
-        if rounds > MAX_EXPANSION_ROUNDS + max(len(group) for group in pending.values()):
-            remaining = sorted({type(node).__name__ for group in pending.values() for node, _ in group})
-            raise NotImplementedError(f'CPF could not expand {", ".join(remaining)} after {rounds} rounds; '
-                                      'a library node appears to expand into itself')
+        # PROGRESS, not round count, is what this can actually observe: a population being lowered
+        # changes the census every round, so a census that stops changing is the one symptom worth
+        # refusing on. A budget derived from the CURRENT population cannot see that at all, because
+        # that population shrinks as the round number grows and the two cross part way through any
+        # long drain.
+        current = Counter(type(node).__name__ for group in pending.values() for node, _ in group)
+        stalled = stalled + 1 if current == census else 0
+        census = current
+        if stalled > MAX_EXPANSION_STALLED_ROUNDS:
+            # Reports the census and how long it stood, and stops there. Naming a cause -- a node
+            # that expands into itself -- would assert something this loop never established, and
+            # the reader then goes looking for a cycle that may not exist.
+            counted = ', '.join(f'{name} x{count}' for name, count in sorted(census.items()))
+            raise NotImplementedError(f'CPF stopped expanding library nodes: {stalled} consecutive rounds left '
+                                      f'the same nodes pending ({counted}). Expansion is making no progress; '
+                                      f'check whether one of these expands into a node of its own type.')
 
         # One per state, by GUID so the pick does not depend on graph iteration order.
         chosen = [sorted(group, key=lambda pair: pair[0].guid)[0] for group in pending.values()]
