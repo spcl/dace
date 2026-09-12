@@ -14,16 +14,20 @@ N = dace.symbol("N")
 
 
 def test_parsed_dace_source_already_uses_int_floor():
-    """`//` written in a kernel is fine -- pystr_to_symbolic maps it onto int_floor. This pass exists
-    for the OTHER spelling, python's `//` applied to a sympy object in transformation code."""
+    """`//` written in a kernel is fine -- pystr_to_symbolic maps it onto int_floor, and so does `//` on a
+    bare dace symbol. This pass exists for the OTHER spelling, python's `//` applied to a compound sympy
+    expression in transformation code, which still lands on sympy floor()."""
     assert head_name(pystr_to_symbolic("(N - 1) // 2")) == "__int_floor"
-    assert isinstance(symbol("N") // 2, sympy.floor)
+    assert head_name(symbol("N") // 2) == "__int_floor"
+    assert isinstance((symbol("N") - 1) // 2, sympy.floor)
 
 
-@pytest.mark.parametrize("expression", ["(N + 1) * 4 // 8", "(N - 1) // 2", "N // 2", "(2 * N + 3) // 4"])
+@pytest.mark.parametrize("expression", ["(N + 1) * 4 // 8", "(N - 1) // 2", "floor(N / 2)", "(2 * N + 3) // 4"])
 def test_normalize_is_value_preserving_and_survives_codegen(expression):
     n = symbol("N")
-    floored = eval(expression, {"N": n})  # python `//` on a sympy object -> sympy.floor
+    # python `//` on a compound sympy expression -> sympy.floor. A bare symbol's `//` is already int_floor,
+    # so its residual floor is spelled out.
+    floored = eval(expression, {"N": n, "floor": sympy.floor})
     assert floored.atoms(sympy.floor), f"{expression} did not produce a sympy floor"
     converted = normalize(floored)
     assert not converted.atoms(sympy.floor)
