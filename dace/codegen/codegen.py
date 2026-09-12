@@ -219,6 +219,14 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     :param validate: If True, validates the SDFG before generating the code.
     :return: List of code objects that correspond to files to compile.
     """
+    # Lowering for emission is not a step of the program's history. Recorded, the first library
+    # expansion deep-copied the whole SDFG into ``orig_sdfg``, and ``SDFG.save`` serialized that
+    # copy a second time only to strip it again.
+    with config.set_temporary('store_history', value=False):
+        return lower_and_generate_code(sdfg, validate)
+
+
+def lower_and_generate_code(sdfg: SDFG, validate: bool) -> List[CodeObject]:
     from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
     from dace.codegen.common import warn_if_cxx_miscompiles_inline_selects
 
@@ -322,7 +330,8 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         from dace.transformation.passes.mark_const_init import MarkConstInit
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
         from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
-        inline_host_nested_sdfgs(sdfg, validate=validate)
+        # Unvalidated sweeps: the ``validate`` closing this branch checks the inlined SDFG once.
+        inline_host_nested_sdfgs(sdfg, validate=False)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Normalize single-value transients to Scalar (default is transient-only, so the signature
