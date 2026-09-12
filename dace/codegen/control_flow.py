@@ -90,7 +90,6 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
     """
     sdfg = region.sdfg
     loop = region
-    cond = unparse_interstate_edge(loop.loop_condition.code[0], sdfg, codegen=codegen, symbols=symbols)
 
     # Ahead of every spelling of the loop below, so a hint on an inverted loop is not silently
     # dropped. Empty unless the rendering is standalone and a pass recorded an alternative.
@@ -101,6 +100,8 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
     if (loop.loop_variable and codegen.dispatcher.defined_vars.has(loop.loop_variable)
             and not loop.loop_variable in lsyms):
         lsyms[loop.loop_variable] = codegen.dispatcher.defined_vars.get(loop.loop_variable)[1]
+    # The condition reads the loop variable as the update does, so it is printed against its type.
+    cond = unparse_interstate_edge(loop.loop_condition.code[0], sdfg, codegen=codegen, symbols=lsyms)
 
     if loop.init_statement:
         init = unparse_interstate_edge(loop.init_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)

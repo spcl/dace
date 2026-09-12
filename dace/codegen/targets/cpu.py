@@ -370,7 +370,10 @@ def register_gpu_block_reduction(red: dict, covered: dict) -> str:
             f"for (int __bi = 0; __bi < {red['m']}; ++__bi) {red['partial']}[__bi] = {red['identity']};")
 
 
-def standalone_wcr_expression(redtype, lhs: str, rhs: str) -> Optional[str]:
+def standalone_wcr_expression(redtype,
+                              lhs: str,
+                              rhs: str,
+                              types: Optional[Tuple[Optional[str], Optional[str]]] = None) -> Optional[str]:
     """The CPF expression combining ``lhs`` and ``rhs`` under ``redtype``, or ``None``.
 
     ``None`` means the resolution has no fixed operator spelling -- it is ``Custom``, or one no
@@ -384,6 +387,8 @@ def standalone_wcr_expression(redtype, lhs: str, rhs: str) -> Optional[str]:
                 here -- the caller passes a primary expression, and adding parentheses would change
                 text the emission tests pin.
     :param rhs: the incoming value.
+    :param types: the dace type names of ``lhs`` and ``rhs``. The C dialect has no ``std::min`` and
+                  names its typed helper after them (``cpf_lowering.c_minmax_call``); C++ never reads them.
     """
     if redtype is dtypes.ReductionType.Exchange:
         return f'({rhs})'
@@ -393,9 +398,9 @@ def standalone_wcr_expression(redtype, lhs: str, rhs: str) -> Optional[str]:
     if operator in ('+', '*', '&', '|', '^', '&&', '||'):
         return f'{lhs} {operator} ({rhs})'
     if operator in ('min', 'max'):
-        # C has no ``std::min``; CPF emits its own typed pair (see cpf_lowering.C_MINMAX_TYPES).
-        spelling = f'cpf_{operator}' if cpf_lowering.standalone_c() else f'std::{operator}'
-        return f'{spelling}({lhs}, {rhs})'
+        if cpf_lowering.standalone_c():
+            return cpf_lowering.c_minmax_call(f'cpf_{operator}', (lhs, rhs), types)
+        return f'std::{operator}({lhs}, {rhs})'
     return None
 
 
@@ -1888,7 +1893,14 @@ class CPUCodeGen(TargetCodeGenerator):
         # semicolon the caller appends lands after the block, where it is an empty statement.
         return f'{hint}_Pragma("omp critical (cpf_wcr)")\n{{ {body}; }}'
 
-    def standalone_wcr_value(self, sdfg: SDFG, memlet, redtype, lhs: str, rhs: str, target: str) -> str:
+    def standalone_wcr_value(self,
+                             sdfg: SDFG,
+                             memlet,
+                             redtype,
+                             lhs: str,
+                             rhs: str,
+                             target: str,
+                             value_dtype: Optional[dtypes.typeclass] = None) -> str:
         """The CPF expression folding ``rhs`` into ``lhs``, whatever the two operands are.
 
         Split out of :meth:`standalone_wcr` because the same combination is needed in three places
@@ -1901,9 +1913,15 @@ class CPUCodeGen(TargetCodeGenerator):
         :param lhs: the accumulator operand, already spelled as the caller wants to read it.
         :param rhs: the incoming value.
         :param target: the accumulated location, for the message.
+        :param value_dtype: the type of ``rhs``. With the accumulator's own type it names the typed C
+                            ``min``/``max`` helper; ``None`` where no C rendering reaches.
         :raises NotImplementedError: for a resolution no standalone spelling covers.
         """
-        expression = standalone_wcr_expression(redtype, lhs, rhs)
+        types = None
+        if value_dtype is not None:
+            accumulator = sdfg.arrays[memlet.data].dtype
+            types = (accumulator.to_string(), value_dtype.to_string())
+        expression = standalone_wcr_expression(redtype, lhs, rhs, types)
         if expression is not None:
             return expression
         if redtype is dtypes.ReductionType.Custom:
@@ -1960,7 +1978,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(dtype, dtypes.vector):
             raise NotImplementedError(f'CPF cannot render the vector WCR on {target}: the vector type is a DaCe '
                                       'runtime template. Scalarize the map before rendering.')
-        return f'*({ptr}) = {self.standalone_wcr_value(sdfg, memlet, redtype, f"*({ptr})", inname, target)}'
+        return f'*({ptr}) = {self.standalone_wcr_value(sdfg, memlet, redtype, f"*({ptr})", inname, target, dtype)}'
 
     def process_out_memlets(self,
                             sdfg: SDFG,

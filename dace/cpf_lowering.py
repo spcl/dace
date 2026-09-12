@@ -58,8 +58,9 @@ class Dialect(enum.Enum):
     #: No DaCe headers; emit only the C++ standard library and CPF's own inline definitions.
     STANDALONE = 'standalone'
     #: No DaCe headers and no C++ either: one C23 translation unit. The C standard library is not
-    #: type-generic and has no templates, so every helper is a ``_Generic`` dispatch macro over a
-    #: closed set of typed ``static inline`` functions (see :data:`C_INLINE_DEFINITIONS`).
+    #: type-generic and has no templates, so a helper is a set of typed ``static inline`` functions
+    #: (see :data:`C_INLINE_DEFINITIONS`). Where the printer resolves the argument types it calls the
+    #: one for their type by name; the others are still selected by a ``_Generic`` dispatch macro.
     STANDALONE_C = 'standalone_c'
     #: No DaCe headers, one HIP translation unit holding both the host code and the kernels.
     #: C++ like :attr:`STANDALONE`, so every host-side helper and lowering it has applies here
@@ -1036,17 +1037,21 @@ def ctype_for(ctype: str, dialect: Optional[Dialect] = None) -> str:
     return tables_for(dialect).ctype_renames.get(ctype, ctype)
 
 
-def variadic_minmax(name: str, arguments: Tuple[str, ...], dialect: Optional[Dialect] = None) -> Optional[str]:
+def variadic_minmax(name: str,
+                    arguments: Tuple[str, ...],
+                    dialect: Optional[Dialect] = None,
+                    types: Optional[Tuple[Optional[str], ...]] = None) -> Optional[str]:
     """Spell a variadic ``Max``/``Min`` for ``dialect``.
 
     The runtime's ``Max`` takes any number of arguments, and so does the C++ dialect's own
-    ``cpf_max`` template, so that one is called with the arguments as they stand. C has no
-    variadic macro to fold over, so the C dialect NESTS the binary macro instead -- left to right,
-    which is the association the recursive template has too.
+    ``cpf_max`` template, so that one is called with the arguments as they stand. C has neither a
+    template nor overloading, so the C dialect NESTS the typed binary helper instead -- left to
+    right, which is the association the recursive template has too (see :func:`c_minmax_call`).
 
     :param name: the runtime function name.
     :param arguments: already-printed argument expressions.
     :param dialect: which standalone dialect to spell it for; ambient when omitted.
+    :param types: the dace type name of each argument. Read only by the C dialect.
     :returns: the expression, or ``None`` if ``name`` is not a min/max.
     """
     resolved = dialect if dialect is not None else _active_dialect
@@ -1055,13 +1060,10 @@ def variadic_minmax(name: str, arguments: Tuple[str, ...], dialect: Optional[Dia
         return None
     if len(arguments) == 1:
         return '(%s)' % arguments[0]
+    if resolved is Dialect.STANDALONE_C:
+        return c_minmax_call(target, arguments, types)
     if len(arguments) == 2:
         return '%s(%s, %s)' % (target, arguments[0], arguments[1])
-    if resolved is Dialect.STANDALONE_C:
-        nested = arguments[0]
-        for argument in arguments[1:]:
-            nested = '%s(%s, %s)' % (target, nested, argument)
-        return nested
     return '%s(%s)' % (target, ', '.join(arguments))
 
 
@@ -1070,11 +1072,16 @@ def needs_definition(name: str, dialect: Optional[Dialect] = None) -> bool:
     return name in tables_for(dialect).inline_definitions
 
 
-def lowering_for(name: str, arguments: Tuple[str, ...], dialect: Optional[Dialect] = None) -> Optional[str]:
+def lowering_for(name: str,
+                 arguments: Tuple[str, ...],
+                 dialect: Optional[Dialect] = None,
+                 types: Optional[Tuple[Optional[str], ...]] = None) -> Optional[str]:
     """The CPF spelling of a call to ``name`` with ``arguments`` already printed.
 
     :param name: the runtime function name as the ordinary generators would emit it.
     :param arguments: already-printed argument expressions.
+    :param types: the dace type name of each argument where the printer resolved it. The C dialect
+                  names a typed helper after them; the C++ dialect never reads them.
     :returns: the C++ expression, or ``None`` if ``name`` needs no rewriting -- either it is not a
               runtime function at all, or it is one CPF emits a definition for and calls unchanged
               (:func:`needs_definition` separates those two).
@@ -1086,7 +1093,7 @@ def lowering_for(name: str, arguments: Tuple[str, ...], dialect: Optional[Dialec
     tables = tables_for(dialect)
     if name in tables.unsupported:
         raise NotImplementedError(f'CPF cannot lower {name!r}: {tables.unsupported[name]}.')
-    variadic = variadic_minmax(name, arguments, dialect)
+    variadic = variadic_minmax(name, arguments, dialect, types)
     if variadic is not None:
         return variadic
     if name in tables.rewrites:
@@ -1306,6 +1313,119 @@ C_MINMAX_TYPES: Tuple[Tuple[str, str],
                       ...] = (('int', 'i'), ('unsigned int', 'u'), ('long', 'l'), ('unsigned long', 'ul'),
                               ('long long', 'll'), ('unsigned long long',
                                                     'ull'), ('float', 'f'), ('double', 'd'), ('long double', 'ld'))
+
+#: dace type name -> the C type a helper the printers call BY NAME is instantiated at. The printer
+#: resolves its argument types and names the helper for the type C's own conversions give them, so
+#: the call is a plain function call and no dispatch macro is emitted.
+C_HELPER_TYPES: Dict[str, str] = {
+    'int32': 'int32_t',
+    'int64': 'int64_t',
+    'uint32': 'uint32_t',
+    'uint64': 'uint64_t',
+    'float32': 'float',
+    'float64': 'double',
+}
+
+#: Integer types narrower than ``int``, which C promotes to ``int`` before any arithmetic.
+C_INTEGER_PROMOTIONS: Dict[str, str] = {
+    'bool': 'int32',
+    'bool_': 'int32',
+    'int8': 'int32',
+    'int16': 'int32',
+    'uint8': 'int32',
+    'uint16': 'int32',
+}
+
+#: ``(conversion rank, signed)`` of each promoted integer type on an LP64 target.
+C_INTEGER_RANKS: Dict[str, Tuple[int, bool]] = {
+    'int32': (1, True),
+    'uint32': (1, False),
+    'int64': (2, True),
+    'uint64': (2, False),
+}
+
+#: ``(rank of the real type, complex)`` of each floating type.
+C_FLOATING_RANKS: Dict[str, Tuple[int, bool]] = {
+    'float32': (1, False),
+    'float64': (2, False),
+    'complex64': (1, True),
+    'complex128': (2, True),
+}
+C_FLOATING_BY_RANK: Dict[Tuple[int, bool], str] = {rank: name for name, rank in C_FLOATING_RANKS.items()}
+
+
+def c_arithmetic(name: str) -> bool:
+    """Whether ``name`` is a dace type :func:`c_common_type` can convert."""
+    return name in C_INTEGER_PROMOTIONS or name in C_INTEGER_RANKS or name in C_FLOATING_RANKS
+
+
+def c_symbol_type(name: str) -> str:
+    """The type the C dialect picks a helper by for a SYMBOL of dace type ``name``.
+
+    Every signed integer is taken at ``int64``. A symbol's recorded width is not the width the unit
+    declares it with: one parsed from text carries ``DEFAULT_SYMBOL_TYPE``, and a nested function
+    takes as ``int64_t`` a symbol its caller declares ``int``. A helper instantiated at the recorded
+    width could narrow an ``int64_t`` value; widening a signed integer changes no value a narrower
+    helper returns without overflowing.
+    """
+    return 'int64' if name in C_INTEGER_PROMOTIONS or name in ('int32', 'int64') else name
+
+
+def c_integer_conversion(first: str, second: str) -> str:
+    """The usual arithmetic conversion of two promoted integer types (C11 6.3.1.8) on LP64."""
+    (first_rank, first_signed), (second_rank, second_signed) = C_INTEGER_RANKS[first], C_INTEGER_RANKS[second]
+    if first_signed == second_signed:
+        return first if first_rank >= second_rank else second
+    signed, unsigned = (first, second) if first_signed else (second, first)
+    # Only a strictly wider signed type represents every value of the unsigned one.
+    return signed if C_INTEGER_RANKS[signed][0] > C_INTEGER_RANKS[unsigned][0] else unsigned
+
+
+def c_common_type(types: Tuple[str, ...]) -> str:
+    """The type of ``(a0) + (a1) + ...`` in C for operands of the dace types ``types``.
+
+    This is the type a ``_Generic`` selection on the sum of the arguments picks at compile time,
+    computed at print time so the printer can name the typed helper directly.
+
+    :param types: dace type names (``'int64'``, ``'float32'``), at least one.
+    :returns: the dace type name of the result.
+    :raises NotImplementedError: for a type with no C arithmetic spelling here.
+    """
+    promoted = [C_INTEGER_PROMOTIONS.get(name, name) for name in types]
+    unknown = sorted({name for name in promoted if name not in C_INTEGER_RANKS and name not in C_FLOATING_RANKS})
+    if unknown or not promoted:
+        raise NotImplementedError(f'CPF cannot type C arithmetic over {list(types)}: {unknown} has no C spelling here')
+    floating = [C_FLOATING_RANKS[name] for name in promoted if name in C_FLOATING_RANKS]
+    if floating:
+        return C_FLOATING_BY_RANK[(max(rank for rank, _ in floating), any(is_complex for _, is_complex in floating))]
+    result = promoted[0]
+    for other in promoted[1:]:
+        result = c_integer_conversion(result, other)
+    return result
+
+
+def c_minmax_call(stem: str, arguments: Tuple[str, ...], types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """A C ``Max``/``Min`` over two or more arguments, as nested calls to the typed binary helper.
+
+    Nested left to right, and each call is instantiated at the type C's conversions give its two
+    operands -- which is what the ``_Generic`` dispatch on ``(a) + (b)`` selected.
+
+    :param stem: ``'cpf_max'`` or ``'cpf_min'``.
+    :param arguments: already-printed argument expressions.
+    :param types: the dace type name of each argument, as the printer resolved it.
+    :returns: the nested call.
+    :raises NotImplementedError: if an argument type is unknown or has no ordering.
+    """
+    if types is None or len(types) != len(arguments) or any(dtype is None for dtype in types):
+        raise NotImplementedError(f'CPF cannot pick the C {stem} helper for ({", ".join(arguments)}): the printer '
+                                  f'resolved the argument types as {types}')
+    nested, nested_type = arguments[0], types[0]
+    for argument, argument_type in zip(arguments[1:], types[1:]):
+        nested_type = c_common_type((nested_type, argument_type))
+        if nested_type not in C_HELPER_TYPES:
+            raise NotImplementedError(f'CPF cannot order {nested_type} values for {stem}: the type has no ordering')
+        nested = '%s_%s(%s, %s)' % (stem, nested_type, nested, argument)
+    return nested
 
 
 def c_generic_macro(name: str,
@@ -1533,11 +1653,24 @@ C_CTYPE_RENAMES.update({
 #: ``b`` wins only by comparing STRICTLY better, so a tie -- and a comparison false because an
 #: operand is NaN -- keeps ``a``. Same rule as the runtime's ``max``/``min``, which is what these
 #: stand in for.
+C_MINMAX_CONDITIONS: Tuple[Tuple[str, str], ...] = (('cpf_max', 'a < b'), ('cpf_min', 'b < a'))
+
+#: The ``_Generic`` pair the prefix-scan statement macros fold through. Their accumulator is a
+#: ``typeof``, which only the macro expansion knows, so no printer can name a typed helper for them.
 _C_MINMAX_DEFINITIONS: Dict[str, str] = {
     name:
     c_typed_family(name, (('{T}', 'a'), ('{T}', 'b')), ((C_MINMAX_TYPES, '{T}', 'return (%s) ? b : a;' % condition), ),
                    '(a) + (b)')
-    for name, condition in (('cpf_max', 'a < b'), ('cpf_min', 'b < a'))
+    for name, condition in C_MINMAX_CONDITIONS
+}
+
+#: ``cpf_max_<type>`` / ``cpf_min_<type>``: what a printed ``Max``/``Min`` calls by name (see
+#: :func:`c_minmax_call`).
+C_TYPED_MINMAX_DEFINITIONS: Dict[str, str] = {
+    '%s_%s' % (stem, name):
+    'static inline %s %s_%s(%s a, %s b) { return (%s) ? b : a; }' % (ctype, stem, name, ctype, ctype, condition)
+    for stem, condition in C_MINMAX_CONDITIONS
+    for name, ctype in C_HELPER_TYPES.items()
 }
 
 _C_SIGN_BODY = 'return ({T})((({T})0 < value) - (value < ({T})0));'
@@ -1557,6 +1690,7 @@ C_COMPLEX_BUILDERS: Dict[str, str] = {'dace::complex64': 'cpf_complex64', 'dace:
 
 C_INLINE_DEFINITIONS: Dict[str, str] = dict(_C_MATH_MACROS)
 C_INLINE_DEFINITIONS.update(_C_MINMAX_DEFINITIONS)
+C_INLINE_DEFINITIONS.update(C_TYPED_MINMAX_DEFINITIONS)
 # C11 6.2.5p13: a complex has the representation of a two-element array of its real type.
 C_INLINE_DEFINITIONS.update({
     builder: ('static inline %s _Complex %s(%s re, %s im) { union { %s _Complex value; %s parts[2]; } z = '
@@ -2385,8 +2519,6 @@ C_NATIVE_RENAMES.update({
     'std::memmove': 'memmove',
     'std::memset': 'memset',
     'std::size_t': 'size_t',
-    'std::min': 'cpf_min',
-    'std::max': 'cpf_max',
     # ``fmod`` has no runtime name of its own -- ``cpp_mod`` is what the printers reach it through
     # -- so it is absent from the two printer tables the renames above derive from, and a body that
     # writes the C++ spelling directly needs the entry here.
@@ -2402,15 +2534,54 @@ C_NATIVE_RENAMES.update({
 _C_NATIVE_RENAME_PATTERN = re.compile(r'(?:::)?\b(' + '|'.join(
     re.escape(name) for name in sorted(C_NATIVE_RENAMES, key=len, reverse=True)) + r')\b')
 
+#: ``std::min<T>(`` / ``std::max<T>(``, as an expansion that knows its element type writes them.
+C_TYPED_MINMAX_CALL = re.compile(r'(?:::)?\bstd::(min|max)\s*<\s*([A-Za-z_][\w ]*?)\s*>\s*\(')
+
+#: C scalar spelling -> dace type name, for an element type an expansion wrote as a template argument.
+C_CTYPE_DTYPES: Dict[str, str] = {
+    'bool': 'bool',
+    'char': 'int8',
+    'int8_t': 'int8',
+    'short': 'int16',
+    'int16_t': 'int16',
+    'int': 'int32',
+    'int32_t': 'int32',
+    'long': 'int64',
+    'long long': 'int64',
+    'int64_t': 'int64',
+    'uint8_t': 'uint8',
+    'uint16_t': 'uint16',
+    'unsigned int': 'uint32',
+    'uint32_t': 'uint32',
+    'unsigned long': 'uint64',
+    'unsigned long long': 'uint64',
+    'uint64_t': 'uint64',
+    'size_t': 'uint64',
+    'float': 'float32',
+    'double': 'float64',
+}
+
+
+def c_typed_minmax(match: 're.Match') -> str:
+    """The typed C helper call that opens in place of a ``std::min<T>(`` / ``std::max<T>(``."""
+    operation, ctype = match.group(1), match.group(2)
+    if ctype not in C_CTYPE_DTYPES:
+        raise NotImplementedError(f'CPF cannot spell std::{operation}<{ctype}> in C: no C helper takes that type')
+    return 'cpf_%s_%s(' % (operation, c_common_type((C_CTYPE_DTYPES[ctype], )))
+
 
 def c_native_renames(code: str) -> str:
     """Spell the ``std::`` names a hand-written body carries the C way.
+
+    ``std::min<T>`` / ``std::max<T>`` become the typed helper for ``T``. An untyped ``std::min``
+    names no type to pick a helper by, so it is left for ``dace.codegen.cpf.verify`` to report.
 
     :param code: the body as the expansion or pass wrote it.
     :returns: the body with each :data:`C_NATIVE_RENAMES` name replaced.
     """
     if 'std::' not in code:
         return code
+    code = C_TYPED_MINMAX_CALL.sub(c_typed_minmax, code)
     return _C_NATIVE_RENAME_PATTERN.sub(lambda match: C_NATIVE_RENAMES[match.group(1)], code)
 
 

@@ -113,9 +113,14 @@ def spell(text, dialect):
     return cpf_lowering.c_cast_native_code(text) if dialect is Dialect.STANDALONE_C else text
 
 
+def literal_types(arguments):
+    """The C type of each printed literal in a case: a decimal point makes a ``double``, else an ``int``."""
+    return tuple('float64' if '.' in argument else 'int32' for argument in arguments)
+
+
 def render(name, arguments, dialect):
     """The CPF call expression for ``name`` under ``dialect``, plus any definition it needs."""
-    lowered = cpf_lowering.lowering_for(name, arguments, dialect)
+    lowered = cpf_lowering.lowering_for(name, arguments, dialect, literal_types(arguments))
     if lowered is None:
         assert cpf_lowering.needs_definition(name, dialect), (
             f'{name!r} has no CPF lowering and no inline definition in {dialect}, so it would be emitted as a '
@@ -442,6 +447,11 @@ def test_every_c_definition_is_reachable():
     unreachable entry never compiles, never runs, and never fails.
     """
     reachable = set(cpf_lowering.C_STD_RENAMES.values()) | set(cpf_lowering.C_VARIADIC_MINMAX.values())
+    # A printed min/max names the typed helper for the type its operands convert to.
+    for name in cpf_lowering.C_VARIADIC_MINMAX:
+        for dtype in cpf_lowering.C_HELPER_TYPES:
+            lowered = cpf_lowering.lowering_for(name, ('a', 'b'), Dialect.STANDALONE_C, (dtype, dtype))
+            reachable |= cpf_lowering.helpers_used(lowered, Dialect.STANDALONE_C)
     # A helper the printers call UNCHANGED -- ``lowering_for`` returns None and ``needs_definition``
     # says CPF emits the body. That is any C definition whose name is a runtime function, which
     # includes gcd/lcm: a std:: rename in C++, an emitted definition here.
@@ -530,12 +540,71 @@ def test_c_refuses_a_scan_identity_it_cannot_order():
         cpf_lowering.rewrite_native_code('min_identity<double _Complex>()', Dialect.STANDALONE_C)
 
 
-def test_variadic_minmax_nests_binary_calls_in_c():
-    """C has no variadic macro to fold over, so a three-way ``Max`` nests the binary one; the C++
-    template takes all three directly, and both associate left to right."""
-    arguments = ('a', 'b', 'c')
-    assert cpf_lowering.variadic_minmax('Max', arguments, Dialect.STANDALONE_C) == 'cpf_max(cpf_max(a, b), c)'
-    assert cpf_lowering.variadic_minmax('Max', arguments, Dialect.STANDALONE) == 'cpf_max(a, b, c)'
+#: ``(argument types, the nested C call)``. Each binary call is instantiated at the type C's usual
+#: arithmetic conversions give ITS two operands, so the outer call sees the inner call's result type.
+C_NESTED_MINMAX = [
+    (('float64', 'float64', 'float64'), 'cpf_max_float64(cpf_max_float64(a, b), c)'),
+    (('int32', 'int64', 'float32'), 'cpf_max_float32(cpf_max_int64(a, b), c)'),
+    (('int8', 'int16', 'uint16'), 'cpf_max_int32(cpf_max_int32(a, b), c)'),
+    (('uint32', 'int64', 'uint64'), 'cpf_max_uint64(cpf_max_int64(a, b), c)'),
+    (('int32', 'uint32', 'int32'), 'cpf_max_uint32(cpf_max_uint32(a, b), c)'),
+]
+
+
+@pytest.mark.parametrize('types,expected', C_NESTED_MINMAX, ids=['-'.join(types) for types, _ in C_NESTED_MINMAX])
+def test_a_c_variadic_max_nests_the_typed_binary_helper_left_to_right(types, expected):
+    """C has neither the variadic template nor overloading, so a three-way ``Max`` nests binary calls,
+    each named for the type its own two operands convert to."""
+    assert cpf_lowering.variadic_minmax('Max', ('a', 'b', 'c'), Dialect.STANDALONE_C, types) == expected
+
+
+def test_the_cpp_variadic_max_takes_every_argument_at_once():
+    """The C++ template is variadic and reads no types, so its spelling must not follow the C one."""
+    assert cpf_lowering.variadic_minmax('Max', ('a', 'b', 'c'), Dialect.STANDALONE) == 'cpf_max(a, b, c)'
+
+
+#: Each dace type the C helpers convert, spelled the way a probe declares an operand of it.
+C_ARITHMETIC_SPELLINGS = {
+    'bool': 'bool',
+    'int8': 'int8_t',
+    'int16': 'int16_t',
+    'int32': 'int32_t',
+    'int64': 'int64_t',
+    'uint8': 'uint8_t',
+    'uint16': 'uint16_t',
+    'uint32': 'uint32_t',
+    'uint64': 'uint64_t',
+    'float32': 'float',
+    'float64': 'double',
+    'complex64': 'float _Complex',
+    'complex128': 'double _Complex',
+}
+#: The types a sum can have, in the order the probe numbers them.
+C_SUM_TYPES = ('int32', 'int64', 'uint32', 'uint64', 'float32', 'float64', 'complex64', 'complex128')
+C_TYPE_PAIRS = [(first, second) for first in C_ARITHMETIC_SPELLINGS for second in C_ARITHMETIC_SPELLINGS]
+
+
+@pytest.fixture(scope='module')
+def c_sum_types():
+    """The type gcc's ``_Generic`` selects for ``(a) + (b)`` over every pair, from one compiled probe."""
+    declarations = '\n'.join('static %s v_%s;' % (spelling, name) for name, spelling in C_ARITHMETIC_SPELLINGS.items())
+    associations = ', '.join('%s: %d' % (C_ARITHMETIC_SPELLINGS[name], code) for code, name in enumerate(C_SUM_TYPES))
+    body = '\n'.join('    out[%d] = _Generic((v_%s) + (v_%s), %s, default: -1);' % (index, first, second, associations)
+                     for index, (first, second) in enumerate(C_TYPE_PAIRS))
+    code = '#include <stdint.h>\n#include <complex.h>\n%s\nvoid probe(int * out)\n{\n%s\n}\n' % (declarations, body)
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_c_sum_types', language='c'))
+    out = np.full(len(C_TYPE_PAIRS), -2, dtype=np.int32)
+    library.probe.argtypes = [ctypes.c_void_p]
+    library.probe.restype = None
+    library.probe(ctypes.c_void_p(out.ctypes.data))
+    return {pair: (C_SUM_TYPES[code] if code >= 0 else None) for pair, code in zip(C_TYPE_PAIRS, out)}
+
+
+@pytest.mark.parametrize('first,second', C_TYPE_PAIRS, ids=['%s+%s' % pair for pair in C_TYPE_PAIRS])
+def test_c_common_type_is_the_type_the_compiler_gives_the_sum(c_sum_types, first, second):
+    """The printer names the helper a ``_Generic`` on ``(a) + (b)`` used to select, so the two must agree
+    on every pair, or a call converts its operands to a different type than the compiler would."""
+    assert cpf_lowering.c_common_type((first, second)) == c_sum_types[(first, second)]
 
 
 def test_c_scan_helpers_keep_the_parallel_inscan_form():
@@ -669,8 +738,8 @@ void probe(double * out) {{ calls = 0; out[0] = {call}; out[0] += calls; }}
 
 @pytest.mark.parametrize('name,call,expected', [
     ('cpf_sqrt', 'cpf_sqrt(bump())', 5.0),
-    ('cpf_max', 'cpf_max(bump(), 1.0)', 17.0),
-    ('cpf_min', 'cpf_min(bump(), 1.0)', 2.0),
+    ('cpf_max_float64', 'cpf_max_float64(bump(), 1.0)', 17.0),
+    ('cpf_min_float64', 'cpf_min_float64(bump(), 1.0)', 2.0),
 ],
                          ids=['sqrt', 'max', 'min'])
 def test_c_dispatch_macros_evaluate_each_argument_once(name, call, expected):
@@ -880,7 +949,7 @@ C_NATIVE_STD_BODIES = [
     ('fmod', '_out[0] = std::fmod(_in[0], _in[1]);'),
     ('hypot', '_out[0] = std::hypot(_in[0], _in[1]);'),
     ('atan2', '_out[0] = std::atan2(_in[0], _in[1]);'),
-    ('minmax', '_out[0] = std::min(_in[0], std::max(_in[1], _in[2]));'),
+    ('minmax', '_out[0] = std::min<double>(_in[0], std::max<double>(_in[1], _in[2]));'),
     ('numeric_limits', '_out[0] = std::numeric_limits<double>::max();'),
 ]
 
@@ -899,6 +968,20 @@ def test_the_c_lane_answers_every_cxx_name_a_selectable_expansion_writes(label, 
         assert rewritten == body, 'the fill is answered at expansion time, not here'
         return
     assert 'std::' not in rewritten, f'{label} kept a C++ spelling: {rewritten}'
+
+
+def test_a_typed_native_std_min_calls_the_helper_for_its_promoted_type():
+    """An ``int8_t`` operand is promoted to ``int`` before it is compared, so its helper is the int one."""
+    body = '_out[0] = std::min<int8_t>(_in[0], std::max<float>(_in[1], _in[2]));'
+    rewritten = cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C)
+    assert rewritten == '_out[0] = cpf_min_int32(_in[0], cpf_max_float32(_in[1], _in[2]));', rewritten
+
+
+def test_an_untyped_native_std_min_is_left_for_verify():
+    """C has no overloading, so a ``std::min`` naming no element type has no helper to become: it must
+    reach CPF's gate by name rather than turn into a helper of a guessed type."""
+    body = '_out[0] = std::min(_in[0], _in[1]);'
+    assert cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C) == body
 
 
 #: ``(dialect, the text a cast in a symbolic expression must print as)``. Both dialects are held to
