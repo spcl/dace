@@ -550,10 +550,10 @@ def test_a_scalar_a_kernel_writes_and_a_later_state_reads_is_device_resident():
     assert resident, (f'no device copy of the kernel-written scalar: '
                       f'{[(n, sdfg.arrays[n].storage.name) for n in written]}')
 
-    signatures = [
-        line for obj in sdfg.generate_code() if obj.language == 'cu' for line in obj.clean_code.splitlines()
-        if '__global__' in line
-    ]
+    # Not filtered by ``obj.language``: the CUDA target names the device file's language after the
+    # detected backend (``cu`` for CUDA, ``cpp`` for HIP -- ``dace/codegen/targets/cuda.py``), so a
+    # language-specific filter here would only run on an NVIDIA host.
+    signatures = [line for obj in sdfg.generate_code() for line in obj.clean_code.splitlines() if '__global__' in line]
     assert signatures, 'nothing was emitted as a kernel, so the signature asserts nothing'
     by_value = [line for line in signatures for name in resident if f'double {name}' in line]
     assert not by_value, f'a kernel takes a scalar it writes by value: {by_value}'
