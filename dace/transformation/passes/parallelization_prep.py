@@ -49,6 +49,17 @@ def _loops(sdfg: SDFG):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
 
+def mappable_count_upper_bound(candidate: SDFG, verdicts: Dict[str, bool]) -> int:
+    """An upper bound on ``BestEffortLoopPeeling._mappable_loop_count(candidate, dict(verdicts))``, without its prep.
+
+    The count scores each loop 0 or 1 -- its memoized verdict when the label is in ``verdicts``, a
+    fresh probe otherwise -- and skips provably-single-iteration loops. Its prep passes (scalar
+    privatization, symbol and constant propagation, iterator renaming without post-value states)
+    add, remove and relabel no ``LoopRegion``, so the loops and labels read here are the ones the
+    count scores."""
+    return sum(int(verdicts.get(loop.label, True)) for loop in _loops(candidate))
+
+
 def _as_symbolic(expr):
     """``expr`` as a sympy expression, skipping the print-and-reparse round trip when it already is
     one. Subset bounds are stored symbolic, so ``pystr_to_symbolic(str(bound))`` returns the very
@@ -821,7 +832,8 @@ class BestEffortLoopPeeling(ppl.Pass):
                        loop: LoopRegion,
                        x,
                        middle_singleton: bool = True,
-                       clamp: FrozenSet[str] = frozenset()) -> bool:
+                       clamp: FrozenSet[str] = frozenset(),
+                       reuse_loop: bool = False) -> bool:
         """Index-set-split ``loop`` at iteration ``x`` into range segments, each a
         clone of the body wired in sequence in place of the loop. Unit stride only;
         returns whether it split.
@@ -853,7 +865,11 @@ class BestEffortLoopPeeling(ppl.Pass):
           in the segment's bound, which ``LoopToMap`` maps as readily as a bare one.
         - guard the whole split with the membership relation and keep the original loop as the
           fallback -- :meth:`_split_range_relations` plus :meth:`_specialize_index_set_split`.
-          Keeps the bounds bare, at the price of a second copy of the nest that never parallelizes."""
+          Keeps the bounds bare, at the price of a second copy of the nest that never parallelizes.
+
+        ``reuse_loop`` makes ``loop`` itself the last segment instead of a clone, saving one deepcopy of the
+        nest. Only for a throwaway candidate graph: the loop object stays live, so a caller that later visits
+        its snapshot of loops (the real split in :meth:`apply_pass`) would find it still in the graph."""
         import copy
         from dace.properties import CodeBlock
         from dace.sdfg.sdfg import InterstateEdge
@@ -895,10 +911,20 @@ class BestEffortLoopPeeling(ppl.Pass):
             return False  # [x, end] would be the whole loop -> nothing to split
 
         chain: List[LoopRegion] = []
+        in_edges = list(parent.in_edges(loop))
+        out_edges = list(parent.out_edges(loop))
 
-        def clone_segment() -> LoopRegion:
-            seg = copy.deepcopy(loop)
-            seg.label = _unique_block_label(sdfg, loop.label)
+        def clone_segment(last: bool = False) -> LoopRegion:
+            label = _unique_block_label(sdfg, loop.label)
+            if last and reuse_loop:
+                # The last segment IS the loop: every earlier clone is already taken, so copying it once
+                # more only to delete the original is a whole-nest deepcopy for nothing. Removed and
+                # re-added, it lands where that last clone would, with the edges re-attached below.
+                parent.remove_node(loop)
+                seg = loop
+            else:
+                seg = copy.deepcopy(loop)
+            seg.label = label
             # Registers the clone so the next unique-label query sees it, and marks the head of the
             # chain as the region entry when the loop it replaces was one.
             parent.add_node(seg, is_start_block=is_start and not chain)
@@ -912,7 +938,8 @@ class BestEffortLoopPeeling(ppl.Pass):
             before.loop_condition = CodeBlock(f'{ivar} < {hi}')
             chain.append(before)
         if middle_singleton:
-            at = clone_segment()  # {x} intersected with [start, end]: at most a single iteration
+            # {x} intersected with [start, end]: at most a single iteration
+            at = clone_segment(last=not want_after)
             # Clamped to the range, so an out-of-range ``x`` runs nothing here rather than an
             # iteration the loop never had. Nobody maps a singleton, so the min/max costs no
             # parallelism -- unlike the range segments, whose bounds must stay bare for
@@ -921,27 +948,29 @@ class BestEffortLoopPeeling(ppl.Pass):
             at.loop_condition = CodeBlock(f'{ivar} < min(({x}), ({end})) + 1')
             chain.append(at)
             if want_after:
-                after = clone_segment()  # [x+1, end], original condition
+                after = clone_segment(last=True)  # [x+1, end], original condition
                 lo = f'max(({x}) + 1, ({start}))' if 'after' in clamp else f'({x}) + 1'
                 after.init_statement = CodeBlock(f'{ivar} = {lo}')
                 chain.append(after)
         else:
-            after = clone_segment()  # [x, end]: x joins the second half, original condition
+            after = clone_segment(last=True)  # [x, end]: x joins the second half, original condition
             lo = f'max(({x}), ({start}))' if 'after' in clamp else f'({x})'
             after.init_statement = CodeBlock(f'{ivar} = {lo}')
             chain.append(after)
 
-        in_edges = list(parent.in_edges(loop))
-        out_edges = list(parent.out_edges(loop))
+        # A reused loop took its own edges with it; otherwise each edge moves over before the loop goes.
         for ie in in_edges:
             parent.add_edge(ie.src, chain[0], ie.data)
-            parent.remove_edge(ie)
+            if not reuse_loop:
+                parent.remove_edge(ie)
         for prev, nxt in zip(chain, chain[1:]):
             parent.add_edge(prev, nxt, InterstateEdge())
         for oe in out_edges:
             parent.add_edge(chain[-1], oe.dst, oe.data)
-            parent.remove_edge(oe)
-        parent.remove_node(loop)
+            if not reuse_loop:
+                parent.remove_edge(oe)
+        if not reuse_loop:
+            parent.remove_node(loop)
         parent.reset_cfg_list()
         return True
 
@@ -1157,9 +1186,13 @@ class BestEffortLoopPeeling(ppl.Pass):
                 if not cloops:
                     continue
                 sides = frozenset() if guarded else clamp
-                if not self._split_loop_at(cand, cloops[0], x, middle_singleton=singleton, clamp=sides):
+                if not self._split_loop_at(cand, cloops[0], x, middle_singleton=singleton, clamp=sides,
+                                           reuse_loop=True):
                     continue
                 self._clean_peeled_remainder(cand)
+                # Skipping a candidate that cannot beat the best is what a count <= best_count does anyway.
+                if mappable_count_upper_bound(cand, verdicts) <= best_count:
+                    continue
                 try:
                     cand.validate()
                     n_mappable = self._mappable_loop_count(cand, dict(verdicts))
@@ -1569,7 +1602,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             cloops = _loops(cand)
             if not cloops:
                 return None
-            if not self._split_loop_at(cand, cloops[0], x, middle_singleton=False):
+            if not self._split_loop_at(cand, cloops[0], x, middle_singleton=False, reuse_loop=True):
                 continue
             relations: set = set()
             self._clean_peeled_remainder(cand, collect=relations)  # capture the branch condition

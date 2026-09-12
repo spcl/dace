@@ -26,7 +26,7 @@ import pytest
 import dace
 from dace import symbolic
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling
+from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling, mappable_count_upper_bound
 
 N = dace.symbol('N', nonnegative=True)
 K = dace.symbol('K', nonnegative=True)
@@ -252,3 +252,21 @@ def test_split_point_provably_past_the_end_is_refused():
     assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, symbolic.pystr_to_symbolic('-1'))
     sdfg.validate()
     assert _loops(sdfg) == [loop], 'a refused split must leave the loop alone'
+
+
+def test_split_search_bound_never_undercounts_a_candidate():
+    """The search skips a candidate whose bound cannot beat the best, so the bound must hold after the count's prep."""
+    sdfg = reverse_read_same_write.to_sdfg(simplify=True)
+    peel = BestEffortLoopPeeling(peel_limit=4)
+    mini, _ = peel._isolate_loop(_loops(sdfg)[0], sdfg)
+    verdicts = {}
+    assert peel._mappable_loop_count(copy.deepcopy(mini), verdicts) == 0
+    verdicts.pop(_loops(mini)[0].label)
+    cand = copy.deepcopy(mini)
+    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2))
+    peel._clean_peeled_remainder(cand)
+    labels = [l.label for l in _loops(cand)]
+    bound = mappable_count_upper_bound(cand, verdicts)
+    count = peel._mappable_loop_count(cand, dict(verdicts))
+    assert [l.label for l in _loops(cand)] == labels, 'the count prep must not add, drop or relabel a loop'
+    assert (bound, count) == (3, 2)
