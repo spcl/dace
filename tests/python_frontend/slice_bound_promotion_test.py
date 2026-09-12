@@ -112,5 +112,186 @@ def test_a_float_bound_is_still_refused():
         float_bound.to_sdfg(simplify=False)
 
 
+@dace.program
+def alias_bounds_a_slice(hc: dace.complex128[M, M]):
+    n_iter = N
+    c = np.zeros((N, N), dtype=np.complex128)
+    for i in range(n_iter):
+        for j in range(n_iter):
+            c[i, j] = i * 10.0 + j
+    hc[:n_iter, :n_iter] = c
+
+
+@dace.program
+def alias_sizes_an_array(res: dace.float64[N]):
+    k = N
+    res[:] = np.arange(k) + 1.0
+
+
+@pytest.mark.parametrize('n', [1, 4])
+def test_a_scalar_copied_from_a_symbol_bounds_a_slice_of_that_symbols_extent(n):
+    """``n_iter = N`` then ``hc[:n_iter, :n_iter] = np.zeros((N, N))`` is how a generated kernel keeps
+    a loop-carried size, and the store was refused as ``[N, N]`` into ``[__sym_n_iter, ...]``."""
+    m = 7
+    hc = np.zeros((m, m), dtype=np.complex128)
+    alias_bounds_a_slice(hc=hc, N=n, M=m)
+    expected = np.zeros((m, m), dtype=np.complex128)
+    expected[:n, :n] = np.arange(n)[:, None] * 10.0 + np.arange(n)[None, :]
+    assert np.array_equal(hc, expected), hc
+
+
+def test_a_scalar_copied_from_a_symbol_sizes_an_array_of_that_symbols_extent():
+    n = 6
+    res = np.zeros(n)
+    alias_sizes_an_array(res=res, N=n)
+    assert np.array_equal(res, np.arange(n) + 1.0), res
+
+
+@dace.program
+def alias_bounds_a_slice_inside_a_branch(hc: dace.float64[M, M], flag: dace.bool):
+    n_iter = N
+    c = np.ones((N, N))
+    if flag:
+        hc[:n_iter, :n_iter] = c
+
+
+@pytest.mark.parametrize('flag', [True, False])
+def test_a_scalar_copied_from_a_symbol_bounds_a_slice_inside_a_branch(flag):
+    """A branch nested in the assignment's region runs after it and at most once, so the copy still
+    holds its symbol there -- the generated kernels guard their store with ``if uspp:``."""
+    n, m = 3, 5
+    hc = np.zeros((m, m))
+    alias_bounds_a_slice_inside_a_branch(hc=hc, flag=flag, N=n, M=m)
+    expected = np.zeros((m, m))
+    if flag:
+        expected[:n, :n] = 1.0
+    assert np.array_equal(hc, expected), hc
+
+
+@dace.program
+def rebound_by_an_update(res: dace.float64[M]):
+    k = N
+    k += 1
+    res[:k] = 1.0
+
+
+@dace.program
+def carried_through_a_loop(res: dace.float64[M]):
+    n = N
+    for it in range(3):
+        res[:n] = res[:n] + 1.0
+        n = n + 1
+
+
+@dace.program
+def defined_on_a_branch(res: dace.float64[M], flag: dace.bool):
+    if flag:
+        n = N
+    else:
+        n = N + 1
+    res[:n] = 1.0
+
+
+def reference_rebound_by_an_update(res, n):
+    res[:n + 1] = 1.0
+
+
+def reference_carried_through_a_loop(res, n):
+    for it in range(3):
+        res[:n + it] = res[:n + it] + 1.0
+
+
+def reference_defined_on_a_branch(res, n, flag):
+    res[:n if flag else n + 1] = 1.0
+
+
+@pytest.mark.parametrize('program, reference, extra', [
+    (rebound_by_an_update, reference_rebound_by_an_update, {}),
+    (carried_through_a_loop, reference_carried_through_a_loop, {}),
+    (defined_on_a_branch, reference_defined_on_a_branch, {
+        'flag': True
+    }),
+    (defined_on_a_branch, reference_defined_on_a_branch, {
+        'flag': False
+    }),
+],
+                         ids=['update', 'loop_carry', 'branch_taken', 'branch_not_taken'])
+def test_a_scalar_that_may_no_longer_hold_its_symbol_keeps_its_own_value(program, reference, extra):
+    """Relating ``n = N`` back to ``N`` is only sound where the assignment certainly ran and nothing
+    rebound it since. An update, a later loop iteration or the other branch must read the scalar."""
+    n, m = 4, 9
+    res = np.zeros(m)
+    program(res=res, N=n, M=m, **extra)
+    expected = np.zeros(m)
+    reference(expected, n, **extra)
+    assert np.array_equal(res, expected), res
+
+
+@dace.program
+def alias_bounds_an_update(hc: dace.float64[M, M]):
+    n_iter = N
+    c = np.ones((N, N))
+    hc[:n_iter, :n_iter] += c
+
+
+def test_a_scalar_copied_from_a_symbol_bounds_an_update_of_that_symbols_extent():
+    n, m = 3, 5
+    hc = np.full((m, m), 2.0)
+    alias_bounds_an_update(hc=hc, N=n, M=m)
+    expected = np.full((m, m), 2.0)
+    expected[:n, :n] += 1.0
+    assert np.array_equal(hc, expected), hc
+
+
+@dace.program
+def alias_bounds_a_store_then_a_loop_reads_it(hc: dace.float64[M, M], out: dace.float64[M]):
+    n_iter = N
+    hc[:n_iter, :n_iter] = np.ones((N, N))
+    a = np.copy(hc[:, :n_iter])
+    for it in range(2):
+        a = np.copy(hc[:, :n_iter])
+        out[:] = out + a[:, 0]
+
+
+def test_a_loop_reading_the_copy_again_sees_the_extent_read_before_the_loop():
+    """cegterg's shape: ``psi_k = np.copy(psi[:, :nbase_iter])`` before the Davidson loop and again
+    inside it. Reading the copy as ``N`` outside the loop but as a fresh symbol inside it gave the one
+    name two shapes, and the second binding was refused."""
+    n, m = 3, 5
+    hc = np.zeros((m, m))
+    out = np.zeros(m)
+    alias_bounds_a_store_then_a_loop_reads_it(hc=hc, out=out, N=n, M=m)
+    expected_hc = np.zeros((m, m))
+    expected_hc[:n, :n] = 1.0
+    expected_out = 2.0 * expected_hc[:, 0]
+    assert np.array_equal(hc, expected_hc), hc
+    assert np.array_equal(out, expected_out), out
+
+
+def test_a_store_in_a_loop_that_rebinds_the_copy_is_still_refused():
+    """A later iteration stores through the rebound copy, so inside that loop it is not ``N``."""
+
+    @dace.program
+    def rebound_in_the_loop(hc: dace.float64[M, M]):
+        n_iter = N
+        for it in range(2):
+            hc[:n_iter, :n_iter] = np.ones((N, N))
+            n_iter = n_iter + 1
+
+    with pytest.raises(IndexError, match='could not broadcast'):
+        rebound_in_the_loop.to_sdfg(simplify=False)
+
+
+def test_a_genuinely_different_extent_is_still_refused():
+
+    @dace.program
+    def larger_source(hc: dace.float64[M, M]):
+        n_iter = N
+        hc[:n_iter, :n_iter] = np.zeros((N + 1, N + 1))
+
+    with pytest.raises(IndexError, match='could not broadcast'):
+        larger_source.to_sdfg(simplify=False)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

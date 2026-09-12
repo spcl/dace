@@ -1401,6 +1401,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
+        #: Integer scalars whose last assignment was a symbolic value, with the region it ran in.
+        self.symbolic_scalar_values: Dict[str, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
+        #: Promoted symbols every read so far provably set to a symbolic value, with the region it holds in.
+        self.promoted_symbol_values: Dict[symbolic.symbol, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
+        #: Promoted symbols some read may have set to another value.
+        self.unproven_symbols: Set[str] = set()
 
     @classmethod
     def progress_count(cls) -> int:
@@ -3091,7 +3097,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 for sym in operand.free_symbols:
                     if str(sym) not in self.sdfg.symbols:
                         self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
+                target_desc = self.sdfg.arrays.get(target_name)
+                if (op is None and boolarr is None and not indirect_indices and isinstance(target_desc, data.Scalar)
+                        and target_desc.dtype in dtypes.INTEGER_TYPES):
+                    self.symbolic_scalar_values[target_name] = (operand, self.cfg_target)
                 operand = symbolic.symstr(operand)
+        proven = self.proven_symbol_values()
+        if proven:
+            target_subset, op_subset = copy.deepcopy(target_subset), copy.deepcopy(op_subset)
+            target_subset.replace(proven)
+            op_subset.replace(proven)
 
         indirect_indices = indirect_indices or {}
         tasklet_code = ''
@@ -3319,6 +3334,8 @@ class ProgramVisitor(ExtNodeVisitor):
             wtarget_name = wtarget
             wtarget_array = self.sdfg.arrays[wtarget_name]
             wtarget_subset = subsets.Range.from_array(wtarget_array)
+        # An update is a write too: it ends the version any promoted symbol was read from.
+        self.forget_promoted_scalar(wtarget_name)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
             if op_subset is None:
@@ -3337,6 +3354,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     if str(sym) not in self.sdfg.symbols:
                         self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
                 operand = symbolic.symstr(operand)
+        proven = self.proven_symbol_values()
+        if proven:
+            rtarget_subset, wtarget_subset, op_subset = (copy.deepcopy(s)
+                                                         for s in (rtarget_subset, wtarget_subset, op_subset))
+            for subset in (rtarget_subset, wtarget_subset, op_subset):
+                subset.replace(proven)
 
         if op in bitwise_augassign_ops:
             bitwise_args = [self.sdfg.arrays[wtarget_name]]
@@ -5992,6 +6015,36 @@ class ProgramVisitor(ExtNodeVisitor):
         the symbol on its own interstate edge.
         """
         self.indirections.pop(scalar, None)
+        self.symbolic_scalar_values.pop(scalar, None)
+
+    def value_holds_here(self, value: symbolic.SymbolicType, defining_region: ControlFlowRegion) -> bool:
+        """Whether ``value``, bound in ``defining_region``, provably still holds at the current region.
+
+        It holds in that region or in a branch nested in it, with no loop in between (a later
+        iteration may have rebound it), while none of its symbols is assigned on an interstate edge
+        or as a loop variable.
+        """
+        region = self.cfg_target
+        while region is not defining_region:
+            if region is None or isinstance(region, (LoopRegion, SDFG)):
+                return False
+            region = region.parent_graph
+        assigned = {name for edge in self.sdfg.all_interstate_edges(recursive=True) for name in edge.data.assignments}
+        assigned.update(loop.loop_variable for loop in self.sdfg.all_control_flow_regions(recursive=True)
+                        if isinstance(loop, LoopRegion))
+        return not any(str(sym) in assigned for sym in value.free_symbols)
+
+    def proven_symbol_values(self) -> Dict[symbolic.symbol, symbolic.SymbolicType]:
+        """Promoted symbols that provably equal a symbolic value at the current region.
+
+        ``n = N; hc[:n, :n] = c`` bounds the store by ``n``'s promoted symbol while ``c`` is sized by
+        ``N``. The symbol stays the extent everywhere, so every read of one assignment names the
+        same shape; only a store compares its extents through these values.
+        """
+        return {
+            sym: value
+            for sym, (value, region) in self.promoted_symbol_values.items() if self.value_holds_here(value, region)
+        }
 
     def promote_scalar_to_symbol(self,
                                  scalar: str,
@@ -6034,6 +6087,13 @@ class ProgramVisitor(ExtNodeVisitor):
         # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
         rhs = scalar if isinstance(desc, data.Scalar) else f'{scalar}[{", ".join(["0"] * len(desc.shape))}]'
         edge.data.assignments = {str(sym): rhs}
+        # One read that may see another value (a loop iteration after a rebind) spoils the symbol for good.
+        known = self.symbolic_scalar_values.get(scalar)
+        if known is not None and str(sym) not in self.unproven_symbols and self.value_holds_here(*known):
+            self.promoted_symbol_values[sym] = known
+        else:
+            self.promoted_symbol_values.pop(sym, None)
+            self.unproven_symbols.add(str(sym))
         return sym
 
     #: AST nodes a slice bound may be built from and still be read as plain integer arithmetic.
