@@ -1202,6 +1202,12 @@ def writes_whole_array(state: SDFGState, edge: Edge[Memlet], desc: dt.Data) -> b
             # reduces (carries a ``wcr``) and left the identity unset folds onto the output.
             if getattr(src, 'wcr', None) is not None and getattr(src, 'identity', 0) is None:
                 return False
+    # A write through a view carries the view's full range, whatever reached the view itself.
+    if isinstance(edge.src, nd.AccessNode) and isinstance(edge.src.desc(state), dt.View):
+        view = edge.src.desc(state)
+        into_view = [e for e in state.in_edges(edge.src) if not e.data.is_empty()]
+        if not into_view or not all(writes_whole_array(state, e, view) for e in into_view):
+            return False
     return covers_full_extent(edge.data.get_dst_subset(edge, state), desc)
 
 

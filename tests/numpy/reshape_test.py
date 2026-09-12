@@ -472,6 +472,91 @@ def test_a_reshape_with_two_unknown_extents_is_refused():
         two_unknowns.to_sdfg()
 
 
+def test_a_write_through_a_fortran_reshape_lands_in_its_copy():
+    """numpy copies a C-contiguous array for an F-order reshape, and a store through the result lands
+    in that copy. Simplification deleted the copy, because the store reaches it through a view."""
+
+    @dace.program
+    def fortran_reshape_then_store(x: dace.float64[3, 4]):
+        y = x.reshape((4, 3), order='F')
+        y[0, 1] = 100.0
+        return y
+
+    source = np.arange(12, dtype=np.float64).reshape(3, 4)
+    expected = source.reshape((4, 3), order='F')
+    expected[0, 1] = 100.0
+    x = source.copy()
+    got = fortran_reshape_then_store(x)
+    assert np.array_equal(got, expected), got
+    assert np.array_equal(x, source), 'the store reached the source through a copy'
+
+
+def store_through_one_d_into_two_d(x: dace.float64[12]):
+    y = x.reshape((3, 4), order='F')
+    y[1, 2] = 100.0
+    return y
+
+
+def store_through_two_d_into_one_d(x: dace.float64[3, 4]):
+    y = x.reshape((12, ), order='F')
+    y[5] = 100.0
+    return y
+
+
+def store_through_a_size_one_axis_copy(x: dace.float64[3, 1, 4]):
+    y = x.reshape((4, 3), order='F')
+    y[1:2, 0] = 100.0
+    return y
+
+
+def store_through_a_size_one_axis_view(x: dace.float64[1, 12]):
+    y = x.reshape((12, 1), order='F')
+    y[3, 0] = 100.0
+    return y
+
+
+def store_through_a_strided_slice(x: dace.float64[6, 8]):
+    y = x[:, ::2].reshape((8, 3), order='F')
+    y[2, 1] = 100.0
+    return y
+
+
+def store_into_higher_rank_then_back(x: dace.float64[3, 4]):
+    y = x.reshape((2, 3, 2), order='F')
+    y[1, 2, 0] = 100.0
+    return y.reshape((3, 4), order='F')
+
+
+def store_through_the_way_back_from_higher_rank(x: dace.float64[3, 4]):
+    y = x.reshape((2, 3, 2), order='F')
+    z = y.reshape((3, 4), order='F')
+    z[2, 3] = 100.0
+    return y
+
+
+@pytest.mark.parametrize('kernel', [
+    store_through_one_d_into_two_d,
+    store_through_two_d_into_one_d,
+    store_through_a_size_one_axis_copy,
+    store_through_a_size_one_axis_view,
+    store_through_a_strided_slice,
+    store_into_higher_rank_then_back,
+    store_through_the_way_back_from_higher_rank,
+],
+                         ids=lambda kernel: kernel.__name__)
+def test_a_store_through_a_fortran_reshape_leaves_both_arrays_as_numpy_does(kernel):
+    """Whether numpy views or copies decides whether the store reaches the source, so both the result
+    and the source must match numpy element for element."""
+    shape = tuple(kernel.__annotations__['x'].shape)
+    source = np.arange(1, np.prod(shape) + 1, dtype=np.float64).reshape(shape)
+    want_x = source.copy()
+    want = kernel(want_x)
+    got_x = source.copy()
+    got = dace.program(kernel)(got_x)
+    assert got.shape == want.shape and np.array_equal(got, want), got
+    assert np.array_equal(got_x, want_x), got_x
+
+
 if __name__ == "__main__":
     test_reshape()
     test_reshape_dst()
@@ -496,3 +581,5 @@ if __name__ == "__main__":
     test_a_fortran_reshape_of_a_c_contiguous_array_reads_column_major('fft_block_4d', (3, 4, 5, 2), (60, 2),
                                                                       dace.complex128)
     test_a_reshape_with_two_unknown_extents_is_refused()
+    test_a_write_through_a_fortran_reshape_lands_in_its_copy()
+    test_a_store_through_a_fortran_reshape_leaves_both_arrays_as_numpy_does(store_through_a_strided_slice)

@@ -717,6 +717,45 @@ def test_dde_removes_an_initializer_a_reduction_with_identity_overwrites():
     assert not any(isinstance(n, nodes.Tasklet) and n.label == 'init' for n in state.nodes())
 
 
+@dace.program
+def write_one_element_through_a_reshaped_copy(x: dace.float64[3, 4]):
+    y = np.copy(x)
+    z = y.reshape((4, 3))
+    z[0, 1] = 100.0
+    return z
+
+
+@dace.program
+def fill_through_a_reshaped_copy(x: dace.float64[3, 4]):
+    y = np.copy(x)
+    z = y.reshape((4, 3))
+    z[:] = 7.0
+    return z
+
+
+def test_dde_keeps_a_copy_that_a_write_through_a_view_does_not_cover():
+    """The view's edge into its data always carries the view's full range, so a one-element store
+    through it read as a full overwrite and the copy it lands in was deleted as dead."""
+    x = np.arange(12, dtype=np.float64).reshape(3, 4)
+    expected = x.copy().reshape((4, 3))
+    expected[0, 1] = 100.0
+
+    sdfg = write_one_element_through_a_reshaped_copy.to_sdfg(simplify=True)
+    got = sdfg(x=x.copy())
+    assert np.array_equal(got, expected), got
+
+
+def test_dde_removes_a_copy_that_a_write_through_a_view_fully_covers():
+    """Control: a store of the whole view does overwrite every element the copy wrote."""
+    sdfg = fill_through_a_reshaped_copy.to_sdfg(simplify=True)
+    copies_from_x = [
+        e for state in sdfg.states() for e in state.edges() if isinstance(e.src, nodes.AccessNode) and e.src.data == 'x'
+    ]
+    assert not copies_from_x, 'the copy the fill overwrites was kept'
+    got = sdfg(x=np.arange(12, dtype=np.float64).reshape(3, 4))
+    assert np.array_equal(got, np.full((4, 3), 7.0)), got
+
+
 def test_dde_keeps_an_ordering_edge_whose_producer_is_live():
     """A dead transient's empty out-edge orders a LIVE producer before a reader."""
     sdfg = dace.SDFG('dde_live_ordering')
@@ -780,3 +819,5 @@ if __name__ == '__main__':
     test_dde_keeps_an_initializer_the_second_write_does_not_cover()
     test_dde_removes_an_initializer_the_second_write_fully_covers()
     test_dde_keeps_an_ordering_edge_whose_producer_is_live()
+    test_dde_keeps_a_copy_that_a_write_through_a_view_does_not_cover()
+    test_dde_removes_a_copy_that_a_write_through_a_view_fully_covers()
