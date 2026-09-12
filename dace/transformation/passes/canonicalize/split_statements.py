@@ -996,14 +996,7 @@ class SplitStatements(ppl.Pass):
             else:
                 kept_in = list(node.in_connectors)
             clone_sdfg = copy.deepcopy(node.sdfg)
-            # COMPENSATES FOR AN ATTACHMENT GAP, and is not the root fix. ``SDFG.__deepcopy__``
-            # leaves a NESTED sdfg's cfg list empty, and ``add_nested_sdfg`` only propagates to the
-            # regions that list already holds -- it never walks a subtree it has not seen. So a
-            # deep-copied ``LoopRegion`` is never registered and the next ``parent_graph.cfg_id``
-            # dies on it, arbitrarily far away (the vectorizer's re-run of canonicalize on polybench
-            # ``deriche``). Rebuilding here is the cheapest place to restore the invariant from this
-            # side; once ``add_nested_sdfg`` REGISTERS an unseen subtree rather than only
-            # propagating, this call goes away.
+            # The clone is still detached, so its cfg list is empty and the passes below cannot find a root.
             clone_sdfg.reset_cfg_list()
             if cut_other_stores:
                 for other in [c for c in node.out_connectors if c not in grp]:

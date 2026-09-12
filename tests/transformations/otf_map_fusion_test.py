@@ -330,6 +330,18 @@ def test_trivial_fusion_nested_sdfg():
     assert (res == res_fused).all()
 
 
+def test_trivial_fusion_nested_sdfg_is_registered():
+    """The nested SDFG cloned out of the producer map resolves its ``cfg_id`` after fusion."""
+    sdfg = trivial_fusion_nested_sdfg.to_sdfg()
+    sdfg.simplify()
+    assert sdfg.apply_transformations(OTFMapFusion) == 1
+
+    nested = [n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert nested, 'the fused map must still hold the cloned nested SDFG'
+    for nsdfg in nested:
+        assert sdfg.cfg_list[nsdfg.cfg_id] is nsdfg
+
+
 @dace.program
 def trivial_fusion_none_connectors(B: dace.float64[10, 20]):
     tmp = dace.define_local([10, 20], dtype=B.dtype)
@@ -900,6 +912,7 @@ if __name__ == '__main__':
     test_trivial_fusion_permute()
     test_trivial_fusion_not_remove_map()
     test_trivial_fusion_nested_sdfg()
+    test_trivial_fusion_nested_sdfg_is_registered()
     test_trivial_fusion_none_connectors()
 
     # Defined subsets

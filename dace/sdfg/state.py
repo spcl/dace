@@ -1563,12 +1563,17 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if not isinstance(node, nd.Node):
             raise TypeError("Expected Node, got " + type(node).__name__ + " (" + str(node) + ")")
         # Correct nested SDFG's parent attributes
-        if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
-            node.sdfg.parent = self
-            node.sdfg.parent_sdfg = self.sdfg
-            node.sdfg.parent_nsdfg_node = node
+        nested = node.sdfg if isinstance(node, nd.NestedSDFG) else None
+        if nested is not None:
+            nested.parent = self
+            nested.parent_sdfg = self.sdfg
+            nested.parent_nsdfg_node = node
         self._clear_scopedict_cache()
-        return super(SDFGState, self).add_node(node)
+        result = super(SDFGState, self).add_node(node)
+        # A deep copy arrives with an empty cfg list: register its subtree in tree order, as an added region is.
+        if nested is not None and self.sdfg is not None and nested not in self.sdfg.cfg_list:
+            self.sdfg.reset_cfg_list()
+        return result
 
     def remove_node(self, node):
         self._clear_scopedict_cache()
