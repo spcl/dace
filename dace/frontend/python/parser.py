@@ -578,11 +578,19 @@ class DaceProgram(pycommon.SDFGConvertible):
         return sdfg
 
     def _evaluate_annotation(self, ann):
+        """
+        Resolves an annotation that PEP 563 (``from __future__ import annotations``) or a manual
+        forward reference left as a string, using this program's globals plus its closure.
+        """
+        if isinstance(ann, str):
+            forward_str = ann
+        else:
+            forward_str = getattr(ann, '__forward_arg__', None)
+            if forward_str is None:
+                return ann
         try:
-            return eval(ann.__forward_arg__, self.global_vars)
-        except AttributeError:
-            return ann
-        except:
+            return eval(forward_str, self.global_vars)
+        except Exception:
             # Evaluating arbitrary code - anything can happen. Good luck.
             return dtypes.compiletime
 
@@ -619,6 +627,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             ann = sig_arg.annotation
             if self.ignore_type_hints:
                 ann = inspect._empty
+            elif isinstance(ann, str):
+                # PEP 563 (``from __future__ import annotations``) stringizes every annotation.
+                ann = self._evaluate_annotation(ann)
 
             # Variable-length arguments: obtain from the remainder of given_*
             if sig_arg.kind is sig_arg.VAR_POSITIONAL:
@@ -761,6 +772,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Set __return* arrays from return type annotations
         rettype = self.signature.return_annotation
+        if isinstance(rettype, str):
+            rettype = self._evaluate_annotation(rettype)
         if not self.ignore_type_hints and not _is_empty(rettype):
             if isinstance(rettype, tuple):
                 for i, subrettype in enumerate(rettype):
