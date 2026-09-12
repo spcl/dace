@@ -431,6 +431,39 @@ def _is_scalar(edge: 'gr.MultiConnectorEdge[Memlet]', memlet_path: List['gr.Mult
     return True
 
 
+def state_has_reachable_cycle(state: 'dace.sdfg.SDFGState') -> bool:
+    """``state.has_cycles()`` without the networkx dispatch: a cycle reachable from the state's source nodes, or
+    anywhere when it has none, found by one colored depth-first walk over the out-edge index."""
+    out_edges = state._nodes
+    sources = [node for node, (in_index, _) in out_edges.items() if not in_index]
+    starts = sources if sources else list(out_edges)
+    on_path = 1
+    finished = 2
+    color: Dict[Any, int] = {}
+    for start in starts:
+        if start in color:
+            continue
+        color[start] = on_path
+        stack = [(start, iter(out_edges[start][1]))]
+        while stack:
+            node, successors = stack[-1]
+            advanced = False
+            for edge in successors:
+                target = edge.dst
+                state_of_target = color.get(target)
+                if state_of_target == on_path:
+                    return True
+                if state_of_target is None:
+                    color[target] = on_path
+                    stack.append((target, iter(out_edges[target][1])))
+                    advanced = True
+                    break
+            if not advanced:
+                color[node] = finished
+                stack.pop()
+    return False
+
+
 def below_lower_bound(memo: Dict[Tuple[str, Any, Any], bool], minel: Any, offset: Any) -> bool:
     """``((minel + offset) < 0) == True``, answered once per distinct pair in ``memo``: every memlet of a
     state repeats the same few bounds, and each sympy comparison runs the assumption system."""
@@ -510,7 +543,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     if (sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0):
         raise InvalidSDFGError("Unreachable state", sdfg, state_id, cfg=cfg)
 
-    if state.has_cycles():
+    if state_has_reachable_cycle(state):
         raise InvalidSDFGError('State should be acyclic but contains cycles', sdfg, state_id, cfg=cfg)
 
     scope = state.scope_dict()
