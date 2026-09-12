@@ -197,3 +197,90 @@ def test_tasklet_assigns_name_reads_the_statements_not_the_source_text():
     assert tutil.tasklet_assigns_name(tasklet('b = a;', dace.dtypes.Language.CPP), 'b'), 'C++ assignment counts'
     assert tutil.tasklet_assigns_name(tasklet('b += a;', dace.dtypes.Language.CPP), 'b'), 'so does C++ +='
     assert not tutil.tasklet_assigns_name(tasklet('if (b >= a) { }', dace.dtypes.Language.CPP), 'b'), '>= is not ='
+
+
+def writes_scalar(state: dace.SDFGState, name: str) -> bool:
+    return any(
+        isinstance(node, dace.nodes.AccessNode) and node.data == name and state.in_degree(node) > 0
+        for node in state.nodes())
+
+
+def writes_per_path(sdfg: dace.SDFG, src: dace.SDFGState, dst: dace.SDFGState, name: str) -> list[int]:
+    return [sum(writes_scalar(block, name) for block in path) for path in sdfg.all_simple_paths(src, dst)]
+
+
+def stacked_writes(sdfg: dace.SDFG, name: str) -> list[str]:
+    return [
+        block.label for block in sdfg.nodes()
+        if writes_scalar(block, name) and any(writes_scalar(pred, name) for pred in sdfg.predecessors(block))
+    ]
+
+
+def branches_joining_at_use(label: str, start_to_right: dict[str, str],
+                            right_to_use: dict[str, str]) -> tuple[dace.SDFG, dace.SDFGState, dace.SDFGState]:
+    """``flag`` picks ``left`` or ``right``; ``left -> use`` assigns ``s = X[0]``; ``use`` copies ``s`` to ``out``."""
+    sdfg = dace.SDFG(label)
+    for name in ('X', 'Y', 'out'):
+        sdfg.add_array(name, [1], dace.float64)
+    sdfg.add_symbol('s', dace.float64)
+    sdfg.add_symbol('flag', dace.int64)
+    start = sdfg.add_state('start', is_start_block=True)
+    left = sdfg.add_state('left')
+    right = sdfg.add_state('right')
+    use = sdfg.add_state('use')
+    sdfg.add_edge(start, left, dace.InterstateEdge(condition='flag > 0'))
+    sdfg.add_edge(start, right, dace.InterstateEdge(condition='flag <= 0', assignments=start_to_right))
+    sdfg.add_edge(left, use, dace.InterstateEdge(assignments={'s': 'X[0]'}))
+    sdfg.add_edge(right, use, dace.InterstateEdge(assignments=right_to_use))
+    tasklet = use.add_tasklet('copy', {}, {'res'}, 'res = s')
+    use.add_edge(tasklet, 'res', use.add_access('out'), None, dace.Memlet('out[0]'))
+    return sdfg, start, use
+
+
+def run_branch(sdfg: dace.SDFG, flag: int) -> float:
+    out = np.zeros(1)
+    sdfg(X=np.array([2.0]), Y=np.array([5.0]), out=out, flag=np.int64(flag))
+    return float(out[0])
+
+
+def test_two_branches_assigning_a_symbol_into_one_state_each_keep_their_own_value():
+    sdfg, start, use = branches_joining_at_use('two_assigning_branches', {}, {'s': 'Y[0]'})
+
+    sdutil.demote_symbol_to_scalar(sdfg, 's', dace.float64)
+
+    assert writes_per_path(sdfg, start, use, 's') == [1, 1], 'each branch must run exactly its own write'
+    assert stacked_writes(sdfg, 's') == [], 'no write may run right after another write of the same scalar'
+    assert (run_branch(sdfg, 1), run_branch(sdfg, 0)) == (2.0, 5.0)
+
+
+def test_a_non_assigning_branch_into_the_same_state_does_not_run_the_other_branch_write():
+    sdfg, start, use = branches_joining_at_use('one_assigning_branch', {'s': 'Y[0]'}, {})
+
+    sdutil.demote_symbol_to_scalar(sdfg, 's', dace.float64)
+
+    assert writes_per_path(sdfg, start, use, 's') == [1, 1], 'each branch must run exactly its own write'
+    assert stacked_writes(sdfg, 's') == []
+    assert (run_branch(sdfg, 1), run_branch(sdfg, 0)) == (2.0, 5.0)
+
+
+def test_a_write_on_a_back_edge_into_the_start_block_does_not_run_on_entry():
+    """Structural only: ``s`` is undefined on entry, so an entry write is observable only as undefined behavior."""
+    sdfg = dace.SDFG('back_edge_into_start_block')
+    sdfg.add_array('X', [4], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_symbol('s', dace.float64)
+    sdfg.add_symbol('i', dace.int64)
+    head = sdfg.add_state('head', is_start_block=True)
+    body = sdfg.add_state('body')
+    done = sdfg.add_state('done')
+    sdfg.add_edge(head, body, dace.InterstateEdge(condition='i < 4', assignments={'i': 'i + 1'}))
+    sdfg.add_edge(body, head, dace.InterstateEdge(assignments={'s': 'X[i - 1]'}))
+    sdfg.add_edge(head, done, dace.InterstateEdge(condition='i >= 4'))
+    sink = done.add_tasklet('read', {}, {'res'}, 'res = s')
+    done.add_edge(sink, 'res', done.add_access('out'), None, dace.Memlet('out[0]'))
+
+    sdutil.demote_symbol_to_scalar(sdfg, 's', dace.float64)
+
+    assert sdfg.start_block is head, 'entering the SDFG must not run the back edge write (X[i - 1] at i = 0)'
+    assert writes_per_path(sdfg, body, head, 's') == [1], 'the back edge runs its write exactly once'
+    sdfg.validate()

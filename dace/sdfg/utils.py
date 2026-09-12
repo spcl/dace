@@ -3122,13 +3122,16 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                         g.add_edge(sdict[n], None, access, None, dace.memlet.Memlet())
 
     # 2
-    for e in sdfg.all_interstate_edges():
+    # Snapshot, since the writes add edges. Each write goes on its OWN edge: ``add_state_before`` moves every
+    # in-edge of ``e.dst``, so a join ran every branch's write on every path and the last one won.
+    for e in list(sdfg.all_interstate_edges()):
         matching_assignments = {(k, v) for k, v in e.data.assignments.items() if k.strip() == symbol_str}
         if len(matching_assignments) > 0:
-            # Add them to the next state
-            state = e.dst.parent_graph.add_state_before(e.dst,
-                                                        label=f"_{e.dst}_sym_assign",
-                                                        is_start_block=e.dst.parent_graph.start_block == e.dst)
+            cfg = e.dst.parent_graph
+            state = cfg.add_state(label=f"_{e.dst}_sym_assign")
+            cfg.remove_edge(e)
+            cfg.add_edge(e.src, state, e.data)
+            cfg.add_edge(state, e.dst, dace.InterstateEdge())
             # Go through all matching assignments
             # Add symbols etc. as necessary
             for k, v in matching_assignments:
