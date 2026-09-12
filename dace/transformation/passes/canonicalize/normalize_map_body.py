@@ -29,9 +29,15 @@ from dace.transformation.passes.analysis import map_scope
 
 
 def _map_body_nsdfgs(state: SDFGState, map_entry: nodes.MapEntry) -> List[nodes.NestedSDFG]:
-    """The NestedSDFG nodes inside ``map_entry``'s scope, in dependency
+    """The NestedSDFG nodes in ``map_entry``'s OWN scope, in dependency
     (topological) order so a producer is always merged before its consumer."""
-    body = map_scope.map_body_nodes(state, map_entry)
+    # THIS scope only. ``map_body_nodes`` includes the bodies of maps nested inside this one by
+    # design, and merging one of those into this body moves it out of the scope its own MapEntry
+    # opens: the sibling inner map is left holding an exit whose scope parent is a FOREIGN entry,
+    # which every later ``scope_dict`` refuses. The scope dict is already cached, so this is a
+    # lookup per body node.
+    scope = state.scope_dict()
+    body = [n for n in map_scope.map_body_nodes(state, map_entry) if scope[n] is map_entry]
     order = {n: i for i, n in enumerate(sdutil.dfs_topological_sort(state))}
     # Total key: a tie (a body node the topological sort did not cover) decides which sibling becomes the
     # merge base, so break it on the node id rather than on traversal order.

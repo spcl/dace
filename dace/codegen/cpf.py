@@ -36,6 +36,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from dace.ordered import OrderedSet
@@ -254,13 +255,9 @@ RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {'ArgReduce': ('OpenMP', )}
 #: for the host.
 RENDERABLE_BY_NODE_DEVICE: Dict[str, Tuple[str, ...]] = {'FindFirst': ('CUDA', ), 'Scan': ('CUDA', )}
 
-#: Slack in the expand-and-reselect loop of :func:`force_renderable_expansions`, on top of the one
-#: round
-#: per library node a single state holds. A node may expand into further library nodes (``MatMul``
-#: -> ``Gemm`` -> its own expansion), so each generation needs a round of its own; the slack covers
-#: that nesting depth. The bound exists only so a node that expands to itself fails with a message
-#: instead of looping forever.
-MAX_EXPANSION_ROUNDS = 16
+#: Consecutive rounds of :func:`force_renderable_expansions` that may leave the library-node census
+#: unchanged before it refuses. NOT a bound on total rounds: a state needs one round per node.
+MAX_EXPANSION_STALLED_ROUNDS = 16
 
 LIFETIME_DEMOTIONS = {
     dtypes.AllocationLifetime.Persistent: dtypes.AllocationLifetime.SDFG,
@@ -389,9 +386,10 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
     :param provenance: filled in with ``node GUID -> (origin GUID, description)`` for the code each
                        expansion produced, so the rendering can say what the loops used to be.
                        Descriptions come from :data:`LIBRARY_NODE_DESCRIPTIONS`.
-    :raises NotImplementedError: if expansion has not converged (see :data:`MAX_EXPANSION_ROUNDS`).
+    :raises NotImplementedError: if expansion has stalled (see :data:`MAX_EXPANSION_STALLED_ROUNDS`).
     """
-    rounds = 0
+    census: Optional[Counter] = None
+    stalled = 0
     while True:
         pending: Dict[int, List] = {}
         for node, state in sdfg.all_nodes_recursive():
@@ -399,11 +397,17 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
                 pending.setdefault(id(state), []).append((node, state))
         if not pending:
             return
-        rounds += 1
-        if rounds > MAX_EXPANSION_ROUNDS + max(len(group) for group in pending.values()):
-            remaining = sorted({type(node).__name__ for group in pending.values() for node, _ in group})
-            raise NotImplementedError(f'CPF could not expand {", ".join(remaining)} after {rounds} rounds; '
-                                      'a library node appears to expand into itself')
+        # A budget taken from the CURRENT population shrinks as the round number grows, so the
+        # two cross part way through any long drain. Progress is what can actually be observed.
+        current = Counter(type(node).__name__ for group in pending.values() for node, _ in group)
+        stalled = stalled + 1 if current == census else 0
+        census = current
+        if stalled > MAX_EXPANSION_STALLED_ROUNDS:
+            # Observations only: naming a cause sent readers after a cycle that did not exist.
+            counted = ', '.join(f'{name} x{count}' for name, count in sorted(census.items()))
+            raise NotImplementedError(f'CPF stopped expanding library nodes: {stalled} consecutive rounds left '
+                                      f'the same nodes pending ({counted}). Expansion is making no progress; '
+                                      f'check whether one of these expands into a node of its own type.')
 
         # One per state, by GUID so the pick does not depend on graph iteration order.
         chosen = [sorted(group, key=lambda pair: pair[0].guid)[0] for group in pending.values()]
