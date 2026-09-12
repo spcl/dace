@@ -330,22 +330,40 @@ CONSTEXPR_PROBES = {
 _SCAN_REASON = 'writes through an output iterator under an OpenMP inscan clause, which cannot be constant-evaluated'
 
 NOT_CONSTEXPR = {
-    'scan_incl_sum': _SCAN_REASON,
-    'scan_incl_product': _SCAN_REASON,
-    'scan_incl_min': _SCAN_REASON,
-    'scan_incl_max': _SCAN_REASON,
-    'scan_excl_sum': _SCAN_REASON,
-    'scan_excl_product': _SCAN_REASON,
-    'scan_excl_min': _SCAN_REASON,
-    'scan_excl_max': _SCAN_REASON,
-    'min_identity': 'reads std::numeric_limits<T>::infinity(), whose constexpr-ness varies by type and library',
-    'max_identity': 'reads std::numeric_limits<T>::infinity(), whose constexpr-ness varies by type and library',
-    'find_first_index': 'runs an OpenMP-parallel cancelling search over a predicate, which has no constant evaluation',
-    'find_first_chunk': 'reads the OpenMP thread count, which only exists at run time',
-    'np_modf': 'std::modf takes a pointer out-parameter and is not constexpr before C++23',
-    'np_frexp': 'std::frexp takes a pointer out-parameter and is not constexpr before C++23',
-    'Modulo': 'divides through std::floor on a double for every instantiation (GCC folds it, clang does not)',
-    'Modulo_float': 'divides through std::floor for every instantiation (GCC folds it, clang does not)',
+    'scan_incl_sum':
+    _SCAN_REASON,
+    'scan_incl_product':
+    _SCAN_REASON,
+    'scan_incl_min':
+    _SCAN_REASON,
+    'scan_incl_max':
+    _SCAN_REASON,
+    'scan_excl_sum':
+    _SCAN_REASON,
+    'scan_excl_product':
+    _SCAN_REASON,
+    'scan_excl_min':
+    _SCAN_REASON,
+    'scan_excl_max':
+    _SCAN_REASON,
+    'min_identity':
+    'reads std::numeric_limits<T>::infinity(), whose constexpr-ness varies by type and library',
+    'max_identity':
+    'reads std::numeric_limits<T>::infinity(), whose constexpr-ness varies by type and library',
+    'find_first_index':
+    'runs an OpenMP-parallel cancelling search over a predicate, which has no constant evaluation',
+    'detect_collision': ('writes a tag buffer from OpenMP-parallel loops and allocates one itself when the caller '
+                         'wired none'),
+    'find_first_chunk':
+    'reads the OpenMP thread count, which only exists at run time',
+    'np_modf':
+    'std::modf takes a pointer out-parameter and is not constexpr before C++23',
+    'np_frexp':
+    'std::frexp takes a pointer out-parameter and is not constexpr before C++23',
+    'Modulo':
+    'divides through std::floor on a double for every instantiation (GCC folds it, clang does not)',
+    'Modulo_float':
+    'divides through std::floor for every instantiation (GCC folds it, clang does not)',
 }
 
 
@@ -433,6 +451,12 @@ def test_every_c_definition_is_reachable():
         reachable |= cpf_lowering.helpers_used(template.replace('{0}', 'a').replace('{1}', 'b'), Dialect.STANDALONE_C)
     reachable |= cpf_lowering.helpers_used(cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C),
                                            Dialect.STANDALONE_C)
+    # The native lane: a name a hand-written body carries is renamed straight onto its C helper,
+    # and the duplicate check's two arities pick two different macros.
+    reachable |= set(cpf_lowering.C_NATIVE_RENAMES.values())
+    for statement in DETECT_COLLISION_STATEMENTS.values():
+        reachable |= cpf_lowering.helpers_used(cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C),
+                                               Dialect.STANDALONE_C)
     # The two arity-specific halves of ``heaviside`` are defined inside its own entry, not called
     # from anywhere else; every other name must be reached from outside.
     unreachable = sorted(set(cpf_lowering.C_INLINE_DEFINITIONS) - reachable)
@@ -657,3 +681,218 @@ def test_c_dispatch_macros_evaluate_each_argument_once(name, call, expected):
     library.probe(ctypes.c_void_p(out.ctypes.data))
     assert out[0] == pytest.approx(expected), (f'{call} gave {out[0]!r}; the trailing digit is the number of times '
                                                'the argument ran, and it must be 1')
+
+
+#: The two statements ``ExpandScatterConflictCheckPure`` / ``...CPU`` write, copied here rather
+#: than imported for the reason :data:`FIND_FIRST_STATEMENT` is: a change to the expansion's
+#: spelling must break this file instead of turning the C rewrite into a silent no-op.
+DETECT_COLLISION_STATEMENTS = {
+    'tagged': '_count_out = dace::detect_collision(_idx_in, (n), _owner_out, (cap), false);',
+    'sized': '_count_out = dace::detect_collision(_idx_in, (n), false);',
+}
+
+#: ``(rewritten call, the macro it must name)`` per arity.
+DETECT_COLLISION_C_FORMS = {
+    'tagged': ('cpf_detect_collision(_count_out, _idx_in, (n), _owner_out, (cap), false);', 'cpf_detect_collision'),
+    'sized': ('cpf_detect_collision_sized(_count_out, _idx_in, (n), false);', 'cpf_detect_collision_sized'),
+}
+
+#: ``(index array, whether it repeats a value)``. The empty and single-element cases are here
+#: because the check's two passes and its max sweep all bound on ``n``.
+DUPLICATE_CASES = [
+    ([], 0),
+    ([0], 0),
+    ([3, 1, 0, 2], 0),
+    ([0, 0], 1),
+    ([2, 1, 2, 0], 1),
+    ([1, 0, 3, 3], 1),
+]
+
+
+@pytest.mark.parametrize('arity', sorted(DETECT_COLLISION_STATEMENTS))
+def test_c_rewrites_the_duplicate_check_into_its_statement_macro(arity):
+    """C has neither the template nor the overload pair, so the arity at the call site is what
+    picks between the macro that takes a caller-sized tag array and the one that sizes its own."""
+    statement = DETECT_COLLISION_STATEMENTS[arity]
+    expected, helper = DETECT_COLLISION_C_FORMS[arity]
+    rewritten = cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C)
+    assert rewritten == expected
+    assert cpf_lowering.helpers_used(rewritten, Dialect.STANDALONE_C) == {helper}
+    # C++ has both overloads as one template pair, so it keeps the call and drops the namespace.
+    assert cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE) == statement.replace('dace::', '')
+
+
+def test_c_leaves_an_unrecognized_duplicate_check_call_for_verify():
+    """A call of an arity the rewrite does not know stays ``dace::``-qualified, so CPF's own gate
+    names the construct rather than emitting C that does not compile."""
+    unknown = '_count_out = dace::detect_collision(_idx_in, (n), _owner_out, (cap), false, 7);'
+    assert cpf_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
+
+
+def duplicate_check_unit(arity, dialect):
+    """A standalone unit whose ``probe`` runs the duplicate check over a caller-supplied index."""
+    body = cpf_lowering.rewrite_native_code(DETECT_COLLISION_STATEMENTS[arity], dialect)
+    used = cpf_lowering.helpers_used(body, dialect) | ({'detect_collision'} if dialect is Dialect.STANDALONE else set())
+    signature = 'const int64_t * _idx_in, long long n, int64_t * _owner_out, long long cap, int64_t * _out'
+    return textwrap.dedent("""
+        {preamble}
+
+        {entry}
+        {{
+            int64_t _count_out = -1;
+            (void)_owner_out;
+            (void)cap;
+            {body}
+            _out[0] = _count_out;
+        }}
+        """).format(preamble=preamble(used, dialect), entry=entry(dialect, signature), body=body)
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+@pytest.mark.parametrize('arity', sorted(DETECT_COLLISION_STATEMENTS))
+@pytest.mark.parametrize('index,expected', DUPLICATE_CASES, ids=[str(idx) for idx, _ in DUPLICATE_CASES])
+def test_the_duplicate_check_answers_one_exactly_when_an_index_repeats(arity, dialect, index, expected):
+    """The scatter guard reads this flag to decide whether a scatter may run as a parallel Map, so
+    a missed duplicate is a data race the compiler introduced."""
+    code = duplicate_check_unit(arity, dialect)
+    assert_standalone(code, label='detect_collision', language=LANGUAGE[dialect])
+    library = build_standalone(code, name='cpf_detect_%s_%s' % (arity, dialect.value), language=LANGUAGE[dialect])
+    idx = np.array(index, dtype=np.int64)
+    owner = np.zeros(max(len(index), 1), dtype=np.int64)
+    out = np.zeros(1, dtype=np.int64)
+    function = library.probe
+    function.argtypes = [ctypes.c_void_p, ctypes.c_longlong, ctypes.c_void_p, ctypes.c_longlong, ctypes.c_void_p]
+    function.restype = None
+    function(ctypes.c_void_p(idx.ctypes.data), len(index), ctypes.c_void_p(owner.ctypes.data), len(owner),
+             ctypes.c_void_p(out.ctypes.data))
+    assert out[0] == expected, f'{arity} check over {index} answered {out[0]}, not {expected}'
+
+
+#: The two lines ``ExpandIntegerSortPure`` writes, for the same reason the statements above are
+#: copied rather than imported.
+SORT_STATEMENT = 'std::copy(_in, _in + (n), _out);\nstd::sort(_out, _out + (n));'
+
+
+@pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
+@pytest.mark.parametrize('values', [[], [5], [3, 3, 3], [4, 1, 3, 1, 0, -2, 9]],
+                         ids=['empty', 'single', 'equal', 'mixed'])
+def test_copy_then_sort_leaves_the_destination_ordered_and_the_source_untouched(dialect, values):
+    """``std::copy`` and ``std::sort`` are algorithms, not names C has; the C macros CPF defines
+    for them must produce the same range the C++ algorithms do, the empty range included."""
+    body = cpf_lowering.rewrite_native_code(SORT_STATEMENT, dialect)
+    used = cpf_lowering.helpers_used(body, dialect)
+    signature = 'const int64_t * _in, long long n, int64_t * _out'
+    code = textwrap.dedent("""
+        {preamble}
+
+        {entry}
+        {{
+            {body}
+        }}
+        """).format(preamble=preamble(used, dialect), entry=entry(dialect, signature), body=body)
+    assert_standalone(code, label='sort', language=LANGUAGE[dialect])
+
+    library = build_standalone(code, name='cpf_sort_%s_%d' % (dialect.value, len(values)), language=LANGUAGE[dialect])
+    source = np.array(values, dtype=np.int64)
+    original = source.copy()
+    destination = np.zeros(max(len(values), 1), dtype=np.int64)
+    function = library.probe
+    function.argtypes = [ctypes.c_void_p, ctypes.c_longlong, ctypes.c_void_p]
+    function.restype = None
+    function(ctypes.c_void_p(source.ctypes.data), len(values), ctypes.c_void_p(destination.ctypes.data))
+    assert list(destination[:len(values)]) == sorted(values)
+    assert list(source) == list(original), 'the sort must write the destination, not the source'
+
+
+#: ``(ctype, numpy dtype, the value each extreme must equal)``. The expected values come from the
+#: C++ class template's documented meaning -- ``lowest()`` is the most negative FINITE value, which
+#: for a float type is NOT ``<T>_MIN``.
+NUMERIC_LIMIT_CASES = [
+    ('int', np.int32, np.iinfo(np.int32).max, np.iinfo(np.int32).min),
+    ('long long', np.int64, np.iinfo(np.int64).max, np.iinfo(np.int64).min),
+    ('float', np.float32, np.finfo(np.float32).max, -np.finfo(np.float32).max),
+    ('double', np.float64, np.finfo(np.float64).max, -np.finfo(np.float64).max),
+]
+
+
+@pytest.mark.parametrize('ctype,dtype,largest,lowest',
+                         NUMERIC_LIMIT_CASES,
+                         ids=[c for c, _, _, _ in NUMERIC_LIMIT_CASES])
+def test_the_c_numeric_limit_constants_are_the_values_the_class_template_gives(ctype, dtype, largest, lowest):
+    """A tile reduction seeds its accumulator with these, so a constant that is off by a type makes
+    every min/max reduction start from a value the data can beat."""
+    body = cpf_lowering.rewrite_native_code(
+        'hi = std::numeric_limits<%s>::max(); lo = std::numeric_limits<%s>::lowest();' % (ctype, ctype),
+        Dialect.STANDALONE_C)
+    assert 'numeric_limits' not in body, body
+
+    code = textwrap.dedent("""
+        {preamble}
+
+        {entry}
+        {{
+            {ctype} hi, lo;
+            {body}
+            out[0] = hi;
+            out[1] = lo;
+        }}
+        """).format(preamble=preamble(set(), Dialect.STANDALONE_C),
+                    entry=entry(Dialect.STANDALONE_C, '%s * out' % ctype),
+                    ctype=ctype,
+                    body=body)
+    assert_standalone(code, label='numeric_limits', language='c')
+    library = build_standalone(code, name='cpf_limits_%s' % ctype.replace(' ', '_'), language='c')
+    out = np.zeros(2, dtype=dtype)
+    function = library.probe
+    function.argtypes = [ctypes.c_void_p]
+    function.restype = None
+    function(ctypes.c_void_p(out.ctypes.data))
+    assert out[0] == largest, f'numeric_limits<{ctype}>::max() gave {out[0]}, not {largest}'
+    assert out[1] == lowest, f'numeric_limits<{ctype}>::lowest() gave {out[1]}, not {lowest}'
+
+
+def test_an_unknown_numeric_limit_member_is_left_for_verify():
+    """Only ``max`` and ``lowest`` have a rewrite; anything else must stay ``std::``-qualified so
+    CPF's own gate names it rather than emitting C that does not compile."""
+    unknown = 'e = std::numeric_limits<double>::epsilon();'
+    assert cpf_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
+
+
+#: ``(label, a body writing it the way the expansion does)`` for every ``std::`` name a library
+#: expansion CPF can SELECT writes by hand into a tasklet body. Recovered by reading those
+#: expansions rather than by grepping the output of the kernels that happened to be rendered: a
+#: name only one unrendered kernel reaches is the one that breaks a roster later.
+C_NATIVE_STD_BODIES = [
+    ('abort', 'if ((N < 0)) { std::abort(); }'),
+    ('memcpy', 'std::memcpy(_out, _in, 64);'),
+    ('copy', 'std::copy(_in, _in + (n), _out);'),
+    ('sort', 'std::sort(_out, _out + (n));'),
+    ('fill_n', 'std::fill_n(_out, 8, 0.0);'),
+    ('size_t', 'for (std::size_t i = 0; i < 8; ++i) { _out[i] = 0.0; }'),
+    ('abs', '_out[0] = std::abs(_in[0]);'),
+    ('sqrt', '_out[0] = std::sqrt(_in[0]);'),
+    ('exp', '_out[0] = std::exp(_in[0]);'),
+    ('pow', '_out[0] = std::pow(_in[0], 2.0);'),
+    ('fma', '_out[0] = std::fma(_in[0], _in[1], _in[2]);'),
+    ('fmod', '_out[0] = std::fmod(_in[0], _in[1]);'),
+    ('hypot', '_out[0] = std::hypot(_in[0], _in[1]);'),
+    ('atan2', '_out[0] = std::atan2(_in[0], _in[1]);'),
+    ('minmax', '_out[0] = std::min(_in[0], std::max(_in[1], _in[2]));'),
+    ('numeric_limits', '_out[0] = std::numeric_limits<double>::max();'),
+]
+
+
+@pytest.mark.parametrize('label,body', C_NATIVE_STD_BODIES, ids=[label for label, _ in C_NATIVE_STD_BODIES])
+def test_the_c_lane_answers_every_cxx_name_a_selectable_expansion_writes(label, body):
+    """A hand-written tasklet body never reaches an expression printer, so this lane is the only
+    place its C++ spelling can be re-spelled -- and in C a ``std::`` name is not a name at all.
+
+    ``std::fill_n`` is the exception and is expected to survive: its C form depends on the FILL
+    VALUE, which only the expansion knows, so the expansion chooses between a memset and a loop
+    and nothing reaches this lane.
+    """
+    rewritten = cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C)
+    if label == 'fill_n':
+        assert rewritten == body, 'the fill is answered at expansion time, not here'
+        return
+    assert 'std::' not in rewritten, f'{label} kept a C++ spelling: {rewritten}'
