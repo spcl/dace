@@ -238,6 +238,21 @@ def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
         assert ran_cmake(gpu_folder), 'the CPU+GPU shape records separately from the CPU one'
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
+def test_a_folder_reconfigured_under_new_flags_publishes_nothing(tmp_path, private_cache):
+    """A reconfigure keeps what CMake detected under the old flags, so it must not be filed under the new flags' key."""
+    build_and_check(tmp_path, 'reconfigured')
+    root = compiler.build_cache_root()
+    published = {cache: sorted(os.listdir(os.path.join(root, cache))) for cache in ('configure', 'commands')}
+    assert all(published.values()), f'the first build published nothing, so nothing is tested: {published}'
+    other_flags = dace.Config.get('compiler', 'cpu', 'args') + ' -DDACE_RECONFIGURED_UNDER_NEW_FLAGS'
+
+    with dace.config.set_temporary('compiler', 'cpu', 'args', value=other_flags):
+        build_and_check(tmp_path, 'reconfigured')
+
+    assert {cache: sorted(os.listdir(os.path.join(root, cache))) for cache in published} == published
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

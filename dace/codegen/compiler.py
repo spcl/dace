@@ -423,18 +423,24 @@ def prepare_precompiled_header(targets) -> Optional[str]:
         return None
 
 
-def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: int, output_stream) -> None:
-    """Configure and build ``build_folder``, seeding and publishing the configure cache around it."""
+def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: int, output_stream) -> bool:
+    """Configure and build ``build_folder``, seeding and publishing the configure cache around it.
+
+    :return: Whether the configure belongs to ``configure_key``: fresh, or seeded from that key. A folder
+             reconfigured under another command keeps what CMake detected under the earlier one, so
+             neither the configure nor the commands it builds with may be filed under this key.
+    """
     if Config.get('debugprint') == 'verbose':
         print(f'Running CMake: {cmake_command}')
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
     reuse_configure = CACHES_SUPPORTED and Config.get_bool('compiler', 'configure_cache')
+    fresh = not os.path.exists(os.path.join(build_folder, 'CMakeCache.txt'))
     seeded = reuse_configure and seed_cmake_configure(build_folder, configure_key)
     try:
         if not identical_file_exists(cmake_filename, cmake_command):
             _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
-            if reuse_configure and not seeded:
+            if reuse_configure and fresh and not seeded:
                 publish_cmake_configure(build_folder, configure_key)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more
@@ -445,6 +451,7 @@ def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: i
             shutil.rmtree(os.path.join(build_cache_root(), 'configure', configure_key), ignore_errors=True)
         shutil.rmtree(build_folder, ignore_errors=True)
         os.makedirs(build_folder)
+        fresh = True
         try:
             _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
         except subprocess.CalledProcessError as ex:
@@ -469,6 +476,7 @@ def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: i
             raise cgx.CompilationError('Compiler failure')
         else:
             raise cgx.CompilationError('Compiler failure:\n' + ex.output)
+    return fresh
 
 
 def configure_and_compile(
@@ -693,8 +701,8 @@ def cmake_configure_and_build(
             command_db.drop(build_cache_root(), command_key)
         if recipe is not None:
             command_db.clear(build_folder)  # it ran and failed partway, so nothing here is trustworthy
-        run_cmake(cmake_command, build_folder, configure_key, jobs, output_stream)
-        if reuse_commands and use_ninja:
+        configure_owned = run_cmake(cmake_command, build_folder, configure_key, jobs, output_stream)
+        if reuse_commands and use_ninja and configure_owned:
             command_db.publish(
                 build_cache_root(), command_key,
                 command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name))
