@@ -152,6 +152,60 @@ def loop_bound_symbols(loop: LoopRegion) -> Set[str]:
     return bound
 
 
+def provably_free_symbols(sd: SDFG) -> Set[str]:
+    """Declared symbols ``sd.free_symbols`` must report without walking a block: the walk adds every
+    declared symbol and removes only what a descriptor, a constant, an interstate assignment or a
+    loop variable defines, so a declared name that is none of those survives it."""
+    defined = set(sd.arrays.keys()) | set(sd.constants_prop.keys())
+    defined |= {lhs for e in sd.all_interstate_edges() for lhs in e.data.assignments}
+    defined |= {blk.loop_variable for blk in sd.all_control_flow_blocks() if isinstance(blk, LoopRegion)}
+    return set(sd.symbols.keys()) - defined
+
+
+def unread_names(sd: SDFG, names: Set[str]) -> Set[str]:
+    """``names`` minus every name a block, region meta code or interstate edge of ``sd`` reads.
+
+    Same answer as subtracting ``blk.free_symbols`` for every block, without its cost: a region's
+    free symbols re-walk the whole body once per nesting level, yet only ever report what a state,
+    meta code, or an interstate edge inside the region reads (plus the extents of a container that
+    edge names). So regions are asked only for a survivor one of their edges reads under the
+    ``used_symbols`` spelling, which ``free_symbol_names`` can miss."""
+    remaining = set(names)
+    for e in sd.all_interstate_edges():
+        for rhs in e.data.assignments.values():
+            remaining -= free_symbol_names(rhs)
+        if e.data.condition is not None:
+            try:
+                remaining -= {str(s) for s in e.data.condition.get_free_symbols()}
+            except Exception:
+                pass
+    regions = []
+    for blk in sd.all_control_flow_blocks():
+        if not remaining:
+            return remaining
+        if isinstance(blk, AbstractControlFlowRegion):
+            remaining -= meta_read_symbols(blk)
+            regions.append(blk)
+        else:
+            remaining -= {str(s) for s in blk.free_symbols}
+    if not remaining or not regions:
+        return remaining
+    region_reads: Set[str] = set()
+    for region in sd.all_control_flow_regions():
+        if region is sd:
+            continue
+        for e in region.edges():
+            edge_reads = e.data.used_symbols(all_symbols=True)
+            region_reads |= edge_reads
+            for name in edge_reads & sd.arrays.keys():
+                region_reads |= {str(s) for s in sd.arrays[name].used_symbols(True)}
+    if remaining.isdisjoint(region_reads):
+        return remaining
+    for region in regions:
+        remaining -= {str(s) for s in region.free_symbols}
+    return remaining
+
+
 def reads_data(value, owner: SDFG) -> bool:
     """``value`` names a data container of ``owner``."""
     return bool(free_symbol_names(value) & set(owner.arrays))
@@ -366,42 +420,37 @@ class SymbolPropagation(ppl.Pass):
             bindings = consistent_bindings(sd)
             # ``replace_dict`` also rewrites descriptor shapes, which live at SDFG scope, so
             # ``K = i + 1`` would size a transient by a loop variable and allocate it outside.
-            invariant = {str(s) for s in sd.free_symbols} | set(sd.constants_prop.keys())
-            safe_subs = {
-                sym: rhs
-                for sym, rhs in bindings.items()
-                if rhs is not None and not is_array_access(rhs) and free_symbol_names(rhs) <= invariant
-            }
+            candidates = {sym: rhs for sym, rhs in bindings.items() if rhs is not None and not is_array_access(rhs)}
+            safe_subs = {}
+            if candidates:
+                constants = set(sd.constants_prop.keys())
+                rhs_names = {sym: free_symbol_names(rhs) for sym, rhs in candidates.items()}
+                # The whole-SDFG walk only settles a name the declaration check cannot.
+                invariant = provably_free_symbols(sd) | constants
+                if not all(names <= invariant for names in rhs_names.values()):
+                    invariant = {str(s) for s in sd.free_symbols} | constants
+                safe_subs = {sym: candidates[sym] for sym, names in rhs_names.items() if names <= invariant}
 
             if safe_subs:
                 self._arm_invariant()
                 sd.replace_dict(safe_subs, replace_keys=False, replace_in_graph=False)
 
-            used_in_ir: Set[str] = set()
-            for blk in sd.all_control_flow_blocks():
-                used_in_ir |= {str(s) for s in blk.free_symbols}
-                used_in_ir |= meta_read_symbols(blk)
-            for e in sd.all_interstate_edges():
-                for rhs in e.data.assignments.values():
-                    used_in_ir |= free_symbol_names(rhs)
-                if e.data.condition is not None:
-                    try:
-                        used_in_ir |= {str(s) for s in e.data.condition.get_free_symbols()}
-                    except Exception:
-                        pass
+            targets = {lhs for e in sd.all_interstate_edges() for lhs in e.data.assignments}
+            unread = unread_names(sd, targets)
 
             sd_eliminated: Set[str] = set()
-            for e in sd.all_interstate_edges():
-                for lhs in list(e.data.assignments.keys()):
-                    if lhs not in used_in_ir:
-                        self._arm_invariant()
-                        del e.data.assignments[lhs]
-                        sd_eliminated.add(lhs)
+            if unread:
+                for e in sd.all_interstate_edges():
+                    for lhs in list(e.data.assignments.keys()):
+                        if lhs in unread:
+                            self._arm_invariant()
+                            del e.data.assignments[lhs]
+                            sd_eliminated.add(lhs)
             # Drop orphaned declarations, else nested-SDFG validation demands the symbol.
             if sd_eliminated:
                 still_bound = {k for ie in sd.all_interstate_edges() for k in ie.data.assignments.keys()}
                 for name in sd_eliminated:
-                    if (name in sd.symbols and name not in still_bound and name not in used_in_ir):
+                    if name in sd.symbols and name not in still_bound:
                         del sd.symbols[name]
             eliminated |= sd_eliminated
         return eliminated

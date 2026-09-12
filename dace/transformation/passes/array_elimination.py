@@ -142,8 +142,17 @@ class ArrayElimination(ppl.Pass):
             return None
         for state in reversed(state_order):
             # Find all data descriptors that will no longer be used after this state
-            removable_data: OrderedSet[str] = OrderedSet(
-                s for s in access_sets if state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
+            # ``(accesses & reach) - {state}`` is non-empty exactly when another accessing state is
+            # reachable; scanning for one skips building a set of all of ``reach`` per container.
+            removable_data: OrderedSet[str] = OrderedSet()
+            reach = None
+            for s, accesses in access_sets.items():
+                if state not in accesses:
+                    continue
+                if reach is None:
+                    reach = reachable[state]
+                if not any(other is not state and other in reach for other in accesses):
+                    removable_data.add(s)
 
             # Find duplicate access nodes as an ordered list
             access_nodes: Dict[str, List[nodes.AccessNode]] = defaultdict(list)

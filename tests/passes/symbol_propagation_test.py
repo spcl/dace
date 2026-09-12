@@ -789,3 +789,37 @@ def test_resolve_bindings_expands_data_reads_only_when_asked():
     assert {str(s) for s in expanded_read.free_symbols} == {'i'}, expanded_read
     assert expanded_guard.args[0] == expanded_read, (expanded_guard, expanded_read)
     assert sdfg.to_json() == before, 'resolve_bindings must not mutate the SDFG'
+
+
+def test_an_assignment_read_only_through_an_attribute_inside_a_loop_is_kept():
+    """``x.real`` on a loop-body edge is the only read of ``x``, and the RHS parser does not model it.
+    Disagreeing branches keep ``x`` from being substituted, so dropping its bindings would leave the
+    read naming nothing."""
+    sdfg = dace.SDFG('symprop_attribute_read_in_loop')
+    sdfg.add_symbol('flag', dace.int32)
+    sdfg.add_symbol('x', dace.int32)
+    sdfg.add_symbol('y', dace.int32)
+
+    entry = sdfg.add_state('entry', is_start_block=True)
+    pick = ConditionalBlock('pick', sdfg=sdfg)
+    sdfg.add_node(pick)
+    sdfg.add_edge(entry, pick, dace.InterstateEdge())
+    for label, value, condition in (('then', '1', CodeBlock('flag > 0')), ('otherwise', '2', None)):
+        region = ControlFlowRegion(label, sdfg=sdfg)
+        pick.add_branch(condition, region)
+        first = region.add_state(f'{label}_first', is_start_block=True)
+        second = region.add_state(f'{label}_second')
+        region.add_edge(first, second, dace.InterstateEdge(assignments={'x': value}))
+
+    loop = LoopRegion('loop', 'i < y', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)
+    sdfg.add_node(loop)
+    sdfg.add_edge(pick, loop, dace.InterstateEdge())
+    body_first = loop.add_state('body_first', is_start_block=True)
+    body_second = loop.add_state('body_second')
+    loop.add_edge(body_first, body_second, dace.InterstateEdge(assignments={'y': 'x.real'}))
+
+    SymbolPropagation().apply_pass(sdfg, {})
+
+    bound = sorted((lhs, rhs) for e in sdfg.all_interstate_edges() for lhs, rhs in e.data.assignments.items())
+    assert bound == [('x', '1'), ('x', '2'), ('y', 'x.real')], bound
+    assert 'x' in sdfg.symbols

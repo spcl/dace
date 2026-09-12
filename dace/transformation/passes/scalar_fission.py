@@ -4,9 +4,28 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
+
+
+class CarrierIndex:
+    """Where every data container of one SDFG is accessed, for :meth:`ScalarFission._carrier_free`.
+
+    ``node_states`` holds the state of each access node and ``edge_sources`` the source block of each interstate
+    edge reading the name, both in the order a walk of ``all_states`` / ``all_interstate_edges`` meets them. Asking
+    the walk once per container made the check quadratic in the SDFG size."""
+    __slots__ = ('node_states', 'edge_sources')
+
+    def __init__(self, sdfg: SDFG) -> None:
+        self.node_states: Dict[str, List[SDFGState]] = defaultdict(list)
+        for state in sdfg.all_states():
+            for node in state.data_nodes():
+                self.node_states[node.data].append(state)
+        self.edge_sources: Dict[str, List[ControlFlowBlock]] = defaultdict(list)
+        for edge in sdfg.all_interstate_edges():
+            for symbol_name in dict.fromkeys(str(s) for s in edge.data.free_symbols):
+                self.edge_sources[symbol_name].append(edge.src)
 
 
 @transformation.explicit_cf_compatible
@@ -79,6 +98,7 @@ class ScalarFission(ppl.Pass):
         # (see ``_inout_nsdfg_carried``). Leave it untouched, like ``cond_referenced``.
         inout_carried: Set[str] = self._inout_nsdfg_carried(sdfg)
 
+        carriers: Optional[CarrierIndex] = None
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
 
@@ -105,7 +125,11 @@ class ScalarFission(ppl.Pass):
             # zcor/zfac/zqe pattern). These are loop-local (no upward-exposed use),
             # so each enclosing loop gets its own copy -- scalar privatization.
             if None in write_scope_dict:
-                self._privatize_loop_local_undominated(sdfg, name, write_scope_dict[None], results)
+                # Built on the first undominated container, after any renames made before it. A rename
+                # only rewrites the container being processed, so the entries of the rest stay exact.
+                if carriers is None:
+                    carriers = CarrierIndex(sdfg)
+                self._privatize_loop_local_undominated(sdfg, name, write_scope_dict[None], results, carriers)
 
             # A write-conflict-resolution write does not KILL the previous value, it reads it
             # (see :meth:`is_wcr_write`), so it cannot start a new single-assignment version.
@@ -274,7 +298,12 @@ class ScalarFission(ppl.Pass):
     #  Privatization of undominated (None-scope) loop-local scalars
     # ------------------------------------------------------------------ #
 
-    def _privatize_loop_local_undominated(self, sdfg: SDFG, name: str, accesses: Set[Tuple], results):
+    def _privatize_loop_local_undominated(self,
+                                          sdfg: SDFG,
+                                          name: str,
+                                          accesses: Set[Tuple],
+                                          results,
+                                          carriers: Optional['CarrierIndex'] = None):
         """Give a separate container to each loop's copy of a scalar whose reads
         are not dominated by a single write (the ``None`` write-scope), when it
         is provably loop-local. This is scalar privatization; it is legal only if
@@ -294,7 +323,7 @@ class ScalarFission(ppl.Pass):
         """
         # The ``None`` scope is ONE equivalence class, and splitting it per loop is only
         # value-preserving when no value crosses a group boundary (see ``_carrier_free``).
-        if not self._carrier_free(sdfg, name):
+        if not self._carrier_free(sdfg, name, carriers):
             return
 
         by_loop: Dict[LoopRegion, List[Tuple]] = defaultdict(list)
@@ -329,7 +358,7 @@ class ScalarFission(ppl.Pass):
             self._propagate_rename_into_nsdfgs(affected_states, name, newname)
             results[name].add(newname)
 
-    def _carrier_free(self, sdfg: SDFG, name: str) -> bool:
+    def _carrier_free(self, sdfg: SDFG, name: str, carriers: Optional['CarrierIndex'] = None) -> bool:
         """Whether no value of ``name`` can flow from one loop to another, or out to non-loop scope.
 
         The undominated (``None``) write scope is one equivalence class of accesses the shadow
@@ -361,23 +390,16 @@ class ScalarFission(ppl.Pass):
 
         :param sdfg: The SDFG being modified.
         :param name: The data container to test.
+        :param carriers: Where each container is accessed, built once for a run of queries; ``None`` builds one.
         :returns: ``True`` if the undominated groups of ``name`` may be privatized independently.
         """
+        if carriers is None:
+            carriers = CarrierIndex(sdfg)
         loops: Set[LoopRegion] = set()
-        for state in sdfg.all_states():
-            for node in state.data_nodes():
-                if node.data != name:
-                    continue
-                loop = self._innermost_loop(state)
-                if loop is None:
-                    return False
-                loops.add(loop)
         # Interstate-edge reads are accesses too, and one at non-loop scope consumes whatever the
         # loops left behind just as a top-level AccessNode would.
-        for edge in sdfg.all_interstate_edges():
-            if not any(str(s) == name for s in edge.data.free_symbols):
-                continue
-            loop = self._innermost_loop(edge.src)
+        for block in (*carriers.node_states.get(name, ()), *carriers.edge_sources.get(name, ())):
+            loop = self._innermost_loop(block)
             if loop is None:
                 return False
             loops.add(loop)

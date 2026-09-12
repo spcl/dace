@@ -2,6 +2,7 @@
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from functools import lru_cache
 
 import sympy
 
@@ -14,7 +15,7 @@ from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.propagation import align_memlet
-from typing import Dict, Iterable, List, Set, Tuple, Any, Optional, Union
+from typing import Dict, FrozenSet, Iterable, List, Set, Tuple, Any, Optional, Union
 from dace import graphlib as nx
 from dace import graphlib as nxsp
 from dace.ordered import OrderedSet
@@ -65,6 +66,32 @@ class StateReachability(ppl.Pass):
         return reachable
 
 
+@lru_cache(maxsize=4096, typed=True)
+def names_read_by_text(text: str) -> FrozenSet[str]:
+    """``symbolic.free_symbols_and_functions(text) | symbolic.arrays(text)``, parsed once per distinct text.
+
+    The access-set analysis asks this of every loop bound and branch condition on every run, and the same few
+    strings recur across runs and across cloned loops. Names only, so no sympy object is cached."""
+    return frozenset(symbolic.free_symbols_and_functions(text) | symbolic.arrays(text))
+
+
+class StatePositions:
+    """``(state.parent_graph.cfg_id, state.block_id)`` answered from index maps built once per region."""
+    __slots__ = ('sdfg', 'regions')
+
+    def __init__(self, sdfg: SDFG) -> None:
+        self.sdfg = sdfg
+        self.regions: Dict[ControlFlowRegion, Tuple[int, Dict[ControlFlowBlock, int]]] = {}
+
+    def key(self, state: ControlFlowBlock) -> Tuple[int, int]:
+        parent = state.parent_graph
+        known = self.regions.get(parent)
+        if known is None:
+            known = (parent.cfg_id, {block: index for index, block in enumerate(parent.nodes())})
+            self.regions[parent] = known
+        return known[0], known[1][state]
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ControlFlowBlockReachability(ppl.Pass):
@@ -88,19 +115,22 @@ class ControlFlowBlockReachability(ppl.Pass):
         return modified & ppl.Modifies.CFG
 
     @staticmethod
-    def blocks_within(region, memo: Dict[ControlFlowBlock, Set[ControlFlowBlock]]) -> Set[ControlFlowBlock]:
-        """``region.all_control_flow_blocks()`` memoized per region.
+    def blocks_within(region, memo: Dict[ControlFlowBlock,
+                                         OrderedSet[ControlFlowBlock]]) -> OrderedSet[ControlFlowBlock]:
+        """``region.all_control_flow_blocks()`` memoized per region, in that traversal order.
 
         Every reachability entry naming a region expands it, so the unmemoized call re-walked the
         same subtrees once per entry and dominated the pass on a deeply nested SDFG. The pass does
         not modify the graph, so one expansion per region stays valid for the whole run.
 
         Keyed by the region object, not ``id(region)``: the memo then holds a reference, so an
-        address cannot be recycled by a later allocation and alias a stale entry.
+        address cannot be recycled by a later allocation and alias a stale entry. Ordered, not a ``set``:
+        blocks hash by identity, so a set's order follows memory addresses, and every reach set this feeds
+        would inherit an insertion order that changes from run to run.
         """
         blocks = memo.get(region)
         if blocks is None:
-            blocks = set(region.all_control_flow_blocks())
+            blocks = OrderedSet(region.all_control_flow_blocks())
             memo[region] = blocks
         return blocks
 
@@ -118,8 +148,11 @@ class ControlFlowBlockReachability(ppl.Pass):
             closure.update(self.blocks_within(region, region_blocks))
             closure.add(region)  # The loop condition is also reachable.
 
-        # Add all states that this region can reach in its parent graph to the closure.
+        # Add all states that this region can reach in its parent graph to the closure. A block already
+        # present came in with an enclosing region's blocks, which hold all of its own: nothing to add.
         for reached_block in block_reach[region.parent_graph.cfg_id][region]:
+            if reached_block in closure:
+                continue
             if isinstance(reached_block, ControlFlowRegion):
                 closure.update(self.blocks_within(reached_block, region_blocks))
             closure.add(reached_block)
@@ -167,10 +200,16 @@ class ControlFlowBlockReachability(ppl.Pass):
             for cfg in sdfg.all_control_flow_regions():
                 result: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = defaultdict(OrderedSet)
                 for block in cfg.nodes():
-                    for reached in single_level_reachable[block.parent_graph.cfg_id][block]:
-                        if isinstance(reached, AbstractControlFlowRegion):
-                            result[block].update(self.blocks_within(reached, region_blocks))
-                        result[block].add(reached)
+                    reached_blocks = single_level_reachable[block.parent_graph.cfg_id][block]
+                    if reached_blocks:
+                        block_result = result[block]
+                        for reached in reached_blocks:
+                            # Present means added with an enclosing region's blocks, a superset of its own.
+                            if reached in block_result:
+                                continue
+                            if isinstance(reached, AbstractControlFlowRegion):
+                                block_result.update(self.blocks_within(reached, region_blocks))
+                            block_result.add(reached)
                     if block.parent_graph is not sdfg:
                         graph_id = id(block.parent_graph)
                         if graph_id not in cached_closures:
@@ -294,7 +333,7 @@ class AccessSets(ppl.Pass):
         if init_stmt:
             exprs.add(init_stmt)
         for expr in exprs:
-            readset |= (symbolic.free_symbols_and_functions(expr) | symbolic.arrays(expr)) & arrays
+            readset |= set(names_read_by_text(expr)) & arrays
         return readset
 
     def _state_sets(self, state: SDFGState) -> Tuple[OrderedSet[str], OrderedSet[str]]:
@@ -336,8 +375,7 @@ class AccessSets(ppl.Pass):
             elif isinstance(block, ConditionalBlock):
                 for cond, _ in block.branches:
                     if cond is not None:
-                        readset |= (symbolic.free_symbols_and_functions(cond.as_string)
-                                    | symbolic.arrays(cond.as_string)) & arrays
+                        readset |= set(names_read_by_text(cond.as_string)) & arrays
             result[block] = (readset, writeset)
         return raw_read, raw_write
 
@@ -994,6 +1032,9 @@ class ScalarWriteShadowScopes(ppl.Pass):
             # Same span, same argument: nothing below mutates the graph.
             reach_cache: Dict[Tuple[int, str], Dict[nd.AccessNode, Set[nd.Node]]] = {}
 
+            # ``(cfg_id, block_id)`` of a state, from per-region index maps: both properties are linear scans.
+            state_positions = StatePositions(sdfg)
+
             anames = sdfg.arrays.keys()
             # Interstate reads indexed by container in ONE walk of ``access_sets``, which spans the
             # whole SDFG tree and was re-walked (and re-parsed) once per candidate. Appended in that
@@ -1023,7 +1064,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                 # descriptors, so it decides ``find_new_name`` suffixes. Membership is never
                 # tested here, so a list costs nothing.
                 desc_states_with_nodes = sorted((s for s in access_nodes[desc].keys() if s.sdfg is sdfg),
-                                                key=lambda s: (s.parent_graph.cfg_id, s.block_id))
+                                                key=state_positions.key)
                 for state in desc_states_with_nodes:
                     for read_node in access_nodes[desc][state][0]:
                         write = self._find_dominating_write(desc,
