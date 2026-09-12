@@ -431,6 +431,22 @@ required:
                             Can be set to 'max' to maximize occupancy.
                         default: '32,1,1'
 
+                    chiplet_number:
+                        type: int
+                        title: Number of chiplets of the target GPU
+                        description: >
+                            Number of chiplets (XCDs) of the GPU the code is generated for, 6 on MI300A or 8 on
+                            MI300X. The thread-blocks of every kernel are distributed over that many chiplets:
+                            the first dimension of the grid is padded to a multiple of that number and split
+                            into as many contiguous chunks as there are chiplets, relying on the round-robin
+                            thread-block scheduling of multi-chiplet AMD GPUs. The other two grid dimensions
+                            are left untouched. The default of 0 detects the number of chiplets of the GPU of
+                            this machine when targeting HIP, and disables the distribution when it cannot be
+                            determined. A value of 1 disables the distribution as well. Individual kernels can
+                            be excluded from it by setting the `allow_chiplet_threadblock_distribution`
+                            property of their map to False.
+                        default: 0
+
                     dynamic_map_block_size:
                         type: str
                         title: Thread-Block size for GPU_ThreadBlock_Dynamic
