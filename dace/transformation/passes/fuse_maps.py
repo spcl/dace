@@ -58,12 +58,16 @@ def _induced_matches(state: SDFGState, pnodes: List[xf.PatternNode],
 
     # The pattern node whose image supplies the candidates for each level, or None for a free level.
     parents = [next((i for i in range(j) if (i, j) in pedges), None) for j in range(npat)]
+    # A free level's candidates filtered by type once, in `state.nodes()` order, instead of once per
+    #  image of the levels above it -- the horizontal pair pattern paid O(maps * nodes) per sweep.
+    free_candidates = [[n for n in all_nodes if isinstance(n, pnodes[j].node)] if parents[j] is None else []
+                       for j in range(npat)]
 
     def extend(j: int, images: List[nodes.Node]) -> Iterator[List[nodes.Node]]:
         if j == npat:
             yield list(images)
             return
-        candidates = all_nodes if parents[j] is None else successors(images[parents[j]])
+        candidates = free_candidates[j] if parents[j] is None else successors(images[parents[j]])
         node_type = pnodes[j].node
         for cand in candidates:
             if not isinstance(cand, node_type) or any(cand is img for img in images):
@@ -157,7 +161,7 @@ class FuseMaps(ppl.Pass):
     validate = properties.Property(
         dtype=bool,
         default=True,
-        desc='If True, validates the SDFG after all transformations have been applied.',
+        desc='If True, validates the SDFG after all transformations have been applied, when at least one applied.',
     )
     validate_all = properties.Property(dtype=bool,
                                        default=False,
@@ -307,7 +311,9 @@ class FuseMaps(ppl.Pass):
                     for xform, shapes in units:
                         self._drain(xform, shapes, cfg, state, state_id, pipeline_results, applied)
 
-        if self.validate and (not self.validate_all):
+        # Nothing fused means the SDFG is the one the caller passed in; validating THAT is the caller's
+        #  contract (canonicalize: its own validate / validate_all), not a check of this pass's work.
+        if applied and self.validate and (not self.validate_all):
             sdfg.validate()
 
         return applied or None
@@ -325,13 +331,13 @@ class FuseMaps(ppl.Pass):
         progress = True
         while progress:
             progress = False
-            node_id = None
+            # `cfg_id` is a `cfg_list.index()` scan; nothing a probe does can move the region.
+            cfg_id = cfg.cfg_id
             for expr_index, (pnodes, pedges) in enumerate(shapes):
                 for images in _induced_matches(state, pnodes, pedges):
-                    if node_id is None:
-                        node_id = {node: i for i, node in enumerate(state.nodes())}
-                    xform.setup_match(owner, cfg.cfg_id, state_id, dict(zip(pnodes, (node_id[n] for n in images))),
-                                      expr_index)
+                    # Matched by node OBJECT: `PatternNode.__get__` returns a non-int as-is, so there is no
+                    #  per-sweep node index, no `expressions()` rebuild and no O(index) node walk per read.
+                    xform.setup_match(owner, cfg_id, state_id, dict(zip(pnodes, images)), expr_index, override=True)
                     # `setup_match` resets it, so the cached analysis is installed after the call.
                     xform._pipeline_results = pipeline_results
                     xform.permissive = False
