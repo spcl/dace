@@ -70,7 +70,7 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
         res = symbolic.equal(*symbolic.equalize_symbols_across(d1, d2))
         if res is None:
             warnings.warn(
-                f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
+                f'Last mode of first tensor/matrix {arr1.shape[-1]} and second-last mode of '
                 f'second tensor/matrix {arr2.shape[-2]} may not match', UserWarning)
         elif not res:
             raise SyntaxError('Matrix dimension mismatch %s != %s' % (arr1.shape[-1], arr2.shape[-2]))
