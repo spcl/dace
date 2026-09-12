@@ -7,11 +7,11 @@ unconditionally: "TileITE requires uniform dtype across _t, _e and _o ... cast v
 tasklet first", telling the caller to do work the node should do itself.
 
 ``TileBinop`` / ``TileFma`` / ``TileUnop`` already promote a Tile operand this way (design
-6.2, ``tile_binop._promotion_ok``): same dtype, or a WIDENING conversion (int -> float/double,
+6.2, ``tile_binop.promotion_ok``): same dtype, or a WIDENING conversion (int -> float/double,
 narrower int -> wider int, float -> double, numeric -> bool) is allowed and resolved by the
 pure/ISA expansion's own arithmetic-conversion context; only a genuinely narrowing conversion
 (``double -> float``, ``float -> int``, int narrowing) still raises. ``TileITE`` now follows the
-SAME rule, via the SAME ``_promotion_ok`` helper, so the three tile lib nodes with a Tile operand
+SAME rule, via the SAME ``promotion_ok`` helper, so the three tile lib nodes with a Tile operand
 agree on one promotion policy instead of ``TileITE`` carrying a stricter, second opinion.
 
 This is a separate, narrower change from the ``np.where`` literal-arm fix covered by

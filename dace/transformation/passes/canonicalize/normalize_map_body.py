@@ -267,7 +267,7 @@ class NormalizeMapBody(ppl.Pass):
             drepl = _uniquify_data_against(tail, reserved)
             # A container keep WRITES and drop READS is one value, not two: point tail's copy at
             # keep's array so it crosses the sequencing edge ``_append_cfg`` adds.
-            for drop_conn, (keep_conn, _) in carried.items():
+            for drop_conn, (keep_conn, carrier) in carried.items():
                 renamed = drepl.get(drop_conn, drop_conn)
                 if renamed != keep_conn:
                     replace_datadesc_names(tail, {renamed: keep_conn})

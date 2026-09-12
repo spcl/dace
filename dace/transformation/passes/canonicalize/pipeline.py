@@ -322,7 +322,7 @@ def run_structural_cleanup(sdfg: SDFG) -> None:
 
     :param sdfg: The SDFG to clean up in place.
     """
-    for _, unit in _structural_cleanup('structural_cleanup'):
+    for label, unit in _structural_cleanup('structural_cleanup'):
         unit.apply_pass(sdfg, {})
 
 
@@ -1847,7 +1847,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # value while leaving its defining name behind. No SimplifyPass runs past the ``reduce`` stage,
     # so this is the ONLY thing that prunes those. BEFORE AssumeSymbolConstraints, which must stay
     # the terminal stage.
-    for _ in range(TERMINAL_SYMBOL_ROUNDS):
+    for round_index in range(TERMINAL_SYMBOL_ROUNDS):
         s += [('end', SymbolDedup()), ('end', SymbolPropagation()), ('end', ConstantPropagation())]
     s += [('end', RemoveUnusedSymbols())]
 
@@ -1994,7 +1994,7 @@ def _stage_runs() -> List[Tuple[str, int, int]]:
     :returns: ``(label, start, stop)`` index ranges into the flat recipe.
     """
     runs: List[List] = []
-    for i, (lbl, _) in enumerate(_build_stages()):
+    for i, (lbl, unit) in enumerate(_build_stages()):
         if runs and runs[-1][0] == lbl and runs[-1][2] == i:
             runs[-1][2] = i + 1
         else:
@@ -2009,7 +2009,7 @@ def _stage_factory(start: int, stop: int) -> StageFactory:
     :param stop: Index one past the run's last pass.
     :returns: A factory that builds that run's passes in order.
     """
-    return lambda: [p for _, p in _build_stages()[start:stop]]
+    return lambda: [p for lbl, p in _build_stages()[start:stop]]
 
 
 #: Grouped view of :func:`_build_stages`: ``(label,

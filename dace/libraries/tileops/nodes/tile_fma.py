@@ -30,8 +30,8 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, _is_tile_shape, _is_scalar_shape, edge_moves_a_tile,
-                         scalar_operand_ref, _promotion_ok)
+from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, is_tile_shape, is_scalar_shape, edge_moves_a_tile,
+                         scalar_operand_ref, promotion_ok)
 
 #: C++ spellings of every registered dtype narrower than ``float``; these operands take the
 #: ``double``-widened FMA spelling, everything else calls ``std::fma`` on its own type. Read off the
@@ -164,7 +164,7 @@ class ExpandTileFMAPure(ExpandTransformation):
         # length-1 -> a single assignment (no lane loop); otherwise the K-fold loop.
         out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_o").data.data]
         out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and node.kind_c != TILE
-                         and _is_scalar_shape(out_desc))
+                         and is_scalar_shape(out_desc))
         if out_is_scalar:
             # Scalar output: no lane loop; one assignment. A volume-1 output (Scalar
             # or length-1 Array) is a by-value local (``T _o;``), so it -- and the
@@ -387,7 +387,7 @@ class TileFMA(nodes.LibraryNode):
         o_arr = sdfg.arrays[out_e["_o"].data.data]
         # Output-kind rule (design 6.2): when any input is Tile, ``_o`` must be tile-shape.
         any_tile_input = TILE in (self.kind_a, self.kind_b, self.kind_c)
-        if any_tile_input and not (_is_tile_shape(o_arr, tuple(self.widths))
+        if any_tile_input and not (is_tile_shape(o_arr, tuple(self.widths))
                                    or edge_moves_a_tile(out_e["_o"], tuple(self.widths))):
             raise NotImplementedError(f"{self.label}: output-kind rule violated -- a Tile input is present but "
                                       f"'_o' descriptor is not tile-shape {tuple(self.widths)!r}. Per design "
@@ -402,7 +402,7 @@ class TileFMA(nodes.LibraryNode):
                 # conversion (e.g. double -> int) raises.
                 if kind == TILE:
                     src = sdfg.arrays[in_e[label].data.data].dtype
-                    if not _promotion_ok(src, o_arr.dtype):
+                    if not promotion_ok(src, o_arr.dtype):
                         raise NotImplementedError(
                             f"{self.label}: Tile operand {label!r} dtype {src} cannot be promoted to output "
                             f"dtype {o_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")

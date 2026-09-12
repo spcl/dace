@@ -221,7 +221,7 @@ def _resolve_operand_ctype(node: TileBinop | TileFMA | TileUnop, parent_state: S
 def _operand_exprs(node: TileBinop | TileFMA | TileUnop, conns: list[tuple[str, str]]) -> list[str | None]:
     """Per-operand inline ``expr_*`` strings, aligned with ``conns`` order."""
     mapping = {"_a": node.expr_a, "_b": getattr(node, "expr_b", None), "_c": getattr(node, "expr_c", None)}
-    return [mapping.get(conn) for _, conn in conns]
+    return [mapping.get(conn) for kind, conn in conns]
 
 
 def _scalar_ref(conn: str, desc: Data, subset: Subset) -> str:
@@ -259,9 +259,9 @@ def make_binop_tasklet(node: TileBinop, parent_state: SDFGState, parent_sdfg: SD
     # to the pure expansion's ``out_is_scalar`` branch (mirrors ``make_unop_tasklet``
     # and the differing-dtype deferral below). Gated on both operands non-Tile, matching
     # the pure path's own ``out_is_scalar`` predicate.
-    from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure, _is_scalar_shape
+    from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure, is_scalar_shape
     out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-    if node.kind_a != TILE and node.kind_b != TILE and _is_scalar_shape(out_desc):
+    if node.kind_a != TILE and node.kind_b != TILE and is_scalar_shape(out_desc):
         return ExpandTileBinopPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
@@ -341,10 +341,10 @@ def make_fma_tasklet(node: TileFMA, parent_state: SDFGState, parent_sdfg: SDFG, 
     # to the pure expansion's ``out_is_scalar`` branch (mirrors make_binop_tasklet).
     # Gated on all operands non-Tile, matching the pure path's own predicate.
     from dace.libraries.tileops.nodes.tile_fma import ExpandTileFMAPure
-    from dace.libraries.tileops.nodes.tile_binop import _is_scalar_shape
+    from dace.libraries.tileops.nodes.tile_binop import is_scalar_shape
     out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_o").data.data]
     no_tile = node.kind_a != TILE and node.kind_b != TILE and node.kind_c != TILE
-    if no_tile and _is_scalar_shape(out_desc):
+    if no_tile and is_scalar_shape(out_desc):
         return ExpandTileFMAPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
@@ -430,9 +430,9 @@ def make_unop_tasklet(node: TileUnop, parent_state: SDFGState, parent_sdfg: SDFG
     # delegate to it (the same escape hatch the cast-op case above and the
     # differing-dtype case below use). Gated on a non-Tile operand to mirror the pure
     # path's own ``out_is_scalar`` predicate (a Tile operand always yields a tile output).
-    from dace.libraries.tileops.nodes.tile_binop import _is_scalar_shape
+    from dace.libraries.tileops.nodes.tile_binop import is_scalar_shape
     out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-    if node.kind_a != TILE and _is_scalar_shape(out_desc):
+    if node.kind_a != TILE and is_scalar_shape(out_desc):
         return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}

@@ -32,7 +32,7 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, _is_tile_shape, _promotion_ok, edge_moves_a_tile,
+from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, is_tile_shape, promotion_ok, edge_moves_a_tile,
                          scalar_operand_ref)
 
 # Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
@@ -312,7 +312,7 @@ class TileITE(nodes.LibraryNode):
             dtype cannot be promoted to ``_o``'s (narrowing). Symbol arms are cast to
             ``_o``'s dtype inline at expansion, so they are exempt; a widening Tile arm
             is promoted the same way ``TileBinop`` / ``TileFma`` / ``TileUnop`` promote a
-            Tile operand (design 6.2, ``tile_binop._promotion_ok``) -- not cast here, but
+            Tile operand (design 6.2, ``tile_binop.promotion_ok``) -- not cast here, but
             left for the pure/ISA expansion's own arithmetic-conversion context, exactly
             like those siblings.
         """
@@ -334,7 +334,7 @@ class TileITE(nodes.LibraryNode):
         # tile-shape. (In the tile body at least the cond or one arm is a Tile; an
         # all-Symbol/Scalar ITE is loop-invariant and may keep a scalar output.)
         any_tile_input = TILE in (self.kind_mask, self.kind_t, self.kind_e)
-        if any_tile_input and not (_is_tile_shape(o_arr, tuple(self.widths))
+        if any_tile_input and not (is_tile_shape(o_arr, tuple(self.widths))
                                    or edge_moves_a_tile(out_e["_o"], tuple(self.widths))):
             raise NotImplementedError(
                 f"{self.label}: output-kind rule violated -- a Tile input is present but "
@@ -343,7 +343,7 @@ class TileITE(nodes.LibraryNode):
         for conn, kind in (("_t", self.kind_t), ("_e", self.kind_e)):
             if kind == TILE:
                 src = sdfg.arrays[in_e[conn].data.data].dtype
-                if not _promotion_ok(src, o_arr.dtype):
+                if not promotion_ok(src, o_arr.dtype):
                     raise NotImplementedError(
                         f"{self.label}: Tile operand {conn!r} dtype {src} cannot be promoted to output "
                         f"dtype {o_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")

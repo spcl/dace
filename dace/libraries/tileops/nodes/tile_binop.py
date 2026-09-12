@@ -25,7 +25,7 @@ from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
 
 
-def _is_tile_shape(desc: dace.data.Data, widths: Sequence[int]) -> bool:
+def is_tile_shape(desc: dace.data.Data, widths: Sequence[int]) -> bool:
     """True iff ``desc`` is an :class:`dace.data.Array` whose shape equals ``widths``."""
     if not isinstance(desc, dace.data.Array):
         return False
@@ -61,7 +61,7 @@ def edge_moves_a_tile(edge: graph.MultiConnectorEdge[dace.Memlet], widths: Seque
     return dace.symbolic.shapes_equal(size[split:], tuple(widths))
 
 
-def _is_scalar_shape(desc: dace.data.Data) -> bool:
+def is_scalar_shape(desc: dace.data.Data) -> bool:
     """True iff ``desc`` is a :class:`dace.data.Scalar` or a length-1 :class:`Array`."""
     if isinstance(desc, dace.data.Scalar):
         return True
@@ -98,7 +98,7 @@ def scalar_operand_ref(desc: dace.data.Data, conn: str, widths: Sequence[int], o
         dtype; a per-lane tile read (``broadcast == False``) keeps the tile
         dtype uncast, exactly like a Tile operand.
     """
-    if isinstance(desc, dace.data.Array) and _is_tile_shape(desc, tuple(widths)):
+    if isinstance(desc, dace.data.Array) and is_tile_shape(desc, tuple(widths)):
         return f"{conn}[{off}]", False
     return conn, True
 
@@ -108,7 +108,7 @@ def is_floating_dtype(dtype: dace.dtypes.typeclass) -> bool:
 
     ``np.issubdtype(ml_dtypes.bfloat16, np.floating)`` is False -- ml_dtypes registers its scalars
     outside numpy's float hierarchy -- so a bare numpy test reads ``bfloat16`` and the two fp8 types
-    as neither integer nor float, and :func:`_promotion_ok` then refuses EVERY promotion off them,
+    as neither integer nor float, and :func:`promotion_ok` then refuses EVERY promotion off them,
     a comparison's ``-> bool`` included.
 
     :param dtype: The dtype to classify.
@@ -117,7 +117,7 @@ def is_floating_dtype(dtype: dace.dtypes.typeclass) -> bool:
     return dtype in dace.dtypes.FLOAT_TYPES or np.issubdtype(dtype.type, np.floating)
 
 
-def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
+def promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> bool:
     """Whether a Tile operand of dtype ``src`` may be promoted to the output
     dtype ``dst`` before the op (a widening conversion).
 
@@ -335,7 +335,7 @@ class ExpandTileBinopPure(ExpandTransformation):
         # length-1, emit a single assignment with no lane loop. Otherwise emit the K-fold loop
         # ``_c[off] = ...`` over the tile.
         out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-        out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and _is_scalar_shape(out_desc))
+        out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and is_scalar_shape(out_desc))
         if out_is_scalar:
             # The Scalar output path: no lane loop; one assignment. A volume-1
             # output (Scalar or length-1 Array) is a by-value local (``T _c;``),
@@ -577,7 +577,7 @@ class TileBinop(nodes.LibraryNode):
         c_arr = sdfg.arrays[out_e["_c"].data.data]
         # Output-kind rule (design 6.2): when any input is Tile, the output must be tile-shape.
         any_tile_input = (self.kind_a == TILE or self.kind_b == TILE)
-        if any_tile_input and not (_is_tile_shape(c_arr, tuple(self.widths))
+        if any_tile_input and not (is_tile_shape(c_arr, tuple(self.widths))
                                    or edge_moves_a_tile(out_e["_c"], tuple(self.widths))):
             raise NotImplementedError(f"{self.label}: output-kind rule violated -- kind_a={self.kind_a!r}, "
                                       f"kind_b={self.kind_b!r} (has Tile input) but '_c' descriptor is not tile-shape "
@@ -595,7 +595,7 @@ class TileBinop(nodes.LibraryNode):
                 # operand never meets the output, so ``b_index > 0.0`` into an int8 mask narrows nothing.
                 if kind == TILE and self.op not in COMPARISON_OPS:
                     src = sdfg.arrays[in_e[label].data.data].dtype
-                    if not _promotion_ok(src, c_arr.dtype):
+                    if not promotion_ok(src, c_arr.dtype):
                         raise NotImplementedError(
                             f"{self.label}: Tile operand {label!r} dtype {src} cannot be promoted to output "
                             f"dtype {c_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")

@@ -475,7 +475,7 @@ class ArgMaxLift(ppl.Pass):
         if isinstance(block, BreakBlock):
             return True
         if isinstance(block, ConditionalBlock):
-            return any(self._contains_break(br) for _, br in block.branches)
+            return any(self._contains_break(br) for condition, br in block.branches)
         if isinstance(block, ControlFlowRegion):
             return any(self._contains_break(n) for n in block.nodes())
         return False
@@ -2045,7 +2045,7 @@ class ArgMaxLift(ppl.Pass):
         skeleton = skeleton if skeleton is not None else self.guarded_loop_skeleton(loop)
         if skeleton is None:
             return None
-        start, end, _, cond_codeblock, true_branch = skeleton
+        start, end, cond_block, cond_codeblock, true_branch = skeleton
 
         idx_carrier = self.true_branch_writes_index_only(true_branch, loop.loop_variable)
         if idx_carrier is None or idx_carrier not in sdfg.symbols:
@@ -2117,7 +2117,7 @@ class ArgMaxLift(ppl.Pass):
             return None
         # One round per binding suffices for an acyclic chain; the bound stops a
         # cyclic one (``x := y`` on one edge, ``y := x`` on another).
-        for _ in range(len(bindings) + 1):
+        for round_index in range(len(bindings) + 1):
             finder = astutils.ASTFindReplace(dict(bindings))
             tree = finder.visit(tree)
             if finder.replace_count == 0:
@@ -2129,7 +2129,7 @@ class ArgMaxLift(ppl.Pass):
         tree = wiring.visit(tree)
         if wiring.refused:
             return None
-        connectors = dict.fromkeys(conn for conn, _ in wiring.reads.values())
+        connectors = dict.fromkeys(conn for conn, memlet in wiring.reads.values())
         for node in ast.walk(tree):
             if not isinstance(node, ast.Name):
                 continue

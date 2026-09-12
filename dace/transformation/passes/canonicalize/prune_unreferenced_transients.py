@@ -62,7 +62,7 @@ def referenced_names(sdfg: SDFG) -> Set[str]:
         if isinstance(cfr, LoopRegion):
             text.extend((cfr.loop_condition, cfr.init_statement, cfr.update_statement))
         elif isinstance(cfr, ConditionalBlock):
-            text.extend(cond for cond, _ in cfr.branches)
+            text.extend(cond for cond, region in cfr.branches)
     used |= set(re.findall(r'[A-Za-z_]\w*', '\n'.join(code_text(t) for t in text if t is not None)))
     return used
 

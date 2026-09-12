@@ -174,7 +174,7 @@ class AnnotateLoopKinds(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """:returns: The number of loops newly labelled, or ``None`` if none was."""
         labelled = 0
-        for node, _ in list(sdfg.all_nodes_recursive()):
+        for node, parent_graph in list(sdfg.all_nodes_recursive()):
             if isinstance(node, nodes.MapEntry):
                 if node.specialization_hint:
                     continue

@@ -22,7 +22,7 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import _promotion_ok
+from .tile_binop import promotion_ok
 
 TILE = "Tile"
 SYMBOL = "Symbol"
@@ -171,9 +171,9 @@ class ExpandTileUnopPure(ExpandTransformation):
             rhs_expr = f"{pre}{operand}{post}"
         # Output kind dispatch (design 6.2): non-Tile input + Scalar / length-1 output -> single
         # assignment (no lane loop). Otherwise the K-fold tile loop.
-        from .tile_binop import _is_scalar_shape
+        from .tile_binop import is_scalar_shape
         out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-        out_is_scalar = (node.kind_a != TILE and _is_scalar_shape(out_desc))
+        out_is_scalar = (node.kind_a != TILE and is_scalar_shape(out_desc))
         if out_is_scalar:
             # A volume-1 output (Scalar / length-1 Array) is a by-value local
             # (``T _c;``), so it -- and the volume-1 ``_mask`` -- are referenced
@@ -352,13 +352,13 @@ class TileUnop(nodes.LibraryNode):
             # ``abs`` of a complex operand is the (real) magnitude -- ``std::abs(std::complex<T>)``
             # returns ``T`` -- so a complex -> real result is correct, not a lossy narrowing.
             is_complex_abs = self.op == "abs" and src in (dace.dtypes.complex64, dace.dtypes.complex128)
-            if not is_complex_abs and not _promotion_ok(src, c_arr.dtype):
+            if not is_complex_abs and not promotion_ok(src, c_arr.dtype):
                 raise NotImplementedError(
                     f"{self.label}: Tile operand '_a' dtype {src} cannot be promoted to output dtype "
                     f"{c_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")
         # Output-kind rule (design 6.2): when input is Tile, the output must be tile-shape.
-        from .tile_binop import _is_tile_shape, edge_moves_a_tile
-        if self.kind_a == TILE and not (_is_tile_shape(c_arr, tuple(self.widths))
+        from .tile_binop import is_tile_shape, edge_moves_a_tile
+        if self.kind_a == TILE and not (is_tile_shape(c_arr, tuple(self.widths))
                                         or edge_moves_a_tile(out_e["_c"], tuple(self.widths))):
             raise NotImplementedError(
                 f"{self.label}: output-kind rule violated -- kind_a=Tile but '_c' descriptor is not "

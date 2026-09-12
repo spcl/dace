@@ -235,7 +235,7 @@ class PerfectLoopNesting(ppl.Pass):
         uniq = UniqueLoopIterators(assign_loop_iterator_post_value=False)
         trivial = PatternMatchAndApplyRepeated([TrivialLoopElimination()])
         rounds = 0
-        for _ in range(MAX_ROUNDS):
+        for round_index in range(MAX_ROUNDS):
             # ``apply_pass`` returns differ by pass type (an int count for MoveIfIntoLoop, a results
             # ``defaultdict`` for the PatternMatchAndApplyRepeated-wrapped TrivialLoopElimination),
             # so test each for truthiness rather than summing.

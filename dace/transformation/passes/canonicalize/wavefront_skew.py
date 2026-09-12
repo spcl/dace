@@ -341,7 +341,7 @@ def split_snapshot_window(state: SDFGState) -> Optional[subsets.Range]:
     dst_sub = e.data.get_dst_subset(e, state)
     if src_sub is None or (dst_sub is not None and dst_sub != src_sub):
         return None
-    if any(symbolic.simplify(step - 1) != 0 for (_, _, step) in src_sub.ndrange()):
+    if any(symbolic.simplify(step - 1) != 0 for (start, stop, step) in src_sub.ndrange()):
         return None
     return src_sub
 
@@ -452,10 +452,10 @@ def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: Tuple[str, 'Writ
     dependence, sits on a non-carrier array, or has an undecidable distance."""
     if not snap_reads:
         return True
-    arr, wmap, _ = carrier
+    arr, wmap, dependences = carrier
     if wmap is None:
         return False  # a reduced (one-axis) carrier does not name the writing iteration
-    for (_, _, _, ridx, src_name, _) in snap_reads:
+    for (state, snap_node, edge, ridx, src_name, window) in snap_reads:
         if src_name != arr or len(ridx) != 2:
             return False  # snapshot not on the 2-D carrier -> cannot reason
         u_r, v_r = wmap.invert(ridx[0], ridx[1])
@@ -473,11 +473,11 @@ def snapshot_reads_in_window(snap_reads: List[SnapRead], u: str, v: str, domain:
     whatever ISL cannot decide."""
     dims = [u, v]
     iters = (u, v)
-    for (_, _, _, ridx, _, window) in snap_reads:
+    for (state, snap_node, edge, ridx, src_name, window) in snap_reads:
         rng = window.ndrange()
         if len(rng) != len(ridx):
             return False
-        for idx, (lo, hi, _) in zip(ridx, rng):
+        for idx, (lo, hi, step) in zip(ridx, rng):
             below = symbolic.simplify(canonical_iterators(lo, iters) - idx - 1)
             above = symbolic.simplify(idx - canonical_iterators(hi, iters) - 1)
             for outside in (below, above):
@@ -494,13 +494,13 @@ def commit_split_snapshots(snap_reads: List[SnapRead], copy_states: List[SDFGSta
     """Rewire the planned snapshot reads onto the live array and drop the copies.
     Called only after a legal skew is confirmed. Structural cleanup then removes
     the emptied copy states and eliminates the dead ``arr_split_snap`` arrays."""
-    for (state, _, e, _, src_name, _) in snap_reads:
+    for (state, snap_node, e, ridx, src_name, window) in snap_reads:
         reader = live_reader(state, src_name)
         redirected = copy.deepcopy(e.data)
         redirected.data = src_name
         state.add_edge(reader, None, e.dst, e.dst_conn, redirected)
         state.remove_edge(e)
-    for (state, snap_node, _, _, _, _) in snap_reads:
+    for (state, snap_node, edge, ridx, src_name, window) in snap_reads:
         if snap_node in state.nodes() and state.degree(snap_node) == 0:
             state.remove_node(snap_node)
     for st in copy_states:
@@ -516,7 +516,7 @@ def point_index(subset, iters: tuple[str, ...]) -> Optional[List[object]]:
     iterators named in ``iters`` are re-keyed (:func:`canonical_iterators`) -- everything
     downstream then works in one symbol spelling."""
     idx = []
-    for (start, end, _) in subset.ndrange():
+    for (start, end, step) in subset.ndrange():
         if start != end:
             return None
         idx.append(canonical_iterators(start, iters))
@@ -1334,7 +1334,7 @@ class WavefrontSkew(ppl.Pass):
         carrier = collect_carrier(inners, sdfg, u, v, snap_src=snap_src)
         if carrier is None:
             return False
-        _, _, deps = carrier
+        arr, wmap, deps = carrier
 
         # Redirecting a snapshot read is only value-preserving when it is a FORWARD
         # (anti) dependence in iteration space -- the writer runs on a strictly

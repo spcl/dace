@@ -662,7 +662,7 @@ def carries_across_iterations(body, name: str, in_names: dict[str, None], cone=N
     stores = write_subsets(body, name)
     if not iteration_distinct(stores, body.loop_variable):
         return True
-    for _, node, edge in read_cone(body, name, in_names, cone):
+    for state, node, edge in read_cone(body, name, in_names, cone):
         if node.data == name and {access_offset(edge_subset(edge, name), w) for w in stores} != {0}:
             return True
     return False
@@ -820,7 +820,7 @@ def merge_carried_groups(body,
             continue
         readers = [
             i for i, grp in enumerate(merged)
-            if i != writer and any(n.data == name for oc in grp for _, n, _ in read_cone(body, oc, in_names, cone))
+            if i != writer and any(n.data == name for oc in grp for st, n, e in read_cone(body, oc, in_names, cone))
         ]
         if not readers:
             continue

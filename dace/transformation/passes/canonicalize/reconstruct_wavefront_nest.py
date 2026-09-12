@@ -60,7 +60,7 @@ def _top_level_maps(state: SDFGState) -> List[nodes.MapEntry]:
     return [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and state.entry_node(n) is None]
 
 
-def _find_candidate(outer: LoopRegion) -> Optional[Candidate]:
+def find_candidate(outer: LoopRegion) -> Optional[Candidate]:
     """``(map_state, inner_loop)`` if ``outer``'s body is EXACTLY one ``SDFGState`` holding a
     top-level Map plus one sibling ``LoopRegion`` -- the imperfect two-statement shape
     ``WavefrontSkew.extract_two_level_nest`` refuses. ``None`` for any other shape."""
@@ -259,7 +259,7 @@ class ReconstructWavefrontNest(ppl.Pass):
         """Reconstruct ``outer``'s body in ``sdfg`` if the candidate shape is present, its
         range matches, and a throwaway deepcopy proves it unlocks a skew. ``True`` iff
         committed for real."""
-        candidate = _find_candidate(outer)
+        candidate = find_candidate(outer)
         if candidate is None:
             return False
         map_state, inner_loop = candidate

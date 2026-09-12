@@ -193,7 +193,7 @@ class LoopToConditionalReduce(ppl.Pass):
         if len(non_else) != 1:
             return None
         cond_codeblock, true_branch = non_else[0]
-        for _, br in else_branches:
+        for else_condition, br in else_branches:
             if self._branch_has_content(br):
                 return None
 
@@ -569,7 +569,7 @@ class LoopToConditionalReduce(ppl.Pass):
             arr_name, sub = gather
             if sub is not None:
                 try:
-                    key = tuple(str(lo) for lo, _, _ in sub.ranges)
+                    key = tuple(str(lo) for lo, hi, step in sub.ranges)
                     connector_for_access[(arr_name, key)] = addend_conn_name
                 except Exception:
                     pass
