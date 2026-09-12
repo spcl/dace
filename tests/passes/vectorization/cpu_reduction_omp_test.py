@@ -69,7 +69,7 @@ def _vprod32(A: dace.float32[N], out: dace.float32[1]):
 
 
 # (program, reduction operator string as it appears in the OMP clause)
-_PROGRAMS = {"sum": (_vsum32, "+"), "max": (_vmax32, "max"), "min": (_vmin32, "min"), "prod": (_vprod32, "*")}
+PROGRAMS = {"sum": (_vsum32, "+"), "max": (_vmax32, "max"), "min": (_vmin32, "min"), "prod": (_vprod32, "*")}
 
 
 def _vectorized(prog):
@@ -108,17 +108,17 @@ def _inputs(kind, nval):
     return rng.permutation(a).astype(np.float32), np.prod
 
 
-@pytest.mark.parametrize("kind", list(_PROGRAMS))
+@pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_emits_omp_reduction_clause(kind):
     """Parallel map carries ``reduction(op:acc)`` clause; body tiles the fold with
     ``tile_reduce``, not a per-iteration atomic."""
-    prog, op = _PROGRAMS[kind]
+    prog, op = PROGRAMS[kind]
     code = _cpu_code(_vectorized(prog))
     assert f"reduction({op}:" in code, f"expected an OpenMP reduction({op}:...) clause on the parallel map"
     assert "tile_reduce" in code, "expected a tile_reduce within-tile fold"
 
 
-@pytest.mark.parametrize("kind", list(_PROGRAMS))
+@pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_partial_folds_to_single_element(kind):
     """The interposed reduction partial (``NormalizeWCRSource``'s ``_wcr_priv_*_acc`` on the
     ``NSDFG -> AccessNode -[wcr]-> MapExit`` boundary) folds onto a single element -- a scalar,
@@ -129,7 +129,7 @@ def test_partial_folds_to_single_element(kind):
     under the program's own ``acc``: ``ReductionScalarLocalPrep`` privatizes the accumulator slot
     into a fresh ``_priv_acc`` scalar, so the name in the clause is the one that has to be a
     Scalar, and pinning the source name would test a descriptor the pragma never mentions."""
-    sdfg = _vectorized(_PROGRAMS[kind][0])
+    sdfg = _vectorized(PROGRAMS[kind][0])
     parts = [(k, d) for s in sdfg.all_sdfgs_recursive() for k, d in s.arrays.items()
              if k.startswith("_wcr_priv") and k.endswith("_acc")]
     assert parts, "expected an interposed _wcr_priv reduction partial"
@@ -145,10 +145,10 @@ def test_partial_folds_to_single_element(kind):
             f"accumulator {name} must stay a Scalar, got {[type(d).__name__ for d in descs]}"
 
 
-@pytest.mark.parametrize("kind", list(_PROGRAMS))
+@pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_numeric_exact(kind):
     """Bit-exact result under the (parallel, per-thread-privatized) reduction order."""
-    sdfg = _vectorized(_PROGRAMS[kind][0])
+    sdfg = _vectorized(PROGRAMS[kind][0])
     sdfg.name = f"cpu_reduction_{kind}"
     shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
     csdfg = sdfg.compile()
@@ -210,8 +210,8 @@ def test_happens_before_edge_does_not_cost_the_reduction_clause():
 
 
 if __name__ == "__main__":
-    for _kind in _PROGRAMS:
-        test_emits_omp_reduction_clause(_kind)
-        test_partial_folds_to_single_element(_kind)
+    for kind in PROGRAMS:
+        test_emits_omp_reduction_clause(kind)
+        test_partial_folds_to_single_element(kind)
     test_happens_before_edge_does_not_cost_the_reduction_clause()
     print("codegen ok")

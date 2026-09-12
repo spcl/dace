@@ -32,19 +32,19 @@ from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from tests.corpus.polybench import polybench as PB
 
 #: The CPU canonicalize knob set the numerical corpus gate uses.
-_CPU = dict(target='cpu',
-            peel_limit=4,
-            break_anti_dependence=True,
-            interchange_carry_with_map=True,
-            scatter_to_guarded_maps=True)
+CPU = dict(target='cpu',
+           peel_limit=4,
+           break_anti_dependence=True,
+           interchange_carry_with_map=True,
+           scatter_to_guarded_maps=True)
 
 #: Generated-code ceiling. Measured: 5105 bytes untransformed, 5861 after canon.
 #: A canon change that unrolled/fused/expanded this kernel into a compile-time
 #: blowup would blow past this by orders of magnitude.
-_MAX_CODE_BYTES = 200_000
+MAX_CODE_BYTES = 200_000
 
 #: SDFG node ceiling. Measured: 11 untransformed, 17 after canon.
-_MAX_NODES = 500
+MAX_NODES = 500
 
 
 def _kernel():
@@ -56,7 +56,7 @@ def _kernel():
 def _canonicalized():
     """A canonicalized + CPU-finalized k3mm."""
     sdfg = PB.fresh_sdfg(_kernel())
-    canonicalize(sdfg, validate=True, validate_all=False, **_CPU)
+    canonicalize(sdfg, validate=True, validate_all=False, **CPU)
     finalize_for_target(sdfg, 'cpu')
     return sdfg
 
@@ -82,11 +82,11 @@ def test_k3mm_canonicalize_does_not_explode():
                             f"unexpanded, got {len(libs)}: {[type(n).__name__ for n in libs]}")
 
     nodes = _node_count(sdfg)
-    assert nodes <= _MAX_NODES, f"canon exploded k3mm's SDFG: {nodes} nodes (> {_MAX_NODES}); expected ~17"
+    assert nodes <= MAX_NODES, f"canon exploded k3mm's SDFG: {nodes} nodes (> {MAX_NODES}); expected ~17"
 
     code_bytes = _code_bytes(sdfg)
-    assert code_bytes <= _MAX_CODE_BYTES, (f"canon exploded k3mm's generated code: {code_bytes} bytes "
-                                           f"(> {_MAX_CODE_BYTES}); expected ~5.9KB")
+    assert code_bytes <= MAX_CODE_BYTES, (f"canon exploded k3mm's generated code: {code_bytes} bytes "
+                                          f"(> {MAX_CODE_BYTES}); expected ~5.9KB")
 
 
 def test_k3mm_canonicalized_compiles_and_is_value_preserving():

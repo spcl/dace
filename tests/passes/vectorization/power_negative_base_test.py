@@ -31,7 +31,7 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 N = dace.symbol('N')
 #: The host's best runnable SIMD ISA (AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR); vectorization
 #: enforces arch-native, so a hardcoded AVX-512 would SIGILL-refuse on an AVX2-only or ARM host.
-_HOST_ISA = detect_host_isa()
+HOST_ISA = detect_host_isa()
 
 
 def test_expand_pow_non_literal_exponent_keeps_pow_not_exp_log():
@@ -55,7 +55,7 @@ def sin_squared(x: dace.float64[N], y: dace.float64[N]):
     y[:] = np.sin(x)**2
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", _HOST_ISA])
+@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
 def test_sin_squared_negative_base_vectorizes_without_nan(isa):
     """``np.sin(x) ** 2`` over a range where ``sin(x) < 0`` must vectorize to the
     numpy result, not NaN (the ``exp(2 * log(sin))`` regression)."""

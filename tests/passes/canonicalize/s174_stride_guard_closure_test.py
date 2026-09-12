@@ -34,19 +34,19 @@ from dace.libraries.standard.nodes.scan import Scan
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from tests.corpus.measure_parallelization import cpu_params, guarded_fallback_loops
-from tests.corpus.tsvc import tsvc as _TS
-from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
+from tests.corpus.tsvc import tsvc
+from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 from tests.helpers.isolation import MISMATCH, exit_code
 
-_ZERO_TRIP_LEN = 64
+ZERO_TRIP_LEN = 64
 
 
 def _canonicalized(name: str, tag: str):
     """The CPU-canonicalized SDFG for one TSVC kernel, plus its ``(arrays, call_kwargs)``."""
-    kernel = _TS.collect(name=name)[0]
-    sdfg = _TS.to_sdfg(kernel, tag=tag, simplify=True)
+    kernel = tsvc.collect(name=name)[0]
+    sdfg = tsvc.to_sdfg(kernel, tag=tag, simplify=True)
     canonicalize(sdfg, validate=True, validate_all=False, **cpu_params(4))
-    return sdfg, _TS.make_inputs(kernel, seed=1234)
+    return sdfg, tsvc.make_inputs(kernel, seed=1234)
 
 
 def _structure(sdfg):
@@ -71,13 +71,13 @@ def test_s174_stride_guard_closes_to_bare_map():
 def test_s174_closed_map_is_bit_exact():
     """Canonicalize 10x in-process (the cross-process canon flake is order-dependent): the
     closed form stays a bare Map and is BIT-exact against the numpy oracle every time."""
-    kernel = _TS.collect(name='s174_d_single')[0]
-    arrays, call_kwargs = _TS.make_inputs(kernel, seed=1234)
+    kernel = tsvc.collect(name='s174_d_single')[0]
+    arrays, call_kwargs = tsvc.make_inputs(kernel, seed=1234)
     ref = {n: a.copy() for n, a in arrays.items()}
-    _TS_REF['s174_d_single'](**ref, **call_kwargs)
+    REFERENCES['s174_d_single'](**ref, **call_kwargs)
 
     for trial in range(10):
-        sdfg = _TS.to_sdfg(kernel, tag=f'guardclose_exact_{trial}', simplify=True)
+        sdfg = tsvc.to_sdfg(kernel, tag=f'guardclose_exact_{trial}', simplify=True)
         canonicalize(sdfg, validate=True, validate_all=False, **cpu_params(4))
         assert guarded_fallback_loops(sdfg) == 0
         assert _structure(sdfg) == (0, 1, 0)
@@ -104,12 +104,12 @@ def test_s174_zero_trip_count_does_not_abort():
     fin = finalize_for_target(copy.deepcopy(sdfg), 'cpu')
     fin.name = f'{fin.name}_gc_zero'
 
-    a = np.arange(_ZERO_TRIP_LEN, dtype=np.float64)
-    b = np.ones(_ZERO_TRIP_LEN, dtype=np.float64)
+    a = np.arange(ZERO_TRIP_LEN, dtype=np.float64)
+    b = np.ones(ZERO_TRIP_LEN, dtype=np.float64)
     work = a.copy()
 
     # M == 0 must leave `a` untouched, so `work` is compared against the pristine `a`.
-    code = exit_code(fin, {'a': work, 'b': b, 'M': 0, 'LEN_1D': _ZERO_TRIP_LEN}, [(work, a)], exact=True)
+    code = exit_code(fin, {'a': work, 'b': b, 'M': 0, 'LEN_1D': ZERO_TRIP_LEN}, [(work, a)], exact=True)
 
     assert code >= 0, (f'zero-trip M=0 killed by signal {-code} '
                        '(SIGABRT=6 means the guard was dropped onto an unconditional strided Scan)')

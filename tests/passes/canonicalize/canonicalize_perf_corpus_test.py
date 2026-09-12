@@ -145,18 +145,18 @@ from tests.corpus.polybench import polybench_numpy as PBN
 #: mask and its own libgomp then sees exactly one place, so all OMP_NUM_THREADS threads land on one
 #: core -- measured as a 20x regression on every libgomp arm (autoopt-gcc 2.10ms -> 41.08ms) while
 #: sequential and libomp arms were untouched. Children restore this set before measuring anything.
-_FULL_AFFINITY = frozenset(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else frozenset()
+FULL_AFFINITY = frozenset(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else frozenset()
 
 #: ``canonicalize`` keyword bag; ``Any`` because it is a heterogeneous kwargs splat, not a mapping.
-_CPU: dict[str, Any] = dict(target='cpu',
-                            peel_limit=4,
-                            break_anti_dependence=True,
-                            interchange_carry_with_map=True,
-                            scatter_to_guarded_maps=True)
+CPU: dict[str, Any] = dict(target='cpu',
+                           peel_limit=4,
+                           break_anti_dependence=True,
+                           interchange_carry_with_map=True,
+                           scatter_to_guarded_maps=True)
 
 
 def _canon(s: dace.SDFG) -> dace.SDFG:
-    return finalize_for_target(canonicalize(s, validate=True, **_CPU), 'cpu')
+    return finalize_for_target(canonicalize(s, validate=True, **CPU), 'cpu')
 
 
 def _autoopt(s: dace.SDFG) -> dace.SDFG:
@@ -169,19 +169,19 @@ def _autoopt(s: dace.SDFG) -> dace.SDFG:
 BASELINE = 'dace-autoopt-gcc'
 #: Pipelines to time, ``label -> transform``. Populated from the arm table below; the default is
 #: the two g++ DaCe arms, which claim no external pass and so need no toolchain probe.
-_PIPELINES: dict[str, Callable[[dace.SDFG], dace.SDFG]] = {}
+PIPELINES: dict[str, Callable[[dace.SDFG], dace.SDFG]] = {}
 
 #: A candidate pipeline is a "regression" only past this multiple of the baseline
 #: (best-of-N). Generous so timing noise never flakes CI; catches gross regressions.
 REGRESSION_FACTOR = 6.0
 #: Below this baseline runtime (ms) the kernel is too fast to time reliably; gate it
 #: very leniently rather than flake on per-call overhead.
-_MIN_TIMEABLE_MS = 0.5
-_REPS = int(os.environ.get('CANON_PERF_REPS', '7'))
-_WARMUP = int(os.environ.get('CANON_PERF_WARMUP', '2'))
-#: Rep-count floor and per-(kernel, arm) timing budget. ``_REPS`` is the CEILING now, not the flat
-#: count: ``_reps_for`` spends up to ``_BUDGET_MS`` of wall clock and stops, so a cheap kernel still
-#: gets the full ``_REPS`` while a 20s stencil gets ``_MIN_REPS`` instead of turning one kernel into
+MIN_TIMEABLE_MS = 0.5
+REPS = int(os.environ.get('CANON_PERF_REPS', '7'))
+WARMUP = int(os.environ.get('CANON_PERF_WARMUP', '2'))
+#: Rep-count floor and per-(kernel, arm) timing budget. ``REPS`` is the CEILING now, not the flat
+#: count: ``_reps_for`` spends up to ``BUDGET_MS`` of wall clock and stops, so a cheap kernel still
+#: gets the full ``REPS`` while a 20s stencil gets ``MIN_REPS`` instead of turning one kernel into
 #: two hours. The floor keeps a median meaningful; raise the budget to trade wall clock for tighter
 #: medians on the expensive tail.
 #: Upper bound on a SINGLE call at the paper shape. A paper-size kernel is meant to be a realistic
@@ -192,15 +192,15 @@ _WARMUP = int(os.environ.get('CANON_PERF_WARMUP', '2'))
 #: the table would hide the very thing this is meant to surface. Three minutes leaves room for the
 #: heaviest honest arm (seq-cpp on jacobi_2d measured 4.87s, so the margin is ~37x) while still
 #: catching a kernel whose paper shape has run away. Lower it with CANON_PERF_MAX_CALL_MS.
-_MAX_CALL_MS = float(os.environ.get('CANON_PERF_MAX_CALL_MS', '180000'))
-_MIN_REPS = int(os.environ.get('CANON_PERF_MIN_REPS', '5'))
-_BUDGET_MS = float(os.environ.get('CANON_PERF_BUDGET_MS', '20000'))
-_PER_KERNEL_TIMEOUT = int(os.environ.get('CANON_PERF_TIMEOUT', '600'))
+MAX_CALL_MS = float(os.environ.get('CANON_PERF_MAX_CALL_MS', '180000'))
+MIN_REPS = int(os.environ.get('CANON_PERF_MIN_REPS', '5'))
+BUDGET_MS = float(os.environ.get('CANON_PERF_BUDGET_MS', '20000'))
+PER_KERNEL_TIMEOUT = int(os.environ.get('CANON_PERF_TIMEOUT', '600'))
 #: Per-ARM cap. The kernel cap alone is not enough: its alarm is spent on whichever arm is
 #: running when it fires, so a single slow arm both loses itself and leaves its siblings
 #: unbounded. A third of the kernel budget lets the typical nine-arm kernel finish while
 #: still catching an arm that has genuinely run away.
-_PER_ARM_TIMEOUT = int(os.environ.get('CANON_PERF_ARM_TIMEOUT', str(max(60, _PER_KERNEL_TIMEOUT // 3))))
+PER_ARM_TIMEOUT = int(os.environ.get('CANON_PERF_ARM_TIMEOUT', str(max(60, PER_KERNEL_TIMEOUT // 3))))
 #: Measure each OpenMP-runtime family in its OWN process. Load-bearing for the LLVM columns, not a
 #: tidiness knob: libgomp and libomp co-resident in one process cost ~34x. MEASURED on this box with
 #: a standalone microbenchmark of DaCe's emitted jacobi_1d body at OMP_NUM_THREADS=72 -- clang alone
@@ -234,35 +234,35 @@ _PER_ARM_TIMEOUT = int(os.environ.get('CANON_PERF_ARM_TIMEOUT', str(max(60, _PER
 #: regression on the four gcc arms is worse than the known llvm inflation. The real fix is to stop
 #: the collapse happening at all -- an OpenBLAS not linked against libgomp, or preventing libgomp
 #: from binding the master thread before its place list is built -- not to widen the mask after.
-_ISOLATE_ARMS = os.environ.get('CANON_PERF_ISOLATE_ARMS', '0') not in ('0', 'false', 'False')
+ISOLATE_ARMS = os.environ.get('CANON_PERF_ISOLATE_ARMS', '0') not in ('0', 'false', 'False')
 #: Set in the spawned children so they skip the toolchain probe the parent already ran.
-_IS_CHILD = os.environ.get('CANON_PERF_ARM_CHILD') == '1'
+IS_CHILD = os.environ.get('CANON_PERF_ARM_CHILD') == '1'
 #: Bumped when the measurement METHOD changes so that results produced by the old one stop counting
 #: as current. 2 == per-runtime process isolation; every record written before it has LLVM columns
 #: contaminated by the co-residency above and must be re-measured rather than skipped.
 MEASUREMENT_EPOCH = 2
 
 #: Where per-kernel result files live (one ``<suite>_<kernel>.json`` each).
-_RESULTS_DIR: str = os.environ.get('CANON_PERF_DIR',
-                                   os.path.join(os.path.dirname(os.path.abspath(__file__)), 'perf_results'))
+RESULTS_DIR: str = os.environ.get('CANON_PERF_DIR',
+                                  os.path.join(os.path.dirname(os.path.abspath(__file__)), 'perf_results'))
 #: Re-measure even when a result file already exists.
-_FORCE = os.environ.get('CANON_PERF_FORCE', '') not in ('', '0', 'false', 'False')
+FORCE = os.environ.get('CANON_PERF_FORCE', '') not in ('', '0', 'false', 'False')
 #: Dataset presets to measure, defaulting to every preset the corpus adapter defines.
 #: ``CANON_PERF_PRESETS=paper`` (comma-separated) halves the compiles of a sweep that only wants
 #: the performance-realistic shape -- and the paper-preset compiles are what the sweep costs.
-_ONLY_PRESETS = [p for p in os.environ.get('CANON_PERF_PRESETS', '').split(',') if p]
-PRESETS = tuple(p for p in CS.PRESETS if not _ONLY_PRESETS or p in _ONLY_PRESETS)
+ONLY_PRESETS = [p for p in os.environ.get('CANON_PERF_PRESETS', '').split(',') if p]
+PRESETS = tuple(p for p in CS.PRESETS if not ONLY_PRESETS or p in ONLY_PRESETS)
 #: Also save each pipeline's SDFG BEFORE library-node expansion to ``<dir>/sdfg/``
 #: (opt-in; ``--save-sdfg`` from the script sets this too).
-_SAVE_SDFG = os.environ.get('CANON_PERF_SAVE_SDFG', '') not in ('', '0', 'false', 'False')
+SAVE_SDFG = os.environ.get('CANON_PERF_SAVE_SDFG', '') not in ('', '0', 'false', 'False')
 
 #: Structural-only builders -- the SDFG each PIPELINE produces BEFORE library-node expansion
 #: (Reduce/MatMul/Einsum nodes still present). Keyed by pipeline, not by arm: the SDFG is the same
 #: whichever compiler the arm goes on to use. canon stops at the ``canonicalize`` output
 #: (``finalize_for_target`` would expand it); autoopt uses ``auto_optimize(..., expand=False)``.
-_PRE_EXPANSION = {
+PRE_EXPANSION = {
     'autoopt': lambda s: auto_optimize(s, dace.DeviceType.CPU, expand=False),
-    'canon': lambda s: canonicalize(s, validate=True, **_CPU),
+    'canon': lambda s: canonicalize(s, validate=True, **CPU),
 }
 
 # ---------------------------------------------------------------------------
@@ -270,7 +270,7 @@ _PRE_EXPANSION = {
 #
 # An "arm" is a (SDFG pipeline, C++ compiler, extra flags) triple. The harness keys the per-kernel
 # JSON, the speedup map, the CSV and the Markdown table by pipeline label, so an arm costs one
-# ``_PIPELINES`` entry plus a toolchain override around its build -- no second axis, no schema
+# ``PIPELINES`` entry plus a toolchain override around its build -- no second axis, no schema
 # change.
 #
 # There is exactly ONE job shape: the eight arms the figure compares, plus ``seq-cpp`` because it is
@@ -367,14 +367,14 @@ def serialize(sdfg: dace.SDFG) -> dace.SDFG:
 #: BOTH shapes are needed: unforced, gcc parallelizes the flat loop and declines the nest, Polly the
 #: reverse (see commit 77676aea6). A green probe proves a pass CAN parallelize something, never that
 #: it touched a measured kernel.
-_PROBE_SRC = ('void probe_scop(double *__restrict__ A, double *__restrict__ B, double *__restrict__ C) {\n'
-              '    for (int i = 0; i < 4096; i++)\n'
-              '        for (int j = 0; j < 4096; j++)\n'
-              '            C[i * 4096 + j] = A[i * 4096 + j] + B[i * 4096 + j] * 3.0;\n'
-              '}\n'
-              'void probe_flat(double *__restrict__ A, double *__restrict__ B, int n) {\n'
-              '    for (long i = 0; i < n; i = i + 1) { const double t = B[i]; A[i] = t + 1.0; }\n'
-              '}\n')
+PROBE_SRC = ('void probe_scop(double *__restrict__ A, double *__restrict__ B, double *__restrict__ C) {\n'
+             '    for (int i = 0; i < 4096; i++)\n'
+             '        for (int j = 0; j < 4096; j++)\n'
+             '            C[i * 4096 + j] = A[i * 4096 + j] + B[i * 4096 + j] * 3.0;\n'
+             '}\n'
+             'void probe_flat(double *__restrict__ A, double *__restrict__ B, int n) {\n'
+             '    for (long i = 0; i < n; i = i + 1) { const double t = B[i]; A[i] = t + 1.0; }\n'
+             '}\n')
 
 #: The ONE base flag set EVERY arm is built with; an arm adds only its own flags on top, so the
 #: comparison differs in nothing else. Defaults to the string ``submit_corpus_perf.sh`` pins, and
@@ -391,25 +391,25 @@ _PROBE_SRC = ('void probe_scop(double *__restrict__ A, double *__restrict__ B, d
 #: the two compiler columns. ``fast`` lets both emit FMA, which is what an -O3 -march=native
 #: measurement should be showing. Correctness stays checkable because the corpus compares floats at
 #: a per-precision tolerance (``polybench.outputs_match``), not bit-exactly.
-_BASE_ARGS = os.environ.get(
+BASE_ARGS = os.environ.get(
     'DACE_compiler_cpu_args', '-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno '
     '-fno-trapping-math -fno-signed-zeros -ffp-contract=fast')
 
 #: One knob per compiler column and one per external pass, all overridable so a variant (a
 #: different thread count, ``-polly-vectorizer``, another GCC) is a sweep, not an edit.
-_GCC = os.environ.get('CANON_PERF_GCC_CXX', 'g++')
-_CLANG = os.environ.get('CANON_PERF_CLANG_CXX', 'clang++')
+GCC = os.environ.get('CANON_PERF_GCC_CXX', 'g++')
+CLANG = os.environ.get('CANON_PERF_CLANG_CXX', 'clang++')
 #: gcc's auto-parallelizer takes its thread count as a compile-time flag, and that flag IS the
 #: runtime width, not a heuristic hint: parloops emits the count as a literal ``num_threads``
 #: argument (``mov w2, <N>; bl GOMP_parallel``), so it does NOT widen to OMP_NUM_THREADS at run
-#: time. Consequence for the table: whenever ``_AUTOPAR_HINT`` is capped below ``_THREADS``, this
+#: time. Consequence for the table: whenever ``AUTOPAR_HINT`` is capped below ``THREADS``, this
 #: one arm runs narrower than the other five and its speedup column is understated by roughly the
 #: width ratio. That is why the cap is recorded into the evidence string rather than applied
 #: silently -- a narrower arm is a legitimate measurement only if the reader can see the width.
 #: Falls back to 72 -- one CSCS node's 288 cores over the 4 ranks the submit script requests --
 #: so a bare run matches the width the batch job measures at instead of silently timing 4
 #: threads and reporting it under the same label.
-_THREADS = os.environ.get('OMP_NUM_THREADS', '72')
+THREADS = os.environ.get('OMP_NUM_THREADS', '72')
 #: The hint is the FULL runtime width by default, so the arm asks gcc for the parallelism the job
 #: actually runs with. The cap exists because of a MEASURED suppression: on g++ 15.2 (x86), with
 #: Graphite in the same command line, parloops stops parallelizing a 4096x4096 affine nest somewhere
@@ -432,8 +432,8 @@ _THREADS = os.environ.get('OMP_NUM_THREADS', '72')
 #: the arm keeps its full flag set. Second, ``--param parloops-min-per-thread`` does not override
 #: the suppression at any value down to 1, so the numeric coincidence with the 4096-iteration probe
 #: nest is not the cost model talking.
-_AUTOPAR_HINT_CAP = int(os.environ.get('CANON_PERF_GCC_AUTOPAR_HINT_CAP', _THREADS))
-_AUTOPAR_HINT = min(int(_THREADS), _AUTOPAR_HINT_CAP)
+AUTOPAR_HINT_CAP = int(os.environ.get('CANON_PERF_GCC_AUTOPAR_HINT_CAP', THREADS))
+AUTOPAR_HINT = min(int(THREADS), AUTOPAR_HINT_CAP)
 #: Graphite is folded into the gcc autopar arm and Polly into the llvm one -- the user's table has
 #: eight columns, and a polyhedral restructuring nobody then parallelizes answers no question the
 #: figure asks. Polly IS the llvm arm's polyhedral engine, so ``-polly -polly-parallel`` is both.
@@ -447,38 +447,38 @@ _AUTOPAR_HINT = min(int(_THREADS), _AUTOPAR_HINT_CAP)
 #: ``-floop-parallelize-all`` forces past the profitability heuristic (never the dependence
 #: analysis), pairing with ``-polly-parallel-force``; for gcc it is inside the noise, 8.088x against
 #: 8.058x. Commit 77676aea6 has the measurements.
-_GCC_AUTOPAR_FLAGS = os.environ.get(
-    'CANON_PERF_GCC_AUTOPAR_FLAGS', f'-fopenmp -ftree-parallelize-loops={_AUTOPAR_HINT} -floop-parallelize-all '
+GCC_AUTOPAR_FLAGS = os.environ.get(
+    'CANON_PERF_GCC_AUTOPAR_FLAGS', f'-fopenmp -ftree-parallelize-loops={AUTOPAR_HINT} -floop-parallelize-all '
     '-fgraphite-identity')
 #: ``-polly-omp-backend=LLVM`` keeps libgomp out of a process that already links libomp (two
 #: co-resident runtimes cost ~34x). ``-process-unprofitable`` widens SCoP detection and
 #: ``-parallel-force`` then parallelizes what Polly proved safe -- neither alone emits any parallel
 #: code, and unforced Polly declines flat 1-D loops at any trip count, so this column would otherwise
 #: time sequential code (1.209x vs 7.572x). Commit 77676aea6 and 20ae06d56 have the measurements.
-_LLVM_AUTOPAR_FLAGS = os.environ.get(
+LLVM_AUTOPAR_FLAGS = os.environ.get(
     'CANON_PERF_LLVM_AUTOPAR_FLAGS', '-fopenmp -mllvm -polly -mllvm -polly-parallel '
     '-mllvm -polly-omp-backend=LLVM -mllvm -polly-process-unprofitable -mllvm -polly-parallel-force')
 
 #: What the four DaCe arms lower BLAS/LAPACK/linalg library nodes to. Overridable so a box with no
 #: OpenBLAS can still run the sweep (``CANON_PERF_DACE_BLAS=pure``), but NOT defaulted to ``pure``:
 #: the figure's headline comparison is against numpy, and numpy is OpenBLAS.
-_DACE_BLAS = os.environ.get('CANON_PERF_DACE_BLAS', 'OpenBLAS')
+DACE_BLAS = os.environ.get('CANON_PERF_DACE_BLAS', 'OpenBLAS')
 
 #: ``GOMP_parallel`` as an UNDEFINED SYMBOL of the probe object is a stronger engagement proof than
 #: any diagnostic: it means the compiler really emitted a parallel region.
-_AUTOPAR_MARKER = 'GOMP_parallel'
-#: Separate from ``_AUTOPAR_MARKER``, not a substring both runtimes match: a marker accepting either
+AUTOPAR_MARKER = 'GOMP_parallel'
+#: Separate from ``AUTOPAR_MARKER``, not a substring both runtimes match: a marker accepting either
 #: would not catch Polly reverting to the GNU backend and re-creating the libgomp+libomp conflict.
-_LLVM_AUTOPAR_MARKER = '__kmpc_fork_call'
+LLVM_AUTOPAR_MARKER = '__kmpc_fork_call'
 #: The polyhedral half of each external arm, reported by its own dump/remark flag. Required
 #: *alongside* the autopar marker: an arm credited with Graphite that only ran ``-ftree-parallelize``
 #: is mislabelled, and mislabelled is indistinguishable from fabricated once it is a bar in a plot.
-_GRAPHITE_MARKER = 'Adding SCoP'
-_POLLY_MARKER = 'SCoP begins here'
+GRAPHITE_MARKER = 'Adding SCoP'
+POLLY_MARKER = 'SCoP begins here'
 
 #: Derived by REMOVAL so the pair always differs in exactly one flag, even under an env override.
-_GCC_AUTOPAR_DEFAULT_FLAGS = _GCC_AUTOPAR_FLAGS.replace(' -floop-parallelize-all', '')
-_LLVM_AUTOPAR_DEFAULT_FLAGS = _LLVM_AUTOPAR_FLAGS.replace(' -mllvm -polly-parallel-force', '')
+GCC_AUTOPAR_DEFAULT_FLAGS = GCC_AUTOPAR_FLAGS.replace(' -floop-parallelize-all', '')
+LLVM_AUTOPAR_DEFAULT_FLAGS = LLVM_AUTOPAR_FLAGS.replace(' -mllvm -polly-parallel-force', '')
 
 #: The EIGHT comparison arms + ``seq-cpp``, in column order (the baseline first). An arm with EMPTY
 #: ``flags`` is a plain DaCe pipeline built by the named compiler and claims no external pass; an
@@ -486,25 +486,25 @@ _LLVM_AUTOPAR_DEFAULT_FLAGS = _LLVM_AUTOPAR_FLAGS.replace(' -mllvm -polly-parall
 #: auto-parallelizer appears twice: ``-default`` is its out-of-the-box behaviour, the unsuffixed one
 #: its forced ceiling.
 ARMS = (
-    Arm(BASELINE, _autoopt, _GCC, '', '', (), _DACE_BLAS, 'legacy'),
-    Arm('dace-autoopt-llvm', _autoopt, _CLANG, '', '', (), _DACE_BLAS, 'legacy'),
-    Arm('dace-canon-gcc', _canon, _GCC, '', '', (), _DACE_BLAS, 'experimental_readable'),
-    Arm('dace-canon-llvm', _canon, _CLANG, '', '', (), _DACE_BLAS, 'experimental_readable'),
-    Arm('dace-simplify+gcc-autopar', serialize, _GCC, _GCC_AUTOPAR_FLAGS,
-        '-fopt-info-loop -fdump-tree-graphite-details=stderr', (_GRAPHITE_MARKER, _AUTOPAR_MARKER)),
-    Arm('dace-simplify+gcc-autopar-default', serialize, _GCC, _GCC_AUTOPAR_DEFAULT_FLAGS,
-        '-fopt-info-loop -fdump-tree-graphite-details=stderr', (_GRAPHITE_MARKER, _AUTOPAR_MARKER)),
-    Arm('dace-simplify+llvm-autopar', serialize, _CLANG, _LLVM_AUTOPAR_FLAGS, '-Rpass-analysis=polly-scops',
-        (_POLLY_MARKER, _LLVM_AUTOPAR_MARKER)),
-    Arm('dace-simplify+llvm-autopar-default', serialize, _CLANG, _LLVM_AUTOPAR_DEFAULT_FLAGS,
-        '-Rpass-analysis=polly-scops', (_POLLY_MARKER, _LLVM_AUTOPAR_MARKER)),
-    Arm('seq-cpp', serialize, _GCC, '', '', ()),
+    Arm(BASELINE, _autoopt, GCC, '', '', (), DACE_BLAS, 'legacy'),
+    Arm('dace-autoopt-llvm', _autoopt, CLANG, '', '', (), DACE_BLAS, 'legacy'),
+    Arm('dace-canon-gcc', _canon, GCC, '', '', (), DACE_BLAS, 'experimental_readable'),
+    Arm('dace-canon-llvm', _canon, CLANG, '', '', (), DACE_BLAS, 'experimental_readable'),
+    Arm('dace-simplify+gcc-autopar', serialize, GCC, GCC_AUTOPAR_FLAGS,
+        '-fopt-info-loop -fdump-tree-graphite-details=stderr', (GRAPHITE_MARKER, AUTOPAR_MARKER)),
+    Arm('dace-simplify+gcc-autopar-default', serialize, GCC, GCC_AUTOPAR_DEFAULT_FLAGS,
+        '-fopt-info-loop -fdump-tree-graphite-details=stderr', (GRAPHITE_MARKER, AUTOPAR_MARKER)),
+    Arm('dace-simplify+llvm-autopar', serialize, CLANG, LLVM_AUTOPAR_FLAGS, '-Rpass-analysis=polly-scops',
+        (POLLY_MARKER, LLVM_AUTOPAR_MARKER)),
+    Arm('dace-simplify+llvm-autopar-default', serialize, CLANG, LLVM_AUTOPAR_DEFAULT_FLAGS,
+        '-Rpass-analysis=polly-scops', (POLLY_MARKER, LLVM_AUTOPAR_MARKER)),
+    Arm('seq-cpp', serialize, GCC, '', '', ()),
 )
 
 #: Arms timed without ``--arms``: the two g++ DaCe pipelines. They claim no external pass, so they
 #: need no probe and cannot fail at import on a box without clang -- which matters because this
 #: module is also collected by a plain ``pytest tests/``.
-_DEFAULT_ARMS = (ARMS[0], ARMS[2])
+DEFAULT_ARMS = (ARMS[0], ARMS[2])
 
 #: Labels this harness used BEFORE the current arm table, and what each became. DOCUMENTATION only:
 #: the per-kernel JSONs already on disk were measured at ``OMP_NUM_THREADS=8`` with neither the
@@ -527,10 +527,10 @@ LEGACY_LABELS = {
 }  # ``seq-cpp`` is absent on purpose: it kept its name and its meaning, so nothing about it moved.
 
 #: pipeline label -> arm. Always populated, so every measurement runs on a pinned toolchain.
-_ARMS: dict[str, Arm] = {}
+REGISTERED_ARMS: dict[str, Arm] = {}
 #: pipeline label -> the compiler line proving its external passes engaged, recorded into every
 #: result file so a number can never be read without its provenance.
-_EVIDENCE: dict[str, str] = {}
+EVIDENCE: dict[str, str] = {}
 
 
 def arm_tag(label: str) -> str:
@@ -541,7 +541,7 @@ def arm_tag(label: str) -> str:
 
 def arm_omp_runtime(arm: Arm) -> str:
     """Which OpenMP runtime this arm's compiler links: clang pulls libomp, gcc libgomp."""
-    return 'omp' if arm.executable == _CLANG else 'gomp'
+    return 'omp' if arm.executable == CLANG else 'gomp'
 
 
 def blas_note(arm: Arm) -> str:
@@ -555,7 +555,7 @@ def blas_note(arm: Arm) -> str:
     # Under the same per-compiler OPENBLAS_DIR the arm's own builds see (``toolchain_env``), or the
     # evidence line records a different library than the one that produced the numbers.
     saved = os.environ.get('OPENBLAS_DIR')
-    per_cc = os.environ.get('CANON_PERF_OPENBLAS_LLVM' if arm.executable == _CLANG else 'CANON_PERF_OPENBLAS_GCC')
+    per_cc = os.environ.get('CANON_PERF_OPENBLAS_LLVM' if arm.executable == CLANG else 'CANON_PERF_OPENBLAS_GCC')
     if per_cc:
         os.environ['OPENBLAS_DIR'] = per_cc
     try:
@@ -577,7 +577,7 @@ def probe_arm(arm: Arm) -> str:
     is as misleading as one that ran neither. Nothing falls back -- an arm that quietly degrades to
     plain ``-O3`` under a polyhedral label is a fabricated baseline, worse than having no baseline.
     """
-    if _IS_CHILD:
+    if IS_CHILD:
         # The parent probed every arm before spawning anything; re-proving it in each child would
         # recompile the probe nest 9x per kernel for no extra integrity.
         return f'{os.path.basename(arm.executable)} (probed in parent)'
@@ -587,8 +587,8 @@ def probe_arm(arm: Arm) -> str:
     with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR') or None) as tmp:
         src, obj = os.path.join(tmp, 'probe.cpp'), os.path.join(tmp, 'probe.o')
         with open(src, 'w') as f:
-            f.write(_PROBE_SRC)
-        cmd = [exe, *shlex.split(_BASE_ARGS), *shlex.split(arm.flags), *shlex.split(arm.probe_flags)]
+            f.write(PROBE_SRC)
+        cmd = [exe, *shlex.split(BASE_ARGS), *shlex.split(arm.flags), *shlex.split(arm.probe_flags)]
         proc = subprocess.run(cmd + ['-c', src, '-o', obj], capture_output=True, text=True, timeout=300)
         out = proc.stdout + proc.stderr
         if proc.returncode != 0:
@@ -634,7 +634,7 @@ def toolchain_env(arm: Arm) -> Iterator[None]:
             'DACE_library_linalg_default_implementation', 'OPENBLAS_DIR', 'DACE_compiler_emit_tree_reductions')
     saved = {k: os.environ.get(k) for k in keys}
     os.environ['DACE_compiler_cpu_executable'] = arm.executable
-    os.environ['DACE_compiler_cpu_args'] = f'{_BASE_ARGS} {arm.flags}'.strip()
+    os.environ['DACE_compiler_cpu_args'] = f'{BASE_ARGS} {arm.flags}'.strip()
     os.environ['DACE_compiler_cpu_implementation'] = arm.codegen
     # Rides the codegen axis by request: auto_optimize is measured as it ships (legacy codegen, no
     # tree reductions), canonicalize with tree reductions on the experimental generator.
@@ -644,7 +644,7 @@ def toolchain_env(arm: Arm) -> Iterator[None]:
     # runtime into the process. The build links the full .so path, so cmake bakes the dir into the
     # kernel's RUNPATH -- which only decides if no libopenblas is on LD_LIBRARY_PATH (it overrides
     # RUNPATH); the submit script therefore keeps both dirs OFF it.
-    per_cc = os.environ.get('CANON_PERF_OPENBLAS_LLVM' if arm.executable == _CLANG else 'CANON_PERF_OPENBLAS_GCC')
+    per_cc = os.environ.get('CANON_PERF_OPENBLAS_LLVM' if arm.executable == CLANG else 'CANON_PERF_OPENBLAS_GCC')
     if per_cc:
         os.environ['OPENBLAS_DIR'] = per_cc
     # Spans the TRANSFORM, not just the build: ``CS.build`` runs the arm's pipeline inside this
@@ -691,7 +691,7 @@ def resolve_autopar_hint(arm: Arm) -> Arm:
     Probes descending widths and takes the first that emits a parallel region; raising is left to the
     caller when none does.
     """
-    hint = _AUTOPAR_HINT
+    hint = AUTOPAR_HINT
     for candidate in [w for w in (hint, 64, 56, 48, 44, 40, 36, 32, 24, 16, 8, 4) if w <= hint]:
         probe = arm._replace(
             flags=arm.flags.replace(f'-ftree-parallelize-loops={hint}', f'-ftree-parallelize-loops={candidate}'))
@@ -703,9 +703,9 @@ def resolve_autopar_hint(arm: Arm) -> Arm:
             print(f'NOTE: {arm.label} parallelizes at -ftree-parallelize-loops={candidate}, not '
                   f'{hint}: this g++ build suppresses parloops above that width when Graphite is on. '
                   f'That number is baked into the object as the region\'s num_threads, so THIS arm '
-                  f'runs on {candidate} threads while every other arm runs on {_THREADS} -- its '
-                  f'speedup column is understated by roughly {int(_THREADS) / candidate:.2f}x.')
-        _EVIDENCE[probe.label] = evidence
+                  f'runs on {candidate} threads while every other arm runs on {THREADS} -- its '
+                  f'speedup column is understated by roughly {int(THREADS) / candidate:.2f}x.')
+        EVIDENCE[probe.label] = evidence
         return probe
     return arm
 
@@ -719,19 +719,19 @@ def register_arms(arms: tuple[Arm, ...]) -> dict[str, str]:
     # The VALUE is a choice; the explicit pin is not. gcc defaults -ffp-contract to fast and clang to
     # on, so an override that drops the flag makes the two compiler columns of one pipeline fuse
     # differently and the table stops comparing like with like.
-    if '-ffp-contract=' not in _BASE_ARGS:
+    if '-ffp-contract=' not in BASE_ARGS:
         raise RuntimeError('every arm needs an explicit -ffp-contract= in DACE_compiler_cpu_args; the '
                            'gcc and clang defaults differ, so omitting it makes the compiler columns '
-                           f'incomparable. Got: {_BASE_ARGS!r}')
-    if '-ffast-math' in _BASE_ARGS:
+                           f'incomparable. Got: {BASE_ARGS!r}')
+    if '-ffast-math' in BASE_ARGS:
         raise RuntimeError('-ffast-math must not be in DACE_compiler_cpu_args: it enables associative '
                            'math, so each compiler reassociates reductions its own way and the columns '
-                           f'no longer evaluate the same expression. Got: {_BASE_ARGS!r}')
+                           f'no longer evaluate the same expression. Got: {BASE_ARGS!r}')
     # The gcc autopar width is resolved against THIS compiler before anything is probed for real:
     # the Graphite suppression cliff moves between g++ builds, and a width past it turns the arm
     # into plain -O3.
     arms = tuple(
-        resolve_autopar_hint(a) if a.executable == _GCC and '-ftree-parallelize-loops=' in a.flags else a for a in arms)
+        resolve_autopar_hint(a) if a.executable == GCC and '-ftree-parallelize-loops=' in a.flags else a for a in arms)
     # An arm that ASKS for OpenBLAS and silently gets ``pure`` is the same class of fabrication the
     # autopar probe exists to prevent: the label credits a tuned kernel and the number is a naive
     # triple loop. Detection is the same code the build uses, so this cannot pass here and fail there.
@@ -744,12 +744,12 @@ def register_arms(arms: tuple[Arm, ...]) -> dict[str, str]:
                            'libopenblas.so on LD_LIBRARY_PATH); set CANON_PERF_DACE_BLAS=pure to '
                            'measure the naive expansion on purpose.')
     evidence = {arm.label: probe_arm(arm) for arm in arms}
-    _PIPELINES.clear()  # a registration is the WHOLE table: every arm's toolchain is pinned, none implicit
-    _ARMS.clear()
+    PIPELINES.clear()  # a registration is the WHOLE table: every arm's toolchain is pinned, none implicit
+    REGISTERED_ARMS.clear()
     for arm in arms:
-        _PIPELINES[arm.label] = arm.transform
-        _ARMS[arm.label] = arm
-    _EVIDENCE.update(evidence)
+        PIPELINES[arm.label] = arm.transform
+        REGISTERED_ARMS[arm.label] = arm
+    EVIDENCE.update(evidence)
     return evidence
 
 
@@ -767,12 +767,12 @@ def arms_requested(value: str) -> bool:
 #: unusable toolchain: the intended loud failure, since a silently-disabled arm is a fabricated
 #: number. Registration also pins the toolchain of the default pair, so a label means the same
 #: measurement whether or not the external arms were asked for.
-register_arms(ARMS if arms_requested(os.environ.get('CANON_PERF_ARMS', '')) else _DEFAULT_ARMS)
+register_arms(ARMS if arms_requested(os.environ.get('CANON_PERF_ARMS', '')) else DEFAULT_ARMS)
 
-_HOST = socket.gethostname()
+HOST = socket.gethostname()
 #: Appended-to only. Every pre-existing column keeps its exact meaning, so an old CSV consumer
 #: still reads a new CSV; ``reference_*`` / ``speedup_vs_reference`` are blank in old-shape data.
-_CSV_FIELDS = [
+CSV_FIELDS = [
     'suite', 'kernel', 'preset', 'pipeline', 'correct', 'min_ms', 'median_ms', 'mean_ms', 'std_ms',
     'speedup_vs_baseline', 'reps', 'omp', 'host', 'timestamp', 'error', 'reference_kind', 'reference_min_ms',
     'speedup_vs_reference'
@@ -788,7 +788,7 @@ def _now():
 
 
 def _result_path(suite, name):
-    return os.path.join(_RESULTS_DIR, f'{suite}_{name}.json')
+    return os.path.join(RESULTS_DIR, f'{suite}_{name}.json')
 
 
 def _shape_of(ctx):
@@ -812,9 +812,9 @@ def _save_pre_expansion(ctx, suite, name, preset):
     """Save each pipeline's pre-expansion SDFG (opt-in) to ``<results>/sdfg/`` for
     inspection. Best-effort: a pipeline that fails to build is reported by the
     timing path, so its snapshot is simply skipped here."""
-    out_dir = os.path.join(_RESULTS_DIR, 'sdfg')
+    out_dir = os.path.join(RESULTS_DIR, 'sdfg')
     os.makedirs(out_dir, exist_ok=True)
-    for label, fn in _PRE_EXPANSION.items():
+    for label, fn in PRE_EXPANSION.items():
         try:
             s = CS.build(ctx, fn, f'{label}_pre')
             s.save(os.path.join(out_dir, f'{suite}_{name}_{preset}_{label}.sdfg'))
@@ -825,16 +825,16 @@ def _save_pre_expansion(ctx, suite, name, preset):
 #: cupy's default allocator calls ``cudaMalloc`` per array, so a GPU pipeline would time driver
 #: allocation instead of the kernel. Set once, and only if a pipeline already pulled cupy in --
 #: importing it here would cost a CUDA init on the CPU-only sweeps this harness usually runs.
-_CUPY_POOLED = False
+CUPY_POOLED = False
 
 
 def _pool_cupy():
     """Route cupy device + pinned allocations through pools. No-op without cupy or a device."""
-    global _CUPY_POOLED
+    global CUPY_POOLED
     cupy = sys.modules.get('cupy')
-    if _CUPY_POOLED or cupy is None:
+    if CUPY_POOLED or cupy is None:
         return
-    _CUPY_POOLED = True
+    CUPY_POOLED = True
     try:
         cupy.cuda.set_allocator(cupy.cuda.MemoryPool().malloc)
         cupy.cuda.set_pinned_memory_allocator(cupy.cuda.PinnedMemoryPool().malloc)
@@ -860,8 +860,8 @@ def _reps_for(est_ms: float) -> int:
     every timing so a reader can see which regime produced it.
     """
     if est_ms <= 0:  # timer granularity: too fast to size, so it is cheap -- give it the full count
-        return _REPS
-    return max(_MIN_REPS, min(_REPS, int(_BUDGET_MS / est_ms)))
+        return REPS
+    return max(MIN_REPS, min(REPS, int(BUDGET_MS / est_ms)))
 
 
 def _time_all_reps(ctx, sdfg):
@@ -879,11 +879,11 @@ def _time_all_reps(ctx, sdfg):
     t0 = time.perf_counter()
     cs(**kw)
     est_ms = (time.perf_counter() - t0) * 1000.0
-    if est_ms > _MAX_CALL_MS:
+    if est_ms > MAX_CALL_MS:
         # One call already blew the budget, so there is nothing to learn from four more of them.
         # Report the single sample and say so: the fix belongs in the kernel's paper shape.
         print(
-            f'      OVER BUDGET: one call took {est_ms / 1000:.1f}s > {_MAX_CALL_MS / 1000:.0f}s '
+            f'      OVER BUDGET: one call took {est_ms / 1000:.1f}s > {MAX_CALL_MS / 1000:.0f}s '
             f'-- reporting reps=1; this kernel\'s paper size needs lowering',
             flush=True)
         return np.asarray([est_ms], dtype=float), True
@@ -892,10 +892,10 @@ def _time_all_reps(ctx, sdfg):
     # stencil cost 40s, as much as the entire rep floor. The call above has already warmed the
     # caches and faulted the pages, which is what warmup is for, so once a kernel is expensive
     # enough to be sized down the second warmup buys nothing but wall clock.
-    warmup = _WARMUP if reps > _MIN_REPS else min(_WARMUP, 1)
+    warmup = WARMUP if reps > MIN_REPS else min(WARMUP, 1)
     with dace.profile(repetitions=reps, warmup=warmup, print_results=False) as prof:
         cs(**kw)
-    _report, times = prof.times[-1]
+    _, times = prof.times[-1]
     # dace.profile reports per-call wall time in ms
     return np.asarray(times, dtype=float), False
 
@@ -958,11 +958,11 @@ def time_reference(ctx: dict) -> np.ndarray:
     if DENOMINATOR.get(suite) != 'reference':
         raise RuntimeError(f"{suite} has no timeable reference; its denominator is {DENOMINATOR[suite]!r}")
     fn, call = numpy_call(ctx)
-    for _ in range(_WARMUP):
+    for _ in range(WARMUP):
         PB.restore_inputs(call, ctx['arrays'])
         fn(**call)
     times = []
-    for _ in range(_REPS):
+    for _ in range(REPS):
         PB.restore_inputs(call, ctx['arrays'])
         t0 = time.perf_counter()
         fn(**call)
@@ -1020,7 +1020,7 @@ def geomeans(records: dict[tuple, dict], preset: str, key: str = 'speedup_vs_ref
     kernels actually behind the number. Kept per corpus because the denominator is per corpus.
     """
     per: dict[tuple, list[float]] = {}
-    for (suite, _name), r in records.items():
+    for (suite, _), r in records.items():
         pres = r.get('presets', {}).get(preset) or {}
         for label, ratio in (pres.get(key) or {}).items():
             per.setdefault((suite, label), []).append(ratio)
@@ -1036,10 +1036,10 @@ def restore_affinity() -> None:
     built and timed rather than once at startup -- a restore that happens before the next OpenBLAS
     load is simply undone by it.
     """
-    if _FULL_AFFINITY and hasattr(os, 'sched_setaffinity'):
+    if FULL_AFFINITY and hasattr(os, 'sched_setaffinity'):
         try:
-            if frozenset(os.sched_getaffinity(0)) != _FULL_AFFINITY:
-                os.sched_setaffinity(0, set(_FULL_AFFINITY))
+            if frozenset(os.sched_getaffinity(0)) != FULL_AFFINITY:
+                os.sched_setaffinity(0, set(FULL_AFFINITY))
         except OSError:  # a cgroup may forbid widening; measuring narrow beats not measuring
             pass
 
@@ -1056,11 +1056,11 @@ def run_arm(ctx, label: str, deadline: float) -> dict:
     try:
         # Bound EVERY arm, not just the kernel: the kernel alarm is a single shot and the handler
         # below absorbs it, so without re-arming, every arm after the first timeout ran unbounded.
-        signal.alarm(max(1, int(min(_PER_ARM_TIMEOUT, deadline - time.monotonic()))))
+        signal.alarm(max(1, int(min(PER_ARM_TIMEOUT, deadline - time.monotonic()))))
         # The compiler override has to span the whole arm: ``run_matches`` compiles too, and
         # correctness must gate the very binary that gets timed.
-        with toolchain_env(_ARMS[label]):
-            sdfg = CS.build(ctx, _PIPELINES[label], arm_tag(label))
+        with toolchain_env(REGISTERED_ARMS[label]):
+            sdfg = CS.build(ctx, PIPELINES[label], arm_tag(label))
             entry['correct'] = bool(CS.run_matches(ctx, sdfg))
             if entry['correct']:
                 times, over_budget = _time_all_reps(ctx, sdfg)
@@ -1069,7 +1069,7 @@ def run_arm(ctx, label: str, deadline: float) -> dict:
                     # Travels with the number so a reader never takes a one-sample timing for a
                     # best-of-N, and so the offending kernel is findable in the result files.
                     entry['over_budget'] = True
-                    entry['budget_ms'] = _MAX_CALL_MS
+                    entry['budget_ms'] = MAX_CALL_MS
                 # Per-entry, because the count is adaptive: the record-level ``reps`` is a ceiling.
                 entry['reps'] = int(times.size)
                 entry['times_ms'] = [round(float(x), 6) for x in times]
@@ -1094,12 +1094,12 @@ def arms_worker(suite: str, name: str, preset: str, labels: list[str], budget: f
     process boundary; re-deriving it costs one allocation and one reference computation per child,
     which is far below the co-residency penalty it avoids.
     """
-    global _FULL_AFFINITY
+    global FULL_AFFINITY
     if affinity:
         # Remember it for restore_affinity(); the restore itself happens per arm, NOT here. Doing it
         # only at child start is too early: CS.make below loads OpenBLAS, which re-collapses the mask
         # straight after -- measured as the gcc arms staying 20x slow while the llvm arms recovered.
-        _FULL_AFFINITY = frozenset(affinity)
+        FULL_AFFINITY = frozenset(affinity)
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(_Timeout()))
     ctx = CS.make(suite, name, preset)
     deadline = time.monotonic() + budget
@@ -1112,18 +1112,18 @@ def measure_arms(ctx, preset: str, labels: list[str], deadline: float) -> dict:
     """Measure ``labels`` for the kernel in ``ctx``, one process per OpenMP runtime family.
 
     The grouping is the whole point: libgomp and libomp in one process cost ~34x (see
-    ``_ISOLATE_ARMS``), so the gcc arms and the clang arms must never share an interpreter. Arms are
+    ``ISOLATE_ARMS``), so the gcc arms and the clang arms must never share an interpreter. Arms are
     returned in ``labels`` order regardless of which child produced them, so the record's column
     order does not depend on the grouping.
 
     Falls back to measuring in-process when isolation is off, when this IS the child, or when a
     child dies outright -- a lost child would otherwise silently drop a whole family of columns.
     """
-    if not _ISOLATE_ARMS or _IS_CHILD:
+    if not ISOLATE_ARMS or IS_CHILD:
         return {label: run_arm(ctx, label, deadline) for label in labels}
     families: dict[str, list[str]] = {}
     for label in labels:
-        families.setdefault(arm_omp_runtime(_ARMS[label]), []).append(label)
+        families.setdefault(arm_omp_runtime(REGISTERED_ARMS[label]), []).append(label)
     budget = max(1.0, deadline - time.monotonic())
     env = dict(os.environ, CANON_PERF_ARM_CHILD='1')
     out: dict[str, dict] = {}
@@ -1133,7 +1133,7 @@ def measure_arms(ctx, preset: str, labels: list[str], deadline: float) -> dict:
             with _child_env(env):
                 with mp.Pool(1) as pool:
                     out.update(
-                        pool.apply(arms_worker, (ctx['suite'], ctx['name'], preset, group, budget, _FULL_AFFINITY)))
+                        pool.apply(arms_worker, (ctx['suite'], ctx['name'], preset, group, budget, FULL_AFFINITY)))
         except Exception as e:
             # Never lose a family to a crashed child: fall back to measuring it here. The numbers
             # are then co-resident-contaminated, which is why it says so rather than staying quiet.
@@ -1167,15 +1167,15 @@ def _measure_kernel(suite, name):
     """
     # Mirrors the alarm the caller arms for this kernel, so the per-arm bound below can tighten
     # that deadline but never extend past it.
-    deadline = time.monotonic() + _PER_KERNEL_TIMEOUT
+    deadline = time.monotonic() + PER_KERNEL_TIMEOUT
     result: dict[str, Any] = dict(
         suite=suite,
         kernel=name,
-        host=_HOST,
+        host=HOST,
         timestamp=_now(),
         omp_num_threads=os.environ.get('OMP_NUM_THREADS', ''),
-        reps=_REPS,
-        warmup=_WARMUP,
+        reps=REPS,
+        warmup=WARMUP,
         baseline=BASELINE,
         # Which measurement METHOD produced these numbers; a record
         # from an older epoch is re-measured, never skipped.
@@ -1188,9 +1188,9 @@ def _measure_kernel(suite, name):
         label:
         dict(sdfg=arm.transform.__name__,
              cxx=arm.executable,
-             args=f'{_BASE_ARGS} {arm.flags}'.strip(),
-             engaged=_EVIDENCE.get(label, ''))
-        for label, arm in _ARMS.items()
+             args=f'{BASE_ARGS} {arm.flags}'.strip(),
+             engaged=EVIDENCE.get(label, ''))
+        for label, arm in REGISTERED_ARMS.items()
     }
     measured_any = False
     for preset in PRESETS:
@@ -1218,9 +1218,9 @@ def _measure_kernel(suite, name):
             except Exception as e:
                 ref['error'] = f'{type(e).__name__}: {str(e)[:120]}'
         pres['reference'] = ref
-        if _SAVE_SDFG:
+        if SAVE_SDFG:
             _save_pre_expansion(ctx, suite, name, preset)
-        for label, entry in measure_arms(ctx, preset, list(_PIPELINES), deadline).items():
+        for label, entry in measure_arms(ctx, preset, list(PIPELINES), deadline).items():
             measured_any = measured_any or ('min_ms' in entry)
             pres['pipelines'][label] = entry
         # Back to the KERNEL bound: the last arm left its own alarm armed, and it would
@@ -1263,14 +1263,14 @@ def _regressions(result):
     outcome and the interesting result, not a DaCe regression. Every arm running ``auto_optimize``
     or ``canonicalize`` -- including the clang++ columns -- stays gated.
     """
-    exempt = {label for label, arm in _ARMS.items() if arm.flags or arm.transform not in (_autoopt, _canon)}
+    exempt = {label for label, arm in REGISTERED_ARMS.items() if arm.flags or arm.transform not in (_autoopt, _canon)}
     out = []
     for preset, pres in result['presets'].items():
         base = pres['pipelines'].get(result['baseline'], {})
         if not (base.get('correct') and base.get('min_ms')):
             continue
         b = base['min_ms']
-        factor = REGRESSION_FACTOR if b >= _MIN_TIMEABLE_MS else 50.0
+        factor = REGRESSION_FACTOR if b >= MIN_TIMEABLE_MS else 50.0
         for label, entry in pres['pipelines'].items():
             if label == result['baseline'] or label in exempt:
                 continue
@@ -1330,7 +1330,7 @@ def has_current_arms(path: str, suite: str = '', name: str = '') -> bool:
     # also held libgomp, so their numbers carry the ~34x co-residency penalty.
     if int(record.get('epoch', 1)) < MEASUREMENT_EPOCH:
         return False
-    want = set(_PIPELINES)
+    want = set(PIPELINES)
     for preset in PRESETS:
         pres = (record.get('presets') or {}).get(preset)
         if pres is None:
@@ -1364,13 +1364,13 @@ def has_current_arms(path: str, suite: str = '', name: str = '') -> bool:
 #: Every pragma that would introduce a *second* level of parallelism under an auto-parallelizer.
 #: ``omp simd`` and ``omp atomic`` are deliberately absent: they are vectorization and a reduction
 #: guard, not a thread team.
-_OMP_PARALLEL_PRAGMA = re.compile(r'#pragma\s+omp\s+(?:parallel|sections|task|target|teams)')
+OMP_PARALLEL_PRAGMA = re.compile(r'#pragma\s+omp\s+(?:parallel|sections|task|target|teams)')
 
 
 def emitted_pragmas(ctx: dict, transform: Callable[[dace.SDFG], dace.SDFG], tag: str) -> list[str]:
     """The thread-team OpenMP pragmas in the C++ ``transform`` makes DaCe emit. Codegen only."""
     sdfg = CS.build(ctx, transform, tag)
-    return _OMP_PARALLEL_PRAGMA.findall('\n'.join(c.clean_code for c in sdfg.generate_code()))
+    return OMP_PARALLEL_PRAGMA.findall('\n'.join(c.clean_code for c in sdfg.generate_code()))
 
 
 @pytest.mark.parametrize("suite,name", [('poly', 'gemm'), ('np', 'arc_distance')])
@@ -1401,16 +1401,16 @@ def test_autopar_input_is_sequential(suite, name):
 @pytest.mark.parametrize("suite,name", CS.kernels())
 def test_speedup(suite, name):
     path = _result_path(suite, name)
-    if not _FORCE and os.path.exists(path) and has_current_arms(path, suite, name):
+    if not FORCE and os.path.exists(path) and has_current_arms(path, suite, name):
         pytest.skip(f"already measured: {os.path.relpath(path)} "
                     f"(delete it or set CANON_PERF_FORCE=1 to re-run)")
 
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(_Timeout()))
-    signal.alarm(_PER_KERNEL_TIMEOUT)
+    signal.alarm(PER_KERNEL_TIMEOUT)
     try:
         result = _measure_kernel(suite, name)  # may pytest.skip (build error / not measurable)
     except _Timeout:
-        pytest.skip(f"{suite}:{name} exceeded {_PER_KERNEL_TIMEOUT}s (not measured; will retry)")
+        pytest.skip(f"{suite}:{name} exceeded {PER_KERNEL_TIMEOUT}s (not measured; will retry)")
     finally:
         signal.alarm(0)
 
@@ -1424,7 +1424,7 @@ def test_speedup(suite, name):
 # ---------------------------------------------------------------------------
 def export_csv(csv_path, results_dir=None):
     """Aggregate every result JSON in ``results_dir`` into one summary CSV. Returns row count."""
-    results_dir = results_dir or _RESULTS_DIR
+    results_dir = results_dir or RESULTS_DIR
     rows = []
     for fn in sorted(os.listdir(results_dir)) if os.path.isdir(results_dir) else []:
         if not fn.endswith('.json'):
@@ -1460,7 +1460,7 @@ def export_csv(csv_path, results_dir=None):
                         speedup_vs_reference=pres.get('speedup_vs_reference', {}).get(label)))
     os.makedirs(os.path.dirname(os.path.abspath(csv_path)) or '.', exist_ok=True)
     with open(csv_path, 'w', newline='') as f:
-        w = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         w.writeheader()
         w.writerows(rows)
     return len(rows)
@@ -1497,7 +1497,7 @@ def _candidate_labels(records: dict[tuple, dict]) -> list[str]:
     """Non-baseline pipeline labels to give a column, in ``ARMS`` order.
 
     The aggregation step re-exports result files it did not produce, so an arm is picked up from
-    the DATA as well as from ``_PIPELINES`` -- otherwise ``--no-run``, which deliberately registers
+    the DATA as well as from ``PIPELINES`` -- otherwise ``--no-run``, which deliberately registers
     no toolchain, would drop every column it did not itself register. That is also how a superseded
     label (``canon``, ``gcc-autopar``, ... -- see ``LEGACY_LABELS``) keeps a column of its own
     instead of being silently folded into the arm that replaced it under different flags. Ordering
@@ -1505,7 +1505,7 @@ def _candidate_labels(records: dict[tuple, dict]) -> list[str]:
     registered the arms or only read their JSON -- a plot may key on column position.
     """
     order = {arm.label: i for i, arm in enumerate(ARMS)}
-    seen = set(_PIPELINES)
+    seen = set(PIPELINES)
     seen.update(label for r in records.values() for pres in r.get('presets', {}).values()
                 for label in pres.get('pipelines', {}))
     return sorted((label for label in seen if label != BASELINE),
@@ -1523,7 +1523,7 @@ def _md_geomean_block(records: dict[tuple, dict], preset: str) -> list[str]:
     if not gm:
         return []
     kinds = {}
-    for (suite, _n), r in records.items():
+    for (suite, _), r in records.items():
         kind = ((r.get('presets', {}).get(preset) or {}).get('denominator') or {}).get('kind')
         if kind:
             kinds[suite] = kind
@@ -1544,7 +1544,7 @@ def _md_geomean_block(records: dict[tuple, dict], preset: str) -> list[str]:
 
 def _load_records(results_dir: str | None = None) -> dict[tuple, dict]:
     """``(suite, kernel) -> result record`` for every JSON in the results directory."""
-    results_dir = results_dir or _RESULTS_DIR
+    results_dir = results_dir or RESULTS_DIR
     records = {}
     for fn in sorted(os.listdir(results_dir)) if os.path.isdir(results_dir) else []:
         if not fn.endswith('.json'):
@@ -1568,8 +1568,8 @@ def export_markdown(md_path, results_dir=None):
     out = [
         f"# Corpus speedup — {len(ARMS) - 1} comparison arms, baseline `{BASELINE}`",
         "",
-        f"host `{_HOST}` · OMP `{os.environ.get('OMP_NUM_THREADS', '')}` · "
-        f"best-of `{_REPS}` (warmup {_WARMUP}) · kernels measured `{len(records)}` · generated `{_now()}`",
+        f"host `{HOST}` · OMP `{os.environ.get('OMP_NUM_THREADS', '')}` · "
+        f"best-of `{REPS}` (warmup {WARMUP}) · kernels measured `{len(records)}` · generated `{_now()}`",
         "",
         f"Speedup = `{BASELINE}_min / arm_min` (best-of-N); **>1× means faster than the baseline**. "
         "Only numerically-correct arms are timed — ✓ verified, ✗ miscompile, · not measured.",
@@ -1633,7 +1633,7 @@ def print_summary() -> None:
     records = _load_records()
     for preset in PRESETS:
         print(
-            f"\n### preset={preset}  (best-of-{_REPS}, warmup={_WARMUP}, "
+            f"\n### preset={preset}  (best-of-{REPS}, warmup={WARMUP}, "
             f"OMP={os.environ.get('OMP_NUM_THREADS')}, kernels={len(records)})",
             flush=True)
         for (suite, label), (ratio, n) in sorted(geomeans(records, preset).items()):
@@ -1655,7 +1655,7 @@ def _run_sweep(only: str = '', force: bool = False, suite: str = '', shard: tupl
     and a results directory that suit it, and keeps a long polybench sweep from eating the wall
     clock the tsvc kernels needed. One tag still works, so every existing caller is unaffected.
     """
-    os.makedirs(_RESULTS_DIR, exist_ok=True)
+    os.makedirs(RESULTS_DIR, exist_ok=True)
     want = {t.strip() for t in suite.split(',') if t.strip()}
     kernels = [(s, n) for s, n in CS.kernels() if (not want or s in want) and (not only or only in n)]
     if limit:
@@ -1674,11 +1674,11 @@ def _run_sweep(only: str = '', force: bool = False, suite: str = '', shard: tupl
     for i, (suite, name) in enumerate(kernels, 1):
         path = _result_path(suite, name)
         if not force and os.path.exists(path) and has_current_arms(path, suite, name):
-            print(f"[{i}/{len(kernels)}] skip {suite}:{name} (all {len(_PIPELINES)} arms already measured)", flush=True)
+            print(f"[{i}/{len(kernels)}] skip {suite}:{name} (all {len(PIPELINES)} arms already measured)", flush=True)
             continue
         print(f"[{i}/{len(kernels)}] measure {suite}:{name} ...", flush=True)
         signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(_Timeout()))
-        signal.alarm(_PER_KERNEL_TIMEOUT)
+        signal.alarm(PER_KERNEL_TIMEOUT)
         try:
             result = _measure_kernel(suite, name)
         except (_Timeout, BaseException) as e:  # incl. pytest.skip -> just don't write a file
@@ -1708,7 +1708,7 @@ if __name__ == '__main__':
                     help='only these corpora, comma-separated (poly, np, tsvc, tsvc25); default all')
     ap.add_argument('--shard', metavar='I/N', default='0/1', help='only every N-th selected kernel starting at I')
     ap.add_argument('--limit', metavar='N', type=int, default=0, help='only the first N kernels of each corpus')
-    ap.add_argument('--dir', metavar='PATH', help=f'results directory (default {_RESULTS_DIR})')
+    ap.add_argument('--dir', metavar='PATH', help=f'results directory (default {RESULTS_DIR})')
     ap.add_argument('--no-run', action='store_true', help='skip measuring; only (re)export CSV / tables')
     ap.add_argument('--save-sdfg',
                     action='store_true',
@@ -1719,17 +1719,17 @@ if __name__ == '__main__':
                     'two g++ DaCe pipelines; aborts if a toolchain cannot prove its passes ran')
     args = ap.parse_args()
     if args.dir:
-        _RESULTS_DIR = args.dir
+        RESULTS_DIR = args.dir
     if args.save_sdfg:
-        _SAVE_SDFG = True
+        SAVE_SDFG = True
     if args.arms:
-        for _label, _line in register_arms(ARMS).items():
-            print(f"arm {_label} engaged: {_line}", flush=True)
+        for label, line in register_arms(ARMS).items():
+            print(f"arm {label} engaged: {line}", flush=True)
     if not args.no_run:
         index, total = (int(p) for p in args.shard.split('/'))
         _run_sweep(only=args.only or '', force=args.force, suite=args.suite, shard=(index, total), limit=args.limit)
     print_summary()
-    md_out = args.markdown or os.path.join(_RESULTS_DIR, 'speedup_table.md')
+    md_out = args.markdown or os.path.join(RESULTS_DIR, 'speedup_table.md')
     export_markdown(md_out)
     print(f"\nwrote speedup table to {md_out}", flush=True)
     csv_out = args.csv or os.environ.get('CANON_PERF_CSV')

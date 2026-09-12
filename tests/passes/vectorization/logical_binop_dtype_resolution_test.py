@@ -202,7 +202,7 @@ def test_a_three_operand_conjunction_splits_into_two_operand_ops():
     sdfg = three_operand_conjunction_sdfg(dace.int32)
     SplitTasklets().apply_pass(sdfg, {})
 
-    for _sd, _state, tasklet in logical_tasklets(sdfg):
+    for _, _, tasklet in logical_tasklets(sdfg):
         tree = ast.parse(tasklet.code.as_string.strip())
         rhs = tree.body[0].value
         assert len(rhs.values) == 2, (f'{tasklet.label} still holds a {len(rhs.values)}-value BoolOp; '

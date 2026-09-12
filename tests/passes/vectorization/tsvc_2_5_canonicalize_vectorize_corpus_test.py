@@ -49,12 +49,12 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
-_PEEL_LIMIT = 4
-_BREAK_ANTI_DEP = True
-_UNROLL_LIMIT = 4
-_TOL = 1e-9
+PEEL_LIMIT = 4
+BREAK_ANTI_DEP = True
+UNROLL_LIMIT = 4
+TOL = 1e-9
 
-_CORPUS = tsvc_2_5.collect()
+CORPUS = tsvc_2_5.collect()
 
 #: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
 #: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
@@ -86,11 +86,11 @@ UNTILED_KERNELS = frozenset({
 # ARM_SVE / ARM_NEON / SCALAR), NOT a hardcoded AVX-512: vectorization enforces
 # arch-native, so a forced non-host ISA would SIGILL at runtime (see
 # ``dace.libraries.tileops._dispatch.host_supported_isas``).
-_HOST_ISA = detect_host_isa()
-_MULTIDIM_KNOBS = [
-    dict(target_isa=_HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
+HOST_ISA = detect_host_isa()
+MULTIDIM_KNOBS = [
+    dict(target_isa=HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
-    dict(target_isa=_HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
+    dict(target_isa=HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
@@ -102,7 +102,7 @@ def _oracle(program):
 
 
 def _allclose(a, b) -> bool:
-    return np.allclose(np.asarray(a), np.asarray(b), rtol=_TOL, atol=_TOL, equal_nan=True)
+    return np.allclose(np.asarray(a), np.asarray(b), rtol=TOL, atol=TOL, equal_nan=True)
 
 
 def _reference(program):
@@ -144,9 +144,9 @@ def _canonicalized(program):
     with contextlib.redirect_stdout(io.StringIO()):
         canonicalize(cand,
                      validate=True,
-                     peel_limit=_PEEL_LIMIT,
-                     break_anti_dependence=_BREAK_ANTI_DEP,
-                     unroll_limit=_UNROLL_LIMIT)
+                     peel_limit=PEEL_LIMIT,
+                     break_anti_dependence=BREAK_ANTI_DEP,
+                     unroll_limit=UNROLL_LIMIT)
     return cand
 
 
@@ -164,7 +164,7 @@ def _run_and_check(program, sdfg, arrays, scalars, ref, stage: str):
                                     f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
 
 
-@pytest.mark.parametrize("idx,program", list(enumerate(_CORPUS)), ids=[p.name for p in _CORPUS])
+@pytest.mark.parametrize("idx,program", list(enumerate(CORPUS)), ids=[p.name for p in CORPUS])
 def test_tsvc_2_5_canonicalize(idx, program):
     """Canonicalize -> verify against the numpy oracle. Canonicalization alone is
     value-preserving; this is the first of the two corpus paths (this, then
@@ -177,7 +177,7 @@ def test_tsvc_2_5_canonicalize(idx, program):
     _run_and_check(program, sdfg, arrays, scalars, ref, "canonicalization")
 
 
-@pytest.mark.parametrize("idx,program", list(enumerate(_CORPUS)), ids=[p.name for p in _CORPUS])
+@pytest.mark.parametrize("idx,program", list(enumerate(CORPUS)), ids=[p.name for p in CORPUS])
 def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
     """Canonicalize -> verify -> multidim VectorizeCPUMultiDim (round-robin knob,
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""
@@ -200,7 +200,7 @@ def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
                             validate_all=True))
     else:
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, ), validate_all=True, **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)]))
+            VectorizeConfig(widths=(8, ), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)]))
     untransformed = copy.deepcopy(sdfg)
     vec.apply_pass(sdfg, {})
     sdfg.validate()

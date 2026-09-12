@@ -12,8 +12,8 @@ import numpy as np
 
 from tests.corpus.tsvc import tsvc
 
-_G1D = tsvc.collect(regime="1d")
-_G2D = tsvc.collect(regime="2d")
+G1D = tsvc.collect(regime="1d")
+G2D = tsvc.collect(regime="2d")
 
 #: K6 hard-canonicals — 9 TSVC kernels exercised under the full knob
 #: matrix on top of the existing ``test_tsvc_vectorization`` parametrisation.
@@ -28,7 +28,7 @@ _G2D = tsvc.collect(regime="2d")
 #: - pure gather ``a[i] = b[ip[i]]``: ``vag``
 #: - broadcast-via-intermediate-scalar ``s = b+c*d; a = s*s``: ``s251``
 #: - gather + broadcast combined ``a[i] = a[i] + b[ip[i]] * 2.0``: ``s4112``
-_K6_HARD_CANONICALS = (
+K6_HARD_CANONICALS = (
     "s1119_d_single",
     "s291_d_single",
     "s4114_d_single",
@@ -43,19 +43,19 @@ _K6_HARD_CANONICALS = (
 
 def _resolve_canonical(kernel_name):
     """Look up a TSVC kernel by short name (e.g. ``s1119_d_single``)."""
-    for k in list(_G1D) + list(_G2D):
+    for k in list(G1D) + list(G2D):
         # k.program.name is like ``tests_corpus_tsvc_s1119_d_single``
         if k.program.name.endswith(kernel_name):
             return k
     raise KeyError(f"TSVC kernel {kernel_name!r} not in corpus")
 
 
-@pytest.mark.parametrize("kernel_name", _K6_HARD_CANONICALS)
+@pytest.mark.parametrize("kernel_name", K6_HARD_CANONICALS)
 def test_tsvc_hardening_canonicals(kernel_name, branch_mode, remainder_strategy, emission_style, vectorize_config):
     """K6: hard TSVC canonicals under the full knob matrix.
 
     Nine kernels covering stencil / branch / multi-stmt / gather /
-    broadcast patterns (see :data:`_K6_HARD_CANONICALS`). Each runs
+    broadcast patterns (see :data:`K6_HARD_CANONICALS`). Each runs
     through the harness ``run_vectorization_test`` with the full opt-in
     fixture set so knob × pattern interactions surface. The base
     ``test_tsvc_vectorization`` keeps the kernel + ``(remainder, branch,

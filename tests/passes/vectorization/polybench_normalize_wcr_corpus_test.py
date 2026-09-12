@@ -28,19 +28,19 @@ from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline
 
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
-_KERNELS = [k.name for k in polybench.collect()]
-_PIPELINES = ("simplify", "simplify_l2m_mapfusion")
+KERNELS = [k.name for k in polybench.collect()]
+PIPELINES = ("simplify", "simplify_l2m_mapfusion")
 
-_PREP: dict = {}
+PREP: dict = {}
 
 
 def _prep(name):
     """Memoized ``(kernel, call_arrays, psize, baseline_reference)`` for one kernel."""
-    if name not in _PREP:
+    if name not in PREP:
         kernel = polybench.collect(name=name)[0]
         call_arrays, psize = polybench.make_inputs(kernel)
-        _PREP[name] = (kernel, call_arrays, psize, polybench.reference(kernel, call_arrays, psize))
-    return _PREP[name]
+        PREP[name] = (kernel, call_arrays, psize, polybench.reference(kernel, call_arrays, psize))
+    return PREP[name]
 
 
 def _pipelined_sdfg(kernel, pipeline):
@@ -52,8 +52,8 @@ def _pipelined_sdfg(kernel, pipeline):
     return sdfg
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("pipeline", _PIPELINES)
+@pytest.mark.parametrize("name", KERNELS)
+@pytest.mark.parametrize("pipeline", PIPELINES)
 def test_polybench_normalize_wcr(name, pipeline):
     """``NormalizeWCR`` preserves semantics after ``pipeline`` (value vs untransformed baseline)."""
     kernel, call_arrays, psize, ref = _prep(name)
@@ -66,11 +66,11 @@ def test_polybench_normalize_wcr(name, pipeline):
     assert polybench.outputs_match(ref, got), f"{name}/{pipeline}: NormalizeWCR changed output vs baseline"
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("pipeline", _PIPELINES)
+@pytest.mark.parametrize("name", KERNELS)
+@pytest.mark.parametrize("pipeline", PIPELINES)
 def test_polybench_normalize_wcr_idempotent(name, pipeline):
     """A second ``NormalizeWCR`` rewrites nothing (returns ``None``) and leaves a valid SDFG."""
-    kernel, _call_arrays, _psize, _ref = _prep(name)
+    kernel, _, _, _ = _prep(name)
     sdfg = _pipelined_sdfg(kernel, pipeline)
     NormalizeWCR().apply_pass(sdfg, {})
     sdfg.validate()

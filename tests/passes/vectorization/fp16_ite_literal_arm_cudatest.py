@@ -34,7 +34,7 @@ import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
-_HAS_NVCC = shutil.which("nvcc") is not None
+HAS_NVCC = shutil.which("nvcc") is not None
 
 #: Every test here is about float16, so the whole module carries the marker the fp16 CI leg
 #: selects on.
@@ -104,7 +104,7 @@ def test_no_python_syntax_in_device_code():
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _HAS_NVCC, reason="nvcc required to compile the generated device code")
+@pytest.mark.skipif(not HAS_NVCC, reason="nvcc required to compile the generated device code")
 def test_generated_code_compiles():
     """The original report: the tail's ternary did not compile at all."""
     _vectorized(name="fp16_ite_literal_arm_compile").compile()

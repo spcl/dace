@@ -177,7 +177,7 @@ def test_view_and_plain_copy_edge_tie_does_not_raise_typeerror():
 def test_bodies_differing_only_in_a_copy_memlets_destination_are_not_fused():
     """`other_subset` is the destination side of a copy memlet: two bodies differing only there are
     two different statements, and fusing deletes one of them."""
-    import copy as _copy
+    import copy
     from dace.sdfg.sdfg import InterstateEdge
     from dace.sdfg.state import LoopRegion
 
@@ -207,7 +207,7 @@ def test_bodies_differing_only_in_a_copy_memlets_destination_are_not_fused():
         g(**args)
         return args["B"]
 
-    oracle = run(_copy.deepcopy(sdfg))
+    oracle = run(copy.deepcopy(sdfg))
     assert np.array_equal(oracle, np.array([6.0, 7.0, 14.0, 15.0]))
 
     assert FuseConsecutiveLoops().apply_pass(sdfg, {}) is None

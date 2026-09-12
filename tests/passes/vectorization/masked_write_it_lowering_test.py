@@ -37,7 +37,7 @@ from tests.passes.vectorization.tile_assertions import assert_tiled
 N = dace.symbol('N')
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
 #: would SIGILL-refuse on an AVX2-only or ARM host.
-_HOST_ISA = detect_host_isa()
+HOST_ISA = detect_host_isa()
 
 
 def _bare_if_tasklets(sdfg):
@@ -104,7 +104,7 @@ def test_normalize_skips_scalar_tail():
     assert not _bare_if_tasklets(sdfg)
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", _HOST_ISA])
+@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
 @pytest.mark.parametrize("remainder", ["scalar_postamble", "masked_tail"])
 def test_masked_const_write_matches_numpy(isa, remainder):
     """``A[A > thresh] = 0`` lowers through the tile pipeline (interior masked store +
@@ -128,7 +128,7 @@ def test_masked_const_write_matches_numpy(isa, remainder):
     assert np.array_equal(work, ref), f"{work[:6]} != {ref[:6]}"
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", _HOST_ISA])
+@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
 @pytest.mark.parametrize("remainder", ["scalar_postamble", "masked_tail"])
 def test_masked_value_write_matches_numpy(isa, remainder):
     """``A[m] = x`` (value tile, not a constant) lowers bit-exact vs NumPy. The

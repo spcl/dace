@@ -109,12 +109,12 @@ def _is_reclaim_stage(unit: ppl.Pass) -> bool:
 
 #: Unit types of :func:`_structural_cleanup`, taken from the helper itself rather than transcribed:
 #: the A/B below has to skip exactly the cleanup, and a transcribed list goes stale silently.
-_CLEANUP_TYPES = frozenset(type(p).__name__ for _lbl, p in canon_pipeline._structural_cleanup('probe'))
+CLEANUP_TYPES = frozenset(type(p).__name__ for _, p in canon_pipeline._structural_cleanup('probe'))
 
 
 def _reclaim_slots() -> List[int]:
     """Recipe indices of every array-reclaiming stage, in order."""
-    at = [i for i, (_lbl, p) in enumerate(canon_pipeline._build_stages()) if _is_reclaim_stage(p)]
+    at = [i for i, (_, p) in enumerate(canon_pipeline._build_stages()) if _is_reclaim_stage(p)]
     assert at, 'the recipe no longer reclaims arrays at all'
     return at
 
@@ -143,8 +143,8 @@ def _cleanup_slots() -> List[int]:
     """
     stages = canon_pipeline._build_stages()
     start = _band_start()
-    names = [type(p).__name__ for _lbl, p in stages]
-    want = [type(p).__name__ for _lbl, p in canon_pipeline._structural_cleanup('probe')]
+    names = [type(p).__name__ for _, p in stages]
+    want = [type(p).__name__ for _, p in canon_pipeline._structural_cleanup('probe')]
     # The FIRST full occurrence of the helper after the reclaimers -- matched as a run, not by
     # membership: the recipe's tail holds further symbol passes of the same types, and picking
     # those up would make the A/B skip work that is not cleanup at all.
@@ -152,9 +152,9 @@ def _cleanup_slots() -> List[int]:
     assert at, 'no structural cleanup after the reclaimers -- re-home this A/B with it'
     helper = list(range(at[0], at[0] + len(want)))
     slots = set(helper)
-    slots.update(i for i, (_lbl, p) in enumerate(stages)
+    slots.update(i for i, (_, p) in enumerate(stages)
                  if start < i <= helper[-1] and isinstance(p, PruneEmptyConditionalBranches))
-    leading = [i for i, (_lbl, p) in enumerate(stages) if start < i < helper[0] and _leads_a_cleanup(p)]
+    leading = [i for i, (_, p) in enumerate(stages) if start < i < helper[0] and _leads_a_cleanup(p)]
     assert leading, 'the terminal cleanup is no longer led by an inline'
     slots.add(leading[-1])
     return sorted(slots)
@@ -171,7 +171,7 @@ def _canonicalize(sdfg: dace.SDFG,
     canon_pipeline.disable_openmp_sections(sdfg)
     reclaim_slots = _reclaim_slots()
     cleanup_slots = _cleanup_slots()
-    for index, (_label, unit) in enumerate(canon_pipeline._build_stages()):
+    for index, (_, unit) in enumerate(canon_pipeline._build_stages()):
         if not with_reclaim and index in reclaim_slots:
             continue
         if not with_cleanup and index in cleanup_slots:
@@ -229,19 +229,19 @@ def test_fused_diamond_loses_the_duplicate_map_fusion_carrier():
 #: per-expression descriptors that chain stages through, and the tasklets that write it for nobody.
 #: All three descriptors carry the replica's ``nested_sdfg_`` prefix; the live half of the split
 #: works on ``a_slice_plus_x_slice`` and the ``_scan_*`` pair, so the sets never overlap.
-_DEAD_REPLICA_ARRAY = 'nested_sdfg_a'
-_DEAD_REPLICA_TRANSIENTS = {
+DEAD_REPLICA_ARRAY = 'nested_sdfg_a'
+DEAD_REPLICA_TRANSIENTS = {
     'nested_sdfg_a',
     'nested_sdfg_a_index',
     'nested_sdfg_a_slice_plus_x_slice',
 }
-_DEAD_REPLICA_TASKLETS = {
+DEAD_REPLICA_TASKLETS = {
     '_Add_',
     '_assign_in_nested_sdfg_a_to_nested_sdfg_a_index',
     '_assign_out_nested_sdfg_a_slice_plus_x_slice_to_nested_sdfg_a',
 }
 #: What the split's live half computes -- named so the removal below cannot quietly take it too.
-_LIVE_TRANSIENTS = {'_scan_in_a', '_scan_seed_a', 'a_slice_plus_x_slice'}
+LIVE_TRANSIENTS = {'_scan_in_a', '_scan_seed_a', 'a_slice_plus_x_slice'}
 
 
 def test_fission_replica_is_absent_from_the_canonical_form():
@@ -249,7 +249,7 @@ def test_fission_replica_is_absent_from_the_canonical_form():
 
     This used to assert that the reclaim band REMOVED the replica, with the un-reclaimed reference
     carrying it as the precondition. The split no longer emits it: the reference now holds exactly
-    ``_LIVE_TRANSIENTS`` and none of the dead names, so the reclaimers have nothing to take here
+    ``LIVE_TRANSIENTS`` and none of the dead names, so the reclaimers have nothing to take here
     and the old precondition is unreachable. The property worth pinning is the end state, asserted
     on BOTH arms so it holds whether the chain is never created or created and collected -- and
     paired with the live set so it cannot pass by deleting everything. The reclaim band keeps its
@@ -259,12 +259,12 @@ def test_fission_replica_is_absent_from_the_canonical_form():
     for with_reclaim in (False, True):
         sdfg = _canonicalize(_fission_dep_then_indep.to_sdfg(simplify=False), with_reclaim=with_reclaim)
         transients, nodes_, tasklets = set(_transients(sdfg)), _access_nodes(sdfg), set(_tasklets(sdfg))
-        assert not (_DEAD_REPLICA_TRANSIENTS & transients), (with_reclaim, sorted(transients))
-        assert _DEAD_REPLICA_ARRAY not in nodes_, (with_reclaim, nodes_)
-        assert not (_DEAD_REPLICA_TASKLETS & tasklets), (with_reclaim, sorted(tasklets))
-        assert _LIVE_TRANSIENTS <= transients, (with_reclaim, sorted(transients))
+        assert not (DEAD_REPLICA_TRANSIENTS & transients), (with_reclaim, sorted(transients))
+        assert DEAD_REPLICA_ARRAY not in nodes_, (with_reclaim, nodes_)
+        assert not (DEAD_REPLICA_TASKLETS & tasklets), (with_reclaim, sorted(tasklets))
+        assert LIVE_TRANSIENTS <= transients, (with_reclaim, sorted(transients))
     # Exact, not a subset: the canonical form is the live half and nothing else.
-    assert set(_transients(sdfg)) == _LIVE_TRANSIENTS, sorted(_transients(sdfg))
+    assert set(_transients(sdfg)) == LIVE_TRANSIENTS, sorted(_transients(sdfg))
 
 
 def _states(sdfg: dace.SDFG) -> List[str]:
@@ -278,7 +278,7 @@ def _workless_branches(sdfg: dace.SDFG) -> List[str]:
     a ControlFlowRegion, so ``DeadStateElimination`` walks past it however empty its states are.
     """
     return sorted(branch.label for nested in sdfg.all_sdfgs_recursive() for block in nested.all_control_flow_blocks()
-                  if isinstance(block, ConditionalBlock) for _condition, branch in block.branches
+                  if isinstance(block, ConditionalBlock) for _, branch in block.branches
                   if not any(state.nodes() for state in branch.all_states()))
 
 
@@ -317,7 +317,7 @@ def test_the_stage_is_idempotent():
     """Re-entering the stage must find nothing -- canonicalize's output is already its fixed point."""
     sdfg = _canonicalize(_fuse_diamond.to_sdfg(simplify=False))
     before = (_transients(sdfg), _access_nodes(sdfg), _tasklets(sdfg))
-    stage = [unit for _lbl, unit in canon_pipeline._build_stages() if _is_reclaim_stage(unit)][0]
+    stage = [unit for _, unit in canon_pipeline._build_stages() if _is_reclaim_stage(unit)][0]
     stage.apply_pass(sdfg, {})
     assert (_transients(sdfg), _access_nodes(sdfg), _tasklets(sdfg)) == before
     sdfg.validate()

@@ -126,5 +126,5 @@ def test_numeric_matches_fp64_then_fp16_cast(n):
 if __name__ == "__main__":
     test_boundary_division_operand_is_explicitly_typed()
     test_generated_code_compiles()
-    for _n in EXTENTS:
-        test_numeric_matches_fp64_then_fp16_cast(_n)
+    for n in EXTENTS:
+        test_numeric_matches_fp64_then_fp16_cast(n)

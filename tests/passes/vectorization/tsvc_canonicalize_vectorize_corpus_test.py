@@ -43,7 +43,7 @@ from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinne
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
-_KERNELS = [k.name for k in tsvc.collect()]
+KERNELS = [k.name for k in tsvc.collect()]
 
 #: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
 #: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
@@ -80,11 +80,11 @@ UNTILED_KERNELS = frozenset({
 # (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a
 # hardcoded AVX-512: vectorization enforces arch-native, so a forced non-host ISA
 # would SIGILL at runtime (see ``dace.libraries.tileops._dispatch.host_supported_isas``).
-_HOST_ISA = detect_host_isa()
-_MULTIDIM_KNOBS = [
-    dict(target_isa=_HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
+HOST_ISA = detect_host_isa()
+MULTIDIM_KNOBS = [
+    dict(target_isa=HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
-    dict(target_isa=_HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
+    dict(target_isa=HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
@@ -93,7 +93,7 @@ _MULTIDIM_KNOBS = [
 # A K=2 tile would see the single array dim as jointly-affine in both iter-vars
 # and would be refused; vectorizing the inner (unit-stride) dim alone is both
 # correct and contiguous. Force K=1 for these kernels.
-_FORCE_K1_KERNELS = {
+FORCE_K1_KERNELS = {
     's125_d_single',
 }
 
@@ -143,7 +143,7 @@ def _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec_pass):
     _assert_matches(name, work, ref, "vectorization")
 
 
-@pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
+@pytest.mark.parametrize("idx,name", list(enumerate(KERNELS)))
 def test_tsvc_canonicalize(idx, name):
     """Canonicalize -> verify e2e against numpy. Canonicalization alone is
     value-preserving; this is the first of the two corpus paths (this, then
@@ -152,7 +152,7 @@ def test_tsvc_canonicalize(idx, name):
     _canonicalized(name, tag="canon")
 
 
-@pytest.mark.parametrize("idx,name", list(enumerate(_KERNELS)))
+@pytest.mark.parametrize("idx,name", list(enumerate(KERNELS)))
 def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     """Canonicalize -> verify -> multidim VectorizeCPUMultiDim (round-robin knob,
     K=2 when the canonicalized body is a 2-D nested map) -> verify."""
@@ -166,9 +166,9 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     # (s125) is also forced to K=1: vectorizing only the inner (unit-stride)
     # dim yields a plain contiguous TileStore; a K=2 tile cannot express the
     # strided box over one array dim.
-    if name in _FORCE_K1_KERNELS:
+    if name in FORCE_K1_KERNELS:
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, ), validate_all=True, **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)]))
+            VectorizeConfig(widths=(8, ), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)]))
     elif map_param_counts and min(map_param_counts) >= 2:
         # 2-D nested map -> K=2 tile (merge/masked_tail; fp_factor+scalar are K=1 only).
         vec = VectorizeCPUMultiDim(
@@ -179,5 +179,5 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
                             validate_all=True))
     else:
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, ), validate_all=True, **_MULTIDIM_KNOBS[idx % len(_MULTIDIM_KNOBS)]))
+            VectorizeConfig(widths=(8, ), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)]))
     _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec)

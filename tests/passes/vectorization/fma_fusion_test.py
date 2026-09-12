@@ -28,12 +28,12 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.libraries.tileops import TileFMA, TileBinop
 
-_HAS_NVCC = shutil.which("nvcc") is not None
+HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
 M = dace.symbol("M")
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
 #: would SIGILL-refuse on an AVX2-only or ARM host.
-_HOST_ISA = detect_host_isa()
+HOST_ISA = detect_host_isa()
 
 
 def _axpy(dt):
@@ -135,7 +135,7 @@ def test_cpu_fma_lowers_and_runs_on_the_host_isa(dt):
     """The same contract on whatever ``detect_host_isa`` reports -- a machine-dependent case, so
     it is marked rather than folded into the portable parametrization, where a SCALAR host made it
     a byte-for-byte duplicate racing the same ``.dacecache`` directory."""
-    fma_lowers_and_runs(_HOST_ISA, dt)
+    fma_lowers_and_runs(HOST_ISA, dt)
 
 
 def test_cpu_fma_off_by_default():
@@ -143,12 +143,12 @@ def test_cpu_fma_off_by_default():
     sdfg = _axpy(dace.float32).to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=_HOST_ISA)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=HOST_ISA)).apply_pass(sdfg, {})
     assert _count(sdfg, TileFMA) == 0
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; PTX check skipped")
+@pytest.mark.skipif(not HAS_NVCC, reason="nvcc not available; PTX check skipped")
 def test_gpu_fma_lowers_to_native_hfma2(tmp_path):
     """A width-8 fp16 ``tile_fma`` lowers to native ``fma.rn.f16x2`` (four packed half2 FMAs),
     NOT separate ``mul.f16x2`` + ``add.f16x2`` -- verified in the PTX."""
@@ -198,7 +198,7 @@ if __name__ == "__main__":
     test_fuse_pass_refuses_reused_intermediate()
     test_tile_fma_registered()
     test_cpu_fma_off_by_default()
-    for _dt in (dace.float32, dace.float64):
-        test_cpu_fma_lowers_and_runs(_dt)
-        test_cpu_fma_lowers_and_runs_on_the_host_isa(_dt)
+    for dt in (dace.float32, dace.float64):
+        test_cpu_fma_lowers_and_runs(dt)
+        test_cpu_fma_lowers_and_runs_on_the_host_isa(dt)
     print("fma fusion tests ok")

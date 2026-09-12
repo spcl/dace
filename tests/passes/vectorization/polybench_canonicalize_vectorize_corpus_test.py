@@ -33,8 +33,8 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 from tests.corpus.polybench import polybench
 
-_KERNELS = [k.name for k in polybench.collect()]
-_PHASES = ("canon", "canon_vec")
+KERNELS = [k.name for k in polybench.collect()]
+PHASES = ("canon", "canon_vec")
 
 #: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
 #: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
@@ -53,7 +53,7 @@ UNTILED_KERNELS = frozenset({
 
 
 def _cases():
-    return [pytest.param(name, phase, id=f"{name}-{phase}") for name in _KERNELS for phase in _PHASES]
+    return [pytest.param(name, phase, id=f"{name}-{phase}") for name in KERNELS for phase in PHASES]
 
 
 # Round-robin multidim knob set (one config per kernel by index), mirroring the
@@ -61,32 +61,32 @@ def _cases():
 # (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a
 # hardcoded AVX-512: vectorization enforces arch-native, so a forced non-host ISA
 # would SIGILL at runtime (see ``dace.libraries.tileops._dispatch.host_supported_isas``).
-_HOST_ISA = detect_host_isa()
-_MULTIDIM_KNOBS = [
-    dict(target_isa=_HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
+HOST_ISA = detect_host_isa()
+MULTIDIM_KNOBS = [
+    dict(target_isa=HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
-    dict(target_isa=_HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
+    dict(target_isa=HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
-_BASE: dict = {}
+BASE: dict = {}
 
 
 def _multidim_pass(name):
-    knobs = _MULTIDIM_KNOBS[_KERNELS.index(name) % len(_MULTIDIM_KNOBS)]
+    knobs = MULTIDIM_KNOBS[KERNELS.index(name) % len(MULTIDIM_KNOBS)]
     return VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), **knobs))
 
 
 def _base(name):
     """Memoized ``(canon_sdfg, call_arrays, psize, reference)`` for one kernel."""
-    if name not in _BASE:
+    if name not in BASE:
         kernel = polybench.collect(name=name)[0]
         call_arrays, psize = polybench.make_inputs(kernel)
         ref = polybench.reference(kernel, call_arrays, psize)
         sdfg = polybench.fresh_sdfg(kernel)
         canonicalize(sdfg, validate=True)
-        _BASE[name] = (sdfg, call_arrays, psize, ref)
-    return _BASE[name]
+        BASE[name] = (sdfg, call_arrays, psize, ref)
+    return BASE[name]
 
 
 @pytest.mark.parametrize("name,phase", _cases())

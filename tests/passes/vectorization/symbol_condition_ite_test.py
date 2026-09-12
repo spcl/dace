@@ -96,7 +96,7 @@ def build_symbol_mask_ite_sdfg(name: str, isa: str):
 
 def test_symbol_mask_ite_expands_through_isa_backend_without_stopiteration():
     """A kind_mask='Symbol' TileITE lowers via the host ISA backend, not just 'pure'."""
-    sdfg, state, _ite = build_symbol_mask_ite_sdfg('symbol_mask_ite_isa_expand', detect_host_isa())
+    sdfg, state, _ = build_symbol_mask_ite_sdfg('symbol_mask_ite_isa_expand', detect_host_isa())
 
     sdfg.expand_library_nodes()  # used to raise StopIteration out of _in_ctype's next(...)
 
@@ -112,7 +112,7 @@ def test_symbol_mask_ite_expands_through_isa_backend_without_stopiteration():
 @pytest.mark.parametrize('isa', ['SCALAR', detect_host_isa()])
 def test_symbol_mask_ite_selects_every_lane_from_the_splat(isa):
     """The splatted predicate must pick the same arm on every lane, not just lane 0."""
-    sdfg, _state, _ite = build_symbol_mask_ite_sdfg(f'symbol_mask_ite_splat_{isa.lower()}', isa)
+    sdfg, _, _ = build_symbol_mask_ite_sdfg(f'symbol_mask_ite_splat_{isa.lower()}', isa)
     sdfg.expand_library_nodes()
     sdfg.validate()
     compiled = sdfg.compile()

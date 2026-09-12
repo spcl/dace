@@ -30,11 +30,11 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from tests.corpus import corpus_suite as CS
 
-_CPU = dict(target='cpu',
-            peel_limit=4,
-            break_anti_dependence=True,
-            interchange_carry_with_map=True,
-            scatter_to_guarded_maps=True)
+CPU = dict(target='cpu',
+           peel_limit=4,
+           break_anti_dependence=True,
+           interchange_carry_with_map=True,
+           scatter_to_guarded_maps=True)
 
 # Kernels where the transformed build and the untransformed baseline are the SAME computation
 # but differ only in the C compiler's FMA-contraction placement, which the default ``-ffast-math``
@@ -44,16 +44,16 @@ _CPU = dict(target='cpu',
 # amplified to ~100% relative error), but its ``init_array`` now builds a well-conditioned matrix
 # (diagonal-dominance term, cond ~1.7), so canonicalization is value-preserving with FMA on. The
 # fixture below is kept as-is so any future FMA-sensitive kernel can be pinned by adding its key.
-_FP_CONTRACT_OFF = set()
+FP_CONTRACT_OFF = set()
 
 
 @pytest.fixture(autouse=True)
 def _fp_contract(request):
     """Pin ``-ffp-contract=off`` for the current test iff its kernel is in
-    ``_FP_CONTRACT_OFF`` (see above); a no-op otherwise. Scoped per-kernel, not gate-wide, and
+    ``FP_CONTRACT_OFF`` (see above); a no-op otherwise. Scoped per-kernel, not gate-wide, and
     the global default is left untouched (FMA stays on for performance elsewhere)."""
     params = request.node.callspec.params
-    if (params.get('suite'), params.get('name')) not in _FP_CONTRACT_OFF:
+    if (params.get('suite'), params.get('name')) not in FP_CONTRACT_OFF:
         yield
         return
     key = ('compiler', 'cpu', 'args')
@@ -65,7 +65,7 @@ def _fp_contract(request):
 
 
 def _canon(s):
-    return finalize_for_target(canonicalize(s, validate=True, **_CPU), 'cpu')
+    return finalize_for_target(canonicalize(s, validate=True, **CPU), 'cpu')
 
 
 def _preserves(suite, name, transform, tag):

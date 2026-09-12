@@ -25,25 +25,25 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from tests.corpus.npbench.structured_grids import vadv
 
-#: The numerical corpus gate's canonicalize configuration (canonicalize_numerical_corpus_test._CPU).
-_CPU = dict(target='cpu',
-            peel_limit=4,
-            break_anti_dependence=True,
-            interchange_carry_with_map=True,
-            scatter_to_guarded_maps=True)
+#: The numerical corpus gate's canonicalize configuration (canonicalize_numerical_corpus_test.CPU).
+CPU = dict(target='cpu',
+           peel_limit=4,
+           break_anti_dependence=True,
+           interchange_carry_with_map=True,
+           scatter_to_guarded_maps=True)
 
 #: Kernel argument order, matching ``vadv.initialize``'s positional return.
-_ARGS = ('utens_stage', 'u_stage', 'wcon', 'u_pos', 'utens', 'dtr_stage')
+ARGS = ('utens_stage', 'u_stage', 'wcon', 'u_pos', 'utens', 'dtr_stage')
 
 #: fp64 corpus tolerance (npbench._tol_for). vadv is FP-reassociation sensitive
 #: (the inner k-sweep is a Thomas solve), so the gate's own criterion is used
 #: rather than a bit-exact compare.
-_RTOL, _ATOL = 1e-9, 1e-11
+RTOL, ATOL = 1e-9, 1e-11
 
 
 def _inputs(I, J, K):
     """``(arrays_dict, reference_utens_stage)`` for one dataset size."""
-    arrays = dict(zip(_ARGS, vadv.CORPUS['initialize'](I, J, K)))
+    arrays = dict(zip(ARGS, vadv.CORPUS['initialize'](I, J, K)))
     work = {n: (v.copy() if isinstance(v, np.ndarray) else v) for n, v in arrays.items()}
     vadv.CORPUS['reference'](**work)
     return arrays, work['utens_stage']
@@ -52,7 +52,7 @@ def _inputs(I, J, K):
 def _canonicalized(tag):
     sdfg = vadv.CORPUS['program'].to_sdfg(simplify=True)
     sdfg.name = f'vadv_{tag}'
-    canonicalize(sdfg, validate=True, **_CPU)
+    canonicalize(sdfg, validate=True, **CPU)
     return sdfg
 
 
@@ -62,7 +62,7 @@ def test_canonicalize_preserves_array_shapes():
     sdfg = vadv.CORPUS['program'].to_sdfg(simplify=True)
     before = {name: tuple(str(d) for d in desc.shape) for name, desc in sdfg.arrays.items()}
     sdfg.name = 'vadv_shape_preserved'
-    canonicalize(sdfg, validate=True, **_CPU)
+    canonicalize(sdfg, validate=True, **CPU)
     after = {name: tuple(str(d) for d in desc.shape) for name, desc in sdfg.arrays.items()}
 
     drifted = {name: (before[name], after[name]) for name in before if name in after and before[name] != after[name]}
@@ -100,4 +100,4 @@ def test_canonicalize_matches_reference(size):
 
     work = {n: (v.copy() if isinstance(v, np.ndarray) else v) for n, v in arrays.items()}
     sdfg.compile()(**work, I=I, J=J, K=K)
-    assert np.allclose(work['utens_stage'], ref, rtol=_RTOL, atol=_ATOL)
+    assert np.allclose(work['utens_stage'], ref, rtol=RTOL, atol=ATOL)

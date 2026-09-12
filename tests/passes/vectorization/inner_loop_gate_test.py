@@ -110,7 +110,7 @@ def _conditional_body(guard: str = 'lim > 0'):
 
 def test_flat_body_is_accepted():
     """The gate is narrow: a pure-dataflow body stays vectorizable."""
-    _sdfg, state, map_entry = _map_over_body(_flat_body(), ['p'])
+    _, state, map_entry = _map_over_body(_flat_body(), ['p'])
     assert map_body_has_inner_loop(state, map_entry) is False
     assert is_vectorizable_map(state, map_entry, 1) is True
 
@@ -118,7 +118,7 @@ def test_flat_body_is_accepted():
 @pytest.mark.parametrize('arrays', [['p'], ['p', 'q'], ['p', 'q', 'v']])
 def test_loop_body_is_refused(arrays):
     """ANY sequential inner loop is refused -- one carried sweep as much as three (adi)."""
-    _sdfg, state, map_entry = _map_over_body(_loop_body(arrays), arrays)
+    _, state, map_entry = _map_over_body(_loop_body(arrays), arrays)
     assert map_body_has_inner_loop(state, map_entry) is True
     assert is_vectorizable_map(state, map_entry, 1) is False
 
@@ -126,7 +126,7 @@ def test_loop_body_is_refused(arrays):
 def test_conditional_body_is_still_allowed():
     """A lane-uniform guard is MASKABLE, so this gate must let it through -- refusing every
     conditional would strip 18 TSVC kernels of their vectorization for no soundness gain."""
-    _sdfg, state, map_entry = _map_over_body(_conditional_body(), ['p'])
+    _, state, map_entry = _map_over_body(_conditional_body(), ['p'])
     assert map_body_has_inner_loop(state, map_entry) is False
     assert is_vectorizable_map(state, map_entry, 1) is True
 
@@ -136,7 +136,7 @@ def test_conditional_over_the_tiled_param_is_refused_by_the_branch_gate():
     "every conditional is allowed": a guard over the param about to be STRIDED is evaluated once per
     tile at the tile base, so lane 0 decides for all W lanes. That one is refused -- and refused by
     the branch gate, not the loop gate, which still reports no inner loop."""
-    _sdfg, state, map_entry = _map_over_body(_conditional_body('i > 0'), ['p'])
+    _, state, map_entry = _map_over_body(_conditional_body('i > 0'), ['p'])
     assert map_body_has_inner_loop(state, map_entry) is False
     assert map_body_has_tiled_param_dependent_branch(state, map_entry, ('i', )) is True
     assert is_vectorizable_map(state, map_entry, 1) is False

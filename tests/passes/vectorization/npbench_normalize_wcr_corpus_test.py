@@ -27,25 +27,25 @@ from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline
 
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
-_CORPUS = {c["name"]: c for c in npbench.collect()}
-_KERNELS = sorted(_CORPUS)
-_PIPELINES = ("simplify", "simplify_l2m_mapfusion")
+CORPUS = {c["name"]: c for c in npbench.collect()}
+KERNELS = sorted(CORPUS)
+PIPELINES = ("simplify", "simplify_l2m_mapfusion")
 
-_PREP: dict = {}
+PREP: dict = {}
 
 
 def _prep(name):
     """Memoized ``(arrays, params, reference)`` for one benchmark."""
-    if name not in _PREP:
-        c = _CORPUS[name]
+    if name not in PREP:
+        c = CORPUS[name]
         arrays, params = npbench.make_inputs(c)
-        _PREP[name] = (arrays, params, npbench.reference_outputs(c, arrays, params))
-    return _PREP[name]
+        PREP[name] = (arrays, params, npbench.reference_outputs(c, arrays, params))
+    return PREP[name]
 
 
 def _pipelined_sdfg(name, pipeline):
     """A fresh npbench SDFG through ``pipeline`` (``NormalizeWCR`` not yet applied)."""
-    c = _CORPUS[name]
+    c = CORPUS[name]
     if pipeline == "simplify":
         return npbench.fresh_sdfg(c, simplify=True)
     sdfg = npbench.fresh_sdfg(c, simplify=False)
@@ -53,8 +53,8 @@ def _pipelined_sdfg(name, pipeline):
     return sdfg
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("pipeline", _PIPELINES)
+@pytest.mark.parametrize("name", KERNELS)
+@pytest.mark.parametrize("pipeline", PIPELINES)
 def test_npbench_normalize_wcr(name, pipeline):
     """``NormalizeWCR`` preserves semantics after ``pipeline`` (value vs npbench reference)."""
     arrays, params, ref = _prep(name)
@@ -63,12 +63,12 @@ def test_npbench_normalize_wcr(name, pipeline):
     sdfg.validate()
     # Per-(kernel, pipeline) name: concurrent xdist builds must not share .dacecache.
     sdfg.name = f"{sdfg.name}_{pipeline}_nwcr"
-    got = npbench.run_outputs(_CORPUS[name], sdfg, arrays, params)
+    got = npbench.run_outputs(CORPUS[name], sdfg, arrays, params)
     assert npbench.outputs_match(ref, got), f"{name}/{pipeline}: NormalizeWCR changed output vs npbench reference"
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("pipeline", _PIPELINES)
+@pytest.mark.parametrize("name", KERNELS)
+@pytest.mark.parametrize("pipeline", PIPELINES)
 def test_npbench_normalize_wcr_idempotent(name, pipeline):
     """A second ``NormalizeWCR`` rewrites nothing (returns ``None``) and leaves a valid SDFG."""
     sdfg = _pipelined_sdfg(name, pipeline)

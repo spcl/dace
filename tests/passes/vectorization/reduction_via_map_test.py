@@ -34,7 +34,7 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 N = dace.symbol('N')
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
 #: would SIGILL-refuse on an AVX2-only or ARM host.
-_HOST_ISA = detect_host_isa()
+HOST_ISA = detect_host_isa()
 
 
 @dace.program
@@ -76,7 +76,7 @@ def _run(prog, kwargs, ref, isa):
     assert np.allclose(work['res'][0], ref, rtol=1e-9, atol=1e-12), f"{prog.name}/{isa}: {work['res'][0]} != {ref}"
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", _HOST_ISA])
+@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
 def test_scalar_reduce_via_map(isa):
     """Unmasked WCR sum over a ``dace.map`` -> lifted to Reduce, vectorized."""
     rng = np.random.default_rng(0)
@@ -85,7 +85,7 @@ def test_scalar_reduce_via_map(isa):
     _run(scalar_reduce, dict(data=data, res=np.zeros(1), N=n), data.sum(), isa)
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", _HOST_ISA])
+@pytest.mark.parametrize("isa", ["SCALAR", HOST_ISA])
 def test_masked_reduce_via_map(isa):
     """Masked WCR sum + count (``azimint_naive`` shape): conditional accumulation
     inside a ``dace.map``.

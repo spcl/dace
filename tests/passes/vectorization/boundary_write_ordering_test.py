@@ -27,7 +27,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol("N", dtype=dace.int64)
-_SIZE = 16
+SIZE = 16
 
 
 @dace.program
@@ -39,7 +39,7 @@ def _boundary(u: dace.float64[N, N]):
 
 
 def _reference():
-    u = np.full((_SIZE, _SIZE), 7.0, dtype=np.float64)
+    u = np.full((SIZE, SIZE), 7.0, dtype=np.float64)
     u[0, :] = 0.0
     u[:, 0] = 0.0
     u[:, -1] = 0.0
@@ -179,8 +179,8 @@ def test_boundary_corners_survive_canonicalize_vectorize(target_isa):
 
     _assert_lid_ordered_after_columns(sdfg, f"canon_vec[{target_isa}]")
 
-    u = np.full((_SIZE, _SIZE), 7.0, dtype=np.float64)
-    sdfg(u=u, N=_SIZE)
+    u = np.full((SIZE, SIZE), 7.0, dtype=np.float64)
+    sdfg(u=u, N=SIZE)
     expected = _reference()
     assert u[-1, 0] == 1.0 and u[-1, -1] == 1.0, "the column zeroing overwrote the lid at the corners"
     np.testing.assert_allclose(u, expected, rtol=0, atol=0)
@@ -221,6 +221,6 @@ def test_boundary_corners_match_canonical_only():
     """The canon-only path is the control: same numbers, no vectorization involved."""
     sdfg = copy.deepcopy(_canonical())
     sdfg.name = f"{sdfg.name}_canon_only"
-    u = np.full((_SIZE, _SIZE), 7.0, dtype=np.float64)
-    sdfg(u=u, N=_SIZE)
+    u = np.full((SIZE, SIZE), 7.0, dtype=np.float64)
+    sdfg(u=u, N=SIZE)
     np.testing.assert_allclose(u, _reference(), rtol=0, atol=0)

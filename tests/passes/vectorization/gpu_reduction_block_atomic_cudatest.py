@@ -40,7 +40,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.libraries.tileops import TileReduce
 
-_HAS_NVCC = shutil.which("nvcc") is not None
+HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
 
 
@@ -69,7 +69,7 @@ def _vmin16(A: dace.float16[N], out: dace.float16[1]):
 
 
 # (program, cub reduction-type suffix as emitted in ``dace::ReductionType::<...>``)
-_PROGRAMS = {"sum": (_vsum16, "Sum"), "max": (_vmax16, "Max"), "min": (_vmin16, "Min")}
+PROGRAMS = {"sum": (_vsum16, "Sum"), "max": (_vmax16, "Max"), "min": (_vmin16, "Min")}
 
 
 def _vectorized(prog):
@@ -97,7 +97,7 @@ def _device_code(sdfg):
     return "\n".join(c.clean_code for c in codes)
 
 
-@pytest.mark.parametrize("kind", list(_PROGRAMS))
+@pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_partial_is_thread_local_register(kind):
     """The per-thread reduction partial -- the WCR source feeding the map-exit boundary --
     is a single-element, thread-private transient, detected by structure (not a hardcoded
@@ -106,7 +106,7 @@ def test_partial_is_thread_local_register(kind):
     threads) is refused by :meth:`_collect_gpu_reductions`, since a single such slot read by
     every thread would over-count the block fold."""
     from dace.sdfg.nodes import AccessNode, MapExit
-    sdfg = _vectorized(_PROGRAMS[kind][0])
+    sdfg = _vectorized(PROGRAMS[kind][0])
     cross_thread = (dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global)
     partials = [(e.src.data, s.arrays[e.src.data]) for s in sdfg.all_sdfgs_recursive() for st in s.states()
                 for n in st.nodes() if isinstance(n, MapExit) for e in st.in_edges(n)
@@ -117,7 +117,7 @@ def test_partial_is_thread_local_register(kind):
         assert d.storage not in cross_thread, f"{name} partial must be thread-private, got {d.storage}"
 
 
-@pytest.mark.parametrize("kind", list(_PROGRAMS))
+@pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_half2_tile_reduce_fires(kind):
     """The within-thread half2->half fold is a ``TileReduce`` of width 2.
 
@@ -128,18 +128,18 @@ def test_half2_tile_reduce_fires(kind):
     that pass's docstring). So a non-divisible extent fires TWO width-2 TileReduce
     nodes, one per body, not one.
     """
-    sdfg = _vectorized(_PROGRAMS[kind][0])
+    sdfg = _vectorized(PROGRAMS[kind][0])
     reds = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileReduce)]
     assert len(reds) == 2 and all(list(r.widths) == [2] for r in reds), \
         f"expected two width-2 TileReduce nodes (mask-free body + masked-tail body); got {[r.widths for r in reds]}"
 
 
-@pytest.mark.parametrize("kind", list(_PROGRAMS))
+@pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_emits_block_reduce_and_single_atomic(kind):
     """The device TU folds the block with ``gpucub::BlockReduce`` and commits ONE atomic
     from thread 0 with the op's reduction functor; the per-thread atomic is suppressed."""
-    cu = _device_code(_vectorized(_PROGRAMS[kind][0]))
-    suffix = _PROGRAMS[kind][1]
+    cu = _device_code(_vectorized(PROGRAMS[kind][0]))
+    suffix = PROGRAMS[kind][1]
     # The block-reduce is typed to the reduction map's block thread count -- compile-time
     # constants chosen by gpu_block_size_selection (not fixed magic numbers). All THREE block
     # dimensions are spelled: the 1-D ``BlockReduce<T, N>`` form assumes threadIdx.y/z == 0 and
@@ -162,10 +162,10 @@ def test_emits_block_reduce_and_single_atomic(kind):
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not _HAS_NVCC, reason="nvcc not available; compile check skipped")
-@pytest.mark.parametrize("kind", list(_PROGRAMS))
+@pytest.mark.skipif(not HAS_NVCC, reason="nvcc not available; compile check skipped")
+@pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_compiles(kind):
-    sdfg = _vectorized(_PROGRAMS[kind][0])
+    sdfg = _vectorized(PROGRAMS[kind][0])
     sdfg.name = f"gpu_block_reduction_compile_{kind}"
     shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
     sdfg.compile()
@@ -180,10 +180,10 @@ def _run_inputs(kind, nval):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("kind", list(_PROGRAMS))
+@pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_runs_exact_multiblock(kind):
     cupy = pytest.importorskip("cupy")
-    sdfg = _vectorized(_PROGRAMS[kind][0])
+    sdfg = _vectorized(PROGRAMS[kind][0])
     sdfg.name = f"gpu_block_reduction_run_{kind}"
     shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
     csdfg = sdfg.compile()
@@ -200,8 +200,8 @@ def test_runs_exact_multiblock(kind):
 
 
 if __name__ == "__main__":
-    for _kind in _PROGRAMS:
-        test_partial_is_thread_local_register(_kind)
-        test_half2_tile_reduce_fires(_kind)
-        test_emits_block_reduce_and_single_atomic(_kind)
+    for kind in PROGRAMS:
+        test_partial_is_thread_local_register(kind)
+        test_half2_tile_reduce_fires(kind)
+        test_emits_block_reduce_and_single_atomic(kind)
     print("codegen ok")

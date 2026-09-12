@@ -208,7 +208,7 @@ def run_matches_untransformed(program, transformed, size=6, seed=11):
 def test_fused_sibling_nests_have_one_parallel_level_of_three(name):
     """Undistributed, the shared parent is blocked by the second child and the first child's own
     inner level by its own recurrence: of the three levels only one parallelizes."""
-    _kernel, sdfg = build(name, f'fused_{name}')
+    _, sdfg = build(name, f'fused_{name}')
     assert nest_levels(parallelize(sdfg)) == (1, 3)
     assert top_level_nests(sdfg) == 1, 'the fused form is one nest'
 
@@ -221,7 +221,7 @@ def test_sibling_nests_distribute_into_two_nests(name):
     This kernel says little about LEGALITY -- the children share only ``cc``, which both READ, so
     there is no cross-child dependence for any rule to get wrong. The adversarial nests further
     down are what decide the legality question."""
-    _kernel, sdfg = build(name, f'split_{name}')
+    _, sdfg = build(name, f'split_{name}')
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is not None
     sdfg.validate()
     assert top_level_nests(sdfg) == 2
@@ -233,7 +233,7 @@ def test_distribution_frees_a_second_parallel_level(name):
     """After the split each child parallelizes on the level the other one blocked: one nest becomes
     ``map i { loop j }``, the other ``loop i { map j }`` -- two parallel levels of four, against
     the one of three the fused nest reaches."""
-    _kernel, sdfg = build(name, f'levels_{name}')
+    _, sdfg = build(name, f'levels_{name}')
     PerfectLoopNesting().apply_pass(sdfg, {})
     parallelize(sdfg)
     sdfg.validate()
@@ -263,7 +263,7 @@ def test_separable_imperfect_nests_distribute_though_they_free_no_level(name):
     children, so the split frees nothing at that level. It happens anyway: canonicalization takes
     the finest legal partition and leaves the recombining to the fusion stages, because a
     "distribute only when it pays" rule is a cost decision and there is no cost model here."""
-    _kernel, sdfg = build(name, f'separable_{name}')
+    _, sdfg = build(name, f'separable_{name}')
     loop = only_loop(sdfg)
     blocks = body_blocks(loop)
     assert level_parallel(blocks, loop.loop_variable, loop.sdfg.arrays), \
@@ -279,7 +279,7 @@ def test_separable_imperfect_nests_distribute_though_they_free_no_level(name):
 def test_parallel_level_diagnostic_is_reported_per_split(name):
     """The parallel-level comparison survives as a REPORTED number, not a decision. Recorded per
     split so a sweep can see which kernels a distribution actually freed a level for."""
-    _kernel, sdfg = build(name, f'diag_{name}')
+    _, sdfg = build(name, f'diag_{name}')
     loop = only_loop(sdfg)
     groups = _forward_flow_groups(loop)
     assert groups is not None
@@ -287,7 +287,7 @@ def test_parallel_level_diagnostic_is_reported_per_split(name):
 
     records = []
     assert distribute_loops(sdfg, records) == 1
-    assert [(fused, distributed) for _label, fused, distributed in records] == [PARENT_LEVEL_DIAGNOSTIC[name]]
+    assert [(fused, distributed) for _, fused, distributed in records] == [PARENT_LEVEL_DIAGNOSTIC[name]]
 
 
 @pytest.mark.parametrize('name', sorted(WHOLE_KERNEL_LEVELS))
@@ -296,10 +296,10 @@ def test_whole_kernel_levels_fused_against_distributed(name):
     five kernels whose answer this pass alone decides. Structure only -- no timing claim is made or
     implied."""
     fused_expected, split_expected = WHOLE_KERNEL_LEVELS[name]
-    _kernel, fused = build(name, f'wkfused_{name}')
+    _, fused = build(name, f'wkfused_{name}')
     assert nest_levels(parallelize(fused)) == fused_expected
 
-    _kernel, split = build(name, f'wksplit_{name}')
+    _, split = build(name, f'wksplit_{name}')
     PerfectLoopNesting().apply_pass(split, {})
     parallelize(split)
     split.validate()
@@ -309,7 +309,7 @@ def test_whole_kernel_levels_fused_against_distributed(name):
 @pytest.mark.parametrize('name', sorted(WHOLE_KERNEL_LEVELS))
 def test_pass_is_idempotent(name):
     """The finest legal partition is a fixpoint: a second application changes nothing."""
-    _kernel, sdfg = build(name, f'idem_{name}')
+    _, sdfg = build(name, f'idem_{name}')
     PerfectLoopNesting().apply_pass(sdfg, {})
     once = sdfg.to_json()
     PerfectLoopNesting().apply_pass(sdfg, {})
@@ -324,7 +324,7 @@ def test_pass_is_idempotent(name):
 @pytest.mark.parametrize('name', sorted(REFUSED_NESTS))
 def test_refused_nests_are_byte_identical(name):
     """A refusal must leave the SDFG exactly as it was."""
-    _kernel, sdfg = build(name, f'refuse_{name}')
+    _, sdfg = build(name, f'refuse_{name}')
     before = sdfg.to_json()
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is None, REFUSED_NESTS[name]
     assert sdfg.to_json() == before, 'a refusal mutated the SDFG'
@@ -334,7 +334,7 @@ def test_shared_written_array_is_one_dependence_component():
     """``s2102`` zeroes a column and then writes the diagonal element of that same column. Both
     children write ``aa``, so they form ONE component and the loop stands -- the subset-disjointness
     reasoning that would separate them is out of this pass's scope."""
-    _kernel, sdfg = build('s2102', 'component_s2102')
+    _, sdfg = build('s2102', 'component_s2102')
     loop = only_loop(sdfg)
     assert _linear_blocks(loop) is not None, 'the body IS a plain two-block chain'
     assert _forward_flow_groups(loop) is None, 'but the two blocks are one dependence component'

@@ -31,15 +31,15 @@ import numpy as np
 from tests.corpus.tsvc import tsvc
 from tests.passes.vectorization.helpers.harness import run_vectorization_test
 
-_G1D = tsvc.collect(regime="1d")
-_G2D = tsvc.collect(regime="2d")
+G1D = tsvc.collect(regime="1d")
+G2D = tsvc.collect(regime="2d")
 
 #: TSVC kernels exercising the hardest knob × access patterns. The
-#: first 9 mirror :data:`_K6_HARD_CANONICALS` (2D stencil, 1D stencil
+#: first 9 mirror :data:`K6_HARD_CANONICALS` (2D stencil, 1D stencil
 #: chains, branch, multi-stmt, gather, broadcast); the remaining 7 add
 #: complementary coverage (irregular gather, indirect, broadcast-on-
 #: gather, mixed-stride, multi-stmt accumulators).
-_K0_TSVC_HARD = (
+K0_TSVC_HARD = (
     "s1119_d_single",  # 2D stencil
     "s291_d_single",  # 1D stencil a[i] = (b[i] + b[i-1]) * 0.5
     "s4114_d_single",  # 1D stencil with arithmetic
@@ -61,13 +61,13 @@ _K0_TSVC_HARD = (
 
 def _resolve_canonical(kernel_name: str):
     """Look up a TSVC kernel by short name."""
-    for k in list(_G1D) + list(_G2D):
+    for k in list(G1D) + list(G2D):
         if k.program.name.endswith(kernel_name):
             return k
     raise KeyError(f"TSVC kernel {kernel_name!r} not in corpus")
 
 
-@pytest.mark.parametrize("kernel_name", _K0_TSVC_HARD)
+@pytest.mark.parametrize("kernel_name", K0_TSVC_HARD)
 def test_k0_remainder_tsvc(kernel_name: str):
     """K=0 scalar-postamble path on hard TSVC kernels: the tile-op
     remainder at ``widths=(1,)`` must stay numerically equivalent to the

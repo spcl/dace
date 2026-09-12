@@ -24,7 +24,7 @@ from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 
-_HAS_NVCC = shutil.which("nvcc") is not None
+HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
 TSTEPS = dace.symbol("TSTEPS")
 
@@ -138,7 +138,7 @@ def test_scalar_cast_constant_broadcasts():
     sdfg.expand_library_nodes()
     # the constant stays at the input (fp16) precision -- no fp64 container leaked
     assert all(d.dtype != dace.float64 for d in sdfg.arrays.values())
-    if _HAS_NVCC:
+    if HAS_NVCC:
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         sdfg.compile()
 
@@ -204,7 +204,7 @@ def test_gpu_reduction_uses_gpu_expansion():
     for st, mx in wcr_exits:
         assert st.entry_node(mx).map.schedule == ScheduleType.GPU_Device, \
             "reduction map must be GPU-scheduled so codegen emits the GPU block-reduce, not a CPU fold"
-    if _HAS_NVCC:
+    if HAS_NVCC:
         sdfg.expand_library_nodes()
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         sdfg.compile()
