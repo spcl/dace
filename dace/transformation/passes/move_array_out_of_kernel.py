@@ -174,8 +174,11 @@ class MoveArrayOutOfKernel(Pass):
                 next_map_exit.add_in_connector(in_connector)
                 next_map_exit.add_out_connector(out_connector)
 
+                # One iteration's slice: the whole buffer lowers to a self-copy racing every iteration.
+                prefix = self.get_memlet_subset(map_entry_chain, previous_node)
+                whole = Range.from_array(array_desc).ndrange()
                 next_map_state.add_edge(previous_node, previous_out_connector, next_map_exit, in_connector,
-                                        Memlet.from_array(array_name, array_desc))
+                                        Memlet(data=array_name, subset=Range(prefix + whole[len(prefix):])))
 
             previous_node = next_map_exit
             previous_out_connector = out_connector
@@ -345,8 +348,10 @@ class MoveArrayOutOfKernel(Pass):
         otherwise the full map-dimension range. This makes memlets represent
         per-thread/per-block slices when lifting arrays out of kernels.
 
-        :param map_chain: Nested MapEntry nodes, outermost to innermost.
-        :returns: List of ``(start, end, stride)`` tuples per map dimension.
+        :param map_chain: Nested MapEntry nodes, innermost to outermost, as :meth:`get_maps_between`
+            returns them.
+        :returns: List of ``(start, end, stride)`` tuples per map dimension, outermost map first --
+            the order :meth:`get_new_shape_info` prepends the dimensions in.
         """
         subset = []
         for next_map in map_chain:
@@ -354,6 +359,7 @@ class MoveArrayOutOfKernel(Pass):
                 continue
 
             map_parent_state = self._node_to_state_cache[next_map]
+            level = []
             for param, (start, end, stride) in zip(next_map.map.params, next_map.map.range.ndrange()):
 
                 node_is_map = ((isinstance(node, nodes.MapEntry) and node == next_map)
@@ -361,9 +367,10 @@ class MoveArrayOutOfKernel(Pass):
                 node_state = self._node_to_state_cache[node]
                 if helpers.contained_in(node_state, node, next_map) and not node_is_map:
                     index = symbol(param)
-                    subset.append((index, index, 1))
+                    level.append((index, index, 1))
                 else:
-                    subset.append((start, end, stride))
+                    level.append((start, end, stride))
+            subset = level + subset
 
         return subset
 

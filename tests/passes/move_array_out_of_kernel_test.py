@@ -315,6 +315,96 @@ def test_lifted_kernel_declares_a_nested_loop_counter():
     assert 'k = ' in device_code, 'the sweep loop disappeared, so this no longer covers the case'
 
 
+#: A block wider than the kernel, so an index list in the wrong order overruns the buffer.
+KERNEL_EXTENT, BLOCK_EXTENT, SCRATCH_EXTENT = 3, 5, 7
+
+
+def kernel_with_a_thread_block_around_its_scratch():
+    """``a[i, t] = tmp[2]`` with ``tmp[2] = i + 10 * t``, where ``tmp`` sits inside a ``GPU_ThreadBlock``
+    map over ``t`` inside the ``GPU_Device`` kernel over ``i`` -- the nesting ``WarpTiling`` leaves."""
+    sdfg = dace.SDFG('scratch_inside_a_thread_block')
+    sdfg.add_array('a', [KERNEL_EXTENT, BLOCK_EXTENT], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('tmp', [SCRATCH_EXTENT], dace.float64, transient=True, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('grid', is_start_block=True)
+    kernel_entry, kernel_exit = state.add_map('kernel',
+                                              dict(i=f'0:{KERNEL_EXTENT}'),
+                                              schedule=dtypes.ScheduleType.GPU_Device)
+    block_entry, block_exit = state.add_map('block',
+                                            dict(t=f'0:{BLOCK_EXTENT}'),
+                                            schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+    fill = state.add_tasklet('fill', {}, {'__out'}, '__out = i + 10.0 * t')
+    use = state.add_tasklet('use', {'__in'}, {'__out'}, '__out = __in')
+    scratch = state.add_access('tmp')
+    state.add_nedge(kernel_entry, block_entry, dace.Memlet())
+    state.add_nedge(block_entry, fill, dace.Memlet())
+    state.add_edge(fill, '__out', scratch, None, dace.Memlet('tmp[2]'))
+    state.add_edge(scratch, None, use, '__in', dace.Memlet('tmp[2]'))
+    state.add_memlet_path(use,
+                          block_exit,
+                          kernel_exit,
+                          state.add_write('a'),
+                          src_conn='__out',
+                          memlet=dace.Memlet('a[i, t]'))
+    sdfg.validate()
+    return sdfg, kernel_entry
+
+
+def test_lifted_indices_follow_the_order_of_the_lifted_dimensions():
+    """Every access to a lifted buffer must land inside it, in a slice no other iteration uses.
+
+    The shape gains ``[KERNEL, BLOCK]`` in front, outermost map first, so an access inside both maps
+    has to lead with ``[i, t]``. Built innermost first it led with ``[t, i]`` against those strides,
+    which overruns the buffer as soon as the block is wider than the kernel: the softmax in
+    ``warp_tiling_test`` wrote past its device allocation that way and faulted.
+
+    Checked by evaluating the flat offset of each access for every ``(i, t)``, so a wrong order fails
+    on the arithmetic it produces rather than on its spelling.
+    """
+    sdfg, kernel_entry = kernel_with_a_thread_block_around_its_scratch()
+    MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, 'tmp')
+
+    desc = sdfg.arrays['tmp']
+    assert [int(s) for s in desc.shape] == [KERNEL_EXTENT, BLOCK_EXTENT, SCRATCH_EXTENT], desc.shape
+    accesses = [
+        e for e in sdfg.start_state.edges()
+        if e.data.data == 'tmp' and (isinstance(e.src, dace.nodes.Tasklet) or isinstance(e.dst, dace.nodes.Tasklet))
+    ]
+    assert len(accesses) == 2, [str(e.data) for e in accesses]
+    total = int(desc.total_size)
+    for edge in accesses:
+        begins = [begin for begin, _, _ in edge.data.subset.ndrange()]
+        offsets = {
+            sum(int(dace.symbolic.evaluate(b, {
+                'i': i,
+                't': t
+            })) * int(s) for b, s in zip(begins, desc.strides))
+            for i in range(KERNEL_EXTENT)
+            for t in range(BLOCK_EXTENT)
+        }
+        assert len(offsets) == KERNEL_EXTENT * BLOCK_EXTENT, f'{edge.data}: two iterations share one slice'
+        assert 0 <= min(offsets) and max(offsets) < total, \
+            f'{edge.data}: offsets {min(offsets)}..{max(offsets)} leave the {total}-element buffer'
+
+
+def test_the_lift_moves_one_slice_per_iteration_out_of_the_kernel():
+    """Inside the kernel a lifted buffer leaves one iteration's slice at a time.
+
+    The edges the lift adds from the in-kernel access node out through the map exits carried the
+    whole buffer. Codegen lowers such an edge to a copy of the buffer onto itself in EVERY iteration,
+    so each thread re-reads and re-writes the slices the other threads are filling: a race, and on
+    the warp-tiled softmax 32 whole-buffer copies per block.
+    """
+    sdfg, kernel_entry = kernel_with_a_thread_block_around_its_scratch()
+    MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, 'tmp')
+
+    state = sdfg.start_state
+    moved = {
+        e.dst.map.label: int(e.data.subset.num_elements())
+        for e in state.edges() if isinstance(e.dst, dace.nodes.MapExit) and e.data.data == 'tmp'
+    }
+    assert moved == {'block': SCRATCH_EXTENT, 'kernel': BLOCK_EXTENT * SCRATCH_EXTENT}, moved
+
+
 if __name__ == '__main__':
     test_lift_leaves_descendant_nested_sdfgs_at_their_own_rank()
     test_lifted_scratch_below_a_nested_sdfg_computes_the_right_values()
