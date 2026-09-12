@@ -632,6 +632,11 @@ def test_fusion_with_nested_sdfg_0():
             input_nodes={T},
             external_edges=True,
         )
+
+        # The connectors are single elements of the outer arrays. Integration can only run once the
+        # node is wired up, so it has to be requested explicitly here.
+        nsdfg.integrate_into_parent()
+
         sdfg.validate()
         return sdfg
 
@@ -2488,6 +2493,11 @@ def _make_map_fusion_nested_sdfg_slicing(
     mx2.add_scope_connectors("result")
     state.add_edge(mx2, "OUT_result", result_data, None, dace.Memlet(f"result_data[0:{nb_cells}, 0:{nb_levels}]"))
 
+    # The nested SDFGs' connectors are slices of the outer arrays. Integration can only run once
+    # the nodes are wired up, so it has to be requested explicitly here.
+    hood_nsdfg.integrate_into_parent()
+    reduction_nsdfg.integrate_into_parent()
+
     sdfg.validate()
 
     return sdfg, state, mx1, intermediate, me2, reduction_nsdfg, hood_nsdfg
@@ -2553,50 +2563,26 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
 
     _to_symb = lambda x: tuple(dace_symbolic.pystr_to_symbolic(xx) for xx in x)
 
-    def _extract(nsdfg, inner_value, is_shape):
-        if strict_dataflow:
-            assert len(inner_value) == 3
-            inner_symbolic_value = str(inner_value[1 if is_shape else 0])
-        else:
-            assert len(inner_value) == 1
-            assert is_shape
-            inner_symbolic_value = str(inner_value[0])
-        assert inner_symbolic_value.startswith(f"map_fusion_nsdfg_{'shape' if is_shape else 'strides'}_")
-        assert inner_symbolic_value in nsdfg.sdfg.symbols
-        assert inner_symbolic_value in nsdfg.symbol_mapping
-        assert str(c2e_dim) != inner_symbolic_value
-        assert str(nsdfg.symbol_mapping[inner_symbolic_value]) == str(c2e_dim)
-        if strict_dataflow:
-            return _to_symb((1, inner_symbolic_value, 1)) if is_shape else _to_symb((inner_symbolic_value, 1, 1))
-        else:
-            return _to_symb((inner_symbolic_value, ))
-
+    # The nested SDFG contract makes the connector's descriptor the parent's container, so the
+    # reduction is mirrored onto it using the parent's own symbols. The fresh
+    # ``map_fusion_nsdfg_{shape,strides}_*`` aliases that used to be minted for a narrowed connector
+    # are no longer needed, and the expected values no longer depend on ``symbolic_size``:
+    # integration makes the inner and the outer symbol one and the same, and
+    # ``dace.sdfg.dealias.remove_symbol_aliases()`` guarantees that name cannot clash inside.
     if strict_dataflow:
         exp_outer_reduction_shape = _to_symb((1, c2e_dim, 1))
         exp_outer_reduction_strides = _to_symb((c2e_dim, 1, 1))
-
-        if symbolic_size:
-            exp_inner_reduction_shape = _extract(reduction_nsdfg, inner_reduction.shape, True)
-            exp_inner_reduction_strides = _extract(reduction_nsdfg, inner_reduction.strides, False)
-            exp_inner_local_hood_shape = _extract(hood_nsdfg, inner_local_hood.shape, True)
-            exp_inner_local_hood_strides = _extract(hood_nsdfg, inner_local_hood.strides, False)
-        else:
-            exp_inner_reduction_strides = _to_symb((c2e_dim, 1, 1))
-            exp_inner_reduction_shape = _to_symb((1, c2e_dim, 1))
-            exp_inner_local_hood_strides = exp_inner_reduction_strides
-            exp_inner_local_hood_shape = exp_inner_reduction_shape
+        exp_inner_reduction_shape = _to_symb((1, c2e_dim, 1))
+        exp_inner_reduction_strides = _to_symb((c2e_dim, 1, 1))
+        exp_inner_local_hood_shape = exp_inner_reduction_shape
+        exp_inner_local_hood_strides = exp_inner_reduction_strides
     else:
         exp_outer_reduction_shape = _to_symb((c2e_dim, ))
         exp_outer_reduction_strides = _to_symb((1, ))
+        exp_inner_reduction_shape = _to_symb((c2e_dim, ))
         exp_inner_reduction_strides = _to_symb((1, ))
+        exp_inner_local_hood_shape = _to_symb((c2e_dim, ))
         exp_inner_local_hood_strides = _to_symb((1, ))
-
-        if symbolic_size:
-            exp_inner_reduction_shape = _extract(reduction_nsdfg, inner_reduction.shape, True)
-            exp_inner_local_hood_shape = _extract(hood_nsdfg, inner_local_hood.shape, True)
-        else:
-            exp_inner_reduction_shape = _to_symb((c2e_dim, ))
-            exp_inner_local_hood_shape = _to_symb((c2e_dim, ))
 
     assert exp_outer_reduction_shape == outer_reduction.shape
     assert exp_outer_reduction_strides == outer_reduction.strides
@@ -2680,6 +2666,10 @@ def _make_map_fusion_with_non_slicing_nsdfg(
         new_src=nsdfg,
     )
     state.remove_node(tlet_that_will_be_replaced_with_a_nsdfg)
+
+    # The connectors are single elements of the outer arrays. Integration can only run once the
+    # node is wired up, so it has to be requested explicitly here.
+    nsdfg.integrate_into_parent()
 
     sdfg.validate()
 

@@ -17,6 +17,7 @@ from dace import dtypes
 from dace import symbolic, nodes
 from dace.properties import SymbolicProperty, make_properties
 
+from dace.transformation.helpers import reduce_integrated_nsdfg_connector
 from dace.transformation.dataflow.stream_transient import AccumulateTransient
 from dace.transformation.dataflow.local_storage import OutLocalStorage, InLocalStorage
 
@@ -272,6 +273,15 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 # Add edges from temporary buffer to second map's content
                 for edge in consume_memlets[array][second_accesses]:
                     otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=None)
+                    # A nested SDFG's connector is identical to the container it is connected to (see
+                    # ``dace.sdfg.dealias.integrate_nested_sdfg``), so a consumer has to follow the read
+                    # into the per-iteration buffer instead of keeping the whole intermediate's descriptor.
+                    if isinstance(edge.dst, nds.NestedSDFG) and edge.dst_conn in edge.dst.sdfg.arrays:
+                        if not edge.dst.sdfg.arrays[edge.dst_conn].is_equivalent(tmp_desc):
+                            reduce_integrated_nsdfg_connector(edge.dst.sdfg,
+                                                              edge.dst_conn,
+                                                              tmp_desc,
+                                                              offset=edge.data.subset)
                     graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, otf_memlet)
 
                 # Step 3: Copy content of first map into second map
@@ -282,6 +292,16 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                     # Connect new OTF nodes to tmp_access for write
                     for edge in graph.edges_between(node, first_map_exit):
                         otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=first_memlet.wcr)
+                        # A nested SDFG's connector is identical to the container it is connected to (see
+                        # ``dace.sdfg.dealias.integrate_nested_sdfg``), so it has to follow the write into
+                        # the per-iteration buffer instead of keeping the whole intermediate's descriptor.
+                        if isinstance(edge.src, nds.NestedSDFG) and edge.src_conn in edge.src.sdfg.arrays:
+                            inner_desc = edge.src.sdfg.arrays[edge.src_conn]
+                            if not inner_desc.is_equivalent(tmp_desc):
+                                reduce_integrated_nsdfg_connector(edge.src.sdfg,
+                                                                  edge.src_conn,
+                                                                  tmp_desc,
+                                                                  offset=first_memlet.subset)
                         graph.add_edge(edge.src, edge.src_conn, tmp_access, None, otf_memlet)
                         graph.remove_edge(edge)
 
@@ -477,6 +497,11 @@ def advanced_replace(subgraph: StateSubgraphView, s: str, s_: str) -> None:
         elif isinstance(node, nodes.NestedSDFG):
             for nsdfg in node.sdfg.all_sdfgs_recursive():
                 nsdfg.replace(s, s_)
+                # Renaming the symbol inside the nested SDFG leaves the enclosing node's symbol
+                # mapping keyed by the old name, so the symbol would stop being passed in.
+                parent_node = nsdfg.parent_nsdfg_node
+                if parent_node is not None and s in parent_node.symbol_mapping:
+                    parent_node.symbol_mapping[s_] = parent_node.symbol_mapping.pop(s)
                 for cfg in nsdfg.all_control_flow_regions():
                     cfg.replace(s, s_)
                     for nblock in cfg.nodes():

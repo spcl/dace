@@ -766,6 +766,80 @@ def test_multiple_global_accesses():
     assert np.array_equal(val, np.ones((10, 10)) * 3)
 
 
+# The same array, reached under two names: the caller knows it as ``_G_ALIAS``, the callee as
+# ``_G_ARRAY``. Only the caller's own name for the array follows the caller; the connector of the
+# call keeps the name the callee's descriptor is under.
+_G_ARRAY = np.random.rand(20)
+_G_ALIAS = _G_ARRAY
+
+
+def test_global_array_named_differently_in_callee():
+
+    @dace.program
+    def reads_the_array(out: dace.float64[20]):
+        out[:] = _G_ARRAY + 1.0
+
+    @dace.program
+    def reads_the_alias(out: dace.float64[20]):
+        out[:] = _G_ALIAS * 2.0
+        reads_the_array(out)
+
+    res = np.zeros(20)
+    reads_the_alias(res)
+    assert np.allclose(res, _G_ARRAY + 1.0)
+
+
+def test_field_named_differently_in_callee():
+    """The same field, called ``self.arr`` by the object that owns it and ``self.inner.arr`` by the
+    object that holds it."""
+
+    class Inner:
+
+        def __init__(self, arr):
+            self.arr = arr
+
+        @dace.method
+        def __call__(self, out: dace.float64[20]):
+            out[:] = self.arr + 1.0
+
+    class Outer:
+
+        def __init__(self, arr):
+            self.inner = Inner(arr)
+
+        @dace.method
+        def __call__(self, out: dace.float64[20]):
+            out[:] = self.inner.arr * 2.0
+            self.inner(out)
+
+    arr = np.random.rand(20)
+    res = np.zeros(20)
+    Outer(arr)(res)
+    assert np.allclose(res, arr + 1.0)
+
+
+def test_global_array_named_differently_in_a_map_body():
+    """The call sits inside a map, so the array has to be passed into the body's own SDFG.
+
+    What the body is given is the container the caller has for the array, under the caller's name
+    for it: the name the callee knows the same array by names nothing in the caller.
+    """
+
+    @dace.program
+    def writes_one(out: dace.float64[20], i: dace.int64):
+        out[i] = _G_ARRAY[i] + 1.0
+
+    @dace.program
+    def writes_all(out: dace.float64[20]):
+        out[:] = _G_ALIAS * 2.0
+        for i in dace.map[0:20]:
+            writes_one(out, i)
+
+    res = np.zeros(20)
+    writes_all(res)
+    assert np.allclose(res, _G_ARRAY + 1.0)
+
+
 if __name__ == '__main__':
     test_dynamic_closure()
     test_external_ndarray_readonly()
@@ -798,3 +872,6 @@ if __name__ == '__main__':
     test_transient_field()
     test_nested_transient_field()
     test_multiple_global_accesses()
+    test_global_array_named_differently_in_callee()
+    test_field_named_differently_in_callee()
+    test_global_array_named_differently_in_a_map_body()

@@ -314,6 +314,33 @@ def test_loop_to_stree_triple_nested_for():
     assert [type(n) for n in po_nodes] == [tn.ForScope, tn.ForScope, tn.ForScope, tn.TaskletNode, tn.LibraryCall]
 
 
+def test_symbols_defined_at_includes_loop_variables():
+    """Loop variables of enclosing loop regions must be visible to nodes inside them."""
+    sdfg = SDFG('defined_at')
+    sdfg.using_explicit_control_flow = True
+    sdfg.add_array('A', [10, 10], dace.float64)
+    outer = LoopRegion(label='outer',
+                       condition_expr='i < 10',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1')
+    inner = LoopRegion(label='inner',
+                       condition_expr='j < 10',
+                       loop_var='j',
+                       initialize_expr='j = 0',
+                       update_expr='j = j + 1')
+    sdfg.add_node(outer, is_start_block=True)
+    outer.add_node(inner, is_start_block=True)
+    state = inner.add_state('body', is_start_block=True)
+    tasklet = state.add_tasklet('t', {}, {'o'}, 'o = 1')
+    state.add_edge(tasklet, 'o', state.add_write('A'), None, dace.Memlet('A[i, j]'))
+
+    defined = state.symbols_defined_at(tasklet)
+    assert 'i' in defined
+    assert 'j' in defined
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_loop_regular_for()
     test_loop_regular_while()
@@ -327,3 +354,4 @@ if __name__ == '__main__':
     test_loop_to_stree_do_for()
     test_loop_to_stree_do_for_inverted_cond()
     test_loop_to_stree_triple_nested_for()
+    test_symbols_defined_at_includes_loop_variables()

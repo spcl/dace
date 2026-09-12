@@ -168,7 +168,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
 
         # nest map's content in sdfg
         map_subgraph = body.scope_subgraph(map_entry, include_entry=False, include_exit=False)
-        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph, full_data=True)
+        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph)
         nested_state: SDFGState = nsdfg.sdfg.nodes()[0]
 
         # replicate loop in nested sdfg
@@ -225,12 +225,3 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
                 sdfg.remove_symbol(s)
 
         sdfg.reset_cfg_list()
-
-        from dace.transformation.interstate import RefineNestedAccess
-        transformation = RefineNestedAccess()
-        transformation.setup_match(sdfg, body.parent_graph.cfg_id, body.block_id,
-                                   {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)
-        transformation.apply(body, sdfg)
-
-        # Second propagation for refined accesses.
-        propagation.propagate_memlets_scope(sdfg, body, scope_tree)

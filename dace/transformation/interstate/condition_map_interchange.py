@@ -3,7 +3,7 @@
 
 from dace import sdfg as sd
 from dace import dtypes
-from dace.sdfg import utils as sdutil
+from dace.sdfg import dealias, utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
 from dace.properties import CodeBlock
 from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
@@ -11,7 +11,9 @@ from dace.memlet import Memlet
 from dace.transformation import transformation
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.utils import set_nested_sdfg_parent_references
+from dace import subsets as sbs
 import copy
+import itertools
 
 
 @transformation.explicit_cf_compatible
@@ -99,9 +101,26 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     start_state.add_node(new_n)
                     copy_mapping[n] = new_n
 
-                param_lb_map = {}
-                for i in range(len(node.map.params)):
-                    param_lb_map[node.map.params[i]] = node.map.range[i][0]
+                # A container may cross the boundary on several edges -- a body reading both
+                # A[i, j] and A[i, 0] -- while a connector takes exactly one. The connector
+                # therefore covers the union of those windows, and every crossing memlet is
+                # rebased onto that union rather than onto its own edge's subset.
+                windows = {}
+                for boundary_edge in itertools.chain(state.out_edges(node), state.in_edges(map_exit)):
+                    name = boundary_edge.data.data
+                    if name is None or boundary_edge.data.subset is None:
+                        continue
+                    if name in windows:
+                        windows[name] = sbs.union(windows[name], boundary_edge.data.subset)
+                    else:
+                        windows[name] = copy.deepcopy(boundary_edge.data.subset)
+
+                # Edges crossing the map's boundary are rebased onto the window the connector
+                # covers, which means subtracting that window's origin -- not substituting each
+                # parameter with its lower bound. The two agree only when every index of the
+                # window is one of this map's parameters; an index coming from an enclosing scope
+                # (an outer map, reaching in as a symbol) survives the substitution and then reads
+                # far outside a connector sized to the window.
                 for n in body + [map_exit]:
                     for edge in state.in_edges(n):
                         src = None
@@ -117,7 +136,8 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                                 continue
                             src = start_state.add_access(edge.data.data)
                             src_conn = None
-                            memlet.replace(param_lb_map)
+                            if memlet.subset is not None and windows.get(edge.data.data) is not None:
+                                memlet.subset.offset(windows[edge.data.data], True)
                         if edge.dst in copy_mapping:
                             dst = copy_mapping[edge.dst]
                         elif edge.dst is map_exit:
@@ -125,35 +145,48 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                                 continue
                             dst = start_state.add_access(edge.data.data)
                             dst_conn = None
-                            memlet.replace(param_lb_map)
+                            if memlet.subset is not None and windows.get(edge.data.data) is not None:
+                                memlet.subset.offset(windows[edge.data.data], True)
                         start_state.add_edge(src, src_conn, dst, dst_conn, memlet)
 
-                for edge in state.out_edges(node):
-                    if edge.data.data not in nsdfg.sdfg.arrays and edge.data.data is not None:
-                        desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
-                        desc.shape = edge.data.subset.size()
-                        nsdfg.sdfg.add_datadesc(edge.data.data, desc)
-                    state.add_edge(
-                        edge.src,
-                        edge.src_conn,
-                        nsdfg,
-                        edge.data.data,
-                        copy.deepcopy(edge.data),
-                    )
-                for edge in state.in_edges(state.exit_node(node)):
-                    if edge.data.data not in nsdfg.sdfg.arrays and edge.data.data is not None:
-                        desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
-                        desc.shape = edge.data.subset.size()
-                        nsdfg.sdfg.add_datadesc(edge.data.data, desc)
-                    state.add_edge(
-                        nsdfg,
-                        edge.data.data,
-                        edge.dst,
-                        edge.dst_conn,
-                        copy.deepcopy(edge.data),
-                    )
+                def _connector_memlet(memlet):
+                    # The edge used to end at a node inside the map body, so an ``other_subset`` on it
+                    # describes that node's container. It now ends at a nested SDFG connector, whose
+                    # descriptor integration makes identical to the container the memlet names, so an
+                    # other subset of a different rank cannot refer to this edge's other end any more.
+                    # One that does match the rank still can, and is left alone.
+                    result = copy.deepcopy(memlet)
+                    desc = state.sdfg.arrays.get(result.data, None)
+                    if (result.other_subset is not None and desc is not None
+                            and result.other_subset.dims() != len(desc.shape)):
+                        result.other_subset = None
+                    return result
+
+                def _add_connector(edges, to_nested):
+                    seen = set()
+                    for edge in edges:
+                        name = edge.data.data
+                        if name in seen:
+                            continue
+                        if name is not None:
+                            seen.add(name)
+                            if name not in nsdfg.sdfg.arrays:
+                                desc = copy.deepcopy(state.sdfg.arrays[name])
+                                desc.shape = windows[name].size()
+                                nsdfg.sdfg.add_datadesc(name, desc)
+                        memlet = _connector_memlet(edge.data)
+                        if name is not None:
+                            memlet.subset = copy.deepcopy(windows[name])
+                        if to_nested:
+                            state.add_edge(edge.src, edge.src_conn, nsdfg, name, memlet)
+                        else:
+                            state.add_edge(nsdfg, name, edge.dst, edge.dst_conn, memlet)
+
+                _add_connector(state.out_edges(node), True)
+                _add_connector(state.in_edges(state.exit_node(node)), False)
 
                 state.remove_nodes_from(body)
+                dealias.integrate_nested_sdfg(nsdfg.sdfg)
 
         # Wrap all states in the nested SDFGs with the conditional block
         for state in all_states:

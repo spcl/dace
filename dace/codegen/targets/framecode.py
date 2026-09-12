@@ -412,7 +412,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         # Collect external arrays
         ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
         for subsdfg, aname, arr in sdfg.arrays_recursive():
-            if arr.lifetime == dtypes.AllocationLifetime.External:
+            if arr.lifetime == dtypes.AllocationLifetime.External and arr.transient is True:
                 ext_arrays[arr.storage].append((subsdfg, aname, arr))
 
         # Only generate functions as necessary
@@ -558,6 +558,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
     def _can_allocate(self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: Union[nodes.EntryNode, SDFGState,
                                                                                         SDFG]) -> bool:
+        # A view is a pointer bound to its access node, not storage of its own: whatever the
+        # container behind it is made of, the pointer can be declared wherever that node sits.
+        # Climbing out of the scope would emit the binding where the subset's symbols -- a
+        # surrounding map's parameters, say -- are not in scope.
+        if isinstance(desc, data.View):
+            return True
+
         schedule = self._get_schedule(scope)
         # if not dtypes.can_allocate(desc.storage, schedule):
         #     return False

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
+from dace.sdfg import dealias
 
 
 @dace.library.expansion
@@ -162,7 +163,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
                                   buffer_write,
                                   src_conn=buffer_name_inner,
                                   memlet=dace.Memlet(f"{buffer_name}[0:{large_veclen}]"))
-
+            dealias.integrate_nested_sdfg(nested_sdfg)
         else:  # Not elementwise, one side is a vector of vectors
 
             vtype = out_desc.dtype if is_pack else in_desc.dtype

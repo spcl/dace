@@ -136,6 +136,12 @@ std::ofstream of("prune_connectors_test.txt", std::ofstream::app);
 of << i << "\\n";""",
                                language=dace.Language.CPP)
 
+    # The inner SDFG's connectors are narrowed views of the middle SDFG's arrays. Integration can
+    # only run once the nodes are wired up, so it has to be requested explicitly here.
+    nsdfg_inner.integrate_into_parent()
+    nsdfg_middle.integrate_into_parent()
+    isolated_nsdfg.integrate_into_parent()
+
     sdfg_outer.validate()
 
     return sdfg_outer
@@ -323,6 +329,10 @@ def test_unused_retval_2():
     state.add_memlet_path(nsnode, mx, state.add_write('output'), memlet=dace.Memlet('output[i]'), src_conn='used')
     state.add_memlet_path(nsnode, mx, state.add_write('tmp'), memlet=dace.Memlet('tmp[i]'), src_conn='__return')
 
+    # The connectors are single elements of the outer arrays, so they have to be integrated into
+    # the parent once the node is wired up.
+    nsnode.integrate_into_parent()
+
     # Mark nested SDFG to not be inlineable
     nsnode.no_inline = True
 
@@ -460,6 +470,10 @@ def test_prune_connectors_with_conditional_block():
     state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))
     state.add_memlet_path(state.add_access(COND), me, nsdfg_node, dst_conn=cond, memlet=dace.Memlet(f"{COND}[i]"))
     state.add_memlet_path(nsdfg_node, mx, state.add_access(OUT), src_conn=out, memlet=dace.Memlet(f"{OUT}[i]"))
+
+    # The connectors are single elements of the outer arrays, so they have to be integrated into
+    # the parent once the node is wired up.
+    nsdfg_node.integrate_into_parent()
 
     assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
 

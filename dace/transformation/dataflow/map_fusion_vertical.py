@@ -7,6 +7,7 @@ import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
+from dace.transformation.helpers import reduce_integrated_nsdfg_connector
 from dace.sdfg.type_inference import infer_expr_type
 from ordered_set import OrderedSet
 
@@ -827,6 +828,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     reduced_intermediate_desc=new_inter_desc,
                     inner_data=new_pre_exit_edge.src_conn,
                     outer_edge=new_pre_exit_edge,
+                    old_intermediate_desc=inter_desc,
+                    offset=producer_offset,
+                    squeezed_dims=squeezed_dims,
+                    is_scalar=is_scalar,
                 )
 
             # We now handle the MemletTree defined by this edge.
@@ -863,6 +868,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         reduced_intermediate_desc=new_inter_desc,
                         inner_data=producer_edge.src_conn,
                         outer_edge=producer_edge,
+                        old_intermediate_desc=inter_desc,
+                        offset=producer_offset,
+                        squeezed_dims=squeezed_dims,
+                        is_scalar=is_scalar,
                     )
 
             # Now after we have handled the input of the new intermediate node,
@@ -937,6 +946,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                             reduced_intermediate_desc=new_inter_desc,
                             inner_data=new_inner_edge.dst_conn,
                             outer_edge=new_inner_edge,
+                            old_intermediate_desc=inter_desc,
+                            offset=consumer_offset,
+                            squeezed_dims=squeezed_dims,
+                            is_scalar=is_scalar,
                         )
 
                     # Now we have to make sure that all consumers are properly updated.
@@ -969,6 +982,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                 reduced_intermediate_desc=new_inter_desc,
                                 inner_data=consumer_edge.dst_conn,
                                 outer_edge=consumer_edge,
+                                old_intermediate_desc=inter_desc,
+                                offset=consumer_offset,
+                                squeezed_dims=squeezed_dims,
+                                is_scalar=is_scalar,
                             )
 
                 # The edge that leaves the second MapEntry was already deleted. We now delete
@@ -1728,6 +1745,39 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if len(inner_desc.shape) == 1 and inner_desc.shape[0] == 1:
             return True
 
+        # Under the nested SDFG contract (see `dace.sdfg.dealias.integrate_nested_sdfg()`) the
+        #  connector's descriptor is identical to the outer container and the narrowing to the part
+        #  that is actually used is expressed by a view inside. Reducing the outer container is then
+        #  mirrored one to one on the inner one, which `_updated_inner_strides_of_nested_sdfg()`
+        #  does.
+        is_integrated = inner_desc.is_equivalent(intermediate.desc(sdfg))
+        if is_integrated:
+            # Depending on `strict_dataflow` the reduced intermediate either keeps its degenerate
+            #  dimensions or has them squeezed away, and a view of it follows suit. Both ranks are
+            #  therefore acceptable; anything else would leave the view's strides unrelated to the
+            #  reduced container's.
+            allowed_view_ranks = {
+                len(reduced_intermediate_shape),
+                sum(1 for s in reduced_intermediate_shape if s != 1),
+            }
+            for inner_state in inner_sdfg.states():
+                for inner_node in inner_state.nodes():
+                    if not (isinstance(inner_node, nodes.AccessNode) and inner_node.data == inner_data):
+                        continue
+                    for inner_edge in itertools.chain(inner_state.in_edges(inner_node),
+                                                      inner_state.out_edges(inner_node)):
+                        other_node = inner_edge.dst if inner_edge.src is inner_node else inner_edge.src
+                        if isinstance(other_node, nodes.NestedSDFG):
+                            # TODO(phimuell): Implement recursive handling.
+                            return False
+                        if isinstance(other_node, nodes.AccessNode):
+                            view_desc = other_node.desc(inner_sdfg)
+                            #  A view spanning a single element has no stride worth fixing up.
+                            if (isinstance(view_desc, data.View) and len(view_desc.shape) not in allowed_view_ranks
+                                    and not all(s == 1 for s in view_desc.shape)):
+                                return False
+            return True
+
         # We do not allow nested handling, i.e. the data can not be passed to another
         #  nested SDFG. Otherwise it would become too complicated. Thus we now check
         #  if the data is passed further down, by inspecting all nested SDFG.
@@ -1811,10 +1861,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         reduced_intermediate_desc: data.Data,
         inner_data: str,
         outer_edge: graph.MultiConnectorEdge[dace.Memlet],
+        old_intermediate_desc: Optional[data.Data] = None,
+        offset: Optional[subsets.Subset] = None,
+        squeezed_dims: Optional[List[int]] = None,
+        is_scalar: bool = False,
     ) -> None:
         inner_sdfg: dace.SDFG = nsdfg.sdfg
         inner_desc = inner_sdfg.arrays[inner_data]
         outer_sdfg: dace.SDFG = nsdfg.sdfg.parent_sdfg
+
+        # The nested SDFG contract makes the inner descriptor identical to the outer container, so
+        # the reduction is mirrored rather than only the strides being remapped.
+        if old_intermediate_desc is not None and inner_desc.is_equivalent(old_intermediate_desc):
+            reduce_integrated_nsdfg_connector(
+                nsdfg=inner_sdfg,
+                connector=inner_data,
+                reduced_desc=reduced_intermediate_desc,
+                offset=offset,
+                squeezed_dims=squeezed_dims or [],
+                is_scalar=is_scalar,
+            )
+            return
 
         # NOTE: The current implementation of this function assumes that there is no
         #   recursive propagation of the change in strides needed.

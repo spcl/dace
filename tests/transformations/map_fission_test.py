@@ -496,6 +496,10 @@ def test_single_data_multiple_connectors():
 
     sdutils.consolidate_edges(outer_sdfg)
 
+    # The connectors are rows of the outer arrays, so they have to be integrated into the parent
+    # once the node is wired up.
+    inner_sdfg_node.integrate_into_parent()
+
     A = np.arange(20, dtype=np.int32).reshape((2, 10)).copy()
     ref = np.empty_like(A)
     ref_sdfg = copy.deepcopy(outer_sdfg)
@@ -589,6 +593,11 @@ def test_dependent_symbol():
     outer_state.add_memlet_path(inner_sdfg_node, mx, b, memlet=dace.Memlet(data='B', subset='1, 0:10'), src_conn='B1')
 
     sdutils.consolidate_edges(outer_sdfg)
+
+    # The connectors are rows of the outer arrays, so they have to be integrated into the parent
+    # once the node is wired up.
+    inner_sdfg_node.integrate_into_parent()
+
     A = np.arange(20, dtype=np.int32).reshape((2, 10)).copy()
     ref = np.zeros_like(A)
     ref_sdfg = copy.deepcopy(outer_sdfg)
@@ -960,6 +969,77 @@ def test_mapfission_refuses_conditional_component_stays_valid():
     assert np.allclose(x1, x0) and np.allclose(y1, y0)
 
 
+def _fission_leaf(name, inp, in_shape, out, out_shape, code):
+    """One-tasklet SDFG copying ``inp`` to ``out``; a shape of ``[1]`` marks the scalar side."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array(inp, in_shape, dace.float64)
+    sdfg.add_array(out, out_shape, dace.float64)
+    sdfg.add_symbol('i', dace.int64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('t', {'x'}, {'y'}, code)
+    index = lambda shape: '0' if list(shape) == [1] else 'i'
+    state.add_edge(state.add_read(inp), None, tasklet, 'x', dace.Memlet('%s[%s]' % (inp, index(in_shape))))
+    state.add_edge(tasklet, 'y', state.add_write(out), None, dace.Memlet('%s[%s]' % (out, index(out_shape))))
+    return sdfg
+
+
+def _fission_nested_components():
+    """A map over a nested SDFG whose two states are joined by a transient scalar.
+
+    Both states hold a nested SDFG of their own, connected to that scalar. Fission promotes the
+    scalar to an array with the map's dimension, which under the nested SDFG contract (see
+    ``dace.sdfg.dealias.integrate_nested_sdfg``) is a different container than the connectors below
+    describe: each has to become a view of the element its memlet selects.
+    """
+    N = dace.symbol('N')
+    body = dace.SDFG('body')
+    body.add_array('a', [N], dace.float64)
+    body.add_array('b', [N], dace.float64)
+    body.add_scalar('t', dace.float64, transient=True)
+    body.add_symbol('i', dace.int64)
+
+    write = body.add_state('write_t')
+    writer = write.add_nested_sdfg(_fission_leaf('writer', 'a', [N], 't', [1], 'y = x * 2.0'), {'a'}, {'t'}, {'i': 'i'})
+    write.add_edge(write.add_read('a'), None, writer, 'a', dace.Memlet('a[i]'))
+    write.add_edge(writer, 't', write.add_write('t'), None, dace.Memlet('t[0]'))
+
+    read = body.add_state('read_t')
+    body.add_edge(write, read, dace.InterstateEdge())
+    reader = read.add_nested_sdfg(_fission_leaf('reader', 't', [1], 'b', [N], 'y = x + 1.0'), {'t'}, {'b'}, {'i': 'i'})
+    read.add_edge(read.add_read('t'), None, reader, 't', dace.Memlet('t[0]'))
+    read.add_edge(reader, 'b', read.add_write('b'), None, dace.Memlet('b[i]'))
+
+    sdfg = dace.SDFG('fission_nested_components')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map('m', dict(i='0:N'))
+    node = state.add_nested_sdfg(body, {'a'}, {'b'}, {'i': 'i', 'N': 'N'})
+    state.add_memlet_path(state.add_read('A'), entry, node, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(node, exit_, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+    return sdfg
+
+
+def test_fission_promoted_transient_of_nested_sdfg():
+    A = np.array([1.0, 3.0, 7.0, 50.0])
+    expected = A * 2.0 + 1.0
+
+    sdfg = _fission_nested_components()
+    assert sdfg.apply_transformations(MapFission) == 1
+
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.NestedSDFG):
+            for edge in state.all_edges(node):
+                conn = edge.dst_conn if edge.dst is node else edge.src_conn
+                if conn and conn in node.sdfg.arrays:
+                    assert node.sdfg.arrays[conn].is_equivalent(state.sdfg.arrays[edge.data.data])
+    sdfg.validate()
+
+    B = np.zeros(4)
+    sdfg(A=A, B=B, N=4)
+    assert np.allclose(B, expected)
+
+
 if __name__ == '__main__':
     test_subgraph()
     test_nested_sdfg()
@@ -987,3 +1067,4 @@ if __name__ == '__main__':
     test_memset_memcpy_fission_clean_connectors(_three_set_two_cpy, 3, 2)
     test_mapfission_does_not_apply_to_conditional_map()
     test_mapfission_refuses_conditional_component_stays_valid()
+    test_fission_promoted_transient_of_nested_sdfg()

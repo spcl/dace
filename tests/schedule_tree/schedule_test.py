@@ -34,8 +34,11 @@ def test_for_in_map_in_for():
     assert len(fornode.children) == 1  # map
     mapnode = fornode.children[0]
     assert isinstance(mapnode, tn.MapScope)
-    assert len(mapnode.children) == 2  # copy, for
-    copynode, fornode = mapnode.children
+    # Without simplification the slice ``A[i]`` is reached through a view of its own, which the tree
+    # renders as a node of its own ahead of the copy.
+    children = [c for c in mapnode.children if not isinstance(c, tn.ViewNode)]
+    assert len(children) == 2  # copy, for
+    copynode, fornode = children
     assert isinstance(copynode, tn.CopyNode)
     assert isinstance(fornode, tn.LoopScope)
     assert len(fornode.children) == 1  # tasklet
@@ -131,7 +134,12 @@ def test_nesting_nview():
 
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
-    assert any(isinstance(v, tn.NView) for v in stree.children)
+
+    # Reshaping (20, 10) into (4, 5, 10) is not a slice of a, so it cannot be composed away and
+    # survives as a view. Under the nested SDFG contract it sits inside the nesting rather than
+    # at its boundary, which makes it an ordinary view of the container rather than an NView.
+    views = [n for n in stree.preorder_traversal() if isinstance(n, tn.ViewNode)]
+    assert any(v.source == 'a' and tuple(v.view_desc.shape) == (4, 5, 10) for v in views)
 
 
 def test_irreducible_sub_sdfg():
@@ -253,10 +261,16 @@ def test_dyn_map_range():
     assert len(stree.children) == 2
     assert all(isinstance(c, tn.MapScope) for c in stree.children)
     mapscope = stree.children[1]
-    start, end, dynrangemap = mapscope.children
-    assert isinstance(start, tn.DynScopeCopyNode)
-    assert isinstance(end, tn.DynScopeCopyNode)
+    dynrangemap = mapscope.children[-1]
     assert isinstance(dynrangemap, tn.MapScope)
+
+    # The two bounds are read from A_row ahead of the inner map, which then ranges between them.
+    # Simplification promotes those reads to symbols, so they arrive as assignments; without it they
+    # are copies into scalars first and reach the map through its dynamic-range connectors.
+    bounds = [c for c in mapscope.children[:-1] if isinstance(c, (tn.AssignNode, tn.DynScopeCopyNode))]
+    assert len(bounds) == 2
+    start, end = (c.name if isinstance(c, tn.AssignNode) else c.target for c in bounds)
+    assert str(dynrangemap.node.map.range) == f'{start}:{end}'
 
 
 def test_multiview():

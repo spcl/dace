@@ -2572,6 +2572,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
     # First, filter out direct (to constants) and degenerate (N -> N) replacements
     repl = {}
     invrepl = {}
+    symbolic_repl = {}
     for k, v in mapping.items():
         # Degenerate
         if str(k) == str(v):
@@ -2598,8 +2599,29 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
             pass
 
         # Otherwise, symbolic replacement
-        repl[k] = f'__dacesym_{k}'
-        invrepl[f'__dacesym_{k}'] = v
+        symbolic_repl[str(k)] = v
+
+    # A two-step replacement (through the intermediate __dacesym_* names) is only necessary
+    # if replacement keys appear within the replacement values (e.g., {M: N, N: M}).
+    # Otherwise, replace directly in a single pass.
+    if symbolic_repl:
+        keys = set(symbolic_repl.keys())
+        overlap = False
+        for v in symbolic_repl.values():
+            try:
+                vsyms = {str(s) for s in pystr_to_symbolic(v).free_symbols}
+            except (TypeError, ValueError, AttributeError, sympy.SympifyError):
+                overlap = True  # Cannot analyze, be safe
+                break
+            if keys & vsyms:
+                overlap = True
+                break
+        if overlap:
+            for k, v in symbolic_repl.items():
+                repl[k] = f'__dacesym_{k}'
+                invrepl[f'__dacesym_{k}'] = v
+        else:
+            repl.update(symbolic_repl)
 
     if len(repl) == 0:
         return

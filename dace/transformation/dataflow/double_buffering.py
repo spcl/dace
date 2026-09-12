@@ -157,6 +157,12 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         for e in dup_nstate.edges():
             final_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
 
+        # This state runs after the loop, on what the loop's last iteration read ahead. The loop
+        # variable belongs to the loop and means nothing out here, so the memlets that were written
+        # in it take the value it would have been left with: one step past the last iteration.
+        last_iteration = map_rstart + (symbolic.int_floor(map_rend - map_rstart, map_rstride) + 1) * map_rstride
+        sd.replace(final_state, map_param, last_iteration)
+
         # If there is a WCR output with transient, only output in last state
         nstate: sd.SDFGState
         for node in nstate.sink_nodes():
@@ -190,6 +196,17 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         # Remove symbol once done
         del nsdfg_node.sdfg.symbols['__dace_db_param']
         del nsdfg_node.symbol_mapping['__dace_db_param']
+
+        # A transient that gained a buffer dimension is no longer the container a nested SDFG below
+        # was connected to: under the nested SDFG contract (see
+        # ``dace.sdfg.dealias.integrate_nested_sdfg``) the connector has to become a view of the
+        # buffer its memlet selects. This happens once the buffer index is in its final form, so
+        # that the view is written the way the loop reads it.
+        for state in nsdfg_node.sdfg.states():
+            for node in state.nodes():
+                if (isinstance(node, nodes.NestedSDFG)
+                        and any(edge.data.data in transients_to_modify for edge in state.all_edges(node))):
+                    node.integrate_into_parent()
 
         return nsdfg_node
 

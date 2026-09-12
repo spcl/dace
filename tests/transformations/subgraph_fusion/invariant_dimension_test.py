@@ -90,6 +90,11 @@ def fix_sdfg(sdfg, graph):
     utils.change_edge_dest(graph, nested_original, nnode)
     utils.change_edge_src(graph, nested_original, nnode)
     graph.remove_node(nested_original)
+
+    # The connectors are one-dimensional slices of the outer three-dimensional arrays.
+    # Integration can only run once the node is wired up, so it has to be requested explicitly here.
+    nnode.integrate_into_parent()
+
     sdfg.validate()
 
 

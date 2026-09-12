@@ -9,7 +9,7 @@ from dace.properties import CodeBlock
 import dace.sdfg.nodes as nodes
 import dace.transformation.transformation as xf
 from dace import dtypes, data as dt
-from dace.sdfg import SDFG, SDFGState, state as dstate, utils as dace_utils
+from dace.sdfg import dealias, SDFG, SDFGState, state as dstate, utils as dace_utils
 from dace.sdfg.state import LoopRegion
 from dace.memlet import Memlet
 
@@ -254,6 +254,13 @@ class BackwardPassGenerator:
 
         # Forward required data by the backward pass according to a user defined strategy
         self.data_forwarding_manager.forward_data_to_backward_pass()
+
+        # A reversed nested SDFG is built from the forward node's own descriptors, which are narrowed
+        # to the part of a container that node reads, while what the backward pass connects to it is
+        # the whole container -- a forwarded value carries an index space per iteration of the loop
+        # that stored it. Bring the connectors back onto the descriptors of the containers they are
+        # connected to, with views inside standing for the narrowing.
+        self._integrate_reversed_nested_sdfgs()
 
         # In some cases (accessnode -> accessnode), the descriptors for the gradients of the function outputs are not
         # added yet. Add them now.
@@ -907,6 +914,17 @@ class BackwardPassGenerator:
                 self.backward_sdfg._find_new_name("gradient_" + forward_name)
 
         return self.array_grad_map[forward_name]
+
+    def _integrate_reversed_nested_sdfgs(self) -> None:
+        """
+        Brings every nested SDFG the backward pass created onto the descriptors it is connected to.
+
+        :note: This function operates in-place on the backward SDFG.
+        """
+        for state in self.backward_sdfg.states():
+            for node in list(state.nodes()):
+                if isinstance(node, nodes.NestedSDFG):
+                    dealias.integrate_nested_sdfg(node.sdfg)
 
     def _add_gradient_data_descriptor(self, data_name: str) -> dt.Array:
         """Add the data descriptor for the gradient for `data_name`.
@@ -1740,7 +1758,12 @@ class BackwardPassGenerator:
                             backward_dst_node = node
                             break
 
-                memlet.data = backward_dst_node.data
+                # Only a memlet that names the destination follows it to the copy that stands in for
+                # it. One written from the other end -- an access node inside a map scope is fed by a
+                # memlet naming the container outside it -- keeps addressing that container, and its
+                # subset would mean nothing against the copy's descriptor.
+                if fwd_memlet.data == dest_node.data:
+                    memlet.data = backward_dst_node.data
 
                 # We also need to Add an empty edge from the cleared node to where the data will be used
                 tmp_clear_node_out_edges = backward_state.out_edges(backward_dst_node)
@@ -1796,7 +1819,10 @@ class BackwardPassGenerator:
                 if isinstance(source_access_node, nodes.AccessNode):
                     # Check if this is a zeroed out node
                     in_values = any(source_access_node in values for values in self.zeroed_out.values())
-                    if source_access_node.data != memlet.data and in_values:
+                    # Only the memlets that name the gradient the copy stands in for follow it to the
+                    # copy. One that names the other end of the path addresses a different container,
+                    # and pointing it at the copy would give its subset the wrong descriptor.
+                    if in_values and source_access_node.data == memlet.data + "_tmp":
                         memlet.data = source_access_node.data
             self._set_wcr_if_needed(backward_state=backward_state,
                                     backward_node=self.reverse_map[forward_node],

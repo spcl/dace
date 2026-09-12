@@ -472,8 +472,11 @@ def test_nested_sdfg_in_map_nest():
     # find write set
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    # Only the top-level access node: the nested SDFG's connector is the same container under the
+    # nested SDFG contract, so it carries the name 'A' too, and the write set asked about here is
+    # the one the map nest presents to the outside.
+    for state in sdfg.states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
@@ -511,14 +514,20 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
     # find write set
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    # Only the top-level access node: the nested SDFG's connector is the same container under the
+    # nested SDFG contract, so it carries the name 'A' too, and the write set asked about here is
+    # the one the map nest presents to the outside.
+    for state in sdfg.states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
             write_set = memlet.subset
-    assert (str(write_set) == "0:M, 0:N - 2")
+    # ``j`` runs over range(2, N), so the map nest writes columns 2 through N - 1. The write set is
+    # now read off the top-level access node, in A's own coordinates, rather than relative to a
+    # connector narrowed to the slab.
+    assert (str(write_set) == "0:M, 2:N")
 
 
 def test_map_in_nested_sdfg_in_map():
@@ -857,8 +866,11 @@ def test_loop_in_nested_sdfg_in_map_multiplied_indices():
     write_approx = result[sdfg.cfg_id].approximation
     write_set = None
     accessnode = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    # Only the top-level access node: the nested SDFG's connector is the same container under the
+    # nested SDFG contract, so it carries the name 'A' too, and the write set asked about here is
+    # the one the map nest presents to the outside.
+    for state in sdfg.states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
@@ -891,8 +903,11 @@ def test_loop_in_nested_sdfg_simple():
     write_approx = result[sdfg.cfg_id].approximation
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    # Only the top-level access node: the nested SDFG's connector is the same container under the
+    # nested SDFG contract, so it carries the name 'A' too, and the write set asked about here is
+    # the one the map nest presents to the outside.
+    for state in sdfg.states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
