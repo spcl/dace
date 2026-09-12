@@ -54,7 +54,28 @@ def test_refold_booleans_folds_literal_arms():
     assert str(folded.func) == 'AND'
 
 
+def test_floordiv_on_a_symbol_is_int_floor():
+    """One extent must have ONE spelling. ``pystr_to_symbolic`` maps ``//`` to ``int_floor`` and
+    ``SymExpr`` routes it there too; a symbol inheriting sympy's ``floor(x/y)`` made the Python
+    spelling of the same extent compare unequal to the parsed one."""
+    from dace.symbolic import equal, pystr_to_symbolic, symbol
+
+    n = symbol("n", dtype=dace.int64, positive=True)
+    assert equal(n // 2, pystr_to_symbolic('n // 2')) is True
+    assert equal(64 // n, pystr_to_symbolic('64 // n')) is True
+
+
+def test_relax_int_floor_hands_the_solver_a_head_it_can_invert():
+    """``int_floor`` is a bare Function to sympy, which raises rather than declining on one."""
+    from dace.symbolic import pystr_to_symbolic, relax_int_floor
+
+    assert str(relax_int_floor(pystr_to_symbolic('(h - 7) // 2 + 1'))) == 'floor(h/2 - 7/2) + 1'
+    assert str(relax_int_floor(pystr_to_symbolic('int_ceil(h, 2)'))) == 'ceiling(h/2)'
+
+
 if __name__ == "__main__":
     test_simplify_ext_min()
     test_shapes_equal_compares_by_name()
     test_refold_booleans_folds_literal_arms()
+    test_floordiv_on_a_symbol_is_int_floor()
+    test_relax_int_floor_hands_the_solver_a_head_it_can_invert()

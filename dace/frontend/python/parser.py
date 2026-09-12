@@ -170,7 +170,8 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                     sym_dim = sym_dim.subs(repldict)
 
                 if symbolic.issymbolic(sym_dim - real_dim):
-                    equations.append(sym_dim - real_dim)
+                    # int_floor is an opaque Function head; solve() cannot invert one.
+                    equations.append(symbolic.relax_int_floor(sym_dim - real_dim))
 
     if len(symbols) == 0:
         return {}

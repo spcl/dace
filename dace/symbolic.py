@@ -295,6 +295,15 @@ class symbol(sympy.Symbol, metaclass=_SYMBOL_META):
         if fail is not None:
             raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
 
+    def __floordiv__(self, other: Any) -> sympy.Expr:
+        """``//`` on a symbol yields ``int_floor``, as ``pystr_to_symbolic`` and :class:`SymExpr`
+        already do; sympy's inherited ``floor(x/y)`` compares unequal to both."""
+        return operator_int_floor(self, other)
+
+    def __rfloordiv__(self, other: Any) -> sympy.Expr:
+        """``other // self``; see :meth:`__floordiv__`."""
+        return operator_int_floor(other, self)
+
     # Type stubs for arithmetic operators (inherited from sympy.Symbol at runtime)
     if TYPE_CHECKING:
         # yapf: disable
@@ -306,8 +315,6 @@ class symbol(sympy.Symbol, metaclass=_SYMBOL_META):
         def __rmul__(self, other: Any) -> sympy.Expr: ...
         def __truediv__(self, other: Any) -> sympy.Expr: ...
         def __rtruediv__(self, other: Any) -> sympy.Expr: ...
-        def __floordiv__(self, other: Any) -> sympy.Expr: ...
-        def __rfloordiv__(self, other: Any) -> sympy.Expr: ...
         def __mod__(self, other: Any) -> sympy.Expr: ...
         def __rmod__(self, other: Any) -> sympy.Expr: ...
         def __pow__(self, other: Any) -> sympy.Expr: ...
@@ -1706,6 +1713,10 @@ class __int_floor(int_floor):
     pass
 
 
+#: Unmangled alias: ``__int_floor`` named inside a class body becomes ``_symbol__int_floor``.
+operator_int_floor = __int_floor
+
+
 class int_ceil(DaceFunction):
 
     @classmethod
@@ -1804,6 +1815,22 @@ def relax_ipow(expr: SymbolicType) -> SymbolicType:
     if not isinstance(expr, sympy.Basic):
         return expr
     return expr.rewrite(sympy.Pow)
+
+
+def relax_int_floor(expr: SymbolicType) -> SymbolicType:
+    """Rewrite ``int_floor``/``int_ceil`` to sympy's ``floor``/``ceiling`` so solvers can invert them.
+
+    Both are bare ``Function`` heads to SymPy, which refuses to solve through one
+    (``NotImplementedError: equal function with more than 1 argument``).
+    """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    expr = expr.replace(int_floor, lambda x, y: sympy.floor(x / y))
+    return expr.replace(int_ceil, lambda x, y: sympy.ceiling(x / y))
 
 
 class fma(DaceFunction):
@@ -4516,7 +4543,7 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
     if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
         return a != b
     else:
-        a, b = equalize_symbols(a, b)
+        a, b = (relax_int_floor(x) for x in equalize_symbols(a, b))
         # NOTE: We simplify in an attempt to remove inconvenient methods, such
         # as `ceiling` and `floor`, if the symbol assumptions allow it.
         # We subtract and compare to zero according to the SymPy documentation
@@ -4560,7 +4587,9 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
     # caller reading ``is True`` treats as "not equal" and silently refuses on. Equalize first, so
     # the answer is about the VALUES rather than about which instance the caller happened to hold.
     if all(isinstance(arg, sympy.Basic) for arg in args):
-        args = list(equalize_symbols_across(*args))
+        # relax_int_floor for the same reason: one extent reaches here as ``int_floor(x, y)`` from
+        # the parser and as ``floor(x/y)`` from Python's ``//``, and sympy relates neither head.
+        args = [relax_int_floor(arg) for arg in equalize_symbols_across(*args)]
 
     facts = []
     if is_length:
