@@ -23,7 +23,10 @@ StateScopeTables = dict[nodes.EntryNode | None, dict[str, typeclass]]
 StateSymbolScopes = Dict[SDFGState, StateScopeTables]
 
 
-def state_scope_symbol_tables(sdfg: SDFG, state: SDFGState, base: dict[str, typeclass]) -> StateScopeTables:
+def state_scope_symbol_tables(sdfg: SDFG,
+                              state: SDFGState,
+                              base: dict[str, typeclass],
+                              region_tables: Optional[Dict[int, Dict[str, typeclass]]] = None) -> StateScopeTables:
     """
     One table per scope of ``state``, each the answer ``symbols_defined_at`` would give for a node in
     that scope. Built outer to inner so every entry inherits its parent's finished table and
@@ -33,9 +36,23 @@ def state_scope_symbol_tables(sdfg: SDFG, state: SDFGState, base: dict[str, type
     :param state: The state to tabulate.
     :param base: :func:`~dace.sdfg.state.sdfg_scope_symbols` of ``sdfg``, which is per-SDFG invariant
                  and therefore worth hoisting out of a loop over states.
+    :param region_tables: Optional memo of :func:`~dace.sdfg.state.enclosing_region_symbols`, keyed by
+                          ``id(state.parent_graph)``. That table depends only on ``base`` and the region
+                          chain above the state, so all states of one region share it. Valid while
+                          ``base`` and the region tree are unchanged -- one :class:`SymbolScopes` run,
+                          which modifies nothing and keeps every region alive, so ids cannot recycle.
+                          Each state still gets its own copy: code generation extends these tables in place.
     :return: Scope entry node (``None`` for the state's top level) to its visible symbols.
     """
-    per_scope: StateScopeTables = {None: enclosing_region_symbols(state, base)}
+    if region_tables is None:
+        top_level = enclosing_region_symbols(state, base)
+    else:
+        shared = region_tables.get(id(state.parent_graph))
+        if shared is None:
+            shared = enclosing_region_symbols(state, base)
+            region_tables[id(state.parent_graph)] = shared
+        top_level = collections.OrderedDict(shared)
+    per_scope: StateScopeTables = {None: top_level}
     children = state.scope_children()
     stack: list[nodes.EntryNode | None] = [None]
     while stack:  # outer to inner: each entry inherits its parent's finished table
@@ -71,9 +88,10 @@ class SymbolScopes(ppl.Pass):
         result: Dict[int, StateSymbolScopes] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             base = sdfg_scope_symbols(sdfg)
+            region_tables: Dict[int, Dict[str, typeclass]] = {}
             per_sdfg: StateSymbolScopes = {}
             for state in sdfg.states():
-                per_sdfg[state] = state_scope_symbol_tables(sdfg, state, base)
+                per_sdfg[state] = state_scope_symbol_tables(sdfg, state, base, region_tables)
             result[sdfg.cfg_id] = per_sdfg
         return result
 
