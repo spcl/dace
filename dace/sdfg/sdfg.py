@@ -3,6 +3,7 @@ import ast
 import collections
 import copy
 import ctypes
+from functools import lru_cache
 import gzip
 from numbers import Integral
 import os
@@ -12,7 +13,7 @@ import pathlib
 import random
 import shutil
 import sys
-from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+from typing import Any, AnyStr, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 
 import sympy
@@ -293,6 +294,12 @@ class LogicalGroup(object):
         return ret
 
 
+@lru_cache(maxsize=16384, typed=True)
+def assignment_rhs_symbol_names(rhs: str) -> FrozenSet[str]:
+    """Names read by one interstate-edge assignment RHS; a pure function of the text, so memoized."""
+    return frozenset(str(s) for s in dace.symbolic.symbols_in_ast(ast.parse(rhs)))
+
+
 @make_properties
 class InterstateEdge(object):
     """ An SDFG state machine edge. These edges can contain a condition
@@ -413,7 +420,7 @@ class InterstateEdge(object):
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
             # Always add LHS symbols to the set of candidate free symbols
-            rhs_symbols |= set(map(str, dace.symbolic.symbols_in_ast(ast.parse(rhs))))
+            rhs_symbols |= assignment_rhs_symbol_names(rhs)
             # Add the RHS to the set of candidate defined symbols ONLY if it has not been read yet
             # This also solves the ordering issue that may arise in cases like the 3rd example above
             if lhs not in cond_symbols and lhs not in rhs_symbols:
