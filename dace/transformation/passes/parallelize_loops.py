@@ -58,7 +58,11 @@ class ParallelizeLoops(ppl.Pass):
 
     Soundness rests on one invariant: every ``apply`` is immediately preceded by a full
     ``can_be_applied`` against the CURRENT graph. Nothing is applied on the strength of a verdict
-    taken before another lift.
+    taken before another lift. The one exception is :meth:`parallelize_loop` with ``proven=True``,
+    for a caller whose own independence proof replaces the probe.
+
+    Code that lifts ONE given loop calls :meth:`parallelize_loop`: the same probe, lift and post-lift
+    steps as the sweep, so no library code applies ``LoopToMap`` on its own.
 
     Applies with no per-lift memlet propagation (like the matcher, which calls ``apply`` directly)
     and propagates the whole SDFG once at the end.
@@ -110,10 +114,56 @@ class ParallelizeLoops(ppl.Pass):
             applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
 
         if applied:
-            prune_stale_symbol_mappings(sdfg)
-        if applied and self.propagate:
-            propagate_memlets_sdfg(sdfg)
+            self.finish(sdfg)
         return applied or None
+
+    def parallelize_loop(self, sdfg: SDFG, loop: LoopRegion, proven: bool = False) -> bool:
+        """Lift ONE loop the way :meth:`apply_pass` lifts each candidate, then run its post-lift steps.
+
+        :param sdfg: the SDFG to prune and propagate after the lift; it must contain ``loop``.
+        :param loop: the loop to lift, in ``sdfg`` or one of its nested SDFGs.
+        :param proven: skip the ``LoopToMap`` probe. Only for a caller holding an independence proof
+                       the probe cannot reconstruct: a wavefront legality proof, or a runtime guard
+                       that rules out colliding writes.
+        :returns: whether ``loop`` was lifted.
+        """
+        if not self.lift(LoopToMap(), loop, {}, proven):
+            return False
+        self.finish(sdfg)
+        return True
+
+    def lift(self, xform: LoopToMap, loop: LoopRegion, pipeline_results: Dict[str, Any], proven: bool = False) -> bool:
+        """Probe ``loop`` against the CURRENT graph and lift it if ``LoopToMap`` accepts it.
+
+        :param xform: the instance to match; its ``lift_context``, when set, supplies the shared analysis.
+        :param proven: skip the probe, see :meth:`parallelize_loop`.
+        :returns: whether ``loop`` was lifted.
+        """
+        sd = loop.sdfg
+        graph = loop.parent_graph
+        ctx: Optional[LiftContext] = vars(xform).get('lift_context')
+        # ``override=True`` with the loop OBJECT, the way ``fuse_states`` sets up its own
+        # matches: ``PatternNode.__get__`` returns a non-int subgraph value as-is, so the
+        # match resolves by identity instead of through ``cfg_list[cfg_id].node(node_id)``.
+        # That drops two linear scans per candidate -- ``graph.node_id(loop)`` and the
+        # ``cfg_list.index()`` inside ``cfg_id`` -- and removes any chance of a stale index
+        # resolving to the wrong block. ``LoopToMap`` never reads ``cfg_id``, so a match with no
+        # context passes -1 rather than scanning for a region a caller may not have indexed yet.
+        cfg_id = -1 if ctx is None else ctx.cfg_ids.get(graph)
+        if cfg_id is None:
+            cfg_id = graph.cfg_id  # context predates this region; fall back to the scan
+        xform.setup_match(sd, cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+        xform._pipeline_results = pipeline_results
+        if not proven and not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
+            return False
+        xform.apply(graph, sd)
+        return True
+
+    def finish(self, sdfg: SDFG) -> None:
+        """The post-lift steps: drop stale nested-SDFG symbol mappings, then propagate memlets if asked."""
+        prune_stale_symbol_mappings(sdfg)
+        if self.propagate:
+            propagate_memlets_sdfg(sdfg)
 
     def lift_fixpoint(self, sdfg: SDFG, pipeline_results: Dict[str, Any], order, contexts: Dict[SDFG, LiftContext],
                       invariants: Dict[SDFG, LiftInvariants], loop_facts: Dict[Any, LoopFacts]) -> int:
@@ -147,22 +197,8 @@ class ParallelizeLoops(ppl.Pass):
                     ctx = contexts[sd] = build_lift_context(sd, inv, loop_facts, fresh_free_symbols.pop(sd, None))
 
                 xform.lift_context = ctx
-                # ``override=True`` with the loop OBJECT, the way ``fuse_states`` sets up its own
-                # matches: ``PatternNode.__get__`` returns a non-int subgraph value as-is, so the
-                # match resolves by identity instead of through ``cfg_list[cfg_id].node(node_id)``.
-                # That drops two linear scans per candidate -- ``graph.node_id(loop)`` and the
-                # ``cfg_list.index()`` inside ``cfg_id`` -- and removes any chance of a stale index
-                # resolving to the wrong block.
-                cfg_id = ctx.cfg_ids.get(graph)
-                if cfg_id is None:
-                    cfg_id = graph.cfg_id  # context predates this region; fall back to the scan
-                xform.setup_match(sd, cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
-                xform._pipeline_results = pipeline_results
-
-                if not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
+                if not self.lift(xform, loop, pipeline_results):
                     continue
-
-                xform.apply(graph, sd)
                 applied += 1
                 lifted_one = True
                 fresh_free_symbols = {} if ctx.post_lift_free_symbols is None else {sd: ctx.post_lift_free_symbols}

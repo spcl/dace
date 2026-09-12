@@ -322,3 +322,63 @@ def test_a_mapping_the_callee_stopped_needing_is_pruned():
     assert 'k' not in node.symbol_mapping
     assert 'k' not in {str(s) for s in sdfg.free_symbols}, 'pruning did not release the caller'
     sdfg.validate()
+
+
+@dace.program
+def one_sweep(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(N):
+        b[i] = a[i] * 2.0 + 1.0
+
+
+@dace.program
+def carried_sweep(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(1, N):
+        a[i] = a[i - 1] + b[i]
+
+
+@dace.program
+def permuted_scatter(a: dace.float64[N], b: dace.float64[N], idx: dace.int64[N]):
+    for i in range(N):
+        a[idx[i]] = b[i]
+
+
+def test_lifting_one_loop_leaves_the_sdfg_the_sweep_leaves():
+    """A pass that lifts one given loop must get the sweep's post-lift steps, not a bare ``LoopToMap.apply``."""
+    swept = one_sweep.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(swept, {})
+
+    single = one_sweep.to_sdfg(simplify=True)
+    (loop, ) = candidate_loops(single)
+    assert ParallelizeLoops().parallelize_loop(single, loop)
+
+    single.validate()
+    assert single.hash_sdfg() == swept.hash_sdfg()
+
+
+def test_a_loop_the_probe_refuses_is_left_untouched():
+    sdfg = carried_sweep.to_sdfg(simplify=True)
+    before = sdfg.hash_sdfg()
+    (loop, ) = candidate_loops(sdfg)
+
+    assert not ParallelizeLoops().parallelize_loop(sdfg, loop)
+    assert sdfg.hash_sdfg() == before
+
+
+def test_a_proven_lift_is_taken_where_the_probe_refuses():
+    """A caller's own proof (here: ``idx`` is a permutation) replaces the probe, which cannot see it."""
+    sdfg = permuted_scatter.to_sdfg(simplify=True)
+    (loop, ) = candidate_loops(sdfg)
+    assert not LoopToMap.can_be_applied_to(sdfg, loop=loop), 'fixture broken: the probe accepts the scatter'
+
+    assert ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
+    assert loop_count(sdfg) == 0
+    sdfg.validate()
+
+    rng = np.random.default_rng(0)
+    a = np.zeros(N)
+    b = rng.random(N)
+    idx = rng.permutation(N).astype(np.int64)
+    a_ref = a.copy()
+    a_ref[idx] = b
+    sdfg(a=a, b=b, idx=idx)
+    np.testing.assert_array_equal(a, a_ref)
