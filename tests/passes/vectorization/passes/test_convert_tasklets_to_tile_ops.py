@@ -312,8 +312,8 @@ def test_converter_unop_with_scalar_source_sets_scalar_kind():
 
 def _build_inner_body_with_reduction(op="+"):
     """Build a body NSDFG with an in-place RMW accumulator tasklet ``_acc = _acc <op> _val``."""
-    _OP_TAG = {"+": "add", "*": "mul", "min": "min", "max": "max"}
-    sdfg = dace.SDFG(f"reduce_{_OP_TAG[op]}_fixture")
+    OP_TAG = {"+": "add", "*": "mul", "min": "min", "max": "max"}
+    sdfg = dace.SDFG(f"reduce_{OP_TAG[op]}_fixture")
     sdfg.add_array("A", (8, ), dace.float64, transient=False)
     sdfg.add_array("Acc", (1, ), dace.float64, transient=False)
     state = sdfg.add_state("s")

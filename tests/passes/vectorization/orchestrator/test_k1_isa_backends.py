@@ -33,9 +33,9 @@ def _host_flags():
     return set()
 
 
-_FLAGS = _host_flags()
+FLAGS = _host_flags()
 # (target_isa, required cpuinfo flag, expected backend header).
-_ISA_CASES = [
+ISA_CASES = [
     ("AVX512", "avx512f", "dace/tile_ops/avx512.h"),
     ("AVX2", "avx2", "dace/tile_ops/avx2.h"),
 ]
@@ -63,10 +63,10 @@ def _k1_axpy_sdfg(name):
     return sdfg
 
 
-@pytest.mark.parametrize("isa,flag,header", _ISA_CASES)
+@pytest.mark.parametrize("isa,flag,header", ISA_CASES)
 def test_k1_axpy_isa_backend(isa, flag, header):
     """K=1 axpy under ``target_isa=<ISA>`` includes the ISA header and matches numpy."""
-    if flag not in _FLAGS:
+    if flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
     sdfg = _k1_axpy_sdfg(f"e2e_k1_axpy_{isa.lower()}")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa)).apply_pass(sdfg, {})
@@ -89,17 +89,17 @@ def test_k1_axpy_isa_backend(isa, flag, header):
 
 # (target_isa, required cpuinfo flag (None = always available), backend header).
 # SCALAR is always exercised; the SIMD cases skip when the host lacks the flag.
-_MASKGEN_CASES = [("SCALAR", None, "dace/tile_ops/scalar.h")] + _ISA_CASES
+MASKGEN_CASES = [("SCALAR", None, "dace/tile_ops/scalar.h")] + ISA_CASES
 
 
-@pytest.mark.parametrize("isa,flag,header", _MASKGEN_CASES)
+@pytest.mark.parametrize("isa,flag,header", MASKGEN_CASES)
 def test_k1_mask_gen_isa_backend(isa, flag, header):
     """A non-divisible masked-remainder axpy lowers ``TileMaskGen`` through the
     per-ISA backend header: the iteration mask's ``base + l < ub`` compare becomes
     the ``dace::tileops::tile_mask_gen`` intrinsic (not the scalar pure loop), and
     the masked load/store read it. Verified against numpy over aligned + non-
     divisible (masked-remainder) sizes."""
-    if flag is not None and flag not in _FLAGS:
+    if flag is not None and flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
     sdfg = _k1_axpy_sdfg(f"e2e_k1_maskgen_{isa.lower()}")
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa,
@@ -138,7 +138,7 @@ def _k1_masked_ite_sdfg(name):
     return sdfg
 
 
-@pytest.mark.parametrize("isa,flag,header", _MASKGEN_CASES)
+@pytest.mark.parametrize("isa,flag,header", MASKGEN_CASES)
 def test_k1_masked_ite_isa_backend(isa, flag, header):
     """A data-dependent ``if`` (-> ``TileITE``) under a masked remainder lowers
     ``TileMaskGen`` through the per-ISA header AND reads the iteration mask from a
@@ -149,7 +149,7 @@ def test_k1_masked_ite_isa_backend(isa, flag, header):
     the other branches read it uninitialized (flaky lane writes). The fix emits the
     mask in a dedicated dominating ``_tile_mask_init`` start state. Verified
     bit-exact against numpy over aligned + non-divisible (masked-remainder) sizes."""
-    if flag is not None and flag not in _FLAGS:
+    if flag is not None and flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
     sdfg = _k1_masked_ite_sdfg(f"e2e_k1_maskite_{isa.lower()}")
     VectorizeCPUMultiDim(

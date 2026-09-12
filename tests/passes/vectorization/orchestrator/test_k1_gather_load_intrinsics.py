@@ -34,13 +34,13 @@ def _host_flags():
     return set()
 
 
-_FLAGS = _host_flags()
+FLAGS = _host_flags()
 # (implementation, required cpuinfo flag (None = always run), backend header).
 # The intrinsic itself (``_mm512_i64gather_pd`` / ``_mm512_loadu_pd``) lives in
 # the header, not the generated .cpp; the .cpp carries the ``tile_<op><...>``
 # call + the header include. Asserting the include proves the intrinsic backend
 # was selected; the numpy comparison proves it computes correctly.
-_CASES = [
+CASES = [
     ("scalar", None, "dace/tile_ops/scalar.h"),
     ("avx2", "avx2", "dace/tile_ops/avx2.h"),
     ("avx512", "avx512f", "dace/tile_ops/avx512.h"),
@@ -110,12 +110,12 @@ def _compiled_code(sdfg):
         return f.read()
 
 
-@pytest.mark.parametrize("impl,flag,header", _CASES)
+@pytest.mark.parametrize("impl,flag,header", CASES)
 @pytest.mark.parametrize("masked", [False, True])
 def test_k1_gather_intrinsic(impl, flag, header, masked):
     """``a[idx[i]]`` lowers to ``tile_gather`` and matches numpy; masked lanes
     zero-fill without reading their index."""
-    if flag is not None and flag not in _FLAGS:
+    if flag is not None and flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
     sdfg = _gather_sdfg(f"tg_{impl}_{int(masked)}", impl, masked)
     csdfg = sdfg.compile()
@@ -141,13 +141,13 @@ def test_k1_gather_intrinsic(impl, flag, header, masked):
     np.testing.assert_allclose(dst, expected, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("impl,flag,header", _CASES)
+@pytest.mark.parametrize("impl,flag,header", CASES)
 @pytest.mark.parametrize("masked", [False, True])
 @pytest.mark.parametrize("stride", [1, 2, 3])
 def test_k1_strided_load_intrinsic(impl, flag, header, masked, stride):
     """``src[l * stride]`` lowers to ``tile_load`` (loadu when stride==1, gather
     when stride!=1) and matches numpy; masked lanes zero-fill."""
-    if flag is not None and flag not in _FLAGS:
+    if flag is not None and flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
     sdfg = _strided_sdfg(f"tl_{impl}_{stride}_{int(masked)}", impl, stride, masked)
     csdfg = sdfg.compile()

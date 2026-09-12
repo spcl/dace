@@ -163,8 +163,8 @@ def test_strided_load_stride_2(emission_style):
 
 def test_strided_load_stride_ssym():
     N = 64
-    _ssym = 2
-    src = numpy.random.random(_ssym * N)
+    ssym_value = 2
+    src = numpy.random.random(ssym_value * N)
     dst = numpy.zeros(N)
     run_vectorization_test(
         dace_func=strided_load_stride_ssym,
@@ -177,7 +177,7 @@ def test_strided_load_stride_ssym():
             # and the trip is provably divisible by W=8 (no remainder).
             "N": N // 8,
             "scale": 1.5,
-            "ssym": _ssym
+            "ssym": ssym_value
         },
         vector_width=8,
         sdfg_name="strided_load_stride_ssym",
@@ -271,7 +271,7 @@ def test_strided_store_stride_3(emission_style):
 
 def test_strided_store_stride_ssym():
     N = 64
-    _ssym = 2
+    ssym_value = 2
     src = numpy.random.random(N)
     dst = numpy.zeros(2 * N)
     run_vectorization_test(
@@ -285,7 +285,7 @@ def test_strided_store_stride_ssym():
             # and the trip is provably divisible by W=8 (no remainder).
             "N": N // 8,
             "scale": 1.5,
-            "ssym": _ssym
+            "ssym": ssym_value
         },
         vector_width=8,
         sdfg_name="strided_store_stride_ssym",

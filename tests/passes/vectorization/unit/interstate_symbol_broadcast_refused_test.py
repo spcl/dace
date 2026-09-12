@@ -43,7 +43,7 @@ N = dace.symbol('N')
 W = 8
 #: Host's best runnable SIMD ISA -- vectorization enforces arch-native, so a pinned AVX-512 would
 #: SIGILL on an AVX2-only or ARM host.
-_HOST_ISA = detect_host_isa()
+HOST_ISA = detect_host_isa()
 
 
 @dace.program
@@ -109,7 +109,7 @@ def vectorized(prog, tag):
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=(W, ),
                         validate_all=True,
-                        target_isa=_HOST_ISA,
+                        target_isa=HOST_ISA,
                         remainder_strategy=RemainderStrategy.FULL_MASK,
                         branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
     sdfg.validate()

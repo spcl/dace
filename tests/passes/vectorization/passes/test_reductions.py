@@ -19,12 +19,12 @@ from dace.transformation.passes.vectorization.utils.reductions import (
     emit_tree_reduction,
 )
 
-_INFIX = ["+", "-", "*", "/", "&", "|", "^"]
-_FUNCALL = ["max", "min"]
-_ALL = _INFIX + _FUNCALL
+INFIX = ["+", "-", "*", "/", "&", "|", "^"]
+FUNCALL = ["max", "min"]
+ALL = INFIX + FUNCALL
 # ``-`` and ``/`` are valid chain *syntax* but are not identity-bearing
 # (associative) reductions, so they are deliberately absent from IDENTITY.
-_IDENTITY_OPS = ["+", "*", "&", "|", "^", "max", "min"]
+IDENTITY_OPS = ["+", "*", "&", "|", "^", "max", "min"]
 
 
 def _ref_fold(op: str, values):
@@ -53,7 +53,7 @@ def _eval(expr: str, input_var: str, values):
 
 
 def test_identity_table_is_complete_and_correct():
-    assert set(IDENTITY) == set(_IDENTITY_OPS)
+    assert set(IDENTITY) == set(IDENTITY_OPS)
     assert IDENTITY["+"] == "0"
     assert IDENTITY["*"] == "1"
     assert IDENTITY["&"] == "~0"
@@ -63,12 +63,12 @@ def test_identity_table_is_complete_and_correct():
     assert IDENTITY["min"] == "+inf"
 
 
-@pytest.mark.parametrize("op", _INFIX)
+@pytest.mark.parametrize("op", INFIX)
 def test_chain_infix_shape(op):
     assert emit_chain_reduction("_in", 4, op) == f"_in[0] {op} _in[1] {op} _in[2] {op} _in[3]"
 
 
-@pytest.mark.parametrize("op", _FUNCALL)
+@pytest.mark.parametrize("op", FUNCALL)
 def test_chain_funcall_shape(op):
     # Function-call ops nest left-associatively (no infix syntax for max/min).
     assert emit_chain_reduction("_in", 4, op) == f"{op}({op}({op}(_in[0], _in[1]), _in[2]), _in[3])"
@@ -83,7 +83,7 @@ def test_tree_funcall_shape_odd_width_trails_last_lane():
     assert emit_tree_reduction("_in", 5, "max") == "max(max(max(_in[0], _in[1]), max(_in[2], _in[3])), _in[4])"
 
 
-@pytest.mark.parametrize("op", _ALL)
+@pytest.mark.parametrize("op", ALL)
 def test_width_one_short_circuits_to_single_lane(op):
     assert emit_chain_reduction("_in", 1, op) == "_in[0]"
     assert emit_tree_reduction("_in", 1, op) == "_in[0]"

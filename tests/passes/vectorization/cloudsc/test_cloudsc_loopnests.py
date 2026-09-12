@@ -32,12 +32,12 @@ KLEV = dace.symbol("KLEV")
 KLON = dace.symbol("KLON")
 NCLV = dace.symbol("NCLV")
 
-_PTSPHY = 50.0
-_RLMIN = 1.0e-8
-_RAMIN = 1.0e-8
-_RALVDCP = 2.5008e6 / 1004.7
-_RALSDCP = 2.8345e6 / 1004.7
-_ZQTMST = 1.0 / _PTSPHY
+PTSPHY = 50.0
+RLMIN = 1.0e-8
+RAMIN = 1.0e-8
+RALVDCP = 2.5008e6 / 1004.7
+RALSDCP = 2.8345e6 / 1004.7
+ZQTMST = 1.0 / PTSPHY
 
 
 @dace.program
@@ -47,8 +47,8 @@ def cloudsc_init_affine(pt: dace.float64[KLEV, KLON], pa: dace.float64[KLEV, KLO
     # cloudsc_bottom_lower.F90: "non CLV initialization" nest.
     for jk in range(KLEV):
         for jl in range(KLON):
-            ztp1[jk, jl] = pt[jk, jl] + _PTSPHY * ptend_t[jk, jl]
-            za[jk, jl] = pa[jk, jl] + _PTSPHY * ptend_a[jk, jl]
+            ztp1[jk, jl] = pt[jk, jl] + PTSPHY * ptend_t[jk, jl]
+            za[jk, jl] = pa[jk, jl] + PTSPHY * ptend_a[jk, jl]
 
 
 def test_cloudsc_init_affine(remainder_strategy, branch_mode):
@@ -86,7 +86,7 @@ def cloudsc_species_init(pclv: dace.float64[NCLV, KLEV, KLON], ptend_cld: dace.f
     for jm in range(NCLV):
         for jk in range(KLEV):
             for jl in range(KLON):
-                zqx[jm, jk, jl] = pclv[jm, jk, jl] + _PTSPHY * ptend_cld[jm, jk, jl]
+                zqx[jm, jk, jl] = pclv[jm, jk, jl] + PTSPHY * ptend_cld[jm, jk, jl]
 
 
 def test_cloudsc_species_init(remainder_strategy, branch_mode):
@@ -121,15 +121,15 @@ def cloudsc_tidy_branch(zqx_l: dace.float64[KLEV, KLON], zqx_i: dace.float64[KLE
     # CLOUDSC-characteristic conditional accumulation pattern).
     for jk in range(KLEV):
         for jl in range(KLON):
-            if zqx_l[jk, jl] + zqx_i[jk, jl] < _RLMIN or za[jk, jl] < _RAMIN:
-                zqadj_l = zqx_l[jk, jl] * _ZQTMST
+            if zqx_l[jk, jl] + zqx_i[jk, jl] < RLMIN or za[jk, jl] < RAMIN:
+                zqadj_l = zqx_l[jk, jl] * ZQTMST
                 ptend_q[jk, jl] = ptend_q[jk, jl] + zqadj_l
-                ptend_t[jk, jl] = ptend_t[jk, jl] - _RALVDCP * zqadj_l
+                ptend_t[jk, jl] = ptend_t[jk, jl] - RALVDCP * zqadj_l
                 zqx_v[jk, jl] = zqx_v[jk, jl] + zqx_l[jk, jl]
                 zqx_l[jk, jl] = 0.0
-                zqadj_i = zqx_i[jk, jl] * _ZQTMST
+                zqadj_i = zqx_i[jk, jl] * ZQTMST
                 ptend_q[jk, jl] = ptend_q[jk, jl] + zqadj_i
-                ptend_t[jk, jl] = ptend_t[jk, jl] - _RALSDCP * zqadj_i
+                ptend_t[jk, jl] = ptend_t[jk, jl] - RALSDCP * zqadj_i
                 zqx_v[jk, jl] = zqx_v[jk, jl] + zqx_i[jk, jl]
                 zqx_i[jk, jl] = 0.0
                 za[jk, jl] = 0.0

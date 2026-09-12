@@ -550,9 +550,9 @@ def pow_implementations(A: dace.float64[S], B: dace.float64[S]):
 
 def test_log(remainder_strategy, emission_style):
     # Create test arrays
-    _S = 64
-    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
-    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+    dim_size = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(dim_size, ))
+    B = numpy.abs(numpy.random.randn(dim_size, )) * 1e-4
 
     # Baseline SDFG
     log_implementations_std_sdfg = log_implementations.to_sdfg()
@@ -563,7 +563,7 @@ def test_log(remainder_strategy, emission_style):
                                "A": A,
                                "B": B
                            },
-                           params={"S": _S},
+                           params={"S": dim_size},
                            vector_width=8,
                            sdfg_name="test_log",
                            from_sdfg=True,
@@ -573,9 +573,9 @@ def test_log(remainder_strategy, emission_style):
 
 def test_exp(remainder_strategy, emission_style):
     # Create test arrays
-    _S = 64
-    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
-    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+    dim_size = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(dim_size, ))
+    B = numpy.abs(numpy.random.randn(dim_size, )) * 1e-4
 
     # Baseline SDFG
     exp_implementations_std_sdfg = exp_implementations.to_sdfg()
@@ -586,7 +586,7 @@ def test_exp(remainder_strategy, emission_style):
                                "A": A,
                                "B": B
                            },
-                           params={"S": _S},
+                           params={"S": dim_size},
                            vector_width=8,
                            sdfg_name="test_exp",
                            from_sdfg=True,
@@ -596,9 +596,9 @@ def test_exp(remainder_strategy, emission_style):
 
 def test_pow(remainder_strategy, emission_style):
     # Create test arrays
-    _S = 64
-    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
-    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+    dim_size = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(dim_size, ))
+    B = numpy.abs(numpy.random.randn(dim_size, )) * 1e-4
 
     # Baseline SDFG
     pow_implementations_std_sdfg = pow_implementations.to_sdfg()
@@ -609,7 +609,7 @@ def test_pow(remainder_strategy, emission_style):
                                "A": A,
                                "B": B
                            },
-                           params={"S": _S},
+                           params={"S": dim_size},
                            vector_width=8,
                            sdfg_name="test_pow",
                            from_sdfg=True,

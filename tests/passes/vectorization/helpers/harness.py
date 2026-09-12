@@ -233,7 +233,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            expect_no_tiling: bool = False,
                            canon_lift_copy: bool = True):
 
-    import pytest as _pytest
+    import pytest
     # ``--run-full-matrix`` hook: when the flag is set, the test was
     # parametrised over knob fixtures it does NOT declare in its signature.
     # Pick up those knob values from ``request.getfixturevalue`` so the
@@ -244,40 +244,40 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # __main__ direct invocation) have no active request; fallback to
     # whatever the caller passed.
     try:
-        request = _pytest.fixture_request_or_none() if hasattr(_pytest, "fixture_request_or_none") else None
+        request = pytest.fixture_request_or_none() if hasattr(pytest, "fixture_request_or_none") else None
     except Exception:
         request = None
     if request is None:
         # Resolve the active pytest request via the test's introspection.
-        # ``_pytest`` doesn't expose a public "current request"; instead we
+        # ``pytest`` doesn't expose a public "current request"; instead we
         # look up the caller's local ``request`` fixture via the harness's
         # frame. Tests that take ``request`` make it visible; for tests that
         # don't, knob fallbacks stay on the kwargs path.
-        import inspect as _inspect
-        for _frame in _inspect.stack()[1:]:
-            _candidate = _frame.frame.f_locals.get("request")
-            if _candidate is not None and hasattr(_candidate, "getfixturevalue"):
-                request = _candidate
+        import inspect
+        for frame in inspect.stack()[1:]:
+            candidate = frame.frame.f_locals.get("request")
+            if candidate is not None and hasattr(candidate, "getfixturevalue"):
+                request = candidate
                 break
     if request is not None and request.config.getoption("--run-full-matrix", default=False):
         # Override any knob whose fixturename is in the request but the
         # caller did not explicitly pass (i.e. the value is at its default).
         # Identify "explicit" vs "default" via the function default: if the
         # caller passes None or matches the default, treat as default.
-        _default_branch_mode = "merge"
-        _default_remainder = "scalar"
-        _default_emission = "default"
-        if branch_mode == _default_branch_mode and "branch_mode" in request.fixturenames:
+        default_branch_mode = "merge"
+        default_remainder = "scalar"
+        default_emission = "default"
+        if branch_mode == default_branch_mode and "branch_mode" in request.fixturenames:
             try:
                 branch_mode = request.getfixturevalue("branch_mode")
             except Exception:
                 pass
-        if remainder_strategy == _default_remainder and "remainder_strategy" in request.fixturenames:
+        if remainder_strategy == default_remainder and "remainder_strategy" in request.fixturenames:
             try:
                 remainder_strategy = request.getfixturevalue("remainder_strategy")
             except Exception:
                 pass
-        if emission_style == _default_emission and "emission_style" in request.fixturenames:
+        if emission_style == default_emission and "emission_style" in request.fixturenames:
             try:
                 emission_style = request.getfixturevalue("emission_style")
             except Exception:
@@ -396,7 +396,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         # The locked single-knob shape rejects fixture combinations outside
         # (branch_mode=merge, remainder in {scalar, masked}, emission_style=
         # default); skip per-arm rather than propagate.
-        _skip_reason = _tile_nodes_skip_reason(
+        skip_reason = _tile_nodes_skip_reason(
             copy_sdfg,
             branch_mode,
             remainder_strategy,
@@ -407,12 +407,12 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         # comparison below would compare a deep copy of the reference against the
         # reference and pass no matter what. That is a FAILURE unless the caller said
         # so with ``expect_no_tiling=True``; SKIP only the knob-incompatibility cases.
-        _tile_nodes_noop = False
-        if _skip_reason:
-            if "no innermost map" in _skip_reason:
-                _tile_nodes_noop = True
+        tile_nodes_noop = False
+        if skip_reason:
+            if "no innermost map" in skip_reason:
+                tile_nodes_noop = True
             else:
-                _pytest.skip(f"tile_nodes arm: {_skip_reason}")
+                pytest.skip(f"tile_nodes arm: {skip_reason}")
         widths = _auto_tile_widths(copy_sdfg, vector_width, loop_to_map_permissive)
         from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
             VectorizeCPUMultiDim, )
@@ -432,7 +432,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             tile_remainder = "masked_tail"
         else:  # remainder == "scalar"
             tile_remainder = "scalar_postamble"
-        if not _tile_nodes_noop:
+        if not tile_nodes_noop:
             VectorizeCPUMultiDim(
                 VectorizeConfig(widths=widths,
                                 target_isa=ISA.SCALAR,
@@ -455,7 +455,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             assert len(emitted) > len(control), (
                 f"{sdfg_name}: the vectorizer added ZERO tile lib nodes "
                 f"(reference {len(control)}, vectorized {len(emitted)})"
-                f"{' (no innermost map: the pass was never called)' if _tile_nodes_noop else ''}, "
+                f"{' (no innermost map: the pass was never called)' if tile_nodes_noop else ''}, "
                 f"so the comparison below runs the reference against itself "
                 f"and passes unconditionally. Re-run with -W error::UserWarning "
                 f"to read the refusal reason, or pass expect_no_tiling=True if "

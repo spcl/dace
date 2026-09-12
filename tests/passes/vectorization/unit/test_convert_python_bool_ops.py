@@ -47,7 +47,7 @@ def test_detect_binop_or():
     t = _tasklet(["_c_0", "_c_1"], "_o", "_o = (_c_0 or _c_1)")
     res = ConvertTaskletsToTileOps()._detect_binop(t)
     assert res is not None
-    _out, _a, _b, op = res
+    _, _, _, op = res
     assert op == "||"
 
 
@@ -55,7 +55,7 @@ def test_detect_binop_and():
     t = _tasklet(["_c_0", "_c_1"], "_o", "_o = (_c_0 and _c_1)")
     res = ConvertTaskletsToTileOps()._detect_binop(t)
     assert res is not None
-    _out, _a, _b, op = res
+    _, _, _, op = res
     assert op == "&&"
 
 
@@ -64,7 +64,7 @@ def test_detect_unop_not(code):
     t = _tasklet(["_c_0"], "_o", code)
     res = ConvertTaskletsToTileOps()._detect_unop(t)
     assert res is not None
-    _out, _a, op = res
+    _, _, op = res
     assert op == "not"
 
 

@@ -73,10 +73,9 @@ def test_pass_returns_none_on_empty_sdfg():
 
 def test_pass_refuses_widths_outside_k_range():
     """Constructor refuses K outside {1, 2, 3}."""
-    import pytest as _pt
-    with _pt.raises(ValueError, match=r"widths length"):
+    with pytest.raises(ValueError, match=r"widths length"):
         InsertTileLoadStore(widths=())
-    with _pt.raises(ValueError, match=r"widths length"):
+    with pytest.raises(ValueError, match=r"widths length"):
         InsertTileLoadStore(widths=(8, 8, 8, 8))
 
 
@@ -323,8 +322,8 @@ def test_walker_stages_linear_access_via_tile_branch():
 
 def _build_gather_tile_fixture():
     """``A[idx[ii]]`` (K=1 1-D gather): non-transient A + non-transient idx in a body NSDFG."""
-    from dace.subsets import Range as _Range
-    from dace.symbolic import pystr_to_symbolic as _to_sym
+    from dace.subsets import Range
+    from dace.symbolic import pystr_to_symbolic
 
     sdfg = dace.SDFG("walker_gather_fixture")
     sdfg.add_array("A", (32, ), dace.float64, transient=False)
@@ -341,7 +340,7 @@ def _build_gather_tile_fixture():
     t_inner = instate.add_access("out_t")
     tasklet = instate.add_tasklet("ld", {"_a"}, {"_o"}, "_o = _a")
     instate.add_edge(a_inner, None, tasklet, "_a",
-                     Memlet(data="A", subset=_Range([(_to_sym("idx[ii]"), _to_sym("idx[ii]"), 1)])))
+                     Memlet(data="A", subset=Range([(pystr_to_symbolic("idx[ii]"), pystr_to_symbolic("idx[ii]"), 1)])))
     instate.add_edge(tasklet, "_o", t_inner, None, Memlet("out_t[0]"))
 
     nsdfg = state.add_nested_sdfg(inner, {"A", "idx"}, set(), symbol_mapping={"ii": "ii"})
@@ -390,8 +389,8 @@ def test_walker_stages_gather_access_via_tile_branch_with_idx_sources():
 
 def _build_k2_gather_tile_fixture():
     """K=2 multi-tile-dim gather: ``A[idx[ii, jj]]`` -- depends on both tile iter-vars."""
-    from dace.subsets import Range as _Range
-    from dace.symbolic import pystr_to_symbolic as _to_sym
+    from dace.subsets import Range
+    from dace.symbolic import pystr_to_symbolic
 
     sdfg = dace.SDFG("walker_k2_gather_fixture")
     sdfg.add_array("A", (64, ), dace.float64, transient=False)
@@ -407,8 +406,9 @@ def _build_k2_gather_tile_fixture():
     a_inner = instate.add_access("A")
     t_inner = instate.add_access("out_t")
     tasklet = instate.add_tasklet("ld", {"_a"}, {"_o"}, "_o = _a")
-    instate.add_edge(a_inner, None, tasklet, "_a",
-                     Memlet(data="A", subset=_Range([(_to_sym("idx[ii, jj]"), _to_sym("idx[ii, jj]"), 1)])))
+    instate.add_edge(
+        a_inner, None, tasklet, "_a",
+        Memlet(data="A", subset=Range([(pystr_to_symbolic("idx[ii, jj]"), pystr_to_symbolic("idx[ii, jj]"), 1)])))
     instate.add_edge(tasklet, "_o", t_inner, None, Memlet("out_t[0]"))
 
     nsdfg = state.add_nested_sdfg(inner, {"A", "idx"}, set(), symbol_mapping={"ii": "ii", "jj": "jj"})

@@ -20,10 +20,10 @@ from dace.libraries.tileops.nodes.tile_reduce import (
     TileReduce,
 )
 
-_CPU_ISAS = ["SCALAR", "AVX512", "AVX2", "ARM_NEON", "ARM_SVE"]
+CPU_ISAS = ["SCALAR", "AVX512", "AVX2", "ARM_NEON", "ARM_SVE"]
 
 
-@pytest.mark.parametrize("isa", _CPU_ISAS)
+@pytest.mark.parametrize("isa", CPU_ISAS)
 def test_reduce_selects_isa_for_full_k1(isa: str) -> None:
     # A full (axis=None), unmasked, K=1 TileReduce lowers to the CPU ISA
     # ``tile_reduce`` intrinsic (the CPU ISA headers now ship it) -- but only
@@ -153,12 +153,12 @@ def test_reduce_avx2_end_to_end_numeric(op, ref, W):
 
 
 if __name__ == "__main__":
-    for _isa in _CPU_ISAS:
-        test_reduce_selects_isa_for_full_k1(_isa)
+    for isa in CPU_ISAS:
+        test_reduce_selects_isa_for_full_k1(isa)
     test_reduce_kge2_falls_back_to_pure_on_cpu()
     test_reduce_cpu_emits_intrinsic_for_full_k1()
     test_reduce_cpu_falls_back_to_pure_for_masked_and_axis()
-    for _op, _ref in [("+", np.sum), ("*", np.prod), ("min", np.min), ("max", np.max)]:
-        for _W in [8, 16, 17]:
-            test_reduce_cpu_end_to_end_numeric(_op, _ref, _W)
+    for op, ref in [("+", np.sum), ("*", np.prod), ("min", np.min), ("max", np.max)]:
+        for W in [8, 16, 17]:
+            test_reduce_cpu_end_to_end_numeric(op, ref, W)
     print("CPU tile-reduce lowering tests passed")

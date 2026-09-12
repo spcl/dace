@@ -27,29 +27,29 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
     VectorizeCPUMultiDim, )
 
-_N = dace.symbol("N")
-_M = dace.symbol("M")
-_NNZ = dace.symbol("NNZ")
+N = dace.symbol("N")
+M = dace.symbol("M")
+NNZ = dace.symbol("NNZ")
 
 
 @dace.program
-def _k1_indirect_kernel(a: dace.float64[_N], b: dace.float64[_N], idx: dace.int32[_N]):
+def _k1_indirect_kernel(a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]):
     """1D indirect stencil: ``a[i] = b[idx[i]] + 1.0``."""
-    for i in dace.map[0:_N]:
+    for i in dace.map[0:N]:
         a[i] = b[idx[i]] + 1.0
 
 
 @dace.program
-def _k2_indirect_kernel(a: dace.float64[_M, _N], c: dace.float64[_M, _N], idx: dace.int32[_M, _N]):
+def _k2_indirect_kernel(a: dace.float64[M, N], c: dace.float64[M, N], idx: dace.int32[M, N]):
     """2D indirect stencil: ``c[i, j] = a[idx[i, j], j] + 1.0``."""
-    for i, j in dace.map[0:_M, 0:_N]:
+    for i, j in dace.map[0:M, 0:N]:
         c[i, j] = a[idx[i, j], j] + 1.0
 
 
 @dace.program
-def _spmv_kernel(y: dace.float64[_N], A: dace.float64[_N, _NNZ], x: dace.float64[_N], col: dace.int32[_NNZ]):
+def _spmv_kernel(y: dace.float64[N], A: dace.float64[N, NNZ], x: dace.float64[N], col: dace.int32[NNZ]):
     """SpMV-style: ``y[i] = sum_k A[i, k] * x[col[k]]``."""
-    for i, k in dace.map[0:_N, 0:_NNZ]:
+    for i, k in dace.map[0:N, 0:NNZ]:
         y[i] += A[i, k] * x[col[k]]
 
 

@@ -107,7 +107,7 @@ def test_infer_edge_endpoints_non_an_endpoint_returns_none():
     reports ``None`` for that side's data name + subset.
     """
     from dace.transformation.passes.vectorization.utils.subsets import infer_edge_endpoints
-    sdfg, state, a, _b = _build_an_to_an()
+    sdfg, state, a, _ = _build_an_to_an()
     t = state.add_tasklet("t", inputs={"_in"}, outputs=set(), code="pass")
     edge = state.add_edge(a, None, t, "_in", Memlet("A[0:8]"))
     src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg, state)

@@ -23,7 +23,7 @@ from tests.passes.vectorization.helpers.harness import N, X, Y, run_vectorizatio
 
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
 #: would SIGILL-refuse on an AVX2-only or ARM host.
-_HOST_ISA = detect_host_isa()
+HOST_ISA = detect_host_isa()
 
 pytestmark = pytest.mark.tile_nodes
 
@@ -102,7 +102,7 @@ def _vectorize_and_check_2d_reduction(widths):
     sdfg.name = f"sum2d_k{len(widths)}"
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=widths,
-                        target_isa=_HOST_ISA,
+                        target_isa=HOST_ISA,
                         remainder_strategy=RemainderStrategy.MASKED_TAIL,
                         branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
     sdfg.validate()

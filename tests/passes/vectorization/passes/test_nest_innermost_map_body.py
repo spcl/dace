@@ -203,10 +203,10 @@ def test_k2_scalar_staged_body_nest_alone_is_valid():
 
     # The boundary edges into/out of the body NSDFG must not carry a stale
     # other_subset (the connector descriptor defines the inner shape).
-    for _state in sdfg.states():
-        for node in _state.nodes():
+    for state in sdfg.states():
+        for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
-                for edge in (*_state.in_edges(node), *_state.out_edges(node)):
+                for edge in (*state.in_edges(node), *state.out_edges(node)):
                     if edge.data is not None and edge.data.data is not None:
                         assert edge.data.other_subset is None, \
                             f"boundary edge {edge.data.data} still carries other_subset {edge.data.other_subset}"

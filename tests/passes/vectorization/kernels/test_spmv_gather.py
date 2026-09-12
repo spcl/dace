@@ -28,12 +28,12 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-_N = dace.symbol("N")
-_NNZ = dace.symbol("NNZ")
+N = dace.symbol("N")
+NNZ = dace.symbol("NNZ")
 
 
 @dace.program
-def _spmv(y: dace.float64[_N], A: dace.float64[_N, _NNZ], x: dace.float64[_N], col: dace.int32[_NNZ]):
+def _spmv(y: dace.float64[N], A: dace.float64[N, NNZ], x: dace.float64[N], col: dace.int32[NNZ]):
     """SpMV-style gather + reduction, in the canonical Option-B form: a product
     Map (``prod[i, k] = A[i, k] * x[col[k]]`` -- straight-line body with a gather)
     followed by a ``Reduce`` over the reduced ``k`` axis (``y[i] = sum_k prod[i, k]``).
@@ -43,8 +43,8 @@ def _spmv(y: dace.float64[_N], A: dace.float64[_N, _NNZ], x: dace.float64[_N], c
     NOT as a for-loop or a WCR inside the vectorized map body (neither of which the
     tile path supports). The fused ``y[i] += A[i,k]*x[col[k]]`` form is lifted to
     this shape by a separate pass (see WP1-B)."""
-    prod = np.ndarray((_N, _NNZ), dace.float64)
-    for i, k in dace.map[0:_N, 0:_NNZ]:
+    prod = np.ndarray((N, NNZ), dace.float64)
+    for i, k in dace.map[0:N, 0:NNZ]:
         prod[i, k] = A[i, k] * x[col[k]]
     y[:] = np.sum(prod, axis=1)
 

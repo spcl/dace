@@ -89,8 +89,8 @@ def _reduce_sdfg(wcr, identity, dtype, schedule=dtypes.ScheduleType.Sequential, 
     # compiling different cases must not collide in .dacecache/<name>/.
     # Hash the raw wcr (a regex sanitiser would collapse + * & | ^ all to
     # '_', aliasing distinct operators into the same .dacecache dir).
-    import hashlib as _hl
-    h = _hl.md5(f"{tag}|{wcr}|{dtype.ctype}|{schedule.name}".encode()).hexdigest()[:10]
+    import hashlib
+    h = hashlib.md5(f"{tag}|{wcr}|{dtype.ctype}|{schedule.name}".encode()).hexdigest()[:10]
     sdfg = dace.SDFG(f"vr_{tag}_{h}")
     sdfg.add_array("A", [N], dtype)
     sdfg.add_array("out", [1], dtype)
@@ -104,23 +104,23 @@ def _reduce_sdfg(wcr, identity, dtype, schedule=dtypes.ScheduleType.Sequential, 
     return sdfg
 
 
-_FP_OPS = [
+FP_OPS = [
     ("lambda a, b: a + b", 0.0, lambda x: np.add.reduce(x)),
     ("lambda a, b: a * b", 1.0, lambda x: np.multiply.reduce(x)),
     ("lambda a, b: max(a, b)", None, lambda x: np.maximum.reduce(x)),
     ("lambda a, b: min(a, b)", None, lambda x: np.minimum.reduce(x)),
 ]
-_INT_OPS = [
+INT_OPS = [
     ("lambda a, b: a + b", 0, lambda x: np.add.reduce(x)),
     ("lambda a, b: a & b", -1, lambda x: np.bitwise_and.reduce(x)),
     ("lambda a, b: a | b", 0, lambda x: np.bitwise_or.reduce(x)),
     ("lambda a, b: a ^ b", 0, lambda x: np.bitwise_xor.reduce(x)),
 ]
-_SIZES = [7, 8, 9, 16, 17, 64]
+SIZES = [7, 8, 9, 16, 17, 64]
 
 
-@pytest.mark.parametrize("size", _SIZES)
-@pytest.mark.parametrize("wcr,identity,ref", _FP_OPS)
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("wcr,identity,ref", FP_OPS)
 def test_vectorized_fp_reduction_matrix(wcr, identity, ref, size):
     sdfg = _reduce_sdfg(wcr, identity, dace.float64, tag=f"fp{size}")
     sdfg.expand_library_nodes()
@@ -130,8 +130,8 @@ def test_vectorized_fp_reduction_matrix(wcr, identity, ref, size):
     assert np.allclose(out[0], ref(a), atol=1e-10), f"size={size} {wcr}: {out[0]} vs {ref(a)}"
 
 
-@pytest.mark.parametrize("size", _SIZES)
-@pytest.mark.parametrize("wcr,identity,ref", _INT_OPS)
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("wcr,identity,ref", INT_OPS)
 def test_vectorized_int_reduction_matrix(wcr, identity, ref, size):
     sdfg = _reduce_sdfg(wcr, identity, dace.int64, tag=f"int{size}")
     sdfg.expand_library_nodes()

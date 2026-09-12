@@ -26,7 +26,7 @@ NB = dace.symbol("NB")
 NLEV = dace.symbol("NLEV")
 NPROMA = dace.symbol("NPROMA")
 
-_WIDTHS = (8, 8)
+WIDTHS = (8, 8)
 
 
 @dace.program
@@ -56,7 +56,7 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     """
     return sum(1 for n, parent in sdfg.all_nodes_recursive()
                if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
-               and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, _WIDTHS))
+               and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, WIDTHS))
 
 
 def _count_tile_scatters(sdfg: dace.SDFG) -> int:

@@ -130,7 +130,7 @@ def test_transitive_loop_symbol_guard_is_refused():
 
 def test_map_param_guard_is_refused():
     """The iteration symbol is a MapEntry param reached across an NSDFG boundary."""
-    _outer, inner = _build_map_param_guard_sdfg()
+    _, inner = _build_map_param_guard_sdfg()
     rewritten = SameWriteSetIfElseToITECFG().apply_pass(inner, {})
     assert rewritten is None, "map-param iteration guard was if-converted"
     assert len(_conditional_blocks(inner)) == 1

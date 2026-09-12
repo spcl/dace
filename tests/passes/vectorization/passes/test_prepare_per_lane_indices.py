@@ -31,7 +31,7 @@ def test_widen_accesses_does_not_materialise_idx_tile_for_gather_access():
     WidenAccesses handles widening + per-lane SYMBOL fanout (step 5), NOT
     tile materialisation.
     """
-    from dace.memlet import Memlet as _Memlet
+    from dace.memlet import Memlet
     from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 
     sdfg = dace.SDFG("walker_gather_fixture")
@@ -48,18 +48,18 @@ def test_widen_accesses_does_not_materialise_idx_tile_for_gather_access():
     a_inner = instate.add_access("A")
     t_inner = instate.add_access("out_t")
     tasklet = instate.add_tasklet("ld", {"_a"}, {"_o"}, "_o = _a")
-    from dace.subsets import Range as _Range
-    from dace.symbolic import pystr_to_symbolic as _to_sym
+    from dace.subsets import Range
+    from dace.symbolic import pystr_to_symbolic
     instate.add_edge(a_inner, None, tasklet, "_a",
-                     _Memlet(data="A", subset=_Range([(_to_sym("idx[ii]"), _to_sym("idx[ii]"), 1)])))
-    instate.add_edge(tasklet, "_o", t_inner, None, _Memlet("out_t[0]"))
+                     Memlet(data="A", subset=Range([(pystr_to_symbolic("idx[ii]"), pystr_to_symbolic("idx[ii]"), 1)])))
+    instate.add_edge(tasklet, "_o", t_inner, None, Memlet("out_t[0]"))
 
     nsdfg = state.add_nested_sdfg(inner, {"A", "idx"}, set(), symbol_mapping={"ii": "ii"})
     a_outer = state.add_access("A")
     idx_outer = state.add_access("idx")
-    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=_Memlet("A[0:32]"))
-    state.add_memlet_path(idx_outer, me, nsdfg, dst_conn="idx", memlet=_Memlet("idx[0:32]"))
-    state.add_nedge(nsdfg, mx, _Memlet())
+    state.add_memlet_path(a_outer, me, nsdfg, dst_conn="A", memlet=Memlet("A[0:32]"))
+    state.add_memlet_path(idx_outer, me, nsdfg, dst_conn="idx", memlet=Memlet("idx[0:32]"))
+    state.add_nedge(nsdfg, mx, Memlet())
 
     before_int_arrays = sum(1 for d in inner.arrays.values()
                             if isinstance(d, dace.data.Array) and d.transient and d.dtype == dace.int64)

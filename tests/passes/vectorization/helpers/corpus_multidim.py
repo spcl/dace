@@ -52,10 +52,10 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 #: full rename instead of the real delta. The ISA still varies per host -- it just stops leaking
 #: into the identifier. On a SCALAR-only host the two arms are the same config; both still run (the
 #: ID set must not depend on the runner's CPU either).
-_HOST_ISA = detect_host_isa()
+HOST_ISA = detect_host_isa()
 CONFIGS: Dict[str, dict] = {
     f"{label}_{short}": dict(target_isa=isa, branch_mode=mode)
-    for label, isa in (("hostsimd", _HOST_ISA), ("scalar", "SCALAR"))
+    for label, isa in (("hostsimd", HOST_ISA), ("scalar", "SCALAR"))
     for short, mode in (("merge", "merge"), ("fpfac", "fp_factor"))
 }
 
@@ -65,7 +65,7 @@ PHASES: Tuple[str, ...] = ("base", *CONFIGS)
 
 #: Calls that can lower to a conditional / select. Over-broad on purpose (see
 #: :func:`exercises_branch_lowering`).
-_BRANCH_CALLS = frozenset({"where", "select", "clip", "min", "max", "minimum", "maximum", "fmin", "fmax"})
+BRANCH_CALLS = frozenset({"where", "select", "clip", "min", "max", "minimum", "maximum", "fmin", "fmax"})
 
 
 def exercises_branch_lowering(program) -> bool:
@@ -115,7 +115,7 @@ def _branches(fn, seen) -> bool:
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else (func.id if isinstance(func, ast.Name) else "")
         # ``np.divide(..., where=mask)`` is a predicated write, same as an if/else.
-        if name in _BRANCH_CALLS or any(kw.arg == "where" for kw in node.keywords):
+        if name in BRANCH_CALLS or any(kw.arg == "where" for kw in node.keywords):
             return True
         callee = glb.get(name)
         callee = callee.f if isinstance(callee, DaceProgram) else callee

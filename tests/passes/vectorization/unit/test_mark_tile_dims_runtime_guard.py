@@ -27,10 +27,10 @@ from dace.transformation.passes.vectorization.enums import BranchMode
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-_GUARD_STATE_LABEL = "_tile_runtime_check"  # the now-removed guard's state label
+GUARD_STATE_LABEL = "_tile_runtime_check"  # the now-removed guard's state label
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
 #: would SIGILL-refuse on an AVX2-only or ARM host.
-_HOST_ISA = detect_host_isa()
+HOST_ISA = detect_host_isa()
 
 
 def _build_inner_map_sdfg(name: str, trip):
@@ -58,7 +58,7 @@ def _build_inner_map_sdfg(name: str, trip):
 
 
 def _guard_states(sdfg):
-    return [s for s in sdfg.nodes() if isinstance(s, dace.SDFGState) and s.label == _GUARD_STATE_LABEL]
+    return [s for s in sdfg.nodes() if isinstance(s, dace.SDFGState) and s.label == GUARD_STATE_LABEL]
 
 
 def test_mark_tile_dims_no_guard_for_symbolic_trip():
@@ -102,7 +102,7 @@ def test_mark_tile_dims_specs_static_trip_below_width_for_masked_tail():
     assert not _guard_states(sdfg)
 
 
-@pytest.mark.parametrize("strat,isa", [("full_mask", _HOST_ISA), ("scalar_postamble", "SCALAR")])
+@pytest.mark.parametrize("strat,isa", [("full_mask", HOST_ISA), ("scalar_postamble", "SCALAR")])
 @pytest.mark.parametrize("n", [3, 5, 7])
 def test_symbolic_trip_below_width_runs_correctly(strat, isa, n):
     """A symbolic-trip kernel run with ``N < W`` produces correct results -- the

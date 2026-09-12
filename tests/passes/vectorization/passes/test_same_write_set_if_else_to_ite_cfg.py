@@ -767,7 +767,7 @@ def test_promote_gather_indices_refuses_without_a_def_edge():
     """With no edge to hoist the assignment onto (a CFG start block), the nested
     subscript survives unchanged and ``_has_nested_subscript`` flags it so the
     caller refuses the lift instead of emitting a bare-pointer read."""
-    sdfg, _merge = _gather_merge_two_preds_sdfg()
+    sdfg, _ = _gather_merge_two_preds_sdfg()
     p = SameWriteSetIfElseToITECFG()
     rhs = "w[idx[i], 0] > 0.0"
 

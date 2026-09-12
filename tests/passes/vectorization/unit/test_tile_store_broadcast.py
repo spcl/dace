@@ -36,14 +36,14 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
 KLEV = dace.symbol("KLEV")
 KLON = dace.symbol("KLON")
 
-_WIDTHS = (8, 8)
+WIDTHS = (8, 8)
 
-_PTSPHY = 50.0
-_RLMIN = 1.0e-8
-_RAMIN = 1.0e-8
-_RALVDCP = 2.5008e6 / 1004.7
-_RALSDCP = 2.8345e6 / 1004.7
-_ZQTMST = 1.0 / _PTSPHY
+PTSPHY = 50.0
+RLMIN = 1.0e-8
+RAMIN = 1.0e-8
+RALVDCP = 2.5008e6 / 1004.7
+RALSDCP = 2.8345e6 / 1004.7
+ZQTMST = 1.0 / PTSPHY
 
 
 @dace.program
@@ -60,15 +60,15 @@ def _tidy_branch(
     # arm, which is the canonical TileStore broadcast pattern.
     for jk in range(KLEV):
         for jl in range(KLON):
-            if zqx_l[jk, jl] + zqx_i[jk, jl] < _RLMIN or za[jk, jl] < _RAMIN:
-                zqadj_l = zqx_l[jk, jl] * _ZQTMST
+            if zqx_l[jk, jl] + zqx_i[jk, jl] < RLMIN or za[jk, jl] < RAMIN:
+                zqadj_l = zqx_l[jk, jl] * ZQTMST
                 ptend_q[jk, jl] = ptend_q[jk, jl] + zqadj_l
-                ptend_t[jk, jl] = ptend_t[jk, jl] - _RALVDCP * zqadj_l
+                ptend_t[jk, jl] = ptend_t[jk, jl] - RALVDCP * zqadj_l
                 zqx_v[jk, jl] = zqx_v[jk, jl] + zqx_l[jk, jl]
                 zqx_l[jk, jl] = 0.0
-                zqadj_i = zqx_i[jk, jl] * _ZQTMST
+                zqadj_i = zqx_i[jk, jl] * ZQTMST
                 ptend_q[jk, jl] = ptend_q[jk, jl] + zqadj_i
-                ptend_t[jk, jl] = ptend_t[jk, jl] - _RALSDCP * zqadj_i
+                ptend_t[jk, jl] = ptend_t[jk, jl] - RALSDCP * zqadj_i
                 zqx_v[jk, jl] = zqx_v[jk, jl] + zqx_i[jk, jl]
                 zqx_i[jk, jl] = 0.0
                 za[jk, jl] = 0.0
@@ -89,7 +89,7 @@ def _tasklet_count(sdfg: dace.SDFG) -> int:
     tasklets, user direction 2026-06-15) -- none of those touch a tile."""
     return sum(1 for n, parent in sdfg.all_nodes_recursive()
                if isinstance(n, dace.nodes.Tasklet) and not _is_assign_tasklet(n)
-               and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, _WIDTHS))
+               and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, WIDTHS))
 
 
 def test_tilestore_symbol_broadcast_minimal():

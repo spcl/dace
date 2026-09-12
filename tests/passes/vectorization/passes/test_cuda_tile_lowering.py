@@ -16,7 +16,7 @@ from dace.libraries.tileops import _dispatch
 from dace.libraries.tileops import environments as tile_env
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _VALID_ISAS
 
-_CUDA_H = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "tile_ops", "cuda.h")
+CUDA_H = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "tile_ops", "cuda.h")
 
 
 def test_cuda_isa_registered():
@@ -34,7 +34,7 @@ def test_cuda_environment_pulls_header():
 
 
 def test_cuda_header_has_half2_intrinsics():
-    src = open(_CUDA_H).read()
+    src = open(CUDA_H).read()
     # fp16x2 arithmetic + min/max + negate/abs (the core SIMD ops).
     for intr in ("__hadd2", "__hsub2", "__hmul2", "__h2div", "__hmin2", "__hmax2", "__hneg2", "__habs2"):
         assert intr in src, f"cuda.h missing fp16x2 intrinsic {intr}"

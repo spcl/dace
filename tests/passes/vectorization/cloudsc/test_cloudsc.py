@@ -18,7 +18,7 @@ from tests.passes.vectorization.helpers.harness import (
 
 #: Only ``insert_copies`` was ever read out of this; the discarded first element made half of
 #: every parametrization an exact duplicate run.
-_OPT_PARAMS = [True, False]
+OPT_PARAMS = [True, False]
 
 # Also run the cloudsc snippets through the K-dim tile-op path
 # (VectorizeCPUMultiDim). The ``vectorize_config`` fixture (conftest) adds a
@@ -62,8 +62,8 @@ def cloudsc_snippet_two(
     for i in dace.map[0:N]:
         for j in dace.map[0:N]:
             B[i, j] = A[1, i, j] + A[0, i, j]
-            _if_cond_5 = B[i, j] > c
-            if _if_cond_5:
+            if_cond_5 = B[i, j] > c
+            if if_cond_5:
                 D[i, j] = B[i, j] / A[0, i, j]
                 E[i, j] = 1.0 - D[i, j]
             else:
@@ -72,12 +72,12 @@ def cloudsc_snippet_two(
 
 
 def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy, emission_style, vectorize_config):
-    _S = 64
-    A = numpy.random.random((2, _S, _S))
-    B = numpy.random.random((_S, _S))
+    dim_size = 64
+    A = numpy.random.random((2, dim_size, dim_size))
+    B = numpy.random.random((dim_size, dim_size))
     c = 0.1
-    D = numpy.random.random((_S, _S))
-    E = numpy.random.random((_S, _S))
+    D = numpy.random.random((dim_size, dim_size))
+    E = numpy.random.random((dim_size, dim_size))
 
     run_vectorization_test(dace_func=cloudsc_snippet_two,
                            arrays={
@@ -88,7 +88,7 @@ def test_snippet_from_cloudsc_two(branch_mode, remainder_strategy, emission_styl
                            },
                            params={
                                'c': c,
-                               'N': _S
+                               'N': dim_size
                            },
                            vector_width=8,
                            sdfg_name="cloudsc_snippet_two",
@@ -106,12 +106,12 @@ def has_no_inner_maps(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
 
 
 def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_strategy):
-    _S = 64
-    A = numpy.random.random((2, _S, _S))
-    B = numpy.random.random((_S, _S))
+    dim_size = 64
+    A = numpy.random.random((2, dim_size, dim_size))
+    B = numpy.random.random((dim_size, dim_size))
     c = 0.1
-    D = numpy.random.random((_S, _S))
-    E = numpy.random.random((_S, _S))
+    D = numpy.random.random((dim_size, dim_size))
+    E = numpy.random.random((dim_size, dim_size))
 
     vectorized_sdfg = run_vectorization_test(dace_func=cloudsc_snippet_two,
                                              arrays={
@@ -122,7 +122,7 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
                                              },
                                              params={
                                                  'c': c,
-                                                 'N': _S
+                                                 'N': dim_size
                                              },
                                              vector_width=8,
                                              sdfg_name="cloudsc_snippet_two_fuse_overlapping_loads",
@@ -148,7 +148,7 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads(branch_mode, remainder_
     # the vector width exists), not a bogus union.
     vw_step_maps = [
         n for n, _ in vectorized_sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and any(str(s) == "8" for _b, _e, s in n.map.range)
+        if isinstance(n, dace.nodes.MapEntry) and any(str(s) == "8" for _, _, s in n.map.range)
     ]
     assert vw_step_maps, ("cloudsc_two did not vectorize under fuse_overlapping_loads=True: no map strided by "
                           "the vector width was produced")
@@ -202,8 +202,8 @@ def test_snippet_from_cloudsc_four(remainder_strategy, emission_style, vectorize
     klev = 64
     kidia = 1
     kfdia = 32
-    _for_it_92 = 0
-    _for_it_91 = 0
+    for_it_92 = 0
+    for_it_91 = 0
 
     # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
     arr_shapes = {
@@ -220,8 +220,8 @@ def test_snippet_from_cloudsc_four(remainder_strategy, emission_style, vectorize
         "kidia": numpy.int64(kidia),
         "klev": numpy.int64(klev),
         "klon": numpy.int64(klon),
-        "_for_it_92": numpy.int64(_for_it_92),
-        "_for_it_91": numpy.int64(_for_it_91),
+        "_for_it_92": numpy.int64(for_it_92),
+        "_for_it_91": numpy.int64(for_it_91),
     }
 
     # Quick verification display: shape and contiguity / strides
@@ -274,7 +274,7 @@ def snippet_three_inputs(ralvdcp: float | None = None):
     return arrays, scalars
 
 
-@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
+@pytest.mark.parametrize("opt_parameters", OPT_PARAMS)
 def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strategy, vectorize_config):
     insert_copies = opt_parameters
     sdfg = _get_cloudsc_snippet_three(add_scalar=False)
@@ -292,10 +292,10 @@ def test_snippet_from_cloudsc_three(opt_parameters, branch_mode, remainder_strat
                            branch_mode=branch_mode,
                            remainder_strategy=remainder_strategy,
                            vectorize_config=vectorize_config,
-                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
+                           param_tag=f"param{OPT_PARAMS.index(opt_parameters)}")
 
 
-@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
+@pytest.mark.parametrize("opt_parameters", OPT_PARAMS)
 def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_mode, remainder_strategy,
                                                         vectorize_config):
     """The map-range-dependent subset variant: the staged window moves with the tile base."""
@@ -315,10 +315,10 @@ def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters, branch_m
                            branch_mode=branch_mode,
                            remainder_strategy=remainder_strategy,
                            vectorize_config=vectorize_config,
-                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
+                           param_tag=f"param{OPT_PARAMS.index(opt_parameters)}")
 
 
-@pytest.mark.parametrize("opt_parameters", _OPT_PARAMS)
+@pytest.mark.parametrize("opt_parameters", OPT_PARAMS)
 def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode, remainder_strategy, vectorize_config):
     """The variant whose body also reads a lane-uniform scalar (``ralvdcp``)."""
     insert_copies = opt_parameters
@@ -337,7 +337,7 @@ def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters, branch_mode,
                            branch_mode=branch_mode,
                            remainder_strategy=remainder_strategy,
                            vectorize_config=vectorize_config,
-                           param_tag=f"param{_OPT_PARAMS.index(opt_parameters)}")
+                           param_tag=f"param{OPT_PARAMS.index(opt_parameters)}")
 
 
 # ``no_inline=True`` keeps snippet three's nested SDFGs as real nested SDFGs instead of

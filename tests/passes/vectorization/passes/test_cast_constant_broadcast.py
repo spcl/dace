@@ -31,9 +31,9 @@ M = 64  # exact multiple of width 2
 
 #: A per-lane constant fill loop ``X[__l0] = <numeric-or-cast const>;`` -- the SLOW path this
 #: fix removes for a same-domain constant broadcast.
-_CONST_FILL_RE = re.compile(r"\[__l\d+\]\s*=\s*(?:dace::\w+\(\(?\s*[-+0-9.]|\(?\s*[-+0-9.]+\s*\)?\s*;)")
+CONST_FILL_RE = re.compile(r"\[__l\d+\]\s*=\s*(?:dace::\w+\(\(?\s*[-+0-9.]|\(?\s*[-+0-9.]+\s*\)?\s*;)")
 #: ``tile_binop<T, W, 'op', bA, bB, bC>`` -- capture the three operand broadcast flags.
-_BINOP_FLAGS_RE = re.compile(r"tile_binop<[^>]*'.'\s*,\s*(true|false)\s*,\s*(true|false)\s*,\s*(true|false)\s*>")
+BINOP_FLAGS_RE = re.compile(r"tile_binop<[^>]*'.'\s*,\s*(true|false)\s*,\s*(true|false)\s*,\s*(true|false)\s*>")
 
 
 def _config(expand: bool) -> VectorizeConfig:
@@ -58,11 +58,11 @@ def _emitted_code(sdfg: dace.SDFG) -> str:
 
 
 def _has_const_fill_loop(code: str) -> bool:
-    return any(_CONST_FILL_RE.search(ln) for ln in code.splitlines())
+    return any(CONST_FILL_RE.search(ln) for ln in code.splitlines())
 
 
 def _binop_broadcast_flags(code: str):
-    return [tuple(f == "true" for f in m) for m in _BINOP_FLAGS_RE.findall(code)]
+    return [tuple(f == "true" for f in m) for m in BINOP_FLAGS_RE.findall(code)]
 
 
 # --------------------------- kernels (module scope) ---------------------------
