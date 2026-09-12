@@ -301,10 +301,14 @@ def ParseMemlet(visitor,
 
     try:
         subset, new_axes, arrdims, slice_dims = parse_memlet_subset(array, node, das, parsed_slice)
-    except IndexError:
+    except IndexError as reason:
+        # the raising site names the construct it rejected; reporting only the rank sends a reader
+        # looking at dimensionality when the cause is a boolean mask's position or its shape
+        detail = str(reason).strip()
         raise DaceSyntaxError(
             visitor, node, 'Failed to parse memlet expression due to dimensionality. '
-            f'Array dimensions: {array.shape}, expression in code: {astutils.unparse(node)}')
+            f'Array dimensions: {array.shape}, expression in code: {astutils.unparse(node)}' +
+            (f' Rejected by: {detail}' if detail else '')) from reason
 
     # If undefined, default number of accesses is the slice size
     if num_accesses is None:
