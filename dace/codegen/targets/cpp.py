@@ -1131,7 +1131,12 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
             result = StringIO()
-            cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=defined_symbols)
+            cppunparse.CPPUnparser(rk,
+                                   ldepth + 1,
+                                   locals,
+                                   result,
+                                   defined_symbols=defined_symbols,
+                                   data_names=set(memlets) | set(sdfg.constants))
             callsite_stream.write(result.getvalue(), cfg, state_id, node)
 
 
@@ -1156,6 +1161,20 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         self.sdfg = sdfg
         self.framecode = framecode
         super().__init__(tree, 0, cppunparse.CPPLocals(), file, expr_semicolon=False, defined_symbols=defined_symbols)
+
+    def c_name_dtype(self, name: str):
+        """The caller's table first, then the SDFG's own symbols and scalars, which an edge reads by name."""
+        dtype = super().c_name_dtype(name)
+        if dtype is not None:
+            return dtype
+        if name in self.sdfg.symbols:
+            return self.sdfg.symbols[name]
+        desc = self.sdfg.arrays.get(name)
+        return desc.dtype if isinstance(desc, data.Scalar) else None
+
+    def c_data_name(self, name: str) -> bool:
+        """An edge reads data by its container's name; every other name it reads is a symbol."""
+        return name in self.sdfg.arrays
 
     def _Name(self, t: ast.Name):
         if t.id not in self.sdfg.arrays:

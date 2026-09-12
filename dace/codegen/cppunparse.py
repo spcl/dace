@@ -80,7 +80,7 @@ import sympy
 import dace
 from numbers import Number
 from io import StringIO
-from typing import List
+from typing import Dict, List, Optional, Tuple
 from dace import dtypes, cpf_lowering
 from dace.sdfg import type_inference
 
@@ -262,7 +262,31 @@ class CPPLocals(LocalScheme):
             del self.locals[var]
 
 
-def runtime_call(name: str, arguments: List[str]) -> str:
+def c_literal_type(value) -> Optional[str]:
+    """The dace type name of the C literal :meth:`CPPUnparser._Num` prints for ``value``, or ``None``.
+
+    A Python integer carries the suffix ``_Num`` gives it; a NumPy integer is printed bare, and a bare
+    decimal literal too wide for ``int`` is a ``long``.
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return 'int32'
+    if isinstance(value, (complex, np.complexfloating)):
+        return dtypes.dtype_to_typeclass(type(value)).to_string()
+    if isinstance(value, (float, np.floating)):
+        return 'float64'
+    if isinstance(value, np.integer):
+        return 'int32' if int(value).bit_length() < 32 else 'int64'
+    if isinstance(value, int):
+        bits = value.bit_length()
+        if bits < 32:
+            return 'int32'
+        if bits == 32:
+            return 'uint32' if value >= 0 else 'int64'
+        return 'int64' if bits <= 63 else 'uint64'
+    return None
+
+
+def runtime_call(name: str, arguments: List[str], types: Optional[Tuple[Optional[str], ...]] = None) -> str:
     """A call to a DaCe runtime function, spelled for the ambient dialect.
 
     Under :attr:`~dace.cpf_lowering.Dialect.RUNTIME` this is the call the generators have always
@@ -277,13 +301,14 @@ def runtime_call(name: str, arguments: List[str]) -> str:
 
     :param name: the function as the ordinary generators spell it, qualified or not.
     :param arguments: the already-printed argument expressions.
+    :param types: the dace type name of each argument, which the C dialect names a typed helper after.
     :returns: the call (or the expression that replaces it).
     :raises NotImplementedError: if a runtime function has no standalone spelling.
     """
     if cpf_lowering.standalone():
         dialect = cpf_lowering.active_dialect()
         bare = name.rsplit('::', 1)[-1]
-        lowered = cpf_lowering.lowering_for(bare, tuple(arguments), dialect)
+        lowered = cpf_lowering.lowering_for(bare, tuple(arguments), dialect, types)
         if lowered is not None:
             return lowered
         if cpf_lowering.needs_definition(bare, dialect):
@@ -311,9 +336,14 @@ class CPPUnparser:
                  indent_offset=0,
                  type_inference=False,
                  defined_symbols=None,
-                 language=dace.dtypes.Language.CPP):
+                 language=dace.dtypes.Language.CPP,
+                 data_names=None):
 
         self.f = file
+        #: The names among ``defined_symbols`` that are data, declared at exactly their dtype.
+        self.data_names = frozenset(data_names or ())
+        #: Each local this unparser declared, with the C type of the value it was declared from.
+        self.c_local_types: Dict[str, Optional[str]] = {}
         self.future_imports = []
         self._indent = depth
         self.indent_output = indent_output
@@ -366,7 +396,72 @@ class CPPUnparser:
 
     def emit_call(self, name: str, arguments) -> None:
         """Write a call to the runtime function ``name`` over the argument AST nodes."""
-        self.write(runtime_call(name, [self.render(node) for node in arguments]))
+        types = tuple(self.c_type(node) for node in arguments) if cpf_lowering.standalone_c() else None
+        self.write(runtime_call(name, [self.render(node) for node in arguments], types))
+
+    def c_name_dtype(self, name: str):
+        """The type the caller declared ``name`` with, or ``None``."""
+        return self.defined_symbols.get(name)
+
+    def c_scalar_type(self, dtype) -> Optional[str]:
+        """The dace type name of an arithmetic ``dtype``, or ``None`` for anything else."""
+        if not isinstance(dtype, dtypes.typeclass) or isinstance(dtype, (dtypes.pointer, dtypes.vector)):
+            return None
+        name = dtype.to_string()
+        return name if cpf_lowering.c_arithmetic(name) else None
+
+    def c_data_name(self, name: str) -> bool:
+        """Whether ``name`` is data, which the unit declares at exactly its dtype, rather than a symbol."""
+        return name in self.data_names
+
+    def c_type(self, node: ast.AST) -> Optional[str]:
+        """The dace type name of the C value ``node`` prints as, or ``None`` when it cannot be told.
+
+        Follows C rather than NumPy: an integer literal is an ``int``, an integer operand beside a
+        ``float`` makes a ``float``, and binary operands meet at the usual arithmetic conversions. Data
+        has the type it was declared with; a symbol is taken as
+        :func:`~dace.cpf_lowering.c_symbol_type` says, since its recorded width is not its declared one.
+        """
+        if isinstance(node, ast.Constant):
+            return c_literal_type(node.value)
+        if isinstance(node, ast.Name):
+            if node.id in self.c_local_types:
+                return self.c_local_types[node.id]
+            dtype = self.c_scalar_type(self.c_name_dtype(node.id))
+            if dtype is None or self.c_data_name(node.id):
+                return dtype
+            return cpf_lowering.c_symbol_type(dtype)
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            pointer = self.c_name_dtype(node.value.id)
+            return self.c_scalar_type(pointer.base_type) if isinstance(pointer, dtypes.pointer) else None
+        if isinstance(node,
+                      (ast.Compare, ast.BoolOp)) or (isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not)):
+            return 'int32'
+        operands: List[ast.AST] = []
+        if isinstance(node, ast.UnaryOp):
+            operands = [node.operand]
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.LShift, ast.RShift)):
+            operands = [node.left]
+        elif isinstance(node, ast.BinOp) and not isinstance(node.op, (ast.Pow, ast.MatMult)):
+            operands = [node.left, node.right]
+        elif isinstance(node, ast.IfExp):
+            operands = [node.body, node.orelse]
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
+            if node.func.id in self._typecast_funcs or node.func.id in _typecast_func_to_cpp:
+                return node.func.id if cpf_lowering.c_arithmetic(node.func.id) else None
+            if node.func.id in cpf_lowering.C_CTYPE_DTYPES:
+                return cpf_lowering.C_CTYPE_DTYPES[node.func.id]
+            if node.func.id in cpf_lowering.C_TYPED_MINMAX_DEFINITIONS:
+                return node.func.id.rsplit('_', 1)[1]
+            # Instantiated at the type their arguments convert to, which is also what they return.
+            if node.func.id in ('min', 'max', 'Min', 'Max', 'int_ceil', 'int_floor', 'int_floor_ni', 'py_floor',
+                                'py_mod', 'floor_mod', 'mod', 'Mod', 'cpp_mod', 'Mod_float', 'Modulo', 'Modulo_float',
+                                'gcd', 'lcm'):
+                operands = list(node.args)
+        types = tuple(self.c_type(operand) for operand in operands)
+        if not types or any(dtype is None for dtype in types):
+            return None
+        return cpf_lowering.c_common_type(types)
 
     def typecast(self, ctype: str, argument: str) -> str:
         """A numeric cast of ``argument`` to ``ctype``, spelled for the ambient dialect.
@@ -519,6 +614,9 @@ class CPPUnparser:
                     else:
                         self.locals.define(target.id, t.lineno, self._indent)
                         self.write("auto ")
+                        if cpf_lowering.standalone_c():
+                            # ``auto`` takes the value's own C type, which a later helper call is picked by.
+                            self.c_local_types[target.id] = self.c_type(t.value)
 
             # dispatch target
             if target:
@@ -1540,9 +1638,15 @@ class CPPUnparser:
         raise NotImplementedError('Invalid C++')
 
 
-def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
+def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None, data_names=None):
     strio = StringIO()
-    CPPUnparser(node, 0, locals or CPPLocals(), strio, expr_semicolon=expr_semicolon, defined_symbols=defined_symbols)
+    CPPUnparser(node,
+                0,
+                locals or CPPLocals(),
+                strio,
+                expr_semicolon=expr_semicolon,
+                defined_symbols=defined_symbols,
+                data_names=data_names)
     return strio.getvalue().strip()
 
 

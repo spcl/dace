@@ -3665,17 +3665,18 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # preserved, which is what index arithmetic (``N // 8``) requires.
         self.fp_ctype = fp_ctype
 
-    def _mpr_call(self, name, arguments):
+    def _mpr_call(self, name, arguments, types=None):
         """The standalone spelling of a call, or ``None`` if this dialect emits it unchanged.
 
         A helper with an inline definition is emitted as a plain call; which definitions a
         translation unit needs is recovered from the finished text by
         :func:`~dace.cpf_lowering.helpers_used`, because ``symstr`` is memoized and per-printer
-        state would not survive a cache hit.
+        state would not survive a cache hit. ``types`` are the arguments' C types (:meth:`c_type`),
+        which the C dialect names a typed helper after.
         """
         if self.dialect not in cpf_lowering.STANDALONE_DIALECTS:
             return None
-        lowered = cpf_lowering.lowering_for(name, tuple(arguments), self.dialect)
+        lowered = cpf_lowering.lowering_for(name, tuple(arguments), self.dialect, types)
         if lowered is not None:
             return lowered
         if cpf_lowering.needs_definition(name, self.dialect):
@@ -3887,10 +3888,62 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         is a call to the DaCe runtime's variadic ``Max``, which standalone output cannot resolve.
         """
         arguments = [self._print(argument) for argument in expr.args]
-        lowered = self._mpr_call(name, arguments)
+        types = (tuple(self.c_type(argument)
+                       for argument in expr.args) if self.dialect is cpf_lowering.Dialect.STANDALONE_C else None)
+        lowered = self._mpr_call(name, arguments, types)
         if lowered is not None:
             return lowered
         return '%s(%s)' % (name, ', '.join(arguments))
+
+    def c_type(self, expr) -> Optional[str]:
+        """The dace type name the C dialect picks a typed helper by for ``expr``, or ``None``.
+
+        :param expr: a sympy expression this printer prints.
+        :returns: the type of the printed C expression under C's usual arithmetic conversions, with
+                  a symbol taken as :func:`~dace.cpf_lowering.c_symbol_type` says, or ``None``.
+        """
+        if isinstance(expr, symbol):
+            return cpf_lowering.c_symbol_type(expr.dtype.to_string())
+        if isinstance(expr, TypedConstant):
+            return expr.dtype.to_string()
+        if isinstance(expr, sympy.logic.boolalg.Boolean):
+            return 'int32'
+        if isinstance(expr, sympy.Integer):
+            return 'int32' if abs(int(expr)) < 2**31 else 'int64'
+        if isinstance(expr, sympy.Rational):
+            return {'float': 'float32', 'double': 'float64'}.get(self.fp_ctype, 'int32')
+        if isinstance(expr, (sympy.Float, sympy.NumberSymbol)):
+            return 'float64'
+        name = str(expr.func)
+        name = name[2:] if name.startswith('__') else name
+        if name in _TYPECAST_CPP:
+            return name
+        if isinstance(expr, sympy.Pow):
+            base, exponent = self.c_type(expr.base), self.c_type(expr.exp)
+            if base is None or exponent is None:
+                return None
+            if expr.exp.is_Integer:
+                return cpf_lowering.c_common_type((base, ))
+            common = cpf_lowering.c_common_type((base, exponent))
+            return common if common in cpf_lowering.C_FLOATING_RANKS else 'float64'
+        if isinstance(expr, (sympy.floor, sympy.ceiling)):
+            inner = self.c_type(expr.args[0])
+            if inner is None or expr.args[0].is_integer:
+                return inner
+            if integral_index_expression(expr.args[0]):
+                return 'int64'
+            return inner if inner in cpf_lowering.C_FLOATING_RANKS else 'float64'
+        operands = expr.args
+        if name == 'IfExpr':
+            operands = expr.args[1:]
+        elif not (isinstance(expr, (sympy.Add, sympy.Mul, sympy.Mod, sympy.Max, sympy.Min, sympy.Abs)) or name
+                  in ('int_floor', 'int_ceil', 'int_floor_ni', 'py_floor', 'py_mod', 'mod', 'fortran_mod',
+                      'bitwise_and', 'bitwise_or', 'bitwise_xor', 'bitwise_invert', 'left_shift', 'right_shift')):
+            return None
+        types = tuple(self.c_type(operand) for operand in operands)
+        if not types or any(dtype is None for dtype in types):
+            return None
+        return cpf_lowering.c_common_type(types)
 
     def _print_Mod(self, expr):
         return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))

@@ -123,6 +123,27 @@ def test_sym2cpp_defaults_to_the_runtime_dialect():
     assert sym2cpp(sympy.Abs(X)) == sym2cpp(sympy.Abs(X), dialect=Dialect.RUNTIME)
 
 
+#: ``(label, expression, the typed helper its C spelling calls)``.
+C_SYMBOLIC_MINMAX = [
+    ('default-width-symbol', sympy.Max(symbolic.symbol('N'), 0), 'cpf_max_int64'),
+    ('int32-symbols', sympy.Min(symbolic.symbol('P', dace.int32), symbolic.symbol('Q', dace.int32)), 'cpf_min_int64'),
+    ('float32-symbols', sympy.Min(symbolic.symbol('f', dace.float32),
+                                  symbolic.symbol('g', dace.float32)), 'cpf_min_float32'),
+    ('float-literal', sympy.Max(symbolic.symbol('N'), sympy.Float(1.5)), 'cpf_max_float64'),
+    ('uint64-symbol', sympy.Max(symbolic.symbol('u', dace.uint64), symbolic.symbol('N')), 'cpf_max_uint64'),
+]
+
+
+@pytest.mark.parametrize('label,expression,helper', C_SYMBOLIC_MINMAX, ids=[label for label, _, _ in C_SYMBOLIC_MINMAX])
+def test_a_c_symbolic_minmax_names_the_helper_for_its_widened_type(label, expression, helper):
+    """A symbol parsed from text carries DEFAULT_SYMBOL_TYPE rather than the width the unit declares,
+    so a signed integer min/max is instantiated at int64; an int32 helper would narrow an int64_t
+    extent. A floating or unsigned atom keeps its own type."""
+    lowered = sym2cpp(expression, dialect=Dialect.STANDALONE_C)
+    assert lowered.startswith(helper + '('), lowered
+    assert not re.search(r'\bcpf_(min|max)\(', lowered), f'{label}: the untyped dispatch name survived: {lowered}'
+
+
 #: ``(dace type, C++ spelling, C spelling)``. Only the complex widths differ between the dialects:
 #: C++ has a class template, C a type qualifier, and nothing else in the table has two spellings.
 CTYPES = [

@@ -12,7 +12,7 @@ output edge).
 from typing import Optional, Tuple
 
 import dace
-from dace import library, properties
+from dace import cpf_lowering, library, properties
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -38,22 +38,23 @@ def _identity_literal(op: str, ctype: str) -> str:
     raise ValueError(f"unknown op {op!r}")
 
 
-def _combine_expr(op: str, acc: str, val: str) -> str:
+def _combine_expr(op: str, acc: str, val: str, ctype: str) -> str:
     """Return the C++ expression that combines ``acc`` and ``val`` per ``op``.
 
     :param op: Reduction op.
     :param acc: Accumulator variable.
     :param val: New value variable.
+    :param ctype: The element type. A C rendering names it in ``std::min<T>``, the only
+                  ``std::min`` spelling the C dialect can type a helper by.
     :returns: A C++ expression (no trailing semicolon).
     """
     if op == "+":
         return f"{acc} + {val}"
     if op == "*":
         return f"{acc} * {val}"
-    if op == "min":
-        return f"std::min({acc}, {val})"
-    if op == "max":
-        return f"std::max({acc}, {val})"
+    if op in ("min", "max"):
+        template = f"<{ctype}>" if cpf_lowering.standalone_c() else ""
+        return f"std::{op}{template}({acc}, {val})"
     raise ValueError(f"unknown op {op!r}")
 
 
@@ -121,7 +122,7 @@ class ExpandTileReducePure(ExpandTransformation):
             src_off_terms.append(f"__l{d}" if stride == 1 else f"(__l{d} * {stride})")
             stride *= widths[d]
         src_off = " + ".join(reversed(src_off_terms)) if K else "0"
-        combine_acc = _combine_expr(op, "__acc", f"_src[{src_off}]")
+        combine_acc = _combine_expr(op, "__acc", f"_src[{src_off}]", ctype)
         lane_gate = f"if (_mask[{src_off}]) " if node.has_mask else ""
 
         if node.axis is None:
@@ -161,7 +162,7 @@ class ExpandTileReducePure(ExpandTransformation):
                 kept_stride *= w
             init_kept_off = " + ".join(reversed(init_kept_terms)) if kept_widths else "0"
             init_body = f"_dst[{init_kept_off}] = {init};"
-            combine_dst = _combine_expr(op, f"_dst[{reduce_kept_off}]", f"_src[{src_off}]")
+            combine_dst = _combine_expr(op, f"_dst[{reduce_kept_off}]", f"_src[{src_off}]", ctype)
             reduce_body = f"{lane_gate}_dst[{reduce_kept_off}] = {combine_dst};"
             init_widths = [w for _, w in kept_widths]
             code = (f"{nested_loops(init_widths, init_body)}\n"

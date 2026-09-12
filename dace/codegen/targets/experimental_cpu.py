@@ -1825,7 +1825,10 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         lhs = self._bare_access(target_node)
         if lhs is None:
             return self.generic_visit(node)
-        rhs = cppunparse.cppunparse(value, expr_semicolon=False, defined_symbols=self.operand_dtypes)
+        rhs = cppunparse.cppunparse(value,
+                                    expr_semicolon=False,
+                                    defined_symbols=self.operand_dtypes,
+                                    data_names=self.operand_dtypes)
         desc = self.sdfg.arrays[target]
         plain = '%s = %s;' % (lhs, rhs)
         if self.codegen._is_const_scalar(desc, target, self.sdfg):

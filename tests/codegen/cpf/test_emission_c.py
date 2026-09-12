@@ -311,7 +311,7 @@ def test_scan_keeps_its_parallel_inscan_form():
 def test_output_builds_without_warnings():
     """``-Wall -Wextra`` clean under the C driver, including every unused typed helper it emits."""
     _, code = render_c(c_clamp, 'mprc_clamp')
-    assert 'cpf_max(' in code and 'cpf_min(' in code, 'min/max must come from CPF\'s typed pair'
+    assert 'cpf_max_float64(' in code and 'cpf_min_float64(' in code, f'min/max must call the double helpers:\n{code}'
     diagnostics = compile_diagnostics(code, 'mprc_clamp', language='c')
     assert not diagnostics.strip(), f'CPF C output warns:\n{diagnostics}'
 
@@ -459,7 +459,7 @@ def test_index_helper_computes_in_int64():
     assert out[0] == 3000000007, 'the index arithmetic wrapped through 32 bits'
 
 
-# -- the _Generic min/max dispatch ---------------------------------------------------------------
+# -- the typed min/max helpers -------------------------------------------------------------------
 
 _MINMAX_PROBE = """
 #include <stdint.h>
@@ -467,39 +467,99 @@ _MINMAX_PROBE = """
 void probe({ctype} * out, {ctype} a, {ctype} b) {{ out[0] = {call}; }}
 """
 
-#: ``(numpy dtype, C type, a, b)``. The int64 pair is the one that matters: both values are exactly
-#: representable in double but their DIFFERENCE is not, so a dispatch that widened through double
-#: would return the wrong one of the two.
+#: ``(numpy dtype, C type, dace type, a, b)``. The int64 pair is the one that matters: both values
+#: are exactly representable in double but their DIFFERENCE is not, so a helper that widened through
+#: double would return the wrong one of the two. The uint64 pair is above ``INT64_MAX``.
 MINMAX_CASES = [
-    (np.int32, 'int32_t', np.int32(-2147483648), np.int32(2147483647)),
-    (np.int64, 'int64_t', np.int64(2**53 + 1), np.int64(2**53 + 2)),
-    (np.float32, 'float', np.float32(1.5), np.float32(-2.25)),
-    (np.float64, 'double', 1.5, -2.25),
+    (np.int32, 'int32_t', 'int32', np.int32(-2147483648), np.int32(2147483647)),
+    (np.int64, 'int64_t', 'int64', np.int64(2**53 + 1), np.int64(2**53 + 2)),
+    (np.uint64, 'uint64_t', 'uint64', np.uint64(2**63 + 1), np.uint64(2**63)),
+    (np.float32, 'float', 'float32', np.float32(1.5), np.float32(-2.25)),
+    (np.float64, 'double', 'float64', 1.5, -2.25),
 ]
 
 
-@pytest.mark.parametrize('dtype,ctype,a,b', MINMAX_CASES, ids=[case[1] for case in MINMAX_CASES])
-@pytest.mark.parametrize('name', ['cpf_max', 'cpf_min'])
-def test_generic_minmax_selects_the_exact_typed_helper(name, dtype, ctype, a, b):
-    """``cpf_max`` must pick the helper for the argument's own type, at full width."""
-    definitions = '\n'.join(cpf_lowering.definitions_for({name}, cpf_lowering.Dialect.STANDALONE_C))
-    code = _MINMAX_PROBE.format(definitions=definitions, ctype=ctype, call='%s(a, b)' % name)
-    library = ctypes.CDLL(compile_standalone(code, 'cpf_minmax_%s_%s' % (name, ctype), language='c'))
+def run_minmax(helper, label, dtype, ctype, a, b):
+    """``helper(a, b)``, built from the definition CPF emits for it and run."""
+    definitions = '\n'.join(cpf_lowering.definitions_for({helper}, cpf_lowering.Dialect.STANDALONE_C))
+    code = _MINMAX_PROBE.format(definitions=definitions, ctype=ctype, call='%s(a, b)' % helper)
+    library = ctypes.CDLL(compile_standalone(code, label, language='c'))
     out = np.zeros(1, dtype=dtype)
     scalar = np.ctypeslib.as_ctypes_type(dtype)
     library.probe.argtypes = [ctypes.c_void_p, scalar, scalar]
     library.probe.restype = None
     library.probe(ctypes.c_void_p(out.ctypes.data), a, b)
+    return out[0]
+
+
+@pytest.mark.parametrize('dtype,ctype,dace_type,a,b', MINMAX_CASES, ids=[case[2] for case in MINMAX_CASES])
+@pytest.mark.parametrize('name', ['cpf_max', 'cpf_min'])
+def test_the_typed_minmax_helper_compares_at_its_full_width(name, dtype, ctype, dace_type, a, b):
+    """The helper a printer names for a type must compare at that type, or two wide values collapse."""
+    helper = '%s_%s' % (name, dace_type)
+    got = run_minmax(helper, 'cpf_width_' + helper, dtype, ctype, a, b)
     expected = max(a, b) if name == 'cpf_max' else min(a, b)
-    assert out[0] == expected, f'{name} on {ctype} gave {out[0]!r}, expected {expected!r}'
+    assert got == expected, f'{helper}({a!r}, {b!r}) gave {got!r}, expected {expected!r}'
 
 
-def test_generic_minmax_has_no_default_association():
-    """A type outside the closed list must fail to select, not widen silently through ``double``."""
-    for name in ('cpf_max', 'cpf_min'):
-        definition = cpf_lowering.C_INLINE_DEFINITIONS[name]
-        assert 'default:' not in definition, (f'{name} carries a default association, so an unlisted type would be '
-                                              'converted instead of rejected')
+#: ``(helper, a, b, expected)``. ``b`` wins only by comparing strictly better, so a tie and a false
+#: comparison against NaN keep ``a`` -- down to the sign of a zero, which ``fmax`` does not promise.
+FIRST_OPERAND_CASES = [
+    ('cpf_max_float64', np.nan, 1.0, np.nan),
+    ('cpf_max_float64', 1.0, np.nan, 1.0),
+    ('cpf_min_float64', np.nan, 1.0, np.nan),
+    ('cpf_min_float64', 1.0, np.nan, 1.0),
+    ('cpf_max_float64', 0.0, -0.0, 0.0),
+    ('cpf_max_float64', -0.0, 0.0, -0.0),
+    ('cpf_min_float64', 0.0, -0.0, 0.0),
+    ('cpf_min_float64', -0.0, 0.0, -0.0),
+]
+
+
+@pytest.mark.parametrize('helper,a,b,expected',
+                         FIRST_OPERAND_CASES,
+                         ids=['%s(%r,%r)' % (helper, a, b) for helper, a, b, _ in FIRST_OPERAND_CASES])
+def test_the_typed_minmax_keeps_the_first_operand_on_a_tie_or_a_nan(helper, a, b, expected):
+    """Python's ``max``/``min`` keep the earlier operand, and the runtime and the C++ dialect do too."""
+    label = 'cpf_first_%s_%d' % (helper, FIRST_OPERAND_CASES.index((helper, a, b, expected)))
+    got = run_minmax(helper, label, np.float64, 'double', a, b)
+    same = (np.isnan(got) and np.isnan(expected)) or (got == expected and np.signbit(got) == np.signbit(expected))
+    assert same, f'{helper}({a!r}, {b!r}) gave {got!r}, expected {expected!r}'
+
+
+@pytest.mark.parametrize('types', [('complex128', 'float64'), ('float16', 'float64'), None, ('float64', None)],
+                         ids=['complex', 'float16', 'untyped', 'one-untyped'])
+def test_a_minmax_the_c_dialect_cannot_type_is_refused_not_guessed(types):
+    """No dispatch macro is left to reject such a call at compile time, so the printer has to refuse
+    it; picking a helper anyway would convert the operands to a type they do not have."""
+    with pytest.raises(NotImplementedError):
+        cpf_lowering.lowering_for('Max', ('a', 'b'), cpf_lowering.Dialect.STANDALONE_C, types)
+
+
+def test_a_typed_minmax_helper_is_a_function_not_a_macro():
+    """The rendered unit carries no macros, so the helper a printer calls must be a plain function."""
+    for helper, definition in cpf_lowering.C_TYPED_MINMAX_DEFINITIONS.items():
+        assert '#define' not in definition and '_Generic' not in definition, f'{helper}: {definition}'
+
+
+@pytest.mark.parametrize('operation', ['min', 'max'])
+def test_a_c_minmax_resolution_folds_through_the_typed_helper_and_keeps_the_accumulator(operation):
+    """The code generator prints a resolution itself, so its operand types come from the accumulator
+    and the value rather than from a printer. The accumulator is the FIRST operand, which a tie, a NaN
+    and a signed zero must leave in place."""
+    name = f'cpf_c_wcr_{operation}'
+    sdfg, code = render_sdfg(wcr_sdfg(name, f'lambda p, q: {operation}(p, q)', length=6), language='c')[:2]
+    assert f'cpf_{operation}_float64(' in code, f'the resolution does not call the double helper:\n{code}'
+    assert not re.search(r'\bcpf_(min|max)\(', code), f'the untyped dispatch name survived:\n{code}'
+
+    a = np.array([np.nan, 1.0, -0.0, 0.0, 3.0, 2.0])
+    out = np.array([1.0, np.nan, 0.0, -0.0, 3.0, 5.0])
+    fold = min if operation == 'min' else max
+    expected = np.array([fold(accumulated, value) for accumulated, value in zip(out, a)])
+    run_c(sdfg, code, {'a': a, 'out': out}, name)
+    for index, (got, want) in enumerate(zip(out, expected)):
+        same = (np.isnan(got) and np.isnan(want)) or (got == want and np.signbit(got) == np.signbit(want))
+        assert same, f'element {index}: {operation}({expected[index]!r}) folded to {got!r}, Python gives {want!r}'
 
 
 # -- the C verify() gate -------------------------------------------------------------------------
