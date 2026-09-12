@@ -1886,7 +1886,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     # TODO: Think of a better way to avoid calling symbols_defined_at in this moment
                     sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
         else:
-            s.symbol_mapping = symbol_mapping
+            s.symbol_mapping = symbol_mapping or {}
 
         return s
 
