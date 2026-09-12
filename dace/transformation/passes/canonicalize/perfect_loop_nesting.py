@@ -92,7 +92,8 @@ the loop would increment once per clone), or when the groups do not separate.
 from typing import Any
 
 from dace import SDFG, properties
-from dace.sdfg.state import LoopRegion
+from dace.config import Config
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
@@ -100,12 +101,74 @@ from dace.transformation.passes.canonicalize.distribute_producer_consumer import
 from dace.transformation.passes.canonicalize.sift_statements_into_perfect_nest import sift_imperfect_nests
 from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 #: Safety bound on fixpoint rounds -- a perfect nest is at most this deep in
 #: practice; the loop breaks as soon as a round changes nothing.
 MAX_ROUNDS = 8
+
+#: A loop's iterator and its init, condition and update statements as text.
+LoopHeader = tuple[str | None, str | None, str | None, str | None]
+
+
+def loop_header(loop: LoopRegion) -> LoopHeader:
+    """Everything ``TrivialLoopElimination.can_be_applied`` reads off ``loop``."""
+    init, condition, update = loop.init_statement, loop.loop_condition, loop.update_statement
+    return (loop.loop_variable, None if init is None else init.as_string,
+            None if condition is None else condition.as_string, None if update is None else update.as_string)
+
+
+def trivial_loop_accepts(xform: TrivialLoopElimination, region: ControlFlowRegion, loop: LoopRegion) -> bool:
+    """One ``can_be_applied`` probe, refusing on an exception exactly as the pattern matcher does."""
+    try:
+        xform.setup_match(region.sdfg, -1, -1, {TrivialLoopElimination.loop: loop}, 0, override=True)
+        return bool(xform.can_be_applied(region, 0, region.sdfg, permissive=False))
+    except Exception as err:
+        if Config.get_bool('optimizer', 'match_exception'):
+            raise
+        print(f'WARNING: TrivialLoopElimination::can_be_applied triggered a {type(err).__name__} exception: {err}')
+        return False
+
+
+def first_trivial_loop(sdfg: SDFG, xform: TrivialLoopElimination,
+                       verdicts: dict[LoopHeader, bool]) -> tuple[ControlFlowRegion, LoopRegion] | None:
+    """The first loop the pattern matcher would apply ``TrivialLoopElimination`` to, in its order."""
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        for block in region.nodes():
+            if not isinstance(block, LoopRegion):
+                continue
+            header = loop_header(block)
+            verdict = verdicts.get(header)
+            if verdict is None:
+                verdict = verdicts[header] = trivial_loop_accepts(xform, region, block)
+            if verdict:
+                return region, block
+    return None
+
+
+def eliminate_trivial_loops(sdfg: SDFG, verdicts: dict[LoopHeader, bool]) -> int:
+    """``PatternMatchAndApplyRepeated([TrivialLoopElimination()])``, without re-probing every loop per apply.
+
+    Same applications in the same order: each sweep restarts at the first region and applies the
+    first accepted loop, which is where the matcher's restarted enumeration lands. The verdict is a
+    pure function of :func:`loop_header`, so ``verdicts`` keeps it across sweeps and rounds; an
+    eliminated loop's nested headers change text and simply miss. No end-of-pass ``validate``: the
+    canonicalize pipeline turns that off for its own pattern units and validates on its own.
+
+    :param sdfg: The SDFG to transform in place.
+    :param verdicts: Header -> verdict memo, owned by the caller for as long as it likes.
+    :returns: The number of loops eliminated.
+    """
+    xform = TrivialLoopElimination()
+    applied = 0
+    target = first_trivial_loop(sdfg, xform, verdicts)
+    while target is not None:
+        region, loop = target
+        xform.setup_match(region.sdfg, region.cfg_id, -1, {TrivialLoopElimination.loop: loop}, 0, override=True)
+        xform.apply(region, region.sdfg)
+        applied += 1
+        target = first_trivial_loop(sdfg, xform, verdicts)
+    return applied
 
 
 def level_parallel(blocks: list, loop_var: str | None, arrays: dict[str, Any]) -> bool:
@@ -233,18 +296,16 @@ class PerfectLoopNesting(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         uniq = UniqueLoopIterators(assign_loop_iterator_post_value=False)
-        trivial = PatternMatchAndApplyRepeated([TrivialLoopElimination()])
+        verdicts: dict[LoopHeader, bool] = {}
         rounds = 0
         for round_index in range(MAX_ROUNDS):
-            # ``apply_pass`` returns differ by pass type (an int count for MoveIfIntoLoop, a results
-            # ``defaultdict`` for the PatternMatchAndApplyRepeated-wrapped TrivialLoopElimination),
-            # so test each for truthiness rather than summing.
+            # Each step reports its own kind of result, so test each for truthiness rather than summing.
             changed = False
             if distribute_loops(sdfg):
                 changed = True
             if MoveIfIntoLoop().apply_pass(sdfg, {}):
                 changed = True
-            if trivial.apply_pass(sdfg, {}):
+            if eliminate_trivial_loops(sdfg, verdicts):
                 changed = True
             # Sink LAST in the round: give the distribution the first chance to separate the
             # statements outright, and only sink what is still stuck in an imperfect nest.

@@ -28,11 +28,13 @@ import dace
 from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import _forward_flow_groups
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.canonicalize.perfect_loop_nesting import (PerfectLoopNesting, distribute_loops,
-                                                                          level_parallel, parallel_level_diagnostic)
+                                                                          eliminate_trivial_loops, level_parallel,
+                                                                          parallel_level_diagnostic)
 from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.simplify import SimplifyPass
@@ -328,6 +330,46 @@ def test_refused_nests_are_byte_identical(name):
     before = sdfg.to_json()
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is None, REFUSED_NESTS[name]
     assert sdfg.to_json() == before, 'a refusal mutated the SDFG'
+
+
+def add_loop_writing(region, label, condition, var, init, update, index):
+    loop = LoopRegion(label, condition, var, init, update)
+    region.add_node(loop, is_start_block=region.number_of_nodes() == 0)
+    body = loop.add_state(f'{label}_body', is_start_block=True)
+    write = body.add_tasklet(f'{label}_write', {}, {'o': None}, 'o = 1.0')
+    body.add_edge(write, 'o', body.add_write('a'), None, dace.Memlet(f'a[{index}]'))
+    return loop
+
+
+def trivial_loop_fixture():
+    sdfg = dace.SDFG('trivial_loops')
+    sdfg.add_array('a', [8], dace.float64)
+    outer = add_loop_writing(sdfg, 'outer', 'i < 4', 'i', 'i = 0', 'i = i + 1', 'i')
+    add_loop_writing(outer, 'single', 'j < 1', 'j', 'j = 0', 'j = j + 1', 'j')
+    zero = add_loop_writing(sdfg, 'zero', 'k < 0', 'k', 'k = 0', 'k = k + 1', 'k')
+    sdfg.add_edge(outer, zero, dace.InterstateEdge())
+    wrapper = add_loop_writing(sdfg, 'wrapper', 'm < 3', 'm', 'm = 2', 'm = m + 1', 'm')
+    add_loop_writing(wrapper, 'inner', 'n < 6', 'n', 'n = 5', 'n = n + 1', 'n - m')
+    sdfg.add_edge(zero, wrapper, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def region_layout(sdfg):
+    return [(region.label, [block.label for block in region.nodes()])
+            for region in sdfg.all_control_flow_regions(recursive=True)]
+
+
+def test_trivial_loop_driver_eliminates_what_the_pattern_matcher_does_in_its_order():
+    matched, driven = trivial_loop_fixture(), trivial_loop_fixture()
+    applied = PatternMatchAndApplyRepeated([TrivialLoopElimination()]).apply_pass(matched, {})
+
+    count = eliminate_trivial_loops(driven, {})
+
+    driven.validate()
+    assert count == len(applied['TrivialLoopElimination']) == 4
+    assert region_layout(driven) == region_layout(matched)
+    assert [r.label for r in driven.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)] == ['outer']
 
 
 def test_shared_written_array_is_one_dependence_component():
