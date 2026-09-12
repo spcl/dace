@@ -4,7 +4,6 @@ Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
 """
 import ast
-import copy
 import functools
 import itertools
 import math
@@ -14,7 +13,7 @@ import warnings
 
 import sympy as sp
 from io import StringIO
-from typing import IO, TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
+from typing import IO, TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import dace
 from dace import data, cpf_lowering, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -927,6 +926,28 @@ def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
     return False
 
 
+def struct_type_names(sdfg: SDFG | None) -> Dict[str, None]:
+    if sdfg is None:
+        return {}
+    return {
+        array.dtype.name: None
+        for array in sdfg.arrays.values() if array is not None and isinstance(array.dtype, dace.dtypes.struct)
+    }
+
+
+def tasklet_unparse_facts(sdfg: SDFG, frame: 'DaCeCodeGenerator') -> Tuple[Dict[str, None], Dict[str, Any]]:
+    """What every Python tasklet of ``sdfg`` reads off the whole SDFG, built once per code generation."""
+    facts = frame.tasklet_unparse_cache.get(sdfg)
+    if facts is None:
+        constant_dtypes = {
+            k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+            for k, v in sdfg.constants.items()
+        }
+        facts = (struct_type_names(sdfg), constant_dtypes)
+        frame.tasklet_unparse_cache[sdfg] = facts
+    return facts
+
+
 def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_stream, locals, ldepth, toplevel_schedule,
                     codegen):
 
@@ -1110,19 +1131,19 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
     defined_symbols = scope_analysis.defined_at(codegen._frame.symbol_scopes, state_dfg, node)
 
-    defined_symbols.update({
-        k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-        for k, v in sdfg.constants.items()
-    })
+    struct_names, constant_dtypes = tasklet_unparse_facts(sdfg, codegen._frame)
+    defined_symbols.update(constant_dtypes)
 
     for connector, (memlet, _, _, conntype) in memlets.items():
         if connector is not None:
             defined_symbols.update({connector: conntype})
 
     callsite_stream.write(codegen.tasklet_body_comment(node), cfg, state_id, node)
+    struct_initializer = StructInitializer(sdfg, struct_names)
     for stmt in body:
-        stmt = copy.deepcopy(stmt)
-        rk = StructInitializer(sdfg).visit(stmt)
+        # The visitors rewrite in place; the tasklet keeps its own AST.
+        stmt = astutils.copy_tree(stmt)
+        struct_initializer.visit(stmt)
         if isinstance(stmt, ast.Expr):
             rk = codegen.make_keyword_remover(sdfg, memlets).visit_TopLevelExpr(stmt)
         else:
@@ -1502,21 +1523,19 @@ class StructInitializer(ExtNodeTransformer):
     """ Replace struct creation calls with compound literal struct
         initializers in tasklets. """
 
-    def __init__(self, sdfg: SDFG):
-        self._structs = {}
-        if sdfg is None:
-            return
+    def __init__(self, sdfg: SDFG | None, struct_names: Dict[str, None] | None = None):
+        self.sdfg = sdfg
+        #: ``struct_type_names(sdfg)``, scanned on the first bare-name call unless the caller passed it.
+        self.struct_names = struct_names
 
-        # Find all struct types in SDFG
-        for array in sdfg.arrays.values():
-            if array is None:
-                continue
-            if isinstance(array.dtype, dace.dtypes.struct):
-                self._structs[array.dtype.name] = array.dtype
+    def names_struct(self, name: str) -> bool:
+        if self.struct_names is None:
+            self.struct_names = struct_type_names(self.sdfg)
+        return name in self.struct_names
 
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and (node.func.id.startswith('__DACESTRUCT_')
-                                                or node.func.id in self._structs):
+                                                or self.names_struct(node.func.id)):
             fields = ', '.join([
                 '.%s = %s' % (rname(arg.arg), cppunparse.pyexpr2cpp(arg.value))
                 for arg in sorted(node.keywords, key=lambda x: x.arg)

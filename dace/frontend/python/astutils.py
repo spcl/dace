@@ -432,6 +432,45 @@ def and_expr(node_a, node_b):
         return ast.fix_missing_locations(newexpr)
 
 
+class TreeCopier(ast.NodeTransformer):
+    """The visitor behind :func:`copy_tree`, defined once rather than per call."""
+
+    def visit_Constant(self, node):
+        # Ignore value
+        return ast.copy_location(ast.Constant(value=node.value, kind=node.kind), node)
+
+    def visit(self, node):
+        if node.__class__.__name__ in {'Num', 'Constant'}:
+            method = 'visit_' + node.__class__.__name__
+            visitor = getattr(self, method, self.generic_visit)
+            return visitor(node)
+        newnode = copy.copy(node)
+        return self.generic_visit(newnode)
+
+    def generic_visit(self, node):
+        for field, old_value in ast.iter_fields(node):
+            if isinstance(old_value, list):
+                new_values = []
+                for value in old_value:
+                    if isinstance(value, ast.AST):
+                        value = self.visit(value)
+                        if value is None:
+                            continue
+                        elif not isinstance(value, ast.AST):
+                            new_values.extend(value)
+                            continue
+                    new_values.append(value)
+                # Copy list instead of modifying it in-place
+                setattr(node, field, new_values)
+            elif isinstance(old_value, ast.AST):
+                new_node = self.visit(old_value)
+                if new_node is None:
+                    delattr(node, field)
+                else:
+                    setattr(node, field, new_node)
+        return node
+
+
 def copy_tree(node: ast.AST) -> ast.AST:
     """
     Copies an entire AST without copying the non-AST parts (e.g., constant values).
@@ -440,45 +479,7 @@ def copy_tree(node: ast.AST) -> ast.AST:
     :param node: The tree to copy.
     :return: The copied tree.
     """
-
-    class Copier(ast.NodeTransformer):
-
-        def visit_Constant(self, node):
-            # Ignore value
-            return ast.copy_location(ast.Constant(value=node.value, kind=node.kind), node)
-
-        def visit(self, node):
-            if node.__class__.__name__ in {'Num', 'Constant'}:
-                method = 'visit_' + node.__class__.__name__
-                visitor = getattr(self, method, self.generic_visit)
-                return visitor(node)
-            newnode = copy.copy(node)
-            return self.generic_visit(newnode)
-
-        def generic_visit(self, node):
-            for field, old_value in ast.iter_fields(node):
-                if isinstance(old_value, list):
-                    new_values = []
-                    for value in old_value:
-                        if isinstance(value, ast.AST):
-                            value = self.visit(value)
-                            if value is None:
-                                continue
-                            elif not isinstance(value, ast.AST):
-                                new_values.extend(value)
-                                continue
-                        new_values.append(value)
-                    # Copy list instead of modifying it in-place
-                    setattr(node, field, new_values)
-                elif isinstance(old_value, ast.AST):
-                    new_node = self.visit(old_value)
-                    if new_node is None:
-                        delattr(node, field)
-                    else:
-                        setattr(node, field, new_node)
-            return node
-
-    return Copier().visit(node)
+    return TreeCopier().visit(node)
 
 
 class ExtNodeTransformer(ast.NodeTransformer):

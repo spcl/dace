@@ -91,6 +91,8 @@ class DaCeCodeGenerator(object):
         # Consulted by state_needs_brace to gate the experimental readable state-scope elision.
         self._structured_cfg: Dict[int, bool] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
+        # SDFG -> (struct type names, constant dtypes) for its Python tasklets; see cpp.tasklet_unparse_facts.
+        self.tasklet_unparse_cache: Dict[SDFG, Tuple[Dict[str, None], Dict[str, Any]]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
