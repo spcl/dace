@@ -3,6 +3,7 @@
 #define __DACE_COMPLEX_H
 
 #include <complex>
+#include <type_traits>
 
 #include "types.h"
 
@@ -57,15 +58,54 @@ static DACE_HDFI complexJ operator-(const complexJ& j) {
 }
 }  // namespace dace
 
-// Complex-scalar multiplication functions
+#ifndef __CUDACC__
+// std::complex<T> takes only a T scalar; these take any other arithmetic scalar, evaluate in the common type and
+// narrow to T. thrust::complex has its own mixed-type operators.
+namespace dace {
+template <typename T, typename S>
+using complex_with_scalar_t = std::enable_if_t<std::is_arithmetic_v<S> && !std::is_same_v<S, T>, cmplx<T>>;
+}  // namespace dace
 
-template <typename T>
-cmplx<T> operator*(const cmplx<T>& a, const int& b) {
-  return cmplx<T>(b * a.real(), b * a.imag());
+template <typename T, typename S>
+DACE_HDFI dace::complex_with_scalar_t<T, S> operator*(const cmplx<T>& a, const S& b) {
+  using C = std::common_type_t<T, S>;
+  return cmplx<T>(cmplx<C>(a) * C(b));
 }
-template <typename T>
-cmplx<T> operator*(const int& a, const cmplx<T>& b) {
-  return cmplx<T>(a * b.real(), a * b.imag());
+template <typename T, typename S>
+DACE_HDFI dace::complex_with_scalar_t<T, S> operator*(const S& a, const cmplx<T>& b) {
+  using C = std::common_type_t<T, S>;
+  return cmplx<T>(C(a) * cmplx<C>(b));
 }
+template <typename T, typename S>
+DACE_HDFI dace::complex_with_scalar_t<T, S> operator/(const cmplx<T>& a, const S& b) {
+  using C = std::common_type_t<T, S>;
+  return cmplx<T>(cmplx<C>(a) / C(b));
+}
+template <typename T, typename S>
+DACE_HDFI dace::complex_with_scalar_t<T, S> operator/(const S& a, const cmplx<T>& b) {
+  using C = std::common_type_t<T, S>;
+  return cmplx<T>(C(a) / cmplx<C>(b));
+}
+template <typename T, typename S>
+DACE_HDFI dace::complex_with_scalar_t<T, S> operator+(const cmplx<T>& a, const S& b) {
+  using C = std::common_type_t<T, S>;
+  return cmplx<T>(cmplx<C>(a) + C(b));
+}
+template <typename T, typename S>
+DACE_HDFI dace::complex_with_scalar_t<T, S> operator+(const S& a, const cmplx<T>& b) {
+  using C = std::common_type_t<T, S>;
+  return cmplx<T>(C(a) + cmplx<C>(b));
+}
+template <typename T, typename S>
+DACE_HDFI dace::complex_with_scalar_t<T, S> operator-(const cmplx<T>& a, const S& b) {
+  using C = std::common_type_t<T, S>;
+  return cmplx<T>(cmplx<C>(a) - C(b));
+}
+template <typename T, typename S>
+DACE_HDFI dace::complex_with_scalar_t<T, S> operator-(const S& a, const cmplx<T>& b) {
+  using C = std::common_type_t<T, S>;
+  return cmplx<T>(C(a) - cmplx<C>(b));
+}
+#endif
 
 #endif  // __DACE_COMPLEX_H
