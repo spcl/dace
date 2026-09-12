@@ -374,3 +374,72 @@ def test_ordering_memlet_into_sibling_keeps_no_connector():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def single_tasklet_body(name: str) -> dace.SDFG:
+    """A trivial map body: ``o[0] = a[0] + 1``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [1], dace.float64)
+    sdfg.add_array('o', [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('t', {'__in'}, {'__out'}, '__out = __in + 1.0')
+    state.add_edge(state.add_read('a'), None, tasklet, '__in', dace.Memlet('a[0]'))
+    state.add_edge(tasklet, '__out', state.add_write('o'), None, dace.Memlet('o[0]'))
+    return sdfg
+
+
+def outer_map_over_two_inner_maps() -> tuple:
+    """One outer map holding two sibling inner maps, each with its own single-NestedSDFG body.
+
+    The nested SDFGs are two scopes down from the outer entry, so they are reachable between it and
+    its exit while belonging to neither its body nor each other's.
+    """
+    sdfg = dace.SDFG('outer_map_over_two_inner_maps')
+    for name in ('A', 'B', 'C'):
+        sdfg.add_array(name, [N], dace.float64)
+    state = sdfg.add_state()
+    read = state.add_read('A')
+    outer_entry, outer_exit = state.add_map('outer', {'i': '0:N'})
+    for name in ('B', 'C'):
+        inner_entry, inner_exit = state.add_map('inner_' + name, {'j': '0:N'})
+        nested = state.add_nested_sdfg(single_tasklet_body('leaf_' + name), {'a'}, {'o'})
+        state.add_memlet_path(read, outer_entry, inner_entry, nested, dst_conn='a', memlet=dace.Memlet('A[j]'))
+        state.add_memlet_path(nested,
+                              inner_exit,
+                              outer_exit,
+                              state.add_write(name),
+                              src_conn='o',
+                              memlet=dace.Memlet(name + '[j]'))
+    sdfg.validate()
+    return sdfg, state
+
+
+def test_a_map_body_collects_only_its_own_scopes_nested_sdfgs():
+    """Only the outer map's OWN body may be consolidated.
+
+    Collecting the body by reachability instead of by scope reaches through a nested map entry, and
+    merging what it finds moves a node out of the scope its own MapEntry opened. The graph stays
+    valid to the eye -- the damage is a MapExit whose scope parent is a foreign MapEntry, which
+    every later ``scope_dict`` refuses with "Leftover nodes in queue".
+    """
+    sdfg, state = outer_map_over_two_inner_maps()
+    NormalizeMapBody().apply_pass(sdfg, {})
+
+    state._clear_scopedict_cache()
+    scope = state.scope_dict()
+    unpaired = [(n, scope[n]) for n in state.nodes() if isinstance(n, nodes.MapExit) and scope[n].map is not n.map]
+    assert not unpaired, ('a map exit was left inside a foreign map scope: ' +
+                          ', '.join(f'{exit_node} in scope {parent}' for exit_node, parent in unpaired))
+    sdfg.validate()
+
+
+def test_a_sibling_inner_map_keeps_the_nested_sdfg_that_forms_its_body():
+    """Each inner map still owns exactly one nested SDFG, so nothing was merged across the boundary."""
+    sdfg, state = outer_map_over_two_inner_maps()
+    NormalizeMapBody().apply_pass(sdfg, {})
+
+    state._clear_scopedict_cache()
+    scope = state.scope_dict()
+    for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.label.startswith('inner_')]:
+        owned = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and scope[n] is entry]
+        assert len(owned) == 1, f'{entry.map.label} owns {len(owned)} nested SDFGs, expected 1'

@@ -251,12 +251,8 @@ RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {'ArgReduce': ('OpenMP', )}
 #: for the host.
 RENDERABLE_BY_NODE_DEVICE: Dict[str, Tuple[str, ...]] = {'FindFirst': ('CUDA', ), 'Scan': ('CUDA', )}
 
-#: How many CONSECUTIVE rounds of :func:`force_renderable_expansions` may leave the library-node
-#: census unchanged before the loop refuses. Not a bound on the total number of rounds: a state
-#: holding many library nodes needs one round per node, and a node may expand into further library
-#: nodes (``MatMul`` -> ``Gemm`` -> its own expansion), so a healthy graph takes as many rounds as
-#: it takes. What no healthy graph does is expand and arrive back at the same census, which is the
-#: one shape that would otherwise loop forever.
+#: Consecutive rounds of :func:`force_renderable_expansions` that may leave the library-node census
+#: unchanged before it refuses. NOT a bound on total rounds: a state needs one round per node.
 MAX_EXPANSION_STALLED_ROUNDS = 16
 
 LIFETIME_DEMOTIONS = {
@@ -397,18 +393,13 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
                 pending.setdefault(id(state), []).append((node, state))
         if not pending:
             return
-        # PROGRESS, not round count, is what this can actually observe: a population being lowered
-        # changes the census every round, so a census that stops changing is the one symptom worth
-        # refusing on. A budget derived from the CURRENT population cannot see that at all, because
-        # that population shrinks as the round number grows and the two cross part way through any
-        # long drain.
+        # A budget taken from the CURRENT population shrinks as the round number grows, so the
+        # two cross part way through any long drain. Progress is what can actually be observed.
         current = Counter(type(node).__name__ for group in pending.values() for node, _ in group)
         stalled = stalled + 1 if current == census else 0
         census = current
         if stalled > MAX_EXPANSION_STALLED_ROUNDS:
-            # Reports the census and how long it stood, and stops there. Naming a cause -- a node
-            # that expands into itself -- would assert something this loop never established, and
-            # the reader then goes looking for a cycle that may not exist.
+            # Observations only: naming a cause sent readers after a cycle that did not exist.
             counted = ', '.join(f'{name} x{count}' for name, count in sorted(census.items()))
             raise NotImplementedError(f'CPF stopped expanding library nodes: {stalled} consecutive rounds left '
                                       f'the same nodes pending ({counted}). Expansion is making no progress; '
