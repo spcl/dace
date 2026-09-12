@@ -382,7 +382,7 @@ class LoopToScan(ppl.Pass):
             for info in par_infos:
                 _rewrite(par_region, par_loop, info, owner)
 
-        if _stride_guard_is_statically_dischargeable(infos) and _lift_proven_doall_to_map(parent, loop, sdfg):
+        if _stride_guard_is_statically_dischargeable(infos) and _lift_proven_doall_to_map(loop, sdfg):
             return
         specialize_loop_under_condition(loop, guard, _lift, sdfg)
 
@@ -2683,7 +2683,7 @@ def _stride_guard_is_statically_dischargeable(infos: List['_Scan']) -> bool:
     return guarded
 
 
-def _lift_proven_doall_to_map(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
+def _lift_proven_doall_to_map(loop: LoopRegion, sdfg: SDFG) -> bool:
     """Lift a loop already PROVEN DOALL to a bare ``Map``, bypassing ``LoopToMap``'s own
     ``can_be_applied`` dependency test. :returns: whether the lift happened.
 
@@ -2698,11 +2698,9 @@ def _lift_proven_doall_to_map(parent: ControlFlowRegion, loop: LoopRegion, sdfg:
     shape zoo (nested/composite bodies), which is wider than ``LoopToMap``'s comfort zone, and
     declining to lift only costs the guard we would have dropped.
     """
-    from dace.transformation.interstate.loop_to_map import LoopToMap
-    instance = LoopToMap()
-    instance.loop = loop
+    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
     try:
-        instance.apply(parent, sdfg)
+        ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
     except Exception:  # noqa: BLE001 -- an exotic body LoopToMap cannot restructure; keep the guard
         return False
     return True

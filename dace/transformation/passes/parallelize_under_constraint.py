@@ -39,7 +39,7 @@ from typing import Optional, Set
 
 from dace import SDFG, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
 from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
@@ -96,6 +96,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
         :returns: The number of loops specialized, or ``None`` if none.
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         specialized = 0
         for sd in sdfg.all_sdfgs_recursive():
@@ -130,12 +131,10 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 # (WCR-free, vectorizable) Map -- injective under ``condition`` --
                 # and the else branch keeps the original sequential loop for when
                 # the condition fails at runtime.
-                def _parallelize(par_loop, par_region, own):
-                    inst = LoopToMap()
-                    inst.loop = par_loop
-                    inst.apply(par_region, own)
+                def parallelize(par_loop: LoopRegion, par_region: ControlFlowRegion, own: SDFG) -> None:
+                    ParallelizeLoops().parallelize_loop(own, par_loop, proven=True)
 
-                specialize_loop_under_condition(loop, condition, _parallelize, owner, assume=self.assume_constraint)
+                specialize_loop_under_condition(loop, condition, parallelize, owner, assume=self.assume_constraint)
                 facts = ScopeFacts(sd)
                 specialized += 1
         return specialized or None

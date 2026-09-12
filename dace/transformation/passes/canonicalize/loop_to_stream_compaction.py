@@ -845,13 +845,8 @@ class LoopToStreamCompaction(ppl.Pass):
         reconstruct: phase 3 writes through ``rank``, which is strictly increasing on the taken
         iterations. Phase 1 needs no waiver, so it is lifted strictly.
         """
-        from dace.transformation.interstate.loop_to_map import LoopToMap
-        instance = LoopToMap()
-        instance.loop = loop
-        parent = loop.parent_graph
-        if not instance.can_be_applied(parent, 0, sdfg, permissive=permissive):
-            return
-        instance.apply(parent, sdfg)
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        ParallelizeLoops(permissive=permissive).parallelize_loop(sdfg, loop)
 
 
 __all__ = ['LoopToStreamCompaction']

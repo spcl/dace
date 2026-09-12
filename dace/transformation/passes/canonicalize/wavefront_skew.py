@@ -1737,8 +1737,8 @@ class WavefrontSkew(ppl.Pass):
         loop.add_node(guard, is_start_block=True)
 
     def _convert_inner_to_map(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, hint: str) -> None:
-        """Lift the skewed inner ``p``-loop to a Map via ``LoopToMap.apply``,
-        bypassing ``can_be_applied``: independence of the ``p``-iterations at
+        """Lift the skewed inner ``p``-loop to a Map via ``ParallelizeLoops.parallelize_loop``,
+        bypassing the ``LoopToMap`` probe: independence of the ``p``-iterations at
         fixed ``t`` is guaranteed by the legality proof (``tau.delta < 0`` for
         every dependence => no intra-``t`` dependence). An exception here signals
         a real upstream bug and is intentionally not swallowed.
@@ -1746,11 +1746,9 @@ class WavefrontSkew(ppl.Pass):
         ``hint`` names what the fresh Map is -- a wavefront front, a tile column -- on the Map
         itself, since the lift keeps no record of the loop it consumed. Matched by iteration
         variable: ``LoopToMap`` names the map after the body, not after the axis."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
         itervar = inner.loop_variable
-        instance = LoopToMap()
-        instance.loop = inner
-        instance.apply(outer, sdfg)
+        ParallelizeLoops().parallelize_loop(sdfg, inner, proven=True)
         for node, _ in outer.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry) and itervar in node.map.params and not node.specialization_hint:
                 node.specialization_hint = hint

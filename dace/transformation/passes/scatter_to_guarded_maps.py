@@ -124,7 +124,7 @@ class ScatterToGuardedMaps(ppl.Pass):
         """Run the full pipeline. Returns the number of distinct ``idx`` arrays guarded,
         or ``None`` if no scatter loop was found.
         """
-        from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         scatter_loops, idx_arrays, sliced_guards, joint_writes = detect_scatter_loops_and_idx_arrays(
             sdfg, allow_hoisted_joint=not self.emit_unparallelized_else_branch)
@@ -137,10 +137,8 @@ class ScatterToGuardedMaps(ppl.Pass):
                 parent = loop.parent_graph
                 if parent is None or loop not in parent.nodes():
                     continue
-                instance = LoopToMap()
-                instance.loop = loop
                 try:
-                    instance.apply(parent, _owning_sdfg(sdfg, loop))
+                    ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
                 except Exception:
                     pass
             return (len(idx_arrays) + len(sliced_guards) + len(joint_writes)) or None
@@ -211,7 +209,7 @@ class ScatterToGuardedMaps(ppl.Pass):
                 # A joint key already answers for every dimension of this loop's writes, so its
                 # counts alone decide the branch -- the per-array symbols below are empty here.
                 cond = ' + '.join(joint_dup_syms[id(loop)]) + ' > 0'
-                _wrap_loop_in_dispatcher(parent, loop, cond, LoopToMap)
+                _wrap_loop_in_dispatcher(parent, loop, cond)
                 continue
 
             if self.emit_unparallelized_else_branch and (dup_count_syms or sliced_dup_syms):
@@ -225,13 +223,11 @@ class ScatterToGuardedMaps(ppl.Pass):
                 loop_idx_syms += [sliced_dup_syms[(id(loop), i)] for i in loop_idx if (id(loop), i) in sliced_dup_syms]
                 if loop_idx_syms:
                     cond = ' + '.join(loop_idx_syms) + ' > 0'
-                    _wrap_loop_in_dispatcher(parent, loop, cond, LoopToMap)
+                    _wrap_loop_in_dispatcher(parent, loop, cond)
                     continue
 
-            instance = LoopToMap()
-            instance.loop = loop
             try:
-                instance.apply(parent, owner_sdfg)
+                ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
             except Exception:
                 pass
         return (len(idx_arrays) + len(sliced_guards) + len(joint_writes)) or None
@@ -1155,7 +1151,7 @@ def _write_index_input_connectors(nsdfg_node: nodes.NestedSDFG, out_conn: str) -
     return idx_conns
 
 
-def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str, loop_to_map_cls) -> None:
+def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str) -> None:
     """Replace ``loop`` in ``parent`` with a ``ConditionalBlock`` that picks
     between a sequential clone (taken when ``condition_expr`` is true -- the
     "collision detected, fall back" branch) and a parallelised lift of the
@@ -1172,8 +1168,6 @@ def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str, loop
     :param condition_expr: The guard expression (e.g. ``"__dup_count > 0"``)
         for the ``True`` branch (sequential clone). The ``False`` branch is
         unguarded.
-    :param loop_to_map_cls: ``LoopToMap`` class (injected to avoid a top-level
-        import cycle through ``dace.transformation.interstate``).
     """
     import copy as _copy
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
@@ -1212,13 +1206,12 @@ def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str, loop
         parent.add_edge(cb, e.dst, e.data)
 
     # Lift the loop inside the False branch to a Map.
-    owner_sdfg = parent.sdfg
-    while owner_sdfg.parent_sdfg is not None:
-        owner_sdfg = owner_sdfg.parent_sdfg
-    instance = loop_to_map_cls()
-    instance.loop = loop
+    from dace.transformation.passes.parallelize_loops import ParallelizeLoops  # avoid an import cycle
+    root = parent.sdfg
+    while root.parent_sdfg is not None:
+        root = root.parent_sdfg
     try:
-        instance.apply(par_branch, owner_sdfg)
+        ParallelizeLoops().parallelize_loop(root, loop, proven=True)
     except Exception:
         # If the lift fails on the parallel branch the sequential clone in the
         # other branch still produces the right result; codegen will compile
