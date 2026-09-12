@@ -7,6 +7,8 @@ Every shape-and-value test runs under both emit modes the pass exposes:
 writeback`` so a downstream ``LoopToMap`` can produce ``#pragma omp
 parallel for reduction(op:scalar)``).
 """
+import copy
+
 import numpy as np
 import pytest
 
@@ -15,7 +17,9 @@ from dace import memlet as mm
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce, RetargetWCRAccumulator)
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce, RetargetWCRAccumulator,
+                                                       augassign_to_wcr_in_state)
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -1899,3 +1903,102 @@ def test_loop_to_reduce_doesnt_lift_break_loop():
         res = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
         assert res is None
         assert sdfg.to_json() == before, f'LoopToReduce({prefer}) refused the loop but still mutated the SDFG'
+
+
+# ---------------------------------------------------------------------------
+# ``AugAssignToWCR`` traversal pinning: ``AccumulatorCopyChainToWCR`` used to drive
+# ``AugAssignToWCR`` through the generic ``PatternMatchAndApplyRepeated`` VF2 sweep, one
+# whole-SDFG match per state per fixpoint round. It now walks the tasklets directly
+# (``augassign_to_wcr_candidates`` / ``augassign_to_wcr_in_state``), enumerating the same five
+# shapes ``AugAssignToWCR.expressions()`` defines by anchor instead of isomorphism. These
+# fixtures pin that the direct walk finds and applies exactly what the generic driver did.
+# ---------------------------------------------------------------------------
+
+
+def build_free_tasklet_rmw():
+    """Expr 0: ``A[0] -> tasklet -> A[0]``, no map, no staging copies."""
+    sdfg = dace.SDFG('free_tasklet_rmw')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [6], dace.float64)
+    state = sdfg.add_state('body', is_start_block=True)
+    a_r = state.add_read('A')
+    b_r = state.add_read('B')
+    a_w = state.add_write('A')
+    tasklet = state.add_tasklet('combine', {'__in1': None, '__in2': None}, {'__out': None}, '__out = __in1 + __in2')
+    state.add_edge(a_r, None, tasklet, '__in1', mm.Memlet('A[0]'))
+    state.add_edge(b_r, None, tasklet, '__in2', mm.Memlet('B[2]'))
+    state.add_edge(tasklet, '__out', a_w, None, mm.Memlet('A[0]'))
+    sdfg.reset_cfg_list()
+    return sdfg
+
+
+def build_free_map_rmw():
+    """Expr 1: ``A[0] -> map_entry -> tasklet -> map_exit -> A[0]``, write subset loop-invariant."""
+    sdfg = dace.SDFG('free_map_rmw')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [6], dace.float64)
+    state = sdfg.add_state('body', is_start_block=True)
+    a_r = state.add_read('A')
+    b_r = state.add_read('B')
+    a_w = state.add_write('A')
+    me, mx = state.add_map('m', dict(i='0:6'))
+    tasklet = state.add_tasklet('combine', {'__in1': None, '__in2': None}, {'__out': None}, '__out = __in1 + __in2')
+    state.add_memlet_path(a_r, me, tasklet, memlet=mm.Memlet('A[0]'), dst_conn='__in1')
+    state.add_memlet_path(b_r, me, tasklet, memlet=mm.Memlet('B[i]'), dst_conn='__in2')
+    state.add_memlet_path(tasklet, mx, a_w, memlet=mm.Memlet('A[0]'), src_conn='__out')
+    sdfg.reset_cfg_list()
+    return sdfg
+
+
+def build_copy_wrapped_rmw():
+    """Expr 2: ``A[0] -> copy_in -> tasklet -> copy_out -> A[0]``, private scalar staging."""
+    sdfg = dace.SDFG('copy_wrapped_rmw')
+    sdfg.add_array('A', [2], dace.float64)
+    sdfg.add_array('B', [6], dace.float64)
+    sdfg.add_scalar('a_in', dace.float64, transient=True)
+    sdfg.add_scalar('b_in', dace.float64, transient=True)
+    sdfg.add_scalar('a_sum', dace.float64, transient=True)
+    state = sdfg.add_state('body', is_start_block=True)
+    a_r = state.add_read('A')
+    a_in = state.add_access('a_in')
+    b_r = state.add_read('B')
+    b_in = state.add_access('b_in')
+    tasklet = state.add_tasklet('combine', {'__in1': None, '__in2': None}, {'__out': None}, '__out = __in1 + __in2')
+    a_sum = state.add_access('a_sum')
+    a_w = state.add_write('A')
+    state.add_edge(a_r, None, a_in, None, mm.Memlet('A[0]'))
+    state.add_edge(a_in, None, tasklet, '__in1', mm.Memlet('a_in[0]'))
+    state.add_edge(b_r, None, b_in, None, mm.Memlet('B[2]'))
+    state.add_edge(b_in, None, tasklet, '__in2', mm.Memlet('b_in[0]'))
+    state.add_edge(tasklet, '__out', a_sum, None, mm.Memlet('a_sum[0]'))
+    state.add_edge(a_sum, None, a_w, None, mm.Memlet('A[0]'))
+    sdfg.reset_cfg_list()
+    return sdfg
+
+
+@pytest.mark.parametrize('build', (build_free_tasklet_rmw, build_free_map_rmw, build_copy_wrapped_rmw))
+def test_augassign_traversal_matches_old_generic_driver(build):
+    """The direct walk must apply exactly what ``PatternMatchAndApplyRepeated([AugAssignToWCR()])``
+    applied, on the same graph, for each anchor shape it enumerates."""
+    # Deepcopy from ONE build so unchanged nodes/edges keep the same guid on both sides --
+    # two independent ``build()`` calls would mint fresh guids and diverge in ``to_json()``
+    # for a reason that has nothing to do with the traversal under test.
+    base = build()
+    old_sdfg = copy.deepcopy(base)
+    new_sdfg = copy.deepcopy(base)
+
+    old_applied = PatternMatchAndApplyRepeated([AugAssignToWCR()], permissive=False, validate=False,
+                                               validate_all=False).apply_pass(old_sdfg, {})
+    old_count = sum(len(v) for v in old_applied.values()) if old_applied else 0
+
+    new_xform = AugAssignToWCR()
+    new_count = sum(augassign_to_wcr_in_state(new_xform, new_sdfg, state) for state in list(new_sdfg.all_states()))
+
+    assert old_count > 0, f'{build.__name__}: fixture did not exercise the old driver'
+    assert new_count == old_count, f'{build.__name__}: applied count diverged (old={old_count}, new={new_count})'
+    old_sdfg.validate()
+    new_sdfg.validate()
+    # ``hash_sdfg`` strips guids (freshly minted on every node an ``apply`` creates, so two
+    # independently driven runs never share them) and compares everything else structural.
+    assert new_sdfg.hash_sdfg() == old_sdfg.hash_sdfg(
+    ), f'{build.__name__}: rewritten graph diverged from the old driver'

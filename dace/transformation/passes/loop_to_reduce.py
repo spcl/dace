@@ -15,16 +15,18 @@ Accumulator: ``Scalar``, length-1 ``Array``, or one loop-invariant slice of an `
 """
 import ast
 import copy
-from typing import Dict, List, NamedTuple, Optional, Set
+from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
 import sympy
 
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, nodes, properties, subsets, symbolic
 from dace.ordered import OrderedSet
+from dace.sdfg import graph as gr
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic import AND, OR, bitwise_and, bitwise_or, Subscript
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.analysis import loop_analysis
 
 # Ops here are commutative by construction -> skip is_op_commutative (returns None
@@ -349,30 +351,200 @@ class AccumulatorCopyChainToWCR(ppl.Pass):
         return count or None
 
 
-def _augassign_to_wcr_per_state(sdfg: SDFG) -> int:
-    """Drive ``AugAssignToWCR`` to a fixpoint one state at a time.
+#: ``{PatternNode: node}`` binding for one ``AugAssignToWCR`` candidate.
+AugAssignBinding = Dict[Any, nodes.Node]
 
-    ``sdfg.apply_transformations_repeated`` restarts its scan at the FIRST state after every
-    applied match, so a graph with ``M`` rewrites pays ``M + 1`` whole-SDFG VF2 sweeps -- on
-    CloudSC, 99 rewrites for 78 s of matching. ``AugAssignToWCR`` is a
-    ``SingleStateTransformation``: every candidate it can see lives in one state, so the
-    global driver's "scan from the top, take the first match, restart" loop already exhausts
-    the states in order. Exhausting each state in that same order therefore replays the SAME
-    application sequence, but each sweep collapses and matches ONE state instead of all of
-    them. States that ``apply`` splits off (``isolate_tasklet``) are appended to their region,
-    so re-reading ``nodes()`` each step reaches them; the closing whole-SDFG sweep is the
-    fixpoint check the original driver's last (matchless) round performed, and it also catches
-    any match a rewrite could have opened in a region already walked.
+
+def data_in_edges(state: SDFGState, node: nodes.Node) -> List[gr.MultiConnectorEdge[mm.Memlet]]:
+    return [e for e in state.in_edges(node) if e.data is not None and not e.data.is_empty()]
+
+
+def data_out_edges(state: SDFGState, node: nodes.Node) -> List[gr.MultiConnectorEdge[mm.Memlet]]:
+    return [e for e in state.out_edges(node) if e.data is not None and not e.data.is_empty()]
+
+
+def staging_successor(state: SDFGState, node: nodes.Node) -> List[nodes.AccessNode]:
+    """AccessNode successors of ``node`` shaped like a private staging copy: exactly one
+    in-edge and one out-edge -- candidate ``copy_out``/``combine_out``."""
+    return [
+        e.dst for e in data_out_edges(state, node)
+        if isinstance(e.dst, nodes.AccessNode) and state.in_degree(e.dst) == 1 and state.out_degree(e.dst) == 1
+    ]
+
+
+def staging_predecessor(state: SDFGState, node: nodes.Node) -> List[nodes.AccessNode]:
+    """AccessNode predecessors of ``node`` shaped like a private staging copy -- candidate
+    ``copy_in``."""
+    return [
+        e.src for e in data_in_edges(state, node)
+        if isinstance(e.src, nodes.AccessNode) and state.in_degree(e.src) == 1 and state.out_degree(e.src) == 1
+    ]
+
+
+def free_tasklet_augassign_candidates(state: SDFGState,
+                                      tasklet: nodes.Tasklet) -> Iterator[Tuple[int, AugAssignBinding]]:
+    """Candidates anchored on a combining tasklet outside any map: expr 0 (direct RMW),
+    2 (copy-wrapped RMW), 3 (combine-then-copyback). Mirrors ``AugAssignToWCR.expressions()``
+    node-for-node -- a bounded local walk, not an isomorphism search."""
+    aug = AugAssignToWCR
+    inputs = [e.src for e in data_in_edges(state, tasklet) if isinstance(e.src, nodes.AccessNode)]
+    outputs = [e.dst for e in data_out_edges(state, tasklet) if isinstance(e.dst, nodes.AccessNode)]
+
+    for inp in inputs:
+        for out in outputs:
+            yield 0, {aug.input: inp, aug.tasklet: tasklet, aug.output: out}
+
+    for copy_in in staging_predecessor(state, tasklet):
+        (pred, ) = state.in_edges(copy_in)
+        if not isinstance(pred.src, nodes.AccessNode):
+            continue
+        for copy_out in staging_successor(state, tasklet):
+            (succ, ) = state.out_edges(copy_out)
+            if not isinstance(succ.dst, nodes.AccessNode):
+                continue
+            yield 2, {
+                aug.input: pred.src,
+                aug.copy_in: copy_in,
+                aug.tasklet: tasklet,
+                aug.copy_out: copy_out,
+                aug.output: succ.dst,
+            }
+
+    for inp in inputs:
+        for combine_out in staging_successor(state, tasklet):
+            (mid, ) = state.out_edges(combine_out)
+            copyback = mid.dst
+            if not isinstance(copyback, nodes.Tasklet):
+                continue
+            for out_edge in data_out_edges(state, copyback):
+                if isinstance(out_edge.dst, nodes.AccessNode):
+                    yield 3, {
+                        aug.input: inp,
+                        aug.tasklet: tasklet,
+                        aug.combine_out: combine_out,
+                        aug.copyback: copyback,
+                        aug.output: out_edge.dst,
+                    }
+
+
+def map_tasklet_augassign_candidates(state: SDFGState, map_entry: nodes.MapEntry,
+                                     tasklet: nodes.Tasklet) -> Iterator[Tuple[int, AugAssignBinding]]:
+    """Candidates anchored on a combining tasklet at the top level of a map: expr 1 (direct
+    RMW), 4 (combine-then-copyback). Mirror of :func:`free_tasklet_augassign_candidates`."""
+    aug = AugAssignToWCR
+    map_exit = state.exit_node(map_entry)
+    if map_exit is None:
+        return
+    inputs = [e.src for e in data_in_edges(state, map_entry) if isinstance(e.src, nodes.AccessNode)]
+    outputs = [e.dst for e in data_out_edges(state, map_exit) if isinstance(e.dst, nodes.AccessNode)]
+
+    if any(e.dst is map_exit for e in data_out_edges(state, tasklet)):
+        for inp in inputs:
+            for out in outputs:
+                yield 1, {
+                    aug.input: inp,
+                    aug.map_entry: map_entry,
+                    aug.tasklet: tasklet,
+                    aug.map_exit: map_exit,
+                    aug.output: out,
+                }
+
+    for inp in inputs:
+        for combine_out in staging_successor(state, tasklet):
+            (mid, ) = state.out_edges(combine_out)
+            copyback = mid.dst
+            if not isinstance(copyback, nodes.Tasklet):
+                continue
+            if not any(e.dst is map_exit for e in data_out_edges(state, copyback)):
+                continue
+            for out in outputs:
+                yield 4, {
+                    aug.input: inp,
+                    aug.map_entry: map_entry,
+                    aug.tasklet: tasklet,
+                    aug.combine_out: combine_out,
+                    aug.copyback: copyback,
+                    aug.map_exit: map_exit,
+                    aug.output: out,
+                }
+
+
+def augassign_to_wcr_candidates(state: SDFGState) -> Iterator[Tuple[int, AugAssignBinding]]:
+    """Enumerate ``(expr_index, binding)`` for every ``AugAssignToWCR`` candidate anchored on
+    a combining Tasklet in ``state``.
+
+    All five of ``AugAssignToWCR.expressions()`` are anchored on the same combining tasklet,
+    so the candidates can be enumerated by walking the tasklets of a state directly, the same
+    traversal-half shape :class:`~dace.transformation.passes.canonicalize.revert_nonreduction_wcr.RevertNonReductionWCR`
+    uses for ``WCRToAugAssign``. Endpoint types pick the shape; legality stays on the
+    transformation.
+
+    :param state: The state to scan.
+    :returns: Yields a pattern index and the node binding to match it with.
+    """
+    for node in state.nodes():
+        if not isinstance(node, nodes.Tasklet):
+            continue
+        entry = state.entry_node(node)
+        if entry is None:
+            yield from free_tasklet_augassign_candidates(state, node)
+        elif isinstance(entry, nodes.MapEntry):
+            yield from map_tasklet_augassign_candidates(state, entry, node)
+
+
+def augassign_to_wcr_in_state(xform: AugAssignToWCR, sdfg: SDFG, state: SDFGState) -> int:
+    """Apply ``AugAssignToWCR`` at every candidate ``state`` accepts, restarting the scan
+    after each rewrite. ``xform`` is reused across candidates and states: ``setup_match``
+    with ``override=True`` binds it straight to the node objects the traversal found, no
+    ``node_id`` round-trip and no per-candidate instance.
+
+    :param xform: A single, reused ``AugAssignToWCR`` instance.
+    :param sdfg: ``state``'s OWN owning SDFG (``state.sdfg``) -- a nested SDFG's states have
+                 descriptors the top-level SDFG does not carry; passing the wrong one makes
+                 ``can_be_applied`` miss every descriptor lookup and refuse a real candidate.
+    :param state: The state to rewrite in place.
+    :returns: Number of rewrites performed in ``state``.
+    """
+    cfg_id = state.parent_graph.cfg_id
+    state_id = state.block_id
+    applied = 0
+    changed = True
+    while changed:
+        changed = False
+        for expr_index, binding in augassign_to_wcr_candidates(state):
+            xform.setup_match(sdfg, cfg_id, state_id, binding, expr_index, override=True)
+            if not xform.can_be_applied(state, expr_index, sdfg, permissive=False):
+                continue
+            xform.apply(state, sdfg)
+            applied += 1
+            changed = True
+            break
+    return applied
+
+
+def _augassign_to_wcr_per_state(sdfg: SDFG) -> int:
+    """Drive ``AugAssignToWCR`` to a fixpoint with a dedicated traversal, one state at a time.
+
+    ``PatternMatchAndApplyRepeated`` re-derives every match from scratch after each single
+    application -- ``SDFG.all_control_flow_regions`` plus a VF2 subgraph isomorphism per state
+    per sweep -- and re-enumerates the WHOLE SDFG's control-flow regions on every one of those
+    per-state calls, even though only one state is being probed: on CloudSC, 78 s of matching
+    for 99 rewrites, almost all of it that repeated enumeration. ``AugAssignToWCR`` is
+    anchored entirely on a combining tasklet visible within one state (no cross-state legality
+    check anywhere in its ``can_be_applied``), so :func:`augassign_to_wcr_candidates` finds the
+    same candidates by walking the tasklets directly, and ``augassign_to_wcr_in_state`` drives
+    them to a fixpoint without any isomorphism search.
+
+    States that ``apply`` splits off (``isolate_tasklet``) are appended to their region, so
+    re-reading ``nodes()`` each step reaches them. The closing sweep replays the old driver's
+    final matchless round for parity: cheap here since it is the same direct walk, not VF2.
 
     ``permissive=False`` is required: permissive mode matches scan-shape bodies (TSVC
     recurrence_down ``b[i] = b[i+1] + a[i]`` after ``LoopToScan``) as reductions and rewrites
     them to WCR writes later parallelised -> carried dependence lost, off-by-one. Pinned by
     the descending-recurrence value-preservation test.
     """
-    from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-
-    driver = PatternMatchAndApplyRepeated([AugAssignToWCR()], permissive=False, validate=False, validate_all=False)
+    xform = AugAssignToWCR()
     count = 0
     for cfr in sdfg.all_control_flow_regions(recursive=True):
         # Re-read ``nodes()`` per step rather than walking a snapshot: ``apply`` may append a
@@ -383,12 +555,21 @@ def _augassign_to_wcr_per_state(sdfg: SDFG) -> int:
             if block is None:
                 break
             visited.add(block)
-            driver.states = [block]
-            applied = driver.apply_pass(sdfg, {})
-            count += sum(len(v) for v in applied.values()) if applied else 0
-    driver.states = None
-    applied = driver.apply_pass(sdfg, {})
-    return count + (sum(len(v) for v in applied.values()) if applied else 0)
+            # ``block.sdfg``, not ``sdfg``: a state inside a NestedSDFG carries descriptors the
+            # top-level SDFG does not, and ``can_be_applied`` resolves them off the SDFG passed in.
+            count += augassign_to_wcr_in_state(xform, block.sdfg, block)
+
+    changed = True
+    while changed:
+        changed = False
+        for cfr in sdfg.all_control_flow_regions(recursive=True):
+            for block in list(cfr.nodes()):
+                if not isinstance(block, SDFGState):
+                    continue
+                found = augassign_to_wcr_in_state(xform, block.sdfg, block)
+                count += found
+                changed = changed or found > 0
+    return count
 
 
 def loop_iteration_assigned_symbols(loop: LoopRegion) -> Set[str]:
