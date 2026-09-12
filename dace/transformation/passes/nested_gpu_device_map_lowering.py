@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Optional
+from typing import Dict, List, Optional
 
 import copy
 import sympy
@@ -9,6 +9,7 @@ import dace
 from dace import SDFG, properties
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.ordered import OrderedSet
@@ -116,12 +117,23 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                                dace.memlet.Memlet.from_array(ie.data.data, state.sdfg.arrays[ie.data.data]))
             else:
                 state.add_edge(ie.src, None, nsdfg, None, dace.memlet.Memlet(None))
+        out_edges_by_data: Dict[str, List[MultiConnectorEdge]] = {}
         for oe in map_out_edges:
             if oe.data.data is not None:
-                state.add_edge(nsdfg, oe.data.data, oe.dst, oe.dst_conn,
-                               dace.memlet.Memlet.from_array(oe.data.data, state.sdfg.arrays[oe.data.data]))
+                out_edges_by_data.setdefault(oe.data.data, []).append(oe)
             else:
                 state.add_edge(nsdfg, None, oe.dst, None, dace.memlet.Memlet(None))
+        for data_name, data_out_edges in out_edges_by_data.items():
+            whole = dace.memlet.Memlet.from_array(data_name, state.sdfg.arrays[data_name])
+            if len(data_out_edges) == 1:
+                state.add_edge(nsdfg, data_name, data_out_edges[0].dst, data_out_edges[0].dst_conn, whole)
+                continue
+            # A nested SDFG out-connector drives one edge, so a container the map exit writes through
+            # several connectors fans out through an access node.
+            fan_out = state.add_access(data_name)
+            state.add_edge(nsdfg, data_name, fan_out, None, whole)
+            for oe in data_out_edges:
+                state.add_edge(fan_out, None, oe.dst, oe.dst_conn, copy.deepcopy(whole))
 
         # Copy over map inputs
         for data_name in inputs.union(outputs):
