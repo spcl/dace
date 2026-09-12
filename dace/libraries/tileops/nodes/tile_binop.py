@@ -155,15 +155,15 @@ def _promotion_ok(src: dace.dtypes.typeclass, dst: dace.dtypes.typeclass) -> boo
     return False
 
 
-_TILE = "Tile"
-_SYMBOL = "Symbol"
-_SCALAR = "Scalar"
-_VALID_KINDS = (_TILE, _SYMBOL, _SCALAR)
+TILE = "Tile"
+SYMBOL = "Symbol"
+SCALAR = "Scalar"
+VALID_KINDS = (TILE, SYMBOL, SCALAR)
 
 #: Ops that answer ``bool`` whatever their operands are.
 COMPARISON_OPS = frozenset({"<", "<=", ">", ">=", "==", "!="})
 
-_OP_CPP = {
+OP_CPP = {
     "+": ("(", " + ", ")"),
     "-": ("(", " - ", ")"),
     "*": ("(", " * ", ")"),
@@ -217,12 +217,12 @@ _OP_CPP = {
 def _binop_rhs(op: str, lhs: str, rhs: str) -> str:
     """Render the C++ expression for ``op`` on ``lhs`` and ``rhs``.
 
-    :param op: The operator symbol (key of :data:`_OP_CPP`).
+    :param op: The operator symbol (key of :data:`OP_CPP`).
     :param lhs: Left-hand-side C++ expression.
     :param rhs: Right-hand-side C++ expression.
     :returns: A C++ expression string.
     """
-    pre, sep, post = _OP_CPP[op]
+    pre, sep, post = OP_CPP[op]
     return f"{pre}{lhs}{sep}{rhs}{post}"
 
 
@@ -249,7 +249,7 @@ class ExpandTileBinopPure(ExpandTransformation):
         out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_c").data.data].dtype.ctype
 
-        # The dtype the VALUE operands share. A ``_SYMBOL`` / ``_SCALAR``
+        # The dtype the VALUE operands share. A ``SYMBOL`` / ``SCALAR``
         # operand is cast to this so a type-strict binop (``std::min`` etc.)
         # resolves both operands at one type. This is the OPERAND dtype, NOT
         # ``out_dtype``: a comparison (``ZLI > RLMIN``) has a ``bool`` output
@@ -260,7 +260,7 @@ class ExpandTileBinopPure(ExpandTransformation):
         # fall back to ``out_dtype`` (all-Symbol case with no resolvable type).
         def _operand_dtype() -> str:
             for k, c in ((node.kind_a, "_a"), (node.kind_b, "_b")):
-                if k in (_TILE, _SCALAR) and c in in_e:
+                if k in (TILE, SCALAR) and c in in_e:
                     return parent_sdfg.arrays[in_e[c].data.data].dtype.ctype
             for expr in (node.expr_a, node.expr_b):
                 if not expr:
@@ -278,13 +278,13 @@ class ExpandTileBinopPure(ExpandTransformation):
         # bool tiles, and casting a value to bool truncates it. The cast only
         # exists to resolve type-strict overloads (``std::min(int, double)``),
         # which are never bool; so suppress it when the operand dtype is bool.
-        _cast = "" if operand_dtype == "bool" else f"({operand_dtype})"
+        cast = "" if operand_dtype == "bool" else f"({operand_dtype})"
 
         def _effective_ctype(kind: str, conn: str) -> str:
             """The C++ type ``conn`` is actually emitted as (post any cast)."""
-            if kind == _SYMBOL:
+            if kind == SYMBOL:
                 return operand_dtype
-            if kind == _TILE:
+            if kind == TILE:
                 return parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             _, broadcast = scalar_operand_ref(desc, conn, widths, off)
@@ -296,13 +296,13 @@ class ExpandTileBinopPure(ExpandTransformation):
         def _operand_ref(kind: str, conn: str, expr: str | None, meets_ctype: str) -> str:
             """Return the per-lane C++ reference for one operand.
 
-            A ``_SYMBOL`` / ``_SCALAR`` operand is cast to ``operand_dtype``
+            A ``SYMBOL`` / ``SCALAR`` operand is cast to ``operand_dtype``
             (see above) so ``std::min`` / ``std::max`` (and any other
             type-strict overload) sees both operands at the same type — and a
             comparison's symbol operand keeps its numeric type rather than
             being truncated to the ``bool`` output. The cast is suppressed when
             the operand dtype is bool (logical ops; no ``(bool)X`` is emitted).
-            A ``_TILE`` / per-lane ``_SCALAR`` operand keeps its own dtype
+            A ``TILE`` / per-lane ``SCALAR`` operand keeps its own dtype
             uncast (like before) UNLESS it is ``dace::float16`` meeting a
             differently-typed sibling operand: ``__half`` (what
             ``dace::float16`` is on GPU) exposes several simultaneously
@@ -311,9 +311,9 @@ class ExpandTileBinopPure(ExpandTransformation):
             ``half_disambiguated`` routes it through one explicit, lossless
             ``(float)`` hop first (see its docstring).
             """
-            if kind == _SYMBOL:
-                return f"{_cast}({pyexpr2cpp(expr)})"
-            if kind == _TILE:
+            if kind == SYMBOL:
+                return f"{cast}({pyexpr2cpp(expr)})"
+            if kind == TILE:
                 src = parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
                 return half_disambiguated(f"{conn}[{off}]", src, meets_ctype)
             # Scalar operand. A tile-shape Array widened upstream is a pointer
@@ -325,7 +325,7 @@ class ExpandTileBinopPure(ExpandTransformation):
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             ref, broadcast = scalar_operand_ref(desc, conn, widths, off)
             if broadcast:
-                return f"{_cast}({ref})"
+                return f"{cast}({ref})"
             return half_disambiguated(ref, desc.dtype.ctype, meets_ctype)
 
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a, ctype_b)
@@ -335,7 +335,7 @@ class ExpandTileBinopPure(ExpandTransformation):
         # length-1, emit a single assignment with no lane loop. Otherwise emit the K-fold loop
         # ``_c[off] = ...`` over the tile.
         out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-        out_is_scalar = (node.kind_a != _TILE and node.kind_b != _TILE and _is_scalar_shape(out_desc))
+        out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and _is_scalar_shape(out_desc))
         if out_is_scalar:
             # The Scalar output path: no lane loop; one assignment. A volume-1
             # output (Scalar or length-1 Array) is a by-value local (``T _c;``),
@@ -354,9 +354,9 @@ class ExpandTileBinopPure(ExpandTransformation):
                 body = f"_c[{off}] = {rhs_expr};"
             code = nested_loops(widths, body)
         inputs = {"_a", "_b", "_mask"}
-        if node.kind_a == _SYMBOL:
+        if node.kind_a == SYMBOL:
             inputs.discard("_a")
-        if node.kind_b == _SYMBOL:
+        if node.kind_b == SYMBOL:
             inputs.discard("_b")
         if not node.has_mask:
             inputs.discard("_mask")
@@ -370,7 +370,7 @@ class ExpandTileBinopPure(ExpandTransformation):
         )
 
 
-_CUTE_OP_EXPR = {
+CUTE_OP_EXPR = {
     "+": "{lhs} + {rhs}",
     "-": "{lhs} - {rhs}",
     "*": "{lhs} * {rhs}",
@@ -475,13 +475,13 @@ class TileBinop(nodes.LibraryNode):
     kind_a = properties.Property(
         dtype=str,
         allow_none=False,
-        default=_TILE,
+        default=TILE,
         desc="Operand kind for the left-hand side: 'Tile' or 'Symbol'.",
     )
     kind_b = properties.Property(
         dtype=str,
         allow_none=False,
-        default=_TILE,
+        default=TILE,
         desc="Operand kind for the right-hand side: 'Tile' or 'Symbol'.",
     )
     expr_a = properties.Property(
@@ -502,8 +502,8 @@ class TileBinop(nodes.LibraryNode):
                  widths: Tuple[int, ...],
                  op: str = "+",
                  has_mask: bool = False,
-                 kind_a: str = _TILE,
-                 kind_b: str = _TILE,
+                 kind_a: str = TILE,
+                 kind_b: str = TILE,
                  expr_a: Optional[str] = None,
                  expr_b: Optional[str] = None,
                  location: Optional[str] = None):
@@ -511,7 +511,7 @@ class TileBinop(nodes.LibraryNode):
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
-        :param op: One of the keys of :data:`_OP_CPP`.
+        :param op: One of the keys of :data:`OP_CPP`.
         :param has_mask: When True, declare the ``_mask`` input
             connector.
         :param kind_a: ``"Tile"`` (default — read via ``_a`` connector),
@@ -526,22 +526,22 @@ class TileBinop(nodes.LibraryNode):
             missing expression for symbol kinds, or a no-Tile-operand
             pair (at least one operand must be a tile).
         """
-        if op not in _OP_CPP:
-            raise ValueError(f"TileBinop: unknown op {op!r}; allowed: {sorted(_OP_CPP)}")
+        if op not in OP_CPP:
+            raise ValueError(f"TileBinop: unknown op {op!r}; allowed: {sorted(OP_CPP)}")
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileBinop: widths must have length in {{1, 2, 3}}, got {widths!r}")
         for label, kind in (("kind_a", kind_a), ("kind_b", kind_b)):
-            if kind not in _VALID_KINDS:
-                raise ValueError(f"TileBinop: {label} must be one of {_VALID_KINDS}, got {kind!r}")
-        if kind_a == _SYMBOL and not expr_a:
+            if kind not in VALID_KINDS:
+                raise ValueError(f"TileBinop: {label} must be one of {VALID_KINDS}, got {kind!r}")
+        if kind_a == SYMBOL and not expr_a:
             raise ValueError("TileBinop: kind_a='Symbol' requires expr_a")
-        if kind_b == _SYMBOL and not expr_b:
+        if kind_b == SYMBOL and not expr_b:
             raise ValueError("TileBinop: kind_b='Symbol' requires expr_b")
 
         inputs = set()
-        if kind_a in (_TILE, _SCALAR):
+        if kind_a in (TILE, SCALAR):
             inputs.add("_a")
-        if kind_b in (_TILE, _SCALAR):
+        if kind_b in (TILE, SCALAR):
             inputs.add("_b")
         if has_mask:
             inputs.add("_mask")
@@ -576,14 +576,14 @@ class TileBinop(nodes.LibraryNode):
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         c_arr = sdfg.arrays[out_e["_c"].data.data]
         # Output-kind rule (design 6.2): when any input is Tile, the output must be tile-shape.
-        any_tile_input = (self.kind_a == _TILE or self.kind_b == _TILE)
+        any_tile_input = (self.kind_a == TILE or self.kind_b == TILE)
         if any_tile_input and not (_is_tile_shape(c_arr, tuple(self.widths))
                                    or edge_moves_a_tile(out_e["_c"], tuple(self.widths))):
             raise NotImplementedError(f"{self.label}: output-kind rule violated -- kind_a={self.kind_a!r}, "
                                       f"kind_b={self.kind_b!r} (has Tile input) but '_c' descriptor is not tile-shape "
                                       f"{tuple(self.widths)!r}. Per design section 6.2: any Tile input -> Tile output.")
         for label, kind in (("_a", self.kind_a), ("_b", self.kind_b)):
-            if kind in (_TILE, _SCALAR):
+            if kind in (TILE, SCALAR):
                 if label not in in_e:
                     raise ValueError(f"{self.label}: kind={kind!r} but {label!r} not connected")
                 # Each Tile / Scalar operand is promoted to the output dtype
@@ -593,7 +593,7 @@ class TileBinop(nodes.LibraryNode):
                 # A comparison is exempt: the expansion compares a Tile operand at its own dtype and
                 # stores the ``bool`` it answers, which every numeric output holds exactly. The
                 # operand never meets the output, so ``b_index > 0.0`` into an int8 mask narrows nothing.
-                if kind == _TILE and self.op not in COMPARISON_OPS:
+                if kind == TILE and self.op not in COMPARISON_OPS:
                     src = sdfg.arrays[in_e[label].data.data].dtype
                     if not _promotion_ok(src, c_arr.dtype):
                         raise NotImplementedError(

@@ -16,7 +16,7 @@ import pytest
 import dace
 from dace import nodes
 from dace.libraries.tileops._dispatch import detect_host_isa
-from dace.libraries.tileops.nodes.tile_unop import _UNOP_CPP, TileUnop
+from dace.libraries.tileops.nodes.tile_unop import UNOP_CPP, TileUnop
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import _SUPPORTED_UNOPS
@@ -29,13 +29,13 @@ WIDTHS = (8, )
 
 def test_every_lowered_unop_has_a_cpp_rendering():
     """A converter that lowers an op the pure expansion cannot render is a codegen failure."""
-    missing = sorted(_SUPPORTED_UNOPS - set(_UNOP_CPP))
+    missing = sorted(_SUPPORTED_UNOPS - set(UNOP_CPP))
     assert not missing, f'lowered without a C++ rendering: {missing}'
 
 
 def test_ops_without_an_isa_character_fall_back_rather_than_raise():
     """The ISA table is a SUBSET of what the converter lowers, and the gap must be a fallback."""
-    no_char = sorted(set(_UNOP_CPP) - set(_isa_codegen._UNOP_TO_CHAR))
+    no_char = sorted(set(UNOP_CPP) - set(_isa_codegen.UNOP_TO_CHAR))
     assert no_char, 'the fixture is vacuous -- every op now has an ISA character'
     # The op the fallback exists for; the others (tan, asin, ...) ride the same path.
     assert 'sign_numpy_2' in no_char

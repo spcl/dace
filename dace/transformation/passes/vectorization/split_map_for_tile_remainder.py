@@ -80,7 +80,7 @@ TILE_GUARD_STATE_LABEL = "tile_even_range_check"
 STRIDE_GUARD_PREFIX = "tile_stride_div_"
 
 # Storage classes whose base address the tile codegen is willing to assume anything about
-# (``_isa_codegen._BASE_ALIGN_BYTES``). A stride fact about anything else is never consumed, and
+# (``_isa_codegen.BASE_ALIGN_BYTES``). A stride fact about anything else is never consumed, and
 # an unconsumed fact is a runtime abort bought for nothing.
 _DEVICE_STORAGE = (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Pinned)
 

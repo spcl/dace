@@ -126,7 +126,7 @@ def _phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
 #: member (so ``max`` / ``prod`` partial-tile identities cannot be installed
 #: by load padding alone — they are routed to the reduction's pre-select;
 #: see the L-pad-identity note in ``CUTILE_EXPANSION_DESIGN.md``).
-_PAD_MODE_CUTE = {
+PAD_MODE_CUTE = {
     "ZERO": "ct.PaddingMode.ZERO",
     "NAN": "ct.PaddingMode.NAN",
     "POS_INF": "ct.PaddingMode.POSITIVE_INFINITY",

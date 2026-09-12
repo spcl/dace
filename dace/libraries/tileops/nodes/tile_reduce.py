@@ -57,14 +57,14 @@ def _combine_expr(op: str, acc: str, val: str) -> str:
     raise ValueError(f"unknown op {op!r}")
 
 
-_OP_CUTE = {"+": "ct.sum", "*": "ct.prod", "min": "ct.min", "max": "ct.max"}
-_VALID_OPS = ("+", "*", "min", "max")
+OP_CUTE = {"+": "ct.sum", "*": "ct.prod", "min": "ct.min", "max": "ct.max"}
+VALID_OPS = ("+", "*", "min", "max")
 
 #: cuTile literal for each reduction op's identity, pre-selected into masked
 #: lanes before the (mask-less, L-reduce-nomask) reduction. ``min`` / ``max``
 #: need ``±inf`` which only ``ct.where`` can safely inject (the arithmetic
 #: blend hits the ``inf * 0 = NaN`` hazard — see the L-reduce-nomask note).
-_OP_IDENTITY_CUTE = {
+OP_IDENTITY_CUTE = {
     "+": "0",
     "*": "1",
     "min": "float('inf')",
@@ -80,9 +80,9 @@ _OP_IDENTITY_CUTE = {
 # so its presence in the installed package stays unverified.
 try:  # pragma: no cover - cuTile is not installed on CI
     import cuda.tile as ct  # type: ignore  # noqa: F401
-    _CT_HAS_WHERE = hasattr(ct, "where")
+    CT_HAS_WHERE = hasattr(ct, "where")
 except Exception:  # pragma: no cover - the CI path (no cuTile install)
-    _CT_HAS_WHERE = None
+    CT_HAS_WHERE = None
 
 
 @library.expansion
@@ -286,8 +286,8 @@ class TileReduce(nodes.LibraryNode):
         :raises ValueError: On invalid ``op``, ``widths`` length, or
             out-of-range ``axis``.
         """
-        if op not in _VALID_OPS:
-            raise ValueError(f"TileReduce: unknown op {op!r}; allowed: {_VALID_OPS}")
+        if op not in VALID_OPS:
+            raise ValueError(f"TileReduce: unknown op {op!r}; allowed: {VALID_OPS}")
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileReduce: widths must have length in {{1, 2, 3}}, got {widths!r}")
         if axis is not None and not (0 <= axis < len(widths)):

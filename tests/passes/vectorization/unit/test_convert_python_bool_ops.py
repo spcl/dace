@@ -76,10 +76,10 @@ def test_detect_binop_refuses_matmul():
 def test_tile_unop_not_constructs_and_lowers_to_bang():
     """``TileUnop(op='not')`` is a valid node and its op-char is ``!``."""
     from dace.libraries.tileops import TileUnop
-    from dace.libraries.tileops._isa_codegen import _UNOP_TO_CHAR
+    from dace.libraries.tileops._isa_codegen import UNOP_TO_CHAR
     u = TileUnop(name="n", widths=(8, ), op="not", kind_a="Tile")
     assert u.op == "not"
-    assert _UNOP_TO_CHAR["not"] == "!"
+    assert UNOP_TO_CHAR["not"] == "!"
 
 
 def _state_with_mask_edge(mask_dtype):

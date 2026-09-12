@@ -15,7 +15,7 @@ import numpy as np
 import dace
 from dace.libraries.tileops import TileReduce
 
-_IDENT = {
+IDENT = {
     "+": 0.0,
     "*": 1.0,
     "min": np.inf,
@@ -146,7 +146,7 @@ def test_k1_sum_full_masked():
     rng = np.random.default_rng(seed=21)
     M = (rng.random(widths) > 0.5)
     SRC, DST, _ = _run_reduce(widths=widths, op="+", axis=None, has_mask=True, seed=21, mask_arr=M)
-    masked_src = np.where(M, SRC, _IDENT["+"])
+    masked_src = np.where(M, SRC, IDENT["+"])
     ref = _np_reduce("+", masked_src, axis=None)
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
@@ -157,7 +157,7 @@ def test_k2_sum_full_masked():
     rng = np.random.default_rng(seed=22)
     M = (rng.random(widths) > 0.3)
     SRC, DST, _ = _run_reduce(widths=widths, op="+", axis=None, has_mask=True, seed=22, mask_arr=M)
-    masked_src = np.where(M, SRC, _IDENT["+"])
+    masked_src = np.where(M, SRC, IDENT["+"])
     ref = _np_reduce("+", masked_src, axis=None)
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
@@ -170,6 +170,6 @@ def test_k2_sum_axis0_masked():
     M = (rng.random(widths) > 0.4)
     SRC, DST, dst_shape = _run_reduce(widths=widths, op="+", axis=0, has_mask=True, seed=23, mask_arr=M)
     assert dst_shape == (8, )
-    masked_src = np.where(M, SRC, _IDENT["+"])
+    masked_src = np.where(M, SRC, IDENT["+"])
     ref = _np_reduce("+", masked_src, axis=0)
     np.testing.assert_allclose(DST, ref, rtol=1e-12, atol=1e-12)

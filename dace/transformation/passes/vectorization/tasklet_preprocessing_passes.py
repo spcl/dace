@@ -105,8 +105,8 @@ class PowerOperatorExpander(ast.NodeTransformer):
         # arrives as a connector (numpy's ``power`` ufunc form), NOT a literal, so Case 1 does
         # not fire -- produced NaN on every lane where ``sin(x) < 0`` (npbench arc_distance).
         # ``std::pow`` computes a negative base with an integer exponent correctly and matches
-        # numpy's ``**``; ``**`` carries an ISA-less pure lowering (``_PURE_ONLY_MATH_OPS`` /
-        # ``_OP_CPP["**"]``) so it vectorizes via libmvec.
+        # numpy's ``**``; ``**`` carries an ISA-less pure lowering (``PURE_ONLY_MATH_OPS`` /
+        # ``OP_CPP["**"]``) so it vectorizes via libmvec.
         return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.AST:

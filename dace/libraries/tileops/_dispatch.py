@@ -26,7 +26,7 @@ from dace.sdfg import nodes
 
 # Implementation name each ``target_isa`` maps to for a K==1 tile (K>=2 is always
 # ``'pure'``). Unknown / unset ISA falls back to ``'pure'``.
-_ISA_TO_IMPL = {
+ISA_TO_IMPL = {
     "AVX512": "avx512",
     "AVX2": "avx2",
     "ARM_SVE": "sve",
@@ -42,7 +42,7 @@ _ISA_TO_IMPL = {
 # The host-executed CPU SIMD ISAs. A tile op forced to one of these must run on a host that
 # supports it (arch-native enforcement, see :func:`host_supported_isas`). SCALAR is always
 # runnable; CUDA / CUTILE are GPU device ISAs gated by the schedule, not host-CPU-executed.
-_CPU_SIMD_ISAS = frozenset({"AVX512", "AVX2", "ARM_SVE", "ARM_NEON"})
+CPU_SIMD_ISAS = frozenset({"AVX512", "AVX2", "ARM_SVE", "ARM_NEON"})
 
 # TileBinop / TileUnop ops that have NO per-ISA single-char lowering and must use the
 # ``pure`` loop expansion even at K=1 (a ``std::<fn>`` call the compiler's vector-math
@@ -52,7 +52,7 @@ _CPU_SIMD_ISAS = frozenset({"AVX512", "AVX2", "ARM_SVE", "ARM_NEON"})
 # for a true runtime exponent likewise has no ISA char (``ipow`` is the exact
 # integer-exponent repeated-multiply ``dace::math::ipow``). (``sin`` / ``cos`` / ``exp`` /
 # ``log`` / ``sqrt`` / ``tanh`` DO carry ISA char codes and stay on the intrinsic path.)
-_PURE_ONLY_MATH_OPS = frozenset(
+PURE_ONLY_MATH_OPS = frozenset(
     {"atan2", "hypot", "fmod", "tan", "asin", "acos", "atan", "sinh", "cosh", "pow", "ipow", "**"})
 
 
@@ -65,7 +65,7 @@ def detect_host_isa() -> str:
     ``avx2`` -> AVX2. AArch64: SVE feature -> ARM_SVE, else ARM_NEON (baseline).
     Anything else falls back to ``SCALAR``.
 
-    :returns: One of the :data:`_ISA_TO_IMPL` keys (never ``"AUTO"``).
+    :returns: One of the :data:`ISA_TO_IMPL` keys (never ``"AUTO"``).
     """
     machine = platform.machine().lower()
     flags = set()
@@ -103,7 +103,7 @@ def host_supported_isas() -> frozenset[str]:
     unreadable (e.g. macOS has no ``/proc/cpuinfo``) it conservatively yields ``{SCALAR}``, matching
     ``detect_host_isa``'s fallback.
 
-    :returns: Frozenset of :data:`_ISA_TO_IMPL` keys the host can execute (always includes ``SCALAR``).
+    :returns: Frozenset of :data:`ISA_TO_IMPL` keys the host can execute (always includes ``SCALAR``).
     """
     machine = platform.machine().lower()
     flags = set()
@@ -136,7 +136,7 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
         selector signature.
     :returns: A concrete implementation name present in ``node.implementations``.
         ``K >= 2`` is always ``'pure'``; ``K == 1`` maps ``target_isa`` through
-        :data:`_ISA_TO_IMPL` (resolving ``"AUTO"`` to the host ISA via
+        :data:`ISA_TO_IMPL` (resolving ``"AUTO"`` to the host ISA via
         :func:`detect_host_isa`), falling back to ``'pure'`` when that per-ISA
         expansion is not yet defined on the node.
     """
@@ -148,9 +148,9 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     # expansion even at K=1: a per-lane ``std::<fn>`` call inside the tile for-loop
     # (under the ``_dace_tile_vectorize`` pragma) that the compiler's vector-math
     # library (libmvec) captures. The K=1 per-ISA backend has no single-char op code
-    # for them (see ``_isa_codegen._OP_TO_CHAR`` / ``_UNOP_TO_CHAR``), so routing them
+    # for them (see ``_isa_codegen.OP_TO_CHAR`` / ``UNOP_TO_CHAR``), so routing them
     # to the intrinsic path would ``KeyError``.
-    if getattr(node, "op", None) in _PURE_ONLY_MATH_OPS:
+    if getattr(node, "op", None) in PURE_ONLY_MATH_OPS:
         return "pure"
     target_isa = getattr(node, "target_isa", "SCALAR")
     if target_isa == "AUTO":
@@ -159,8 +159,8 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     # compiles (the backend adds its own ``-m`` flag) but SIGILLs at runtime -- the exact failure
     # seen when a test pins AVX-512 on an AVX2-only or ARM host. Refuse it early with a clear error
     # instead. ``AUTO`` already resolves to a host-supported ISA, so this only fires on an explicit
-    # over-request; CUDA / CUTILE are GPU device ISAs and are not in ``_CPU_SIMD_ISAS``.
-    if target_isa in _CPU_SIMD_ISAS and target_isa not in host_supported_isas():
+    # over-request; CUDA / CUTILE are GPU device ISAs and are not in ``CPU_SIMD_ISAS``.
+    if target_isa in CPU_SIMD_ISAS and target_isa not in host_supported_isas():
         raise ValueError(f"tile-op target_isa={target_isa!r} is not executable on this host "
                          f"(supported: {sorted(host_supported_isas())}). Vectorization enforces "
                          f"arch-native: use ISA.AUTO to target the host, or pick a supported ISA.")
@@ -171,7 +171,7 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     # carries complex natively (``cuComplex``, scalar-per-lane warps) so it keeps its path.
     if target_isa != "CUDA" and _tile_has_complex_operand(node, parent_state):
         return "pure"
-    impl = _ISA_TO_IMPL.get(target_isa, "pure")
+    impl = ISA_TO_IMPL.get(target_isa, "pure")
     return impl if impl in node.implementations else "pure"
 
 

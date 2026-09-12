@@ -32,7 +32,7 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import (_TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, _promotion_ok, edge_moves_a_tile,
+from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, _is_tile_shape, _promotion_ok, edge_moves_a_tile,
                          scalar_operand_ref)
 
 # Capability probe for ``ct.where`` (cuTile's select). The cuTile runtime is
@@ -44,9 +44,9 @@ from .tile_binop import (_TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, 
 # x, y)`` op), so its presence in the installed package stays unverified.
 try:  # pragma: no cover - cuTile is not installed on CI
     import cuda.tile as ct  # type: ignore  # noqa: F401
-    _CT_HAS_WHERE = hasattr(ct, "where")
+    CT_HAS_WHERE = hasattr(ct, "where")
 except Exception:  # pragma: no cover - the CI path (no cuTile install)
-    _CT_HAS_WHERE = None
+    CT_HAS_WHERE = None
 
 
 @library.expansion
@@ -85,10 +85,10 @@ class ExpandTileITEPure(ExpandTransformation):
             per-lane tile read keeps the tile dtype. The cond is a boolean
             ``? :`` context so its ``cast`` is ``None``.
             """
-            if kind == _SYMBOL:
+            if kind == SYMBOL:
                 cpp = pyexpr2cpp(expr)
                 return f"({cast})({cpp})" if cast else f"({cpp})"
-            if kind == _TILE:
+            if kind == TILE:
                 return f"{conn}[{off}]"
             # Scalar operand: descriptor-aware reference (a tile-shape Array
             # widened upstream is read per lane like a Tile; a by-value Scalar /
@@ -112,11 +112,11 @@ class ExpandTileITEPure(ExpandTransformation):
         body = f"_o[{off}] = ({mask_ref} ? {t_ref} : {e_ref});"
         code = nested_loops(widths, body)
         inputs = set()
-        if node.kind_mask in (_TILE, _SCALAR):
+        if node.kind_mask in (TILE, SCALAR):
             inputs.add("_mask")
-        if node.kind_t in (_TILE, _SCALAR):
+        if node.kind_t in (TILE, SCALAR):
             inputs.add("_t")
-        if node.kind_e in (_TILE, _SCALAR):
+        if node.kind_e in (TILE, SCALAR):
             inputs.add("_e")
         return nodes.Tasklet(
             label=f"{node.label}_pure",
@@ -207,13 +207,13 @@ class TileITE(nodes.LibraryNode):
     kind_t = properties.Property(
         dtype=str,
         allow_none=False,
-        default=_TILE,
+        default=TILE,
         desc="Then-arm kind: 'Tile' (read via _t), 'Scalar' (length-1 via _t), or 'Symbol' (inline expr_t).",
     )
     kind_e = properties.Property(
         dtype=str,
         allow_none=False,
-        default=_TILE,
+        default=TILE,
         desc="Else-arm kind: 'Tile' (read via _e), 'Scalar' (length-1 via _e), or 'Symbol' (inline expr_e).",
     )
     expr_t = properties.Property(
@@ -231,7 +231,7 @@ class TileITE(nodes.LibraryNode):
     kind_mask = properties.Property(
         dtype=str,
         allow_none=False,
-        default=_TILE,
+        default=TILE,
         desc="Condition kind: 'Tile' (per-lane bool tile via _mask), 'Scalar' (length-1 bool via _mask), "
         "or 'Symbol' (loop-invariant predicate embedded inline via expr_mask, no _mask connector).",
     )
@@ -245,11 +245,11 @@ class TileITE(nodes.LibraryNode):
     def __init__(self,
                  name: str,
                  widths: Tuple[int, ...],
-                 kind_t: str = _TILE,
-                 kind_e: str = _TILE,
+                 kind_t: str = TILE,
+                 kind_e: str = TILE,
                  expr_t: Optional[str] = None,
                  expr_e: Optional[str] = None,
-                 kind_mask: str = _TILE,
+                 kind_mask: str = TILE,
                  expr_mask: Optional[str] = None,
                  location: Optional[str] = None):
         """Construct a ``TileITE`` node.
@@ -278,20 +278,20 @@ class TileITE(nodes.LibraryNode):
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileITE: widths must have length in {{1, 2, 3}}, got {widths!r}")
         for label, kind in (("kind_t", kind_t), ("kind_e", kind_e), ("kind_mask", kind_mask)):
-            if kind not in _VALID_KINDS:
-                raise ValueError(f"TileITE: {label} must be one of {_VALID_KINDS}, got {kind!r}")
-        if kind_t == _SYMBOL and not expr_t:
+            if kind not in VALID_KINDS:
+                raise ValueError(f"TileITE: {label} must be one of {VALID_KINDS}, got {kind!r}")
+        if kind_t == SYMBOL and not expr_t:
             raise ValueError("TileITE: kind_t='Symbol' requires expr_t")
-        if kind_e == _SYMBOL and not expr_e:
+        if kind_e == SYMBOL and not expr_e:
             raise ValueError("TileITE: kind_e='Symbol' requires expr_e")
-        if kind_mask == _SYMBOL and not expr_mask:
+        if kind_mask == SYMBOL and not expr_mask:
             raise ValueError("TileITE: kind_mask='Symbol' requires expr_mask")
         inputs = set()
-        if kind_mask in (_TILE, _SCALAR):
+        if kind_mask in (TILE, SCALAR):
             inputs.add("_mask")
-        if kind_t in (_TILE, _SCALAR):
+        if kind_t in (TILE, SCALAR):
             inputs.add("_t")
-        if kind_e in (_TILE, _SCALAR):
+        if kind_e in (TILE, SCALAR):
             inputs.add("_e")
         super().__init__(name, location=location, inputs=inputs, outputs={"_o"})
         self.widths = list(widths)
@@ -324,7 +324,7 @@ class TileITE(nodes.LibraryNode):
         # connector (Tile / Scalar); a Symbol operand is inline (no connector).
         required = []
         for conn, kind in (("_mask", self.kind_mask), ("_t", self.kind_t), ("_e", self.kind_e)):
-            if kind in (_TILE, _SCALAR):
+            if kind in (TILE, SCALAR):
                 required.append(conn)
         for conn in required:
             if conn not in in_e:
@@ -333,7 +333,7 @@ class TileITE(nodes.LibraryNode):
         # Output-kind rule (design 6.2): when ANY operand is a Tile, ``_o`` must be
         # tile-shape. (In the tile body at least the cond or one arm is a Tile; an
         # all-Symbol/Scalar ITE is loop-invariant and may keep a scalar output.)
-        any_tile_input = _TILE in (self.kind_mask, self.kind_t, self.kind_e)
+        any_tile_input = TILE in (self.kind_mask, self.kind_t, self.kind_e)
         if any_tile_input and not (_is_tile_shape(o_arr, tuple(self.widths))
                                    or edge_moves_a_tile(out_e["_o"], tuple(self.widths))):
             raise NotImplementedError(
@@ -341,7 +341,7 @@ class TileITE(nodes.LibraryNode):
                 f"'_o' descriptor is not tile-shape {tuple(self.widths)!r}. Per design section 6.2: "
                 f"any Tile input -> Tile output.")
         for conn, kind in (("_t", self.kind_t), ("_e", self.kind_e)):
-            if kind == _TILE:
+            if kind == TILE:
                 src = sdfg.arrays[in_e[conn].data.data].dtype
                 if not _promotion_ok(src, o_arr.dtype):
                     raise NotImplementedError(

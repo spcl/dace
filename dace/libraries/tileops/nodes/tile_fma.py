@@ -30,7 +30,7 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import (_TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, _is_scalar_shape, edge_moves_a_tile,
+from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, _is_tile_shape, _is_scalar_shape, edge_moves_a_tile,
                          scalar_operand_ref, _promotion_ok)
 
 #: C++ spellings of every registered dtype narrower than ``float``; these operands take the
@@ -39,7 +39,7 @@ from .tile_binop import (_TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, 
 #: left ``dace::float8_e4m3fn`` / ``dace::float8_e5m2`` in the un-widened branch, though both CUDA
 #: fp8 types carry the same multi-implicit-conversion surface as ``__half`` that widening dodges.
 #: ``bool_`` is EXCLUDED on purpose although it is one byte -- a widened bool would read
-#: ``bool(std::fma(...))``, the numeric-to-bool truncation the ``_cast`` guard below refuses to
+#: ``bool(std::fma(...))``, the numeric-to-bool truncation the ``cast`` guard below refuses to
 #: emit. A bare ``bytes < 4`` test puts ``bool_`` back in; do not "simplify" this predicate.
 NARROW_OPERAND_CTYPES: Final[frozenset[str]] = frozenset(tc.ctype for tc in dace.dtypes.TYPECLASS_TO_STRING
                                                          if tc.bytes < dace.float32.bytes and tc.type is not np.bool_)
@@ -68,13 +68,13 @@ class ExpandTileFMAPure(ExpandTransformation):
         out_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_o").data.data].dtype.ctype
 
-        # The dtype the VALUE operands share (a ``_SYMBOL`` / ``_SCALAR`` operand
+        # The dtype the VALUE operands share (a ``SYMBOL`` / ``SCALAR`` operand
         # is cast to this). Prefer a data operand's descriptor dtype; else a
         # symbol's own declared dtype; else fall back to ``out_dtype``. Mirrors
         # ``ExpandTileBinopPure._operand_dtype``.
         def _operand_dtype() -> str:
             for k, c in ((node.kind_a, "_a"), (node.kind_b, "_b"), (node.kind_c, "_c")):
-                if k in (_TILE, _SCALAR) and c in in_e:
+                if k in (TILE, SCALAR) and c in in_e:
                     return parent_sdfg.arrays[in_e[c].data.data].dtype.ctype
             for expr in (node.expr_a, node.expr_b, node.expr_c):
                 if not expr:
@@ -89,21 +89,21 @@ class ExpandTileFMAPure(ExpandTransformation):
 
         operand_dtype = _operand_dtype()
         # No ``(bool)X`` is ever emitted: the cast only resolves type-strict overloads, and casting a
-        # value to bool truncates it (twin guard + full rationale on ``tile_binop.py``'s ``_cast``).
-        _cast = "" if operand_dtype == dace.bool_.ctype else f"({operand_dtype})"
+        # value to bool truncates it (twin guard + full rationale on ``tile_binop.py``'s ``cast``).
+        cast = "" if operand_dtype == dace.bool_.ctype else f"({operand_dtype})"
         narrow_operand = operand_dtype in NARROW_OPERAND_CTYPES
 
         def _effective_ctype(kind: str, conn: str) -> str:
             """The C++ type ``conn`` is actually emitted as (post any cast)."""
-            if kind == _SYMBOL:
+            if kind == SYMBOL:
                 return operand_dtype
-            if kind == _TILE:
+            if kind == TILE:
                 return parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             _, broadcast = scalar_operand_ref(desc, conn, widths, off)
             return operand_dtype if broadcast else desc.dtype.ctype
 
-        _ctypes = {
+        ctypes_by_conn = {
             "_a": _effective_ctype(node.kind_a, "_a"),
             "_b": _effective_ctype(node.kind_b, "_b"),
             "_c": _effective_ctype(node.kind_c, "_c"),
@@ -114,13 +114,13 @@ class ExpandTileFMAPure(ExpandTransformation):
             half arithmetic stays safe), else a non-float16 placeholder --
             :func:`half_disambiguated` only cares about the binary distinction.
             """
-            others = [c for k, c in _ctypes.items() if k != this_conn]
+            others = [c for k, c in ctypes_by_conn.items() if k != this_conn]
             return dace.float16.ctype if all(c == dace.float16.ctype for c in others) else operand_dtype + "?mixed"
 
         def _operand_ref(kind: str, conn: str, expr: str | None) -> str:
             """Return the per-lane C++ reference for one FMA operand.
 
-            A ``_SYMBOL`` / broadcast ``_SCALAR`` operand is cast to
+            A ``SYMBOL`` / broadcast ``SCALAR`` operand is cast to
             ``operand_dtype`` so ``std::fma`` resolves all three operands at one
             type; a per-lane Tile read (or a tile-shape Scalar widened upstream)
             keeps the tile dtype uncast -- UNLESS it is ``dace::float16``
@@ -131,9 +131,9 @@ class ExpandTileFMAPure(ExpandTransformation):
             a bare half handed to ``std::fma`` with mixed-type siblings is a
             compile-time ambiguity, not a truncation risk).
             """
-            if kind == _SYMBOL:
-                return f"{_cast}({pyexpr2cpp(expr)})"
-            if kind == _TILE:
+            if kind == SYMBOL:
+                return f"{cast}({pyexpr2cpp(expr)})"
+            if kind == TILE:
                 src = parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
                 return half_disambiguated(f"{conn}[{off}]", src, _meets_ctype(conn))
             # Scalar operand: descriptor-aware (a tile-shape Array widened upstream
@@ -142,7 +142,7 @@ class ExpandTileFMAPure(ExpandTransformation):
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             ref, broadcast = scalar_operand_ref(desc, conn, widths, off)
             if broadcast:
-                return f"{_cast}({ref})"
+                return f"{cast}({ref})"
             return half_disambiguated(ref, desc.dtype.ctype, _meets_ctype(conn))
 
         a_ref = _operand_ref(node.kind_a, "_a", node.expr_a)
@@ -163,7 +163,7 @@ class ExpandTileFMAPure(ExpandTransformation):
         # Output-kind dispatch (design 6.2): all inputs non-Tile and ``_o`` Scalar /
         # length-1 -> a single assignment (no lane loop); otherwise the K-fold loop.
         out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_o").data.data]
-        out_is_scalar = (node.kind_a != _TILE and node.kind_b != _TILE and node.kind_c != _TILE
+        out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and node.kind_c != TILE
                          and _is_scalar_shape(out_desc))
         if out_is_scalar:
             # Scalar output: no lane loop; one assignment. A volume-1 output (Scalar
@@ -182,11 +182,11 @@ class ExpandTileFMAPure(ExpandTransformation):
                 body = f"_o[{off}] = {rhs_expr};"
             code = nested_loops(widths, body)
         inputs = set()
-        if node.kind_a in (_TILE, _SCALAR):
+        if node.kind_a in (TILE, SCALAR):
             inputs.add("_a")
-        if node.kind_b in (_TILE, _SCALAR):
+        if node.kind_b in (TILE, SCALAR):
             inputs.add("_b")
-        if node.kind_c in (_TILE, _SCALAR):
+        if node.kind_c in (TILE, SCALAR):
             inputs.add("_c")
         if node.has_mask:
             inputs.add("_mask")
@@ -269,19 +269,19 @@ class TileFMA(nodes.LibraryNode):
     kind_a = properties.Property(
         dtype=str,
         allow_none=False,
-        default=_TILE,
+        default=TILE,
         desc="Operand kind for the multiplicand ``a``: 'Tile', 'Scalar' or 'Symbol'.",
     )
     kind_b = properties.Property(
         dtype=str,
         allow_none=False,
-        default=_TILE,
+        default=TILE,
         desc="Operand kind for the multiplier ``b``: 'Tile', 'Scalar' or 'Symbol'.",
     )
     kind_c = properties.Property(
         dtype=str,
         allow_none=False,
-        default=_TILE,
+        default=TILE,
         desc="Operand kind for the addend ``c``: 'Tile', 'Scalar' or 'Symbol'.",
     )
     expr_a = properties.Property(
@@ -307,9 +307,9 @@ class TileFMA(nodes.LibraryNode):
                  name: str,
                  widths: Tuple[int, ...],
                  has_mask: bool = False,
-                 kind_a: str = _TILE,
-                 kind_b: str = _TILE,
-                 kind_c: str = _TILE,
+                 kind_a: str = TILE,
+                 kind_b: str = TILE,
+                 kind_c: str = TILE,
                  expr_a: Optional[str] = None,
                  expr_b: Optional[str] = None,
                  expr_c: Optional[str] = None,
@@ -335,24 +335,24 @@ class TileFMA(nodes.LibraryNode):
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileFMA: widths must have length in {{1, 2, 3}}, got {widths!r}")
         for label, kind in (("kind_a", kind_a), ("kind_b", kind_b), ("kind_c", kind_c)):
-            if kind not in _VALID_KINDS:
-                raise ValueError(f"TileFMA: {label} must be one of {_VALID_KINDS}, got {kind!r}")
-        if kind_a == _SYMBOL and not expr_a:
+            if kind not in VALID_KINDS:
+                raise ValueError(f"TileFMA: {label} must be one of {VALID_KINDS}, got {kind!r}")
+        if kind_a == SYMBOL and not expr_a:
             raise ValueError("TileFMA: kind_a='Symbol' requires expr_a")
-        if kind_b == _SYMBOL and not expr_b:
+        if kind_b == SYMBOL and not expr_b:
             raise ValueError("TileFMA: kind_b='Symbol' requires expr_b")
-        if kind_c == _SYMBOL and not expr_c:
+        if kind_c == SYMBOL and not expr_c:
             raise ValueError("TileFMA: kind_c='Symbol' requires expr_c")
-        if _TILE not in (kind_a, kind_b, kind_c):
+        if TILE not in (kind_a, kind_b, kind_c):
             raise ValueError("TileFMA: at least one operand must be a Tile "
                              f"(got kind_a={kind_a!r}, kind_b={kind_b!r}, kind_c={kind_c!r})")
 
         inputs = set()
-        if kind_a in (_TILE, _SCALAR):
+        if kind_a in (TILE, SCALAR):
             inputs.add("_a")
-        if kind_b in (_TILE, _SCALAR):
+        if kind_b in (TILE, SCALAR):
             inputs.add("_b")
-        if kind_c in (_TILE, _SCALAR):
+        if kind_c in (TILE, SCALAR):
             inputs.add("_c")
         if has_mask:
             inputs.add("_mask")
@@ -386,21 +386,21 @@ class TileFMA(nodes.LibraryNode):
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
         o_arr = sdfg.arrays[out_e["_o"].data.data]
         # Output-kind rule (design 6.2): when any input is Tile, ``_o`` must be tile-shape.
-        any_tile_input = _TILE in (self.kind_a, self.kind_b, self.kind_c)
+        any_tile_input = TILE in (self.kind_a, self.kind_b, self.kind_c)
         if any_tile_input and not (_is_tile_shape(o_arr, tuple(self.widths))
                                    or edge_moves_a_tile(out_e["_o"], tuple(self.widths))):
             raise NotImplementedError(f"{self.label}: output-kind rule violated -- a Tile input is present but "
                                       f"'_o' descriptor is not tile-shape {tuple(self.widths)!r}. Per design "
                                       f"section 6.2: any Tile input -> Tile output.")
         for label, kind in (("_a", self.kind_a), ("_b", self.kind_b), ("_c", self.kind_c)):
-            if kind in (_TILE, _SCALAR):
+            if kind in (TILE, SCALAR):
                 if label not in in_e:
                     raise ValueError(f"{self.label}: kind={kind!r} but {label!r} not connected")
                 # Each Tile operand is promoted to the output dtype before the op
                 # (the expansion casts on lowering). Widening (int -> float/double,
                 # int -> wider int, float -> double) is allowed; a narrowing
                 # conversion (e.g. double -> int) raises.
-                if kind == _TILE:
+                if kind == TILE:
                     src = sdfg.arrays[in_e[label].data.data].dtype
                     if not _promotion_ok(src, o_arr.dtype):
                         raise NotImplementedError(

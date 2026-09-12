@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 # suffix, environment attribute on ``..environments``). Each backend exposes the
 # SAME ``dace::tileops::tile_<op>`` signature and differs ONLY in the header its
 # environment pulls in -- so a single factory builds every expansion class.
-_ISA_BACKENDS = (
+ISA_BACKENDS = (
     ("scalar", "Scalar", "TileOpsScalar"),
     ("avx512", "AVX512", "TileOpsAVX512"),
     ("avx2", "AVX2", "TileOpsAVX2"),
@@ -89,21 +89,21 @@ def make_isa_expansions(node_label: str, maker: Callable[[TileOpNode, SDFGState,
     """
     from dace import library
     from dace.transformation.transformation import ExpandTransformation
-    from . import environments as _env
+    from . import environments
     out = {}
-    for key, suffix, env_name in _ISA_BACKENDS:
+    for key, suffix, env_name in ISA_BACKENDS:
         cls_name = f"ExpandTile{node_label}{suffix}"
 
         def _expansion(node: TileOpNode,
                        parent_state: SDFGState,
                        parent_sdfg: SDFG,
-                       _maker: Callable[[TileOpNode, SDFGState, SDFG, str], nodes.Tasklet] = maker,
-                       _key: str = key) -> nodes.Tasklet:
-            return _maker(node, parent_state, parent_sdfg, _key)
+                       bound_maker: Callable[[TileOpNode, SDFGState, SDFG, str], nodes.Tasklet] = maker,
+                       bound_key: str = key) -> nodes.Tasklet:
+            return bound_maker(node, parent_state, parent_sdfg, bound_key)
 
         cls = type(
             cls_name, (ExpandTransformation, ), {
-                "environments": [getattr(_env, env_name)],
+                "environments": [getattr(environments, env_name)],
                 "expansion": staticmethod(_expansion),
                 "__doc__": f"{key} ISA lowering of Tile{node_label} (calls "
                 f"_isa_codegen.{maker.__name__}; the {env_name} environment pulls in the header).",
@@ -117,7 +117,7 @@ def make_isa_expansions(node_label: str, maker: Callable[[TileOpNode, SDFGState,
 
 # TileBinop.op -> the single-char op code the backend headers template on
 # (``dace::tileops::tile_binop<T, VLEN, Op, ...>``; legend in scalar.h).
-_OP_TO_CHAR = {
+OP_TO_CHAR = {
     "+": "+",
     "-": "-",
     "*": "*",
@@ -140,13 +140,13 @@ _OP_TO_CHAR = {
     "||": "|",
 }
 
-_TILE = "Tile"
-_SYMBOL = "Symbol"
-_SCALAR = "Scalar"
+TILE = "Tile"
+SYMBOL = "Symbol"
+SCALAR = "Scalar"
 
 # TileUnop.op -> the single-char op code the backend headers' ``tile_unop``
 # templates on (legend in scalar.h: n neg, a abs, e exp, l log, s sqrt, ...).
-_UNOP_TO_CHAR = {
+UNOP_TO_CHAR = {
     "neg": "n",
     "not": "!",
     "abs": "a",
@@ -193,7 +193,7 @@ def _resolve_operand_ctype(node: TileBinop | TileFMA | TileUnop, parent_state: S
     """Resolve the C++ type the VALUE operands share (mirror of
     ``ExpandTileBinopPure._operand_dtype``).
 
-    Prefer a data operand's (``_TILE`` / ``_SCALAR``) descriptor dtype; else a
+    Prefer a data operand's (``TILE`` / ``SCALAR``) descriptor dtype; else a
     symbol operand's declared type; else fall back to ``out_dtype``. Used to
     decide whether the single-``T`` ISA runtime can carry this op (operands and
     output share a type) or whether it must defer to the ``pure`` expansion
@@ -205,10 +205,10 @@ def _resolve_operand_ctype(node: TileBinop | TileFMA | TileUnop, parent_state: S
     """
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
     for kind, conn in conns:
-        if kind in (_TILE, _SCALAR) and conn in in_e:
+        if kind in (TILE, SCALAR) and conn in in_e:
             return parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
     for kind, conn, expr in [(k, c, e) for (k, c), e in zip(conns, _operand_exprs(node, conns))]:
-        if kind == _SYMBOL and expr:
+        if kind == SYMBOL and expr:
             try:
                 for s in dace.symbolic.symlist(dace.symbolic.pystr_to_symbolic(expr)):
                     if str(s) in parent_sdfg.symbols:
@@ -221,7 +221,7 @@ def _resolve_operand_ctype(node: TileBinop | TileFMA | TileUnop, parent_state: S
 def _operand_exprs(node: TileBinop | TileFMA | TileUnop, conns: list[tuple[str, str]]) -> list[str | None]:
     """Per-operand inline ``expr_*`` strings, aligned with ``conns`` order."""
     mapping = {"_a": node.expr_a, "_b": getattr(node, "expr_b", None), "_c": getattr(node, "expr_c", None)}
-    return [mapping.get(conn) for _kind, conn in conns]
+    return [mapping.get(conn) for _, conn in conns]
 
 
 def _scalar_ref(conn: str, desc: Data, subset: Subset) -> str:
@@ -248,7 +248,7 @@ def _scalar_ref(conn: str, desc: Data, subset: Subset) -> str:
 def make_binop_tasklet(node: TileBinop, parent_state: SDFGState, parent_sdfg: SDFG, suffix: str) -> nodes.Tasklet:
     """CPP tasklet calling ``dace::tileops::tile_binop`` for ``node``.
 
-    Maps ``op`` -> :data:`_OP_TO_CHAR`; each operand's ``kind`` -> the broadcast
+    Maps ``op`` -> :data:`OP_TO_CHAR`; each operand's ``kind`` -> the broadcast
     boolean (Tile reads the per-lane connector with ``Broadcast=false``; Scalar /
     Symbol are materialised into a length-1 ``T`` buffer read with
     ``Broadcast=true``, casting to the output type); ``has_mask`` -> ``Masked``.
@@ -261,7 +261,7 @@ def make_binop_tasklet(node: TileBinop, parent_state: SDFGState, parent_sdfg: SD
     # the pure path's own ``out_is_scalar`` predicate.
     from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure, _is_scalar_shape
     out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-    if node.kind_a != _TILE and node.kind_b != _TILE and _is_scalar_shape(out_desc):
+    if node.kind_a != TILE and node.kind_b != TILE and _is_scalar_shape(out_desc):
         return ExpandTileBinopPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
@@ -281,7 +281,7 @@ def make_binop_tasklet(node: TileBinop, parent_state: SDFGState, parent_sdfg: SD
     pre = []
 
     def operand(kind: str, conn: str, expr: str | None) -> tuple[str, str]:
-        if kind == _TILE:
+        if kind == TILE:
             src = parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
             if src == out_dtype:
                 return "false", conn
@@ -292,7 +292,7 @@ def make_binop_tasklet(node: TileBinop, parent_state: SDFGState, parent_sdfg: SD
             pre.append(f"{out_dtype} {buf}[{vlen}];")
             pre.append(f"for (int _ci = 0; _ci < {vlen}; ++_ci) {buf}[_ci] = ({out_dtype}){conn}[_ci];")
             return "false", buf
-        if kind == _SYMBOL:
+        if kind == SYMBOL:
             val = f"({out_dtype})({pyexpr2cpp(expr)})"
         else:
             desc = parent_sdfg.arrays[in_e[conn].data.data]
@@ -303,15 +303,15 @@ def make_binop_tasklet(node: TileBinop, parent_state: SDFGState, parent_sdfg: SD
 
     a_bcast, a_ptr = operand(node.kind_a, "_a", node.expr_a)
     b_bcast, b_ptr = operand(node.kind_b, "_b", node.expr_b)
-    op_char = _OP_TO_CHAR[node.op]
+    op_char = OP_TO_CHAR[node.op]
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"
     call = (f"dace::tileops::tile_binop<{out_dtype}, {vlen}, '{op_char}', "
             f"{a_bcast}, {b_bcast}, {masked}>(_c, {a_ptr}, {b_ptr}, {mask_arg});")
     inputs = set()
-    if node.kind_a in (_TILE, _SCALAR):
+    if node.kind_a in (TILE, SCALAR):
         inputs.add("_a")
-    if node.kind_b in (_TILE, _SCALAR):
+    if node.kind_b in (TILE, SCALAR):
         inputs.add("_b")
     if node.has_mask:
         inputs.add("_mask")
@@ -343,7 +343,7 @@ def make_fma_tasklet(node: TileFMA, parent_state: SDFGState, parent_sdfg: SDFG, 
     from dace.libraries.tileops.nodes.tile_fma import ExpandTileFMAPure
     from dace.libraries.tileops.nodes.tile_binop import _is_scalar_shape
     out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_o").data.data]
-    no_tile = node.kind_a != _TILE and node.kind_b != _TILE and node.kind_c != _TILE
+    no_tile = node.kind_a != TILE and node.kind_b != TILE and node.kind_c != TILE
     if no_tile and _is_scalar_shape(out_desc):
         return ExpandTileFMAPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
@@ -359,7 +359,7 @@ def make_fma_tasklet(node: TileFMA, parent_state: SDFGState, parent_sdfg: SDFG, 
     pre = []
 
     def operand(kind: str, conn: str, expr: str | None) -> tuple[str, str]:
-        if kind == _TILE:
+        if kind == TILE:
             src = parent_sdfg.arrays[in_e[conn].data.data].dtype.ctype
             if src == out_dtype:
                 return "false", conn
@@ -370,7 +370,7 @@ def make_fma_tasklet(node: TileFMA, parent_state: SDFGState, parent_sdfg: SDFG, 
             pre.append(f"{out_dtype} {buf}[{vlen}];")
             pre.append(f"for (int _ci = 0; _ci < {vlen}; ++_ci) {buf}[_ci] = ({out_dtype}){conn}[_ci];")
             return "false", buf
-        if kind == _SYMBOL:
+        if kind == SYMBOL:
             val = f"({out_dtype})({pyexpr2cpp(expr)})"
         else:
             desc = parent_sdfg.arrays[in_e[conn].data.data]
@@ -387,11 +387,11 @@ def make_fma_tasklet(node: TileFMA, parent_state: SDFGState, parent_sdfg: SDFG, 
     call = (f"dace::tileops::tile_fma<{out_dtype}, {vlen}, "
             f"{a_bcast}, {b_bcast}, {c_bcast}, {masked}>(_o, {a_ptr}, {b_ptr}, {c_ptr}, {mask_arg});")
     inputs = set()
-    if node.kind_a in (_TILE, _SCALAR):
+    if node.kind_a in (TILE, SCALAR):
         inputs.add("_a")
-    if node.kind_b in (_TILE, _SCALAR):
+    if node.kind_b in (TILE, SCALAR):
         inputs.add("_b")
-    if node.kind_c in (_TILE, _SCALAR):
+    if node.kind_c in (TILE, SCALAR):
         inputs.add("_c")
     if node.has_mask:
         inputs.add("_mask")
@@ -408,7 +408,7 @@ def make_fma_tasklet(node: TileFMA, parent_state: SDFGState, parent_sdfg: SDFG, 
 def make_unop_tasklet(node: TileUnop, parent_state: SDFGState, parent_sdfg: SDFG, suffix: str) -> nodes.Tasklet:
     """CPP tasklet calling ``dace::tileops::tile_unop`` for ``node`` (K=1).
 
-    Maps ``op`` -> :data:`_UNOP_TO_CHAR`; the operand's ``kind`` -> the
+    Maps ``op`` -> :data:`UNOP_TO_CHAR`; the operand's ``kind`` -> the
     broadcast boolean (Tile reads the per-lane connector with
     ``Broadcast=false``; Scalar / Symbol are materialised into a length-1 ``T``
     buffer read with ``Broadcast=true``, casting to the output type);
@@ -419,9 +419,9 @@ def make_unop_tasklet(node: TileUnop, parent_state: SDFGState, parent_sdfg: SDFG
     # there is no per-ISA ``tile_unop`` op char for it, so lower it via the pure
     # per-lane ``dace::<dtype>(x)`` cast (the operand != output fallback below also
     # catches the usual differing-dtype cast, but a no-op same-dtype cast must route
-    # here too rather than KeyError on _UNOP_TO_CHAR).
-    from dace.libraries.tileops.nodes.tile_unop import _CAST_OP_TO_CPP, ExpandTileUnopPure
-    if node.op in _CAST_OP_TO_CPP:
+    # here too rather than KeyError on UNOP_TO_CHAR).
+    from dace.libraries.tileops.nodes.tile_unop import CAST_OP_TO_CPP, ExpandTileUnopPure
+    if node.op in CAST_OP_TO_CPP:
         return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
     # A scalar-shaped output (``_c`` a volume-1 Scalar / length-1 Array, which codegen
     # emits by value as ``T _c;``) cannot bind to ``tile_unop``'s ``T* out`` pointer
@@ -432,7 +432,7 @@ def make_unop_tasklet(node: TileUnop, parent_state: SDFGState, parent_sdfg: SDFG
     # path's own ``out_is_scalar`` predicate (a Tile operand always yields a tile output).
     from dace.libraries.tileops.nodes.tile_binop import _is_scalar_shape
     out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-    if node.kind_a != _TILE and _is_scalar_shape(out_desc):
+    if node.kind_a != TILE and _is_scalar_shape(out_desc):
         return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
@@ -445,7 +445,7 @@ def make_unop_tasklet(node: TileUnop, parent_state: SDFGState, parent_sdfg: SDFG
         from dace.libraries.tileops.nodes.tile_unop import ExpandTileUnopPure
         return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
     pre = []
-    if node.kind_a == _TILE:
+    if node.kind_a == TILE:
         src = parent_sdfg.arrays[in_e["_a"].data.data].dtype.ctype
         if src == out_dtype:
             a_bcast, a_ptr = "false", "_a"
@@ -457,7 +457,7 @@ def make_unop_tasklet(node: TileUnop, parent_state: SDFGState, parent_sdfg: SDFG
             pre.append(f"for (int _ci = 0; _ci < {vlen}; ++_ci) {a_ptr}[_ci] = ({out_dtype})_a[_ci];")
             a_bcast = "false"
     else:
-        if node.kind_a == _SYMBOL:
+        if node.kind_a == SYMBOL:
             val = f"({out_dtype})({node.expr_a})"
         else:
             desc = parent_sdfg.arrays[in_e["_a"].data.data]
@@ -469,18 +469,18 @@ def make_unop_tasklet(node: TileUnop, parent_state: SDFGState, parent_sdfg: SDFG
     # char, and only twelve of the seventeen ops the converter lowers have one -- ``tan``, ``asin``,
     # ``acos``, ``atan``, ``sinh``, ``cosh`` and the ``sign`` CloudSC needs do not. The lookup below
     # is a bare subscript, so reaching it without a char is a KeyError out of codegen rather than a
-    # refusal or a fallback. The pure per-lane expansion renders every op ``_UNOP_CPP`` knows, so
+    # refusal or a fallback. The pure per-lane expansion renders every op ``UNOP_CPP`` knows, so
     # delegate to it -- the same escape the cast-op, scalar-output and mixed-dtype cases above take.
-    if node.op not in _UNOP_TO_CHAR:
+    if node.op not in UNOP_TO_CHAR:
         from dace.libraries.tileops.nodes.tile_unop import ExpandTileUnopPure
         return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
-    op_char = _UNOP_TO_CHAR[node.op]
+    op_char = UNOP_TO_CHAR[node.op]
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"
     call = (f"dace::tileops::tile_unop<{out_dtype}, {vlen}, '{op_char}', "
             f"{a_bcast}, {masked}>(_c, {a_ptr}, {mask_arg});")
     inputs = set()
-    if node.kind_a in (_TILE, _SCALAR):
+    if node.kind_a in (TILE, SCALAR):
         inputs.add("_a")
     if node.has_mask:
         inputs.add("_mask")
@@ -509,12 +509,12 @@ def make_ite_tasklet(node: TileITE, parent_state: SDFGState, parent_sdfg: SDFG, 
 
     # A loop-invariant predicate carries NO ``_mask`` connector (TileITE's kind_mask='Symbol')
     # or a length-1 one ('Scalar'), while the runtime reads ``cond`` per lane -- so splat it.
-    if node.kind_mask == _TILE:
+    if node.kind_mask == TILE:
         cond_dtype = _in_ctype(node, parent_state, parent_sdfg, "_mask")
         mask_ptr = "_mask"
     else:
         cond_dtype = "bool"
-        if node.kind_mask == _SYMBOL:
+        if node.kind_mask == SYMBOL:
             cond_val = pyexpr2cpp(node.expr_mask)
         else:
             mask_desc = parent_sdfg.arrays[in_e["_mask"].data.data]
@@ -528,11 +528,11 @@ def make_ite_tasklet(node: TileITE, parent_state: SDFGState, parent_sdfg: SDFG, 
         connector) or a length-1 broadcast buffer (``Broadcast=true``) for a
         Scalar source / inline Symbol expression -- mirrors ``make_binop_tasklet``.
         Returns ``(broadcast_flag, ptr_expr)``."""
-        if kind == _TILE:
+        if kind == TILE:
             return "false", conn
-        if kind == _SYMBOL:
+        if kind == SYMBOL:
             val = f"({out_dtype})({pyexpr2cpp(expr)})"
-        else:  # _SCALAR
+        else:  # SCALAR
             desc = parent_sdfg.arrays[in_e[conn].data.data]
             val = f"({out_dtype})({_scalar_ref(conn, desc, in_e[conn].data.subset)})"
         buf = f"_bc{conn}"
@@ -546,11 +546,11 @@ def make_ite_tasklet(node: TileITE, parent_state: SDFGState, parent_sdfg: SDFG, 
     # A Symbol operand embeds its expression inline (no connector); only Tile / Scalar
     # operands read through a connector.
     inputs = set()
-    if node.kind_mask in (_TILE, _SCALAR):
+    if node.kind_mask in (TILE, SCALAR):
         inputs.add("_mask")
-    if node.kind_t in (_TILE, _SCALAR):
+    if node.kind_t in (TILE, SCALAR):
         inputs.add("_t")
-    if node.kind_e in (_TILE, _SCALAR):
+    if node.kind_e in (TILE, SCALAR):
         inputs.add("_e")
     return nodes.Tasklet(
         label=f"{node.label}_{suffix}",
@@ -565,7 +565,7 @@ def make_ite_tasklet(node: TileITE, parent_state: SDFGState, parent_sdfg: SDFG, 
 # Byte alignment the allocator guarantees for the base of an array, per storage class. The GPU
 # figure is the gpuMalloc/gpuMallocAsync contract (256 B). Anything else is unknown and gets no
 # assumption. Register is NOT here on purpose -- see :func:`base_align_bytes`.
-_BASE_ALIGN_BYTES = {
+BASE_ALIGN_BYTES = {
     dace.dtypes.StorageType.GPU_Global: 256,
     dace.dtypes.StorageType.CPU_Pinned: 256,
 }
@@ -582,7 +582,7 @@ def base_align_bytes(arr: Data) -> int:
     """
     if arr.storage == dace.dtypes.StorageType.Register:
         return arr.alignment if arr.alignment > 0 else arr.dtype.bytes
-    return _BASE_ALIGN_BYTES.get(arr.storage, 0)
+    return BASE_ALIGN_BYTES.get(arr.storage, 0)
 
 
 def _enclosing_param_ranges(
@@ -1104,7 +1104,7 @@ def make_reduce_tasklet(node: TileReduce, parent_state: SDFGState, parent_sdfg: 
         return ExpandTileReducePure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     src_dtype = _in_ctype(node, parent_state, parent_sdfg, "_src")
-    op_char = _OP_TO_CHAR[node.op]
+    op_char = OP_TO_CHAR[node.op]
     # Full reduction -> length-1 output. DaCe emits a volume-1 output by value
     # (``T _dst;``) so it is referenced bare; a genuine multi-element pointer
     # target is dereferenced ``_dst[0]`` (mirrors ExpandTileReducePure.writeback).

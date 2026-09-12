@@ -12,7 +12,7 @@ import pytest
 import dace
 from dace.libraries.tileops import TileBinop
 
-_OP_TAG = {
+OP_TAG = {
     "+": "add",
     "-": "sub",
     "*": "mul",
@@ -32,7 +32,7 @@ _OP_TAG = {
 
 def _build_binop_sdfg(widths, op, has_mask, dtype):
     """Build a minimal SDFG: two input tiles -> TileBinop -> output tile."""
-    sdfg = dace.SDFG(f"tile_binop_pure_{_OP_TAG[op]}_{'x'.join(str(w) for w in widths)}_{'m' if has_mask else 'nm'}")
+    sdfg = dace.SDFG(f"tile_binop_pure_{OP_TAG[op]}_{'x'.join(str(w) for w in widths)}_{'m' if has_mask else 'nm'}")
     sdfg.add_array("A", widths, dtype, transient=False)
     sdfg.add_array("B", widths, dtype, transient=False)
     sdfg.add_array("C", widths, dtype, transient=False)

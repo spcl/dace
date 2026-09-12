@@ -33,7 +33,7 @@ def test_reduce_selects_isa_for_full_k1(isa: str) -> None:
     # silently mismapped -- both branches are the contract here.
     n = TileReduce("t", op="+", widths=(8, ))
     n.target_isa = isa
-    impl = _dispatch._ISA_TO_IMPL[isa]
+    impl = _dispatch.ISA_TO_IMPL[isa]
     assert impl in n.implementations
     if isa != "SCALAR" and isa not in _dispatch.host_supported_isas():
         with pytest.raises(ValueError, match="not executable on this host"):

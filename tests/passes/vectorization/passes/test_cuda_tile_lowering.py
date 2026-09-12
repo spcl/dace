@@ -21,7 +21,7 @@ _CUDA_H = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "da
 
 def test_cuda_isa_registered():
     assert "CUDA" in _VALID_ISAS
-    assert _dispatch._ISA_TO_IMPL["CUDA"] == "cuda"
+    assert _dispatch.ISA_TO_IMPL["CUDA"] == "cuda"
 
 
 def test_cuda_environment_pulls_header():

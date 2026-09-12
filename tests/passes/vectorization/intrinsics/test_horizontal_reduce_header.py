@@ -24,13 +24,13 @@ import pytest
 
 import dace
 
-_INCLUDE = str(Path(dace.__file__).parent / "runtime" / "include")
+INCLUDE = str(Path(dace.__file__).parent / "runtime" / "include")
 #: The standard DaCe builds generated code with. Pinning c++17 here un-gates the day the runtime
 #: headers reach for a C++20 feature -- ``dace/codegen/common.py`` clamps generated code to >= 20.
-_STD = f"-std=c++{dace.Config.get('compiler', 'cpp_standard')}"
-_HOST_IS_X86 = platform.machine().lower() in ("x86_64", "amd64", "x64")
+STD = f"-std=c++{dace.Config.get('compiler', 'cpp_standard')}"
+HOST_IS_X86 = platform.machine().lower() in ("x86_64", "amd64", "x64")
 
-_SRC = textwrap.dedent("""
+SRC = textwrap.dedent("""
     #include "dace/cpu_vectorizable_math.h"
     #include <cstdio>
     #include <cmath>
@@ -59,7 +59,7 @@ _SRC = textwrap.dedent("""
     }
     """)
 
-_AVX512_SRC = textwrap.dedent("""
+AVX512_SRC = textwrap.dedent("""
     #define __DACE_USE_INTRINSICS 1
     #define __DACE_USE_AVX512 1
     #include "dace/cpu_vectorizable_math.h"
@@ -91,10 +91,9 @@ _AVX512_SRC = textwrap.dedent("""
 @pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
 def test_scalar_horizontal_reduce_compiles_and_is_correct(tmp_path):
     src = tmp_path / "hreduce_check.cpp"
-    src.write_text(_SRC)
+    src.write_text(SRC)
     exe = tmp_path / "hreduce_check"
-    compile_res = subprocess.run(
-        ["g++", _STD, "-I", _INCLUDE, str(src), "-o", str(exe)], capture_output=True, text=True)
+    compile_res = subprocess.run(["g++", STD, "-I", INCLUDE, str(src), "-o", str(exe)], capture_output=True, text=True)
     assert compile_res.returncode == 0, f"compile failed:\n{compile_res.stderr}"
     run_res = subprocess.run([str(exe)], capture_output=True, text=True)
     assert run_res.returncode == 0, f"runtime check failed:\n{run_res.stdout}"
@@ -104,25 +103,25 @@ def test_scalar_horizontal_reduce_compiles_and_is_correct(tmp_path):
 def build_avx512(tmp_path):
     """Build the AVX-512 driver; returns the executable path and the compiler result."""
     src = tmp_path / "hred_avx512.cpp"
-    src.write_text(_AVX512_SRC)
+    src.write_text(AVX512_SRC)
     exe = tmp_path / "hred_avx512"
-    res = subprocess.run(["g++", _STD, "-mavx512f", "-I", _INCLUDE,
+    res = subprocess.run(["g++", STD, "-mavx512f", "-I", INCLUDE,
                           str(src), "-o", str(exe)],
                          capture_output=True,
                          text=True)
     return exe, res
 
 
-@pytest.mark.skipif(not _HOST_IS_X86, reason="AVX-512 intrinsics need an x86-targeting compiler")
+@pytest.mark.skipif(not HOST_IS_X86, reason="AVX-512 intrinsics need an x86-targeting compiler")
 def test_avx512_horizontal_reduce_compiles(tmp_path):
     """Building the AVX-512 header needs the compiler, NOT the instruction set: an x86 box without
     an AVX-512 CPU used to skip this whole file's intrinsic path and report green."""
-    _exe, res = build_avx512(tmp_path)
+    _, res = build_avx512(tmp_path)
     assert res.returncode == 0, f"compile failed:\n{res.stderr}"
 
 
 @pytest.mark.avx512
-@pytest.mark.skipif(not _HOST_IS_X86, reason="AVX-512 intrinsics need an x86-targeting compiler")
+@pytest.mark.skipif(not HOST_IS_X86, reason="AVX-512 intrinsics need an x86-targeting compiler")
 def test_avx512_horizontal_reduce_is_correct(tmp_path):
     """Executing those instructions is what needs the hardware, so only this half is mark-gated."""
     exe, res = build_avx512(tmp_path)
@@ -132,7 +131,7 @@ def test_avx512_horizontal_reduce_is_correct(tmp_path):
     assert "ALL OK" in run_res.stdout, run_res.stdout
 
 
-_ARM_TU = textwrap.dedent("""
+ARM_TU = textwrap.dedent("""
     #define __DACE_USE_INTRINSICS 1
     #include "dace/cpu_vectorizable_math.h"
     template <typename T> void use_fp() {
@@ -164,8 +163,8 @@ def _aarch64_cxx():
 
 def _syntax_only_ok(driver, march_flags, tmp_path, name):
     src = tmp_path / f"{name}.cpp"
-    src.write_text(_ARM_TU)
-    res = subprocess.run(driver + [_STD, "-fsyntax-only"] + march_flags + ["-I", _INCLUDE, str(src)],
+    src.write_text(ARM_TU)
+    res = subprocess.run(driver + [STD, "-fsyntax-only"] + march_flags + ["-I", INCLUDE, str(src)],
                          capture_output=True,
                          text=True)
     return res.returncode == 0, res.stderr

@@ -330,10 +330,10 @@ def test_replicate_symbolic_divisor_stays_replicate_with_runtime_check():
 def test_replicate_float_divisor_refused():
     """Float divisor in an access expression is illegal -- the classifier
     refuses (no silent truncation to int) so the dim falls to AFFINE/GATHER."""
-    import sympy as _sp
+    import sympy
     from dace.transformation.passes.vectorization.utils.tile_access import _detect_replicate_factor
     # _detect_replicate_factor should refuse a float divisor.
-    expr = _sp.Function("int_floor")(_sp.Symbol("i"), _sp.Float(2.5))
+    expr = sympy.Function("int_floor")(sympy.Symbol("i"), sympy.Float(2.5))
     assert _detect_replicate_factor(expr, "i") is None
 
 

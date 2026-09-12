@@ -40,7 +40,7 @@ def _build(a_dt, b_dt, c_dt, impl, name):
 
 
 # (a_dtype, b_dtype, c_dtype, numpy a-dtype, numpy b-dtype, numpy c-dtype) — all widening.
-_WIDENING = [
+WIDENING = [
     (dace.int32, dace.float64, dace.float64, np.int32, np.float64, np.float64),
     (dace.float32, dace.float64, dace.float64, np.float32, np.float64, np.float64),
     (dace.int32, dace.int64, dace.int64, np.int32, np.int64, np.int64),
@@ -59,7 +59,7 @@ _WIDENING = [
 
 
 @pytest.mark.parametrize("impl", ["pure", "scalar"])
-@pytest.mark.parametrize("a_dt,b_dt,c_dt,na,nb,nc", _WIDENING)
+@pytest.mark.parametrize("a_dt,b_dt,c_dt,na,nb,nc", WIDENING)
 def test_tile_binop_widening_promotes(impl, a_dt, b_dt, c_dt, na, nb, nc):
     """A widening Tile operand is promoted to the output dtype; result matches numpy."""
     tag = f"{impl}_{a_dt.to_string()}_{b_dt.to_string()}"

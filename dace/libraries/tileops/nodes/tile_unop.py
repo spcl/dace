@@ -24,10 +24,10 @@ from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
 from .tile_binop import _promotion_ok
 
-_TILE = "Tile"
-_SYMBOL = "Symbol"
-_SCALAR = "Scalar"
-_VALID_KINDS = (_TILE, _SYMBOL, _SCALAR)
+TILE = "Tile"
+SYMBOL = "Symbol"
+SCALAR = "Scalar"
+VALID_KINDS = (TILE, SYMBOL, SCALAR)
 
 # op -> (prefix, suffix) for the pure (K>=2) inline C++ form ``<pre>operand<suf>``.
 #: Op -> (prefix, suffix) for the pure inline C++ form ``<pre>operand<suf>``.
@@ -37,7 +37,7 @@ _VALID_KINDS = (_TILE, _SYMBOL, _SCALAR)
 #: ``dace::math::`` namespace failed because ``dace::math::abs`` only has overloads for
 #: ``typeless_nan`` and ``unsigned integer`` -- a ``double`` argument trips the wrong
 #: overload at compile time.
-_UNOP_CPP = {
+UNOP_CPP = {
     "neg": ("(-", ")"),
     "not": ("(!", ")"),
     "abs": ("std::abs(", ")"),
@@ -62,7 +62,7 @@ _UNOP_CPP = {
 }
 
 # op -> the cuTile-Python expression (operand placeholder ``{a}``).
-_CUTE_UNOP_EXPR = {
+CUTE_UNOP_EXPR = {
     "neg": "-{a}",
     "not": "~{a}",
     "abs": "ct.abs({a})",
@@ -88,7 +88,7 @@ _CUTE_UNOP_EXPR = {
 # ``dace::<dtype>(x)`` cast function the C++ codegen already recognises (cppunparse
 # ``_typecast_func_to_cpp``) -- the sanctioned convert form, not a raw C cast. Built
 # from the dtype registry so dtype names are never hardcoded.
-_CAST_OP_TO_CPP = {s.split("::")[-1]: s for s in dace.dtypes.TYPECLASS_TO_STRING.values()}
+CAST_OP_TO_CPP = {s.split("::")[-1]: s for s in dace.dtypes.TYPECLASS_TO_STRING.values()}
 
 
 @library.expansion
@@ -117,13 +117,13 @@ class ExpandTileUnopPure(ExpandTransformation):
         # operand; casting a value to bool truncates it). Unary ops preserve
         # the operand dtype, so the cast only matters for int-literal -> typed
         # resolution, never bool. Suppress it when the dtype is bool.
-        _cast = "" if out_dtype == "bool" else f"({out_dtype})"
-        if node.kind_a == _SYMBOL:
+        cast = "" if out_dtype == "bool" else f"({out_dtype})"
+        if node.kind_a == SYMBOL:
             # Cast to out_dtype so a literal / symbolic int operand resolves
             # cleanly against a typed unop call (mirrors the binop fix).
             operand_ctype = out_dtype
-            operand = f"{_cast}({pyexpr2cpp(node.expr_a)})"
-        elif node.kind_a == _TILE:
+            operand = f"{cast}({pyexpr2cpp(node.expr_a)})"
+        elif node.kind_a == TILE:
             operand_ctype = parent_sdfg.arrays[in_e["_a"].data.data].dtype.ctype
             operand = f"_a[{off}]"
         else:  # Scalar: descriptor-aware reference.
@@ -136,10 +136,10 @@ class ExpandTileUnopPure(ExpandTransformation):
             desc = parent_sdfg.arrays[in_e["_a"].data.data]
             ref, broadcast = scalar_operand_ref(desc, "_a", widths, off)
             operand_ctype = out_dtype if broadcast else desc.dtype.ctype
-            operand = f"{_cast}({ref})" if broadcast else ref
+            operand = f"{cast}({ref})" if broadcast else ref
 
-        if node.op not in _CAST_OP_TO_CPP and node.op not in ("neg", "not") and operand_ctype == dace.float16.ctype:
-            # Every ``_UNOP_CPP`` op other than ``neg``/``not`` lowers to an
+        if node.op not in CAST_OP_TO_CPP and node.op not in ("neg", "not") and operand_ctype == dace.float16.ctype:
+            # Every ``UNOP_CPP`` op other than ``neg``/``not`` lowers to an
             # overloaded ``std::`` function (``sqrt``, ``exp``, ``abs``, ...)
             # with NO ``__half`` overload at all -- unlike a mixed-type infix
             # operator, this is not a "meets a different type" question, it
@@ -153,27 +153,27 @@ class ExpandTileUnopPure(ExpandTransformation):
             # runtime header's own ``_cuda_to_compute`` (tile_ops/cuda.h).
             operand = half_disambiguated(operand, operand_ctype, "float")
 
-        if node.op in _CAST_OP_TO_CPP:
+        if node.op in CAST_OP_TO_CPP:
             # Explicit dtype conversion: the kept ``dace.float64(x)`` cast lowered as
             # a unop whose op IS the target dtype. A cast is the one op that may
             # narrow, emitted as the ``dace::<dtype>(x)`` cast function (the same form
             # codegen lowers a bare ``float64(x)`` to), not an incidental C cast. The
             # operand is read raw -- the cast function performs the conversion.
-            if node.kind_a == _SYMBOL:
+            if node.kind_a == SYMBOL:
                 cast_src = f"({pyexpr2cpp(node.expr_a)})"
-            elif node.kind_a == _TILE:
+            elif node.kind_a == TILE:
                 cast_src = f"_a[{off}]"
             else:  # Scalar: the descriptor-aware reference (uncast).
                 cast_src = ref
-            rhs_expr = f"{_CAST_OP_TO_CPP[node.op]}({cast_src})"
+            rhs_expr = f"{CAST_OP_TO_CPP[node.op]}({cast_src})"
         else:
-            pre, post = _UNOP_CPP[node.op]
+            pre, post = UNOP_CPP[node.op]
             rhs_expr = f"{pre}{operand}{post}"
         # Output kind dispatch (design 6.2): non-Tile input + Scalar / length-1 output -> single
         # assignment (no lane loop). Otherwise the K-fold tile loop.
         from .tile_binop import _is_scalar_shape
         out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-        out_is_scalar = (node.kind_a != _TILE and _is_scalar_shape(out_desc))
+        out_is_scalar = (node.kind_a != TILE and _is_scalar_shape(out_desc))
         if out_is_scalar:
             # A volume-1 output (Scalar / length-1 Array) is a by-value local
             # (``T _c;``), so it -- and the volume-1 ``_mask`` -- are referenced
@@ -190,7 +190,7 @@ class ExpandTileUnopPure(ExpandTransformation):
                 body = f"_c[{off}] = {rhs_expr};"
             code = nested_loops(widths, body)
         inputs = set()
-        if node.kind_a in (_TILE, _SCALAR):
+        if node.kind_a in (TILE, SCALAR):
             inputs.add("_a")
         if node.has_mask:
             inputs.add("_mask")
@@ -273,7 +273,7 @@ class TileUnop(nodes.LibraryNode):
     kind_a = properties.Property(
         dtype=str,
         allow_none=False,
-        default=_TILE,
+        default=TILE,
         desc="Operand kind: 'Tile', 'Scalar' or 'Symbol'.",
     )
     expr_a = properties.Property(
@@ -288,14 +288,14 @@ class TileUnop(nodes.LibraryNode):
                  widths: Tuple[int, ...],
                  op: str = "abs",
                  has_mask: bool = False,
-                 kind_a: str = _TILE,
+                 kind_a: str = TILE,
                  expr_a: Optional[str] = None,
                  location: Optional[str] = None):
         """Construct a ``TileUnop`` node.
 
         :param name: Node label.
         :param widths: Per-dim tile widths, innermost-last.
-        :param op: One of the keys of :data:`_UNOP_CPP`.
+        :param op: One of the keys of :data:`UNOP_CPP`.
         :param has_mask: When True, declare the ``_mask`` input connector.
         :param kind_a: ``"Tile"`` (default), ``"Scalar"`` or ``"Symbol"``.
         :param expr_a: Required when ``kind_a == "Symbol"``.
@@ -303,18 +303,18 @@ class TileUnop(nodes.LibraryNode):
         :raises ValueError: On invalid ``op``, ``widths`` length, kind, or a
             missing expression for the symbol kind.
         """
-        if op not in _UNOP_CPP and op not in _CAST_OP_TO_CPP:
+        if op not in UNOP_CPP and op not in CAST_OP_TO_CPP:
             raise ValueError(f"TileUnop: unknown op {op!r}; allowed: "
-                             f"{sorted(_UNOP_CPP) + sorted(_CAST_OP_TO_CPP)}")
+                             f"{sorted(UNOP_CPP) + sorted(CAST_OP_TO_CPP)}")
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"TileUnop: widths must have length in {{1, 2, 3}}, got {widths!r}")
-        if kind_a not in _VALID_KINDS:
-            raise ValueError(f"TileUnop: kind_a must be one of {_VALID_KINDS}, got {kind_a!r}")
-        if kind_a == _SYMBOL and not expr_a:
+        if kind_a not in VALID_KINDS:
+            raise ValueError(f"TileUnop: kind_a must be one of {VALID_KINDS}, got {kind_a!r}")
+        if kind_a == SYMBOL and not expr_a:
             raise ValueError("TileUnop: kind_a='Symbol' requires expr_a")
 
         inputs = set()
-        if kind_a in (_TILE, _SCALAR):
+        if kind_a in (TILE, SCALAR):
             inputs.add("_a")
         if has_mask:
             inputs.add("_mask")
@@ -340,14 +340,14 @@ class TileUnop(nodes.LibraryNode):
             raise ValueError(f"{self.label}: required output '_c' not connected")
         if self.has_mask and "_mask" not in in_e:
             raise ValueError(f"{self.label}: has_mask=True but '_mask' not connected")
-        if self.kind_a in (_TILE, _SCALAR) and "_a" not in in_e:
+        if self.kind_a in (TILE, SCALAR) and "_a" not in in_e:
             raise ValueError(f"{self.label}: kind_a={self.kind_a!r} but '_a' not connected")
         c_arr = sdfg.arrays[out_e["_c"].data.data]
         # A dtype-name op (``float64`` / ``int32`` / ...) is the explicit conversion
         # that MAY narrow (int64 -> int32, double -> float); that is its purpose, so
         # the widening-only promotion guard is skipped. Every other unop preserves the
         # operand dtype, so a narrowing to the output dtype there is a real bug.
-        if self.kind_a == _TILE and self.op not in _CAST_OP_TO_CPP:
+        if self.kind_a == TILE and self.op not in CAST_OP_TO_CPP:
             src = sdfg.arrays[in_e["_a"].data.data].dtype
             # ``abs`` of a complex operand is the (real) magnitude -- ``std::abs(std::complex<T>)``
             # returns ``T`` -- so a complex -> real result is correct, not a lossy narrowing.
@@ -358,8 +358,8 @@ class TileUnop(nodes.LibraryNode):
                     f"{c_arr.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")
         # Output-kind rule (design 6.2): when input is Tile, the output must be tile-shape.
         from .tile_binop import _is_tile_shape, edge_moves_a_tile
-        if self.kind_a == _TILE and not (_is_tile_shape(c_arr, tuple(self.widths))
-                                         or edge_moves_a_tile(out_e["_c"], tuple(self.widths))):
+        if self.kind_a == TILE and not (_is_tile_shape(c_arr, tuple(self.widths))
+                                        or edge_moves_a_tile(out_e["_c"], tuple(self.widths))):
             raise NotImplementedError(
                 f"{self.label}: output-kind rule violated -- kind_a=Tile but '_c' descriptor is not "
                 f"tile-shape {tuple(self.widths)!r}. Per design section 6.2: Tile input -> Tile output.")
