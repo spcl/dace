@@ -197,6 +197,8 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         new_kernel_entry.map.gpu_launch_bounds = kernel_map_entry.map.gpu_launch_bounds
         new_kernel_entry.map.gpu_min_warps_per_eu = kernel_map_entry.map.gpu_min_warps_per_eu
         new_kernel_entry.map.gpu_maxnreg = kernel_map_entry.map.gpu_maxnreg
+        new_kernel_entry.map.allow_chiplet_threadblock_distribution = (
+            kernel_map_entry.map.allow_chiplet_threadblock_distribution)
 
     def preprocess_default_dims(self):
         """
