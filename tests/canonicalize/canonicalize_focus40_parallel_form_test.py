@@ -55,7 +55,7 @@ import dace
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
@@ -166,8 +166,12 @@ EXPECTED: dict[str, Form] = {
         "the loop into a 3-point stencil with a peeled prologue"),
     "s275_d_single":
     Form(
-        1, 0, 1, (), None, "the guard aa[0, i] > 0 is invariant within a column, so the outer i is free; the inner "
-        "aa[j, i] = aa[j - 1, i] + ... is a real column recurrence and must stay a loop"),
+        1, 1, 1, (), None, "the guard aa[0, i] > 0 is invariant within a column, so the outer i is free; the inner "
+        "aa[j, i] = aa[j - 1, i] + ... is a real column recurrence and must stay a loop. A band owns whole "
+        "columns, so BandCarriedLoops takes i for the threads and the narrowed column map rides inside the "
+        "carry as the Sequential one -- s231's accepted shape behind a per-column guard, and the same band "
+        "plus Sequential inner s1232 pins above. Measured, not argued: the banded build is bit-identical to "
+        "the uncanonicalized one over 8 seeds at LEN_2D=1021, and to itself at 1, 2, 3, 5, 7 and 16 threads"),
     "s2710_d_single":
     Form(
         1, 0, 0, (), None,
@@ -251,9 +255,13 @@ EXPECTED: dict[str, Form] = {
         "chain would either duplicate the producer or serialize the two consumers"),
     "fuse_move_ifs":
     Form(
-        2, 1, 0, (), None,
+        1, 0, 0, (), None,
         "sinking both guards to the innermost position gives the two nests one iteration space; what "
-        "survives is predicated parallel work, not a sequential guard around it"),
+        "survives is predicated parallel work, not a sequential guard around it. ONE map, not two plus "
+        "a Sequential inner: once cond[i] > 0 and K > 0 are both predicates rather than nests, the "
+        "a-nest and the b-nest have the same (i, j) domain and fuse, so there is no second parallel "
+        "region left to enter and nothing for the nested-parallelism rule to sequentialize. "
+        "test_fuse_move_ifs_fuses_both_guarded_nests_into_one_predicated_map pins that shape by name"),
     "fuse_stencil_through_transient":
     Form(
         1, 0, 0, (), None,
@@ -445,6 +453,64 @@ def test_matches_numpy_reference(name: str):
             continue
         assert np.allclose(reference[array], got[array], rtol=TOL, atol=TOL, equal_nan=True), \
             f"{name}/{array}: canonicalize diverges from the numpy oracle"
+
+
+def fuse_move_ifs_inputs(k: int) -> tuple[dict, dict, dict]:
+    """``(arrays, call_kwargs, reference)`` for ``fuse_move_ifs`` at loop-invariant guard value ``k``."""
+    arrays, _scalars = tsvc_2_5.make_inputs(ext_program("fuse_move_ifs"))
+    reference = {name: array.copy() for name, array in arrays.items()}
+    tsvc_2_5_numpy.ref_fuse_move_ifs(**reference, k=k)
+    return arrays, {"LEN_2D": tsvc_2_5.SIZES["LEN_2D"], "K": k}, reference
+
+
+def test_fuse_move_ifs_fuses_both_guarded_nests_into_one_predicated_map():
+    """Both guards become predicates of ONE flat (i, j) map -- neither nest nor guard stays control flow.
+
+    :data:`EXPECTED`'s ``(1, 0, 0)`` is a count, and a count cannot tell the fused nest apart from a
+    lost one: dropping the ``K > 0`` nest entirely would also leave one parallel map and no
+    sequential map. This pins the shape that makes the count the right one, so a regression to the
+    pre-fusion ``(2, 1, 0)`` and a regression that loses a guard both go red here and not only in
+    the table.
+    """
+    sdfg = canonical_sdfg("fuse_move_ifs")
+    maps = [n.map for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
+    assert len(maps) == 1, f"the two guarded nests must share one iteration space, got {len(maps)} maps"
+    fused = maps[0]
+    assert len(fused.params) == 2, f"the fused map must span i and j together, got {fused.params}"
+    assert str(fused.range) == "0:LEN_2D, 0:LEN_2D", f"the fused map must cover the whole square, got {fused.range}"
+
+    staged = {
+        lhs: rhs
+        for sd in sdfg.all_sdfgs_recursive()
+        for edge in sd.all_interstate_edges()
+        for lhs, rhs in edge.data.assignments.items()
+    }
+    row_guards = [lhs for lhs, rhs in staged.items() if rhs.startswith("cond[")]
+    assert len(row_guards) == 1, f"cond[i] must be staged exactly once inside the map body, got {row_guards}"
+    guards = [{str(s)
+               for s in cond.get_free_symbols()} for sd in sdfg.all_sdfgs_recursive()
+              for cfr in sd.all_control_flow_regions(recursive=False) if isinstance(cfr, ConditionalBlock)
+              for cond, _branch in cfr.branches if cond is not None]
+    assert guards == [{"K", row_guards[0]}] * 3, \
+        f"the three live guard combinations must each test BOTH sunk guards, got {guards}"
+
+
+@pytest.mark.parametrize("k", (0, 3))
+def test_fuse_move_ifs_sunk_guards_still_skip_the_work_they_guard(k: int):
+    """Cells whose guard is false keep the value the caller pre-filled, at ``K`` false as well as true.
+
+    Predication only preserves the kernel if a false predicate writes NOTHING, and the corpus binds
+    ``K`` to 3, so the arm the sink newly turned into a predicate -- ``K <= 0``, which must leave
+    every cell of ``b`` alone -- runs nowhere else in this file. Compared exactly rather than within
+    :data:`TOL`: both bodies are one elementwise scale and one elementwise offset, so a preserved
+    cell is bit-identical and an approximate compare would hide a cell that was written back with
+    its own value plus rounding.
+    """
+    arrays, call_kwargs, reference = fuse_move_ifs_inputs(k)
+    got = {name: array.copy() for name, array in arrays.items()}
+    built("fuse_move_ifs").csdfg(**got, **call_kwargs)
+    for array, value in reference.items():
+        assert np.array_equal(value, got[array]), f"fuse_move_ifs/{array} at K={k}: predication changed the values"
 
 
 if __name__ == "__main__":

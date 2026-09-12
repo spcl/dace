@@ -296,7 +296,7 @@ def _look_for_runtime_file(backend: str) -> gpu_runtime.GPURuntime:
     return gpu_runtime.GPURuntime(backend, libpath)
 
 
-@lru_cache()
+@lru_cache(maxsize=None, typed=True)
 def get_gpu_chiplet_count() -> Optional[int]:
     """
     Returns the number of chiplets (XCDs) of the GPU of this machine, or None if it cannot be determined.

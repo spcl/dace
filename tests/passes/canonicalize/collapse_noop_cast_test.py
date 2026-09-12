@@ -14,6 +14,7 @@ BOTH passes.
 import numpy as np
 
 import dace
+from dace import subsets, symbolic
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
@@ -165,6 +166,71 @@ def test_idempotent():
     assert tasklet.code.as_string == 'out = inp'
 
 
+# ----------------------------------------------------------------------------------
+# The cast argument is a SCOPED symbol -- a map parameter, which no declaration table holds.
+#
+# ``MapEntry.new_symbols`` types a parameter as ``result_type_of`` over the range's begin and
+# END, and ``Range`` stores the end as ``N - 1``, whose integer literal infers as int64. So the
+# sugared ``'0:N'`` reports int64 whatever ``N`` is declared, while an explicit ``Range`` over
+# two pure int32 bounds reports int32. Both cases have to be READ; a guessed int64 collapses the
+# genuine widening in the int32 case and drops a real conversion.
+# ----------------------------------------------------------------------------------
+
+
+def build_map_param_cast_sdfg(ndrange, out_ty, body):
+    """map(ndrange) -> tasklet(body) -> AccessNode(out_ty), the cast argument being the parameter."""
+    sdfg = dace.SDFG('param_cast')
+    sdfg.add_symbol('M', dace.int32)
+    sdfg.add_symbol('N', dace.int32)
+    sdfg.add_array('b', (16, ), out_ty, transient=True)
+    st = sdfg.add_state()
+    entry, exit_node = st.add_map('m', ndrange)
+    tasklet = st.add_tasklet('cast', {}, {'out'}, body)
+    write = st.add_write('b')
+    exit_node.add_in_connector('IN_b')
+    exit_node.add_out_connector('OUT_b')
+    st.add_edge(entry, None, tasklet, None, dace.Memlet())
+    st.add_edge(tasklet, 'out', exit_node, 'IN_b', dace.Memlet('b[0]'))
+    st.add_edge(exit_node, 'OUT_b', write, None, dace.Memlet('b[0:16]'))
+    return sdfg, only_tasklet(sdfg)
+
+
+def test_cast_of_a_sugared_map_parameter_to_its_own_width_is_collapsed():
+    """``for i in 0:N`` carries an int64 parameter, so ``int64(i)`` into an int64 slot is noise."""
+    sdfg, tasklet = build_map_param_cast_sdfg({'i': '0:N'}, dace.int64, 'out = int64(i)')
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) == 1
+    assert tasklet.code.as_string == 'out = i'
+
+
+def test_cast_of_a_32_bit_map_parameter_to_64_bits_is_a_real_widening_and_is_kept():
+    """An explicit ``M:N`` range over two int32 bounds carries an int32 parameter: ``int64(i)``
+    widens it, and dropping the cast would store 32 bits where 64 are read."""
+    sdfg, tasklet = build_map_param_cast_sdfg(
+        {'i': subsets.Range([(symbolic.pystr_to_symbolic('M'), symbolic.pystr_to_symbolic('N'), 1)])}, dace.int64,
+        'out = int64(i)')
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) is None
+    assert tasklet.code.as_string == 'out = int64(i)'
+
+
+def test_cast_of_a_32_bit_map_parameter_to_its_own_width_is_collapsed():
+    """The same int32 parameter cast to int32 into an int32 slot IS noise -- the pass must
+    distinguish the two by reading the parameter's width, not by refusing every symbol."""
+    sdfg, tasklet = build_map_param_cast_sdfg(
+        {'i': subsets.Range([(symbolic.pystr_to_symbolic('M'), symbolic.pystr_to_symbolic('N'), 1)])}, dace.int32,
+        'out = int32(i)')
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) == 1
+    assert tasklet.code.as_string == 'out = i'
+
+
+def test_a_cast_of_an_undeclared_name_is_left_alone():
+    """Nothing declares ``ghost``, and the destination and cast target are both int64 -- so any
+    default width for the source would make this look like a no-op and collapse it. An
+    undeterminable width is reported by refusing to rewrite, never by defaulting to one."""
+    sdfg, _, tasklet = build_cast_sdfg(dace.int64, dace.int64, 'out = int64(ghost)')
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) is None
+    assert tasklet.code.as_string == 'out = int64(ghost)'
+
+
 if __name__ == '__main__':
     test_idempotent()
     test_noop_cast_collapsed()
@@ -177,3 +243,7 @@ if __name__ == '__main__':
     test_program_genuine_astype_kept_and_correct()
     test_collapsed_noop_then_eliminated()
     test_genuine_cast_survives_both_passes()
+    test_cast_of_a_sugared_map_parameter_to_its_own_width_is_collapsed()
+    test_cast_of_a_32_bit_map_parameter_to_64_bits_is_a_real_widening_and_is_kept()
+    test_cast_of_a_32_bit_map_parameter_to_its_own_width_is_collapsed()
+    test_a_cast_of_an_undeclared_name_is_left_alone()

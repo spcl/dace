@@ -67,6 +67,12 @@ in the map's own parameters.
   refused -- and it is, but only because the boundary edges are read as accesses too
   (:func:`boundary_accesses`); a test that sees tasklet stores alone finds no write for ``A`` at
   all and approves the nest vacuously.
+- A body canonicalize left as a nested SDFG carries the whole-map UNION on those same boundary
+  edges -- CLOUDSC's ``ztp1[0:N, 0:N]`` and ``zcovptot[0:N]``, the read-only gather's ``a[0:N,
+  0:N]``. A union names no map parameter because it is every iteration at once, so it is evidence
+  of nothing and must not be read as a per-iteration access; taken as one it looks like ``s115``'s
+  shared location and refuses every nest whose body is nested. Only a boundary edge that DOES name
+  a map parameter is an access (:func:`boundary_accesses`).
 
 Correctness does NOT depend on how OpenMP distributes the band loop. A band's entire carry sits
 inside ONE iteration of the outer map, so whichever thread runs band ``t`` runs all of ``t``'s trips
@@ -83,6 +89,7 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set
 
 from dace import SDFG, dtypes, properties, subsets, symbolic
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import transformation
@@ -278,8 +285,8 @@ def rewritten(expressions: List, substitution: Dict[str, Any]) -> List:
 
 
 def boundary_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, allowed: Set[str],
-                      reads: Dict[str, List[List[Any]]], writes: Dict[str, List[List[Any]]]) -> None:
-    """Add the accesses the scope BOUNDARY edges carry, whatever produced them.
+                      reads: Dict[str, List[List[Any]]], writes: Dict[str, List[List[Any]]]) -> bool:
+    """Add the PER-ITERATION accesses the scope BOUNDARY edges carry, whatever produced them.
 
     :func:`collect_accesses` reads the subsets adjacent to code nodes, so a value assembled in a
     transient and copied out through the map exit is recorded nowhere -- and a missing WRITE makes
@@ -288,8 +295,19 @@ def boundary_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nod
     diagonal's row is built in a transient and copied into ``A`` -- and the banded form raced at
     four threads. Every value a band could carry crosses this boundary, and its subset is on the
     boundary edge whatever assembled it, so reading these edges closes the hole for every copy
-    shape at once. It only ever ADDS accesses, and an added access can refuse a band, never
-    approve one.
+    shape at once.
+
+    A boundary edge is such an access only while it NAMES A MAP PARAMETER. Where the body is a
+    nested SDFG the same edge carries the propagated union over the whole map instead --
+    ``ztp1[0:N, 0:N]`` -- which is every iteration at once and so says nothing about any one of
+    them. :func:`index_expressions` reduces that union to its begins ``[0, 0]``, and
+    :func:`band_local` then reads a union WRITE as ``s115``'s location shared by every band and a
+    union READ as column zero of a per-column write. Both refuse, and both are wrong: CLOUDSC's
+    vertical carry and a gather on a read-only operand are distance-0 in the cut axis and must
+    band. So a union is dropped rather than trusted.
+
+    Dropping it must not restore the vacuum this function exists to close, so a union write whose
+    array the interior walk recorded nothing for is an unaccounted write, and refuses.
 
     :param state: the state holding the map.
     :param map_entry: the worksharing map whose axis would be cut.
@@ -297,11 +315,23 @@ def boundary_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nod
     :param allowed: the arrays that cross the scope boundary.
     :param reads: ``name -> [index expression lists]``, extended in place.
     :param writes: ``name -> [index expression lists]``, extended in place.
+    :returns: ``False`` if a boundary write is a union no interior access accounts for.
     """
-    for edges, target in ((state.out_edges(map_entry), reads), (state.in_edges(map_exit), writes)):
+    params = OrderedSet(map_entry.map.params)
+    union_writes: List[str] = []
+    directions = ((state.out_edges(map_entry), reads, False), (state.in_edges(map_exit), writes, True))
+    for edges, target, written in directions:
         for edge in edges:
-            if edge.data is not None and edge.data.data in allowed and edge.data.subset is not None:
-                target.setdefault(edge.data.data, []).append(index_expressions(edge.data.subset))
+            if edge.data is None or edge.data.data not in allowed or edge.data.subset is None:
+                continue
+            indices = index_expressions(edge.data.subset)
+            if any(names_a_param(index, params) for index in indices):
+                target.setdefault(edge.data.data, []).append(indices)
+            elif written:
+                union_writes.append(edge.data.data)
+    # Read AFTER the loop, so an array carrying both a union edge and a per-iteration one is
+    # accounted for whichever order the exit edges come in.
+    return all(name in writes for name in union_writes)
 
 
 def collect_band_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, reads: Dict,
@@ -323,7 +353,8 @@ def collect_band_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit:
     allowed = boundary_names(state, map_entry, map_exit)
     if not collect_accesses(state, map_entry, allowed, local_reads, local_writes):
         return False
-    boundary_accesses(state, map_entry, map_exit, allowed, local_reads, local_writes)
+    if not boundary_accesses(state, map_entry, map_exit, allowed, local_reads, local_writes):
+        return False
     # Counted from the INNERMOST parameter, because that is the one ``cut_into_bands`` slices: two
     # maps of different rank still have to agree on which axis the band owns.
     depth = len(map_entry.map.params)

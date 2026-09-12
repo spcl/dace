@@ -15,12 +15,14 @@ import numpy as np
 import pytest
 
 import dace
+from dace import subsets, symbolic
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.cpu_specialization import cpu_specialize
-from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (LoopToStreamCompaction, IDX_PREFIX,
-                                                                               MASK_PREFIX, TOTAL_PREFIX)
+from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (LoopToStreamCompaction, NestLevel,
+                                                                               IDX_PREFIX, MASK_PREFIX, TOTAL_PREFIX)
 
 N = dace.symbol('N', dtype=dace.int64)
 M = dace.symbol('M', dtype=dace.int64)
@@ -722,6 +724,115 @@ def test_pass_is_a_no_op_when_it_refuses():
     before = sdfg.to_json()
     assert LoopToStreamCompaction().apply_pass(sdfg, {}) is None
     assert sdfg.to_json() == before
+
+
+# -----------------------------------------------------------------------------
+# Renaming an axis must not retype it.
+#
+# Each phase copy gets its own iterator so ``LoopToMap`` does not see a counter another block
+# still names. That rename is a pure rename: the copy has the ORIGINAL loop's init, step and
+# bounds, so it has the original's width, and the width has to be read rather than assumed --
+# ``dtype`` is part of symbol identity on this branch, so one axis declared at two widths is two
+# symbols across the three phases.
+#
+# The two cases differ, and that is the whole point. ``LoopRegion.new_symbols`` types the
+# iterator as ``result_type_of`` over its init, step and end: a unit stride puts the integer
+# literal 1 in that list, and an integer literal infers as int64 whatever the bounds are. A
+# symbolic stride over int32 bounds infers int32. Only the first shape can reach this pass today
+# -- ``loop_extent`` refuses any stride but 1 -- which is exactly why an assumed int64 looks
+# right here and would still be an assumption.
+# -----------------------------------------------------------------------------
+
+
+def stride_loop_sdfg(stride: str) -> tuple[dace.SDFG, LoopRegion]:
+    """A loop between two int32 bounds whose update step is ``stride``."""
+    sdfg = dace.SDFG('stride_loop')
+    for name in ('M32', 'N32', 'S32'):
+        sdfg.add_symbol(name, dace.int32)
+    sdfg.add_array('A', (64, ), dace.float64)
+    loop = LoopRegion('L',
+                      condition_expr='it <= N32',
+                      loop_var='it',
+                      initialize_expr='it = M32',
+                      update_expr=f'it = it + {stride}')
+    sdfg.add_node(loop)
+    loop.add_state('body')
+    return sdfg, loop
+
+
+def test_a_symbolic_stride_axis_is_renamed_at_its_own_32_bit_width():
+    sdfg, loop = stride_loop_sdfg('S32')
+    sut = LoopToStreamCompaction()
+
+    dtype = sut.iterator_dtype(loop, sdfg, scopes.ScopedSymbolResolver())
+    new_name = sut.rename_iterator(loop, sdfg, 'probe', dtype)
+
+    assert dtype == dace.int32
+    assert sdfg.symbols[new_name] == dace.int32
+    assert loop.loop_variable == new_name
+    # The property an assumed width breaks: the renamed condition is read back by parsing its
+    # text, and a symbol parsed from text carries the default width. Declared at any other width
+    # the axis is two symbols of one name, and a difference over them does not cancel.
+    parsed = next(sym for sym in symbolic.pystr_to_symbolic(loop.loop_condition.as_string).free_symbols
+                  if sym.name == new_name)
+    assert symbolic.simplify(parsed - symbolic.symbol(new_name, sdfg.symbols[new_name])) == 0
+
+
+def test_a_unit_stride_axis_is_renamed_at_the_64_bit_width_its_step_infers():
+    """The only shape this pass can match: the literal 1 in the update makes the axis int64 even
+    between two int32 bounds, so the phase copies are int64 by inference, not by assumption."""
+    sdfg, loop = stride_loop_sdfg('1')
+    sut = LoopToStreamCompaction()
+
+    dtype = sut.iterator_dtype(loop, sdfg, scopes.ScopedSymbolResolver())
+    new_name = sut.rename_iterator(loop, sdfg, 'probe', dtype)
+
+    assert dtype == dace.int64
+    assert sdfg.symbols[new_name] == dace.int64
+
+
+# -----------------------------------------------------------------------------
+# ... and the width has to reach the SUBSET, not only the declaration.
+#
+# The renamed axis indexes ``mask`` and ``rank`` at one point per level. Formatting that point
+# to text and letting ``Range`` re-parse it re-mints the axis at ``DEFAULT_SYMBOL_TYPE``, so the
+# subset names a SECOND symbol of the same name at another width -- and no choice of declaration
+# repairs that, only never spelling the component out. The declared width is what the two tests
+# above pin; what these pin is that the subset carries the same symbol, which is observable as
+# FOLDING: over a re-minted axis ``it - it`` does not cancel. Not every consumer splits -- ``subs``
+# keyed on the declared symbol still hits the re-minted one, because ``_eval_subs`` matches on the
+# NAME -- so the fold is the property to assert, and the width is the cause to assert beside it.
+# -----------------------------------------------------------------------------
+
+
+def probe_point_subset(stride: str) -> tuple[dace.SDFG, str, subsets.Range]:
+    """Rename one unit-level axis and hand back the point subset the mask store would carry."""
+    sdfg, loop = stride_loop_sdfg(stride)
+    sut = LoopToStreamCompaction()
+    start, trip = sut.loop_extent(loop)
+    levels = (NestLevel(loop=loop, start=start, trip=trip, preamble=[], child=loop), )
+    dtype = sut.iterator_dtype(loop, sdfg, scopes.ScopedSymbolResolver())
+    new_name = sut.rename_iterator(loop, sdfg, 'probe', dtype)
+    return sdfg, new_name, sut.point_subset(sut.nest_index(levels, [loop], [dtype]))
+
+
+def test_the_mask_point_subset_names_the_axis_at_its_declared_width():
+    sdfg, new_name, subset = probe_point_subset('1')
+
+    axis = subset.symbols[new_name]
+
+    assert sdfg.symbols[new_name] == dace.int64
+    assert axis.dtype == sdfg.symbols[new_name]
+
+
+def test_a_difference_over_the_mask_point_subset_axis_cancels():
+    """The property a re-minted axis breaks: two symbols of one name never cancel."""
+    sdfg, new_name, subset = probe_point_subset('1')
+    declared = symbolic.symbol(new_name, sdfg.symbols[new_name])
+
+    residue = symbolic.simplify(subset.ranges[0][0] - (declared - symbolic.pystr_to_symbolic('M32')))
+
+    assert residue == 0
 
 
 if __name__ == '__main__':

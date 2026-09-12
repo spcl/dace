@@ -28,6 +28,24 @@ def has_maps(sdfg: dace.SDFG) -> bool:
     return False
 
 
+def map_body_nodes(state: SDFGState, map_entry: dace.nodes.MapEntry) -> list[dace.nodes.Node]:
+    """Every node in the map's scope -- entry and exit excluded, inner scopes included.
+
+    Deliberately NOT ``SDFGState.all_nodes_between``: that walk abandons the ENTIRE result the
+    moment it reaches a node with no out-edge (``sdfg/graph.py:435`` returns an empty set), and a
+    write-only scratch scalar -- an ``AccessNode`` with one in-edge and none out -- is exactly such
+    a node. A body predicate reading that walk then reports a clean body having inspected nothing,
+    which for a safety gate means admitting whatever it was built to refuse. Scope membership has
+    no such failure mode: ``scope_children`` classifies every node in the state, and it is already
+    paid for, since ``state.exit_node`` reads the same cached scope dict.
+
+    :param state: the state holding ``map_entry``.
+    :param map_entry: the map whose body is wanted.
+    :returns: the scope's nodes, in state order.
+    """
+    return list(state.scope_subgraph(map_entry, include_entry=False, include_exit=False).nodes())
+
+
 def is_innermost_map(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """True if a map is innermost -- no nested maps, including inside nested SDFGs.
 
@@ -35,7 +53,7 @@ def is_innermost_map(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     :param map_entry: The map entry node to test.
     :returns: ``True`` if the map has no inner maps.
     """
-    nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
+    nodes_between = map_body_nodes(state, map_entry)
     if any(isinstance(node, dace.nodes.MapEntry) for node in nodes_between):
         return False
     return not any(isinstance(node, dace.nodes.NestedSDFG) and has_maps(node.sdfg) for node in nodes_between)
@@ -128,7 +146,7 @@ def map_body_has_param_dependent_loop(state: SDFGState, map_entry: dace.nodes.Ma
     than tiled incorrectly.
     """
     params = {str(p) for p in map_entry.map.params}
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+    for node in map_body_nodes(state, map_entry):
         if not isinstance(node, dace.nodes.NestedSDFG):
             continue
         inner_syms = _inner_syms_for(node, params)
@@ -161,7 +179,7 @@ def map_body_has_inner_loop(state: SDFGState, map_entry: dace.nodes.MapEntry) ->
     :param map_entry: The (assumed innermost) map entry to test.
     :returns: ``True`` if the body carries a loop at any nesting depth.
     """
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+    for node in map_body_nodes(state, map_entry):
         if not isinstance(node, dace.nodes.NestedSDFG):
             continue
         for region in node.sdfg.all_control_flow_regions(recursive=True):
@@ -215,7 +233,7 @@ def map_body_has_tiled_param_dependent_branch(state: SDFGState, map_entry: dace.
     :returns: ``True`` if the map must be left scalar.
     """
     params = {str(p) for p in iter_vars}
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+    for node in map_body_nodes(state, map_entry):
         if not isinstance(node, dace.nodes.NestedSDFG):
             continue
         inner_syms = _inner_syms_for(node, params)
@@ -254,7 +272,7 @@ def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | 
     passes ``MarkTileDims`` / ``SplitMapForTileRemainder``, not here: this predicate is width
     agnostic, and the same map may be tiled at width 1 (a scalar tail) but not at width 8.)
     """
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+    for node in map_body_nodes(state, map_entry):
         if isinstance(node, dace.nodes.NestedSDFG) and _sdfg_has_self_recurrent_assign(node.sdfg):
             return False
     if map_body_has_param_dependent_loop(state, map_entry):
@@ -289,7 +307,7 @@ def map_body_has_foreign_language_tasklet(state: SDFGState, map_entry: dace.node
     own lane-id index materialiser is not such a tasklet -- see
     :func:`is_foreign_language_tasklet`.
     """
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+    for node in map_body_nodes(state, map_entry):
         if is_foreign_language_tasklet(node):
             return True
         if isinstance(node, dace.nodes.NestedSDFG) and any(
@@ -317,7 +335,7 @@ def map_body_has_library_node(state: SDFGState, map_entry: dace.nodes.MapEntry) 
     def _opaque(n: dace.nodes.Node) -> bool:
         return isinstance(n, dace.nodes.LibraryNode) and not isinstance(n, tile_ops)
 
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+    for node in map_body_nodes(state, map_entry):
         if _opaque(node):
             return True
         if isinstance(node, dace.nodes.NestedSDFG) and any(_opaque(n) for n, _ in node.sdfg.all_nodes_recursive()):
@@ -386,7 +404,7 @@ class PerLaneWrite:
     lane_aliases: dict[str, str]
 
 
-def _map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry) -> Iterator[PerLaneWrite]:
+def map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry) -> Iterator[PerLaneWrite]:
     """Yield a :class:`PerLaneWrite` for every NON-transient per-lane WRITE (store) in the map
     body -- the map-exit boundary edges (flat-body form) and the AN in-edges inside a body
     ``NestedSDFG`` (nested form). Only WRITES are yielded: a gather READ is always sound, so the
@@ -405,7 +423,7 @@ def _map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry)
             desc = sdfg.arrays.get(e.data.data)
             if desc is not None and not desc.transient:
                 yield PerLaneWrite(e.data.subset, sdfg, state, outer_params, desc, flat_aliases)
-    for node in state.all_nodes_between(map_entry, mx):
+    for node in map_body_nodes(state, map_entry):
         if isinstance(node, dace.nodes.NestedSDFG):
             inner_iter = _inner_lane_vars(outer_params, node)
             inner_aliases = lane_param_aliases(outer_params, node)
@@ -441,7 +459,7 @@ def map_body_is_tile_lowerable(state: SDFGState,
     This gate is a SAFETY gate, so it FAILS CLOSED: a store whose subset cannot be classified (or
     whose gather begin cannot be parsed) is refused rather than admitted -- we cannot prove it
     injective, so we keep the map scalar. Classification uses the scope's lane vars (see
-    :func:`_map_body_per_lane_subsets`), a superset of the true W lane vars: it can only refuse
+    :func:`map_body_per_lane_subsets`), a superset of the true W lane vars: it can only refuse
     MORE, never fewer.
 
     One class of write is ADMITTED with a proof rather than refused. A dim that ``a[i, i]`` drives
@@ -475,7 +493,7 @@ def map_body_is_tile_lowerable(state: SDFGState,
     if scan_cache is None:
         scan_cache = {}
     lane_param = map_entry.map.params[-1] if K == 1 and map_entry.map.params else None
-    for write in _map_body_per_lane_subsets(state, map_entry):
+    for write in map_body_per_lane_subsets(state, map_entry):
         key = (id(write.sdfg), id(write.state))
         if key not in sym_defs_cache:
             sym_defs_cache[key] = build_symbol_definition_map(write.sdfg, write.state, scan_cache=scan_cache)
@@ -534,7 +552,7 @@ def map_body_has_mixed_conditional_tasklet(state: SDFGState, map_entry: dace.nod
     """True if the map body (including inside body NestedSDFGs) holds a tasklet neither
     ``SplitTasklets`` nor ``NormalizeMaskedWriteTasklets`` can lower -- see
     :func:`_tasklet_mixes_statements_with_conditional`."""
-    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+    for node in map_body_nodes(state, map_entry):
         if isinstance(node, dace.nodes.Tasklet):
             if _tasklet_mixes_statements_with_conditional(node):
                 return True
@@ -631,33 +649,36 @@ def is_gpu_resident_map(state: SDFGState, map_entry: dace.nodes.MapEntry) -> boo
 def map_consists_of_single_nsdfg_or_no_nsdfg(graph: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """True if a map contains a single NestedSDFG or none at all.
 
+    Reads the map's SCOPE (:func:`map_body_nodes`), so a body ending in a write-only scratch
+    scalar is still inspected; ``all_nodes_between`` would answer "no NestedSDFG here" over a
+    body holding one, and ``NestInnermostMapBodyIntoNSDFG`` re-nests on that answer.
+
     :param graph: The state containing the map.
     :param map_entry: The map entry to check.
     :returns: ``True`` if the map contains a single NestedSDFG or no NestedSDFG.
     """
-    all_nodes = {
-        k
-        for k in graph.all_nodes_between(map_entry, graph.exit_node(map_entry))
-        if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
-    }
-    return (len(all_nodes) == 1 and isinstance(next(
-        iter(all_nodes)), dace.nodes.NestedSDFG)) or not any(isinstance(_n, dace.nodes.NestedSDFG) for _n in all_nodes)
+    all_nodes = [
+        k for k in map_body_nodes(graph, map_entry) if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
+    ]
+    return (len(all_nodes) == 1 and isinstance(
+        all_nodes[0], dace.nodes.NestedSDFG)) or not any(isinstance(n, dace.nodes.NestedSDFG) for n in all_nodes)
 
 
-def get_single_nsdfg_inside_map(graph: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> dace.nodes.NestedSDFG:
+def get_single_nsdfg_inside_map(graph: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> dace.nodes.NestedSDFG | None:
     """Return the sole NestedSDFG inside a map, or ``None`` if not exactly one.
+
+    Reads the map's SCOPE (:func:`map_body_nodes`) -- see
+    :func:`map_consists_of_single_nsdfg_or_no_nsdfg`.
 
     :param graph: The state containing the map.
     :param map_entry: The map entry to inspect.
     :returns: The single NestedSDFG node, or ``None``.
     """
-    all_nodes = {
-        k
-        for k in graph.all_nodes_between(map_entry, graph.exit_node(map_entry))
-        if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
-    }
-    if (len(all_nodes) == 1 and isinstance(next(iter(all_nodes)), dace.nodes.NestedSDFG)):
-        return next(iter(all_nodes))
+    all_nodes = [
+        k for k in map_body_nodes(graph, map_entry) if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
+    ]
+    if len(all_nodes) == 1 and isinstance(all_nodes[0], dace.nodes.NestedSDFG):
+        return all_nodes[0]
     return None
 
 

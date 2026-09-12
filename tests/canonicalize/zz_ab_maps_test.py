@@ -3,19 +3,31 @@
 
 Reports the map / pragma counts AND how many StructuralCleanup blocks the dirty-flag skip
 actually elided. Zero skips exonerates F4 and leaves F3 as the only candidate.
+
+The reference SDFG comes from ``build_cloudsc_sdfg``, the same call
+``cloudsc_canonicalize_test.py`` uses for its pinned-count fixture: a fresh parse on a cache
+miss, a cached ``.sdfgz`` (keyed by dace version + source hash, see
+``generate_data_for_cloudsc.cloudsc_cache_dir``) otherwise. Never point this at a hand-picked
+file -- an SDFG from a different parse is a different "A" side and the printed counts stop
+meaning anything. The parse this falls back to is minutes long, so this stays ``integration``
+and out of the canonicalization job's 600s-per-test budget.
+
+This prints counts for a human to read; it does not assert on the map count itself, since that
+count is under active dispute (a 496-vs-491 bisect) and is sensitive to the exact dace commit --
+read the numbers together with ``git rev-parse HEAD``, never in isolation.
 """
 import contextlib
 import os
-import pathlib
 
-import dace
+import pytest
+
 from dace.transformation.passes.canonicalize import canonicalize, pipeline as canon_pipeline
 from tests.corpus.cloudsc.pipelines import map_entries, omp_parallel_for_count
 from tests.corpus.cloudsc.cloudsc_target_pipelines_test import SPECIES_CONSTANTS
+from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
 
-REF = pathlib.Path(os.path.expanduser('~/.cache/cloudsc_reference.sdfgz'))
 
-
+@pytest.mark.integration
 def test_ab_map_counts():
     skipped = []
     applied = []
@@ -36,7 +48,7 @@ def test_ab_map_counts():
 
     canon_pipeline.changed_the_graph = counting_changed
     try:
-        sdfg = dace.SDFG.from_file(str(REF))
+        sdfg = build_cloudsc_sdfg(simplify=False)
         with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull):
             canonicalize(sdfg, validate=True, validate_all=False, target='cpu', specialize_constants=SPECIES_CONSTANTS)
         sdfg.validate()

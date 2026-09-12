@@ -252,6 +252,10 @@ class LiftInv(ppl.Pass):
         if any(e.data is not None and not e.data.is_empty() for e in state.in_edges(map_entry)):
             return None
         # The scope holds exactly the identity tasklet (no scratch, no arithmetic).
+        # ``all_nodes_between`` returns EMPTY as soon as the scope holds a node with no out-edge, but the
+        # outcome is the same refusal either way: reaching here the map already writes ``b_node`` through
+        # ``map_exit``, so a sink is an EXTRA node and the true scope is >=2 -- and an empty walk gives 0.
+        # Only a relaxation of ``!= 1`` would make the difference observable; use scope membership then.
         body = list(state.all_nodes_between(map_entry, map_exit))
         if len(body) != 1 or not isinstance(body[0], nodes.Tasklet):
             return None

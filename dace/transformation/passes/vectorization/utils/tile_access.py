@@ -61,6 +61,7 @@ from typing import TypeAlias
 import sympy
 
 from dace import data as dt
+from dace import dtypes
 from dace import symbolic
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.subsets import Range, Subset
@@ -209,17 +210,21 @@ def _direct_symbols(expr: sympy.Expr) -> set[str]:
 
 
 #: DaCe / numpy dtype names appearing as cast *functions* in tasklet bodies (``int64(i)``,
-#: ``float64(x)``). After sympify these are :class:`sympy.Function` nodes; :func:`_strip_casts`
-#: collapses them to their argument.
-_CAST_NAMES = frozenset({
-    'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64', 'float16', 'float32', 'float64', 'bool',
-    'bool_'
-})
+#: ``float64(x)``), LONGEST FIRST so a name can never be shadowed by one it starts with
+#: (``float`` ahead of ``float64``). Taken from the dtype registry, not written out: the hand list
+#: this replaced predated ``bfloat16`` / the fp8 pair and never held ``complex*`` or bare
+#: ``int`` / ``float``, so a cast in any of those kept its Function node and hid the affine
+#: structure underneath it.
+_CAST_NAMES_LONGEST_FIRST: tuple[str, ...] = tuple(sorted(dtypes.TYPECLASS_STRINGS, key=lambda n: (-len(n), n)))
+
+#: Membership form of the same names, for :func:`_strip_casts`.
+_CAST_NAMES: frozenset[str] = frozenset(_CAST_NAMES_LONGEST_FIRST)
 
 #: Strip ``dace.`` / ``np.`` / ``numpy.`` prefix before a cast name so the remainder parses
 #: (``dace.int64(`` -> ``int64(``). Attribute form ``dace.int64`` is what
 #: :func:`dace.symbolic.pystr_to_symbolic` can't parse; this minimal strip = only text fixup.
-_CAST_PREFIX_RE = re.compile(r'\b(?:dace|np|numpy)\.(?=(?:u?int(?:8|16|32|64)|float(?:16|32|64)|bool_?)\b)')
+_CAST_PREFIX_RE = re.compile(r'\b(?:dace|np|numpy)\.(?=(?:' + '|'.join(re.escape(n)
+                                                                       for n in _CAST_NAMES_LONGEST_FIRST) + r')\b)')
 
 
 def _strip_casts(expr: sympy.Expr) -> sympy.Expr:

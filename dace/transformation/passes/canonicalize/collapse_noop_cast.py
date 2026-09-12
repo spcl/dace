@@ -24,7 +24,9 @@ from dace import SDFG, dtypes
 from dace.frontend.python import astutils
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
+from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.analysis import scopes
 
 
 def string_to_typeclass() -> Dict[str, dtypes.typeclass]:
@@ -62,22 +64,31 @@ def base_name(arg: ast.AST) -> str:
     return arg.id if isinstance(arg, ast.Name) else astutils.rname(arg.value)
 
 
-def destination_dtype(state, tasklet: nodes.Tasklet, out_conn: str, sdfg: SDFG) -> Optional[dtypes.typeclass]:
+def destination_dtype(state: SDFGState, tasklet: nodes.Tasklet, out_conn: str, sdfg: SDFG,
+                      resolver: scopes.ScopedSymbolResolver) -> dtypes.typeclass | scopes.UndeterminedDType:
     """The declared dtype ``x`` is written into: the dtype of the array the output
-    connector ``out_conn`` feeds."""
+    connector ``out_conn`` feeds, or :data:`~dace.transformation.passes.analysis.scopes.UNDETERMINED`."""
     for edge in state.out_edges(tasklet):
         if edge.src_conn == out_conn and edge.data is not None and edge.data.data is not None:
-            return sdfg.arrays[edge.data.data].dtype
-    return None
+            return resolver.resolve_dtype_or_undetermined(edge.data.data, sdfg, state, tasklet, out_conn, edge)
+    return scopes.UNDETERMINED
 
 
-def source_dtype(state, tasklet: nodes.Tasklet, in_name: str, sdfg: SDFG) -> Optional[dtypes.typeclass]:
-    """The dtype of the value ``y`` reads: the array behind the matching input connector,
-    or -- when ``y`` is a free symbol rather than a connector -- the symbol's dtype."""
+def source_dtype(state: SDFGState, tasklet: nodes.Tasklet, in_name: str, sdfg: SDFG,
+                 resolver: scopes.ScopedSymbolResolver) -> dtypes.typeclass | scopes.UndeterminedDType:
+    """The dtype of the value ``y`` reads: the array behind the matching input connector, or --
+    when ``y`` is a free symbol rather than a connector -- the symbol's dtype.
+
+    A free symbol here is routinely a MAP PARAMETER or a loop iterator, which no declaration table
+    holds, so the scoped table the resolver consults is the only source that answers. An unanswered
+    name comes back as :data:`~dace.transformation.passes.analysis.scopes.UNDETERMINED`, which the
+    caller must detect: a falsy ``None`` invites a default, and a guessed width here would either
+    drop a genuine narrowing cast or keep a genuine no-op.
+    """
     for edge in state.in_edges(tasklet):
         if edge.dst_conn == in_name and edge.data is not None and edge.data.data is not None:
-            return sdfg.arrays[edge.data.data].dtype
-    return sdfg.symbols.get(in_name)
+            return resolver.resolve_dtype_or_undetermined(edge.data.data, sdfg, state, tasklet, in_name, edge)
+    return resolver.resolve_dtype_or_undetermined(in_name, sdfg, state, tasklet)
 
 
 @transformation.explicit_cf_compatible
@@ -96,6 +107,9 @@ class CollapseNoOpCast(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         casts = string_to_typeclass()
+        # ONE resolver for the whole run: the pass rewrites tasklet CODE only, so no scope or
+        # declaration it caches ever goes stale and nothing has to be invalidated.
+        resolver = scopes.ScopedSymbolResolver()
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
@@ -104,8 +118,13 @@ class CollapseNoOpCast(ppl.Pass):
                     if candidate is None:
                         continue
                     target_conn, arg, cast_dtype = candidate
-                    dst_dtype = destination_dtype(state, tasklet, target_conn, nsdfg)
-                    src_dtype = source_dtype(state, tasklet, base_name(arg), nsdfg)
+                    dst_dtype = destination_dtype(state, tasklet, target_conn, nsdfg, resolver)
+                    src_dtype = source_dtype(state, tasklet, base_name(arg), nsdfg, resolver)
+                    # An undeterminable end of the cast is not a mismatch and not a match: nothing
+                    # is known, so nothing is rewritten. Identity, because UNDETERMINED refuses
+                    # ``bool()`` on purpose.
+                    if src_dtype is scopes.UNDETERMINED or dst_dtype is scopes.UNDETERMINED:
+                        continue
                     # A genuine no-op: the cast is identity (source already the target dtype) AND
                     # the destination has that same dtype (guard (b)). Then ``cast(y)`` == ``y``
                     # bit-for-bit and the store is exact -- rewriting drops pure noise. Any

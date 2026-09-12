@@ -26,7 +26,6 @@ import sympy
 
 from dace import properties, symbolic
 from dace.config import Config
-from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -243,20 +242,23 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
     xform = StateFusionExtended()
     for cfr in cfrs:
         cfg_id = cfr.cfg_id
-        while True:
-            # A region-wide sweep, in the region's own edge order -- the same order a full restart
-            # would always re-arrive at, since an untouched pair's verdict cannot change. Once a
-            # pair fuses, both states are skipped for the REST of this sweep instead of restarting
-            # the scan: a pair ahead of the fusion point that this fusion did not touch needs no
-            # re-probe. A pair only newly exposed by this sweep's own fusions (e.g. a rewired
-            # successor edge) is picked up on the next sweep, which still runs whenever this one
-            # applied anything.
-            skip_nodes = OrderedSet()
-            applied = 0
+        applied = True
+        while applied:
+            applied = False
+            # RESTART the region's edge scan after each fusion, rather than carrying on past the
+            # fused pair. State fusion is NOT confluent: fusing a pair can make a neighbouring pair
+            # illegal, so which pairs are tried first decides which fixpoint is reached, and both
+            # orders are fixpoints. Skipping both endpoints for the rest of a sweep fuses a
+            # disjoint MATCHING per sweep, which pairs a chain up from the outside instead of
+            # collapsing it left to right, and settles on a coarser partition. Measured on CloudSC:
+            # the matching leaves 308 zqlhs_index access nodes where restarting leaves 273, and the
+            # two extra copies of ``zqlhs_index_2``/``_3`` are then shared across the unrolled LU
+            # bodies, so PrivatizeScalars cannot privatize them and LoopToMap refuses the 30 loops
+            # that write them -- 314 lifted maps down to 282. Restarting costs nothing measurable
+            # (22.7s -> 23.0s for the unroll): the saving in this function is the region list and
+            # the reused transformation above, not the truncated scan.
             for edge in list(cfr.edges()):
                 u, v = edge.src, edge.dst
-                if u in skip_nodes or v in skip_nodes:
-                    continue
                 if not (isinstance(u, SDFGState) and isinstance(v, SDFGState)):
                     continue
                 candidate = {StateFusionExtended.first_state: u, StateFusionExtended.second_state: v}
@@ -265,10 +267,7 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
                     continue
                 xform.apply(cfr, sdfg)
                 fused += 1
-                applied += 1
-                skip_nodes.add(u)
-                skip_nodes.add(v)
-            if applied == 0:
+                applied = True
                 break
     return fused
 

@@ -48,6 +48,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
     privatize_reduction_accumulator, )
+from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 
 #: Reduction ops the tile widener + ``TileReduce`` fold. A ``ReductionType.Custom`` WCR
 #: (non-associative ``-`` / ``/``) is not a foldable reduction, so it is never rewritten.
@@ -98,7 +99,9 @@ class PrepareReductionForWidening(ppl.Pass):
         map_entry = state.entry_node(map_exit)
         if map_entry is None:
             return False
-        between = state.all_nodes_between(map_entry, map_exit) or set()
+        # Scope membership, not ``all_nodes_between``: an emptied walk holds no MapEntry, so an
+        # OUTER map would read as innermost and be privatized as a widening candidate.
+        between = map_body_nodes(state, map_entry)
         if any(isinstance(n, nodes.MapEntry) for n in between):
             return False
         return all(str(step) == "1" for _, _, step in map_entry.map.range)

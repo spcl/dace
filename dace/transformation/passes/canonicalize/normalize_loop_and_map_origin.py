@@ -42,7 +42,7 @@ from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, LoopReg
 from dace.symbolic import pystr_to_symbolic, symstr
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, map_scope
 from dace.transformation.passes.offset_loop_and_maps import (add_to_rhs, process_memlets_in_edges, repl_recursive,
                                                              repl_tasklets_on_node_list)
 
@@ -186,7 +186,10 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
         if not repldict:
             return 0
 
-        scope_nodes = list(state.all_nodes_between(entry, state.exit_node(entry)))
+        # Scope membership, not a reachability walk: ``all_nodes_between`` returns EMPTY as soon as the
+        # scope holds one node with no out-edge (a write-only scratch scalar), and the rebase would then
+        # shift the map range while substituting the shift into nothing -- every body read off by ``begin``.
+        scope_nodes = map_scope.map_body_nodes(state, entry)
         if rebinds_params(scope_nodes, repldict):
             return 0  # refuse before touching anything
 

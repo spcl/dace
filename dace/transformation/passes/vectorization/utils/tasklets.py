@@ -74,12 +74,15 @@ def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
     parsed = symbolic.pystr_to_symbolic(expr)
     subs = {symbolic.symbol(v): symbolic.symbol(v) + symbolic.symbol(f"__l{k}") for k, v in enumerate(iter_vars)}
     body_expr = sym2cpp(parsed.subs(subs))
-    arr_name, _ = sdfg.add_array(name_hint,
-                                 shape=widths,
-                                 dtype=dace.int64,
-                                 transient=True,
-                                 storage=dtypes.StorageType.Register,
-                                 find_new_name=True)
+    # int64 by the never-narrow index rule -- this tile IS an index tile, and the gather that
+    # consumes it must not see a narrowed offset. The C++ cast below reads the descriptor rather
+    # than repeating the spelling, so the two can never disagree.
+    arr_name, index_desc = sdfg.add_array(name_hint,
+                                          shape=widths,
+                                          dtype=dace.int64,
+                                          transient=True,
+                                          storage=dtypes.StorageType.Register,
+                                          find_new_name=True)
     parts = []
     for i in range(K):
         inner = 1
@@ -92,7 +95,8 @@ def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
         code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
         code_lines.append(f"{'    ' * d}DACE_UNROLL")
         code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
-    code_lines.append(f"{'    ' * K}_out[{flat}] = (int64_t)({body_expr});")
+    cast = index_desc.dtype.ctype
+    code_lines.append(f"{'    ' * K}_out[{flat}] = ({cast})({body_expr});")
     for d in reversed(range(K)):
         code_lines.append(f"{'    ' * d}}}")
     tasklet = inner_state.add_tasklet(name=f"{LANE_ID_MATERIALISER_PREFIX}{arr_name}",

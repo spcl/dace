@@ -11,8 +11,12 @@
 #define DACE_EXPORTED extern "C"
 #endif
 
-// Workaround (see unload_library)
+// Workaround (see unload_library). Guarded with its only use: GCC ships <omp.h> even without
+// -fopenmp, so an unguarded include is what let the call compile against a runtime that is not
+// there, and the stub then failed to load on a missing omp_get_max_threads.
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 
 // Loads a library and returns a handle to it, or NULL if there was an error
 // NOTE: On Windows, path must be given as a Unicode string (UTF-16, or
@@ -79,8 +83,11 @@ DACE_EXPORTED void *get_symbol(void *hLibrary, const char *symbol) {
 DACE_EXPORTED void unload_library(void *hLibrary) {
   if (!hLibrary) return;
 
-  // Workaround so that OpenMP does not go ballistic when calling dlclose()
+  // Workaround so that OpenMP does not go ballistic when calling dlclose(). Guarded because with no
+  // OpenMP in the build there is no runtime to placate, and the call would not link.
+#ifdef _OPENMP
   omp_get_max_threads();
+#endif
 
 #ifdef _WIN32
   FreeLibrary((HMODULE)hLibrary);

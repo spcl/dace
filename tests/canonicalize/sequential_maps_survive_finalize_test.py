@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Sequential maps three focus40 kernels still carry after ``canonicalize`` + ``finalize_for_target``.
+"""What ``canonicalize`` + ``finalize_for_target`` leaves behind on three focus40 kernels.
 
 A code-check sweep over 40 loop-level-reasoning kernels found three where the canonicalized form
-still has a ``Sequential`` map: ``ext_war_unit``, ``fuse_move_ifs``, ``tsvc_2_s1232``. A map count
+still had a ``Sequential`` map: ``ext_war_unit``, ``fuse_move_ifs``, ``tsvc_2_s1232``. A map count
 alone cannot say whether that is correct (a real cross-iteration dependence) or a missed
 parallelization (a pass that declined for no dependence reason). Each case here is pinned to
 which one it is, by NAME, not by count:
@@ -11,16 +11,23 @@ which one it is, by NAME, not by count:
   anti-dependence. ``chunk_anti_dependence.py`` (cpu_specialization) resolves it by running
   chunks in parallel and each chunk's interior in order; the two Sequential MAPS left over are
   its single-iteration seam/prologue points -- there is no loop to extract from a domain of one.
-* ``fuse_move_ifs`` and ``tsvc_2_s1232`` -- both have a data-parallel inner loop (no aliasing
-  between iterations at all) that stays ``Sequential`` only because ``sequentialize_unprofitable
-  _parallel_scopes.py``'s rule 1 forbids a SECOND ``CPU_Multicore`` region nested inside one that
-  is already parallel (OpenMP gives one team level; nesting would oversubscribe, not speed
-  anything up). The outer loop already carries the parallelism; the inner one is correctly
-  ``Sequential`` by POLICY, not by dependence.
+* ``tsvc_2_s1232`` -- a data-parallel inner loop (no aliasing between iterations at all) that
+  stays ``Sequential`` only because ``sequentialize_unprofitable_parallel_scopes.py``'s rule 1
+  forbids a SECOND ``CPU_Multicore`` region nested inside one that is already parallel (OpenMP
+  gives one team level; nesting would oversubscribe, not speed anything up). The outer loop
+  already carries the parallelism; the inner one is correctly ``Sequential`` by POLICY, not by
+  dependence. This is the kernel that witnesses the policy.
+* ``fuse_move_ifs`` used to witness the same policy, and since ``56c2a2ec3`` no longer does: its
+  two nests fuse into ONE flat map over both dimensions, so no second parallel region is left to
+  sequentialize. Its own policy test said in as many words that collapsing the two loops into one
+  map is a permitted outcome, so the case stays here pinning the OTHER half of that sentence --
+  one parallel region, no map nested in another map, and the data-dependent guard still standing
+  as a branch predicate rather than quietly dropped by the fusion.
 
 Each kernel gets a numeric test (canonicalize must stay value-preserving) and a structural test
-that would fail if either the map inventory changes shape or a future edit turns a genuinely
-serial map parallel (a race) or leaves a genuinely parallel map serial (a silent regression).
+that would fail if the map inventory changes shape, if a future edit turns a genuinely serial map
+parallel (a race) or leaves a genuinely parallel map serial (a silent regression), or if a fusion
+loses a guard.
 """
 import typing
 
@@ -30,7 +37,10 @@ import pytest
 import dace
 from dace import symbolic
 from dace.dtypes import ScheduleType
+from dace.ordered import OrderedSet
+from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.transformation.passes.canonicalize import finalize, pipeline as cp
 
@@ -49,6 +59,81 @@ def maps_with_schedule(sdfg: dace.SDFG, schedule: dace.ScheduleType) -> typing.L
     """``[(MapEntry, owning SDFGState)]`` for every map of ``schedule`` anywhere in ``sdfg``."""
     return [(n, state) for n, state in sdfg.all_nodes_recursive()
             if isinstance(n, nd.MapEntry) and n.map.schedule == schedule]
+
+
+def root_name(sdfg: dace.SDFG, name: str) -> str:
+    """``name`` as the ROOT SDFG spells it, following nested-SDFG connector renames outward.
+
+    Writes are collected per nested SDFG, where a connector rename can give the same array a
+    different local name; resolving outward lets an assertion name the array the kernel signature
+    names instead of whatever the current nesting happens to call it.
+    """
+    while sdfg.parent_nsdfg_node is not None:
+        state, node = sdfg.parent, sdfg.parent_nsdfg_node
+        edges = [e for e in state.in_edges(node) if e.dst_conn == name]
+        edges += [e for e in state.out_edges(node) if e.src_conn == name]
+        if not edges or edges[0].data.data is None:
+            return name
+        name, sdfg = edges[0].data.data, state.sdfg
+    return name
+
+
+def tasklets_writing(sdfg: dace.SDFG, data: str) -> typing.List[typing.Tuple[nd.Tasklet, SDFGState]]:
+    """``[(Tasklet, owning SDFGState)]`` for every tasklet whose output lands in ``data``.
+
+    The tasklet is what the guard has to sit above. An ``AccessNode`` for ``data`` in an enclosing
+    state is only the outward end of a memlet path, so counting access nodes would report the
+    write once more at every nesting level it passes through, outside the guard each time.
+    """
+    found: typing.List[typing.Tuple[nd.Tasklet, SDFGState]] = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.all_states():
+            for node in state.nodes():
+                if not isinstance(node, nd.Tasklet):
+                    continue
+                for edge in state.out_edges(node):
+                    end = state.memlet_path(edge)[-1].dst
+                    if isinstance(end, nd.AccessNode) and root_name(sd, end.data) == data:
+                        found.append((node, state))
+                        break
+    return found
+
+
+def enclosing_branch_conditions(block: ControlFlowBlock) -> typing.List[str]:
+    """Predicate text of every ``ConditionalBlock`` branch ``block`` sits inside, innermost first."""
+    conditions: typing.List[str] = []
+    child, parent = block, block.parent_graph
+    while parent is not None:
+        if isinstance(parent, ConditionalBlock):
+            conditions += [c.as_string for c, region in parent.branches if region is child and c is not None]
+        child, parent = parent, parent.parent_graph
+    return conditions
+
+
+def names_behind(sdfg: dace.SDFG, condition: str) -> OrderedSet[str]:
+    """Names ``condition`` reads once staged interstate assignments are substituted back in.
+
+    Canonicalize stages an array read into a symbol on an interstate edge (``cond_index =
+    cond[i]``) and writes the SYMBOL into the branch predicate, so the predicate's own free
+    symbols no longer mention the array the guard actually tests.
+    """
+    assigns = {
+        lhs: rhs
+        for sd in sdfg.all_sdfgs_recursive()
+        for cfg in sd.all_control_flow_regions(recursive=False)
+        for e in cfg.edges()
+        for lhs, rhs in e.data.assignments.items()
+    }
+    names: OrderedSet[str] = OrderedSet(str(s) for s in CodeBlock(condition).get_free_symbols())
+    for _ in range(len(assigns) + 1):
+        grown = OrderedSet(names)
+        for name in names:
+            if name in assigns:
+                grown |= OrderedSet(str(s) for s in CodeBlock(assigns[name]).get_free_symbols())
+        if len(grown) == len(names):
+            return grown
+        names = grown
+    return names
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -121,7 +206,7 @@ def test_ext_war_unit_sequential_maps_are_single_iteration_seams():
 
 
 # --------------------------------------------------------------------------------------------- #
-# fuse_move_ifs: an inner data-parallel loop kept Sequential by the no-nested-parallelism rule.  #
+# fuse_move_ifs: two nests that fuse into ONE flat parallel map, guard kept as a predicate.      #
 # --------------------------------------------------------------------------------------------- #
 
 FMI_LEN_2D = dace.symbol('LEN_2D', dtype=dace.int64, positive=True)
@@ -156,48 +241,80 @@ def reference_fuse_move_ifs(a: np.ndarray, b: np.ndarray, src: np.ndarray, cond:
     return a, b
 
 
-def test_fuse_move_ifs_matches_reference():
+def test_fuse_move_ifs_matches_reference_in_every_guard_regime():
+    """One build, three ``cond`` regimes. The all-negative one is the regime that separates a
+    surviving guard from a dropped one: with no ``cond[i]`` positive the reference leaves ``a``
+    exactly as it came in, so a fusion that folded the guarded write into the unconditional map
+    body would show up as ``a`` overwritten everywhere, while the mixed regime alone could still
+    pass on the rows that happen to be positive.
+    """
     n = 6
     rng = np.random.default_rng(3)
     a, b, src = rng.random((n, n)), rng.random((n, n)), rng.random((n, n))
-    cond = rng.random(n) - 0.5
-    expected_a, expected_b = reference_fuse_move_ifs(a, b, src, cond, k=1)
+    conds = {
+        'mixed': rng.random(n) - 0.5,
+        'all_negative': -rng.random(n) - 0.5,
+        'all_positive': rng.random(n) + 0.5,
+    }
 
     sdfg = canonicalized_for_cpu(fuse_move_ifs.to_sdfg(simplify=False))
-    got_a, got_b = a.copy(), b.copy()
     csdfg = sdfg.compile()
-    csdfg(a=got_a, b=got_b, src=src.copy(), cond=cond.copy(), LEN_2D=n, K=1)
-    assert np.allclose(got_a, expected_a), 'the guarded a-loop must be preserved'
-    assert np.allclose(got_b, expected_b), 'the unconditional b-loop must be preserved'
+    for regime, cond in conds.items():
+        expected_a, expected_b = reference_fuse_move_ifs(a, b, src, cond, k=1)
+        got_a, got_b = a.copy(), b.copy()
+        csdfg(a=got_a, b=got_b, src=src.copy(), cond=cond.copy(), LEN_2D=n, K=1)
+        assert np.array_equal(got_a, expected_a), f'{regime}: the guarded a-write must be preserved'
+        assert np.array_equal(got_b, expected_b), f'{regime}: the unconditional b-write must be preserved'
 
 
-def test_fuse_move_ifs_inner_j_loop_is_sequential_by_nested_parallelism_policy_not_a_dependence():
-    """``a[i, j] = src[i, j] * 2.0`` has NO cross-iteration dependence at all -- every (i, j)
-    writes a distinct cell and reads only its own ``src`` element -- so by itself this inner j
-    loop is exactly as parallel as the unconditional b-loop, which DOES come out as a flat
-    ``CPU_Multicore`` map over both dimensions. The only reason the j-loop here stays
-    ``Sequential`` is that it is nested inside the (already parallel) per-i map: rule 1 of
-    ``SequentializeUnprofitableParallelScopes.decide_map``
+def test_fuse_move_ifs_fuses_to_one_parallel_region_and_keeps_the_guard_as_a_predicate():
+    """``a[i, j] = src[i, j] * 2.0`` under ``if cond[i] > 0.0``, and an unconditional
+    ``b[i, j] = src[i, j] + 1.0``, have no cross-iteration dependence at all -- every ``(i, j)``
+    writes a distinct cell and reads only its own ``src`` element. Until ``56c2a2ec3`` the two
+    nests stayed apart and the guarded inner j-loop came out ``Sequential`` under a parallel
+    per-i map, by rule 1 of ``SequentializeUnprofitableParallelScopes.decide_map``
     (dace/transformation/passes/cpu_specialization/sequentialize_unprofitable_parallel_scopes.py
-    :157-161) pins ANY map re-entering a ``CPU_Multicore`` scope to ``Sequential``, unconditionally,
-    because OpenMP gives one team level and stacking two would oversubscribe rather than help.
-    This is a correct fork/join COST decision, not a dependence, and it must stay pinned: a future
-    change that instead collapses the two loops into one map, or moves the parallelism to the
-    j-loop, is fine, but silently leaving BOTH loops parallel (nested ``#pragma omp parallel for``)
-    is the regression this guards against.
+    :157-161): no second ``CPU_Multicore`` region inside one that is already parallel. Sinking the
+    guard's condition prep with the guard made both nests perfect, they fuse, and ONE flat map
+    over both dimensions is what is left -- an outcome the previous pin named as permitted, and
+    the case ``tsvc_2_s1232`` below still witnesses the nested-parallelism rule itself.
+
+    What must hold for the fused form is pinned here instead, and neither half is weaker than the
+    map count it replaces. Nothing may be nested inside a parallel map that is parallel again --
+    that is the ``#pragma omp parallel for`` inside ``#pragma omp parallel for`` the previous pin
+    guarded against, asserted directly rather than inferred from a count of two. And the fusion
+    must not have bought its perfect nest by dropping the guard: the ``a`` write has to stay
+    behind a branch predicate that reads ``cond``, since a guard folded away would make the fused
+    map write ``a`` on every row.
+
+    ``K`` is declared ``positive=True``, so ``K > 0`` is proved at trace time: the b-nest is
+    already unguarded before canonicalize sees it, and this program has exactly one guard.
     """
     sdfg = canonicalized_for_cpu(fuse_move_ifs.to_sdfg(simplify=False))
     seq_maps = maps_with_schedule(sdfg, ScheduleType.Sequential)
     par_maps = maps_with_schedule(sdfg, ScheduleType.CPU_Multicore)
-    assert len(seq_maps) == 1, f'expected exactly 1 sequential map (the guarded inner j-loop), got {len(seq_maps)}'
-    assert len(par_maps) == 2, f'expected the outer i-loop and the flat b-loop both parallel, got {len(par_maps)}'
+    assert len(par_maps) == 1, f'the two nests must fuse into exactly 1 parallel map, got {len(par_maps)}'
+    assert not seq_maps, f'nothing is left to sequentialize once the nests fuse, got {len(seq_maps)}'
 
-    (seq_entry, seq_state), = seq_maps
-    enclosing = get_parent_map_and_loop_scopes(sdfg, seq_entry, seq_state)
-    enclosing_maps = [s for s in enclosing if isinstance(s, nd.MapEntry)]
-    assert len(enclosing_maps) == 1, 'the sequential j-loop must be nested in exactly one map'
-    assert enclosing_maps[0].map.schedule == ScheduleType.CPU_Multicore, \
-        'the enclosing map must be the parallel outer i-loop -- that is WHY the j-loop is sequential'
+    (fused, _fused_state), = par_maps
+    assert len(fused.map.params) == 2, f'the fused map must cover both dimensions, got {fused.map.params}'
+    for begin, end, _step in fused.map.range:
+        assert (begin, str(end)) == (0, 'LEN_2D - 1'), \
+            f'the fused map must span the full 2D domain, got {fused.map.range}'
+
+    # Rule 1's actual subject, stated as itself: no map re-enters a parallel scope.
+    for map_entry, state in maps_with_schedule(sdfg, ScheduleType.CPU_Multicore):
+        enclosing = get_parent_map_and_loop_scopes(sdfg, map_entry, state)
+        assert not [s for s in enclosing if isinstance(s, nd.MapEntry)], \
+            f'{map_entry.map.label} is parallel inside another map -- nested OpenMP regions'
+
+    a_writers = tasklets_writing(sdfg, 'a')
+    assert a_writers, 'the a-write must survive canonicalization'
+    for tasklet, state in a_writers:
+        conditions = enclosing_branch_conditions(state)
+        assert conditions, f'{tasklet.label} writes a unguarded -- the fusion dropped the branch'
+        assert any('cond' in names_behind(sdfg, c) for c in conditions), \
+            f'{tasklet.label} is guarded by {conditions}, which no longer tests cond'
 
 
 # --------------------------------------------------------------------------------------------- #

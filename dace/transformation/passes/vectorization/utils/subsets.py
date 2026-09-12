@@ -10,10 +10,12 @@
 import copy
 
 import dace
+from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.nodes import AccessNode
 from dace.subsets import Range
+from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
@@ -114,6 +116,39 @@ def _assert_no_new_free_symbols(sdfg: dace.SDFG, prev_sdfg_free_syms: set[str], 
                             f"`add_missing_symbols=True` or fix this issue")
 
 
+def symbol_instances(subset: dace.subsets.Range) -> dict[str, symbolic.symbol]:
+    """The dtype-carrying symbol OBJECTS of ``subset``, by name.
+
+    ``Range.free_symbols`` answers plain ``str``; the instances minted by the map (and therefore
+    the ones whose dtype decides symbol identity) sit one level down, in each bound expression.
+    """
+    carried: dict[str, symbolic.symbol] = {}
+    for dim in subset.ranges:
+        for bound in dim:
+            for sym in bound.free_symbols:
+                if isinstance(sym, symbolic.symbol):
+                    carried.setdefault(str(sym), sym)
+    return carried
+
+
+def subset_symbol_dtype(sdfg: dace.SDFG, name: str, carried: dict[str, symbolic.symbol]) -> dace.dtypes.typeclass:
+    """The dtype of ``name`` as it occurs in a subset: the symbol instance's own, else the SDFG's.
+
+    The instance first, because a map parameter is declared in no symbol table at all and the
+    per-lane symbol minted from it must carry the SAME dtype -- one name at two dtypes is two
+    symbols, and the shifted index then never folds against the original.
+
+    :raises UndeterminedSymbolDType: when neither source declares ``name``.
+    """
+    instance = carried.get(name)
+    if instance is not None:
+        return instance.dtype
+    declared = sdfg.symbols.get(name)
+    if declared is not None:
+        return declared
+    raise scopes.UndeterminedSymbolDType(name, sdfg.label)
+
+
 def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, symbol_offset: str,
                                      vector_map_param: str) -> dace.subsets.Range:
     """Rewrite a subset's free symbols to their per-lane variants.
@@ -127,6 +162,8 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
     :param symbol_offset: Integer-valued string suffix / offset.
     :param vector_map_param: The vector map parameter name.
     :returns: A new subset with the offset symbols applied.
+    :raises UndeterminedSymbolDType: when a free symbol carries no dtype and the SDFG does not
+        declare it either.
     """
     # Offset needs to be positive integer
     assert symbol_offset.isdigit()
@@ -141,15 +178,12 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
         for free_sym in free_syms
     }
 
+    carried = symbol_instances(subset)
     for free_sym in free_syms:
-        if str(free_sym) in sdfg.symbols:
-            stype = sdfg.symbols[str(free_sym)]
-        else:
-            stype = dace.int64
         if str(free_sym) != vector_map_param:
             offset_symbol_name = LaneIdScheme.make_dim(str(free_sym), 0, offset_lane)
             if offset_symbol_name not in sdfg.symbols:
-                sdfg.add_symbol(offset_symbol_name, stype)
+                sdfg.add_symbol(offset_symbol_name, subset_symbol_dtype(sdfg, str(free_sym), carried))
 
     new_subset = repl_subset(subset=subset, repl_dict=repl_dict)
     _assert_no_new_free_symbols(sdfg, prev_sdfg_free_syms, free_syms, "repl_subset_to_use_laneid_offset")

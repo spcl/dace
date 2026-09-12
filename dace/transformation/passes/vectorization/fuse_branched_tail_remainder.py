@@ -58,6 +58,7 @@ from dace.properties import CodeBlock
 from dace.sdfg.nodes import MapEntry, NestedSDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (MASKED_TAIL_MARKER,
                                                                                    SCALAR_TAIL_MARKER, TILE_MAIN_MARKER)
 
@@ -181,10 +182,19 @@ class FuseBranchedTailRemainder(ppl.Pass):
             return nsdfgs[0]
         return None
 
-    def _symbol_dtype(self, sdfg: dace.SDFG, sym: str) -> dace.dtypes.typeclass:
-        """Best-effort dtype for a symbol: the SDFG's declared type, else ``int64``."""
-        declared = sdfg.symbols
-        return declared[sym] if sym in declared else dace.int64
+    @staticmethod
+    def _symbol_dtype(resolver: scopes.ScopedSymbolResolver, sdfg: dace.SDFG, sym: str, state: dace.SDFGState,
+                      node: NestedSDFG) -> dace.dtypes.typeclass:
+        """The dtype of an outer-scope symbol the fused body will re-declare.
+
+        Most of these names ARE the fused map's parameters, which no symbol table declares -- only
+        the scope at ``node`` sees them. Re-declaring one at a guessed int64 splits it from the
+        parameter it stands for, so the branch predicate ``i <= ub - W + 1`` never folds against
+        the map range.
+
+        :raises UndeterminedSymbolDType: when no rung of the ladder declares ``sym``.
+        """
+        return resolver.resolve_dtype(sym, sdfg, state=state, node=node)
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Fuse every ``(__tile_main, tail)`` sibling pair in the SDFG.
@@ -194,18 +204,22 @@ class FuseBranchedTailRemainder(ppl.Pass):
         :returns: Number of pairs fused, or ``None`` if none.
         """
         fused = 0
+        resolver = scopes.ScopedSymbolResolver()
         for sd in list(sdfg.all_sdfgs_recursive()):
             for state in list(sd.states()):
                 for main_entry, rem_entry in self._find_pairs(state):
-                    if self._fuse_one(sd, state, main_entry, rem_entry):
+                    if self._fuse_one(resolver, sd, state, main_entry, rem_entry):
                         fused += 1
+                        resolver.invalidate_state(state)  # a fuse deleted one map scope and restrided another
         if fused:
             sdfg.reset_cfg_list()
         return fused or None
 
-    def _fuse_one(self, sd: dace.SDFG, state: dace.SDFGState, main_entry: MapEntry, rem_entry: MapEntry) -> bool:
+    def _fuse_one(self, resolver: scopes.ScopedSymbolResolver, sd: dace.SDFG, state: dace.SDFGState,
+                  main_entry: MapEntry, rem_entry: MapEntry) -> bool:
         """Fuse one main-tiled + remainder pair into a single conditional-body map.
 
+        :param resolver: The pass run's shared symbol resolver.
         :param sd: The SDFG owning ``state``.
         :param state: The state holding both map scopes.
         :param main_entry: The ``__tile_main`` (mask-free vectorized) map entry.
@@ -240,7 +254,8 @@ class FuseBranchedTailRemainder(ppl.Pass):
         out_edge_by_conn = {e.src_conn: (e.dst_conn, e.data) for e in state.in_edges(main_exit) if e.src is main_nsdfg}
 
         masked_tail = rem_entry.map.label.endswith(MASKED_TAIL_MARKER)
-        fused_body = self._build_fused_body(sd, main_entry, main_nsdfg, rem_nsdfg, W, tiled_param, tail_ub, masked_tail)
+        fused_body = self._build_fused_body(resolver, sd, state, main_entry, main_nsdfg, rem_nsdfg, W, tiled_param,
+                                            tail_ub, masked_tail)
 
         # Detach the two original bodies + the whole remainder scope from the state.
         state.remove_node(main_nsdfg)
@@ -271,8 +286,9 @@ class FuseBranchedTailRemainder(ppl.Pass):
             state.add_edge(fused_nsdfg, conn, main_exit, dst_conn, dace.Memlet.from_memlet(memlet))
         return True
 
-    def _build_fused_body(self, sd: dace.SDFG, main_entry: MapEntry, main_nsdfg: NestedSDFG, rem_nsdfg: NestedSDFG,
-                          W: int, tiled_param: str, tail_ub: symbolic.SymbolicType, masked_tail: bool) -> dace.SDFG:
+    def _build_fused_body(self, resolver: scopes.ScopedSymbolResolver, sd: dace.SDFG, state: dace.SDFGState,
+                          main_entry: MapEntry, main_nsdfg: NestedSDFG, rem_nsdfg: NestedSDFG, W: int, tiled_param: str,
+                          tail_ub: symbolic.SymbolicType, masked_tail: bool) -> dace.SDFG:
         """Construct the fused-body SDFG: one ``ConditionalBlock`` over the two reused bodies.
 
         :param masked_tail: ``True`` when the tail is a ``__masked_tail`` TILE body (placed as is,
@@ -301,7 +317,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
                 outer_syms.update(dict.fromkeys(sorted(str(s) for s in free)))
         for s in outer_syms:
             if s not in body.symbols:
-                body.add_symbol(s, self._symbol_dtype(sd, s))
+                body.add_symbol(s, self._symbol_dtype(resolver, sd, s, state, main_nsdfg))
 
         cond_block = ConditionalBlock(f"{base}_remainder_cond", sdfg=body)
         body.add_node(cond_block, ensure_unique_name=True)

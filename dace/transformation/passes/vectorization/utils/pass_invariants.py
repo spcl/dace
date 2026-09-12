@@ -30,6 +30,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import nested_connector_subset
+from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 
 #: Reduction ops a lifted array-slot boundary WCR may carry. The tile path folds the lanes with a
 #: horizontal ``TileReduce`` and the boundary then combines one partial per tile, so the op must be
@@ -264,16 +265,21 @@ def no_wcr_in_map_body(scope: SDFG | SDFGState) -> str | None:
     ``WCRToAugAssign`` must first convert each such WCR to an explicit read-modify-write tasklet --
     its post-condition / the vectorizer's entry pre-condition.
 
-    Map body = nodes strictly between ``MapEntry`` and its ``MapExit``
-    (:meth:`~dace.sdfg.state.SDFGState.all_nodes_between`); every incident edge is a body edge. The
-    reduction-out boundary edge ``MapExit -> AccessNode`` touches only the exit + an outer
-    AccessNode, not the body → not flagged: where a reduction's WCR legitimately lives once lifted out.
+    Map body = the map's scope, entry and exit excluded
+    (:func:`~dace.transformation.passes.vectorization.utils.map_predicates.map_body_nodes`); every
+    incident edge is a body edge. The reduction-out boundary edge ``MapExit -> AccessNode`` touches
+    only the exit + an outer AccessNode, not the body → not flagged: where a reduction's WCR
+    legitimately lives once lifted out.
+
+    Scope membership, NOT ``all_nodes_between``: that walk returns an empty set the moment the body
+    holds a node with no out-edge, and an invariant that reads the emptied walk as "the body" skips
+    the map and reports itself satisfied. A checker that cannot fail is worth nothing.
     """
     for sd, state in _iter_states(scope):
         for node in state.nodes():
             if not isinstance(node, MapEntry):
                 continue
-            body = state.all_nodes_between(node, state.exit_node(node))
+            body = map_body_nodes(state, node)
             if not body:
                 continue
             for edge in state.all_edges(*body):

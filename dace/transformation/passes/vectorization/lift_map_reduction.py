@@ -36,6 +36,7 @@ from dace import dtypes, nodes, symbolic
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 from dace.transformation.passes.vectorization.utils.reductions import (
     IDENTITY,
     MapReductionInfo,
@@ -164,7 +165,7 @@ class PureWCRReductionInfo:
 
 
 def _pure_wcr_map_ok(state: "dace.SDFGState",
-                     map_entry: "dace.nodes.MapEntry") -> tuple[nodes.MapExit, set[nodes.Node], str] | None:
+                     map_entry: "dace.nodes.MapEntry") -> tuple[nodes.MapExit, list[nodes.Node], str] | None:
     """Shared map-level guards for a pure-WCR reduction: single-param, unit-step,
     top-level (within its state) map whose body holds no nested map.
 
@@ -182,14 +183,16 @@ def _pure_wcr_map_ok(state: "dace.SDFGState",
     if state.entry_node(map_entry) is not None:
         return None
     map_exit = state.exit_node(map_entry)
-    inner = state.all_nodes_between(map_entry, map_exit) or set()
+    # Scope membership, not ``all_nodes_between``: an emptied walk holds no MapEntry, so a map
+    # nesting another one would pass this innermost guard.
+    inner = map_body_nodes(state, map_entry)
     if any(isinstance(n, dace.nodes.MapEntry) for n in inner):
         return None
     return map_exit, inner, map_entry.map.params[0]
 
 
 def _validate_pure_wcr_write(state: dace.SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit,
-                             inner: set[nodes.Node], param: str,
+                             inner: list[nodes.Node], param: str,
                              write_edge: MultiConnectorEdge[Memlet]) -> PureWCRReductionInfo | None:
     """Per-write guards: one scalar ``body -> map_exit`` WCR edge writing a FIXED
     (param-independent) scalar accumulator not read at map entry / aliased in scope.
@@ -641,7 +644,11 @@ class LiftMapReductionToReduce(ppl.Pass):
         if set(scalar_src) != range_syms:
             return  # not all symbols scalar-bound dynamic ranges; nothing to scope
 
-        cluster = (set(state.all_nodes_between(me, mx)) | {me, mx, buf_node, red})
+        # Scope membership, not ``all_nodes_between``: an emptied walk drops the fill body out of
+        # the cluster, and every ``me -> body`` edge then reads as leaving the cluster and gets
+        # rerouted through the wrap map.
+        cluster: OrderedSet[nodes.Node] = OrderedSet(map_body_nodes(state, me))
+        cluster |= (me, mx, buf_node, red)
         me_w, mx_w = state.add_map("reduce_scope", {"__reduce_scope_it": "0:1"})
 
         # Dynamic-range connectors re-defining the symbols from their scalars.

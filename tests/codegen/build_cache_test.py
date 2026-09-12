@@ -102,6 +102,42 @@ def test_unusable_recording_falls_back_to_cmake(tmp_path, private_cache):
     assert not ran_cmake(build_and_check(tmp_path, 'stalerecovered')), 'the bad recording was not replaced'
 
 
+#: Templated name a recording gives the program's shared library (see ``command_db.template``).
+PROGRAM_LIBRARY = 'lib$NAME.so'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
+def test_recording_that_links_a_vanished_library_rebuilds_and_replaces_itself(tmp_path, private_cache):
+    """A recording bakes in the absolute library paths CMake's ``find_package`` probed -- libgomp on a
+    GNU toolchain among them -- and nothing revalidates them before a replay. A toolchain that moves
+    one out from under the recording must therefore cost a rebuild, never correctness, and must not
+    keep costing one: the linker rejects the operand it cannot find, the replay reports failure, and
+    the caller reconfigures and records the shape again. Distinct from the stale recording above,
+    which is refused before a single command runs -- this recipe runs, fails partway, and leaves a
+    build folder that has to be cleared before CMake can configure over it.
+    """
+    build_and_check(tmp_path, 'vanishedprime')
+    root = compiler.build_cache_root()
+    key = os.path.splitext(os.listdir(os.path.join(root, 'commands'))[0])[0]
+    recorded = command_db.load(root, key)
+    program_links = [e for e in recorded if e['output'] == PROGRAM_LIBRARY]
+    assert program_links, f'no {PROGRAM_LIBRARY} entry: the recording never links the program'
+    # Right after the output name, where the driver reads it as one more input file to resolve.
+    marker = f'-o {PROGRAM_LIBRARY}'
+    assert marker in program_links[0]['command'], 'the recorded link line no longer names its output'
+    absent = tmp_path / 'uninstalled-toolchain' / 'libgomp.so'
+    relinked = {
+        e['output']: dict(e, command=e['command'].replace(marker, f'{marker} {absent}', 1))
+        for e in program_links
+    }
+    # Written straight over the entry, so recovery below is the caller's alone to demonstrate.
+    with open(command_db.entry_path(root, key), 'w') as fp:
+        json.dump([relinked.get(e['output'], e) for e in recorded], fp)
+
+    assert ran_cmake(build_and_check(tmp_path, 'vanishedvictim')), 'the failed replay never reached CMake'
+    assert not ran_cmake(build_and_check(tmp_path, 'vanishedrecovered')), 'the broken recording was not replaced'
+
+
 @pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
 def test_precompiled_header_is_actually_used(tmp_path):
     """The generated TU must really consume the cached header. A PCH is honored only when its flags

@@ -34,6 +34,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, coerce_remainder_strategy
 from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis import scopes
 from dace.transformation.transformation import PatternTransformation
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
@@ -107,6 +108,7 @@ from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE,
                                           TileReduce, TileStore, TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
+from dace.transformation.passes.vectorization.restore_untiled_map_stride import RestoreUntiledMapStride
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
@@ -365,15 +367,20 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
         ``sdfg.arrays``) used purely symbolically is filtered out by the array-name guard and
         left unbound, so ``validate`` reports "Missing symbols on nested SDFG". Bind each such
         symbol identity (outer ``n3`` → inner ``n3``); the parent scope already resolves it (the
-        strided map range references it), and the type comes from the parent symbol / scalar
-        descriptor (default ``int64``).
+        strided map range references it), and the dtype is RESOLVED against the OWNING SDFG and
+        the NSDFG node's scope — the enclosing map parameter is visible from nowhere else, and a
+        guessed ``int64`` against an ``int32`` parameter mints a second symbol of the same name.
 
         :param sdfg: The SDFG whose body NSDFGs to repair in place.
         :returns: The number of symbols identity-bound.
+        :raises UndeterminedSymbolDType: when no rung of the ladder declares a free symbol.
         """
         bound = 0
+        resolver = scopes.ScopedSymbolResolver()
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, dace.nodes.NestedSDFG) or node.sdfg is None:
+                continue
+            if not isinstance(parent, dace.SDFGState):
                 continue
             inner = node.sdfg
             parent_sdfg = parent.sdfg
@@ -382,14 +389,10 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
                 sym_name = str(sym)
                 if sym_name in connectors or sym_name in node.symbol_mapping:
                     continue
-                if sym_name in parent_sdfg.symbols:
-                    sym_type = parent_sdfg.symbols[sym_name]
-                elif sym_name in parent_sdfg.arrays:
-                    sym_type = parent_sdfg.arrays[sym_name].dtype
-                else:
-                    sym_type = dace.dtypes.int64
+                sym_type = resolver.resolve_dtype(sym_name, parent_sdfg, state=parent, node=node)
                 if sym_name not in inner.symbols:
                     inner.add_symbol(sym_name, sym_type)
+                    resolver.invalidate_sdfg(inner)
                 node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
                 bound += 1
         return bound
@@ -682,8 +685,9 @@ def _resolve_body_nsdfg_symbol_aliases(sdfg: dace.SDFG) -> None:
     bare-symbol rename so the body references the outer symbol directly. Only fires on a
     non-identity ``inner → bare-symbol`` mapping (an offset / affine expr is left alone).
     """
-    for node, _parent in sdfg.all_nodes_recursive():
-        if not isinstance(node, dace.nodes.NestedSDFG):
+    resolver = scopes.ScopedSymbolResolver()
+    for node, parent in sdfg.all_nodes_recursive():
+        if not isinstance(node, dace.nodes.NestedSDFG) or not isinstance(parent, dace.SDFGState):
             continue
         inner = node.sdfg
         renames = {}
@@ -704,13 +708,17 @@ def _resolve_body_nsdfg_symbol_aliases(sdfg: dace.SDFG) -> None:
             if inner_sym in inner.symbols:
                 inner.remove_symbol(inner_sym)
             node.symbol_mapping.pop(inner_sym, None)
-            # Rebind the target identically so the NSDFG still declares it. Take the OUTER
-            # declaration's dtype: one name at two dtypes is two SYMBOLS here, so a guessed
-            # int64 against an int32 map param leaves Min(i, i) that never folds and every
-            # later consumer inherits an opaque bound.
+            # Rebind the target identically so the NSDFG still declares it. Resolve the dtype
+            # against the OWNING SDFG and the NSDFG node's scope, not the top-level table this
+            # walk started from: a node several NSDFGs down has the symbol in its immediate
+            # parent, and an enclosing map parameter is visible from no symbol table at all. One
+            # name at two dtypes is two SYMBOLS here, so a guessed int64 against an int32 map
+            # param leaves Min(i, i) that never folds and every later consumer inherits an
+            # opaque bound.
             if outer_sym not in inner.symbols:
-                inner.add_symbol(outer_sym, sdfg.symbols.get(outer_sym, dace.int64))
+                inner.add_symbol(outer_sym, resolver.resolve_dtype(outer_sym, parent.sdfg, state=parent, node=node))
             node.symbol_mapping[outer_sym] = symbolic.pystr_to_symbolic(outer_sym)
+        resolver.invalidate_sdfg(inner)  # ``inner``'s symbol table just changed; a deeper node reads it as a parent
 
 
 @properties.make_properties
@@ -1039,6 +1047,12 @@ class VectorizeMultiDim(ppl.Pipeline):
             # Converter sees the walker's lib nodes + the mask in scope; sets has_mask=True +
             # wires _mask onto Tile{Binop, Unop, ITE, Reduce}.
             ConvertTaskletsToTileOps(widths=widths_t),
+            # A map the emitters skipped still carries the stride ``StrideMapByTileWidths`` gave
+            # it, and a scalar body under ``step = W`` runs one iteration in W. The two select
+            # through different predicates -- the shared gate reads ``all_nodes_between``, which
+            # answers EMPTY for a body holding a dead-end node, while the emitters demand a single
+            # body NSDFG -- so give the step back wherever no tile op was emitted.
+            RestoreUntiledMapStride(widths=widths_t),
             # Exit gate: a body tasklet the converter could not classify now carries tile-shaped
             # connectors, so the kernel cannot be emitted -- refuse it instead of shipping a body
             # that would compile against a pointer (or not compile at all).

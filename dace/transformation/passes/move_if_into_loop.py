@@ -48,6 +48,7 @@ from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegi
 from dace.sdfg import nodes, propagation
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.interstate.state_fusion import keep_start_block
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -336,7 +337,7 @@ def splice_empty_prep_states(parent: ControlFlowRegion, block: ControlFlowBlock)
                 parent.remove_edge(e)
             parent.remove_node(pred)
             if was_start:
-                parent.start_block = parent.node_id(block)
+                keep_start_block(parent, block)
             break
         else:
             return

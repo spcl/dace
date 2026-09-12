@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import dace
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 
 _INFIX_OPS = {"+", "-", "*", "/", "&", "|", "^"}
 _FUNCALL_OPS = {"max", "min"}
@@ -349,7 +350,7 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
         return None
     map_exit = state.exit_node(map_entry)
     # Innermost only: no nested map in scope.
-    inner = state.all_nodes_between(map_entry, map_exit) or set()
+    inner = map_body_nodes(state, map_entry)
     if any(isinstance(n, dace.nodes.MapEntry) for n in inner):
         return None
     body_nodes = [n for n in inner if n not in (map_entry, map_exit)]

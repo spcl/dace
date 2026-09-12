@@ -144,7 +144,7 @@ Refusals -- each names the miscompile it prevents:
 
 import ast
 import copy
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import dace
 from dace import SDFG, data, dtypes, memlet as mm, properties, subsets, symbolic
@@ -153,7 +153,7 @@ from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalB
                              ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, scopes
 
 #: Prefixes for the transients and symbol this pass introduces.
 MASK_PREFIX = 'compaction_mask_'
@@ -228,11 +228,13 @@ class LoopToStreamCompaction(ppl.Pass):
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self):
+    def depends_on(self) -> Dict[type, ppl.Pass]:
         return {}
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         lifted = 0
+        # ONE resolver for the whole run; each lift invalidates the SDFG it rewrote.
+        resolver = scopes.ScopedSymbolResolver()
         for sd in list(sdfg.all_sdfgs_recursive()):
             for region in list(sd.all_control_flow_regions()):
                 if not (isinstance(region, LoopRegion) and region.loop_variable):
@@ -242,7 +244,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 m = self.match_loop(region, sd)
                 if m is None:
                     continue
-                self.rewrite(m)
+                self.rewrite(m, resolver)
                 lifted += 1
         return lifted or None
 
@@ -342,8 +344,9 @@ class LoopToStreamCompaction(ppl.Pass):
                 return tuple(levels), child
             cur = child
 
-    def nest_index(self, levels: Tuple[NestLevel, ...], loops: List[LoopRegion]) -> List[str]:
-        """The origin-shifted iteration vector, one component per level.
+    def nest_index(self, levels: Tuple[NestLevel, ...], loops: List[LoopRegion],
+                   iterator_dtypes: List[dtypes.typeclass]) -> List[symbolic.SymbolicType]:
+        """The origin-shifted iteration vector, one component per level, SYMBOLIC.
 
         ``mask`` / ``rank`` carry one DIMENSION per level rather than a linearized index. Both are
         the same buffer in memory -- a default-strided array is row-major, so its flat order is the
@@ -352,13 +355,22 @@ class LoopToStreamCompaction(ppl.Pass):
         indexed only when it matches ``a*i + b`` with a provably ``|a| >= 1``, and the linearized
         ``mask[T1*i + j]`` has ``a = T1``, unprovable for a symbolic extent. Per-level dimensions
         give every level ``a = 1``.
+
+        The iterator is minted at the width :meth:`rename_iterator` DECLARED it at, and the
+        component never becomes text. ``dtype`` is part of symbol identity on this branch, so a
+        component formatted to a string and re-parsed comes back as a SECOND symbol of the same
+        name at the default width: ``Min(i, i)`` stops folding, a difference over the axis stops
+        cancelling, and the injectivity check that ``LoopToMap`` runs over this very subset then
+        judges an ``a = 1`` write non-affine. No declaration fixes that -- only never spelling the
+        component out.
         """
         return [
-            symbolic.symstr(symbolic.pystr_to_symbolic(loop.loop_variable) - level.start)
-            for level, loop in zip(levels, loops)
+            symbolic.symbol(loop.loop_variable, dtype) - level.start
+            for level, loop, dtype in zip(levels, loops, iterator_dtypes)
         ]
 
-    def point_subset(self, index: List[str]) -> subsets.Range:
+    def point_subset(self, index: List[symbolic.SymbolicType]) -> subsets.Range:
+        """One point of a shaped buffer. ``Range`` keeps an already-symbolic bound verbatim."""
         return subsets.Range([(comp, comp, 1) for comp in index])
 
     def loop_extent(self, loop: LoopRegion) -> Tuple[Optional[symbolic.SymbolicType], Optional[symbolic.SymbolicType]]:
@@ -644,8 +656,11 @@ class LoopToStreamCompaction(ppl.Pass):
 
     # ---------------------------------- rewrite ----------------------------------
 
-    def rewrite(self, m: CompactionMatch) -> None:
+    def rewrite(self, m: CompactionMatch, resolver: scopes.ScopedSymbolResolver) -> None:
         sdfg, parent, root = m.sdfg, m.parent, m.root
+        # Read before anything is added: the phase copies rename each level's iterator, and a
+        # rename must carry the dtype the ORIGINAL level declares, level by level.
+        iterator_dtypes = [self.iterator_dtype(level.loop, sdfg, resolver) for level in m.levels]
         shape = [level.trip for level in m.levels]
         mask_name, _ = sdfg.add_array(MASK_PREFIX + root.label, shape, MASK_DTYPE, transient=True, find_new_name=True)
         idx_name, _ = sdfg.add_array(IDX_PREFIX + root.label, shape, COUNT_DTYPE, transient=True, find_new_name=True)
@@ -664,8 +679,8 @@ class LoopToStreamCompaction(ppl.Pass):
         scan = parent.add_state(root.label + '_compaction_scan')
         scatter_nest = self.clone_loop(m, '_compaction_scatter')
         exit_state = parent.add_state(root.label + '_compaction_exit')
-        self.build_mask_loop(m, mask_nest, mask_name)
-        self.build_scatter_loop(m, scatter_nest, idx_name, base_sym)
+        self.build_mask_loop(m, mask_nest, mask_name, iterator_dtypes)
+        self.build_scatter_loop(m, scatter_nest, idx_name, base_sym, iterator_dtypes)
 
         parent.add_edge(entry, mask_nest, dace.InterstateEdge(assignments={base_sym: m.cursor}))
         parent.add_edge(mask_nest, scan, dace.InterstateEdge())
@@ -686,6 +701,9 @@ class LoopToStreamCompaction(ppl.Pass):
 
         self.parallelize(mask_nest, sdfg, permissive=False)
         self.parallelize(scatter_nest, sdfg, permissive=True)
+        # Symbols, descriptors, regions and interstate edges all changed; every table built from
+        # this SDFG's base is stale.
+        resolver.invalidate_sdfg(sdfg)
 
     def clone_loop(self, m: CompactionMatch, suffix: str) -> LoopRegion:
         """Copy the matched nest into the parent region; ownership is what makes it editable."""
@@ -702,23 +720,40 @@ class LoopToStreamCompaction(ppl.Pass):
         guard = next(b for b in loops[-1].nodes() if b.label == m.cond_block.label)
         return loops, guard
 
-    def rename_iterator(self, loop: LoopRegion, sdfg: SDFG, suffix: str) -> str:
+    def iterator_dtype(self, loop: LoopRegion, sdfg: SDFG, resolver: scopes.ScopedSymbolResolver) -> dtypes.typeclass:
+        """The dtype ``loop``'s iterator is declared with.
+
+        A LoopRegion binds its iterator through ``new_symbols``, which infers it from the init,
+        step and end -- so the scoped table of a state INSIDE the loop is the authority, and
+        ``sdfg.symbols`` is only the fallback for a name declared but not inferable. ``dtype`` is
+        part of symbol identity here: a rename that retypes the iterator turns one axis into two
+        symbols across the three phases.
+        """
+        body = next(iter(loop.all_states()), None)
+        if body is not None:
+            scoped = resolver.tabulate(body)[None].get(loop.loop_variable)
+            if scoped is not None:
+                return scoped
+        return resolver.resolve_dtype(loop.loop_variable, sdfg)
+
+    def rename_iterator(self, loop: LoopRegion, sdfg: SDFG, suffix: str, dtype: dtypes.typeclass) -> str:
         """Give a phase copy its own iterator: LoopToMap refuses a counter another block still names."""
         new_name = f'compaction_it_{suffix}'
         while new_name in sdfg.symbols or new_name in sdfg.arrays:
             new_name += '_'
-        sdfg.add_symbol(new_name, dtypes.int64)
+        sdfg.add_symbol(new_name, dtype)
         repl = {loop.loop_variable: new_name}
         loop.replace_meta_accesses(repl)
         loop.replace_dict(repl)
         loop.loop_variable = new_name
         return new_name
 
-    def build_mask_loop(self, m: CompactionMatch, root: LoopRegion, mask_name: str) -> None:
+    def build_mask_loop(self, m: CompactionMatch, root: LoopRegion, mask_name: str,
+                        iterator_dtypes: List[dtypes.typeclass]) -> None:
         """Phase 1: the nest with its guard replaced by a store of the guard's value."""
         loops, guard = self.clone_path(m, root)
-        for loop in loops:
-            self.rename_iterator(loop, m.sdfg, loop.label)
+        for loop, dtype in zip(loops, iterator_dtypes):
+            self.rename_iterator(loop, m.sdfg, loop.label, dtype)
         inner = loops[-1]
         store = inner.add_state(root.label + '_store', is_start_block=inner.start_block is guard)
         for edge in list(inner.in_edges(guard)):
@@ -726,18 +761,22 @@ class LoopToStreamCompaction(ppl.Pass):
             inner.add_edge(edge.src, store, edge.data)
         for block in [b for b in inner.nodes() if b is not store and self.reaches(inner, guard, b)]:
             inner.remove_node(block)
-        index = self.nest_index(m.levels, loops)
+        index = self.nest_index(m.levels, loops, iterator_dtypes)
         tasklet = store.add_tasklet(root.label + '_mask', {}, {'__out'}, f'__out = ({m.cond_str})')
         write = store.add_write(mask_name)
         store.add_edge(tasklet, '__out', write, None, mm.Memlet(data=mask_name, subset=self.point_subset(index)))
 
-    def build_scatter_loop(self, m: CompactionMatch, root: LoopRegion, idx_name: str, base_sym: str) -> None:
+    def build_scatter_loop(self, m: CompactionMatch, root: LoopRegion, idx_name: str, base_sym: str,
+                           iterator_dtypes: List[dtypes.typeclass]) -> None:
         """Phase 3: the nest verbatim, with the cursor rebound from the scan on the guard's in-edge."""
         loops, guard = self.clone_path(m, root)
-        for loop in loops:
-            self.rename_iterator(loop, m.sdfg, loop.label)
+        for loop, dtype in zip(loops, iterator_dtypes):
+            self.rename_iterator(loop, m.sdfg, loop.label, dtype)
         inner = loops[-1]
-        index = ', '.join(self.nest_index(m.levels, loops))
+        # An interstate assignment IS text -- ``InterstateEdge.assignments`` holds source, parsed
+        # by the consumer -- so this one component is spelled out. It reaches a CodeBlock, not a
+        # subset, and no symbol object survives that boundary in either direction.
+        index = ', '.join(symbolic.symstr(comp) for comp in self.nest_index(m.levels, loops, iterator_dtypes))
         binding = f'({base_sym}) + ({symbolic.symstr(m.step)}) * {idx_name}[{index}]'
         edges = inner.in_edges(guard)
         if not edges:

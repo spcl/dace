@@ -8,6 +8,7 @@ from typing import Any
 
 import dace
 from dace import properties, symbolic
+from dace.ordered import OrderedSet
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import nest_state_subgraph
@@ -20,6 +21,7 @@ from dace.transformation.passes.vectorization.utils.arrays import demote_connect
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_vectorizable_map,
+    map_body_nodes,
 )
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 
@@ -100,8 +102,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         """
         map_exit = state.exit_node(map_entry)
         body = [
-            k for k in state.all_nodes_between(map_entry, map_exit)
-            if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
+            k for k in map_body_nodes(state, map_entry) if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
         ]
         if len([k for k in body if isinstance(k, dace.nodes.NestedSDFG)]) != 1:
             return False
@@ -159,7 +160,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         scan_cache: dict = {}
         # Annotated: an untyped list infers its elements as ``Any``, which silently disables the type
         # checker over every loop below that consumes them.
-        selected: list[tuple[dace.SDFGState, dace.nodes.MapEntry, set[dace.nodes.Node]]] = []
+        selected: list[tuple[dace.SDFGState, dace.nodes.MapEntry, OrderedSet[dace.nodes.Node]]] = []
         candidates: list[tuple[dace.SDFGState, dace.nodes.MapEntry]] = []
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, dace.nodes.MapEntry):
@@ -185,12 +186,18 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             # plus only boundary reduction AccessNodes (each ``-[wcr]-> MapExit``).
             if self._body_is_nested_reduction(g, n):
                 continue
-            # empty map -> nothing to nest
-            body_nodes = {
-                node
-                for node in g.all_nodes_between(n, g.exit_node(n))
-                if not isinstance(node, (dace.nodes.MapEntry, dace.nodes.MapExit))
-            }
+            # DELIBERATELY ``all_nodes_between`` and not ``map_body_nodes``: on a body ending in
+            # a write-only scratch scalar the walk comes back empty and the map is left un-nested,
+            # which is what keeps the tile emitters away from it. Measured on a one-map SDFG whose
+            # body writes such a scalar: with the scope-based body the map is nested, the widener
+            # tiles it, and ``TileBinop`` validation then refuses the graph ("output-kind rule
+            # violated -- ``_c`` descriptor is not tile-shape") from the orchestrator's FINAL
+            # validate, outside its ``VectorizeUnsupported`` handler, so the whole vectorize leg
+            # dies instead of declining one kernel. Skipping is the safe answer until the widener
+            # can lower a dead-end scalar; ``RestoreUntiledMapStride`` gives the skipped map its
+            # unit step back, so the numbers stay right.
+            body_nodes = OrderedSet(node for node in g.all_nodes_between(n, g.exit_node(n))
+                                    if not isinstance(node, (dace.nodes.MapEntry, dace.nodes.MapExit)))
             if not body_nodes:
                 continue
             selected.append((g, n, body_nodes))
@@ -245,7 +252,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         # memlets, which is exactly the precondition the inline checks.
         flattened = 0
         for g, n in candidates:
-            for node in g.all_nodes_between(n, g.exit_node(n)):
+            for node in map_body_nodes(g, n):
                 if isinstance(node, dace.nodes.NestedSDFG):
                     node.sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
                     flattened += node.sdfg.apply_transformations_repeated(

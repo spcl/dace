@@ -41,6 +41,7 @@ from dace import subsets
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                             no_duplicate_connector_edges,
                                                                             no_isolated_access_nodes,
@@ -124,19 +125,23 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             return False
         return True
 
-    def _eligible_map_bodies(self, state: 'dace.SDFGState') -> dict[dace.nodes.MapEntry, set[dace.nodes.Node]]:
-        """Build ``MapEntry -> body-node-set`` for every Map whose body is
+    def _eligible_map_bodies(self, state: 'dace.SDFGState') -> dict[dace.nodes.MapEntry, list[dace.nodes.Node]]:
+        """Build ``MapEntry -> body-node-list`` for every Map whose body is
         composed only of tasklets and access nodes. ``MapExit`` is exempt
         (it is the body's boundary, not a body node).
+
+        Scope membership, not ``all_nodes_between``: the emptied walk holds no compound node, so
+        a body carrying a NestedSDFG alongside a write-only scratch scalar was admitted with an
+        empty body and staged as if it were flat.
         """
-        eligible: dict[dace.nodes.MapEntry, set[dace.nodes.Node]] = {}
+        eligible: dict[dace.nodes.MapEntry, list[dace.nodes.Node]] = {}
         for entry in state.nodes():
             if not isinstance(entry, dace.nodes.MapEntry):
                 continue
             exit_node = state.exit_node(entry)
             if exit_node is None:
                 continue
-            body = state.all_nodes_between(entry, exit_node) or set()
+            body = map_body_nodes(state, entry)
             if any(not isinstance(n, (dace.nodes.Tasklet, dace.nodes.AccessNode)) for n in body):
                 continue
             eligible[entry] = body

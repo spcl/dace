@@ -92,7 +92,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, map_scope
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -448,7 +448,10 @@ def _extract_transpose(probe: SDFG, written: Dict[str, None]) -> Optional[Transp
     map_exit = host.exit_node(map_entry)
 
     # Only pure copies allowed in the scope: transient AccessNodes + ``__out=__inp``.
-    for n in host.all_nodes_between(map_entry, map_exit):
+    # Scope membership, not a reachability walk: ``all_nodes_between`` returns EMPTY as soon as the
+    # scope holds one node with no out-edge, and this loop would then approve, unlooked-at, a body
+    # whose arithmetic the Transpose lift is about to discard.
+    for n in map_scope.map_body_nodes(host, map_entry):
         if isinstance(n, nodes.AccessNode):
             d = probe.arrays.get(n.data)
             if d is None or not d.transient:

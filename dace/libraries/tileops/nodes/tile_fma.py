@@ -18,7 +18,9 @@ opts into FMA's single-rounded result over a separate ``*`` then ``+``.
 The pure expansion returns a CPP tasklet whose body is a single ``for``-loop over
 the flattened tile (correctness-only).
 """
-from typing import Optional, Tuple
+from typing import Final, Optional, Tuple
+
+import numpy as np
 
 import dace
 from dace import library, properties
@@ -30,6 +32,17 @@ from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
 from .tile_binop import (_TILE, _SYMBOL, _SCALAR, _VALID_KINDS, _is_tile_shape, _is_scalar_shape, edge_moves_a_tile,
                          scalar_operand_ref, _promotion_ok)
+
+#: C++ spellings of every registered dtype narrower than ``float``; these operands take the
+#: ``double``-widened FMA spelling, everything else calls ``std::fma`` on its own type. Read off the
+#: dtype registry rather than listed by hand: the hand list this replaced predated the fp8 pair and
+#: left ``dace::float8_e4m3fn`` / ``dace::float8_e5m2`` in the un-widened branch, though both CUDA
+#: fp8 types carry the same multi-implicit-conversion surface as ``__half`` that widening dodges.
+#: ``bool_`` is EXCLUDED on purpose although it is one byte -- a widened bool would read
+#: ``bool(std::fma(...))``, the numeric-to-bool truncation the ``_cast`` guard below refuses to
+#: emit. A bare ``bytes < 4`` test puts ``bool_`` back in; do not "simplify" this predicate.
+NARROW_OPERAND_CTYPES: Final[frozenset[str]] = frozenset(tc.ctype for tc in dace.dtypes.TYPECLASS_TO_STRING
+                                                         if tc.bytes < dace.float32.bytes and tc.type is not np.bool_)
 
 
 @library.expansion
@@ -75,10 +88,10 @@ class ExpandTileFMAPure(ExpandTransformation):
             return out_dtype
 
         operand_dtype = _operand_dtype()
-        _cast = "" if operand_dtype == "bool" else f"({operand_dtype})"
-        # Whether the operands are narrower than float, which decides the FMA spelling below.
-        narrow_operand = any(dt.ctype == operand_dtype and dt.bytes < 4
-                             for dt in (dace.float16, dace.bfloat16, dace.int8, dace.uint8, dace.int16, dace.uint16))
+        # No ``(bool)X`` is ever emitted: the cast only resolves type-strict overloads, and casting a
+        # value to bool truncates it (twin guard + full rationale on ``tile_binop.py``'s ``_cast``).
+        _cast = "" if operand_dtype == dace.bool_.ctype else f"({operand_dtype})"
+        narrow_operand = operand_dtype in NARROW_OPERAND_CTYPES
 
         def _effective_ctype(kind: str, conn: str) -> str:
             """The C++ type ``conn`` is actually emitted as (post any cast)."""

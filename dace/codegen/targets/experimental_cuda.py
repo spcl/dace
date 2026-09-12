@@ -22,6 +22,7 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, mangle_dace_state_struct_name, ptr, sym2cpp)
+from dace.codegen.targets import gpu_chiplets
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 
 from dace.transformation.passes import analysis as ap
@@ -1371,6 +1372,23 @@ class KernelSpec:
 
         warp_size_key = 'cuda_warp_size' if cudaCodeGen.backend == 'cuda' else 'hip_warp_size'
         self.warpSize: int = Config.get('compiler', 'cuda', warp_size_key)
+
+        # Distribute the thread-blocks of the first grid dimension over the chiplets of the GPU, with
+        # the same decision the legacy target makes (see ``dace.codegen.targets.gpu_chiplets``). None
+        # of the three constructs that make a kernel step aside can reach this target: a persistent
+        # grid and a dynamic thread-block map are not among the schedules it dispatches
+        # (``GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN``), and a nested device map raises in
+        # ``generate_scope``. ``KernelScopeGenerator`` emits the permutation and the trailing-block
+        # mask this padding calls for, under the very same ``chiplet_count > 1`` predicate.
+        self.chiplet_count: int = gpu_chiplets.chiplet_count(kernel_map_entry,
+                                                             cudaCodeGen.backend,
+                                                             is_persistent=False,
+                                                             has_dtbmap=False,
+                                                             extra_grid_dims=[])
+        self.chiplet_chunk: symbolic.SymbolicType = symbolic.pystr_to_symbolic('1')
+        if self.chiplet_count > 1:
+            self.grid_dims, self.chiplet_chunk = gpu_chiplets.distribute_grid_over_chiplets(
+                self.kernel_map.label, self.grid_dims, self.chiplet_count)
 
     def get_gpu_index_ctype(self, config_key='gpu_index_type') -> str:
         """Return the C type string for the configured DaCe dtype under

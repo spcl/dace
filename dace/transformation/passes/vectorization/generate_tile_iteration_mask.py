@@ -13,6 +13,7 @@ import dace
 from dace import properties, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis import scopes
 from dace.libraries.tileops import TileMaskGen
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
@@ -79,8 +80,8 @@ class GenerateTileIterationMask(ppl.Pass):
         global_ubs = tuple(str(r[1] + 1) for r in ranges[-K:])
         return TileDimSpec(iter_vars=iter_vars, widths=tuple(self.widths), global_ubs=global_ubs)
 
-    def _attach_mask(self, parent_sdfg: dace.SDFG, parent_state: dace.SDFGState, map_entry: MapEntry,
-                     spec: TileDimSpec) -> bool:
+    def _attach_mask(self, resolver: scopes.ScopedSymbolResolver, parent_sdfg: dace.SDFG, parent_state: dace.SDFGState,
+                     map_entry: MapEntry, spec: TileDimSpec) -> bool:
         """Add the mask transient + producer :class:`TileMaskGen` INSIDE the body NSDFG.
 
         Per design 6.5 / 6.7 + user direction 2026-06-10: the mask lives where
@@ -88,6 +89,7 @@ class GenerateTileIterationMask(ppl.Pass):
         detect the inner ``_tile_iter_mask`` AccessNode and wire ``has_mask=True``
         + ``_mask`` onto TileLoad / TileStore / Tile{Binop,Unop,ITE,Reduce}.
 
+        :param resolver: The pass run's shared symbol resolver.
         :param parent_sdfg: SDFG owning ``parent_state``.
         :param parent_state: State holding the inner map.
         :param map_entry: Inner map entry.
@@ -154,7 +156,8 @@ class GenerateTileIterationMask(ppl.Pass):
         ub_syms = dict.fromkeys(
             sorted(str(s) for ub in spec.global_ubs for s in symbolic.pystr_to_symbolic(str(ub)).free_symbols))
         all_syms = iter_syms | ub_syms
-        thread_symbols_into_nsdfg(inner_sdfg, body_nsdfg, all_syms, parent_sdfg)
+        thread_symbols_into_nsdfg(inner_sdfg, body_nsdfg, all_syms, parent_sdfg, parent_state, resolver)
+        resolver.invalidate_sdfg(inner_sdfg)  # the body's symbol table and start block both just changed
         return True
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any] | None) -> int | None:
@@ -173,6 +176,7 @@ class GenerateTileIterationMask(ppl.Pass):
         # per-map selection loop quadratic, and a refusal never mutates. Dropped below the moment a
         # mask is attached, so no candidate is ever gated on a stale scan.
         scan_cache: dict[int, Any] = {}
+        resolver = scopes.ScopedSymbolResolver()
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
@@ -194,7 +198,7 @@ class GenerateTileIterationMask(ppl.Pass):
             if n.map.label.endswith(TILE_MAIN_MARKER):
                 continue
             spec = specs[n] if specs is not None and n in specs else self._spec_for(n)
-            if self._attach_mask(g.sdfg, g, n, spec):
+            if self._attach_mask(resolver, g.sdfg, g, n, spec):
                 attached += 1
             scan_cache.clear()  # ``_attach_mask`` rewrote the body; every cached body scan is stale
         assert_invariant(no_memlet_dim_mismatch(sdfg), "GenerateTileIterationMask",

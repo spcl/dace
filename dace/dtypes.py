@@ -502,7 +502,11 @@ def result_type_of(lhs, *rhs):
     according to C semantics.
     """
     if len(rhs) == 0:
-        rhs = None
+        # The largest among one type is that type. Extracting here mirrors what the two-operand
+        # path does below, so a lone symbol or Data answers its dtype rather than itself.
+        from dace.data import Data
+        from dace.symbolic import is_symbol_leaf
+        return lhs.dtype if (is_symbol_leaf(lhs) or isinstance(lhs, Data)) else lhs
     elif len(rhs) > 1:
         result = lhs
         for r in rhs:

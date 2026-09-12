@@ -25,6 +25,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
+from dace.libraries.standard.nodes.find_first import FindFirst, INDEX_NAME, OUTPUT_CONNECTOR_NAME
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from tests.corpus.tsvc import tsvc
@@ -223,6 +224,30 @@ def test_a_host_pinned_library_node_keeps_its_operands_on_the_host():
                 ], ('a host-pinned library node must keep its operands on the host')
 
 
+def find_first_kernel_with_gpu_inputs() -> dace.SDFG:
+    """A standalone ``FindFirst`` search whose signature arrays are already on the device.
+
+    The shape an early-exit search canonicalizes to: one library node, no surrounding map. No pass
+    builds this automatically any more -- ``EarlyExitToFindIndex`` (the search-loop lift) was
+    deleted because its rewrite never paid for itself; ``FindFirst`` remains exported library API,
+    constructed by hand the way ``tests/library/detect_test.py`` and
+    ``tests/codegen/cpf/test_emission.py`` already do. Building it directly here, with both arrays
+    pre-pinned to the device the way ``canonicalized_with_gpu_inputs`` pins a kernel's signature,
+    keeps this test exercising the same placement decision without depending on that lift.
+    """
+    sdfg = dace.SDFG('find_first_kernel_with_gpu_inputs')
+    sdfg.add_array('a', [256], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('out', [1], dace.int64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = FindFirst('search', predicate=f'_a[{INDEX_NAME}] > 0.5', begin=0, end=256)
+    node.add_in_connector('_a', dace.pointer(dace.float64))
+    state.add_node(node)
+    state.add_edge(state.add_read('a'), None, node, '_a', dace.Memlet('a[0:256]'))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('out'), None, dace.Memlet('out[0]'))
+    sdfg.validate()
+    return sdfg
+
+
 def test_a_find_first_answer_stays_on_the_host():
     """``FindFirst``'s answer is a HOST scalar in every expansion, the device one included.
 
@@ -232,9 +257,9 @@ def test_a_find_first_answer_stays_on_the_host():
     pointer -- which VALIDATES, and then corrupts, which is why this is asserted on storage rather
     than left to the SDFG checker.
     """
-    sdfg = canonicalized_with_gpu_inputs('s481_d_single')
+    sdfg = find_first_kernel_with_gpu_inputs()
     finds = [(n, st) for n, st in sdfg.all_nodes_recursive() if type(n).__name__ == 'FindFirst']
-    assert finds, 's481 no longer canonicalizes to a FindFirst; the check below would be vacuous'
+    assert finds, 'the fixture built no FindFirst node; the check below would be vacuous'
     assert all(n.host_connectors for n, _ in finds), 'FindFirst must declare its answer as host-only'
 
     sdfg.apply_gpu_transformations(validate=False, simplify=False)

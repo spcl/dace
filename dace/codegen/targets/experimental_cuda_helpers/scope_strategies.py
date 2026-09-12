@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Scope-emission strategies (RAII bracket managers) for the experimental CUDA codegen."""
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from dace import dtypes, subsets, symbolic
 from dace.sdfg import SDFG, ScopeSubgraphView, nodes, SDFGState
@@ -13,17 +14,28 @@ from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.targets.cpu import (collect_gpu_block_reductions, drain_gpu_block_reduction,
                                       register_gpu_block_reduction)
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
+from dace.codegen.targets import gpu_chiplets
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import get_cuda_dim
 from dace.transformation.dataflow.add_threadblock_map import product
 
 
-def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_stream: CodeIOStream, cfg: ControlFlowRegion,
-                                state_id: int, anchor_node, dispatcher: TargetDispatcher):
+def emit_dim_index_definitions(scope_map,
+                               axis: str,
+                               ctype: str,
+                               callsite_stream: CodeIOStream,
+                               cfg: ControlFlowRegion,
+                               state_id: int,
+                               anchor_node,
+                               dispatcher: TargetDispatcher,
+                               first_dim_index: Optional[str] = None):
     """Emit ``const {ctype} {var_name} = {expr};`` per map dim from the symbolic map coordinates.
 
     ``axis`` is ``'blockIdx'`` (kernel scope) or ``'threadIdx'`` (thread-block scope). The first
     three dims map directly to ``axis.{x|y|z}``; further dims delinearize off ``axis.z``.
 
+    :param first_dim_index: Expression the first dimension is indexed by instead of ``axis.x``, used
+                            by the chiplet distribution to permute the thread-blocks of that
+                            dimension. ``None`` leaves every dimension on its own index.
     :returns: ``(map_range, sym_indices, sym_coords)`` for callers building downstream guards.
     """
     map_range = subsets.Range(scope_map.range[::-1])  # reversed for memory coalescing
@@ -35,7 +47,7 @@ def _emit_dim_index_definitions(scope_map, axis: str, ctype: str, callsite_strea
     for dim in range(dimensions):
         var_name = scope_map.params[-dim - 1]  # reversed
         if dim < 3:
-            expr = f"{axis}.{get_cuda_dim(dim)}"
+            expr = first_dim_index if (dim == 0 and first_dim_index is not None) else f"{axis}.{get_cuda_dim(dim)}"
             if dim == 2 and dimensions > 3:
                 tail = product(dim_sizes[3:])
                 expr = f"({expr} / ({sym2cpp(tail)}))"
@@ -113,12 +125,35 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             kernel_spec = self._current_kernel_spec
             kernel_entry_node = kernel_spec.kernel_map_entry  # == dfg_scope.source_nodes()[0]
 
+            # The chiplet distribution pads the first grid dimension and permutes the thread-blocks
+            # within it, so that dimension is indexed by the permutation rather than by blockIdx.x.
+            # ``KernelSpec`` padded the grid under the same predicate; emitting one without the other
+            # would either scatter the blocks or run the padding blocks over the end of the map.
+            chiplets = kernel_spec.chiplet_count
+            first_dim_index: Optional[str] = None
+            if chiplets > 1:
+                first_dim_index = gpu_chiplets.permuted_block_index(chiplets, sym2cpp(kernel_spec.chiplet_chunk))
+
             # Without an inner ThreadBlock map the kernel-map variables bind
             # to thread indices instead -- same blockIdx-based formulas.
-            _emit_dim_index_definitions(kernel_spec.kernel_map, 'blockIdx', kernel_spec.gpu_index_ctype,
-                                        callsite_stream, cfg, state_id, kernel_entry_node, self._dispatcher)
+            map_range, _, _ = emit_dim_index_definitions(kernel_spec.kernel_map,
+                                                         'blockIdx',
+                                                         kernel_spec.gpu_index_ctype,
+                                                         callsite_stream,
+                                                         cfg,
+                                                         state_id,
+                                                         kernel_entry_node,
+                                                         self._dispatcher,
+                                                         first_dim_index=first_dim_index)
 
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream, callsite_stream)
+
+            # Mask the thread-blocks the padding adds beyond the range of the map. Opened after the
+            # scope allocations, which every thread-block has to reach, and closed by the scope
+            # manager together with the kernel scope itself.
+            if chiplets > 1:
+                scope_manager.open(condition=gpu_chiplets.trailing_block_condition(
+                    kernel_spec.kernel_map.params[-1], sym2cpp(map_range.max_element()[0] + 1)))
 
             self._dispatch_and_deallocate(sdfg, cfg, dfg_scope, state_id, kernel_entry_node, function_stream,
                                           callsite_stream)
@@ -168,7 +203,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
             scope_map = node.map
             kernel_block_dims = self._current_kernel_spec.block_dims
 
-            map_range, symbolic_indices, _sym_coords = _emit_dim_index_definitions(
+            map_range, symbolic_indices, _sym_coords = emit_dim_index_definitions(
                 scope_map, 'threadIdx', self._current_kernel_spec.gpu_index_ctype, callsite_stream, cfg, state_id, node,
                 self._dispatcher)
 

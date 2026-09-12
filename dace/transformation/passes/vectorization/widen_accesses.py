@@ -38,6 +38,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import is_same_domain_constant
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
@@ -82,11 +83,13 @@ def _find_iedge_defining_symbol(inner_sdfg: SDFG, sym_name: str) -> tuple[Edge[I
     return None, None
 
 
-def emit_per_lane_symbol_fanout(sdfg: SDFG,
-                                sym_name: str,
-                                iter_vars: tuple[str, ...],
-                                widths: tuple[int, ...],
-                                iter_var_ubs: dict[str, Any] | None = None) -> dict[tuple[int, ...], str] | None:
+def emit_per_lane_symbol_fanout(
+        sdfg: SDFG,
+        sym_name: str,
+        iter_vars: tuple[str, ...],
+        widths: tuple[int, ...],
+        iter_var_ubs: dict[str, Any] | None = None,
+        resolver: scopes.ScopedSymbolResolver | None = None) -> dict[tuple[int, ...], str] | None:
     """Emit per-lane SDFG symbols + iedge assignments for a Bypass-form gather.
 
     Idempotent: returns existing map if symbols already seeded. WidenAccesses owns this (sibling
@@ -102,8 +105,10 @@ def emit_per_lane_symbol_fanout(sdfg: SDFG,
     :param iter_vars: Tile iter-var names (length K, innermost-last).
     :param widths: Per-dim tile widths (length K).
     :param iter_var_ubs: Optional ``{iter_var: ub_expr}``; clamps shift to ``Min(iv + lane, ub)``.
+    :param resolver: The pass run's shared symbol resolver; one is built here when absent.
     :returns: ``{dep_idx_tuple: plane_sym_name}`` over the dep-dim Cartesian product, or ``None``
         if the symbol has no iedge definition / no iter-var dependency / no walkable RHS.
+    :raises UndeterminedSymbolDType: when nothing declares ``sym_name``, not even the edge binding it.
     """
     import itertools as _itertools
     from dace import symbolic as _sym
@@ -125,12 +130,16 @@ def emit_per_lane_symbol_fanout(sdfg: SDFG,
     except Exception:  # noqa: BLE001
         return None
     import sympy as _sp
+    # Loop-invariant, and it must NOT fall back to int64: an interstate assignment DEFINES its
+    # symbol, so a name absent from ``sdfg.symbols`` is still typed -- by the edge that binds it.
+    # Every per-lane plane inherits this dtype, so one guess here forks the whole fanout onto a
+    # second symbol of the same name, and Min(iv + lane, ub) stops folding against the map param.
+    origin_dtype = (resolver or scopes.ScopedSymbolResolver()).resolve_dtype(sym_name, sdfg, interstate_edge=iedge.data)
     for dep_idx in _itertools.product(*(range(w) for w in dep_widths_iter)):
         chunks = tuple(zip(dep_iter_var_indices, dep_idx))
         plane = LaneIdScheme.make_multi(sym_name, chunks)
         per_lane_syms[dep_idx] = plane
         if plane not in sdfg.symbols:
-            origin_dtype = sdfg.symbols.get(sym_name, dace.int64)
             sdfg.add_symbol(plane, origin_dtype)
         if plane not in iedge.data.assignments:
             repl: dict[Any, Any] = {}
@@ -729,6 +738,7 @@ class WidenAccesses(ppl.Pass):
         # Fanout adds interstate assignments, so both caches are dropped after every success.
         scan_cache: dict[int, Any] = {}
         state_defs: dict[int, dict[str, Any]] = {}
+        resolver = scopes.ScopedSymbolResolver()
         for inner_state in inner_sdfg.states():
             for an in list(inner_state.nodes()):
                 if not isinstance(an, AccessNode):
@@ -764,10 +774,12 @@ class WidenAccesses(ppl.Pass):
                                                        begin_str,
                                                        iter_vars,
                                                        widths,
-                                                       iter_var_ubs=iter_var_ubs) is not None:
+                                                       iter_var_ubs=iter_var_ubs,
+                                                       resolver=resolver) is not None:
                             seeded += 1
                             scan_cache.clear()
                             state_defs.clear()
+                            resolver.invalidate_sdfg(inner_sdfg)  # fanout added SDFG symbols
         return seeded
 
     def _widen_transient(self, inner_sdfg: SDFG, name: str, to_widen: set[str]) -> bool:

@@ -155,6 +155,10 @@ class LoopToSymm(ppl.Pass):
         if len(me.map.params) != 2:
             return None
         mx = state.exit_node(me)
+        # Fail-closed, and provably identical to scope membership here: ``all_nodes_between`` empties on a
+        # scope node with no out-edge, but such a node is an EXTRA one beside the NestedSDFG, so the true
+        # scope is >=2 and both spellings refuse. A body of one NestedSDFG that itself writes nothing empties
+        # the walk too, and membership would then fall through to the ``len(outs) != 1`` refusal below.
         body = state.all_nodes_between(me, mx)
         if body is None or len(body) != 1:
             return None

@@ -20,6 +20,7 @@ symbol form, and this is the seam between them. Names are minted from a counter 
 value, so two ranges can never collide on one symbol.
 """
 import itertools
+from collections.abc import Iterator
 from typing import Any, Dict, List, Optional, Tuple
 
 import sympy
@@ -29,13 +30,14 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.analysis import scopes
 
 #: Prefix for a minted range symbol. ``__dace`` keeps it out of the ABI (``SDFG.arglist`` drops the
 #: prefix on both the scalar and free-symbol paths), which is what makes minting one free.
 RANGE_SYMBOL_PREFIX = '__dace_rng_'
 
 
-def contains_call(expr) -> bool:
+def contains_call(expr: symbolic.SymbolicType) -> bool:
     """Does ``expr`` render as anything other than names, numbers and operators?
 
     Keyed on the sympy tree rather than on the emitted string: a substring match would trip on a
@@ -64,12 +66,15 @@ class HoistLoopRangeCalls(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """:returns: how many range components were bound to symbols, or ``None`` if none were."""
         counter = itertools.count(self._next_free_index(sdfg))
+        # ONE resolver for the whole run: ``symbols_defined_at`` rebuilds the SDFG base and
+        # ``scope_dict`` per call, and a call-bearing step is looked up once per candidate map.
+        resolver = scopes.ScopedSymbolResolver()
         bound = 0
         for cfg in list(sdfg.all_states()):
             for node in list(cfg.nodes()):
                 if not isinstance(node, nodes.MapEntry):
                     continue
-                bound += self._bind_map_range(cfg, node, counter)
+                bound += self._bind_map_range(cfg, node, counter, resolver)
         return bound or None
 
     def _next_free_index(self, sdfg: SDFG) -> int:
@@ -80,7 +85,30 @@ class HoistLoopRangeCalls(ppl.Pass):
         ]
         return max(used) + 1 if used else 0
 
-    def _bind_map_range(self, state: SDFGState, entry: nodes.MapEntry, counter) -> int:
+    def step_dtype(self, state: SDFGState, entry: nodes.MapEntry, step: symbolic.SymbolicType,
+                   resolver: scopes.ScopedSymbolResolver) -> dtypes.typeclass:
+        """The dtype the minted step symbol must be DECLARED with, so the declaration and the
+        instance placed in the range are one symbol.
+
+        ``dtype`` is part of symbol identity here, so minting the use from a bare name (default
+        ``int32``) against an ``int64`` declaration puts two symbols of one name inside a
+        ``subsets.Range``: ``Min(s, s)`` stops folding and a difference stops cancelling. The step is
+        an integer expression over its operands, so its type is ``result_type_of`` over them -- read
+        from the scoped table, the only source that sees an enclosing map parameter. Sorted by name
+        so the answer does not depend on sympy's set order.
+        """
+        operands = [
+            resolver.resolve_dtype(sym.name, state.sdfg, state, entry)
+            for sym in sorted(symbolic.pystr_to_symbolic(str(step)).free_symbols, key=lambda s: s.name)
+        ]
+        if not operands:
+            # A call over numbers folds before it reaches here (``int_ceil(7, 2)`` is 4). One that
+            # did not would have no operand to read a type off: a finding, never a guessed default.
+            raise scopes.UndeterminedSymbolDType(str(step), state.sdfg.label)
+        return dtypes.result_type_of(*operands)
+
+    def _bind_map_range(self, state: SDFGState, entry: nodes.MapEntry, counter: Iterator[int],
+                        resolver: scopes.ScopedSymbolResolver) -> int:
         sdfg = state.sdfg
         parent: ControlFlowRegion = state.parent_graph
         # An interstate assignment is evaluated at STATE scope, so a component may only be hoisted
@@ -106,9 +134,12 @@ class HoistLoopRangeCalls(ppl.Pass):
                 ranges.append((begin, end, step))
                 continue
             name = f'{RANGE_SYMBOL_PREFIX}{next(counter)}'
-            sdfg.add_symbol(name, dtypes.int64)
+            dtype = self.step_dtype(state, entry, step, resolver)
+            sdfg.add_symbol(name, dtype)
             assignments.append((name, symbolic.symstr(step)))
-            ranges.append((begin, end, symbolic.pystr_to_symbolic(name)))
+            # ``symbol(name, dtype)``, never ``pystr_to_symbolic(name)``: the latter mints the
+            # default int32 and would disagree with the declaration above.
+            ranges.append((begin, end, symbolic.symbol(name, dtype)))
         if not assignments:
             return 0
         entry.map.range = subsets.Range(ranges)
@@ -123,4 +154,7 @@ class HoistLoopRangeCalls(ppl.Pass):
         for edge in in_edges:
             for name, value in assignments:
                 edge.data.assignments[name] = value
+        # A new SDFG symbol and a new interstate assignment both feed the per-SDFG base every
+        # scoped table starts from.
+        resolver.invalidate_sdfg(sdfg)
         return len(assignments)

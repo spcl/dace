@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterable
 import dace
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.nodes import NestedSDFG
+from dace.transformation.passes.analysis import scopes
 
 
 def prepend_dominating_init_state(sdfg: SDFG, label: str, build_producer: Callable[[SDFGState], None]) -> SDFGState:
@@ -51,26 +52,35 @@ def prepend_dominating_init_state(sdfg: SDFG, label: str, build_producer: Callab
     return init_state
 
 
-def thread_symbols_into_nsdfg(inner_sdfg: SDFG, nsdfg_node: NestedSDFG, symbol_names: Iterable[str],
-                              parent_sdfg: SDFG) -> None:
+def thread_symbols_into_nsdfg(inner_sdfg: SDFG, nsdfg_node: NestedSDFG, symbol_names: Iterable[str], parent_sdfg: SDFG,
+                              parent_state: SDFGState, resolver: scopes.ScopedSymbolResolver) -> None:
     """Make each name in ``symbol_names`` visible inside ``inner_sdfg``.
 
     A bound symbol the mask producer references (a loop bound such as ``kfdia``)
     that the body NestedSDFG does not otherwise use is absent from both the inner
     SDFG's symbol table AND the NestedSDFG's ``symbol_mapping``, so the generated
     body function never receives it and the producer fails to compile
-    (``'kfdia' was not declared``). Declare each name on ``inner_sdfg`` (typed
-    from ``parent_sdfg`` when known, else ``int64``) and identity-map it on
-    ``nsdfg_node.symbol_mapping``.
+    (``'kfdia' was not declared``). Declare each name on ``inner_sdfg`` and
+    identity-map it on ``nsdfg_node.symbol_mapping``.
+
+    The dtype is RESOLVED at ``nsdfg_node``'s scope, not looked up in
+    ``parent_sdfg.symbols``. Most of these names are the enclosing map's iteration
+    variables, which no symbol table declares at all -- ``symbols_defined_at`` is
+    the only source that sees a map parameter. Re-declaring one at a guessed
+    ``int64`` makes the inner copy a SECOND symbol of the same name, so the mask's
+    ``iv < ub`` comparison never folds against the parameter it was derived from.
 
     :param inner_sdfg: The body NestedSDFG's inner SDFG.
     :param nsdfg_node: The NestedSDFG node wrapping ``inner_sdfg``.
     :param symbol_names: Symbol-name strings to thread through.
-    :param parent_sdfg: SDFG owning ``nsdfg_node`` (source of symbol dtypes).
+    :param parent_sdfg: SDFG owning ``nsdfg_node``.
+    :param parent_state: State holding ``nsdfg_node``; carries the enclosing map scope.
+    :param resolver: The pass run's shared symbol resolver.
+    :raises UndeterminedSymbolDType: when no rung of the ladder declares a threaded name.
     """
     for sname in symbol_names:
         if sname not in inner_sdfg.symbols:
-            dtype = parent_sdfg.symbols[sname] if sname in parent_sdfg.symbols else dace.dtypes.int64
-            inner_sdfg.add_symbol(sname, dtype)
+            inner_sdfg.add_symbol(sname, resolver.resolve_dtype(sname, parent_sdfg, state=parent_state,
+                                                                node=nsdfg_node))
         if sname not in nsdfg_node.symbol_mapping:
             nsdfg_node.symbol_mapping[sname] = dace.symbolic.pystr_to_symbolic(sname)

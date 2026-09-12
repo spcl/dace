@@ -25,22 +25,24 @@ from dace.sdfg import InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis import map_scope
 
 
 def _map_body_nsdfgs(state: SDFGState, map_entry: nodes.MapEntry) -> List[nodes.NestedSDFG]:
     """The NestedSDFG nodes inside ``map_entry``'s scope, in dependency
     (topological) order so a producer is always merged before its consumer."""
-    body = set(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
+    body = map_scope.map_body_nodes(state, map_entry)
     order = {n: i for i, n in enumerate(sdutil.dfs_topological_sort(state))}
-    # Total key: ``sorted`` is stable, so a tie (a body node the topological sort did not cover) would fall
-    # back to ``body``'s order -- a set of NODE objects, hashed by id(). That decides which sibling becomes
-    # the merge base, so break ties on the node id instead of leaving it to allocation order.
+    # Total key: a tie (a body node the topological sort did not cover) decides which sibling becomes the
+    # merge base, so break it on the node id rather than on traversal order.
     return sorted((n for n in body if isinstance(n, nodes.NestedSDFG)),
                   key=lambda n: (order.get(n, len(order)), state.node_id(n)))
 
 
 def _map_body_size(state: SDFGState, map_entry: nodes.MapEntry) -> int:
-    return sum(1 for n in state.all_nodes_between(map_entry, state.exit_node(map_entry))
+    """Body nodes excluding inner scope entries/exits. Counts scope MEMBERS: a body holding a
+    write-only scratch scalar used to count 0 here, and 0 reads as "already a lone NestedSDFG"."""
+    return sum(1 for n in map_scope.map_body_nodes(state, map_entry)
                if not isinstance(n, (nodes.MapEntry, nodes.MapExit)))
 
 
