@@ -20,19 +20,22 @@ from dace.symbolic import pystr_to_symbolic
 from dace.codegen.targets.cpp import sym2cpp
 
 
+# ``sym2cpp`` hands a reparsable cast to cppunparse, so the text carries cppunparse's spacing and parentheses.
 # A typed engine may make an int operand's promotion EXPLICIT where sympy leaves it implicit, and may
 # order a commutative sum differently. Both are equivalent C++ -- `2` promotes to float, `-r` promotes
 # to double, and `+` commutes -- so pinning one spelling tests the incumbent's formatting rather than
 # DaCe's semantics. Accept either; the cast itself is what is under test and stays exact.
 @pytest.mark.parametrize("expr,accepted", [
     ("int32(qm) + 1", ("(dace::int32(qm) + 1)", )),
-    ("int64(x)", ("(dace::int64(x))", )),
-    ("float32(i) * 2", ("(2*dace::float32(i))", "(2.0f*dace::float32(i))")),
-    ("float64(i) - r", ("(-r + dace::float64(i))", "(dace::float64(i) + dace::float64(-r))")),
+    ("int64(x)", ("dace::int64(x)", )),
+    ("float32(i) * 2", ("(2 * dace::float32(i))", "(2.0f*dace::float32(i))")),
+    ("float64(i) - r", ("((- r) + dace::float64(i))", "(dace::float64(i) + dace::float64(-r))")),
 ])
-def test_typecast_prints_to_dace_cast(expr, accepted):
+def test_typecast_prints_to_dace_cast(expr: str, accepted: tuple[str, ...]) -> None:
     got = sym2cpp(pystr_to_symbolic(expr))
     assert got in accepted, f"{expr!r} printed {got!r}, none of {accepted!r}"
+    read_back = pystr_to_symbolic(got.replace("::", "."))
+    assert read_back == pystr_to_symbolic(expr), f"{got!r} reads back as {read_back!r}, not {expr!r}"
 
 
 def test_typecast_roundtrips():
@@ -63,10 +66,13 @@ def test_dace_prefixed_cast_is_accepted():
 # ``visit_Call`` to ``Attr(dace, uint16)(x)`` -> ``'Attr' object is not callable`` at parse. The map is now
 # built from ``dtypes.TYPECLASS_TO_STRING`` so it tracks the dtype list.
 @pytest.mark.parametrize("name", ["int8", "int16", "uint8", "uint16", "uint32", "uint64", "float16"])
-def test_all_width_casts_parse_and_print(name):
+def test_all_width_casts_parse_and_print(name: str) -> None:
     # both the bare and the ``dace.``-prefixed spelling reach ``dace::<name>(x)`` -- neither raises.
-    assert sym2cpp(pystr_to_symbolic(f"{name}(x)")) == f"(dace::{name}(x))"
-    assert sym2cpp(pystr_to_symbolic(f"dace.{name}(x)")) == f"(dace::{name}(x))"
+    bare = sym2cpp(pystr_to_symbolic(f"{name}(x)"))
+    prefixed = sym2cpp(pystr_to_symbolic(f"dace.{name}(x)"))
+    assert bare == f"dace::{name}(x)"
+    assert prefixed == f"dace::{name}(x)"
+    assert pystr_to_symbolic(bare.replace("::", ".")) == pystr_to_symbolic(f"{name}(x)")
 
 
 @pytest.mark.parametrize("expr,expect", [
