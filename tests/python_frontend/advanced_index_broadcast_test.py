@@ -1,10 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests that a broadcast advanced index reaches the memlet as an expression, not a symbol name. """
 import numpy as np
-import pytest
 
 import dace as dc
-from dace.frontend.python.common import DaceSyntaxError
 
 N = dc.symbol('N', dtype=dc.int64, positive=True)
 
@@ -14,8 +12,7 @@ def test_an_open_mesh_gather_indexes_a_size_one_dimension():
     valid identifier cannot name a symbol, so an np.ix_ gather refused to parse at all."""
 
     @dc.program
-    def gather(field: dc.float64[N, N, N], xs: dc.int64[2], ys: dc.int64[2], zs: dc.int64[2],
-               out: dc.float64[2, 2, 2]):
+    def gather(field: dc.float64[N, N, N], xs: dc.int64[2], ys: dc.int64[2], zs: dc.int64[2], out: dc.float64[2, 2, 2]):
         gx, gy, gz = np.ix_(xs, ys, zs)
         out[:] = field[gx, gy, gz]
 
