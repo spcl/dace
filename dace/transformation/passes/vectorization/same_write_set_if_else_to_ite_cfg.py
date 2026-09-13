@@ -31,6 +31,62 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.ordered import OrderedSet
+from dace.symbolic_engine import to_sympy
+
+
+def array_read_parts(node: sympy.Basic) -> tuple[str | None, tuple[sympy.Basic, ...] | None]:
+    """``(array, indices)`` of a parsed read ``A[i, j]`` or ``A(i, j)``; a bare ``A`` has no indices."""
+    if isinstance(node, symbolic.Subscript):
+        return str(node.args[0]), tuple(node.args[1:])
+    if isinstance(node, sympy.Function):
+        return str(node.func), tuple(node.args)
+    if isinstance(node, sympy.Symbol):
+        return str(node), None
+    return None, None
+
+
+def replace_element_reads_with_connectors(text: str, reads: Iterable[str],
+                                          arrays: Iterable[str]) -> tuple[str, list[tuple[str, str | None, str]]]:
+    """Replace each read of ``reads`` with a connector, one per distinct element: ``A[0, i] + A[1, i]`` reads two.
+
+    :returns: the rewritten text and ``(array, element or None for a bare read, connector)`` in first-seen order.
+    """
+    names = OrderedSet(reads)
+    parsed = symbolic.SymExpr(text)
+    base = parsed.expr if isinstance(parsed, symbolic.SymExpr) else parsed
+    if to_sympy is not None:
+        converted = to_sympy(base)
+        if converted is not None:
+            base = converted
+    printer = symbolic.DaceSympyPrinter(OrderedSet(arrays))
+    connectors: dict[tuple[str, str | None], str] = {}
+    rewrites: dict[sympy.Basic, sympy.Basic] = {}
+    walk = sympy.preorder_traversal(base)
+    for node in walk:
+        name, indices = array_read_parts(node)
+        if name not in names:
+            continue
+        # The read is replaced whole; its head symbol is not a second, bare read.
+        walk.skip()
+        element = None if indices is None else ", ".join(printer.doprint(index) for index in indices)
+        if (name, element) not in connectors:
+            connectors[(name, element)] = f"_in_{name}_{len(connectors)}"
+        rewrites[node] = sympy.Symbol(connectors[(name, element)])
+    rewritten = printer.doprint(base.xreplace(rewrites) if rewrites else base)
+    return rewritten, [(name, element, connector) for (name, element), connector in connectors.items()]
+
+
+def wire_element_reads(sdfg: dace.SDFG, state: dace.SDFGState, tasklet: dace.nodes.Tasklet,
+                       element_reads: list[tuple[str, str | None, str]], subset_str: str) -> None:
+    """Feed each element read into ``tasklet``: length-1 sources as ``[0]``, bare reads at ``subset_str``."""
+    for name, element, connector in element_reads:
+        if sdfg.arrays[name].total_size == 1:
+            subset = "0"
+        elif element:
+            subset = element
+        else:
+            subset = subset_str
+        state.add_edge(state.add_access(name), None, tasklet, connector, dace.Memlet(expr=f"{name}[{subset}]"))
 
 
 def free_names_outside_subscript_indices(code: str) -> set[str] | None:
@@ -1373,31 +1429,14 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # ``arr[idx]`` or bare ``arr``; ``replace_array_accesses_with_connectors`` parses
         # via :class:`SymExpr`, rewrites both structurally so identifier overlaps (``arr``
         # vs ``arr10``) can't corrupt the result.
-        in_conn_names = {arr: f"_in_{arr}_{i}" for i, arr in enumerate(arr_reads)}
-        cleaned_rhs, extracted_subsets = symbolic.replace_array_accesses_with_connectors(
-            rhs, in_conn_names, set(sdfg.arrays.keys()))
+        cleaned_rhs, element_reads = replace_element_reads_with_connectors(rhs, arr_reads, sdfg.arrays.keys())
 
         out_conn = f"_out_{cond_name}"
         t = state.add_tasklet(name=f"lift_cond_{cond_sym}",
-                              inputs=dict.fromkeys(in_conn_names.values()),
+                              inputs=dict.fromkeys(connector for _, _, connector in element_reads),
                               outputs={out_conn},
                               code=f"{out_conn} = ({cleaned_rhs})")
-        for arr, conn in in_conn_names.items():
-            an = state.add_access(arr)
-            # length-1 / Scalar operand = loop-invariant value (non-transient scalar
-            # source like kernel arg ``c`` in ``a[i, j] > c``): must stay a 1-element
-            # ``[0]`` read so the vectorizer broadcasts it (array-op-scalar); captured /
-            # W-wide subset would OOB-read the 1-element source, can't be reshaped
-            # (parent-fed connector). Else prefer the subset RHS wrote (``arr[i, j]`` ->
-            # ``[i, j]``), else ``subset_str``.
-            captured = extracted_subsets.get(arr)
-            if sdfg.arrays[arr].total_size == 1:
-                arr_subset = "0"
-            elif captured:
-                arr_subset = captured.strip("[]")
-            else:
-                arr_subset = subset_str
-            state.add_edge(an, None, t, conn, dace.Memlet(expr=f"{arr}[{arr_subset}]"))
+        wire_element_reads(sdfg, state, t, element_reads, subset_str)
         cond_access = state.add_access(cond_name)
         # Flat 1-D transient indexing (as in the compound recipe): ``[0]`` single-element,
         # ``[0:N]`` vector; ``subset_str`` only for the legacy full-source-shape transient.
@@ -1508,24 +1547,13 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                                       storage=dace.dtypes.StorageType.Register,
                                       transient=True,
                                       find_new_name=True)
-        in_conn_names = {arr: f"_in_{arr}_{i}" for i, arr in enumerate(arr_reads)}
-        cleaned_rhs, extracted_subsets = symbolic.replace_array_accesses_with_connectors(
-            cond_text, in_conn_names, set(sdfg.arrays.keys()))
+        cleaned_rhs, element_reads = replace_element_reads_with_connectors(cond_text, arr_reads, sdfg.arrays.keys())
         out_conn = f"_out_{cond_name}"
         t = state.add_tasklet(name="lift_cond_expr",
-                              inputs=dict.fromkeys(in_conn_names.values()),
+                              inputs=dict.fromkeys(connector for _, _, connector in element_reads),
                               outputs={out_conn},
                               code=f"{out_conn} = ({cleaned_rhs})")
-        for arr, conn in in_conn_names.items():
-            an = state.add_access(arr)
-            captured = extracted_subsets.get(arr)
-            if sdfg.arrays[arr].total_size == 1:
-                arr_subset = "0"
-            elif captured:
-                arr_subset = captured.strip("[]")
-            else:
-                arr_subset = subset_str
-            state.add_edge(an, None, t, conn, dace.Memlet(expr=f"{arr}[{arr_subset}]"))
+        wire_element_reads(sdfg, state, t, element_reads, subset_str)
         cond_access = state.add_access(cond_name)
         cond_subset = "0" if shape == (1, ) else f"0:{shape[0]}"
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
