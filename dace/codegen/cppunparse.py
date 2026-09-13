@@ -396,8 +396,24 @@ class CPPUnparser:
 
     def emit_call(self, name: str, arguments) -> None:
         """Write a call to the runtime function ``name`` over the argument AST nodes."""
-        types = tuple(self.c_type(node) for node in arguments) if cpf_lowering.standalone_c() else None
-        self.write(runtime_call(name, [self.render(node) for node in arguments], types))
+        self.write(runtime_call(name, [self.render(node) for node in arguments], self.c_argument_types(arguments)))
+
+    def c_argument_types(self, arguments) -> Optional[Tuple[Optional[str], ...]]:
+        """Each argument node's C type (:meth:`c_type`) when rendering the C dialect, else ``None``."""
+        return tuple(self.c_type(node) for node in arguments) if cpf_lowering.standalone_c() else None
+
+    def c_power_type(self, node: ast.BinOp) -> Optional[str]:
+        """The C type of a printed power: an integer literal exponent is a product, ``0.5`` a square root."""
+        base = self.c_type(node.left)
+        if base is None:
+            return None
+        power = numeric_power_value(node.right)
+        if power is not None and int(power) == power:
+            return cpf_lowering.c_common_type((base, ))
+        if power is not None and float(power) in (0.5, -0.5):
+            return cpf_lowering.c_math_result_type('sqrt', (base, ))
+        exponent = self.c_type(node.right)
+        return None if exponent is None else cpf_lowering.c_math_result_type('pow', (base, exponent))
 
     def c_name_dtype(self, name: str):
         """The type the caller declared ``name`` with, or ``None``."""
@@ -444,7 +460,9 @@ class CPPUnparser:
             operands = [node.operand]
         elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.LShift, ast.RShift)):
             operands = [node.left]
-        elif isinstance(node, ast.BinOp) and not isinstance(node.op, (ast.Pow, ast.MatMult)):
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
+            return self.c_power_type(node)
+        elif isinstance(node, ast.BinOp) and not isinstance(node.op, ast.MatMult):
             operands = [node.left, node.right]
         elif isinstance(node, ast.IfExp):
             operands = [node.body, node.orelse]
@@ -453,6 +471,12 @@ class CPPUnparser:
                 return node.func.id if cpf_lowering.c_arithmetic(node.func.id) else None
             if node.func.id in cpf_lowering.C_CTYPE_DTYPES:
                 return cpf_lowering.C_CTYPE_DTYPES[node.func.id]
+            bare = node.func.id.rsplit('::', 1)[-1]
+            if bare in cpf_lowering.C_TYPED_MATH:
+                types = tuple(self.c_type(argument) for argument in node.args)
+                return None if any(dtype is None for dtype in types) else cpf_lowering.c_math_result_type(bare, types)
+            if bare == 'iround':
+                return 'int32'
             if node.func.id in cpf_lowering.C_TYPED_MINMAX_DEFINITIONS:
                 return node.func.id.rsplit('_', 1)[1]
             # Instantiated at the type their arguments convert to, which is also what they return.
@@ -1297,7 +1321,7 @@ class CPPUnparser:
                 self.write(runtime_call('reciprocal', [base]) if negative else '(%s)' % base)
                 return
             elif power is not None and (float(power) == 0.5 or float(power) == -0.5):  # Square root
-                root = runtime_call('dace::math::sqrt', [self.render(t.left)])
+                root = runtime_call('dace::math::sqrt', [self.render(t.left)], self.c_argument_types([t.left]))
                 # rsqrt
                 self.write(runtime_call('reciprocal', [root]) if float(power) == -0.5 else root)
                 return

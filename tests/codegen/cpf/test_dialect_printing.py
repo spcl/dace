@@ -184,10 +184,10 @@ def test_helpers_used_finds_calls_and_ignores_definitions(dialect):
     assert cpf_lowering.helpers_used('y = my_mod(c, d) + a.mod(e);', dialect) == set()
 
 
-def test_helpers_used_finds_the_c_dispatch_macros():
-    """The C macros go through the same scan, which is what makes the preamble carry them."""
-    assert cpf_lowering.helpers_used('y = cpf_sqrt(x);', Dialect.STANDALONE_C) == {'cpf_sqrt'}
-    assert cpf_lowering.helpers_used('y = cpf_sqrt(x);', Dialect.STANDALONE) == set()
+def test_helpers_used_finds_the_c_typed_helpers():
+    """The typed C helpers go through the same scan, which is what makes the preamble carry them."""
+    assert cpf_lowering.helpers_used('y = cpf_max_float64(x, z);', Dialect.STANDALONE_C) == {'cpf_max_float64'}
+    assert cpf_lowering.helpers_used('y = cpf_max_float64(x, z);', Dialect.STANDALONE) == set()
 
 
 @pytest.mark.parametrize('dialect', [Dialect.STANDALONE, Dialect.STANDALONE_C], ids=['c++', 'c'])

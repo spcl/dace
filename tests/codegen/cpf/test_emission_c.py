@@ -201,11 +201,13 @@ def test_heap_transients_use_aligned_alloc_and_free():
     assert_matches({'a': expected}, {'a': a}, 'mprc_diffuse')
 
 
-def test_maths_reaches_the_generic_dispatch_macros():
-    """Maths in a TASKLET body: C has no ``std::sqrt``, so the call goes through ``cpf_sqrt``."""
+def test_maths_calls_the_math_h_function_for_the_argument_type():
+    """Maths in a TASKLET body: C has no ``std::sqrt``, and the unit carries no macros, so the call
+    names the ``<math.h>`` function for the argument's own type -- ``double`` here."""
     sdfg, code = render_c(c_mixed_maths, 'mprc_maths')
-    assert 'cpf_sqrt(' in code and 'cpf_exp(' in code, 'maths must be lowered to CPF\'s generic macros'
-    assert '#define cpf_sqrt(' in code, 'the macro a call names must be defined in the same unit'
+    for function in ('sqrt', 'exp', 'fabs'):
+        assert re.search(r'\b%s\(' % function, code), f'expected a call to {function} in:\n{code}'
+    assert '#define' not in code, f'the maths must not reach the unit as a macro:\n{code}'
 
     n = 256
     x = np.random.rand(n) * 4.0 - 2.0
@@ -327,12 +329,12 @@ def test_fp32_maths_does_not_double_round():
     """``<math.h>`` is not type-generic: bare ``sqrt`` on a float promotes to double and rounds twice.
 
     So the fp32 call has to reach ``sqrtf``. Asserted twice over, because either half alone is weak:
-    the emitted dispatch must NAME ``sqrtf`` for a ``float``, and the C result must be BIT-identical
+    the emitted call must BE ``sqrtf`` for a ``float``, and the C result must be BIT-identical
     to the C++ rendering of the same SDFG, which calls ``std::sqrt(float)``.
     """
     sdfg, code = render_c(c_fp32_maths, 'mprc_fp32')
-    assert 'cpf_sqrt(' in code, f'this test needs an fp32 sqrt call, or it asserts nothing:\n{code}'
-    assert 'float: sqrtf' in code, 'a float argument must select sqrtf, not promote to double'
+    assert re.search(r'\bsqrtf\(', code), f'a float argument must call sqrtf, not promote to double:\n{code}'
+    assert not re.search(r'\bsqrt\(', code), f'the double sqrt must not be reached for a float:\n{code}'
 
     n = 257
     # Values whose fp32 square root is NOT representable, so a double rounding is observable.

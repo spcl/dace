@@ -60,23 +60,27 @@ _OP_TAG = {'max': 'ArgMaxOp', 'min': 'ArgMinOp'}
 #: ``std::abs``, not ``dace::math::abs``: the latter namespace holds only the ``typeless_nan``
 #: overload, so a real operand does not match it.
 _TRANSFORM_CPP = {'': None, 'abs': 'std::abs'}
-#: The same transforms in the C dialect. ``std::abs`` is C++ only, so a C rendering that pasted it
-#: is not self-contained and CPF's own verifier rejects the result -- which is what it did for every
-#: kernel whose argmax scans a transformed element. ``cpf_abs`` is the ``_Generic`` macro
-#: ``cpf_lowering.C_STD_RENAMES`` already emits for ``abs``, so this names the spelling that module
-#: defines rather than inventing a second one.
-_TRANSFORM_C = {'': None, 'abs': 'cpf_abs'}
+#: The same transforms in the C dialect, as the runtime name ``cpf_lowering`` types a maths call by.
+#: ``std::abs`` is C++ only, and C spells the absolute value as a different function per element
+#: type, so the function is picked here, where the expansion knows the element type.
+_TRANSFORM_C = {'': None, 'abs': 'abs'}
 
 
-def _transform_spelling(transform: str) -> Optional[str]:
+def _transform_spelling(transform: str, dtype: 'dace.dtypes.typeclass') -> Optional[str]:
     """The element transform's spelling in whichever dialect is being rendered.
 
     Asked at EXPANSION time because the tasklet's text is fixed once it is built; outside a
     standalone-C rendering this is the C++ table, which is the behaviour every other caller has.
+
+    :param transform: the node's transform name.
+    :param dtype: the element type the transform is applied to, which picks the C function.
     """
     from dace import cpf_lowering
 
-    return (_TRANSFORM_C if cpf_lowering.standalone_c() else _TRANSFORM_CPP)[transform]
+    if not cpf_lowering.standalone_c():
+        return _TRANSFORM_CPP[transform]
+    runtime = _TRANSFORM_C[transform]
+    return None if runtime is None else cpf_lowering.c_math_function(runtime, (dtype.to_string(), ))
 
 
 #: The same transforms as ``dace/cub_compat.cuh`` functors, for the CUDA expansion's input iterator.
@@ -129,7 +133,7 @@ def _scan_context(node: "ArgReduce", parent_state: dace.SDFGState,
     except (TypeError, ValueError):
         unit_stride = False
     step_str = sym2cpp(step)
-    fn = _transform_spelling(node.transform)
+    fn = _transform_spelling(node.transform, in_dtype)
 
     def read(expr: str) -> str:
         raw = f'_in[{expr}]' if unit_stride else f'_in[({expr}) * ({step_str})]'

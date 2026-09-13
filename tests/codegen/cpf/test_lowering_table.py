@@ -242,7 +242,9 @@ def test_c_definitions_are_emitted_callees_first():
     emitted = cpf_lowering.definitions_for({'py_mod'}, Dialect.STANDALONE_C)
     order = [text.rsplit('#define ', 1)[1].split('(')[0] for text in emitted]
     assert order.index('int_floor_ni') < order.index('py_floor') < order.index('py_mod'), order
-    assert 'cpf_floor' in order, 'py_floor divides through the floor macro, so it must be carried too'
+    py_floor = emitted[order.index('py_floor')]
+    assert 'return floorf(numerator / denominator);' in py_floor, py_floor
+    assert 'return floor(numerator / denominator);' in py_floor, py_floor
 
 
 def test_definitions_are_emitted_callees_first():
@@ -432,7 +434,7 @@ def test_every_cpp_std_rename_has_a_c_form():
     a rename in C++, an emitted definition in C. Asserted explicitly, because "moved lanes" and
     "was forgotten" look identical from the C++ side.
     """
-    answered = set(cpf_lowering.C_STD_RENAMES) | set(cpf_lowering.C_INLINE_DEFINITIONS)
+    answered = set(cpf_lowering.C_STD_RENAMES) | set(cpf_lowering.C_INLINE_DEFINITIONS) | set(cpf_lowering.C_TYPED_MATH)
     missing = sorted(set(cpf_lowering.STD_RENAMES) - answered)
     assert not missing, f'{missing} are renamed to std:: in C++ but have no C spelling'
     for name in ('gcd', 'lcm'):
@@ -737,11 +739,10 @@ void probe(double * out) {{ calls = 0; out[0] = {call}; out[0] += calls; }}
 
 
 @pytest.mark.parametrize('name,call,expected', [
-    ('cpf_sqrt', 'cpf_sqrt(bump())', 5.0),
     ('cpf_max_float64', 'cpf_max_float64(bump(), 1.0)', 17.0),
     ('cpf_min_float64', 'cpf_min_float64(bump(), 1.0)', 2.0),
 ],
-                         ids=['sqrt', 'max', 'min'])
+                         ids=['max', 'min'])
 def test_c_dispatch_macros_evaluate_each_argument_once(name, call, expected):
     """One evaluation, proven by counting -- a duplicated argument would double a stateful call."""
     definitions = '\n'.join(cpf_lowering.definitions_for({name}, Dialect.STANDALONE_C))
@@ -941,14 +942,7 @@ C_NATIVE_STD_BODIES = [
     ('sort', 'std::sort(_out, _out + (n));'),
     ('fill_n', 'std::fill_n(_out, 8, 0.0);'),
     ('size_t', 'for (std::size_t i = 0; i < 8; ++i) { _out[i] = 0.0; }'),
-    ('abs', '_out[0] = std::abs(_in[0]);'),
-    ('sqrt', '_out[0] = std::sqrt(_in[0]);'),
-    ('exp', '_out[0] = std::exp(_in[0]);'),
-    ('pow', '_out[0] = std::pow(_in[0], 2.0);'),
-    ('fma', '_out[0] = std::fma(_in[0], _in[1], _in[2]);'),
-    ('fmod', '_out[0] = std::fmod(_in[0], _in[1]);'),
-    ('hypot', '_out[0] = std::hypot(_in[0], _in[1]);'),
-    ('atan2', '_out[0] = std::atan2(_in[0], _in[1]);'),
+    ('isnan', '_out[0] = std::isnan(_in[0]);'),
     ('minmax', '_out[0] = std::min<double>(_in[0], std::max<double>(_in[1], _in[2]));'),
     ('numeric_limits', '_out[0] = std::numeric_limits<double>::max();'),
 ]
@@ -977,6 +971,28 @@ def test_a_typed_native_std_min_calls_the_helper_for_its_promoted_type():
     assert rewritten == '_out[0] = cpf_min_int32(_in[0], cpf_max_float32(_in[1], _in[2]));', rewritten
 
 
+#: ``std::`` maths a hand-written body could write. Each is overloaded on its argument type, which the
+#: body does not name.
+C_UNTYPED_NATIVE_MATHS = [
+    ('abs', '_out[0] = std::abs(_in[0]);'),
+    ('sqrt', '_out[0] = std::sqrt(_in[0]);'),
+    ('exp', '_out[0] = std::exp(_in[0]);'),
+    ('pow', '_out[0] = std::pow(_in[0], 2.0);'),
+    ('fma', '_out[0] = std::fma(_in[0], _in[1], _in[2]);'),
+    ('fmod', '_out[0] = std::fmod(_in[0], _in[1]);'),
+    ('hypot', '_out[0] = std::hypot(_in[0], _in[1]);'),
+    ('atan2', '_out[0] = std::atan2(_in[0], _in[1]);'),
+]
+
+
+@pytest.mark.parametrize('label,body', C_UNTYPED_NATIVE_MATHS, ids=[label for label, _ in C_UNTYPED_NATIVE_MATHS])
+def test_an_untyped_native_maths_call_is_left_for_verify(label, body):
+    """C names a different function per argument type, and the body names no type: renamed onto the
+    ``double`` function the call would compute a ``float`` at the wrong precision, so it must reach
+    CPF's gate by name. An expansion that knows its element type spells the C function itself."""
+    assert cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C) == body
+
+
 def test_an_untyped_native_std_min_is_left_for_verify():
     """C has no overloading, so a ``std::min`` naming no element type has no helper to become: it must
     reach CPF's gate by name rather than turn into a helper of a guessed type."""
@@ -1003,3 +1019,84 @@ def test_a_cast_survives_the_printers_own_reparse(dialect):
     with cpf_lowering.dialect_scope(dialect):
         rendered = sym2cpp(expression)
     assert rendered == CAST_REPARSE_FORMS[dialect], rendered
+
+
+#: C spelling of each dace type the typed maths is picked by, and a sample operand of it.
+C_MATHS_OPERANDS = {
+    'int32': ('int', '2'),
+    'int64': ('long', '3L'),
+    'float32': ('float', '0.3f'),
+    'float64': ('double', '0.3'),
+    'complex64': ('float _Complex', '(0.3f + 0.2f * I)'),
+    'complex128': ('double _Complex', '(0.3 + 0.2 * I)'),
+}
+C_MATHS_REAL = ('int32', 'int64', 'float32', 'float64')
+C_MATHS_ALL = C_MATHS_REAL + ('complex64', 'complex128')
+#: ``(runtime name, argument types)``: every family ``<tgmath.h>`` also spells, over each type its
+#: C++ counterpart accepts. ``abs`` is absent because ``<tgmath.h>`` has no integer absolute value.
+C_MATHS_CASES = ([(name, (dtype, )) for name, (_, family, arity) in cpf_lowering.C_TYPED_MATH.items()
+                  if arity == 1 and family == 'real' and name not in ('ilogb', 'ROUND', 'ceiling')
+                  for dtype in C_MATHS_REAL] + [(name, (dtype, ))
+                                                for name, (_, family, arity) in cpf_lowering.C_TYPED_MATH.items()
+                                                if arity == 1 and family in ('elementary', 'complex')
+                                                for dtype in C_MATHS_ALL] +
+                 [(name, types) for name, (_, family, arity) in cpf_lowering.C_TYPED_MATH.items() if arity == 2
+                  for types in (('float32', 'float32'), ('float32', 'float64'), ('float64', 'float32'))])
+
+
+@pytest.fixture(scope='module')
+def tgmath_agreement():
+    """For each case: whether the function CPF names returns the same type and the same bits as the
+    ``<tgmath.h>`` macro of the same name, from one compiled probe."""
+    declarations, checks = [], []
+    for index, (name, types) in enumerate(C_MATHS_CASES):
+        base = cpf_lowering.C_TYPED_MATH[name][0]
+        operands = []
+        for position, dtype in enumerate(types):
+            ctype, sample = C_MATHS_OPERANDS[dtype]
+            declarations.append('static %s v%d_%d = %s;' % (ctype, index, position, sample))
+            operands.append('v%d_%d' % (index, position))
+        chosen = '%s(%s)' % (cpf_lowering.c_math_function(name, types), ', '.join(operands))
+        generic = '%s(%s)' % (base, ', '.join(operands))
+        checks.append('    { typeof(%s) a = %s; typeof(%s) b = %s; out[%d] = _Generic(%s, typeof(%s): 1, default: 0) '
+                      '&& memcmp(&a, &b, sizeof a) == 0; }' %
+                      (chosen, chosen, generic, generic, index, chosen, generic))
+    code = ('#include <tgmath.h>\n#include <stdlib.h>\n#include <string.h>\n%s\nvoid probe(int * out)\n{\n%s\n}\n' %
+            ('\n'.join(declarations), '\n'.join(checks)))
+    library = ctypes.CDLL(compile_standalone(code, 'cpf_tgmath_agreement', language='c'))
+    out = np.full(len(C_MATHS_CASES), -1, dtype=np.int32)
+    library.probe.argtypes = [ctypes.c_void_p]
+    library.probe.restype = None
+    library.probe(ctypes.c_void_p(out.ctypes.data))
+    return dict(zip(C_MATHS_CASES, out))
+
+
+@pytest.mark.parametrize('name,types',
+                         C_MATHS_CASES,
+                         ids=['%s-%s' % (name, '-'.join(types)) for name, types in C_MATHS_CASES])
+def test_the_c_maths_function_is_the_one_tgmath_picks(tgmath_agreement, name, types):
+    """The printer names the function a type-generic call would have selected; a double function for a
+    float argument returns a different type and rounds twice, which is what this catches."""
+    assert tgmath_agreement[(name, types)] == 1, (
+        f'{cpf_lowering.c_math_function(name, types)} for {name}{types} disagrees with <tgmath.h>')
+
+
+#: ``(runtime name, argument types, the function named)`` where an integer meets a ``float``. The old
+#: dispatch selected on ``(a) + (b)``, which C converts to ``float``; ``<tgmath.h>`` would take an
+#: integer argument as ``double`` instead, so these are pinned on their own rather than against it.
+C_MIXED_MATHS = [
+    ('pow', ('int32', 'float32'), 'powf'),
+    ('atan2', ('int64', 'float32'), 'atan2f'),
+    ('hypot', ('float32', 'int32'), 'hypotf'),
+    ('fma', ('float32', 'int32', 'float32'), 'fmaf'),
+    ('pow', ('int32', 'int64'), 'pow'),
+]
+
+
+@pytest.mark.parametrize('name,types,function',
+                         C_MIXED_MATHS,
+                         ids=['%s-%s' % (n, '-'.join(t)) for n, t, _ in C_MIXED_MATHS])
+def test_a_mixed_integer_float_maths_call_keeps_the_float_function(name, types, function):
+    """A call picks by the type C's conversions give its arguments together, as the dispatch it replaces
+    did; picking ``double`` here would compute a ``float`` expression at a different precision."""
+    assert cpf_lowering.c_math_function(name, types) == function

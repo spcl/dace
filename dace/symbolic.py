@@ -3748,7 +3748,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return '%s(%s)' % (target, self._print(expr.args[0]))
         # Complex conjugate: ``conj(x)`` -> ``dace::math::conj(x)`` in C++
         if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):
-            lowered = self._mpr_call('conj', [self._print(expr.args[0])])
+            lowered = self._mpr_call('conj', [self._print(expr.args[0])], self.c_argument_types(expr.args))
             if lowered is not None:
                 return lowered
             return 'dace::math::conj(%s)' % self._print(expr.args[0])
@@ -3808,7 +3808,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             if self.cpp_mode:
                 return '((%s) ? (%s) : (%s))' % (cond, tval, fval)
             return '((%s) if (%s) else (%s))' % (tval, cond, fval)
-        lowered = self._mpr_call(name, [self._print(a) for a in expr.args])
+        lowered = self._mpr_call(name, [self._print(a) for a in expr.args], self.c_argument_types(expr.args))
         if lowered is not None:
             return lowered
         # ``exp``/``log``/``sqrt`` reaching C++ from a memlet subset or an interstate assignment
@@ -3848,7 +3848,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # and ``double`` overloads, so any wider integer type makes the call ambiguous.
         if expr.args[0].is_integer:
             return self._print(expr.args[0])
-        lowered = self._mpr_call('ceiling', [self._print(expr.args[0])])
+        lowered = self._mpr_call('ceiling', [self._print(expr.args[0])], self.c_argument_types(expr.args))
         if lowered is not None:
             return lowered
         rounded = 'ceil(%s)' % self._print(expr.args[0])
@@ -3897,6 +3897,20 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return lowered
         return '%s(%s)' % (name, ', '.join(arguments))
 
+    def c_argument_types(self, arguments) -> Optional[Tuple[Optional[str], ...]]:
+        """Each argument's C type (:meth:`c_type`) when printing the C dialect, else ``None``."""
+        if self.dialect is not cpf_lowering.Dialect.STANDALONE_C:
+            return None
+        return tuple(self.c_type(argument) for argument in arguments)
+
+    def c_power_types(self, expr) -> Optional[Tuple[Optional[str], ...]]:
+        """The C types of a printed ``pow``'s operands. A non-integer rational exponent prints as a
+        floating quotient (see :meth:`_print_Pow`), not as the integer fraction its sympy atom is."""
+        types = self.c_argument_types(expr.args)
+        if types is not None and isinstance(expr.args[1], sympy.Rational) and not expr.args[1].is_Integer:
+            types = (types[0], 'float32' if self.fp_ctype == 'float' else 'float64')
+        return types
+
     def c_type(self, expr) -> Optional[str]:
         """The dace type name the C dialect picks a typed helper by for ``expr``, or ``None``.
 
@@ -3921,13 +3935,14 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if name in _TYPECAST_CPP:
             return name
         if isinstance(expr, sympy.Pow):
-            base, exponent = self.c_type(expr.base), self.c_type(expr.exp)
-            if base is None or exponent is None:
+            types = self.c_power_types(expr)
+            if types is None or any(dtype is None for dtype in types):
                 return None
             if expr.exp.is_Integer:
-                return cpf_lowering.c_common_type((base, ))
-            common = cpf_lowering.c_common_type((base, exponent))
-            return common if common in cpf_lowering.C_FLOATING_RANKS else 'float64'
+                return cpf_lowering.c_common_type(types[:1])
+            if expr.exp == sympy.Rational(1, 2):
+                return cpf_lowering.c_math_result_type('sqrt', types[:1])
+            return cpf_lowering.c_math_result_type('pow', types)
         if isinstance(expr, (sympy.floor, sympy.ceiling)):
             inner = self.c_type(expr.args[0])
             if inner is None or expr.args[0].is_integer:
@@ -3935,6 +3950,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             if integral_index_expression(expr.args[0]):
                 return 'int64'
             return inner if inner in cpf_lowering.C_FLOATING_RANKS else 'float64'
+        if name in cpf_lowering.C_TYPED_MATH:
+            types = tuple(self.c_type(argument) for argument in expr.args)
+            if any(dtype is None for dtype in types):
+                return None
+            return cpf_lowering.c_math_result_type(name, types)
         operands = expr.args
         if name == 'IfExpr':
             operands = expr.args[1:]
@@ -3991,7 +4011,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return '((%s) / (%s))' % (self._print(num), self._print(den))
         # Fallback: pure-real floor (e.g. ``floor(sin(x))``); emit the
         # math-library call.
-        lowered = self._mpr_call('floor', [self._print(arg)])
+        lowered = self._mpr_call('floor', [self._print(arg)], self.c_argument_types((arg, )))
         if lowered is not None:
             return lowered
         return 'floor(%s)' % self._print(arg)
@@ -4040,11 +4060,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # C++, i.e. ``pow(x, 0)``.
         if self.cpp_mode:
             if expr.args[1] == sympy.Rational(1, 2):
-                lowered = self._mpr_call('sqrt', [base])
+                lowered = self._mpr_call('sqrt', [base], self.c_argument_types(expr.args[:1]))
                 return lowered if lowered is not None else f'dace::math::sqrt({base})'
             try:
                 if float(exponent) == 0.5:
-                    lowered = self._mpr_call('sqrt', [base])
+                    lowered = self._mpr_call('sqrt', [base], self.c_argument_types(expr.args[:1]))
                     return lowered if lowered is not None else f'dace::math::sqrt({base})'
             except ValueError:
                 pass
@@ -4073,7 +4093,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return res
         except ValueError:
             if self.cpp_mode:
-                lowered = self._mpr_call('pow', [base, exponent])
+                lowered = self._mpr_call('pow', [base, exponent], self.c_power_types(expr))
                 if lowered is not None:
                     return lowered
                 return "dace::math::pow({f}, {s})".format(f=base, s=exponent)

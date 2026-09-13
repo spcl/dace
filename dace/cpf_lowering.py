@@ -1093,6 +1093,11 @@ def lowering_for(name: str,
     tables = tables_for(dialect)
     if name in tables.unsupported:
         raise NotImplementedError(f'CPF cannot lower {name!r}: {tables.unsupported[name]}.')
+    if (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C:
+        if name in C_TYPED_MATH:
+            return '%s(%s)' % (c_math_function(name, types), ', '.join(arguments))
+        if name == 'iround':
+            return '((int)%s(%s))' % (c_math_function('round', types), ', '.join(arguments))
     variadic = variadic_minmax(name, arguments, dialect, types)
     if variadic is not None:
         return variadic
@@ -1286,9 +1291,10 @@ def headers_for(names: Set[str], dialect: Optional[Dialect] = None) -> Tuple[str
 # worse one -- its macros are named ``exp``, ``pow``, ``log``, ``round``, which is exactly the set
 # of names a scientific SDFG gives its containers.
 #
-# So every generic operation becomes a ``_Generic`` dispatch macro over a closed set of typed
-# ``static inline`` functions. The controlling expression of ``_Generic`` is UNEVALUATED, so each
-# argument is still evaluated exactly once, in the selected call.
+# So a printer that resolves its argument types names the function for them -- ``sqrtf`` for a
+# ``float``, ``cpf_max_int64`` for two ``int64_t`` -- and every other generic helper is a ``_Generic``
+# dispatch macro over a closed set of typed ``static inline`` functions. The controlling expression of
+# ``_Generic`` is UNEVALUATED, so each argument is still evaluated exactly once, in the selected call.
 
 #: Arithmetic types a ``_Generic`` dispatch enumerates, paired with the suffix its typed helper is
 #: named after. SIGNED integers only: an unsigned instantiation of a sign-sensitive body ("comparison
@@ -1428,6 +1434,10 @@ def c_minmax_call(stem: str, arguments: Tuple[str, ...], types: Optional[Tuple[O
     return nested
 
 
+#: The ``<math.h>`` / ``<complex.h>`` suffix of each floating C type, for a typed body's ``{f}``.
+C_LIBM_SUFFIXES: Dict[str, str] = {'float': 'f', 'long double': 'l', 'float _Complex': 'f', 'long double _Complex': 'l'}
+
+
 def c_generic_macro(name: str,
                     parameters: Tuple[str, ...],
                     control: str,
@@ -1461,7 +1471,8 @@ def c_typed_family(name: str,
     width the index arithmetic or the element type settled on.
 
     :param name: the helper's name, as the printers emit it. Becomes the macro's name.
-    :param parameters: ``(type template, name)`` per parameter. ``{T}`` is the group's type.
+    :param parameters: ``(type template, name)`` per parameter. ``{T}`` is the group's type, and
+                       ``{f}`` in a body its ``<math.h>`` suffix: ``floor{f}`` is ``floorf`` for a float.
     :param groups: ``(types, return type template, body)``. Several groups exist where C++ used
                    ``if constexpr`` to branch on integral-vs-floating: the branch becomes two
                    groups, and ``_Generic`` picks between them.
@@ -1477,8 +1488,8 @@ def c_typed_family(name: str,
         for ctype, suffix in types:
             target = 'cpf_%s_%s' % (stem, suffix)
             declared = ', '.join(ptype.replace('{T}', ctype) + ' ' + pname for ptype, pname in parameters)
-            statements = '\n'.join('    ' + line if line.strip() else line
-                                   for line in body.replace('{T}', ctype).split('\n'))
+            typed = body.replace('{T}', ctype).replace('{f}', C_LIBM_SUFFIXES.get(ctype, ''))
+            statements = '\n'.join('    ' + line if line.strip() else line for line in typed.split('\n'))
             blocks.append('static inline %s %s(%s) {\n%s\n}' %
                           (returns.replace('{T}', ctype), target, declared, statements))
             dispatch.append((ctype, target))
@@ -1487,7 +1498,7 @@ def c_typed_family(name: str,
 
 
 #: ``(runtime name, C base name, family, arity)`` for every :data:`STD_RENAMES` entry that has a C
-#: counterpart. The family names the suffix set ``_Generic`` picks between:
+#: counterpart. The family names the set of functions the argument type picks between:
 #:
 #: ``real``
 #:     ``<base>f`` for ``float``, ``<base>l`` for ``long double``, ``<base>`` otherwise -- which is
@@ -1500,11 +1511,10 @@ def c_typed_family(name: str,
 #:     ``real``, plus the ``<complex.h>`` counterpart (``cexp``, ``cpow``) for a complex argument, which
 #:     the ``real`` association would silently convert to its real part.
 #:
-#: Arity 1 dispatches on ``+(a0)``; the unary plus applies the integer promotions, so a ``short`` or
-#: an ``int8_t`` selects the ``int`` association instead of failing to select. Arity 2 and 3
-#: dispatch on the SUM of the arguments, which is the type the call would convert them to anyway --
-#: except ``frexp`` and ``ldexp``, whose second argument is an ``int`` exponent and would drag the
-#: dispatch to the wrong type, so they dispatch on the first argument alone (``first`` arity 2).
+#: Arity 1 is picked by the PROMOTED argument type, so a ``short`` or an ``int8_t`` takes the ``int``
+#: function. Arity 2 and 3 are picked by the type C's conversions give the arguments together, which
+#: is the type the call converts them to anyway -- except ``frexp`` and ``ldexp``, whose second
+#: argument is an ``int`` exponent, so the first argument alone picks (``first2`` arity 2).
 C_MATH_SPEC: Tuple[Tuple[str, str, str, object], ...] = (
     ('Abs', 'abs', 'abs', 1),
     ('abs', 'abs', 'abs', 1),
@@ -1547,16 +1557,6 @@ C_MATH_SPEC: Tuple[Tuple[str, str, str, object], ...] = (
     ('hypot', 'hypot', 'real', 2),
 )
 
-#: Maths CPF emits for its OWN definitions rather than for a runtime rename: ``cpp_mod`` needs
-#: ``fmod``, ``np_modf`` needs ``modf``, and the complex ``sign_numpy_2`` needs the component
-#: accessors that :data:`REWRITES` spells ``.real()`` / ``.imag()`` in C++.
-C_INTERNAL_MATH_SPEC: Tuple[Tuple[str, str, str, object], ...] = (
-    ('fmod', 'fmod', 'real', 2),
-    ('modf', 'modf', 'real', 'first2'),
-    ('creal', 'creal', 'complex_component', 1),
-    ('cimag', 'cimag', 'complex_component', 1),
-)
-
 #: Runtime maths C already spells type-generically, as a ``<math.h>`` MACRO. Wrapping these in an
 #: ``cpf_`` dispatch would be wrong as well as pointless: there is no ``isnanf`` to dispatch TO.
 C_TYPE_GENERIC_MATH: Dict[str, str] = {
@@ -1566,64 +1566,110 @@ C_TYPE_GENERIC_MATH: Dict[str, str] = {
     'signbit': 'signbit',
 }
 
-_C_FAMILY_DISPATCH: Dict[str, Tuple[Tuple[str, str], ...]] = {
-    'real': (('float', '{base}f'), ('long double', '{base}l'), ('default', '{base}')),
-    'abs':
-    (('int', 'abs'), ('long', 'labs'), ('long long', 'llabs'), ('float', 'fabsf'), ('long double', 'fabsl'),
-     ('float _Complex', 'cabsf'), ('double _Complex', 'cabs'), ('long double _Complex', 'cabsl'), ('default', 'fabs')),
-    'elementary': (('float', '{base}f'), ('long double', '{base}l'), ('float _Complex', 'c{base}f'),
-                   ('double _Complex', 'c{base}'), ('long double _Complex', 'c{base}l'), ('default', '{base}')),
-    'complex': (('float _Complex', '{base}f'), ('long double _Complex', '{base}l'), ('default', '{base}')),
+#: The ``<math.h>`` / ``<complex.h>`` function each family names for the type that picks it, with
+#: ``{base}`` the function's base name. The printer names the function itself, so a call reaches the
+#: function its argument type selected when the family was a ``_Generic`` dispatch.
+C_MATH_FUNCTIONS: Dict[str, Dict[str, str]] = {
+    'real': {
+        'float32': '{base}f'
+    },
+    'abs': {
+        'int32': 'abs',
+        'int64': 'labs',
+        'float32': 'fabsf',
+        'float64': 'fabs',
+        'complex64': 'cabsf',
+        'complex128': 'cabs'
+    },
+    'elementary': {
+        'float32': '{base}f',
+        'complex64': 'c{base}f',
+        'complex128': 'c{base}'
+    },
+    'complex': {
+        'complex64': '{base}f'
+    },
     # A real argument has no imaginary part to read, and C's ``creal``/``cimag`` accept one, so the
-    # default association keeps working for a complex-valued expression that folded to a real type.
-    'complex_component': (('float _Complex', '{base}f'), ('long double _Complex', '{base}l'), ('default', '{base}')),
+    # double function keeps working for a complex-valued expression that folded to a real type.
+    'complex_component': {
+        'complex64': '{base}f'
+    },
 }
 
+#: The function a family names for every other type: the ``double`` one, which an integer argument
+#: converts to, and ``fabs`` for an unsigned integer's absolute value.
+C_MATH_DEFAULTS: Dict[str, str] = {
+    'real': '{base}',
+    'abs': 'fabs',
+    'elementary': '{base}',
+    'complex': '{base}',
+    'complex_component': '{base}',
+}
 
-def c_math_macro(base: str, family: str, arity) -> Tuple[str, str]:
-    """``(macro name, #define line)`` for one C maths dispatch.
-
-    :param base: the C function's base name (``sqrt``, ``pow``).
-    :param family: which suffix set to dispatch over -- see :data:`C_MATH_SPEC`.
-    :param arity: the argument count, or ``'first2'`` for a two-argument call whose dispatch is
-                  decided by the first argument alone.
-    :returns: the macro's name and its definition.
-    """
-    count = 2 if arity == 'first2' else arity
-    parameters = tuple('a%d' % index for index in range(count))
-    control = '+(a0)' if (count == 1 or arity == 'first2') else ' + '.join('(%s)' % p for p in parameters)
-    dispatch = tuple((ctype, target.replace('{base}', base)) for ctype, target in _C_FAMILY_DISPATCH[family])
-    name = 'cpf_' + base
-    return name, c_generic_macro(name, parameters, control, dispatch)
-
-
-#: Runtime function -> its C spelling, for the names C has under a different name.
+#: Runtime function -> its C spelling, for the names C spells the same for every argument type.
 C_STD_RENAMES: Dict[str, str] = dict(C_TYPE_GENERIC_MATH)
 
-#: C macro name -> its ``#define``. Merged into :data:`C_INLINE_DEFINITIONS` below, so the same
-#: use-scan and dependency ordering that places an inline definition places a macro.
-_C_MATH_MACROS: Dict[str, str] = {}
-for _runtime_name, _base, _family, _arity in C_MATH_SPEC:
-    _macro, _definition = c_math_macro(_base, _family, _arity)
-    C_STD_RENAMES[_runtime_name] = _macro
-    _C_MATH_MACROS[_macro] = _definition
-for _runtime_name, _base, _family, _arity in C_INTERNAL_MATH_SPEC:
-    _macro, _definition = c_math_macro(_base, _family, _arity)
-    _C_MATH_MACROS[_macro] = _definition
+#: Runtime function -> ``(C base name, family, arity)`` for every maths call C names by argument
+#: type. ``re`` / ``im`` are the component accessors :data:`REWRITES` spells as member calls in C++.
+C_TYPED_MATH: Dict[str, Tuple[str, str, object]] = {
+    runtime: (base, family, arity)
+    for runtime, base, family, arity in C_MATH_SPEC
+}
+C_TYPED_MATH.update({'re': ('creal', 'complex_component', 1), 'im': ('cimag', 'complex_component', 1)})
+
+
+def c_math_dispatch(name: str, types: Optional[Tuple[Optional[str], ...]]) -> Tuple[str, str, str]:
+    """``(C base name, family, the type that picks the function)`` for a call to ``name``.
+
+    :raises NotImplementedError: if an argument type is unknown or has no C arithmetic spelling.
+    """
+    base, family, arity = C_TYPED_MATH[name]
+    count = 2 if arity == 'first2' else arity
+    if types is None or len(types) != count or any(dtype is None for dtype in types):
+        raise NotImplementedError(f'CPF cannot pick the C function for {name}: the printer resolved the argument '
+                                  f'types as {types}')
+    return base, family, c_common_type(types[:1] if count == 1 or arity == 'first2' else types)
+
+
+def c_math_function(name: str, types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """The C function a call to ``name`` over arguments of ``types`` names: ``sqrtf``, ``cexp``, ``labs``."""
+    base, family, picking = c_math_dispatch(name, types)
+    return C_MATH_FUNCTIONS[family].get(picking, C_MATH_DEFAULTS[family]).replace('{base}', base)
+
+
+def c_math_result_type(name: str, types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """The dace type name of what the function :func:`c_math_function` names returns."""
+    base, family, picking = c_math_dispatch(name, types)
+    if base == 'ilogb':
+        return 'int32'
+    if family == 'abs':
+        return {
+            'int32': 'int32',
+            'int64': 'int64',
+            'float32': 'float32',
+            'complex64': 'float32'
+        }.get(picking, 'float64')
+    if family == 'elementary' and picking in ('float32', 'complex64', 'complex128'):
+        return picking
+    if family == 'complex':
+        return 'complex64' if picking == 'complex64' else 'complex128'
+    if family == 'complex_component':
+        return 'float32' if picking == 'complex64' else 'float64'
+    return 'float32' if picking == 'float32' else 'float64'
+
 
 #: ``Max``/``Min`` in C. Not the ``<stdlib.h>`` integer ``max``, which does not exist: CPF emits its
 #: own typed pair (see :data:`C_MINMAX_TYPES`).
 C_VARIADIC_MINMAX: Dict[str, str] = {'Max': 'cpf_max', 'Min': 'cpf_min', 'max': 'cpf_max', 'min': 'cpf_min'}
 
-#: Rewrites that differ from :data:`REWRITES` because their C++ form names a C++ construct: a
-#: member call on ``std::complex``, or a ``static_cast``.
-C_REWRITES: Dict[str, Tuple[int, str]] = dict(REWRITES)
-C_REWRITES.update({
-    're': (1, '(cpf_creal({0}))'),
-    'im': (1, '(cpf_cimag({0}))'),
-    'iround': (1, '((int)cpf_round({0}))'),
-    'np_float_pow': (2, '(cpf_pow((double)({0}), (double)({1})))'),
-})
+#: :data:`REWRITES` in C. The component accessors and ``iround`` call a maths function whose C name
+#: depends on the argument type, so :func:`lowering_for` answers them; ``np_float_pow`` converts both
+#: operands to ``double``, which names ``pow`` outright.
+C_REWRITES: Dict[str, Tuple[int, str]] = {
+    name: rewrite
+    for name, rewrite in REWRITES.items() if name not in C_TYPED_MATH and name != 'iround'
+}
+C_REWRITES['np_float_pow'] = (2, '(pow((double)({0}), (double)({1})))')
 
 #: The scalar types a cast can name once it has been through a SYMBOLIC expression. Sympy carries
 #: an unknown function by name, so ``static_cast<int64_t>(i)`` comes back out as ``int64_t(i)`` --
@@ -1688,8 +1734,7 @@ _C_SIGN_BODY = 'return ({T})((({T})0 < value) - (value < ({T})0));'
 #: no functional cast, and ``re + im * I`` evaluates, so a NaN or infinite component would propagate.
 C_COMPLEX_BUILDERS: Dict[str, str] = {'dace::complex64': 'cpf_complex64', 'dace::complex128': 'cpf_complex128'}
 
-C_INLINE_DEFINITIONS: Dict[str, str] = dict(_C_MATH_MACROS)
-C_INLINE_DEFINITIONS.update(_C_MINMAX_DEFINITIONS)
+C_INLINE_DEFINITIONS: Dict[str, str] = dict(_C_MINMAX_DEFINITIONS)
 C_INLINE_DEFINITIONS.update(C_TYPED_MINMAX_DEFINITIONS)
 # C11 6.2.5p13: a complex has the representation of a two-element array of its real type.
 C_INLINE_DEFINITIONS.update({
@@ -1706,7 +1751,7 @@ C_INLINE_DEFINITIONS.update({
     c_typed_family(
         'sign_numpy_2', (('{T}', 'value'), ),
         ((C_ARITHMETIC, '{T}', _C_SIGN_BODY),
-         (C_COMPLEX, '{T}', 'return (cpf_creal(value) != 0 && cpf_cimag(value) != 0) ? value / cpf_abs(value) : 0;')),
+         (C_COMPLEX, '{T}', 'return (creal{f}(value) != 0 && cimag{f}(value) != 0) ? value / cabs{f}(value) : 0;')),
         '+(value)'),
     # Two arities, which no single C macro can have. The three-argument pick chooses between the
     # unary and binary dispatch macros by counting what the caller wrote.
@@ -1725,7 +1770,7 @@ C_INLINE_DEFINITIONS.update({
     # ``(int)floor(...)`` would truncate it to 32 bits.
     'ifloor':
     c_typed_family('ifloor', (('{T}', 'value'), ),
-                   ((C_SIGNED_INTS, '{T}', 'return value;'), (C_FLOATS, 'int', 'return (int)cpf_floor(value);')),
+                   ((C_SIGNED_INTS, '{T}', 'return value;'), (C_FLOATS, 'int', 'return (int)floor{f}(value);')),
                    '+(value)'),
     'int_ceil':
     c_typed_family('int_ceil', (('{T}', 'numerator'), ('{T}', 'denominator')),
@@ -1740,7 +1785,7 @@ C_INLINE_DEFINITIONS.update({
     'py_floor':
     c_typed_family('py_floor', (('{T}', 'numerator'), ('{T}', 'denominator')),
                    ((C_SIGNED_INTS, '{T}', 'return int_floor_ni(numerator, denominator);'),
-                    (C_FLOATS, '{T}', 'return cpf_floor(numerator / denominator);')), '(numerator) + (denominator)'),
+                    (C_FLOATS, '{T}', 'return floor{f}(numerator / denominator);')), '(numerator) + (denominator)'),
     'py_mod':
     c_typed_family('py_mod', (('{T}', 'numerator'), ('{T}', 'denominator')),
                    ((C_ARITHMETIC, '{T}', 'return numerator - py_floor(numerator, denominator) * denominator;'), ),
@@ -1755,18 +1800,18 @@ C_INLINE_DEFINITIONS.update({
     'cpp_mod':
     c_typed_family('cpp_mod', (('{T}', 'numerator'), ('{T}', 'denominator')),
                    ((C_SIGNED_INTS, '{T}', 'return numerator % denominator;'),
-                    (C_FLOATS, '{T}', 'return cpf_fmod(numerator, denominator);')), '(numerator) + (denominator)'),
+                    (C_FLOATS, '{T}', 'return fmod{f}(numerator, denominator);')), '(numerator) + (denominator)'),
     'Mod_float':
     c_typed_family('Mod_float', (('{T}', 'value'), ('{T}', 'modulus')),
                    ((C_FLOATS, '{T}', 'return value - (int)(value / modulus) * modulus;'), ), '(value) + (modulus)'),
     'Modulo':
     c_typed_family(
         'Modulo', (('{T}', 'value'), ('{T}', 'modulus')),
-        ((C_ARITHMETIC, '{T}', 'return value - ({T})cpf_floor((double)(value) / (double)(modulus)) * modulus;'), ),
+        ((C_ARITHMETIC, '{T}', 'return value - ({T})floor((double)(value) / (double)(modulus)) * modulus;'), ),
         '(value) + (modulus)'),
     'Modulo_float':
     c_typed_family('Modulo_float', (('{T}', 'value'), ('{T}', 'modulus')),
-                   ((C_FLOATS, '{T}', 'return value - ({T})cpf_floor(value / modulus) * modulus;'), ),
+                   ((C_FLOATS, '{T}', 'return value - ({T})floor{f}(value / modulus) * modulus;'), ),
                    '(value) + (modulus)'),
     'cpp_divmod':
     c_typed_family('cpp_divmod',
@@ -1786,11 +1831,11 @@ C_INLINE_DEFINITIONS.update({
     'np_modf':
     c_typed_family('np_modf', (('{T}', 'value'), ('{T} *', 'integral'), ('{T} *', 'fractional')),
                    ((C_SIGNED_INTS, 'void', '*integral = value;\n*fractional = 0;'),
-                    (C_FLOATS, 'void', '*fractional = cpf_modf(value, integral);')), '+(value)',
+                    (C_FLOATS, 'void', '*fractional = modf{f}(value, integral);')), '+(value)',
                    ('value', '&(integral)', '&(fractional)')),
     'np_frexp':
     c_typed_family('np_frexp', (('{T}', 'value'), ('{T} *', 'mantissa'), ('int *', 'exponent')),
-                   ((C_FLOATS, 'void', '*mantissa = cpf_frexp(value, exponent);'), ), '+(value)',
+                   ((C_FLOATS, 'void', '*mantissa = frexp{f}(value, exponent);'), ), '+(value)',
                    ('value', '&(mantissa)', '&(exponent)')),
     'ipow':
     c_typed_family('ipow', (('{T}', 'base'), ('long long', 'exponent')), ((C_ARITHMETIC, '{T}', '{T} result = 1;\n'
@@ -2080,17 +2125,10 @@ C_INLINE_DEFINITIONS['cpf_sort'] = '\\\n'.join((
 #: Definitions each C definition calls -- macros included, since a macro must be ``#define``d before
 #: the function body that expands it is compiled.
 C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
-    'sign_numpy_2': ('cpf_creal', 'cpf_cimag', 'cpf_abs'),
-    'ifloor': ('cpf_floor', ),
-    'py_floor': ('int_floor_ni', 'cpf_floor'),
+    'py_floor': ('int_floor_ni', ),
     'py_mod': ('py_floor', ),
     'floor_mod': ('py_mod', ),
-    'cpp_mod': ('cpf_fmod', ),
-    'Modulo': ('cpf_floor', ),
-    'Modulo_float': ('cpf_floor', ),
     'py_divmod': ('cpp_divmod', ),
-    'np_modf': ('cpf_modf', ),
-    'np_frexp': ('cpf_frexp', ),
     'lcm': ('gcd', ),
     'scan_incl_min': ('cpf_min', ),
     'scan_incl_max': ('cpf_max', ),
@@ -2165,8 +2203,16 @@ class Tables(NamedTuple):
 _EXPLICIT_TEMPLATE_ARGUMENTS = r'(?:<[^<>();{}\n]*>\s*)?'
 
 
-def _tables(std_renames, rewrites, inline_definitions, minmax, unsupported, ctype_renames, base_headers, dependencies,
-            definition_headers) -> Tables:
+def _tables(std_renames,
+            rewrites,
+            inline_definitions,
+            minmax,
+            unsupported,
+            ctype_renames,
+            base_headers,
+            dependencies,
+            definition_headers,
+            typed: FrozenSet[str] = frozenset()) -> Tables:
     ctype_names = sorted(ctype_renames, key=len, reverse=True)
     return Tables(std_renames=std_renames,
                   rewrites=rewrites,
@@ -2180,7 +2226,8 @@ def _tables(std_renames, rewrites, inline_definitions, minmax, unsupported, ctyp
                   definition_headers=definition_headers,
                   helper_call=re.compile(r'(?<![\w:.])(' + '|'.join(sorted(inline_definitions, key=len, reverse=True)) +
                                          r')\s*' + _EXPLICIT_TEMPLATE_ARGUMENTS + r'\('),
-                  known=(set(std_renames) | set(rewrites) | set(inline_definitions) | set(minmax) | set(unsupported)))
+                  known=(set(std_renames) | set(rewrites) | set(inline_definitions) | set(minmax) | set(unsupported)
+                         | set(typed)))
 
 
 #: What a DEVICE unit adds to :data:`INLINE_DEFINITIONS`: the runtime functions a device library
@@ -2381,7 +2428,8 @@ TABLES: Dict[Dialect, Tables] = {
             DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
     Dialect.STANDALONE_C:
     _tables(C_STD_RENAMES, C_REWRITES, C_INLINE_DEFINITIONS, C_VARIADIC_MINMAX, C_UNSUPPORTED, C_CTYPE_RENAMES,
-            C_BASE_HEADERS, C_DEFINITION_DEPENDENCIES, {}),
+            C_BASE_HEADERS, C_DEFINITION_DEPENDENCIES, {},
+            frozenset(C_TYPED_MATH) | {'iround'}),
     # The HIP unit is C++, so it takes the C++ vocabulary and adds to it: the ROCm toolkit's own
     # headers, which ship with the compiler that builds the unit, and the device counterparts of
     # the runtime functions a DEVICE library expansion calls (:data:`HIP_INLINE_DEFINITIONS`).
@@ -2498,10 +2546,10 @@ def c_find_first(code: str) -> str:
 #: library expansion's hand-written C++ body, or a pass that writes one. Neither lowering lane sees
 #: those, and in C a ``std::`` name is not a name at all, so this is the table that answers them.
 #:
-#: The elemental maths is DERIVED from the two printer tables rather than listed again: whatever
-#: C++ spells ``std::exp``, C spells the way :data:`C_STD_RENAMES` already spells ``exp``. Writing
-#: the pairs out by hand is how the two lanes drift, and a body that reached the wrong ``cpf_``
-#: macro would compile and compute something else.
+#: Only the type-generic maths (``std::isnan`` ...) is derived from the printer tables. Every other
+#: ``std::`` maths function is overloaded on its argument type, which a hand-written body does not
+#: name, so it is left for ``dace.codegen.cpf.verify`` to report: renamed onto the ``double``
+#: function it would compute a ``float`` argument at the wrong precision.
 #:
 #: The rest are the names with no printer entry at all. ``std::abort`` is the assumption guard:
 #: canonicalization traps a violated symbol assumption with ``if ((N < 0)) { std::abort(); }`` and
@@ -2510,8 +2558,8 @@ def c_find_first(code: str) -> str:
 #: namespace goes. ``std::copy`` and ``std::sort`` keep their argument shape and change name, so
 #: the macros CPF defines for them take iterator pairs exactly as the C++ algorithms do.
 C_NATIVE_RENAMES: Dict[str, str] = {
-    cpp: C_STD_RENAMES.get(runtime, runtime)
-    for runtime, cpp in STD_RENAMES.items() if cpp.startswith('std::')
+    cpp: C_STD_RENAMES[runtime]
+    for runtime, cpp in STD_RENAMES.items() if cpp.startswith('std::') and runtime in C_STD_RENAMES
 }
 C_NATIVE_RENAMES.update({
     'std::abort': 'abort',
@@ -2519,10 +2567,6 @@ C_NATIVE_RENAMES.update({
     'std::memmove': 'memmove',
     'std::memset': 'memset',
     'std::size_t': 'size_t',
-    # ``fmod`` has no runtime name of its own -- ``cpp_mod`` is what the printers reach it through
-    # -- so it is absent from the two printer tables the renames above derive from, and a body that
-    # writes the C++ spelling directly needs the entry here.
-    'std::fmod': 'cpf_fmod',
     'std::copy': 'cpf_copy',
     'std::sort': 'cpf_sort',
 })
