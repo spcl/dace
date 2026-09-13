@@ -40,33 +40,48 @@ PYSTATE_CONNECTORS = frozenset({'__istate', '__ostate'})
 PYSTATE = '__pystate'
 
 
-def is_callback_tasklet(node: nodes.Node, sdfg: SDFG) -> bool:
+def callback_symbol_names(sdfg: SDFG) -> OrderedSet:
+    """Names of the ``dace.callback`` symbols declared in ``sdfg`` or any SDFG nested in it."""
+    names: OrderedSet[str] = OrderedSet()
+    for scope in sdfg.all_sdfgs_recursive():
+        for name, stype in scope.symbols.items():
+            if isinstance(stype, dtypes.callback):
+                names.add(name)
+    return names
+
+
+def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: Optional[OrderedSet] = None) -> bool:
     """A tasklet that calls back into Python, so it can only run on the host.
 
     Neither kind of callback can be offloaded: a Python callback needs the interpreter, and a GPU
     callback is itself a launch, so a kernel cannot issue it. Two markers, because either can be
     absent -- the frontend wires ``__pystate`` through ``__istate``/``__ostate`` to pin the
     ordering, and the callee itself is a ``dace.callback`` symbol the tasklet's code names.
+
+    :param callback_names: :func:`callback_symbol_names` of ``sdfg``, when the caller asks per node.
     """
     if not isinstance(node, nodes.Tasklet):
         return False
     if PYSTATE_CONNECTORS & (OrderedSet(node.in_connectors) | OrderedSet(node.out_connectors)):
         return True
+    names = callback_symbol_names(sdfg) if callback_names is None else callback_names
+    if not names:
+        return False
     code = node.code.as_string or ''
-    for scope in [sdfg] + list(sdfg.all_sdfgs_recursive()):
-        for name, stype in scope.symbols.items():
-            if isinstance(stype, dtypes.callback) and name in code:
-                return True
-    return False
+    return any(name in code for name in names)
 
 
-def scope_holds_callback(state: SDFGState, entry: Optional[nodes.MapEntry],
-                         scope_children: Dict[Optional[nodes.Node], List[nodes.Node]], sdfg: SDFG) -> bool:
+def scope_holds_callback(state: SDFGState,
+                         entry: Optional[nodes.MapEntry],
+                         scope_children: Dict[Optional[nodes.Node], List[nodes.Node]],
+                         sdfg: SDFG,
+                         callback_names: Optional[OrderedSet] = None) -> bool:
     """``entry``'s scope contains a callback, at any depth, so the scope is host code."""
+    names = callback_symbol_names(sdfg) if callback_names is None else callback_names
     for node in scope_children.get(entry, ()):
-        if is_callback_tasklet(node, sdfg):
+        if is_callback_tasklet(node, sdfg, names):
             return True
-        if isinstance(node, nodes.MapEntry) and scope_holds_callback(state, node, scope_children, sdfg):
+        if isinstance(node, nodes.MapEntry) and scope_holds_callback(state, node, scope_children, sdfg, names):
             return True
         if isinstance(node, nodes.NestedSDFG) and sdfg_holds_callback(node.sdfg):
             return True

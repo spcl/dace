@@ -100,7 +100,8 @@ def is_host_map(state: SDFGState,
                 auto: bool,
                 pinned_labels: OrderedSet,
                 pinned_entries: OrderedSet,
-                sdfg: SDFG = None) -> bool:
+                sdfg: SDFG = None,
+                callback_names: Optional[OrderedSet] = None) -> bool:
     """``entry`` belongs on the host, so the maps under it become the kernels.
 
     A map the caller NAMED is a host map whatever the structure looks like -- a caller who names a
@@ -108,7 +109,8 @@ def is_host_map(state: SDFGState,
     emitted at all (:func:`body_extents_depend_on_entry`).
 
     ``auto`` adds the only other reason a map is kept on the host: a scope that launches work
-    rather than doing any of its own.
+    rather than doing any of its own. ``callback_names`` is ``sdfg``'s
+    :func:`~dace.transformation.passes.offloading.offloading_helpers.callback_symbol_names`.
     """
     named = entry in pinned_entries or entry.map.label in pinned_labels
     if named or auto:
@@ -120,7 +122,7 @@ def is_host_map(state: SDFGState,
     # and a GPU callback is itself a launch, so a kernel cannot issue one. Not gated on ``auto`` --
     # a kernel around one would not run at all, which makes this a requirement rather than a
     # preference, and no default behaviour depends on offloading one.
-    if sdfg is not None and helpers.scope_holds_callback(state, entry, scope_children, sdfg):
+    if sdfg is not None and helpers.scope_holds_callback(state, entry, scope_children, sdfg, callback_names):
         return True
     if not auto:
         return False
@@ -156,10 +158,12 @@ def host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet:
 
     found: OrderedSet = OrderedSet()
     for nested in sdfg.all_sdfgs_recursive():
+        # Once per SDFG: asked per tasklet, the callback test walks every nested symbol table.
+        callback_names = helpers.callback_symbol_names(nested)
         for state in nested.states():
             scope_children = state.scope_children()
             for node in state.nodes():
                 if isinstance(node, nodes.MapEntry) and is_host_map(state, node, scope_children, auto, pinned_labels,
-                                                                    pinned_entries, nested):
+                                                                    pinned_entries, nested, callback_names):
                     found.add(node)
     return found
