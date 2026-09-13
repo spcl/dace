@@ -309,7 +309,7 @@ def test_dde_scope_reconnect():
     """
     Corner case:
     map {
-        tasklet(callback()) -> tasklet(do nothing)
+        tasklet(callback()) -> s -> tasklet(do nothing)
     }
     expected map to stay connected
     """
@@ -323,12 +323,14 @@ def test_dde_scope_reconnect():
     t1 = state.add_tasklet('callback', {}, {'o'}, 'o = cb()', side_effects=True)
     # Tasklet has no output and thus can be removed
     t2 = state.add_tasklet('nothing', {'inp'}, {}, '')
+    s = state.add_access('s')
     state.add_nedge(me, t1, dace.Memlet())
-    state.add_edge(t1, 'o', t2, 'inp', dace.Memlet('s'))
+    state.add_edge(t1, 'o', s, None, dace.Memlet('s'))
+    state.add_edge(s, None, t2, 'inp', dace.Memlet('s'))
     state.add_nedge(t2, mx, dace.Memlet())
 
     Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
-    assert set(state.nodes()) == {me, t1, mx}
+    assert set(state.nodes()) == {me, t1, s, mx}
     sdfg.validate()
 
 

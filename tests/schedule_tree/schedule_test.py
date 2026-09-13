@@ -238,7 +238,9 @@ def test_code_to_code():
     state = sdfg.add_state()
     t1 = state.add_tasklet('a', {}, {'out'}, 'out = 5')
     t2 = state.add_tasklet('b', {'inp'}, {}, 'print(inp)', side_effects=True)
-    state.add_edge(t1, 'out', t2, 'inp', dace.Memlet('scal'))
+    scal = state.add_access('scal')
+    state.add_edge(t1, 'out', scal, None, dace.Memlet('scal'))
+    state.add_edge(scal, None, t2, 'inp', dace.Memlet('scal'))
 
     stree = as_schedule_tree(sdfg)
     assert len(stree.children) == 2

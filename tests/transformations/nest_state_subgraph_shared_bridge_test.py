@@ -32,9 +32,11 @@ def _two_bodies_sharing_a_bridge_name():
         producer = state.add_tasklet(f'produce_{i}', {'v'}, {'o'}, 'o = v * 2')
         consumer = state.add_tasklet(f'consume_{i}', {'v'}, {'o'}, 'o = v + 1')
         state.add_edge(state.add_access('a'), None, producer, 'v', dace.Memlet(f'a[{i}]'))
-        state.add_edge(producer, 'o', consumer, 'v', dace.Memlet('bridge[0]'))
+        bridge = state.add_access('bridge')
+        state.add_edge(producer, 'o', bridge, None, dace.Memlet('bridge[0]'))
+        state.add_edge(bridge, None, consumer, 'v', dace.Memlet('bridge[0]'))
         state.add_edge(consumer, 'o', state.add_access('b'), None, dace.Memlet(f'b[{i}]'))
-        made.append((producer, consumer))
+        made.append((producer, bridge, consumer))
     return sdfg, state, made
 
 

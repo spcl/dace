@@ -1,3 +1,4 @@
+import numpy as np
 import dace
 
 from dace.transformation.dataflow import AugAssignToWCR
@@ -520,23 +521,26 @@ def test_aug_assign_state_fission_is_order_stable():
 
 
 def _rmw_with_tasklet_delta(also_write_accumulator: bool):
-    """``acc[k] = acc[k] + f(b[k])`` where the delta reaches the augassign straight from another
-    tasklet, so no AccessNode separates the two. Optionally give the read-side accumulator an
-    in-edge, which is what makes ``apply`` fission the state.
+    """``acc[k] = acc[k] + f(b[k])`` where the delta reaches the augassign from another tasklet
+    through a transient scalar. Optionally give the read-side accumulator an in-edge, which is
+    what makes ``apply`` fission the state.
     """
     sdfg = dace.SDFG(f"rmw_tasklet_delta_{int(also_write_accumulator)}")
     sdfg.add_array("acc", [8], dace.float64)
     sdfg.add_array("b", [8], dace.float64)
+    sdfg.add_scalar("delta_value", dace.float64, transient=True)
     sdfg.add_symbol("k", dace.int64)
     state = sdfg.add_state("main", is_start_block=True)
 
     read = state.add_access("acc")
     write = state.add_access("acc")
     delta = state.add_tasklet("delta", {"__inp": None}, {"__out": None}, "__out = __inp * 2.0")
+    delta_value = state.add_access("delta_value")
     augassign = state.add_tasklet("augassign", {"__in1": None, "__in2": None}, {"__out": None}, "__out = __in1 + __in2")
 
     state.add_edge(state.add_access("b"), None, delta, "__inp", dace.Memlet("b[k]"))
-    state.add_edge(delta, "__out", augassign, "__in2", dace.Memlet("b[k]"))
+    state.add_edge(delta, "__out", delta_value, None, dace.Memlet("delta_value"))
+    state.add_edge(delta_value, None, augassign, "__in2", dace.Memlet("delta_value"))
     state.add_edge(read, None, augassign, "__in1", dace.Memlet("acc[k]"))
     state.add_edge(augassign, "__out", write, None, dace.Memlet("acc[k]"))
     if also_write_accumulator:
@@ -562,9 +566,15 @@ def test_aug_assign_matches_rmw_whose_delta_comes_from_a_tasklet():
     sdfg.validate()
 
 
-def test_aug_assign_still_refuses_a_tasklet_delta_when_fission_is_needed():
-    """The guard stays in force for the case it was written for: an accumulator written in the same
-    state forces ``isolate_tasklet``, and only then does the producer's shape matter."""
+def test_aug_assign_fissions_an_access_node_delta_when_the_accumulator_is_written():
+    """An accumulator written in the same state forces ``isolate_tasklet``; with the delta staged through an
+    access node the producer chain moves with it, so the match applies and the accumulated value is unchanged."""
     sdfg = _rmw_with_tasklet_delta(also_write_accumulator=True)
-    assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=False) == 0
-    assert not [e for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=False) == 1
+    wcrs = [e.data.wcr for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]
+    assert len(wcrs) == 1 and '+' in wcrs[0], f"expected one summing WCR, got {wcrs}"
+    sdfg.validate()
+    acc = np.zeros(8)
+    b = np.arange(8, dtype=np.float64)
+    sdfg(acc=acc, b=b, k=3)
+    assert acc[3] == 1.0 + 2.0 * b[3]
