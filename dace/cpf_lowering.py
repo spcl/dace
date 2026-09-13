@@ -359,7 +359,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     # definition and not a rewrite: ``(int)std::floor(x)`` on an int64 would truncate it to 32 bits.
     'ifloor':
     'template <typename T>\n'
-    'static constexpr inline auto ifloor(const T& value) {\n'
+    'static constexpr inline std::conditional_t<std::is_integral_v<T>, T, int> ifloor(const T& value) {\n'
     '    if constexpr (std::is_integral_v<T>) {\n'
     '        return value;\n'
     '    } else {\n'
@@ -591,20 +591,20 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    return c;\n'
     '}',
     'int_ceil':
-    'template <typename T, typename U>\n'
-    'static constexpr inline auto int_ceil(const T& numerator, const U& denominator) {\n'
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
+    'static constexpr inline R int_ceil(const T& numerator, const U& denominator) {\n'
     '    return (numerator + denominator - 1) / denominator;\n'
     '}',
     'int_floor_ni':
-    'template <typename T, typename U>\n'
-    'static constexpr inline auto int_floor_ni(const T& numerator, const U& denominator) {\n'
-    '    auto quotient = numerator / denominator;\n'
-    '    auto remainder = numerator % denominator;\n'
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
+    'static constexpr inline R int_floor_ni(const T& numerator, const U& denominator) {\n'
+    '    R quotient = numerator / denominator;\n'
+    '    R remainder = numerator % denominator;\n'
     '    return quotient - ((remainder != 0) && ((remainder < 0) != (denominator < 0)));\n'
     '}',
     'py_floor':
-    'template <typename T, typename U>\n'
-    'static constexpr inline auto py_floor(const T& numerator, const U& denominator) {\n'
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
+    'static constexpr inline R py_floor(const T& numerator, const U& denominator) {\n'
     '    if constexpr (std::is_integral_v<T> && std::is_integral_v<U>) {\n'
     '        return int_floor_ni(numerator, denominator);\n'
     '    } else {\n'
@@ -612,23 +612,23 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    }\n'
     '}',
     'py_mod':
-    'template <typename T, typename U>\n'
-    'static constexpr inline auto py_mod(const T& numerator, const U& denominator) {\n'
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
+    'static constexpr inline R py_mod(const T& numerator, const U& denominator) {\n'
     '    return numerator - py_floor(numerator, denominator) * denominator;\n'
     '}',
     'floor_mod':
-    'template <typename T, typename U>\n'
-    'static constexpr inline auto floor_mod(const T& numerator, const U& denominator) {\n'
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
+    'static constexpr inline R floor_mod(const T& numerator, const U& denominator) {\n'
     '    return py_mod(numerator, denominator);\n'
     '}',
     'mod':
-    'template <typename T, typename U>\n'
-    'static constexpr inline auto mod(const T& value, const U& modulus) {\n'
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() % std::declval<U>())>\n'
+    'static constexpr inline R mod(const T& value, const U& modulus) {\n'
     '    return ((value % modulus) + modulus) % modulus;\n'
     '}',
     'cpp_mod':
-    'template <typename T, typename U>\n'
-    'static constexpr inline auto cpp_mod(const T& numerator, const U& denominator) {\n'
+    'template <typename T, typename U, typename R = std::conditional_t<std::is_integral_v<T> && std::is_integral_v<U>, decltype(std::declval<T>() / std::declval<U>()), decltype(std::fmod(std::declval<T>(), std::declval<U>()))>>\n'
+    'static constexpr inline R cpp_mod(const T& numerator, const U& denominator) {\n'
     '    if constexpr (std::is_integral_v<T> && std::is_integral_v<U>) {\n'
     '        return numerator % denominator;\n'
     '    } else {\n'
@@ -724,8 +724,13 @@ DEFINITION_HEADERS: Dict[str, Tuple[str, ...]] = {
     'max_identity': ('<limits>', ),
     'logical_left_shift': ('<type_traits>', ),
     'logical_right_shift': ('<type_traits>', ),
-    'py_floor': ('<type_traits>', ),
-    'cpp_mod': ('<type_traits>', ),
+    'int_ceil': ('<utility>', ),
+    'int_floor_ni': ('<utility>', ),
+    'py_floor': ('<type_traits>', '<utility>'),
+    'py_mod': ('<utility>', ),
+    'floor_mod': ('<utility>', ),
+    'mod': ('<utility>', ),
+    'cpp_mod': ('<type_traits>', '<utility>'),
     'np_modf': ('<type_traits>', ),
 }
 

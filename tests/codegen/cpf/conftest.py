@@ -70,6 +70,8 @@ BANNED_PATTERNS = (
     (re.compile(r'\bdace\s*::'), 'DaCe runtime namespace reference'),
     (re.compile(r'\bDACE_[A-Z]'), 'DaCe preprocessor macro'),
     (re.compile(r'__state\b'), 'DaCe state-struct dereference'),
+    (re.compile(r'^(?!\s*//).*?\b(auto|__auto_type)\b',
+                re.M), 'deduced declaration (auto) instead of the resolved type'),
 )
 
 #: DaCe runtime functions the code generators emit UNQUALIFIED, so no ``dace::`` appears and the

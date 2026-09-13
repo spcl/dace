@@ -306,7 +306,7 @@ def test_int_floor_ni_stays_on_the_callers_signed_type(types, dtype):
 def test_definitions_are_emitted_callees_first():
     """A helper is declared before the helper that calls it, or the unit does not compile."""
     emitted = cpf_lowering.definitions_for({'py_mod'}, Dialect.STANDALONE)
-    order = [text.split('inline auto ')[1].split('(')[0] for text in emitted]
+    order = [re.search(r'\binline\s+\w+\s+(\w+)\(', text).group(1) for text in emitted]
     assert order == ['int_floor_ni', 'py_floor', 'py_mod'], order
 
 
@@ -453,6 +453,35 @@ def test_non_constexpr_definitions_are_not_marked_constexpr(name):
     assert 'static constexpr' not in cpf_lowering.INLINE_DEFINITIONS[name], (
         f'{name} is declared constexpr but {NOT_CONSTEXPR[name]}, so no argument permits constant evaluation. '
         'GCC folds std::floor as a builtin and accepts it; clang rejects the same code.')
+
+
+#: ``(call, the type its arithmetic has)``: a promoted narrow operand, a mixed floating operand, and
+#: ``std::fmod``'s double for a float beside an int. A spelled return type that differed would narrow.
+RETURN_TYPES = [
+    ('ifloor(-3.5)', 'int'),
+    ('ifloor(static_cast<int64_t>(7))', 'int64_t'),
+    ('int_ceil(static_cast<int16_t>(7), static_cast<int16_t>(3))', 'int'),
+    ('int_ceil(static_cast<int64_t>(7), 3)', 'int64_t'),
+    ('int_floor_ni(static_cast<uint8_t>(7), 3)', 'int'),
+    ('py_floor(7.0f, 2.0f)', 'float'),
+    ('py_floor(7, 2.0)', 'double'),
+    ('py_floor(static_cast<int64_t>(-7), 2)', 'int64_t'),
+    ('py_mod(-1.0f, 5.0f)', 'float'),
+    ('floor_mod(static_cast<int16_t>(-1), static_cast<int16_t>(5))', 'int'),
+    ('mod(static_cast<int64_t>(-1), 5)', 'int64_t'),
+    ('cpp_mod(-1, 5)', 'int'),
+    ('cpp_mod(1, 2.0f)', 'double'),
+    ('cpp_mod(1.0f, 2.0f)', 'float'),
+]
+
+
+@pytest.mark.parametrize('call, expected', RETURN_TYPES)
+def test_a_helper_returns_the_type_its_arithmetic_has(call, expected):
+    name = call.split('(', 1)[0]
+    code = '%s\n\nstatic_assert(std::is_same_v<decltype(%s), %s>);\n' % (preamble({name},
+                                                                                  Dialect.STANDALONE), call, expected)
+    diagnostics = compile_diagnostics(code, name='cpf_rt_%s' % name)
+    assert diagnostics == '', f'{call}: return type is not {expected}\n{diagnostics}'
 
 
 # the C tables, held to the same anti-rot standard as the C++ ones
