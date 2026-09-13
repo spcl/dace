@@ -208,10 +208,10 @@ def test_lowering_computes_the_runtime_value(name, arguments, expected, dialect)
                      f'{dialect} and gave {value!r}, but the runtime semantics are {reference!r}')
 
 
-#: Every definition EACH dialect carries, so a C macro that only the C tables have is exercised
+#: Every definition EACH dialect carries, so a C definition that only the C tables have is exercised
 #: too. Parametrized over the dialect's own set rather than over the C++ one: the two differ (C
-#: needs the maths dispatch macros, C++ gets those from ``<cmath>`` overload resolution), and a
-#: shared list would have to skip the difference instead of covering it.
+#: needs one typed function per helper type, C++ gets those from templates and ``<cmath>`` overload
+#: resolution), and a shared list would have to skip the difference instead of covering it.
 DEFINITION_CASES = [(dialect, name) for dialect in DIALECTS
                     for name in sorted(cpf_lowering.TABLES[dialect].inline_definitions)]
 
@@ -225,6 +225,38 @@ def test_every_inline_definition_builds_clean(dialect, name):
     assert_standalone(code, label=name, language=LANGUAGE[dialect])
     diagnostics = compile_diagnostics(code, name='cpf_def_%s_%s' % (name, dialect.value), language=LANGUAGE[dialect])
     assert diagnostics == '', f'{name}: inline definition produced compiler warnings\n{diagnostics}'
+
+
+#: One typed instantiation per C family a native call site picks -- a definition named by the call
+#: site rather than listed in a table, so :data:`DEFINITION_CASES` cannot reach it. Each scan family
+#: is taken at one type throughout and at the widening ``int8`` input, ``int64`` output and seed.
+C_INSTANCE_CASES = sorted([
+    'cpf_scan_%s_%s_%s' % (kind, operation, types) for kind in ('incl', 'excl')
+    for operation in ('sum', 'product', 'min', 'max') for types in ('float64_float64_float64', 'int8_int64_int64')
+] + ['cpf_detect_collision_int32_int64', 'cpf_detect_collision_sized_int64', 'cpf_sort_int64', 'cpf_sort_float32'])
+
+
+@pytest.mark.parametrize('name', C_INSTANCE_CASES)
+def test_every_c_typed_instantiation_builds_clean(name):
+    """Warnings are errors for the functions a call site instantiates too, and none of them is a macro."""
+    code = preamble({name}, Dialect.STANDALONE_C) + '\n'
+    assert '#define' not in code and 'typeof' not in code and '_Pragma' not in code, code
+    assert_standalone(code, label=name, language='c')
+    diagnostics = compile_diagnostics(code, name='cpf_instance_%s' % name, language='c')
+    assert diagnostics == '', f'{name}: typed instantiation produced compiler warnings\n{diagnostics}'
+
+
+def test_a_c_find_first_function_builds_clean():
+    """The search function a find-first site defines compiles without a warning, beside the chunk sizer it calls."""
+    site = cpf_lowering.NativeSite(FIND_FIRST_NAMES, 'probe')
+    cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C, site)
+    functions = '\n'.join(site.functions)
+    code = (preamble(cpf_lowering.helpers_used(functions, Dialect.STANDALONE_C), Dialect.STANDALONE_C) + '\n' +
+            functions + '\n')
+    assert '#define' not in code and '_Pragma' not in code, code
+    assert_standalone(code, label='cpf_find_first_probe', language='c')
+    diagnostics = compile_diagnostics(code, name='cpf_instance_find_first', language='c')
+    assert diagnostics == '', f'the find-first function produced compiler warnings\n{diagnostics}'
 
 
 @pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
