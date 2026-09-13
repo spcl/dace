@@ -86,6 +86,7 @@ def test_host_compiler_resolves():
     ('#include "../../include/hash.h"', 'quoted (relative) include -- CPF may only use system headers'),
     ('x = dace::math::exp(y);', 'DaCe runtime namespace reference'),
     ('static DACE_HDFI constexpr int64_t A_idx(int64_t i) { return i; }', 'DaCe preprocessor macro'),
+    ('#define cpf_min(a, b) ((b) < (a) ? (b) : (a))', 'preprocessor macro definition'),
     ('__dace_init_cuda(__state);', 'DaCe init/exit entry point'),
     ('double *A = __state->__0_A;', 'DaCe state-struct dereference'),
     ('dace::CopyND<double, 1, false, 8>::Copy(src, dst);', 'dace::CopyND copy fallback'),

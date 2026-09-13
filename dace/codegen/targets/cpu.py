@@ -1918,10 +1918,10 @@ class CPUCodeGen(TargetCodeGenerator):
                                                 inname)
         body = self.standalone_wcr(sdfg, memlet, redtype, ptr, inname, dtype, atomic=False)
         if _REDUCTION_TO_OMP_OP.get(redtype) in self._CPF_ATOMIC_OPS:
-            return f'{hint}_Pragma("omp atomic update")\n{body}'
+            return f'{hint}#pragma omp atomic update\n{body}'
         # No atomic form for this operator; a critical section is the portable one. The trailing
         # semicolon the caller appends lands after the block, where it is an empty statement.
-        return f'{hint}_Pragma("omp critical (cpf_wcr)")\n{{ {body}; }}'
+        return f'{hint}#pragma omp critical (cpf_wcr)\n{{ {body}; }}'
 
     def standalone_wcr_value(self,
                              sdfg: SDFG,

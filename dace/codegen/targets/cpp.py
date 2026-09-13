@@ -948,6 +948,26 @@ def tasklet_unparse_facts(sdfg: SDFG, frame: 'DaCeCodeGenerator') -> Tuple[Dict[
     return facts
 
 
+def native_site(sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, state: SDFGState,
+                node: nodes.Tasklet) -> cpf_lowering.NativeSite:
+    """The typed names a native tasklet body reads, for the C rewrite of the helpers it calls.
+
+    The readable generator substitutes a container for each connector it inlines, so the body names
+    containers and scope symbols as well as its own connectors. All three are typed here.
+    """
+    names: Dict[str, Tuple[str, bool]] = {}
+    for name, dtype in state.symbols_defined_at(node).items():
+        names[name] = (dtype.to_string(), False)
+    for name, desc in sdfg.arrays.items():
+        names[name] = (desc.dtype.to_string(), not isinstance(desc, data.Scalar))
+    for name, dtype in itertools.chain(node.in_connectors.items(), node.out_connectors.items()):
+        if isinstance(dtype, dtypes.pointer):
+            names[name] = (dtype.base_type.to_string(), True)
+        elif isinstance(dtype, dtypes.typeclass):
+            names[name] = (dtype.to_string(), False)
+    return cpf_lowering.NativeSite(names, f'{cfg.cfg_id}_{state_id}_{state.node_id(node)}')
+
+
 def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_stream, locals, ldepth, toplevel_schedule,
                     codegen):
 
@@ -1077,7 +1097,11 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             # A no-op outside a standalone rendering.
             body = codegen.rewrite_cpp_tasklet_body(node, sdfg, state_dfg)
             if cpf_lowering.standalone():
-                body = cpf_lowering.rewrite_native_code(body)
+                site = native_site(sdfg, cfg, state_id, state_dfg, node) if cpf_lowering.standalone_c() else None
+                body = cpf_lowering.rewrite_native_code(body, site=site)
+                # A C search over a predicate is a function of its own, and C defines functions at file scope.
+                for function in site.functions if site is not None else ():
+                    function_stream.write(function + '\n', cfg, state_id, node)
             callsite_stream.write(body, cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):

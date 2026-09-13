@@ -516,9 +516,18 @@ def test_c_refuses_exactly_the_names_it_says_it_does():
 
 
 def test_every_cpp_definition_has_a_c_form_or_a_refusal():
-    """No C++ helper escapes the choice: it is either spelled in C or listed as unspellable."""
+    """No C++ helper escapes the choice: it is either spelled in C or listed as unspellable.
+
+    ``cpf_max`` / ``cpf_min`` are spelled in C as one typed function per helper type, which a printed
+    ``Max`` / ``Min`` names directly, so each counts only when every one of those functions exists.
+    """
+    typed_minmax = {
+        stem
+        for stem in cpf_lowering.C_VARIADIC_MINMAX.values()
+        if all('%s_%s' % (stem, dtype) in cpf_lowering.C_INLINE_DEFINITIONS for dtype in cpf_lowering.C_HELPER_TYPES)
+    }
     unclassified = sorted(
-        set(cpf_lowering.INLINE_DEFINITIONS) - set(cpf_lowering.C_INLINE_DEFINITIONS) -
+        set(cpf_lowering.INLINE_DEFINITIONS) - set(cpf_lowering.C_INLINE_DEFINITIONS) - typed_minmax -
         set(cpf_lowering.C_TYPED_HELPER_SPECS) - set(cpf_lowering.C_HELPER_ARITIES) - set(cpf_lowering.C_UNSUPPORTED) -
         cpf_lowering.C_REWRITTEN_IN_NATIVE_CODE)
     assert not unclassified, (f'{unclassified} have a C++ inline definition but no C form, no rewrite and no entry '
@@ -542,7 +551,7 @@ def test_every_cpp_std_rename_has_a_c_form():
 
 
 def test_every_c_definition_is_reachable():
-    """No dead C macro: each one is named by a rename, a rewrite, a min/max, or another definition.
+    """No dead C definition: each one is named by a rename, a rewrite, a min/max, or another definition.
 
     A table that grows an entry nothing reaches is a table that has stopped being checked -- the
     unreachable entry never compiles, never runs, and never fails.
@@ -566,16 +575,14 @@ def test_every_c_definition_is_reachable():
         reachable |= set(dependencies)
     for _, template in cpf_lowering.C_REWRITES.values():
         reachable |= cpf_lowering.helpers_used(template.replace('{0}', 'a').replace('{1}', 'b'), Dialect.STANDALONE_C)
-    reachable |= cpf_lowering.helpers_used(cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C),
-                                           Dialect.STANDALONE_C)
-    # The native lane: a name a hand-written body carries is renamed straight onto its C helper,
-    # and the duplicate check's two arities pick two different macros.
+    # A find-first becomes a function of its site's own, and that function calls the chunk sizer.
+    site = cpf_lowering.NativeSite(FIND_FIRST_NAMES, 'probe')
+    cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C, site)
+    reachable |= cpf_lowering.helpers_used('\n'.join(site.functions), Dialect.STANDALONE_C)
+    # The native lane: a name a hand-written body carries is renamed straight onto its C helper.
     reachable |= set(cpf_lowering.C_NATIVE_RENAMES.values())
     # The literal printers spell every complex constant through its builder.
     reachable |= set(cpf_lowering.C_COMPLEX_BUILDERS.values())
-    for statement in DETECT_COLLISION_STATEMENTS.values():
-        reachable |= cpf_lowering.helpers_used(cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C),
-                                               Dialect.STANDALONE_C)
     # Every name must be reached from outside its own definition.
     unreachable = sorted(set(cpf_lowering.C_INLINE_DEFINITIONS) - reachable)
     assert not unreachable, f'{unreachable} are emitted by no lowering, so nothing ever exercises them'
@@ -612,17 +619,28 @@ def test_c_rewrites_the_scan_identities_to_constants(name, ctype):
 FIND_FIRST_STATEMENT = ('_out_idx = dace::find_first_index((0), (N), '
                         '[&](long long __i) -> bool { return (_a[__i] > 0.5); }, false);')
 
+#: The typed names a find-first site offers: the array the predicate reads, and a symbol it does not.
+FIND_FIRST_NAMES = {'_a': ('float64', True), 'N': ('int32', False)}
 
-def test_c_rewrites_the_find_first_call_into_the_statement_macro():
-    """C keeps the predicate, the index name and the bounds, and moves the target into the macro.
 
-    The predicate cannot survive as an argument to anything callable in C, so the check is that it
-    arrives verbatim and still reads the index under the name the expansion wrote its subscripts
-    against: a rewrite that renamed either would build and then search the wrong elements.
+def test_c_rewrites_the_find_first_call_into_a_function_of_its_own():
+    """C keeps the predicate, the index name and the bounds, and passes exactly what the predicate reads.
+
+    The predicate cannot survive as an argument to anything callable in C, so it is pasted into a
+    function the site defines. The check is that it arrives verbatim, still reads the index under the
+    name the expansion wrote its subscripts against, and that only the names it reads become
+    parameters: a rewrite that renamed either would build and then search the wrong elements.
     """
-    rewritten = cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C)
-    assert rewritten == 'cpf_find_first(_out_idx, (0), (N), __i, false, (_a[__i] > 0.5));'
-    assert cpf_lowering.helpers_used(rewritten, Dialect.STANDALONE_C) == {'cpf_find_first'}
+    site = cpf_lowering.NativeSite(FIND_FIRST_NAMES, 'probe')
+    rewritten = cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C, site)
+    assert rewritten == '_out_idx = cpf_find_first_probe((0), (N), false, _a);'
+    assert len(site.functions) == 1, site.functions
+    function = site.functions[0]
+    assert function.startswith('static inline long long cpf_find_first_probe(long long cpf_ff_begin, '
+                               'long long cpf_ff_end, bool cpf_ff_parallel, const double *_a) {'), function
+    assert 'const long long cpf_ff_v = (_a[__i] > 0.5) ? __i : cpf_ff_end;' in function, function
+    assert '#define' not in function and '_Pragma' not in function, function
+    assert cpf_lowering.helpers_used(function, Dialect.STANDALONE_C) == {'find_first_chunk'}
     # C++ has the lambda, so it keeps the call and only drops the namespace.
     assert cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT,
                                             Dialect.STANDALONE) == FIND_FIRST_STATEMENT.replace('dace::', '')
@@ -637,6 +655,13 @@ def test_c_leaves_an_unrecognized_find_first_call_for_verify():
     """
     unknown = '_out_idx = dace::find_first_index(0, N, some_functor, false);'
     assert cpf_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
+
+
+def test_c_refuses_a_find_first_at_a_site_that_types_no_names():
+    """Without the site's typed names the search function cannot declare its parameters, so the C
+    rewrite refuses rather than emitting a function over undeclared identifiers."""
+    with pytest.raises(NotImplementedError, match='find-first'):
+        cpf_lowering.rewrite_native_code(FIND_FIRST_STATEMENT, Dialect.STANDALONE_C)
 
 
 def test_c_refuses_a_scan_identity_it_cannot_order():
@@ -713,7 +738,7 @@ def test_c_common_type_is_the_type_the_compiler_gives_the_sum(c_sum_types, first
 
 
 def test_c_scan_helpers_keep_the_parallel_inscan_form():
-    """The scan is the reason the eight helpers exist; a serial loop would not be a parallel scan.
+    """The scan is the reason the helpers exist; a serial loop would not be a parallel scan.
 
     The PHASE ORDER is asserted with the clause because it is the half that fails quietly: the
     ``scan`` directive splits the loop body into an input phase and a scan phase, and ``exclusive``
@@ -722,14 +747,25 @@ def test_c_scan_helpers_keep_the_parallel_inscan_form():
     """
     for kind, clause in (('incl', 'inclusive'), ('excl', 'exclusive')):
         for operation, reduction in (('sum', '+'), ('product', '*'), ('min', 'min'), ('max', 'max')):
-            definition = cpf_lowering.C_INLINE_DEFINITIONS['scan_%s_%s' % (kind, operation)]
-            assert '_Pragma("omp simd reduction(inscan, %s:cpf_scan_acc)")' % reduction in definition
-            directive = '_Pragma("omp scan %s(cpf_scan_acc)")' % clause
+            definition, dependencies = cpf_lowering.c_instance('cpf_scan_%s_%s_float64_float64_float64' %
+                                                               (kind, operation))
+            assert dependencies == ()
+            assert '#define' not in definition and 'typeof' not in definition and '_Pragma' not in definition
+            assert '#pragma omp simd reduction(inscan, %s:acc)' % reduction in definition
+            directive = '#pragma omp scan %s(acc)' % clause
             assert directive in definition
-            store = 'cpf_scan_out[cpf_scan_i] = cpf_scan_acc;'
+            store = 'o[i] = acc;'
             before, after = definition.split(directive)
             assert (store in after) if clause == 'inclusive' else (store in before), (
                 f'scan_{kind}_{operation} runs its phases in the {clause} order the other kind needs')
+
+
+def scan_probe_body(statement, names):
+    """``(body, definitions)`` for a scan statement rewritten into C at a site typing ``names``."""
+    body = cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C, cpf_lowering.NativeSite(names, 'probe'))
+    definitions = '\n'.join(
+        cpf_lowering.definitions_for(cpf_lowering.helpers_used(body, Dialect.STANDALONE_C), Dialect.STANDALONE_C))
+    return body, definitions
 
 
 #: A widening scan: an ``int8_t`` 0/1 mask scanned into ``int64_t`` ranks, which is the compaction
@@ -746,7 +782,7 @@ void probe(double * out) {{
     int8_t mask[300];
     int64_t rank[300];
     for (long i = 0; i < 300; ++i) mask[i] = (int8_t)1;
-    scan_excl_sum(mask, rank, 0L, 300L, (int64_t)(0));
+    {body}
     out[0] = (double)rank[0];
     out[1] = (double)rank[1];
     out[2] = (double)rank[299];
@@ -757,13 +793,16 @@ void probe(double * out) {{
 def test_c_scan_widens_from_the_input_type_to_the_seed():
     """The three types a scan touches are independent, and the fold happens at the SEED's.
 
-    A ``_Generic`` family dispatching on one operand declares the other two at the type it picked,
-    so this call did not compile at all: the macro selected the ``long`` helper on the seed and then
-    handed it an ``int8_t *``. Folding at the input's type instead would compile and wrap at 128,
-    which is what the 300-element count catches.
+    The call names one function per type combination, so an ``int8_t`` input, an ``int64_t`` output
+    and an ``int64_t`` seed pick a function whose accumulator is the seed's type. Folding at the input's
+    type instead would compile and wrap at 128, which is what the 300-element count catches.
     """
-    definitions = '\n'.join(cpf_lowering.definitions_for({'scan_excl_sum'}, Dialect.STANDALONE_C))
-    code = _WIDENING_SCAN_PROBE.format(definitions=definitions)
+    body, definitions = scan_probe_body('::dace::scan::detail::scan_excl_sum(mask, rank, 0L, 300L, int64_t(0));', {
+        'mask': ('int8', True),
+        'rank': ('int64', True)
+    })
+    assert body == 'cpf_scan_excl_sum_int8_int64_int64(mask, rank, 0L, 300L, (int64_t)(0));'
+    code = _WIDENING_SCAN_PROBE.format(definitions=definitions, body=body)
     diagnostics = compile_diagnostics(code, name='cpf_scan_widening', language='c')
     assert diagnostics == '', f'the widening scan produced compiler diagnostics\n{diagnostics}'
 
@@ -792,7 +831,7 @@ void probe(double * out) {{
     double acc[8];
     for (long i = 0; i < 8; ++i) src[i] = (double)(i + 1);
     const double seed = 10.0;
-    scan_incl_sum(src, acc, 0L, 8L, seed);
+    {body}
     out[0] = acc[0];
     out[1] = acc[7];
 }}
@@ -802,16 +841,19 @@ void probe(double * out) {{
 def test_a_c_scan_accepts_a_const_seed():
     """The accumulator is built from the seed's type, and the seed is normally ``const``.
 
-    ``typeof`` keeps qualifiers, so deriving the accumulator with it makes it ``const`` -- the fold
-    cannot assign it, and OpenMP refuses a const reduction variable outright ("may appear only in
-    shared or firstprivate clauses"). ``typeof_unqual`` is the C23 spelling that drops the
-    qualifier and keeps the width, which is the whole reason the accumulator is not just ``double``.
+    A ``const`` accumulator cannot be assigned, and OpenMP refuses a const reduction variable outright
+    ("may appear only in shared or firstprivate clauses"). The scan function takes the seed by value
+    and folds into a plain local of the seed's type, so the const-ness stays at the call site.
 
     Not a corner case: every read-only scalar the backend hands a scan arrives ``const``, so this is
     what ``tsvc_2_s323`` does and it stopped compiling entirely.
     """
-    definitions = '\n'.join(cpf_lowering.definitions_for({'scan_incl_sum'}, Dialect.STANDALONE_C))
-    code = _CONST_SEED_SCAN_PROBE.format(definitions=definitions)
+    body, definitions = scan_probe_body('::dace::scan::detail::scan_incl_sum(src, acc, 0L, 8L, seed);', {
+        'src': ('float64', True),
+        'acc': ('float64', True),
+        'seed': ('float64', False)
+    })
+    code = _CONST_SEED_SCAN_PROBE.format(definitions=definitions, body=body)
     diagnostics = compile_diagnostics(code, name='cpf_scan_const_seed', language='c')
     assert diagnostics == '', f'a const seed produced compiler diagnostics\n{diagnostics}'
 
@@ -867,10 +909,15 @@ DETECT_COLLISION_STATEMENTS = {
     'sized': '_count_out = dace::detect_collision(_idx_in, (n), false);',
 }
 
-#: ``(rewritten call, the macro it must name)`` per arity.
+#: The typed names a duplicate-check site offers. Both arrays are ``int64_t``.
+DETECT_COLLISION_NAMES = {'_idx_in': ('int64', True), '_owner_out': ('int64', True), 'n': ('int64', False)}
+
+#: ``(rewritten call, the typed function it must name)`` per arity.
 DETECT_COLLISION_C_FORMS = {
-    'tagged': ('cpf_detect_collision(_count_out, _idx_in, (n), _owner_out, (cap), false);', 'cpf_detect_collision'),
-    'sized': ('cpf_detect_collision_sized(_count_out, _idx_in, (n), false);', 'cpf_detect_collision_sized'),
+    'tagged': ('_count_out = cpf_detect_collision_int64_int64(_idx_in, (n), _owner_out, (cap), false);',
+               'cpf_detect_collision_int64_int64'),
+    'sized':
+    ('_count_out = cpf_detect_collision_sized_int64(_idx_in, (n), false);', 'cpf_detect_collision_sized_int64'),
 }
 
 #: ``(index array, whether it repeats a value)``. The empty and single-element cases are here
@@ -886,14 +933,18 @@ DUPLICATE_CASES = [
 
 
 @pytest.mark.parametrize('arity', sorted(DETECT_COLLISION_STATEMENTS))
-def test_c_rewrites_the_duplicate_check_into_its_statement_macro(arity):
-    """C has neither the template nor the overload pair, so the arity at the call site is what
-    picks between the macro that takes a caller-sized tag array and the one that sizes its own."""
+def test_c_rewrites_the_duplicate_check_into_a_call_typed_for_its_arrays(arity):
+    """C has neither the template nor the overload pair, so the arity at the call site picks between
+    the function that takes a caller-sized tag array and the one that sizes its own, and the element
+    types the site gives the arrays pick its instantiation."""
     statement = DETECT_COLLISION_STATEMENTS[arity]
     expected, helper = DETECT_COLLISION_C_FORMS[arity]
-    rewritten = cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C)
+    rewritten = cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C,
+                                                 cpf_lowering.NativeSite(DETECT_COLLISION_NAMES, 'probe'))
     assert rewritten == expected
     assert cpf_lowering.helpers_used(rewritten, Dialect.STANDALONE_C) == {helper}
+    definitions = cpf_lowering.definitions_for({helper}, Dialect.STANDALONE_C)
+    assert all('#define' not in definition and 'typeof' not in definition for definition in definitions), definitions
     # C++ has both overloads as one template pair, so it keeps the call and drops the namespace.
     assert cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE) == statement.replace('dace::', '')
 
@@ -905,9 +956,15 @@ def test_c_leaves_an_unrecognized_duplicate_check_call_for_verify():
     assert cpf_lowering.rewrite_native_code(unknown, Dialect.STANDALONE_C) == unknown
 
 
+def typed_site(names, dialect):
+    """A typed site for the C dialect, which names its helpers for the types; ``None`` for C++."""
+    return cpf_lowering.NativeSite(names, 'probe') if dialect is Dialect.STANDALONE_C else None
+
+
 def duplicate_check_unit(arity, dialect):
     """A standalone unit whose ``probe`` runs the duplicate check over a caller-supplied index."""
-    body = cpf_lowering.rewrite_native_code(DETECT_COLLISION_STATEMENTS[arity], dialect)
+    body = cpf_lowering.rewrite_native_code(DETECT_COLLISION_STATEMENTS[arity], dialect,
+                                            typed_site(DETECT_COLLISION_NAMES, dialect))
     used = cpf_lowering.helpers_used(body, dialect) | ({'detect_collision'} if dialect is Dialect.STANDALONE else set())
     signature = 'const int64_t * _idx_in, long long n, int64_t * _owner_out, long long cap, int64_t * _out'
     return textwrap.dedent("""
@@ -955,7 +1012,12 @@ SORT_STATEMENT = 'std::copy(_in, _in + (n), _out);\nstd::sort(_out, _out + (n));
 def test_copy_then_sort_leaves_the_destination_ordered_and_the_source_untouched(dialect, values):
     """``std::copy`` and ``std::sort`` are algorithms, not names C has; the C spellings CPF writes
     for them must produce the same range the C++ algorithms do, the empty range included."""
-    body = cpf_lowering.rewrite_native_code(SORT_STATEMENT, dialect)
+    body = cpf_lowering.rewrite_native_code(SORT_STATEMENT, dialect,
+                                            typed_site({
+                                                '_in': ('int64', True),
+                                                '_out': ('int64', True)
+                                            }, dialect))
+    assert dialect is Dialect.STANDALONE or 'cpf_sort_int64(_out, _out + (n));' in body, body
     used = cpf_lowering.helpers_used(body, dialect)
     signature = 'const int64_t * _in, long long n, int64_t * _out'
     code = textwrap.dedent("""
@@ -1060,7 +1122,13 @@ def test_the_c_lane_answers_every_cxx_name_a_selectable_expansion_writes(label, 
     VALUE, which only the expansion knows, so the expansion chooses between a memset and a loop
     and nothing reaches this lane.
     """
-    rewritten = cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C)
+    # The site types the connectors, which the sort is named for.
+    site = cpf_lowering.NativeSite({
+        '_in': ('float64', True),
+        '_out': ('float64', True),
+        'N': ('int64', False)
+    }, 'probe')
+    rewritten = cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C, site)
     if label == 'fill_n':
         assert rewritten == body, 'the fill is answered at expansion time, not here'
         return

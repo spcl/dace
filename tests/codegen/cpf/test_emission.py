@@ -145,7 +145,7 @@ def test_a_conflicting_wcr_renders_as_an_atomic_that_says_it_is_not_reduced():
             out[idx[i]] += val[i]
 
     sdfg, code = render(scatter, 'cpf_scatter_atomic')
-    assert '_Pragma("omp atomic update")' in code, 'a conflicting accumulation must render as an atomic'
+    assert '#pragma omp atomic update\n' in code, 'a conflicting accumulation must render as an atomic'
     assert 'NOT parallel-reduced' in code, 'the atomic must carry the hint that says it is not reduced'
     assert 'reduction(' not in code, 'a conflicting scatter has no tree-reducible form to fold into'
 

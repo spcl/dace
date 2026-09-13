@@ -69,6 +69,7 @@ BANNED_PATTERNS = (
     (re.compile(r'__dace_(init|exit)\w*'), 'DaCe init/exit entry point'),
     (re.compile(r'\bdace\s*::'), 'DaCe runtime namespace reference'),
     (re.compile(r'\bDACE_[A-Z]'), 'DaCe preprocessor macro'),
+    (re.compile(r'^[ \t]*#[ \t]*define\b', re.M), 'preprocessor macro definition'),
     (re.compile(r'__state\b'), 'DaCe state-struct dereference'),
     (re.compile(r'^(?!\s*//).*?\b(auto|__auto_type)\b',
                 re.M), 'deduced declaration (auto) instead of the resolved type'),
@@ -132,14 +133,13 @@ BANNED_PATTERNS_C = BANNED_PATTERNS + (
     (re.compile(r'\bdelete\b'), 'C++ delete-expression'),
 )
 
-#: What a DEVICE rendering must not contain. The two entries dropped from :data:`BANNED_PATTERNS`
-#: are dropped because the unit DEFINES them rather than borrowing them: the ``DACE_*`` annotation
-#: macros and the state struct carrying the stream both come out of CPF's own device preamble. A
-#: ``dace/`` header or a ``dace::`` symbol still says the unit needs the runtime, and both are still
-#: refused. Stated here as well as in ``dace.codegen.cpf.BANNED_DEVICE`` for the same reason the
-#: other two tables are: this file is the acceptance spec, written from outside.
-BANNED_PATTERNS_DEVICE = tuple(entry for entry in BANNED_PATTERNS
-                               if entry[1] not in ('DaCe preprocessor macro', 'DaCe state-struct dereference'))
+#: What a DEVICE rendering must not contain. The state-struct entry is dropped from
+#: :data:`BANNED_PATTERNS` because the unit DECLARES that struct, which carries the stream, rather
+#: than borrowing it. The ``DACE_*`` spellings are written out where they are used, so a surviving
+#: one is still a leak, as are a ``dace/`` header, a ``dace::`` symbol and any ``#define``. Stated
+#: here as well as in ``dace.codegen.cpf.BANNED_DEVICE`` for the same reason the other two tables
+#: are: this file is the acceptance spec, written from outside.
+BANNED_PATTERNS_DEVICE = tuple(entry for entry in BANNED_PATTERNS if entry[1] != 'DaCe state-struct dereference')
 
 
 def assert_standalone_device(code: str, label: str = 'cpf') -> None:
@@ -168,13 +168,14 @@ def assert_standalone_device(code: str, label: str = 'cpf') -> None:
 DEVICE_PREAMBLE_USES = (
     (re.compile(r'\bgpucub\s*::'), re.compile(r'^namespace gpucub\s*=', re.M), 'gpucub'),
     (re.compile(r'\bcpf_gpu_atomic\s*\('), re.compile(r'void cpf_gpu_atomic\s*\(', re.M), 'cpf_gpu_atomic'),
-    (re.compile(r'\bDACE_KERNEL_LAUNCH_CHECK\s*\('), re.compile(r'^#define DACE_KERNEL_LAUNCH_CHECK',
-                                                                re.M), 'DACE_KERNEL_LAUNCH_CHECK'),
+    (re.compile(r'\bcpf_kernel_launch_check\s*\('), re.compile(r'^static inline void cpf_kernel_launch_check\s*\(',
+                                                               re.M), 'cpf_kernel_launch_check'),
 )
 
-#: Every backend-neutral ``gpu*`` name is either declared by the core preamble or aliased per use.
-#: Anything else the generator emits is an undeclared identifier, which is what ``tsvc_2_s323`` hit
-#: on ``gpuMemcpyDeviceToHost`` while the whole suite stayed green.
+#: Every backend-neutral ``gpu*`` name left in the unit is a type or constant the core preamble
+#: declares; each ``gpu*`` CALL is written as its HIP function. Anything else is an undeclared
+#: identifier, which is what ``tsvc_2_s323`` hit on ``gpuMemcpyDeviceToHost`` while the whole suite
+#: stayed green.
 GPU_NAME = re.compile(r'\bgpu[A-Z]\w*')
 
 
@@ -187,7 +188,7 @@ def assert_every_gpu_name_is_declared(code: str, label: str = 'cpf') -> None:
     declared = set()
     for line in code.splitlines():
         text = line.strip()
-        for lead in ('using ', 'static constexpr gpuError_t ', '#define '):
+        for lead in ('using ', 'static constexpr gpuError_t '):
             if text.startswith(lead):
                 rest = text[len(lead):].split('=')[0].split()[0].strip()
                 declared.add(rest)

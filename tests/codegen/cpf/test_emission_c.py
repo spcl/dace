@@ -293,15 +293,16 @@ def test_strided_copy_renders_as_a_loop():
 def test_scan_keeps_its_parallel_inscan_form():
     """The prefix scan must stay the ``inscan`` form, not degrade to a sequential loop.
 
-    That form IS the parallel scan, and it is the reason the eight scan helpers exist at all -- a
-    rendering that quietly serialized every prefix sum would not be a canonical parallel form.
+    That form IS the parallel scan, and it is the reason the scan helpers exist at all -- a rendering
+    that quietly serialized every prefix sum would not be a canonical parallel form. The C helper is a
+    function typed for its input, output and seed, so its directives are plain ``#pragma`` lines.
     """
     sdfg, code = render_c(c_prefix, 'mprc_scan')
-    assert 'scan_incl_sum(' in code, f'this test needs the scan helper, or it asserts nothing:\n{code}'
-    # ``_Pragma``, not ``#pragma``: the C helper is a statement macro, and a macro expansion cannot
-    # produce a directive.
-    assert '_Pragma("omp simd reduction(inscan, +:cpf_scan_acc)")' in code, 'the scan must keep its inscan clause'
-    assert '_Pragma("omp scan inclusive(cpf_scan_acc)")' in code
+    assert re.search(r'cpf_scan_incl_sum_float64_float64_float64\(x, y, 0L, \(long\)\(N\), \(double\)\(0\)\);', code), \
+        f'this test needs the typed scan helper, or it asserts nothing:\n{code}'
+    assert '#pragma omp simd reduction(inscan, +:acc)' in code, 'the scan must keep its inscan clause'
+    assert '#pragma omp scan inclusive(acc)' in code
+    assert '#define' not in code and '_Pragma' not in code and 'typeof' not in code, code
 
     n = 512
     x = np.random.rand(n)
@@ -696,20 +697,25 @@ def find_first_input(hit):
 
 
 @pytest.mark.parametrize('implementation', ['pure', 'OpenMP'])
-def test_find_first_becomes_a_statement_macro_in_c(implementation):
-    """C has no lambda, so the predicate is pasted into the search rather than passed to it.
+def test_find_first_becomes_a_function_over_the_names_its_predicate_reads_in_c(implementation):
+    """C has no lambda, so the search is a function of its own taking what the predicate reads.
 
-    This is the one construct the C dialect answers by rewriting a CALL SITE, so the C form is
-    asserted directly: no lambda survives, the macro carries the assignment target, and the
-    predicate still reads the index under the name the expansion subscripted with.
+    The predicate is pasted into that function's innermost loop, so the C form is asserted directly: no
+    lambda survives, the call site assigns the function's answer, the array the predicate reads is a
+    typed parameter, and the predicate still reads the index under the name the expansion subscripted
+    with.
     """
     sdfg = find_first_sdfg('cpf_c_find_first_%s' % implementation.lower(), implementation)
     rendering = render_sdfg(sdfg, language='c')
     code = rendering.code
     assert '[&]' not in code, 'a C++ lambda survived into the C rendering'
-    assert re.search(r'cpf_find_first\(out\[out_idx\(0\)\], \(0\), \(N\), __i, \w+, \(a\[__i\] > 0.5\)\);',
-                     code), 'the search did not become the C statement macro'
+    call = re.search(r'out\[out_idx\(0\)\] = (cpf_find_first_\w+)\(\(0\), \(N\), (?:true|false), a\);', code)
+    assert call is not None, f'the search did not become a call to its own C function:\n{code}'
+    assert ('static inline long long %s(long long cpf_ff_begin, long long cpf_ff_end, bool cpf_ff_parallel, '
+            'const double *a) {' % call.group(1)) in code, code
+    assert 'const long long cpf_ff_v = (a[__i] > 0.5) ? __i : cpf_ff_end;' in code, code
     assert 'schedule(dynamic, 1)' in code, 'the C search lost its cancelling parallel form'
+    assert '#define' not in code and '_Pragma' not in code, code
 
     assert_standalone(code, 'cpf_c_find_first', language='c')
     library = build_standalone(code, 'cpf_c_find_first_%s' % implementation.lower(), language='c')
@@ -803,15 +809,18 @@ def test_a_non_byte_splat_fill_renders_as_a_loop_rather_than_a_memset():
 
 def test_the_scatter_guard_renders_without_the_dace_runtime():
     """The guard's duplicate check is ``dace::detect_collision``, a runtime template CPF may not
-    name. C has neither the template nor the overload pair, so the call becomes the statement macro
-    CPF defines, and the scatter it guards still writes what the index says."""
+    name. C has neither the template nor the overload pair, so the call names the function CPF
+    instantiates for the index and tag types, and the scatter it guards still writes what the index
+    says."""
     sdfg = scatter_sdfg('cpf_c_scatter_guard')
     rendering = render_sdfg(sdfg, language='c')
     code = rendering.code
     assert_standalone(code, 'cpf_c_scatter_guard', language='c')
-    assert re.search(r'cpf_detect_collision\(\w+, ip, \(N\), \w+, \(N\), false\);',
-                     code), f'the check did not become the C statement macro:\n{code}'
-    assert 'reduction(| : cpf_dc_c)' in code, 'the C check lost its OR-reduced verify pass'
+    assert re.search(r'\w+ = cpf_detect_collision_int32_int64\(ip, \(N\), \w+, \(N\), false\);',
+                     code), f'the check did not become a call to the typed C function:\n{code}'
+    assert 'static inline long long cpf_detect_collision_int32_int64(const int32_t *idx,' in code, code
+    assert 'reduction(| : c)' in code, 'the C check lost its OR-reduced verify pass'
+    assert '#define' not in code, code
 
     n = 64
     ip = np.random.default_rng(0).permutation(n).astype(np.int32)

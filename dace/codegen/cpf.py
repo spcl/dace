@@ -917,6 +917,7 @@ BANNED: Tuple[Tuple[re.Pattern, str], ...] = (
     (re.compile(r'__dace_(init|exit)\w*'), 'a DaCe init/exit entry point'),
     (re.compile(r'\bdace\s*::'), 'a DaCe runtime symbol'),
     (re.compile(r'\bDACE_[A-Z]'), 'a DaCe preprocessor macro'),
+    (re.compile(r'^[ \t]*#[ \t]*define\b', re.M), 'a preprocessor macro definition'),
     (re.compile(r'__state\b'), 'a state-struct dereference'),
 )
 
@@ -930,14 +931,12 @@ _C_DECLARED_TYPES = (r'(?:const\s+)?(?:unsigned\s+|signed\s+)?'
 #: What a finished C rendering must not contain, on top of :data:`BANNED`. Every one of these is
 #: valid C++ that the C++ dialect emits on purpose, so a leak is a dialect branch that was missed
 #: rather than a construct that should never exist.
-#: What a finished DEVICE rendering must not contain. The two entries dropped from :data:`BANNED`
-#: are dropped because the unit DEFINES them rather than borrowing them: the ``DACE_*`` annotation
-#: macros and the state struct carrying the stream both come from
-#: :data:`~dace.cpf_lowering.HIP_DEVICE_CORE`. A ``dace/`` header or a ``dace::`` symbol is
-#: still a leak, and those are the two that say the unit needs the runtime.
+#: What a finished DEVICE rendering must not contain. The state-struct entry is dropped from
+#: :data:`BANNED` because the unit DECLARES that struct, which carries the stream, rather than
+#: borrowing it (:func:`~dace.cpf_lowering.device_entry_prologue`). Every ``DACE_*`` spelling is
+#: written out by :func:`~dace.cpf_lowering.hip_spell_out`, so one surviving is a leak here too.
 BANNED_DEVICE: Tuple[Tuple[re.Pattern, str],
-                     ...] = tuple(entry for entry in BANNED
-                                  if entry[1] not in ('a DaCe preprocessor macro', 'a state-struct dereference'))
+                     ...] = tuple(entry for entry in BANNED if entry[1] != 'a state-struct dereference')
 
 BANNED_C: Tuple[Tuple[re.Pattern, str], ...] = BANNED + (
     (re.compile(r'\bstd\s*::'), 'a C++ standard-library symbol'),
@@ -1153,6 +1152,9 @@ def render(sdfg: SDFG,
                     # ``__restrict__`` is the GNU spelling ``Data.as_arg`` emits because C++ has no
                     # ``restrict`` keyword. C does, and it is the one a C23 unit should carry.
                     body = re.sub(r'\b__restrict__\b', 'restrict', body)
+                if dialect is cpf_lowering.Dialect.STANDALONE_HIP:
+                    # Last, because the passes above match the DaCe spellings the generator wrote.
+                    body = cpf_lowering.hip_spell_out(body)
     code = preamble(body, dialect) + body
     verify(code, sdfg.name, dialect)
     if check_compiles:

@@ -116,7 +116,7 @@ def test_device_reduction_folds_without_a_runtime_functor():
 
 def test_conflicting_device_wcr_is_an_atomic_and_never_an_omp_pragma():
     """A scatter whose index array may repeat is the WCR that stays conflicting. On the host CPF
-    writes ``_Pragma("omp atomic update")`` for it; inside a ``__global__`` function that pragma is
+    writes ``#pragma omp atomic update`` for it; inside a ``__global__`` function that pragma is
     ignored by the device compiler, so the rendering would compile, run, and race. The device
     spelling has to be an actual device atomic."""
 
@@ -256,7 +256,8 @@ def test_a_device_scan_seed_is_declared_at_its_type_on_both_backends():
 def test_a_device_product_scan_multiplies_through_a_typed_functor():
     code = cpf.cpf(device_scan_sdfg('cpf_hip_product_scan', ScanOp.PRODUCT), language='hip')
     assert_standalone_device(code, 'cpf_hip_product_scan')
-    assert '#define DACE_CUB_MUL_OP cpf_cub_multiplies()' in code, code
+    assert 'DACE_CUB_MUL_OP' not in code and '#define' not in code, code
+    assert 'cpf_cub_multiplies()' in code, 'the scan must pass the functor where the operator name was'
     assert '__host__ __device__ T operator()(const T& a, const T& b) const' in code, code
 
 
