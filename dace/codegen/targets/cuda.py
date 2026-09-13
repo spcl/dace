@@ -1700,6 +1700,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # Create grid barrier only if there is a synchronization requirement on nested GPU_Device maps
                 if any(p is not scope_entry for p in dfg_scope.predecessors(node)):
                     create_grid_barrier = True
+            elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
+                # Device maps in nested SDFGs within the kernel may also synchronize the grid
+                if self._nested_grid_barrier_required(node.sdfg):
+                    create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
         kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry))
@@ -2452,6 +2456,30 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         return all_scopes[all_scopes.index(scope_entry) + 1:]
 
+    def _emits_grid_barrier(self, state: SDFGState, scope_entry: nodes.EntryNode) -> bool:
+        """
+        Returns whether the scope generator synchronizes the thread block or grid at the end of the given map.
+
+        :param state: The state containing the map.
+        :param scope_entry: Entry node of a map within a kernel.
+        :return: True if a synchronization point follows the map.
+        """
+        if self.get_next_scope_entries(state, scope_entry):
+            return True
+        parent = xfh.get_parent_map(state, scope_entry)
+        return parent is not None and parent[0].schedule == dtypes.ScheduleType.Sequential
+
+    def _nested_grid_barrier_required(self, nsdfg: SDFG) -> bool:
+        """
+        Returns whether any device map within the given nested SDFG synchronizes the grid.
+
+        :param nsdfg: A nested SDFG generated within a kernel.
+        :return: True if the kernel needs to declare a grid barrier.
+        """
+        return any(
+            isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device
+            and self._emits_grid_barrier(parent, node) for node, parent in nsdfg.all_nodes_recursive())
+
     def generate_devicelevel_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView,
                                    state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Sanity check
@@ -2461,7 +2489,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         scope_entry = dfg_scope.source_nodes()[0]
         scope_exit = dfg_scope.sink_nodes()[0]
         scope_map = scope_entry.map
-        next_scopes = self.get_next_scope_entries(dfg, scope_entry)
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
@@ -2888,8 +2915,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
-        parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
-        if (len(next_scopes) > 0 or parent_scope.schedule == dtypes.ScheduleType.Sequential):
+        if self._emits_grid_barrier(dfg, scope_entry):
             # Thread-block synchronization
             if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 callsite_stream.write('__syncthreads();', cfg, state_id, scope_entry)
