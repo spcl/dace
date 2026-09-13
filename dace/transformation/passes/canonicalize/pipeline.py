@@ -3,7 +3,7 @@
 
 Rewrites an SDFG into a deterministic canonical form so later passes (fusion,
 vectorization, scheduling, equivalence checks) observe one shape per
-computation. See ``DESIGN.md`` for the rationale and ordering constraints.
+computation.
 """
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -1057,7 +1057,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # cascade_iedges_up (post-reduce): lift invariant interstate-edge assignments
     # (e.g. ``kfdia_plus_1 = kfdia + 1``) past every enclosing loop (all-or-nothing
-    # upward, see ``CASCADE_UP_DESIGN.md``) so the later body-assigns-range-symbol
+    # upward) so the later body-assigns-range-symbol
     # refuse-check sees the cleaned-up shape.
     # The frontend promotes a computed index (``i * inc``, ``i + M``) to a scalar and then to an
     # interstate symbol used in the subset (``a[__sym_i_times_inc]``). ``SymbolPropagation``

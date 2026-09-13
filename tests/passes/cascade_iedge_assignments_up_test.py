@@ -2,7 +2,7 @@
 """Unit tests for ``CascadeInterstateEdgeAssignmentsUp``.
 
 Each test is a small focused ``@dace.program`` exercising one of the
-binding rules / legality predicates from ``CASCADE_UP_DESIGN.md``:
+binding rules / legality predicates of the pass:
 
 * outer-only invariant single hoist;
 * two-loop shared hoist (one move serves both siblings);

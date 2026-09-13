@@ -70,10 +70,7 @@ from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import
 
 
 class PerDimKind(enum.Enum):
-    """Per-dim classification of a memlet subset for tile lowering.
-
-    See TILIFICATION_TRANSFORMATION_DESIGN.md section 4 for the lattice.
-    """
+    """Per-dim classification of a memlet subset for tile lowering."""
 
     #: No tile iter-var -- loop-invariant. All W lanes share one source element (codegen splats).
     CONSTANT = "constant"
@@ -1016,8 +1013,7 @@ def classify_tile_access(subset: Range,
             # The value ``a[(c*l+c0) mod N]`` is single-element but NOT contiguous across lanes
             # (it wraps), so it cannot be a structured contiguous-widened tile. The emitter builds
             # a per-lane index tile ``[f(l+0), .., f(l+W-1)]`` (expand the modulus per lane, then
-            # gather), exactly as VECTORIZATION_MODEL.md documents for ``MODULAR`` ("per-lane index
-            # + gather"). Recorded as GATHER so the shared emit dispatch routes it to the gather
+            # gather). Recorded as GATHER so the shared emit dispatch routes it to the gather
             # path; the per-lane expression is recovered from the subset-begin text.
             modular_N = _detect_modular_factor(lo_sym, tvar)
             if modular_N is not None:

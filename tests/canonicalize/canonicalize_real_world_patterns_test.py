@@ -3,8 +3,7 @@
 
 Distilled mock kernels for the load-bearing shapes found in
 ``mo_solve_nonhydro.f90``, ``mo_velocity_advection.f90`` and
-``cloudsc.F90`` (see the corresponding pattern reports in the
-``CASCADE_UP_DESIGN.md`` companion notes). Each test is a small
+``cloudsc.F90``. Each test is a small
 ``@dace.program`` that exercises one shape end-to-end through the
 canonicalize pipeline and asserts numerical equivalence against a
 pure-numpy oracle.

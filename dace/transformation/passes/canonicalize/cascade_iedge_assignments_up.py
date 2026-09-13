@@ -21,7 +21,7 @@ assigned by the loop body's interstate edges"). Cascading the invariant
 assignment up restores ``LoopToMap`` eligibility and stops the per-iteration
 re-assignment of values that never change.
 
-Binding rule (set by the user, see ``CASCADE_UP_DESIGN.md``): *all-or-nothing
+Binding rule (set by the user): *all-or-nothing
 upward*. A one-level partial hoist that leaves the assignment inside a
 different enclosing loop is forbidden -- the same scope-mismatch family of
 bugs reappears one level higher. The pass therefore either moves an
@@ -44,7 +44,7 @@ Legality predicates (per assignment ``key = rhs`` on edge ``e`` in region
 * **L5** -- ``e`` is unconditionally executed by ``D``: refuse if ``e``
   lives inside a ``ConditionalBlock`` branch within ``D`` (conservative;
   the user-permitted relaxation needs whole-program dataflow on ``key``
-  and is left as a future refinement, ``CASCADE_UP_DESIGN.md``).
+  and is left as a future refinement).
 * **L6** -- if the move would cross one or more ``NestedSDFG`` boundaries,
   each crossing needs a ``symbol_mapping`` passthrough. v1 refuses to
   cross NSDFG boundaries (conservative); the next iteration will route

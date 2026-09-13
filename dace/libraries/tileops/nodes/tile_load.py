@@ -124,8 +124,7 @@ def _phase_aware_lane_exprs(node: "TileLoad", parent_state: dace.SDFGState,
 #: ``ct.PaddingMode`` enum members. cuTile's padding enum offers ``+inf``
 #: (good for a downstream ``min`` reduction) but has **no** ``-inf`` / ``1``
 #: member (so ``max`` / ``prod`` partial-tile identities cannot be installed
-#: by load padding alone — they are routed to the reduction's pre-select;
-#: see the L-pad-identity note in ``CUTILE_EXPANSION_DESIGN.md``).
+#: by load padding alone — they are routed to the reduction's pre-select).
 PAD_MODE_CUTE = {
     "ZERO": "ct.PaddingMode.ZERO",
     "NAN": "ct.PaddingMode.NAN",
@@ -405,10 +404,10 @@ class TileLoad(nodes.LibraryNode):
     gather_dims = properties.ListProperty(
         element_type=int,
         default=[],
-        desc="Sorted SOURCE-array dim indices that GATHER (per TILIFICATION_TRANSFORMATION_DESIGN.md "
-        "section 5 + section 9). For each ``d in gather_dims`` an ``_idx_<d>`` input connector is "
+        desc=
+        "Sorted SOURCE-array dim indices that GATHER. For each ``d in gather_dims`` an ``_idx_<d>`` input connector is "
         "declared; the connector's descriptor shape is the Cartesian product of widths over the tile "
-        "dims the gather expression depends on (section 9.2 lane-dependency rule). Lane geometry "
+        "dims the gather expression depends on (lane-dependency rule). Lane geometry "
         "(``widths``) and source addressing (``gather_dims``) are orthogonal: ``len(widths) == K_tile`` "
         "and ``max(gather_dims) < src_ndim`` (checked at ``validate()`` time since ``src_ndim`` "
         "is read from the wired ``_src`` edge). Empty list = no gather (structured load). "
