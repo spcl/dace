@@ -912,7 +912,7 @@ SORT_STATEMENT = 'std::copy(_in, _in + (n), _out);\nstd::sort(_out, _out + (n));
 @pytest.mark.parametrize('values', [[], [5], [3, 3, 3], [4, 1, 3, 1, 0, -2, 9]],
                          ids=['empty', 'single', 'equal', 'mixed'])
 def test_copy_then_sort_leaves_the_destination_ordered_and_the_source_untouched(dialect, values):
-    """``std::copy`` and ``std::sort`` are algorithms, not names C has; the C macros CPF defines
+    """``std::copy`` and ``std::sort`` are algorithms, not names C has; the C spellings CPF writes
     for them must produce the same range the C++ algorithms do, the empty range included."""
     body = cpf_lowering.rewrite_native_code(SORT_STATEMENT, dialect)
     used = cpf_lowering.helpers_used(body, dialect)
@@ -1184,3 +1184,12 @@ def test_a_c_heaviside_of_another_arity_is_refused():
     """A third argument has no helper to reach, so the printer refuses rather than dropping it."""
     with pytest.raises(NotImplementedError, match='heaviside taking 3'):
         cpf_lowering.lowering_for('heaviside', ('a', 'b', 'c'), Dialect.STANDALONE_C, ('float64', ) * 3)
+
+
+def test_a_native_copy_is_the_memmove_it_performs():
+    """The unit carries no macros, so a copy is written out at the call site, and the argument with a
+    nested call in it is still one argument."""
+    body = 'std::copy(_in, _in + (cpf_max_int64(n, 0)), _out);'
+    rewritten = cpf_lowering.rewrite_native_code(body, Dialect.STANDALONE_C)
+    assert rewritten == ('memmove((_out), (_in), (size_t)((_in + (cpf_max_int64(n, 0))) - (_in)) * sizeof(*(_in)));')
+    assert cpf_lowering.helpers_used(rewritten, Dialect.STANDALONE_C) == {'cpf_max_int64'}

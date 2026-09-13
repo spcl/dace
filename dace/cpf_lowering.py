@@ -1181,7 +1181,7 @@ def rewrite_native_code(code: str, dialect: Optional[Dialect] = None) -> str:
     code = rewrite_ctypes(code, dialect)
 
     if (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C:
-        code = c_native_renames(c_numeric_limits(c_detect_collision(c_find_first(c_scan_identities(code)))))
+        code = c_native_renames(c_copy(c_numeric_limits(c_detect_collision(c_find_first(c_scan_identities(code))))))
 
     def replace(match: 're.Match') -> str:
         name = match.group(1)
@@ -2139,13 +2139,6 @@ C_INLINE_DEFINITIONS['cpf_detect_collision_sized'] = '\\\n'.join((
     '    } while (0)',
 ))
 
-#: ``std::copy`` over a contiguous range of a trivially copyable element type, which is what the
-#: expansions that write it copy. The C++ call returns the output end; nothing CPF renders reads
-#: it, and an expression macro has no way to return it, so the C form does not.
-C_INLINE_DEFINITIONS['cpf_copy'] = (
-    '#define cpf_copy(cp_first, cp_last, cp_out) \\\n'
-    '    memmove((cp_out), (cp_first), (size_t)((cp_last) - (cp_first)) * sizeof(*(cp_first)))')
-
 #: ``std::sort`` over a contiguous range. Heapsort rather than ``qsort``: the comparison stays
 #: inline and typed through C23 ``typeof``, where ``qsort`` would need a comparator function per
 #: element type and an indirect call per comparison. Same O(n log n) bound, and the order is the
@@ -2611,8 +2604,9 @@ def c_find_first(code: str) -> str:
 #: canonicalization traps a violated symbol assumption with ``if ((N < 0)) { std::abort(); }`` and
 #: DEDUPS its own guards by searching tasklet bodies for that literal text, so the spelling is
 #: fixed at the source. The ``mem*`` trio and ``std::size_t`` are spelled the same in C once the
-#: namespace goes. ``std::copy`` and ``std::sort`` keep their argument shape and change name, so
-#: the macros CPF defines for them take iterator pairs exactly as the C++ algorithms do.
+#: namespace goes. ``std::sort`` keeps its argument shape and changes name, so the statement CPF
+#: defines for it takes an iterator pair exactly as the C++ algorithm does; ``std::copy`` is spelled
+#: as the ``memmove`` it performs (:func:`c_copy`).
 C_NATIVE_RENAMES: Dict[str, str] = {
     cpp: C_STD_RENAMES[runtime]
     for runtime, cpp in STD_RENAMES.items() if cpp.startswith('std::') and runtime in C_STD_RENAMES
@@ -2623,7 +2617,6 @@ C_NATIVE_RENAMES.update({
     'std::memmove': 'memmove',
     'std::memset': 'memset',
     'std::size_t': 'size_t',
-    'std::copy': 'cpf_copy',
     'std::sort': 'cpf_sort',
 })
 
@@ -2668,6 +2661,38 @@ def c_typed_minmax(match: 're.Match') -> str:
     if ctype not in C_CTYPE_DTYPES:
         raise NotImplementedError(f'CPF cannot spell std::{operation}<{ctype}> in C: no C helper takes that type')
     return 'cpf_%s_%s(' % (operation, c_common_type((C_CTYPE_DTYPES[ctype], )))
+
+
+#: The opening of a ``std::copy`` call, qualified or not.
+C_COPY_CALL = re.compile(r'(?:::)?\bstd::copy\s*\(')
+
+
+def c_copy(code: str) -> str:
+    """Spell each ``std::copy(first, last, out)`` as the ``memmove`` it performs.
+
+    The expansions that write it copy a contiguous range of a trivially copyable element type, and
+    nothing CPF renders reads the output end the C++ call returns. A call whose arguments do not split
+    into three is left alone, so ``dace.codegen.cpf.verify`` reports it by name.
+
+    :param code: the body as the expansion wrote it.
+    :returns: the body with every such copy as a ``memmove``.
+    """
+    pieces, position = [], 0
+    for match in C_COPY_CALL.finditer(code):
+        if match.start() < position:
+            continue
+        depth, end = 1, match.end()
+        while end < len(code) and depth:
+            depth += {'(': 1, ')': -1}.get(code[end], 0)
+            end += 1
+        arguments = c_call_arguments(code[match.end():end - 1]) if depth == 0 else None
+        if arguments is None or len(arguments) != 3:
+            continue
+        first, last, out = arguments
+        pieces.append(code[position:match.start()])
+        pieces.append('memmove((%s), (%s), (size_t)((%s) - (%s)) * sizeof(*(%s)))' % (out, first, last, first, first))
+        position = end
+    return ''.join(pieces) + code[position:]
 
 
 def c_native_renames(code: str) -> str:
