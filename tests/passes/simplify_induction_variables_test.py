@@ -643,6 +643,31 @@ def test_does_not_fold_conditional_argmax_iv():
     assert result[0] == a.max() + float(int(np.argmax(a)))
 
 
+def test_counter_reseeded_without_reading_itself_is_not_folded():
+    """``k = m + 1`` re-seeds ``k`` every iteration; it is not a ``k := k + step`` counter."""
+    sdfg = dace.SDFG('reseeded_counter')
+    for name in ('N', 'm'):
+        sdfg.add_symbol(name, dace.symbol(name).dtype)
+    sdfg.add_array('A', [100], dace.float64)
+    loop = LoopRegion('L',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1',
+                      sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    use = loop.add_state('use')
+    loop.add_edge(body, use, dace.InterstateEdge(assignments={'k': 'm + 1'}))
+    t = use.add_tasklet('read', {'a_in': None}, {}, 'pass')
+    use.add_edge(use.add_access('A'), None, t, 'a_in', dace.Memlet('A[k]'))
+
+    assert SimplifyInductionVariables().apply_pass(sdfg, {}) is None
+    assert [dict(e.data.assignments) for e in loop.all_interstate_edges()] == [{'k': 'm + 1'}]
+    read = next(e for e in use.edges() if e.data.data == 'A')
+    assert str(read.data.subset) == 'k'
+
+
 if __name__ == '__main__':
     import pytest
     pytest.main([__file__, '-v'])

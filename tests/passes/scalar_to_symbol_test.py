@@ -1126,3 +1126,26 @@ def test_scalar_bound_to_a_view_is_not_promoted():
     A = np.zeros(4)
     sdfg(A=A)
     assert A[0] == 20.0
+
+
+@pytest.mark.parametrize('language, code, expected', [
+    (dace.Language.Python, 'b = a[ii]', True),
+    (dace.Language.Python, 'b = A[ii]', False),
+    (dace.Language.Python, 'b = a + ii', False),
+    (dace.Language.CPP, 'b = a[ii];', True),
+    (dace.Language.CPP, 'b = A[ii];', False),
+    (dace.Language.CPP, 'b = a + ii;', False),
+])
+def test_only_a_subscripted_connector_is_an_indirection_candidate(language, code, expected):
+    """A subscript on the data name ``A`` or no subscript at all gives the promoters nothing to rewrite."""
+    sdfg = dace.SDFG('indirection_candidate')
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_scalar('ii', dace.int64, transient=True)
+    sdfg.add_scalar('B', dace.float64, transient=True)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('t', {'a': None, 'ii': None}, {'b': None}, code, language=language)
+    state.add_edge(state.add_access('A'), None, tasklet, 'a', dace.Memlet('A'))
+    state.add_edge(state.add_access('ii'), None, tasklet, 'ii', dace.Memlet('ii'))
+    state.add_edge(tasklet, 'b', state.add_access('B'), None, dace.Memlet('B'))
+
+    assert scalar_to_symbol.tasklet_subscripts_a_connector(state, tasklet) is expected

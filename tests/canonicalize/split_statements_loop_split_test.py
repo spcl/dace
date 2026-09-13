@@ -28,7 +28,8 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.canonicalize.split_statements import SplitStatements
+from dace.transformation.passes.canonicalize.split_statements import (SplitStatements, local_transient_index,
+                                                                      loop_local_transients)
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -124,6 +125,37 @@ def _refuses(sdfg):
     before = sdfg.hash_sdfg()
     fired = _split(sdfg)
     return fired is None and sdfg.hash_sdfg() == before
+
+
+def test_loop_temporaries_are_the_transients_nothing_outside_the_loop_observes():
+    """``t`` lives in ``first`` only, ``c`` is its condition, ``z`` is unused; ``u`` and ``e`` escape."""
+    sdfg = dace.SDFG('loop_temporaries')
+    for nm in ('z', 'c', 'e', 'u', 't'):
+        sdfg.add_scalar(nm, dace.int64, transient=True)
+    first = LoopRegion('first',
+                       condition_expr='i < N + c',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       sdfg=sdfg)
+    second = LoopRegion('second',
+                        condition_expr='j < N',
+                        loop_var='j',
+                        initialize_expr='j = 0',
+                        update_expr='j = j + 1',
+                        sdfg=sdfg)
+    sdfg.add_node(first, is_start_block=True)
+    sdfg.add_node(second)
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'k': 'e'}))
+    first_body = first.add_state('first_body', is_start_block=True)
+    for nm in ('t', 'u', 'e'):
+        first_body.add_access(nm)
+    second.add_state('second_body', is_start_block=True).add_access('u')
+
+    index = local_transient_index(sdfg)
+    assert list(loop_local_transients(first, sdfg, index)) == ['z', 'c', 't']
+    assert list(loop_local_transients(second, sdfg, index)) == ['z']
+    assert list(loop_local_transients(first, sdfg)) == ['z', 'c', 't']
 
 
 # The flat loop is distributed into one loop per statement.

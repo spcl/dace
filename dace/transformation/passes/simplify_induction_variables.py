@@ -24,6 +24,7 @@ from typing import Any, Dict, Optional, Set, Tuple
 import sympy
 
 from dace import SDFG, properties, symbolic
+from dace.ordered import OrderedSet
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -52,7 +53,7 @@ class SimplifyInductionVariables(ppl.Pass):
         # loop; consumed by the enclosing loop so the outer carry can close too.
         nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]] = {}
         for loop in loops:
-            total += _simplify_loop(loop, nested_carries)
+            total += simplify_loop(loop, nested_carries)
         return total or None
 
 
@@ -91,7 +92,11 @@ def _is_self_referential_incr(name: str, rhs: str) -> Optional[sympy.Expr]:
     try:
         lhs_sym = symbolic.pystr_to_symbolic(name)
         rhs_sym = symbolic.pystr_to_symbolic(rhs)
-        diff = symbolic.simplify(rhs_sym - lhs_sym)
+        unsimplified = rhs_sym - lhs_sym
+        # A rhs that never names the counter leaves it in the difference, and simplify keeps value.
+        if (name not in {str(s) for s in rhs_sym.free_symbols} and name in {str(s) for s in unsimplified.free_symbols}):
+            return None
+        diff = symbolic.simplify(unsimplified)
     except Exception:
         return None
     if name in {str(s) for s in diff.free_symbols}:
@@ -107,6 +112,8 @@ def _fold_self_referential_iedge_ivs(loop: LoopRegion, iv_edge_sites: Dict[str, 
     net increment is recorded in ``nested_carries`` so any immediately enclosing
     loop can close the outer carry.
     """
+    if not iv_edge_sites:
+        return 0
     applied = 0
     start = loop_analysis.get_init_assignment(loop)
     stride = loop_analysis.get_loop_stride(loop)
@@ -180,6 +187,10 @@ def _fold_nested_carried_symbols(loop: LoopRegion, nested_carries: Dict[str, Tup
     After a nested inner loop folded a self-referential counter, this loop's
     iteration variable can be used to express the counter's value as a derived IV.
     """
+    # Only consume carries that belong to loops immediately nested inside this one.
+    immediate_nested = immediately_nested_loops(loop)
+    if not any(src_loop in immediate_nested for src_loop, per_iter in nested_carries.values()):
+        return 0
     applied = 0
     start = loop_analysis.get_init_assignment(loop)
     stride = loop_analysis.get_loop_stride(loop)
@@ -188,8 +199,6 @@ def _fold_nested_carried_symbols(loop: LoopRegion, nested_carries: Dict[str, Tup
     loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
     norm_iter = symbolic.simplify(symbolic.int_floor(loop_var - start, stride))
 
-    # Only consume carries that belong to loops immediately nested inside this one.
-    immediate_nested = {n for n in loop.nodes() if isinstance(n, LoopRegion)}
     for name, (src_loop, per_iter) in list(nested_carries.items()):
         if src_loop not in immediate_nested:
             continue
@@ -208,13 +217,22 @@ def _fold_nested_carried_symbols(loop: LoopRegion, nested_carries: Dict[str, Tup
     return applied
 
 
-def _simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]) -> int:
-    ivs = loop_analysis.detect_induction_variables(loop)
+def immediately_nested_loops(loop: LoopRegion) -> OrderedSet[LoopRegion]:
+    return OrderedSet(n for n in loop.nodes() if isinstance(n, LoopRegion))
 
+
+def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]) -> int:
     # Only fold derived IVs that came from interstate-edge assignments; skip
     # tasklet-derived entries (they refer to data descriptors, not symbols,
     # and folding them requires dataflow rewrites out of scope for v1).
     iv_edge_sites = _collect_interstate_iv_sites(loop)
+    # Every fold below needs an interstate assignment in the loop or a carry out of a nested loop.
+    if not iv_edge_sites:
+        immediate_nested = immediately_nested_loops(loop)
+        if not any(src_loop in immediate_nested for src_loop, per_iter in nested_carries.values()):
+            return 0
+
+    ivs = loop_analysis.detect_induction_variables(loop)
 
     applied = 0
 

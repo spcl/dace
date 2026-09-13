@@ -16,6 +16,7 @@ from dace import properties as props
 from dace import sdfg as sd
 from dace import subsets, symbolic
 from dace.frontend.python import astutils
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
@@ -24,6 +25,9 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
 from dace.transformation.transformation import explicit_cf_compatible
+
+# Every ``aname[subexpr]`` occurrence in C++ tasklet code.
+CPP_SUBSCRIPT_RE = re.compile(r'([a-zA-Z_][a-zA-Z_0-9]*?)\[(.*?)\]')
 
 
 def _is_dace_typecast(node: ast.Call) -> bool:
@@ -284,12 +288,12 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                     if isinstance(sdfg.arrays[tinput.src.data], dt.Stream):
                         candidates.remove(candidate)
                         break
-                    # If input is not a single-element memlet, skip
-                    if (tinput.data.dynamic or tinput.data.subset.num_elements() != 1):
-                        candidates.remove(candidate)
-                        break
                     # If input array has inputs of its own (cannot promote within same state), skip
                     if state.in_degree(tinput.src) > 0:
+                        candidates.remove(candidate)
+                        break
+                    # If input is not a single-element memlet, skip
+                    if (tinput.data.dynamic or tinput.data.subset.num_elements() != 1):
                         candidates.remove(candidate)
                         break
                     # Same reason, one indirection out: an INDEX that is itself produced here.
@@ -595,7 +599,7 @@ def _cpp_indirection_promoter(
     repl: Dict[Tuple[int, int], str] = {}
 
     # Find all occurrences of "aname[subexpr]"
-    for m in re.finditer(r'([a-zA-Z_][a-zA-Z_0-9]*?)\[(.*?)\]', code):
+    for m in CPP_SUBSCRIPT_RE.finditer(code):
         node_name = m.group(1)
         subexpr = m.group(2)
         if node_name in (set(in_edges.keys()) | set(out_edges.keys())):
@@ -644,6 +648,19 @@ def _cpp_indirection_promoter(
     return code, in_mapping, out_mapping, do_not_remove
 
 
+def tasklet_subscripts_a_connector(state: sd.SDFGState, node: nodes.Tasklet) -> bool:
+    """Whether ``node`` has a subscript the indirection promoters could rewrite: one naming a connector."""
+    connectors = OrderedSet(e.dst_conn for e in state.in_edges(node))
+    connectors.update(e.src_conn for e in state.out_edges(node))
+    if node.code.language is dtypes.Language.Python:
+        return any(
+            isinstance(sub, ast.Subscript) and astutils.rname(sub) in connectors for stmt in node.code.code
+            for sub in ast.walk(stmt))
+    if node.code.language is dtypes.Language.CPP:
+        return any(m.group(1) in connectors for m in CPP_SUBSCRIPT_RE.finditer(node.code.as_string))
+    return False
+
+
 def remove_symbol_indirection(sdfg: sd.SDFG):
     """
     Converts indirect memory accesses that involve only symbols into explicit
@@ -652,6 +669,11 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
     :param sdfg: The SDFG to run the pass on.
     :note: Operates in-place.
     """
+    # The defined-symbol walk is the whole cost; skip it when no tasklet subscripts a connector.
+    if not any(
+            isinstance(node, nodes.Tasklet) and tasklet_subscripts_a_connector(state, node) for state in sdfg.states()
+            for node in state.nodes()):
+        return
     for state, node, defined_syms in sdutils.traverse_sdfg_with_defined_symbols(sdfg):
         if not isinstance(node, nodes.Tasklet):
             continue

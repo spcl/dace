@@ -118,6 +118,7 @@ re-fuses whatever should recombine.
 """
 import copy
 from collections import Counter
+from dataclasses import dataclass
 from typing import Any
 
 from dace import SDFG, Memlet, dtypes, properties, symbolic
@@ -125,6 +126,7 @@ from dace import data as dt
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.analysis import loop_analysis
 
 
 def states_touch_view(states, arrays: dict) -> bool:
@@ -284,7 +286,7 @@ def local_transient_index(sdfg: SDFG) -> tuple:
 
     :param sdfg: The SDFG whose loops will be asked about.
     :returns: ``(per-state names, states per name, always-outside, per-loop condition names,
-              loop conditions per name)``.
+              loop conditions per name, candidate positions, candidates no state or loop condition names)``.
     """
     state_names: dict[int, dict[str, None]] = {}
     in_states: Counter = Counter()
@@ -306,7 +308,10 @@ def local_transient_index(sdfg: SDFG) -> tuple:
             names = dict.fromkeys(s for s in cfr.loop_condition.get_free_symbols() if s in sdfg.arrays)
             cond_names[id(cfr)] = names
             in_conditions.update(names.keys())
-    return state_names, in_states, always, cond_names, in_conditions
+    # Only these names can be local to any loop; the position keeps the answer in ``sdfg.arrays`` order.
+    position = {nm: i for i, (nm, desc) in enumerate(sdfg.arrays.items()) if desc.transient and nm not in always}
+    unnamed = [nm for nm in position if in_states[nm] == 0 and in_conditions[nm] == 0]
+    return state_names, in_states, always, cond_names, in_conditions, position, unnamed
 
 
 def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: tuple | None = None) -> dict[str, None]:
@@ -321,17 +326,44 @@ def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: tuple | None = No
     :param index: :func:`local_transient_index` of this (unmutated) ``sdfg``, when the caller
                   already holds one. ``None`` builds it here, per loop.
     """
-    state_names, in_states, always, cond_names, in_conditions = index or local_transient_index(sdfg)
+    state_names, in_states, _, cond_names, in_conditions, position, unnamed = index or local_transient_index(sdfg)
     inner: Counter = Counter()
     for state in loop.all_states():
         names = state_names.get(id(state))
         if names is not None:
             inner.update(names.keys())
     own_cond = cond_names.get(id(loop), {})
-    return dict.fromkeys(
-        nm for nm, desc in sdfg.arrays.items()
-        if desc.transient and nm not in always and in_states[nm] == inner[nm] and in_conditions[nm] == (
-            1 if nm in own_cond else 0))
+    # A name every state outside the loop leaves alone is one the loop's states all hold, or one no state holds.
+    local = [
+        nm for nm, count in inner.items()
+        if nm in position and in_states[nm] == count and in_conditions[nm] == (1 if nm in own_cond else 0)
+    ]
+    local.extend(unnamed)
+    local.extend(nm for nm in own_cond if nm in position and in_states[nm] == 0 and in_conditions[nm] == 1)
+    return dict.fromkeys(sorted(local, key=position.__getitem__))
+
+
+@dataclass(slots=True)
+class LoopSplitIndex:
+    """The whole-SDFG indices the loop split reads, each built on first use for an unmutated ``sdfg``."""
+    sdfg: SDFG
+    use: tuple | None = None
+    local: tuple | None = None
+
+    def use_sites(self) -> tuple:
+        if self.use is None:
+            self.use = loop_analysis.symbol_use_sites(self.sdfg)
+        return self.use
+
+    def local_transients(self, loop: LoopRegion) -> dict[str, None]:
+        if self.local is None:
+            self.local = local_transient_index(self.sdfg)
+        return loop_local_transients(loop, self.sdfg, self.local)
+
+    def clear(self) -> None:
+        # Both key on id(), which CPython recycles once a split destroys the blocks.
+        self.use = None
+        self.local = None
 
 
 def _output_dependency(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -> dict[str, None]:
@@ -1152,40 +1184,31 @@ class SplitStatements(ppl.Pass):
         clone carries its own copy of the loop, so one loop comes out as one loop per statement.
 
         Everything the split refuses is decided BEFORE the outlining
-        (:meth:`_loop_output_groups`), because the outlining is not free to undo: a refusal must
+        (:meth:`loop_output_groups`), because the outlining is not free to undo: a refusal must
         leave the SDFG byte-identical.
         """
         from dace.transformation.passes.simplify import SimplifyPass
         from dace.transformation import helpers
         from dace.transformation.interstate import InlineMultistateSDFG
         from dace.sdfg.graph import SubgraphView
-        from dace.transformation.passes.analysis import loop_analysis
 
         count = 0
         for cfg in list(sdfg.all_sdfgs_recursive()):
-            # Hoisted: loop-invariant, both were a whole-SDFG walk per loop.
-            use_index = None
-            local_index = None
+            # Both indices are whole-SDFG walks; most loops are refused before reading either.
+            index = LoopSplitIndex(cfg)
             for loop in [r for r in cfg.all_control_flow_regions() if isinstance(r, LoopRegion)]:
-                if use_index is None:
-                    use_index = loop_analysis.symbol_use_sites(cfg)
-                    local_index = local_transient_index(cfg)
-                local = loop_local_transients(loop, cfg, local_index)
-                decision = self._loop_output_groups(loop, cfg, local, use_index)
+                decision = self.loop_output_groups(loop, cfg, index)
                 if decision is None:
                     continue
                 groups, ordered = decision
                 if self._split_one_loop(cfg, loop, groups, ordered, SimplifyPass, helpers, InlineMultistateSDFG,
                                         SubgraphView):
                     count += 1
-                    # Dropped: the split destroyed the blocks, and both indices key on id(), which
-                    # CPython recycles -- a stale entry would name a live block wrongly.
-                    use_index = None
-                    local_index = None
+                    index.clear()
         return count
 
     @staticmethod
-    def _loop_output_groups(loop: LoopRegion, sdfg: SDFG, local: dict[str, None], use_index=None):
+    def loop_output_groups(loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex):
         """``(groups, ordered)`` for the loop, or ``None`` to refuse -- computed WITHOUT touching it.
 
         ``ordered`` says the clones must run one after the other, in the order ``groups`` gives,
@@ -1193,13 +1216,10 @@ class SplitStatements(ppl.Pass):
 
         :param loop: The loop to classify.
         :param sdfg: The SDFG owning ``loop``.
-        :param local: The loop's own temporaries (:func:`loop_local_transients`); they become
-                      private to each clone, so they are neither inputs nor outputs of the split.
-        :param use_index: The ``symbol_use_sites(sdfg)`` pair, when the caller already holds one for
-                          this (unmutated) ``sdfg``. ``None`` builds it here, per loop.
+        :param index: The whole-SDFG indices of this (unmutated) ``sdfg``. The loop's own temporaries
+                      (:func:`loop_local_transients`) become private to each clone, so they are
+                      neither inputs nor outputs of the split.
         """
-        from dace.transformation.passes.analysis import loop_analysis
-
         states = body_compute_states(loop)
         if states is None:
             return None
@@ -1224,7 +1244,7 @@ class SplitStatements(ppl.Pass):
             return None
         # A counter something outside the loop reads is EXPORTED by the outlining as an extra
         # scalar output, which the per-output clones would each have to write. Leave those alone.
-        use_sites, descriptor_symbols = use_index if use_index is not None else (None, None)
+        use_sites, descriptor_symbols = index.use_sites()
         if loop_analysis.counter_used_outside_loop(loop.loop_variable, loop, sdfg, use_sites, descriptor_symbols):
             return None
 
@@ -1243,6 +1263,7 @@ class SplitStatements(ppl.Pass):
                 # A WCR store is a reduction; it is not replicable per group.
                 if any(e.data.wcr is not None for e in stores):
                     return None
+        local = index.local_transients(loop)
         # A private temp read BEFORE anything writes it holds the PREVIOUS iteration's value (a
         # scalar rotation). Each clone gets its own private copy, so a clone that only reads such a
         # temp would read one that was never written. "Before" spans the whole body: a temp written
