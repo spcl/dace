@@ -220,9 +220,8 @@ def replace_properties_dict(node: Any,
             if propval in repl:
                 setattr(node, pname, repl[propval])
         elif isinstance(propclass, properties.RangeProperty):
-            # Iterating a Range yields (start, end, step) only; rebuilding from that resets tile sizes to 1.
-            ranges = [(*rng, tile) for rng, tile in zip(propval.ranges, propval.tile_sizes)]
-            setattr(node, pname, _replsym(ranges, symrepl))
+            # A Range is mutable: substitute in place, which keeps its tile sizes.
+            propval.replace(symrepl)
         elif isinstance(propclass, properties.ShapeProperty):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
