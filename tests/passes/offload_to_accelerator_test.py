@@ -346,6 +346,69 @@ def test_an_interstate_read_does_not_hand_the_next_state_the_device_name():
                 ], (f'host tasklet left holding a device container: {written}')
 
 
+def two_host_tasklets_beside_a_kernel_then_an_interstate_read() -> dace.SDFG:
+    """Two unconnected host tasklets get two size-1 wrappers that fuse; the next edge reads ``B[0]``."""
+    sdfg = dace.SDFG('two_host_tasklets_beside_a_kernel_then_an_interstate_read')
+    for name, size in (('A', 16), ('B', 16), ('C', 1), ('D', 1), ('E', 16)):
+        sdfg.add_array(name, [size], dace.float64)
+    mixed = sdfg.add_state('mixed', is_start_block=True)
+    mixed.add_mapped_tasklet('double', {'i': '0:16'}, {'inp': dace.Memlet('A[i]')},
+                             'out = inp * 2.0', {'out': dace.Memlet('B[i]')},
+                             external_edges=True)
+    for label, index, target, offset in (('first', 0, 'C', 1.0), ('second', 1, 'D', 2.0)):
+        tasklet = mixed.add_tasklet(label, {'inp'}, {'out'}, f'out = inp + {offset}')
+        mixed.add_edge(mixed.add_read('A'), None, tasklet, 'inp', dace.Memlet(f'A[{index}]'))
+        mixed.add_edge(tasklet, 'out', mixed.add_write(target), None, dace.Memlet(f'{target}[0]'))
+    after = sdfg.add_state('after')
+    after.add_mapped_tasklet('shift', {'i': '0:16'}, {'inp': dace.Memlet('B[i]')},
+                             'out = inp + k', {'out': dace.Memlet('E[i]')},
+                             external_edges=True)
+    sdfg.add_edge(mixed, after, dace.InterstateEdge(assignments={'k': 'B[0]'}))
+    sdfg.validate()
+    # What ``apply_gpu_storage`` does to a signature; the edge now reads device memory until copies exist.
+    for desc in sdfg.arrays.values():
+        desc.storage = dtypes.StorageType.GPU_Global
+    return sdfg
+
+
+def test_fusing_the_wrappers_does_not_validate_before_the_copies_exist():
+    """CloudSC's ``pap``: the wrapper fusion validated a graph whose interstate edge still read ``B``."""
+    sdfg = two_host_tasklets_beside_a_kernel_then_an_interstate_read()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    mixed = next(state for state in sdfg.states() if state.label == 'mixed')
+    scopes = mixed.scope_dict()
+    wrappers = {
+        scopes[node]
+        for node in mixed.nodes() if isinstance(node, dace.nodes.Tasklet) and node.label in ('first', 'second')
+    }
+    assert len(wrappers) == 1, f'the two size-1 wrappers were not fused: {wrappers}'
+    assert next(iter(wrappers)).map.schedule == dtypes.ScheduleType.GPU_Device
+    edge = next(edge for edge in sdfg.all_interstate_edges() if edge.dst.label == 'after')
+    assert set(edge.data.used_arrays(sdfg.arrays)) == {'B_host'}, edge.data.assignments
+
+
+@pytest.mark.gpu
+def test_the_fused_wrappers_compute_what_the_host_tasklets_computed():
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+    sdfg = two_host_tasklets_beside_a_kernel_then_an_interstate_read()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    host_a = np.random.default_rng(7).random(16)
+    arrays = {
+        'A': cupy.asarray(host_a),
+        'B': cupy.zeros(16),
+        'C': cupy.zeros(1),
+        'D': cupy.zeros(1),
+        'E': cupy.zeros(16)
+    }
+    sdfg(**arrays)
+    assert np.allclose(arrays['B'].get(), host_a * 2.0)
+    assert np.allclose(arrays['C'].get(), [host_a[0] + 1.0])
+    assert np.allclose(arrays['D'].get(), [host_a[1] + 2.0])
+    assert np.allclose(arrays['E'].get(), host_a * 2.0 + host_a[0] * 2.0)
+
+
 def free_computation_with_a_reading_and_a_sourceless_tasklet() -> dace.SDFG:
     """One state whose top level holds a device map and a free region with two roots.
 

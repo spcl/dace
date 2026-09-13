@@ -612,10 +612,13 @@ class OffloadToAccelerator(ppl.Pass):
                     new_maps |= self.make_size1_map_wrappers(sdfg, state)
 
             if new_maps:
+                # No validation: host reads of device storage are renamed only by ``eval_IR``, so the
+                # graph is invalid until the copies exist (CloudSC's ``pap`` on an interstate edge).
                 mapfusion_pass = FuseMaps(
                     strict_dataflow=True,
                     perform_vertical_map_fusion=True,
                     perform_horizontal_map_fusion=True,
+                    validate=False,
                 )
                 mapfusion_pipeline = ppl.Pipeline([mapfusion_pass])
                 mapfusion_pipeline.apply_pass(sdfg, {})
