@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from dace import SDFG, symbolic, properties
 from dace.sdfg.state import ControlFlowRegion
+from dace.transformation import helpers as xfh
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
@@ -516,12 +517,57 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
             # so test each for truthiness rather than summing them.
             changed = False
             for unit in units:
-                if unit.apply_pass(sdfg, {}):
-                    changed = True
+                if isinstance(unit, SimplifyPass):
+                    unit_changed = self.simplify_until_settled(unit, sdfg)
+                else:
+                    unit_changed = bool(unit.apply_pass(sdfg, {}))
+                changed = changed or unit_changed
             if not changed:
                 break
             rounds += 1
         return rounds or None
+
+    @staticmethod
+    def simplify_until_settled(simplify: SimplifyPass, sdfg: SDFG) -> bool:
+        """``simplify.apply_pass(sdfg, {})`` without the tail of its confirming sweep.
+
+        ``FixedPointPipeline`` repeats whole sweeps until one changes nothing. A pass that reported no
+        change on the current graph reports none again, so once every simplification pass has done so
+        since the last change the rest of that sweep is skipped. On CloudSC that tail is most of a sweep.
+
+        :param simplify: The round's ``SimplifyPass``; its own ``apply_subpass`` runs every pass.
+        :param sdfg: The SDFG to simplify.
+        :returns: Whether any simplification pass changed ``sdfg``.
+        """
+        names = simplify._pass_names
+        state: Dict[str, Any] = {}
+        settled: Dict[str, None] = {}
+        changed = False
+        sweep_changed = True
+        while sweep_changed and len(settled) < len(names):
+            sweep_changed = False
+            simplify._modified = ppl.Modifies.Nothing
+            for p in simplify.iterate_over_passes(sdfg):
+                result = simplify.apply_subpass(sdfg, p, state)
+                name = type(p).__name__
+                if result is not None:
+                    state[name] = result
+                    simplify._modified = p.modifies()
+                if name not in names:
+                    continue
+                if result is not None:
+                    settled.clear()
+                    changed = sweep_changed = True
+                    continue
+                settled[name] = None
+                if len(settled) == len(names):
+                    break
+        if changed:
+            # What SimplifyPass.apply_pass does after a modifying fixpoint.
+            xfh.split_interstate_edges(sdfg)
+            if simplify.validate and not simplify.validate_all:
+                sdfg.validate()
+        return changed
 
 
 @properties.make_properties
