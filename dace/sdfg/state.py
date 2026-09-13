@@ -764,12 +764,24 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
-        if isinstance(sdfg.start_block, AbstractControlFlowRegion):
-            update_if_not_none(defined_syms, sdfg.start_block.new_symbols(defined_syms))
+        try:
+            start_block = sdfg.start_block
+        except ValueError:
+            # The start block is ambiguous while the SDFG is still being built
+            start_block = None
+        if isinstance(start_block, AbstractControlFlowRegion):
+            update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
         for edge in sdfg.all_interstate_edges():
             update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
             if isinstance(edge.dst, AbstractControlFlowRegion):
                 update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
+        regions = []
+        region = state.parent_graph
+        while region is not None and region is not sdfg:
+            regions.append(region)
+            region = region.parent_graph
+        for region in reversed(regions):
+            update_if_not_none(defined_syms, region.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
         sdict = state.scope_dict()
@@ -1632,21 +1644,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         sdfg: SDFG = self.sdfg
 
-        # Start with global symbols
-        symbols = collections.OrderedDict(sdfg.symbols)
-        for desc in sdfg.arrays.values():
-            symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
-
-        # Add symbols from inter-state edges along the path to the state
-        try:
-            start_state = sdfg.start_state
-            for e in sdfg.predecessor_state_transitions(start_state):
-                symbols.update(e.data.new_symbols(sdfg, symbols))
-        except ValueError:
-            # Cannot determine starting state (possibly some inter-state edges
-            # do not yet exist)
-            for e in sdfg.edges():
-                symbols.update(e.data.new_symbols(sdfg, symbols))
+        symbols = collections.OrderedDict(self.defined_symbols())
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()
@@ -1814,9 +1812,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Validate missing symbols
             missing_symbols = [s for s in symbols if s not in symbol_mapping]
+            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
             if missing_symbols and self.sdfg is not None:
                 # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in self.sdfg.symbols}
+                parent_mapping = {s: s for s in missing_symbols if s in defined_symbols}
                 symbol_mapping.update(parent_mapping)
                 s.symbol_mapping = symbol_mapping
                 missing_symbols = [s for s in symbols if s not in symbol_mapping]
@@ -1826,9 +1825,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # Add new global symbols to nested SDFG
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
-                    # TODO: Think of a better way to avoid calling
-                    # symbols_defined_at in this moment
-                    sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
+                    sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
 
