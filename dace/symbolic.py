@@ -13,6 +13,7 @@ from typing import (Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Se
                     TYPE_CHECKING)
 import numpy
 import sympy.abc
+import sympy.parsing.sympy_parser
 import sympy.printing.str
 
 import packaging.version as packaging_version
@@ -3488,6 +3489,39 @@ _PYSTR2SYM_locals.update(_CAST_CLASSES)  # int32/uint16/float64/... typecast fun
 _PYSTR2SYM_locals.update(_sympy_clash)
 
 
+def sympy_parser_globals() -> Dict[str, Any]:
+    """The namespace ``parse_expr`` builds when handed none, captured from sympy itself so it stays exact per version."""
+    captured: List[Dict[str, Any]] = []
+
+    def capture(tokens: List[Any], local_dict: Dict[str, Any], global_dict: Dict[str, Any]) -> List[Any]:
+        captured.append(global_dict)
+        return tokens
+
+    sympy.parsing.sympy_parser.parse_expr('0', transformations=(capture, ))
+    return captured[0]
+
+
+# ``sympify`` gives ``parse_expr`` no namespace, so each string parse re-ran ``from sympy import *``.
+SYMPY_PARSER_GLOBALS = sympy_parser_globals()
+SYMPIFY_TRANSFORMATIONS = sympy.parsing.sympy_parser.standard_transformations + (
+    sympy.parsing.sympy_parser.convert_xor, )
+
+
+def sympify_text(text: str, evaluate: Optional[bool]) -> Any:
+    """``sympy.sympify(text, _PYSTR2SYM_locals, evaluate=evaluate)`` on the parser namespace built once."""
+    if evaluate is None:
+        evaluate = sympy.core.parameters.global_parameters.evaluate
+    text = text.replace('\n', '')
+    try:
+        return sympy.parsing.sympy_parser.parse_expr(text,
+                                                     local_dict=_PYSTR2SYM_locals,
+                                                     transformations=SYMPIFY_TRANSFORMATIONS,
+                                                     global_dict=SYMPY_PARSER_GLOBALS,
+                                                     evaluate=evaluate)
+    except (sympy.parsing.sympy_parser.TokenError, SyntaxError) as exc:
+        raise sympy.SympifyError('could not parse %r' % text, exc)
+
+
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """
     The visitor reconstructs symbolic expressions with non-evaluating SymPy
@@ -3558,7 +3592,10 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
         return native_parse(expr)
 
     # TODO: support SymExpr over-approximated expressions
-    result = sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify)
+    if isinstance(expr, str):
+        result = sympify_text(expr, simplify)
+    else:
+        result = sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify)
     if isinstance(result, bool):
         # SymPy parses the literals ``True``/``False`` to Python bools; keep them as
         # SymPy booleans so they stay distinct from the integers ``1``/``0``.

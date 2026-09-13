@@ -1,8 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import pytest
+import sympy
 from sympy import Min, Max
 
 import dace
+from dace import symbolic
 from dace.symbolic import pystr_to_symbolic, shapes_equal, simplify_ext, symbol
 
 
@@ -71,6 +74,24 @@ def test_relax_int_floor_hands_the_solver_a_head_it_can_invert():
 
     assert str(relax_int_floor(pystr_to_symbolic('(h - 7) // 2 + 1'))) == 'floor(h/2 - 7/2) + 1'
     assert str(relax_int_floor(pystr_to_symbolic('int_ceil(h, 2)'))) == 'ceiling(h/2)'
+
+
+@pytest.mark.parametrize('text', ['N - 1 < M', 'i + 2*j', 'x ^ 2', 'min(a, b)', 'a\n+ b', 'True', '3.5e-3'])
+@pytest.mark.parametrize('evaluate', [None, True, False])
+def test_string_parse_on_the_shared_namespace_matches_sympify(text: str, evaluate: bool | None) -> None:
+    expected = sympy.sympify(text, symbolic._PYSTR2SYM_locals, evaluate=evaluate)
+    assert sympy.srepr(symbolic.sympify_text(text, evaluate)) == sympy.srepr(expected)
+
+
+def test_string_parse_error_is_a_sympify_error() -> None:
+    with pytest.raises(sympy.SympifyError):
+        symbolic.sympify_text('1 +', None)
+
+
+def test_parse_leaves_the_shared_namespace_unchanged() -> None:
+    before = dict(symbolic.SYMPY_PARSER_GLOBALS)
+    symbolic.sympify_text('sqrt(x) + pi + x ^ y', None)
+    assert symbolic.SYMPY_PARSER_GLOBALS == before
 
 
 if __name__ == "__main__":
