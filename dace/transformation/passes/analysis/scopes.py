@@ -11,7 +11,7 @@ from dace.memlet import Memlet
 from dace.sdfg import graph as dgraph
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import SDFGState, enclosing_region_symbols, sdfg_scope_symbols
+from dace.sdfg.state import (ControlFlowBlock, LoopRegion, SDFGState, enclosing_region_symbols, sdfg_scope_symbols)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis.analysis import StateReachability
@@ -227,6 +227,32 @@ class CodegenAnalysisPipeline(ppl.Pipeline):
 
     def __init__(self):
         super().__init__([StateReachability(), SymbolScopes(), AllocationScopes(), AccessInstances()])
+
+
+def enclosing_loop_iterators(block: ControlFlowBlock) -> dict[str, None]:
+    """Iterators of the ``LoopRegion``s around ``block`` in its own SDFG: invariant inside it, declared by no symbol
+    table."""
+    names: dict[str, None] = {}
+    region = block.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            names[region.loop_variable] = None
+        region = region.parent_graph
+    return names
+
+
+def scoped_names(sdfg: SDFG) -> dict[str, None]:
+    """Every loop iterator and map parameter bound inside ``sdfg`` (not its nested SDFGs). No symbol table holds
+    them, so a fresh name must be checked against these too."""
+    names: dict[str, None] = {}
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            names[region.loop_variable] = None
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                names.update(dict.fromkeys(node.map.params))
+    return names
 
 
 class UndeterminedDType:

@@ -99,7 +99,8 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
     """
     if name == loop.loop_variable:
         return False
-    if name not in sdfg.symbols and name not in sdfg.constants and name not in sdfg_free_symbols:
+    if (name not in sdfg.symbols and name not in sdfg.constants and name not in sdfg_free_symbols
+            and name not in scopes.enclosing_loop_iterators(loop)):
         return False
     for e in loop.edges():
         if e.data.assignments and name in e.data.assignments:

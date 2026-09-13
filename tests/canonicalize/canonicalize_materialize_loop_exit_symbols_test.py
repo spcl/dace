@@ -79,6 +79,37 @@ def test_no_post_loop_use_is_noop():
     assert not _has_loop_exit_sym(sdfg, 'k')
 
 
+def test_a_step_over_an_enclosing_loop_iterator_is_materialised():
+    """``for j: k = 0; for i < N: k = k + j; out[j] = k``: ``j`` is invariant in the inner loop.
+
+    Neither iterator is in ``sdfg.symbols``; a step test that only asks that table calls ``j`` unknown
+    and keeps the inner loop pinned by its post-loop reader.
+    """
+    sdfg = dace.SDFG('mat_iv_enclosing_step')
+    sdfg.add_symbol('k', dace.int64)
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('out', [3], dace.int64)
+    outer = LoopRegion('outer', 'j < 3', 'j', 'j = 0', 'j = j + 1')
+    sdfg.add_node(outer, is_start_block=True)
+    seed = outer.add_state('seed', is_start_block=True)
+    inner = LoopRegion('inner', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    outer.add_node(inner)
+    outer.add_edge(seed, inner, dace.InterstateEdge(assignments={'k': '0'}))
+    body = inner.add_state('body', is_start_block=True)
+    body2 = inner.add_state('body2')
+    inner.add_edge(body, body2, dace.InterstateEdge(assignments={'k': 'k + j'}))
+    post = outer.add_state('post')
+    outer.add_edge(inner, post, dace.InterstateEdge())
+    tasklet = post.add_tasklet('write_k', {}, {'__o'}, '__o = k')
+    post.add_edge(tasklet, '__o', post.add_write('out'), None, dace.Memlet('out[j]'))
+
+    assert MaterializeLoopExitSymbols().apply_pass(sdfg, {}) == 1
+
+    sdfg.validate()
+    assert _has_loop_exit_sym(sdfg, 'k')
+    assert 'j' not in sdfg.symbols
+
+
 def int32_iterator_read_after_its_loop() -> dace.SDFG:
     """``for i = M32; i <= N32; i += S32`` then ``out[0] = a[i - S32]``, the last element visited.
 

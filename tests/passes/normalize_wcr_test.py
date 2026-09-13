@@ -27,7 +27,7 @@ import pytest
 import dace
 from dace.config import set_temporary
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.corpus import corpus_suite as CS
 
@@ -507,6 +507,18 @@ def test_canonicalize_emits_reduction_clause_for_indirect_read_reduction():
     sdfg(a=a.copy(), b=b.copy(), ip=ip.copy(), sum_out=out, N=n)
     # Reduction result: association-order tolerance sanctioned for OMP tree reductions.
     assert np.allclose(out, np.sum(a * b[ip]), rtol=1e-12, atol=1e-12)
+
+
+def test_a_fresh_map_parameter_avoids_a_loop_iterator_no_symbol_table_holds():
+    sdfg = dace.SDFG('fresh_name')
+    loop = LoopRegion('L', '_nnr_i0 < 4', '_nnr_i0', '_nnr_i0 = 0', '_nnr_i0 = _nnr_i0 + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state('body', is_start_block=True)
+
+    name = NormalizeWCR()._fresh_symbol(sdfg, '_nnr_i0')
+
+    assert '_nnr_i0' not in sdfg.symbols
+    assert name != '_nnr_i0'
 
 
 if __name__ == '__main__':

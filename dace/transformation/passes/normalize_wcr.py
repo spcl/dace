@@ -53,6 +53,7 @@ from dace import SDFG, SDFGState, data, dtypes
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.passes.analysis import scopes
 from dace.symbolic import symbol
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import unsqueeze_memlet
@@ -385,7 +386,7 @@ class NormalizeWCR(ppl.Pass):
 
     def _fresh_symbol(self, sdfg: SDFG, base: str) -> str:
         """A map-parameter name unused as a symbol/free-symbol in ``sdfg``."""
-        used = set(sdfg.symbols.keys()) | {str(s) for s in sdfg.free_symbols}
+        used = set(sdfg.symbols.keys()) | {str(s) for s in sdfg.free_symbols} | set(scopes.scoped_names(sdfg))
         name, i = base, 0
         while name in used:
             i += 1
