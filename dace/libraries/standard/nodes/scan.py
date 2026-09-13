@@ -314,6 +314,11 @@ def seed_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int):
     return None if edge is None else sdfg.arrays[edge.data.data]
 
 
+def future_value_type(ctype: str) -> str:
+    """The ``gpucub::FutureValue`` type :func:`future_value` constructs over a ``ctype`` seed."""
+    return f'::gpucub::FutureValue<{ctype}, const {ctype}*>'
+
+
 def future_value(ctype: str, expr: str) -> str:
     """``gpucub::FutureValue`` over a seed the host must not dereference.
 
@@ -324,7 +329,7 @@ def future_value(ctype: str, expr: str) -> str:
     (tsvc_2_s318's scan, gfx942). Naming ``const T*`` accepts a seed that is const and one that is
     not, on CUB and rocPRIM alike.
     """
-    return f'::gpucub::FutureValue<{ctype}, const {ctype}*>({expr})'
+    return f'{future_value_type(ctype)}({expr})'
 
 
 def device_seed_prologue(ctype: str) -> str:
@@ -346,9 +351,9 @@ def device_seed_prologue(ctype: str) -> str:
             '    if (_sc_fetch != gpuSuccess) return _sc_fetch;\n'
             '    _sc_fetch = gpuStreamSynchronize(__sc_stream);\n'
             '    if (_sc_fetch != gpuSuccess) return _sc_fetch;\n'
-            '    auto __sc_seed = __sc_staged;\n'
+            f'    {ctype} __sc_seed = __sc_staged;\n'
             '#else\n'
-            f'    auto __sc_seed = {future_value(ctype, "__sc_init")};\n'
+            f'    {future_value_type(ctype)} __sc_seed(__sc_init);\n'
             '#endif\n')
 
 

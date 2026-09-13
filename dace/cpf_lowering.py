@@ -869,7 +869,11 @@ namespace gpucub = hipcub;
     'DACE_CUB_MAX_OP':
     '#define DACE_CUB_MAX_OP ::gpucub::Max()\n',
     'DACE_CUB_MUL_OP':
-    '#define DACE_CUB_MUL_OP [] __device__(auto __cpf_a, auto __cpf_b) { return __cpf_a * __cpf_b; }\n',
+    'struct cpf_cub_multiplies {\n'
+    '    template <typename T>\n'
+    '    __host__ __device__ T operator()(const T& a, const T& b) const { return a * b; }\n'
+    '};\n'
+    '#define DACE_CUB_MUL_OP cpf_cub_multiplies()\n',
     'cpf_gpu_atomic':
     """\
 //: A conflicting accumulation, applied atomically under any binary operator.

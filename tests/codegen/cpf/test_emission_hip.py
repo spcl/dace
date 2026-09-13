@@ -17,6 +17,7 @@ Rendering, not running: these assert on the emitted text. What a GPU actually co
 subject of the library nodes' own suites, and CPF changes neither the algorithm nor the schedule.
 """
 import re
+import subprocess
 
 import numpy as np
 import pytest
@@ -242,6 +243,31 @@ def test_a_device_resident_scan_seed_is_read_where_it_lives():
     assert_standalone_device(code, 'cpf_hip_affine')
     assert 'inclusive_affine' in code, 'the affine recurrence must render as the device scan over its affine maps'
     assert '__global__ void cpf_affine_pack_kernel' in code, 'the map-packing kernel is part of the unit'
+
+
+def test_a_device_scan_seed_is_declared_at_its_type_on_both_backends():
+    """The HIP arm stages the seed as the element type; the CUDA arm passes the future itself."""
+    code = cpf.cpf(device_scan_sdfg('cpf_hip_seeded_scan', ScanOp.SUM, seed=True), language='hip')
+    assert_standalone_device(code, 'cpf_hip_seeded_scan')
+    assert 'double __sc_seed = __sc_staged;' in code, code
+    assert '::gpucub::FutureValue<double, const double*> __sc_seed(__sc_init);' in code, code
+
+
+def test_a_device_product_scan_multiplies_through_a_typed_functor():
+    code = cpf.cpf(device_scan_sdfg('cpf_hip_product_scan', ScanOp.PRODUCT), language='hip')
+    assert_standalone_device(code, 'cpf_hip_product_scan')
+    assert '#define DACE_CUB_MUL_OP cpf_cub_multiplies()' in code, code
+    assert '__host__ __device__ T operator()(const T& a, const T& b) const' in code, code
+
+
+@pytest.mark.gpu
+def test_a_device_product_scan_unit_builds_with_hipcc(tmp_path):
+    """The functor is what ``gpucub::DeviceScan`` instantiates, so the unit has to build, not only read right."""
+    source = tmp_path / 'cpf_hip_product_build.cpp'
+    source.write_text(cpf.cpf(device_scan_sdfg('cpf_hip_product_build', ScanOp.PRODUCT), language='hip'))
+    command = ['hipcc', '-std=c++20', '-fPIC', '-shared', str(source), '-o', str(tmp_path / 'unit.so')]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize('language', ('c++', 'c'))
