@@ -3799,7 +3799,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return '((%s) %s (%s))' % (self._print(expr.args[0]), op, self._print(expr.args[1]))
         if str(expr.func) == 'ipow' and self.cpp_mode:
             arguments = [self._print(a) for a in expr.args]
-            lowered = self._mpr_call('ipow', arguments)
+            lowered = self._mpr_call('ipow', arguments, self.c_argument_types(expr.args))
             if lowered is not None:
                 return lowered
             return 'dace::math::ipow(%s, %s)' % (arguments[0], arguments[1])
@@ -3950,6 +3950,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             if integral_index_expression(expr.args[0]):
                 return 'int64'
             return inner if inner in cpf_lowering.C_FLOATING_RANKS else 'float64'
+        if name in cpf_lowering.C_TYPED_HELPER_SPECS:
+            types = tuple(self.c_type(argument) for argument in expr.args)
+            picked = types[:1] if cpf_lowering.C_TYPED_HELPER_SPECS[name][0] == 'first' else types
+            return None if any(dtype is None for dtype in picked) else cpf_lowering.c_helper_dispatch(name, types)
         if name in cpf_lowering.C_TYPED_MATH:
             types = tuple(self.c_type(argument) for argument in expr.args)
             if any(dtype is None for dtype in types):

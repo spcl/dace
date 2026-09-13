@@ -1098,6 +1098,8 @@ def lowering_for(name: str,
             return '%s(%s)' % (c_math_function(name, types), ', '.join(arguments))
         if name == 'iround':
             return '((int)%s(%s))' % (c_math_function('round', types), ', '.join(arguments))
+        if name in C_TYPED_HELPER_SPECS:
+            return c_helper_call(name, arguments, types)
     variadic = variadic_minmax(name, arguments, dialect, types)
     if variadic is not None:
         return variadic
@@ -1772,47 +1774,6 @@ C_INLINE_DEFINITIONS.update({
     c_typed_family('ifloor', (('{T}', 'value'), ),
                    ((C_SIGNED_INTS, '{T}', 'return value;'), (C_FLOATS, 'int', 'return (int)floor{f}(value);')),
                    '+(value)'),
-    'int_ceil':
-    c_typed_family('int_ceil', (('{T}', 'numerator'), ('{T}', 'denominator')),
-                   ((C_SIGNED_INTS, '{T}', 'return (numerator + denominator - 1) / denominator;'), ),
-                   '(numerator) + (denominator)'),
-    'int_floor_ni':
-    c_typed_family('int_floor_ni', (('{T}', 'numerator'), ('{T}', 'denominator')),
-                   ((C_SIGNED_INTS, '{T}', '{T} quotient = numerator / denominator;\n'
-                     '{T} remainder = numerator % denominator;\n'
-                     'return quotient - ((remainder != 0) && ((remainder < 0) != (denominator < 0)));'), ),
-                   '(numerator) + (denominator)'),
-    'py_floor':
-    c_typed_family('py_floor', (('{T}', 'numerator'), ('{T}', 'denominator')),
-                   ((C_SIGNED_INTS, '{T}', 'return int_floor_ni(numerator, denominator);'),
-                    (C_FLOATS, '{T}', 'return floor{f}(numerator / denominator);')), '(numerator) + (denominator)'),
-    'py_mod':
-    c_typed_family('py_mod', (('{T}', 'numerator'), ('{T}', 'denominator')),
-                   ((C_ARITHMETIC, '{T}', 'return numerator - py_floor(numerator, denominator) * denominator;'), ),
-                   '(numerator) + (denominator)'),
-    'floor_mod':
-    c_typed_family('floor_mod', (('{T}', 'numerator'), ('{T}', 'denominator')),
-                   ((C_ARITHMETIC, '{T}', 'return py_mod(numerator, denominator);'), ), '(numerator) + (denominator)'),
-    'mod':
-    c_typed_family('mod', (('{T}', 'value'), ('{T}', 'modulus')),
-                   ((C_SIGNED_INTS, '{T}', 'return ((value % modulus) + modulus) % modulus;'), ),
-                   '(value) + (modulus)'),
-    'cpp_mod':
-    c_typed_family('cpp_mod', (('{T}', 'numerator'), ('{T}', 'denominator')),
-                   ((C_SIGNED_INTS, '{T}', 'return numerator % denominator;'),
-                    (C_FLOATS, '{T}', 'return fmod{f}(numerator, denominator);')), '(numerator) + (denominator)'),
-    'Mod_float':
-    c_typed_family('Mod_float', (('{T}', 'value'), ('{T}', 'modulus')),
-                   ((C_FLOATS, '{T}', 'return value - (int)(value / modulus) * modulus;'), ), '(value) + (modulus)'),
-    'Modulo':
-    c_typed_family(
-        'Modulo', (('{T}', 'value'), ('{T}', 'modulus')),
-        ((C_ARITHMETIC, '{T}', 'return value - ({T})floor((double)(value) / (double)(modulus)) * modulus;'), ),
-        '(value) + (modulus)'),
-    'Modulo_float':
-    c_typed_family('Modulo_float', (('{T}', 'value'), ('{T}', 'modulus')),
-                   ((C_FLOATS, '{T}', 'return value - ({T})floor{f}(value / modulus) * modulus;'), ),
-                   '(value) + (modulus)'),
     'cpp_divmod':
     c_typed_family('cpp_divmod',
                    (('{T}', 'numerator'), ('{T}', 'denominator'), ('{T} *', 'quotient'), ('{T} *', 'remainder')),
@@ -1837,42 +1798,123 @@ C_INLINE_DEFINITIONS.update({
     c_typed_family('np_frexp', (('{T}', 'value'), ('{T} *', 'mantissa'), ('int *', 'exponent')),
                    ((C_FLOATS, 'void', '*mantissa = frexp{f}(value, exponent);'), ), '+(value)',
                    ('value', '&(mantissa)', '&(exponent)')),
-    'ipow':
-    c_typed_family('ipow', (('{T}', 'base'), ('long long', 'exponent')), ((C_ARITHMETIC, '{T}', '{T} result = 1;\n'
-                                                                           'while (exponent > 0) {\n'
-                                                                           '    if (exponent & 1) { result *= base; }\n'
-                                                                           '    base *= base;\n'
-                                                                           '    exponent >>= 1;\n'
-                                                                           '}\n'
-                                                                           'return result;'), ), '+(base)'),
-    'logical_left_shift':
-    c_typed_family(
-        'logical_left_shift', (('{T}', 'value'), ('int', 'amount')),
-        tuple((((ctype, suffix), ), '{T}', 'return ({T})((%s)(value) << amount);' % unsigned)
-              for ctype, suffix, unsigned in (('int', 'i', 'unsigned int'), ('long', 'l', 'unsigned long'),
-                                              ('long long', 'll', 'unsigned long long'))), '+(value)'),
-    'logical_right_shift':
-    c_typed_family(
-        'logical_right_shift', (('{T}', 'value'), ('int', 'amount')),
-        tuple((((ctype, suffix), ), '{T}', 'return ({T})((%s)(value) >> amount);' % unsigned)
-              for ctype, suffix, unsigned in (('int', 'i', 'unsigned int'), ('long', 'l', 'unsigned long'),
-                                              ('long long', 'll', 'unsigned long long'))), '+(value)'),
-    'gcd':
-    c_typed_family('gcd', (('{T}', 'a'), ('{T}', 'b')), ((C_SIGNED_INTS, '{T}', '{T} x = a < 0 ? -a : a;\n'
-                                                          '{T} y = b < 0 ? -b : b;\n'
-                                                          'while (y != 0) {\n'
-                                                          '    {T} t = x % y;\n'
-                                                          '    x = y;\n'
-                                                          '    y = t;\n'
-                                                          '}\n'
-                                                          'return x;'), ), '(a) + (b)'),
-    'lcm':
-    c_typed_family('lcm', (('{T}', 'a'), ('{T}', 'b')), ((C_SIGNED_INTS, '{T}', '{T} divisor = gcd(a, b);\n'
-                                                          '{T} product;\n'
-                                                          'if (divisor == 0) { return 0; }\n'
-                                                          'product = (a / divisor) * b;\n'
-                                                          'return product < 0 ? -product : product;'), ), '(a) + (b)'),
 })
+
+#: The dace types a typed helper is instantiated at, grouped the way a helper's bodies differ.
+C_SIGNED_DTYPES: Tuple[str, ...] = ('int32', 'int64')
+C_FLOATING_DTYPES: Tuple[str, ...] = ('float32', 'float64')
+C_ARITHMETIC_DTYPES: Tuple[str, ...] = C_SIGNED_DTYPES + C_FLOATING_DTYPES
+
+#: The unsigned C type of each signed dace type's width, which a logical shift shifts through.
+C_UNSIGNED_OF: Dict[str, str] = {'int32': 'uint32_t', 'int64': 'uint64_t'}
+
+#: Runtime helper -> ``(which arguments pick the type, parameters, (types, body) groups)``.
+#:
+#: ``'all'`` picks by the type C's conversions give every argument, ``'first'`` by the first alone:
+#: ``ipow``'s exponent and a shift's amount are counts, not operands. A helper exists only for the
+#: types its groups list, so an unsigned or floating argument to a signed-only helper is refused at
+#: print time. In a body ``{T}`` is the C type, ``{t}`` the dace type a sibling helper is named for,
+#: ``{f}`` the ``<math.h>`` suffix and ``{U}`` the unsigned type of the same width.
+C_TYPED_HELPER_SPECS: Dict[str, Tuple[str, Tuple[Tuple[str, str], ...], Tuple[Tuple[Tuple[str, ...], str], ...]]] = {
+    'int_ceil': ('all', (('{T}', 'numerator'), ('{T}', 'denominator')),
+                 ((C_SIGNED_DTYPES, 'return (numerator + denominator - 1) / denominator;'), )),
+    # Floored on the argument type itself, never a promoted one: the correction reads the sign of the
+    # remainder, which a floating or unsigned instantiation would not have.
+    'int_floor_ni': ('all', (('{T}', 'numerator'), ('{T}', 'denominator')),
+                     ((C_SIGNED_DTYPES, '{T} quotient = numerator / denominator;\n'
+                       '{T} remainder = numerator % denominator;\n'
+                       'return quotient - ((remainder != 0) && ((remainder < 0) != (denominator < 0)));'), )),
+    'py_floor': ('all', (('{T}', 'numerator'), ('{T}', 'denominator')),
+                 ((C_SIGNED_DTYPES, 'return cpf_int_floor_ni_{t}(numerator, denominator);'),
+                  (C_FLOATING_DTYPES, 'return floor{f}(numerator / denominator);'))),
+    'py_mod': ('all', (('{T}', 'numerator'), ('{T}', 'denominator')),
+               ((C_ARITHMETIC_DTYPES, 'return numerator - cpf_py_floor_{t}(numerator, denominator) * denominator;'), )),
+    'floor_mod': ('all', (('{T}', 'numerator'), ('{T}', 'denominator')),
+                  ((C_ARITHMETIC_DTYPES, 'return cpf_py_mod_{t}(numerator, denominator);'), )),
+    'mod': ('all', (('{T}', 'value'), ('{T}', 'modulus')), ((C_SIGNED_DTYPES,
+                                                             'return ((value % modulus) + modulus) % modulus;'), )),
+    'cpp_mod': ('all', (('{T}', 'numerator'), ('{T}', 'denominator')),
+                ((C_SIGNED_DTYPES, 'return numerator % denominator;'), (C_FLOATING_DTYPES,
+                                                                        'return fmod{f}(numerator, denominator);'))),
+    'Mod_float': ('all', (('{T}', 'value'), ('{T}', 'modulus')),
+                  ((C_FLOATING_DTYPES, 'return value - (int)(value / modulus) * modulus;'), )),
+    'Modulo': ('all', (('{T}', 'value'), ('{T}', 'modulus')),
+               ((C_ARITHMETIC_DTYPES, 'return value - ({T})floor((double)(value) / (double)(modulus)) * modulus;'), )),
+    'Modulo_float': ('all', (('{T}', 'value'), ('{T}', 'modulus')),
+                     ((C_FLOATING_DTYPES, 'return value - ({T})floor{f}(value / modulus) * modulus;'), )),
+    'ipow':
+    ('first', (('{T}', 'base'), ('long long', 'exponent')),
+     ((C_ARITHMETIC_DTYPES, '{T} result = 1;\nwhile (exponent > 0) {\n    if (exponent & 1) { result *= base; }\n'
+       '    base *= base;\n    exponent >>= 1;\n}\nreturn result;'), )),
+    'logical_left_shift':
+    ('first', (('{T}', 'value'), ('int', 'amount')), ((C_SIGNED_DTYPES, 'return ({T})(({U})(value) << amount);'), )),
+    'logical_right_shift':
+    ('first', (('{T}', 'value'), ('int', 'amount')), ((C_SIGNED_DTYPES, 'return ({T})(({U})(value) >> amount);'), )),
+    'gcd': ('all', (('{T}', 'a'), ('{T}', 'b')),
+            ((C_SIGNED_DTYPES, '{T} x = a < 0 ? -a : a;\n{T} y = b < 0 ? -b : b;\nwhile (y != 0) {\n'
+              '    {T} t = x % y;\n    x = y;\n    y = t;\n}\nreturn x;'), )),
+    'lcm': ('all', (('{T}', 'a'), ('{T}', 'b')),
+            ((C_SIGNED_DTYPES, '{T} divisor = cpf_gcd_{t}(a, b);\n{T} product;\nif (divisor == 0) { return 0; }\n'
+              'product = (a / divisor) * b;\nreturn product < 0 ? -product : product;'), )),
+}
+
+
+def c_typed_helpers() -> Tuple[Dict[str, str], Dict[str, Tuple[str, ...]], Dict[str, Tuple[str, ...]]]:
+    """``(definitions, dependencies, types per helper)`` for every :data:`C_TYPED_HELPER_SPECS` entry.
+
+    Each instantiation is one ``static inline`` function named ``cpf_<helper>_<dace type>``, which is
+    what a printer that resolved its argument types calls.
+    """
+    definitions: Dict[str, str] = {}
+    dependencies: Dict[str, Tuple[str, ...]] = {}
+    available: Dict[str, Tuple[str, ...]] = {}
+    for name, (picking, parameters, groups) in C_TYPED_HELPER_SPECS.items():
+        for group_types, body in groups:
+            for dtype in group_types:
+                ctype = C_HELPER_TYPES[dtype]
+                helper = 'cpf_%s_%s' % (name, dtype)
+                filled = (body.replace('{T}', ctype).replace('{t}', dtype).replace(
+                    '{f}', 'f' if dtype == 'float32' else '').replace('{U}', C_UNSIGNED_OF.get(dtype, '')))
+                declared = ', '.join(ptype.replace('{T}', ctype) + ' ' + pname for ptype, pname in parameters)
+                statements = '\n'.join('    ' + line if line.strip() else line for line in filled.split('\n'))
+                definitions[helper] = 'static inline %s %s(%s) {\n%s\n}' % (ctype, helper, declared, statements)
+                dependencies[helper] = tuple(re.findall(r'\b(cpf_\w+)\(', filled))
+                available[name] = available.get(name, ()) + (dtype, )
+    return definitions, dependencies, available
+
+
+C_TYPED_HELPER_DEFINITIONS, C_TYPED_HELPER_DEPENDENCIES, C_TYPED_HELPER_TYPES = c_typed_helpers()
+C_INLINE_DEFINITIONS.update(C_TYPED_HELPER_DEFINITIONS)
+
+#: Typed helper name -> the dace type its call evaluates to, for a printer typing a nested call.
+C_TYPED_HELPER_RESULTS: Dict[str, str] = {
+    helper: helper.rsplit('_', 1)[1]
+    for helper in list(C_TYPED_MINMAX_DEFINITIONS) + list(C_TYPED_HELPER_DEFINITIONS)
+}
+
+
+def c_helper_dispatch(name: str, types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """The dace type the typed helper ``name`` is instantiated at for arguments of ``types``.
+
+    :raises NotImplementedError: if a picking argument's type is unknown, or no helper takes the type.
+    """
+    picking, parameters, _ = C_TYPED_HELPER_SPECS[name]
+    if types is None or len(types) != len(parameters):
+        raise NotImplementedError(f'CPF cannot pick the C {name} helper: the printer resolved the argument types '
+                                  f'as {types}')
+    picked = types[:1] if picking == 'first' else types
+    if any(dtype is None for dtype in picked):
+        raise NotImplementedError(f'CPF cannot pick the C {name} helper: the printer resolved the argument types '
+                                  f'as {types}')
+    dtype = c_common_type(tuple(picked))
+    if dtype not in C_TYPED_HELPER_TYPES[name]:
+        raise NotImplementedError(f'CPF has no C {name} for {dtype} arguments; it takes {C_TYPED_HELPER_TYPES[name]}')
+    return dtype
+
+
+def c_helper_call(name: str, arguments: Tuple[str, ...], types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """The call to the typed helper :func:`c_helper_dispatch` picks for ``name``."""
+    return 'cpf_%s_%s(%s)' % (name, c_helper_dispatch(name, types), ', '.join(arguments))
 
 
 def _c_scan_family(kind: str, operation: str, clause: str, step: str) -> str:
@@ -2125,11 +2167,7 @@ C_INLINE_DEFINITIONS['cpf_sort'] = '\\\n'.join((
 #: Definitions each C definition calls -- macros included, since a macro must be ``#define``d before
 #: the function body that expands it is compiled.
 C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
-    'py_floor': ('int_floor_ni', ),
-    'py_mod': ('py_floor', ),
-    'floor_mod': ('py_mod', ),
     'py_divmod': ('cpp_divmod', ),
-    'lcm': ('gcd', ),
     'scan_incl_min': ('cpf_min', ),
     'scan_incl_max': ('cpf_max', ),
     'scan_excl_min': ('cpf_min', ),
@@ -2137,6 +2175,7 @@ C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     'cpf_find_first': ('find_first_chunk', ),
     'cpf_detect_collision_sized': ('cpf_detect_collision', ),
 }
+C_DEFINITION_DEPENDENCIES.update({helper: calls for helper, calls in C_TYPED_HELPER_DEPENDENCIES.items() if calls})
 
 #: What the C dialect refuses, and why. Empty: every construct CPF reaches has a C spelling.
 C_UNSUPPORTED: Dict[str, str] = {}
@@ -2429,7 +2468,7 @@ TABLES: Dict[Dialect, Tables] = {
     Dialect.STANDALONE_C:
     _tables(C_STD_RENAMES, C_REWRITES, C_INLINE_DEFINITIONS, C_VARIADIC_MINMAX, C_UNSUPPORTED, C_CTYPE_RENAMES,
             C_BASE_HEADERS, C_DEFINITION_DEPENDENCIES, {},
-            frozenset(C_TYPED_MATH) | {'iround'}),
+            frozenset(C_TYPED_MATH) | frozenset(C_TYPED_HELPER_SPECS) | {'iround'}),
     # The HIP unit is C++, so it takes the C++ vocabulary and adds to it: the ROCm toolkit's own
     # headers, which ship with the compiler that builds the unit, and the device counterparts of
     # the runtime functions a DEVICE library expansion calls (:data:`HIP_INLINE_DEFINITIONS`).

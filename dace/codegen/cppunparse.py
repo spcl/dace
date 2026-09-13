@@ -398,6 +398,10 @@ class CPPUnparser:
         """Write a call to the runtime function ``name`` over the argument AST nodes."""
         self.write(runtime_call(name, [self.render(node) for node in arguments], self.c_argument_types(arguments)))
 
+    def c_typed_funcop(self, op: ast.operator) -> bool:
+        """Whether the C dialect prints the operator ``op`` as a typed helper call (``//`` and ``%``)."""
+        return cpf_lowering.standalone_c() and isinstance(op, (ast.FloorDiv, ast.Mod))
+
     def c_argument_types(self, arguments) -> Optional[Tuple[Optional[str], ...]]:
         """Each argument node's C type (:meth:`c_type`) when rendering the C dialect, else ``None``."""
         return tuple(self.c_type(node) for node in arguments) if cpf_lowering.standalone_c() else None
@@ -462,6 +466,11 @@ class CPPUnparser:
             operands = [node.left]
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
             return self.c_power_type(node)
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.FloorDiv, ast.Mod)):
+            types = (self.c_type(node.left), self.c_type(node.right))
+            if any(dtype is None for dtype in types):
+                return None
+            return cpf_lowering.c_helper_dispatch('py_floor' if isinstance(node.op, ast.FloorDiv) else 'py_mod', types)
         elif isinstance(node, ast.BinOp) and not isinstance(node.op, ast.MatMult):
             operands = [node.left, node.right]
         elif isinstance(node, ast.IfExp):
@@ -477,12 +486,14 @@ class CPPUnparser:
                 return None if any(dtype is None for dtype in types) else cpf_lowering.c_math_result_type(bare, types)
             if bare == 'iround':
                 return 'int32'
-            if node.func.id in cpf_lowering.C_TYPED_MINMAX_DEFINITIONS:
-                return node.func.id.rsplit('_', 1)[1]
+            if node.func.id in cpf_lowering.C_TYPED_HELPER_RESULTS:
+                return cpf_lowering.C_TYPED_HELPER_RESULTS[node.func.id]
+            if bare in cpf_lowering.C_TYPED_HELPER_SPECS:
+                types = tuple(self.c_type(argument) for argument in node.args)
+                picked = types[:1] if cpf_lowering.C_TYPED_HELPER_SPECS[bare][0] == 'first' else types
+                return None if any(dtype is None for dtype in picked) else cpf_lowering.c_helper_dispatch(bare, types)
             # Instantiated at the type their arguments convert to, which is also what they return.
-            if node.func.id in ('min', 'max', 'Min', 'Max', 'int_ceil', 'int_floor', 'int_floor_ni', 'py_floor',
-                                'py_mod', 'floor_mod', 'mod', 'Mod', 'cpp_mod', 'Mod_float', 'Modulo', 'Modulo_float',
-                                'gcd', 'lcm'):
+            if node.func.id in ('min', 'max', 'Min', 'Max', 'int_floor', 'Mod'):
                 operands = list(node.args)
         types = tuple(self.c_type(operand) for operand in operands)
         if not types or any(dtype is None for dtype in types):
@@ -688,7 +699,11 @@ class CPPUnparser:
         self.fill()
         self.dispatch(t.target)
         # Operations that require a function call
-        if t.op.__class__.__name__ in self.funcops:
+        if t.op.__class__.__name__ in self.funcops and self.c_typed_funcop(t.op):
+            operands = [t.target, t.value]
+            self.write(" = " + runtime_call(self.funcops[t.op.__class__.__name__][1],
+                                            [self.render(node) for node in operands], self.c_argument_types(operands)))
+        elif t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
             self.write(" = " + func + "(")
             self.dispatch(t.target)
@@ -1295,7 +1310,9 @@ class CPPUnparser:
         if self._complex_literal_fold(t):
             return
         # Operations that require a function call
-        if t.op.__class__.__name__ in self.funcops:
+        if t.op.__class__.__name__ in self.funcops and self.c_typed_funcop(t.op):
+            self.emit_call(self.funcops[t.op.__class__.__name__][1], [t.left, t.right])
+        elif t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
             self.write(func + "(")
 
@@ -1317,7 +1334,8 @@ class CPPUnparser:
             if power is not None and int(power) == power:
                 negative = power < 0
                 power = int(-power if negative else power)
-                base = '1' if power == 0 else runtime_call('dace::math::ipow', [self.render(t.left), str(power)])
+                base = '1' if power == 0 else runtime_call('dace::math::ipow', [self.render(
+                    t.left), str(power)], self.c_argument_types([t.left, ast.Constant(value=power)]))
                 self.write(runtime_call('reciprocal', [base]) if negative else '(%s)' % base)
                 return
             elif power is not None and (float(power) == 0.5 or float(power) == -0.5):  # Square root

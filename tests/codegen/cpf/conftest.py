@@ -94,7 +94,8 @@ _UNQUALIFIED_CALL = re.compile(r'(?<![\w:.])(' + '|'.join(sorted(UNQUALIFIED_RUN
 
 #: What counts as CPF DEFINING one of those names rather than calling it: a C++ function definition
 #: (``static constexpr inline int64_t int_ceil(...)``) or a C function-like macro
-#: (``#define int_ceil(a, b) _Generic(...)``), which is the C dialect's form of the same fix.
+#: (``#define heaviside(...)``). The C dialect's typed helpers (``cpf_int_ceil_int64``) carry the
+#: runtime name only after a ``_``, which the call pattern's lookbehind already does not match.
 _DEFINITION_OF = re.compile(r'(?:\b(?:inline|constexpr|static)\b[^;{()\n]*?|#\s*define\s+)'
                             r'(?<![\w:.])(\w+)\s*\(')
 

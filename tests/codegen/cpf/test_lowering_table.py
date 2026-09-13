@@ -18,6 +18,7 @@ every C definition must be reachable from something a printer emits, and every C
 C counterpart or an entry saying why it cannot.
 """
 import ctypes
+import re
 import textwrap
 
 import numpy as np
@@ -237,14 +238,58 @@ def test_out_parameter_helpers_compute_the_runtime_value(name, statement, expect
                                   abs=1e-12), (f'{name}: {statement!r} gave {value!r}, expected {expected!r}')
 
 
-def test_c_definitions_are_emitted_callees_first():
-    """A C macro must be ``#define``d before the function body that expands it is compiled."""
-    emitted = cpf_lowering.definitions_for({'py_mod'}, Dialect.STANDALONE_C)
-    order = [text.rsplit('#define ', 1)[1].split('(')[0] for text in emitted]
-    assert order.index('int_floor_ni') < order.index('py_floor') < order.index('py_mod'), order
-    py_floor = emitted[order.index('py_floor')]
-    assert 'return floorf(numerator / denominator);' in py_floor, py_floor
-    assert 'return floor(numerator / denominator);' in py_floor, py_floor
+@pytest.mark.parametrize('dtype', ['int32', 'int64'])
+def test_c_typed_helpers_are_emitted_callees_first(dtype):
+    """A C function must be declared before the function that calls it, or the unit does not compile."""
+    emitted = cpf_lowering.definitions_for({'cpf_py_mod_' + dtype}, Dialect.STANDALONE_C)
+    order = [re.match(r'static inline \S+ (\w+)\(', text).group(1) for text in emitted]
+    assert order == ['cpf_int_floor_ni_' + dtype, 'cpf_py_floor_' + dtype, 'cpf_py_mod_' + dtype], order
+
+
+def test_a_float_py_floor_calls_the_floor_of_its_own_width():
+    """``floor`` on a ``float`` quotient would round it through ``double``; the helper names ``floorf``."""
+    emitted = cpf_lowering.definitions_for({'cpf_py_floor_float32'}, Dialect.STANDALONE_C)
+    assert emitted == ('static inline float cpf_py_floor_float32(float numerator, float denominator) {\n'
+                       '    return floorf(numerator / denominator);\n}', ), emitted
+
+
+#: ``(helper, argument types)`` C has no typed helper for. Each would be a sign-sensitive body at a
+#: type without a sign, or integer division at a floating type.
+C_REFUSED_HELPER_CALLS = [
+    ('int_floor_ni', ('uint32', 'int32')),
+    ('int_floor_ni', ('float64', 'int64')),
+    ('int_ceil', ('uint64', 'uint64')),
+    ('mod', ('float32', 'float32')),
+    ('Mod_float', ('int64', 'int64')),
+    ('logical_left_shift', ('float64', 'int32')),
+]
+
+
+@pytest.mark.parametrize('name,types',
+                         C_REFUSED_HELPER_CALLS,
+                         ids=['%s-%s' % (n, '-'.join(t)) for n, t in C_REFUSED_HELPER_CALLS])
+def test_a_helper_call_at_a_type_the_helper_lacks_is_refused(name, types):
+    """No dispatch macro is left to reject such a call at compile time, so the printer must refuse it
+    rather than instantiate a helper at a type it was never written for."""
+    with pytest.raises(NotImplementedError):
+        cpf_lowering.lowering_for(name, ('a', 'b'), Dialect.STANDALONE_C, types)
+
+
+#: ``(argument types, the helper int_floor_ni is instantiated at)``: the conversion of its own two
+#: operands, never a wider or unsigned type.
+C_INT_FLOOR_NI_TYPES = [
+    (('int32', 'int32'), 'int32'),
+    (('int16', 'int8'), 'int32'),
+    (('int32', 'int64'), 'int64'),
+]
+
+
+@pytest.mark.parametrize('types,dtype', C_INT_FLOOR_NI_TYPES, ids=['-'.join(t) for t, _ in C_INT_FLOOR_NI_TYPES])
+def test_int_floor_ni_stays_on_the_callers_signed_type(types, dtype):
+    """The correction reads the remainder's sign, so the helper must run at the signed type the operands
+    already convert to; promoting further would change what an overflowing caller computes."""
+    assert cpf_lowering.lowering_for('int_floor_ni', ('a', 'b'), Dialect.STANDALONE_C, types) == \
+        'cpf_int_floor_ni_%s(a, b)' % dtype
 
 
 def test_definitions_are_emitted_callees_first():
@@ -422,7 +467,8 @@ def test_every_cpp_definition_has_a_c_form_or_a_refusal():
     """No C++ helper escapes the choice: it is either spelled in C or listed as unspellable."""
     unclassified = sorted(
         set(cpf_lowering.INLINE_DEFINITIONS) - set(cpf_lowering.C_INLINE_DEFINITIONS) -
-        set(cpf_lowering.C_UNSUPPORTED) - cpf_lowering.C_REWRITTEN_IN_NATIVE_CODE)
+        set(cpf_lowering.C_TYPED_HELPER_SPECS) - set(cpf_lowering.C_UNSUPPORTED) -
+        cpf_lowering.C_REWRITTEN_IN_NATIVE_CODE)
     assert not unclassified, (f'{unclassified} have a C++ inline definition but no C form, no rewrite and no entry '
                               'in C_UNSUPPORTED, so a kernel calling one would render C that does not build')
 
@@ -434,12 +480,13 @@ def test_every_cpp_std_rename_has_a_c_form():
     a rename in C++, an emitted definition in C. Asserted explicitly, because "moved lanes" and
     "was forgotten" look identical from the C++ side.
     """
-    answered = set(cpf_lowering.C_STD_RENAMES) | set(cpf_lowering.C_INLINE_DEFINITIONS) | set(cpf_lowering.C_TYPED_MATH)
+    answered = (set(cpf_lowering.C_STD_RENAMES) | set(cpf_lowering.C_INLINE_DEFINITIONS)
+                | set(cpf_lowering.C_TYPED_MATH) | set(cpf_lowering.C_TYPED_HELPER_SPECS))
     missing = sorted(set(cpf_lowering.STD_RENAMES) - answered)
     assert not missing, f'{missing} are renamed to std:: in C++ but have no C spelling'
     for name in ('gcd', 'lcm'):
         assert name not in cpf_lowering.C_STD_RENAMES, f'C has no library {name}'
-        assert name in cpf_lowering.C_INLINE_DEFINITIONS, f'{name} must be emitted by CPF in C'
+        assert name in cpf_lowering.C_TYPED_HELPER_SPECS, f'{name} must be emitted by CPF in C'
 
 
 def test_every_c_definition_is_reachable():
@@ -449,7 +496,12 @@ def test_every_c_definition_is_reachable():
     unreachable entry never compiles, never runs, and never fails.
     """
     reachable = set(cpf_lowering.C_STD_RENAMES.values()) | set(cpf_lowering.C_VARIADIC_MINMAX.values())
-    # A printed min/max names the typed helper for the type its operands convert to.
+    # A printed helper call names the typed helper for the type its operands convert to.
+    for name, dtypes in cpf_lowering.C_TYPED_HELPER_TYPES.items():
+        for dtype in dtypes:
+            arguments = tuple('a%d' % index for index in range(len(cpf_lowering.C_TYPED_HELPER_SPECS[name][1])))
+            lowered = cpf_lowering.lowering_for(name, arguments, Dialect.STANDALONE_C, (dtype, ) * len(arguments))
+            reachable |= cpf_lowering.helpers_used(lowered, Dialect.STANDALONE_C)
     for name in cpf_lowering.C_VARIADIC_MINMAX:
         for dtype in cpf_lowering.C_HELPER_TYPES:
             lowered = cpf_lowering.lowering_for(name, ('a', 'b'), Dialect.STANDALONE_C, (dtype, dtype))
