@@ -120,7 +120,7 @@ def test_ite_compiled_in_sdfg_matches_python_reference():
     ra = state.add_access("a")
     rb = state.add_access("b")
     wo = state.add_access("out")
-    t = state.add_tasklet("m", {"_a", "_b"}, {"_o"}, "_o = ITE(c, _a, _b)")
+    t = state.add_tasklet("m", {"_a": None, "_b": None}, {"_o": None}, "_o = ITE(c, _a, _b)")
     state.add_edge(ra, None, t, "_a", dace.Memlet("a[0]"))
     state.add_edge(rb, None, t, "_b", dace.Memlet("b[0]"))
     state.add_edge(t, "_o", wo, None, dace.Memlet("out[0]"))
