@@ -5,6 +5,7 @@ import ast
 import abc
 import collections
 import copy
+import re
 import inspect
 import itertools
 import warnings
@@ -1644,7 +1645,28 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         sdfg: SDFG = self.sdfg
 
-        symbols = collections.OrderedDict(self.defined_symbols())
+        # Start with global symbols
+        symbols = collections.OrderedDict(sdfg.symbols)
+        for desc in sdfg.arrays.values():
+            symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
+
+        # Add symbols from inter-state edges along the path to the state
+        try:
+            start_state = sdfg.start_state
+            for e in sdfg.predecessor_state_transitions(start_state):
+                symbols.update(e.data.new_symbols(sdfg, symbols))
+        except ValueError:
+            # Cannot determine starting state (possibly some inter-state edges
+            # do not yet exist)
+            for e in sdfg.edges():
+                symbols.update(e.data.new_symbols(sdfg, symbols))
+        regions = []
+        region = self.parent_graph
+        while region is not None and region is not sdfg:
+            regions.append(region)
+            region = region.parent_graph
+        for region in reversed(regions):
+            symbols.update({k: v for k, v in region.new_symbols(symbols).items() if v is not None})
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()
@@ -3307,6 +3329,8 @@ class LoopRegion(ControlFlowRegion):
         self.update_before_condition = update_before_condition
         self.unroll = unroll
         self.unroll_factor = unroll_factor
+        self._new_symbols_key = None
+        self._new_symbols_value = {}
 
     def inline(self, lower_returns: bool = False) -> Tuple[bool, Any]:
         """
@@ -3765,6 +3789,16 @@ class LoopRegion(ControlFlowRegion):
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.init_statement and self.loop_variable:
+            # Inference parses the loop header; reuse the answer while the header and its names' types are unchanged
+            texts = (self.loop_variable, self.init_statement.as_string, self.loop_condition.as_string,
+                     self.update_statement.as_string if self.update_statement else '')
+            names = sorted(set(re.findall(r'[A-Za-z_]\w*', ' '.join(texts))))
+            key = (texts, tuple((n, symbols.get(n)) for n in names),
+                   tuple((n, self.sdfg.arrays[n].dtype) for n in names if n in self.sdfg.arrays))
+            if key == self._new_symbols_key:
+                return dict(self._new_symbols_value)
+            self._new_symbols_key = key
+            self._new_symbols_value = {}
             alltypes = copy.copy(symbols)
             alltypes.update({k: v.dtype for k, v in self.sdfg.arrays.items()})
             l_end = loop_analysis.get_loop_end(self)
@@ -3774,7 +3808,8 @@ class LoopRegion(ControlFlowRegion):
                                                   infer_expr_type(l_end, alltypes))
             init_rhs = loop_analysis.get_init_assignment(self)
             if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
-                return {self.loop_variable: inferred_type}
+                self._new_symbols_value = {self.loop_variable: inferred_type}
+            return dict(self._new_symbols_value)
         return {}
 
     def replace_dict(self,
