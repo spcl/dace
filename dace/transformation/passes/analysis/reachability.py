@@ -10,7 +10,7 @@ moves if the graph is edited afterwards.
 """
 import functools
 import itertools
-from typing import Callable, Dict, Iterable, Iterator, List, Optional, Set
+from typing import Callable, Dict, Iterable, Iterator, List, Optional
 
 from dace.ordered import OrderedSet
 from dace.sdfg.sdfg import SDFG
