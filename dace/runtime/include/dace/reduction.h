@@ -274,6 +274,46 @@ struct _wcr_fixed<ReductionType::Max, T> {
   DACE_HDFI T operator()(const T& a, const T& b) const { return ::max(a, b); }
 };
 
+#if defined(DACE_USE_GPU_ATOMICS)
+// The device atomics overload int, unsigned int, long long and unsigned long long only, and
+// int64_t is ``long`` on LP64: route the 64-bit types through the same-signedness long long.
+template <>
+struct _wcr_fixed<ReductionType::Min, int64_t> {
+  static DACE_HDFI int64_t reduce_atomic(int64_t* ptr, const int64_t& value) {
+    return static_cast<int64_t>(atomicMin((long long*)ptr, static_cast<long long>(value)));
+  }
+
+  DACE_HDFI int64_t operator()(const int64_t& a, const int64_t& b) const { return ::min(a, b); }
+};
+
+template <>
+struct _wcr_fixed<ReductionType::Max, int64_t> {
+  static DACE_HDFI int64_t reduce_atomic(int64_t* ptr, const int64_t& value) {
+    return static_cast<int64_t>(atomicMax((long long*)ptr, static_cast<long long>(value)));
+  }
+
+  DACE_HDFI int64_t operator()(const int64_t& a, const int64_t& b) const { return ::max(a, b); }
+};
+
+template <>
+struct _wcr_fixed<ReductionType::Min, uint64_t> {
+  static DACE_HDFI uint64_t reduce_atomic(uint64_t* ptr, const uint64_t& value) {
+    return static_cast<uint64_t>(atomicMin((unsigned long long*)ptr, static_cast<unsigned long long>(value)));
+  }
+
+  DACE_HDFI uint64_t operator()(const uint64_t& a, const uint64_t& b) const { return ::min(a, b); }
+};
+
+template <>
+struct _wcr_fixed<ReductionType::Max, uint64_t> {
+  static DACE_HDFI uint64_t reduce_atomic(uint64_t* ptr, const uint64_t& value) {
+    return static_cast<uint64_t>(atomicMax((unsigned long long*)ptr, static_cast<unsigned long long>(value)));
+  }
+
+  DACE_HDFI uint64_t operator()(const uint64_t& a, const uint64_t& b) const { return ::max(a, b); }
+};
+#endif
+
 // Specialization for floating point types
 template <>
 struct _wcr_fixed<ReductionType::Min, float> {

@@ -88,6 +88,38 @@ def test_block_atomic_runs():
     assert abs(B[0] - np.sum(A)) / 128.0 <= 1e-4
 
 
+def last_negative_index_sdfg() -> dace.SDFG:
+    """A device map folding ``max`` of an ``int64`` index into one element: tsvc s331's kernel shape."""
+    sdfg = dace.SDFG('last_negative_index_int64')
+    sdfg.add_array('A', (1000, ), dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('R', (1, ), dace.int64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state('a')
+    entry, exit_node = state.add_map('scan', dict(i='0:1000'), schedule=dace.ScheduleType.GPU_Device)
+    pick = state.add_tasklet('pick', {'a'}, {'out'}, 'out = i if a < 0.0 else -1')
+    state.add_memlet_path(state.add_read('A'), entry, pick, dst_conn='a', memlet=Memlet('A[i]'))
+    state.add_memlet_path(pick,
+                          exit_node,
+                          state.add_write('R'),
+                          src_conn='out',
+                          memlet=Memlet('R[0]', wcr='lambda x, y: max(x, y)'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_device_max_into_an_int64_uses_the_64_bit_atomic():
+    code = _generated_cuda(last_negative_index_sdfg())
+    assert '_wcr_fixed<dace::ReductionType::Max, int64_t>' in code, 'the int64 max fold is not emitted'
+
+
+@pytest.mark.gpu
+def test_a_device_max_into_an_int64_finds_the_last_negative_index():
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+    host_a = np.random.default_rng(11).uniform(-1.0, 1.0, 1000)
+    arrays = {'A': cupy.asarray(host_a), 'R': cupy.full(1, np.iinfo(np.int64).min, dtype=np.int64)}
+    last_negative_index_sdfg()(**arrays)
+    assert int(arrays['R'].get()[0]) == int(np.flatnonzero(host_a < 0.0)[-1])
+
+
 if __name__ == '__main__':
     test_block_atomic_emits_cub_and_atomic()
     print('codegen ok')
