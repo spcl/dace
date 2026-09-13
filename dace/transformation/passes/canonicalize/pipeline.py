@@ -73,6 +73,7 @@ from dace.transformation.dataflow.mapreduce import MapReduceFusion, MapWCRFusion
 from dace.transformation.dataflow.redundant_array import RedundantArray
 from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
 from dace.transformation.passes.canonicalize.revert_nonreduction_wcr import RevertNonReductionWCR
+from dace.transformation.passes.canonicalize.prune_and_inline_nested_sdfgs import PruneAndInlineNestedSDFGs
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
@@ -129,7 +130,6 @@ from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInv
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
 from dace.transformation.interstate.condition_fusion import ConditionFusion
 from dace.transformation.dataflow.prune_connectors import PruneConnectors
-from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 
 
 def disable_openmp_sections(sdfg: SDFG) -> None:
@@ -343,7 +343,7 @@ def _inline_single_state(label: str) -> List[Tuple[str, ppl.Pass]]:
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
-    return [(label, PatternApplyOnceEverywhere([PruneConnectors(), InlineSDFG()]))]
+    return [(label, PruneAndInlineNestedSDFGs())]
 
 
 def _fold_scalar_slices(label: str) -> List[Tuple[str, ppl.Pass]]:

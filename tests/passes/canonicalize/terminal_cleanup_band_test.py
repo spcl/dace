@@ -43,9 +43,8 @@ from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
-from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.canonicalize.prune_and_inline_nested_sdfgs import PruneAndInlineNestedSDFGs
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 from dace.transformation.passes.simplify import SimplifyPass
 
@@ -128,8 +127,7 @@ def _leads_a_cleanup(unit) -> bool:
     """Whether ``unit`` is the ``PruneConnectors`` + ``InlineSDFG`` fixpoint that leads a cleanup
     site (an un-inlined body hides its per-element memlets behind a whole-array boundary memlet, so
     the cleanup would read the wrong shape)."""
-    return (isinstance(unit, PatternMatchAndApplyRepeated)
-            and any(isinstance(t, InlineSDFG) for t in unit.transformations))
+    return isinstance(unit, PruneAndInlineNestedSDFGs)
 
 
 def _cleanup_slots() -> List[int]:
