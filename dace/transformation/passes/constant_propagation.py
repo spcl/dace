@@ -10,7 +10,7 @@ from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, Control
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.cli.progress import optional_progressbar
 from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
-from typing import Any, Dict, List, Set, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Set, Optional, Tuple, Union
 
 
 class _UnknownValue:
@@ -21,6 +21,19 @@ class _UnknownValue:
 ConstsT = Dict[str, Any]
 BlockConstsT = Dict[ControlFlowBlock, ConstsT]
 OrderCacheT = Dict[ControlFlowBlock, List[ControlFlowBlock]]
+NamesCacheT = Dict[Union[str, int], Tuple[Any, FrozenSet[str]]]
+
+
+def cached_free_names(value: Any, names_cache: NamesCacheT) -> FrozenSet[str]:
+    """``symbolic.free_symbols_and_functions(value)``, memoized by text for a string and by identity otherwise.
+
+    The entry keeps the value alive, so an identity key cannot be reused by another object."""
+    key = value if isinstance(value, str) else id(value)
+    entry = names_cache.get(key)
+    if entry is None:
+        entry = (value, frozenset(symbolic.free_symbols_and_functions(value)))
+        names_cache[key] = entry
+    return entry[1]
 
 
 @dataclass(unsafe_hash=True)
@@ -271,7 +284,8 @@ class ConstantPropagation(ppl.Pass):
     def _collect_constants_for_conditional(self, conditional: ConditionalBlock, arrays: Set[str],
                                            in_const_dict: BlockConstsT, pre_const_dict: BlockConstsT,
                                            post_const_dict: BlockConstsT, out_const_dict: BlockConstsT,
-                                           order_cache: OrderCacheT, last_in: BlockConstsT) -> None:
+                                           order_cache: OrderCacheT, last_in: BlockConstsT,
+                                           names_cache: NamesCacheT) -> None:
         """
         Collect the constants for and inside of a conditional region.
         Recursively collects constants inside of nested regions.
@@ -298,7 +312,7 @@ class ConstantPropagation(ppl.Pass):
         for _, branch in conditional.branches:
             in_const_dict[branch] = in_consts
             self._collect_constants_for_region(branch, arrays, in_const_dict, pre_const_dict, post_const_dict,
-                                               out_const_dict, order_cache, last_in)
+                                               out_const_dict, order_cache, last_in, names_cache)
         # Second, determine the 'post constants' (constants at the end of the conditional region) as an intersection
         # between the output constants of each of the branches.
         post_consts = {}
@@ -355,7 +369,8 @@ class ConstantPropagation(ppl.Pass):
                                       post_const_dict: BlockConstsT,
                                       out_const_dict: BlockConstsT,
                                       order_cache: Optional[OrderCacheT] = None,
-                                      last_in: Optional[BlockConstsT] = None) -> None:
+                                      last_in: Optional[BlockConstsT] = None,
+                                      names_cache: Optional[NamesCacheT] = None) -> None:
         """
         Finds all constants and constant-assigned symbols in the control flow graph for each block.
         Recursively collects constants for nested control flow regions.
@@ -381,9 +396,12 @@ class ConstantPropagation(ppl.Pass):
                                the block is executed. Populated by this function.
         :param order_cache: Avoids re-sorting a region on every sweep. Created on the outermost call.
         :param last_in: Avoids re-collecting a nested region whose inputs did not change.
+        :param names_cache: Memoizes the free names of the constant values, which travel unchanged. Created on
+                            the outermost call.
         """
         order_cache = {} if order_cache is None else order_cache
         last_in = {} if last_in is None else last_in
+        names_cache = {} if names_cache is None else names_cache
         # Given the 'in constants', i.e., the constants for before the current region is executed, compute the 'pre
         # constants', i.e., the set of constants seen inside the region when executing.
         if cfg in in_const_dict:
@@ -437,29 +455,27 @@ class ConstantPropagation(ppl.Pass):
                         constants.update(out_const_dict[edge.src])
 
                     # Update constants with incoming edge
-                    self._propagate(constants, self._data_independent_assignments(edge.data, arrays))
+                    self._propagate(constants, self.data_independent_assignments(edge.data, arrays, names_cache))
 
                     for aname, aval in constants.items():
                         # If something was assigned more than once (to a different value), it's not a constant
                         # If a symbol appearing in the replacing expression of a constant is modified,
                         # the constant is not valid anymore
                         if ((aname in assignments and aval != assignments[aname])
-                                or symbolic.free_symbols_and_functions(aval) & edge.data.assignments.keys()):
+                                or cached_free_names(aval, names_cache) & edge.data.assignments.keys()):
                             assignments[aname] = _UnknownValue
                         else:
                             assignments[aname] = aval
 
                 for edge in cfg.out_edges(block):
+                    edge_assignments = edge.data.assignments
                     for aname, aval in assignments.items():
                         # If the specific replacement would result in the value being both used and reassigned on the
-                        # same inter-state edge, remove it from consideration.
-                        replacements = symbolic.free_symbols_and_functions(aval)
-                        used_in_assignments = {
-                            k
-                            for k, v in edge.data.assignments.items() if aname in symbolic.free_symbols_and_functions(v)
-                        }
-                        reassignments = replacements & edge.data.assignments.keys()
-                        if reassignments and (used_in_assignments - reassignments):
+                        # same inter-state edge, remove it from consideration. The uses are scanned only once a
+                        # reassignment exists, the one case that reads them.
+                        reassignments = cached_free_names(aval, names_cache) & edge_assignments.keys()
+                        if reassignments and any(k not in reassignments and aname in cached_free_names(v, names_cache)
+                                                 for k, v in edge_assignments.items()):
                             assignments[aname] = _UnknownValue
 
                 if isinstance(block, LoopRegion):
@@ -483,11 +499,12 @@ class ConstantPropagation(ppl.Pass):
                         last_in[block] = in_const_dict[block].copy()
                         if isinstance(block, ControlFlowRegion):
                             self._collect_constants_for_region(block, arrays, in_const_dict, pre_const_dict,
-                                                               post_const_dict, out_const_dict, order_cache, last_in)
+                                                               post_const_dict, out_const_dict, order_cache, last_in,
+                                                               names_cache)
                         else:
                             self._collect_constants_for_conditional(block, arrays, in_const_dict, pre_const_dict,
                                                                     post_const_dict, out_const_dict, order_cache,
-                                                                    last_in)
+                                                                    last_in, names_cache)
                 else:
                     # Simple case, no change in constants through this block (states and other basic blocks).
                     pre_const_dict[block] = in_const_dict[block].copy()
@@ -602,11 +619,12 @@ class ConstantPropagation(ppl.Pass):
 
         return original_symbols != symbols
 
-    def _data_independent_assignments(self, edge: InterstateEdge, arrays: Set[str]) -> Dict[str, Any]:
+    def data_independent_assignments(self, edge: InterstateEdge, arrays: Set[str],
+                                     names_cache: NamesCacheT) -> Dict[str, Any]:
         """
         Return symbol assignments that only depend on other symbols and constants, rather than data descriptors.
         """
         return {
-            k: v if (not ((symbolic.free_symbols_and_functions(v) | symbolic.arrays(v)) & arrays)) else _UnknownValue
+            k: v if (not ((cached_free_names(v, names_cache) | symbolic.arrays(v)) & arrays)) else _UnknownValue
             for k, v in edge.assignments.items()
         }
