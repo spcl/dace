@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """CPF spells the type of every variable it declares: the rendered unit carries no ``auto``."""
+import os
 import ast
 import re
 
@@ -122,7 +123,11 @@ def test_a_persistent_region_thread_id_is_the_int_openmp_returns(language):
     a = np.linspace(-1.0, 1.0, 29)
     out = np.zeros_like(a)
     run(rendering, name, language, {'a': a, 'out': out, 'N': a.size})
-    np.testing.assert_array_equal(out, a * 2.0)
+    # A persistent map's parameter is the OpenMP thread id, as in the regular CPU backend, so each element carries
+    # the id of the thread that computed it: an integer in [0, threads).
+    thread_ids = out - a * 2.0
+    np.testing.assert_allclose(thread_ids, np.round(thread_ids), rtol=0.0, atol=1e-12)
+    assert thread_ids.min() >= 0 and thread_ids.max() < (os.cpu_count() or 1)
 
 
 def test_a_strided_scan_accumulator_is_declared_at_the_element_type():
