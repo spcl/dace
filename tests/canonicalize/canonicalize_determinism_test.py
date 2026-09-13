@@ -92,7 +92,64 @@ def test_canonicalize_is_deterministic_across_hash_seeds(tmp_path):
                                                        f'find_new_name allocation order)')
 
 
+# Kernels whose canonical SDFG followed object addresses at a FIXED seed: poly/adi through the memset
+# lift visiting candidate maps in a set, poly/durbin through LoopToMap walking loop states in a set.
+HEAP_KERNELS = ['adi', 'durbin']
+# Throwaway objects allocated before the build, so each process lays the graph out at other addresses.
+BALLASTS = [0, 3001, 100003]
+
+HEAP_PROBE = r'''
+import json, os, sys
+os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
+ballast = [object() for _ in range(int(sys.argv[1]))]
+from dace.transformation.passes.canonicalize import canonicalize
+from tests.corpus.polybench import polybench
+
+out = {}
+for name in sys.argv[2].split(','):
+    sd = polybench.fresh_sdfg(polybench.collect(name)[0])
+    canonicalize(sd)
+    out[name] = sd.hash_sdfg()
+print('__RESULT__' + json.dumps(out))
+'''
+
+
+def canonical_hashes_under_ballast(ballast: int, tmp_path) -> dict:
+    """Canonicalize HEAP_KERNELS in a PYTHONHASHSEED=0 subprocess after allocating ``ballast`` objects."""
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    env = {
+        **os.environ,
+        'PYTHONHASHSEED': '0',
+        'PYTHONPATH': root,
+        'DACE_default_build_folder': str(tmp_path / f'heap_{ballast}'),
+        'MPI4PY_RC_INITIALIZE': '0',
+        'OMP_NUM_THREADS': '1',
+    }
+    proc = subprocess.run(
+        [sys.executable, '-c', HEAP_PROBE, str(ballast), ','.join(HEAP_KERNELS)],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=1800)
+    marker = [ln for ln in proc.stdout.splitlines() if ln.startswith('__RESULT__')]
+    assert marker, f'probe failed under ballast {ballast}:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}'
+    return json.loads(marker[-1][len('__RESULT__'):])
+
+
+@pytest.mark.integration
+def test_canonical_sdfg_does_not_follow_object_addresses(tmp_path):
+    """A seed-pinned build must still reproduce: set iteration over graph objects follows id(), which
+    differs between processes, and it renumbered lifted library nodes and reworded loop hints."""
+    hashes = {ballast: canonical_hashes_under_ballast(ballast, tmp_path) for ballast in BALLASTS}
+    for kernel in HEAP_KERNELS:
+        per_ballast = {ballast: hashes[ballast][kernel] for ballast in BALLASTS}
+        assert len(set(
+            per_ballast.values())) == 1, f'{kernel}: canonical SDFG hash varies with heap layout {per_ballast}'
+
+
 if __name__ == '__main__':
     import pathlib
     test_canonicalize_is_deterministic_across_hash_seeds(pathlib.Path('/tmp/canon_det'))
+    test_canonical_sdfg_does_not_follow_object_addresses(pathlib.Path('/tmp/canon_det'))
     print('OK')
