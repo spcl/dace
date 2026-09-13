@@ -54,6 +54,37 @@ def loop_bound_sdfg() -> dace.SDFG:
     return sdfg
 
 
+def chained_index_read_sdfg() -> dace.SDFG:
+    """``j = c[0]`` then ``x = b[j]``, with the ``x`` edge inserted first so the pass visits ``x`` before ``j``."""
+    sdfg = dace.SDFG('chained_index_read')
+    sdfg.add_array('b', (N, ), dace.float64)
+    sdfg.add_array('c', (N, ), dace.int64)
+    sdfg.add_array('out', (N, ), dace.float64)
+    sdfg.add_symbol('j', dace.int64)
+    sdfg.add_symbol('x', dace.float64)
+
+    entry = sdfg.add_state('entry', is_start_block=True)
+    bind = sdfg.add_state('bind')
+    use = sdfg.add_state('use')
+    sdfg.add_edge(bind, use, dace.InterstateEdge(assignments={'x': 'b[j]'}))
+    sdfg.add_edge(entry, bind, dace.InterstateEdge(assignments={'j': 'c[0]'}))
+
+    tasklet = use.add_tasklet('scale', dict.fromkeys(['_in']), dict.fromkeys(['_out']), '_out = _in * x')
+    use.add_edge(use.add_access('b'), None, tasklet, '_in', dace.Memlet('b[0]'))
+    use.add_edge(tasklet, '_out', use.add_access('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def test_an_index_a_demotion_turns_into_a_memlet_subset_stays_a_symbol():
+    """Demoting ``x`` re-emits ``b[j]`` as a memlet, so ``j`` then indexes the graph and must not be demoted."""
+    sdfg = chained_index_read_sdfg()
+    assert DemoteDataReadingInterstateSymbols().apply_pass(sdfg, {}) == 1
+
+    assert 'x' in sdfg.arrays and 'x' not in sdfg.symbols, 'the read of b[j] was not demoted'
+    assert 'j' in sdfg.symbols and 'j' not in sdfg.arrays, 'j indexes a memlet now and must stay a symbol'
+    sdfg.validate()
+
+
 def test_an_indexed_read_is_recognised_as_one():
     assert 'elem' in data_reading_assigned_symbols(indexed_read_sdfg())
 
