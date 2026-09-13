@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     # Import-time only: ``dace.sdfg.state`` reaches back into this module (LoopRegion.new_symbols does
     # the import inside the function body, "avoid cyclic import"), so importing the SDFG class here at
     # module scope would close that cycle from the other side.
+    from dace.properties import CodeBlock
     from dace.sdfg.sdfg import SDFG
 
 
@@ -133,17 +134,18 @@ def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return end
 
 
-def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def assignment_text(stmt: Optional['CodeBlock'], variable: Optional[str]) -> Optional[str]:
     """
-    Parse a loop region's init statement to identify the exact init assignment expression.
-    """
-    init_stmt = loop.init_statement
-    if init_stmt is None:
-        return None
+    The right-hand side text a loop's init or update statement assigns to ``variable``.
 
-    init_codes_list = init_stmt.code if isinstance(init_stmt.code, list) else [init_stmt.code]
+    :param stmt: The statement, e.g. ``loop.init_statement``.
+    :param variable: The assigned name, e.g. ``loop.loop_variable``.
+    :return: ``None`` without a statement, when a name is assigned more than once, or when ``variable`` is not.
+    """
+    if stmt is None:
+        return None
     assignments: Dict[str, str] = {}
-    for code in init_codes_list:
+    for code in stmt.code if isinstance(stmt.code, list) else [stmt.code]:
         visitor = astutils.FindAssignment()
         visitor.visit(code)
         if visitor.multiple:
@@ -152,37 +154,23 @@ def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
             if assign in assignments:
                 return None
             assignments[assign] = visitor.assignments[assign]
+    return assignments.get(variable)
 
-    if loop.loop_variable in assignments:
-        return symbolic.pystr_to_symbolic(assignments[loop.loop_variable])
 
-    return None
+def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+    """
+    Parse a loop region's init statement to identify the exact init assignment expression.
+    """
+    text = assignment_text(loop.init_statement, loop.loop_variable)
+    return None if text is None else symbolic.pystr_to_symbolic(text)
 
 
 def get_update_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     """
     Parse a loop region's update statement to identify the exact update assignment expression.
     """
-    update_stmt = loop.update_statement
-    if update_stmt is None:
-        return None
-
-    update_codes_list = update_stmt.code if isinstance(update_stmt.code, list) else [update_stmt.code]
-    assignments: Dict[str, str] = {}
-    for code in update_codes_list:
-        visitor = astutils.FindAssignment()
-        visitor.visit(code)
-        if visitor.multiple:
-            return None
-        for assign in visitor.assignments:
-            if assign in assignments:
-                return None
-            assignments[assign] = visitor.assignments[assign]
-
-    if loop.loop_variable in assignments:
-        return symbolic.pystr_to_symbolic(assignments[loop.loop_variable])
-
-    return None
+    text = assignment_text(loop.update_statement, loop.loop_variable)
+    return None if text is None else symbolic.pystr_to_symbolic(text)
 
 
 def get_loop_stride(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:

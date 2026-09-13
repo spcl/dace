@@ -204,12 +204,13 @@ class AccessSets(ppl.Pass):
     def _get_loop_region_readset(self, loop: LoopRegion, arrays: OrderedSet[str]) -> OrderedSet[str]:
         readset = set()
         exprs = {loop.loop_condition.as_string}
-        update_stmt = loop_analysis.get_update_assignment(loop)
-        init_stmt = loop_analysis.get_init_assignment(loop)
-        if update_stmt:
-            exprs.add(update_stmt)
-        if init_stmt:
-            exprs.add(init_stmt)
+        # Texts, not parsed expressions: ``names_read_by_text`` is a cache keyed on its argument.
+        update_text = loop_analysis.assignment_text(loop.update_statement, loop.loop_variable)
+        init_text = loop_analysis.assignment_text(loop.init_statement, loop.loop_variable)
+        if update_text:
+            exprs.add(update_text)
+        if init_text:
+            exprs.add(init_text)
         for expr in exprs:
             readset |= set(names_read_by_text(expr)) & arrays
         return readset

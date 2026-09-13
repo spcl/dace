@@ -2,10 +2,12 @@
 """Tests for induction-variable detection in loop_analysis."""
 
 import dace
+import pytest
 import sympy
 from dace import symbolic
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis.analysis import AccessSets
 
 
 def _make_loop(loop_var='i', init='i = 0', cond='i < N', update='i = i + 1', inverted=False):
@@ -190,6 +192,21 @@ def test_affine_in_iv_rejects_two_ivs():
     ivs = loop_analysis.detect_induction_variables(loop)
     # i + j mixes two IVs — no single-IV affine form.
     assert loop_analysis.affine_in_iv(symbolic.pystr_to_symbolic('i + j'), ivs) is None
+
+
+@pytest.mark.parametrize('init, expected', [('i = 0', '0'), ('i = N - 1; j = 1', '(N - 1)'), ('i = 0; i = 1', None),
+                                            ('j = 0', None)])
+def test_assignment_text_is_the_loop_variables_right_hand_side(init, expected):
+    _, loop = _make_loop(init=init, update='i = i + 2')
+    assert loop_analysis.assignment_text(loop.init_statement, loop.loop_variable) == expected
+    assert loop_analysis.assignment_text(loop.update_statement, loop.loop_variable) == '(i + 2)'
+
+
+def test_access_sets_read_an_array_named_by_the_loop_update():
+    sdfg, loop = _make_loop(update='i = i + step[0]')
+    sdfg.add_array('step', [1], dace.int64)
+    access_sets = AccessSets().apply_pass(sdfg, {})
+    assert 'step' in access_sets[loop][0]
 
 
 if __name__ == '__main__':
