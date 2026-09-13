@@ -332,6 +332,45 @@ def test_map_scope_pure_tasklet_hoisted():
     _run_and_check(sdfg, py_ref, a=np.array([1.0]), b=np.array([7.0]), outp=np.zeros(4), N=4)
 
 
+def build_map_with_invariant_tasklets(count: int, junk_per_node: int, keep_alive: list):
+    sdfg = dace.SDFG(f"licm_map_order_{junk_per_node}")
+    state = sdfg.add_state("st", is_start_block=True)
+    me, mx = state.add_map("m", {"i": "0:N"})
+    for index in range(count):
+        sdfg.add_array(f"a{index}", [1], dace.float64)
+        sdfg.add_array(f"outp{index}", [N], dace.float64)
+        sdfg.add_transient(f"t{index}", [1], dace.float64)
+        # Same-class objects between node creations move where the next nodes land in memory.
+        keep_alive.append([nodes.AccessNode("junk") for junk in range(junk_per_node)])
+        read = state.add_read(f"a{index}")
+        invariant = state.add_tasklet(f"inv{index}", {"x": None}, {"y": None}, "y = x * 2.0")
+        value = state.add_access(f"t{index}")
+        keep = state.add_tasklet(f"keep{index}", {"x": None}, {"y": None}, "y = x")
+        write = state.add_write(f"outp{index}")
+        state.add_memlet_path(read, me, invariant, dst_conn="x", memlet=mm.Memlet(f"a{index}[0]"))
+        state.add_edge(invariant, "y", value, None, mm.Memlet(f"t{index}[0]"))
+        state.add_edge(value, None, keep, "x", mm.Memlet(f"t{index}[0]"))
+        state.add_memlet_path(keep, mx, write, src_conn="y", memlet=mm.Memlet(f"outp{index}[i]"))
+    sdfg.validate()
+    return sdfg, state
+
+
+def test_map_scope_hoists_invariant_tasklets_in_node_order_not_address_order():
+    """Which map-invariant tasklet is hoisted first must follow the state's node order."""
+    keep_alive = []
+    orders = {}
+    for junk_per_node in (0, 1, 3, 7, 31, 127):
+        sdfg, state = build_map_with_invariant_tasklets(4, junk_per_node, keep_alive)
+        assert LoopInvariantCodeMotion().apply_pass(sdfg, {}) == 4
+        sdfg.validate()
+        sdict = state.scope_dict()
+        orders[junk_per_node] = [
+            n.label for n in state.nodes() if isinstance(n, nodes.Tasklet) and sdict.get(n) is None
+        ]
+    expected = [f"inv{index}_licm" for index in range(4)]
+    assert all(order == expected for order in orders.values()), orders
+
+
 # 6. Nested loop `for nl: for i: a[i] = b[i] + 1.0` — inner loop hoisted,
 #    outer body collapses to an empty hull. TSVC2 s000-family.
 

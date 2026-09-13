@@ -689,8 +689,9 @@ def _find_one_map_invariant_tasklet(
     mx = state.exit_node(me)
     inside = state.all_nodes_between(me, mx) or set()
     scope_dict = state.scope_dict()
-    for n in inside:
-        if not isinstance(n, nodes.Tasklet):
+    # State order: iterating the between-set follows node addresses and picks a run-dependent first hoist.
+    for n in state.nodes():
+        if n not in inside or not isinstance(n, nodes.Tasklet):
             continue
         # Must be directly in this scope, not in a nested sub-scope.
         if scope_dict.get(n) is not me:
