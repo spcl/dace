@@ -731,7 +731,7 @@ def written_containers(sdfg: SDFG) -> OrderedSet:
     return written
 
 
-def readonly_entry_arrays(sdfg: SDFG) -> OrderedSet:
+def readonly_entry_arrays(sdfg: SDFG, arglist: Optional[Dict[str, dt.Data]] = None) -> OrderedSet:
     """The entry point's ARRAY parameters that nothing writes -- the ones whose pointee is const.
 
     Read off the same SDFG the signature is generated from, so the qualifier and the argument list
@@ -740,10 +740,12 @@ def readonly_entry_arrays(sdfg: SDFG) -> OrderedSet:
     ``const: true`` while the rendered signature said otherwise.
 
     :param sdfg: the PREPARED SDFG -- the one whose ``arglist()`` is the signature.
+    :param arglist: ``sdfg.arglist()`` when the caller already holds it.
     :returns: the names to qualify.
     """
     written = written_containers(sdfg)
-    return OrderedSet(name for name, desc in sdfg.arglist().items()
+    entry_arguments = sdfg.arglist() if arglist is None else arglist
+    return OrderedSet(name for name, desc in entry_arguments.items()
                       if isinstance(desc, dt.Array) and name not in written)
 
 
@@ -752,7 +754,7 @@ def entry_parameter_name(param: str) -> str:
     return param.strip().split()[-1].lstrip('*')
 
 
-def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str) -> str:
+def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str, arglist: Optional[Dict[str, dt.Data]] = None) -> str:
     """Add ``const`` to the entry point's read-only pointer parameters.
 
     The signature is built by ``Data.as_arg``, which is shared with every other DaCe backend and
@@ -768,9 +770,10 @@ def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str) -> str:
     :param code: the rendered unit.
     :param sdfg: the PREPARED SDFG.
     :param entry: the entry point's name.
+    :param arglist: ``sdfg.arglist()`` when the caller already holds it.
     :returns: the unit with the read-only parameters qualified.
     """
-    readonly = readonly_entry_arrays(sdfg)
+    readonly = readonly_entry_arrays(sdfg, arglist)
     if not readonly:
         return code
     return rewrite_entry_parameters(
@@ -1139,7 +1142,9 @@ def render(sdfg: SDFG,
                 # Type names reach the text from the entry signature and from declarations, neither
                 # of which goes through an expression printer, so the rename runs over the whole unit.
                 body = cpf_lowering.rewrite_ctypes(body, dialect)
-                body = qualify_readonly_pointers(body, prepared, sdfg.name)
+                # Nothing below changes the prepared SDFG, so one argument list serves both uses.
+                entry_arglist = prepared.arglist()
+                body = qualify_readonly_pointers(body, prepared, sdfg.name, entry_arglist)
                 # After the qualifier pass, so each declaration carries the ``const`` CPF decided
                 # on before it moves; only the order changes here.
                 if order is not None:
@@ -1152,7 +1157,7 @@ def render(sdfg: SDFG,
     verify(code, sdfg.name, dialect)
     if check_compiles:
         compile_check(code, sdfg.name, dialect)
-    arguments = tuple(order) if order is not None else tuple(prepared.arglist())
+    arguments = tuple(order) if order is not None else tuple(entry_arglist)
     return Rendering(code, prepared, arguments)
 
 
