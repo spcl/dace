@@ -1700,6 +1700,11 @@ class int_floor(DaceFunction):
         quotient, remainder = split
         if remainder.is_zero:
             return quotient
+        # A constant remainder folds exactly once the whole quotient is known to be a floor: over a
+        # nonnegative numerator and positive divisor C's ``/`` floors, and ``floor((q*y + r)/y)`` is
+        # ``q + floor(r/y)`` for integer ``q``, so ``int_floor(2*N - 1, 2)`` is ``N - 1`` for positive ``N``.
+        if remainder.is_Number and y.is_positive and x.is_nonnegative:
+            return quotient + remainder // y
         return quotient + cls(remainder, y) if rounds_like_flooring(x, y, remainder) else None
 
     def _eval_is_integer(self):
@@ -1746,6 +1751,10 @@ class int_ceil(DaceFunction):
             quotient, remainder = split
             if remainder.is_zero:
                 return quotient
+            # Mirrors int_floor: over a nonnegative numerator and positive divisor the biased C division
+            # is the ceiling, and ``ceil((q*y + r)/y)`` is ``q + ceil(r/y)`` for integer ``q``.
+            if remainder.is_Number and y.is_positive and x.is_nonnegative:
+                return quotient - ((-remainder) // y)
             if rounds_like_flooring(x, y, remainder):
                 return quotient + cls(remainder, y)
         # ``dace::math::int_ceil`` IS ``(x + y - 1) / y`` (runtime/include/dace/math.h), so a

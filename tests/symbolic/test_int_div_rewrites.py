@@ -237,3 +237,18 @@ def test_a_stored_floor_over_an_integer_does_not_reach_cpp_as_a_floating_call():
     emitted = symstr(deserialize_symbolic('floor(__int_floor($N, 2) + 1)'), cpp_mode=True)
     assert 'floor(' not in emitted, emitted
     assert '/' in emitted, emitted
+
+
+def test_a_constant_remainder_folds_over_a_provably_nonnegative_numerator():
+    """``int_floor(2*P - 1, 2)`` is ``P - 1`` and ``int_ceil(2*P - 1, 2)`` is ``P`` once ``2*P - 1 >= 0`` is provable."""
+    assert int_floor(2 * P - 1, 2) == P - 1
+    assert int_ceil(2 * P - 1, 2) == P
+    assert int_floor(3 * P + 5, 3) == P + 1
+    for value in range(1, 9):
+        assert (2 * value - 1) // 2 == value - 1
+        assert -((1 - 2 * value) // 2) == value
+
+
+def test_a_constant_remainder_stays_unfolded_when_the_numerator_may_be_negative():
+    """At ``K = 0`` the numerator is ``-1``: floor gives -1 but the generated C division gives 0."""
+    assert isinstance(int_floor(2 * K - 1, 2), int_floor)
