@@ -4,6 +4,7 @@ each test asserts the cache ENGAGES -- a declined header or unreplayed recording
 correct build save for wall-clock time.
 """
 import contextlib
+import glob
 import json
 import os
 import shutil
@@ -275,3 +276,71 @@ def test_host_isa_id_is_stable_and_nonempty():
     first = compiler.host_isa_id()
     assert first, 'no host identity derived; every CPU would share one cache key'
     assert compiler.host_isa_id() == first, 'host identity is not stable within a process'
+
+
+#: One variable per reader that changes what a configure finds or its compiler searches: CMake itself, its
+#: modules, the compiler driver, ``find_package``'s ``<PackageName>_DIR``/``_ROOT``, and ROCm's HIP config.
+CONFIGURE_INPUTS = ('CMAKE_PREFIX_PATH', 'CC', 'CXX', 'PKG_CONFIG_PATH', 'HIP_PATH', 'CUDA_PATH', 'LD_LIBRARY_PATH',
+                    'CPATH', 'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH', 'OPENBLAS_DIR', 'FFTW_ROOT',
+                    'TBLIS_ROOT', 'ROCM_PATH')
+
+
+@pytest.mark.parametrize('name', CONFIGURE_INPUTS)
+def test_cache_key_separates_environments_a_configure_reads(name, tmp_path, monkeypatch):
+    """Every process of one user shares these caches, whatever environment it runs in. A configure that found a
+    package through one process's ``CMAKE_PREFIX_PATH`` must not be handed to a process whose environment lacks it."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    monkeypatch.setenv(name, '/configure/input/a')
+    under_a = compiler.cache_key('same', 'parts')
+    monkeypatch.setenv(name, '/configure/input/b')
+    assert compiler.cache_key('same', 'parts') != under_a, f'{name} does not reach the cache key'
+
+
+@pytest.mark.parametrize('name', ('PWD', 'OLDPWD', 'SLURM_JOB_ID', 'PYTEST_CURRENT_TEST', 'PYTEST_XDIST_WORKER'))
+def test_cache_key_ignores_variables_no_configure_reads(name, tmp_path, monkeypatch):
+    """A keyed variable that changes per directory, job or test turns every build into a miss."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    monkeypatch.setenv(name, 'a')
+    under_a = compiler.cache_key('same', 'parts')
+    monkeypatch.setenv(name, 'b')
+    assert compiler.cache_key('same', 'parts') == under_a, f'{name} reaches the cache key'
+
+
+def test_an_unreadable_cmake_keys_the_whole_environment():
+    """Without a CMake installation to derive the inputs from, only keying everything is safe."""
+    assert compiler.environment_pattern(None).fullmatch('PYTEST_CURRENT_TEST')
+
+
+def detected_compiler(build_folder):
+    """The compiler detection a build folder's configure used."""
+    found = glob.glob(os.path.join(build_folder, 'build', 'CMakeFiles', '[0-9]*', 'CMakeCXXCompiler.cmake'))
+    assert found, f'no compiler detection under {build_folder}'
+    with open(found[0]) as fp:
+        return fp.read()
+
+
+def test_a_configure_detected_under_another_cpath_is_not_reused(tmp_path, private_cache, monkeypatch):
+    """Compiler detection records ``CPATH`` as an implicit include directory, and the configure cache transplants
+    that detection into later build folders: seeded across a changed ``CPATH``, a build keeps a search directory its
+    own environment never named. Command cache off, or the second build would replay and never configure."""
+    marker = tmp_path / 'cpath-marker'
+    marker.mkdir()
+    with dace.config.set_temporary('compiler', 'command_cache', value=False):
+        with monkeypatch.context() as marked:
+            marked.setenv('CPATH', str(marker), prepend=os.pathsep)
+            marked_folder = build_and_check(tmp_path, 'cpathmarked')
+        plain_folder = build_and_check(tmp_path, 'cpathplain')
+    assert str(marker) in detected_compiler(marked_folder), 'CPATH never reached the detection, so nothing is tested'
+    assert str(marker) not in detected_compiler(plain_folder), 'the configure was seeded from another CPATH'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
+def test_a_recording_made_under_another_cpath_is_not_replayed(tmp_path, private_cache, monkeypatch):
+    """A replay runs the lines CMake authored under the recording's environment, so it must not stand in for a
+    build whose ``CPATH`` differs."""
+    marker = tmp_path / 'cpath-marker'
+    marker.mkdir()
+    with monkeypatch.context() as marked:
+        marked.setenv('CPATH', str(marker), prepend=os.pathsep)
+        assert ran_cmake(build_and_check(tmp_path, 'recordmarked'))
+    assert ran_cmake(build_and_check(tmp_path, 'recordplain')), 'a recording made under another CPATH was replayed'

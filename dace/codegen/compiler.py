@@ -315,11 +315,99 @@ def host_isa_id() -> str:
     return hashlib.sha256(identity.encode()).hexdigest()[:12]
 
 
+#: A CMake-language environment reference: ``$ENV{NAME}``, or ``ENV{NAME}`` under ``if(DEFINED ...)``.
+ENVIRONMENT_REFERENCE = re.compile(r'ENV\{(\w+)\}')
+
+#: Configure inputs no CMake installation file names: the compiler driver's search paths, which compiler
+#: detection records into the cached ``CMakeFiles/<version>/``; the ``<PackageName>_DIR`` that ``find_package``
+#: searches; and what ROCm's ``hip-config.cmake`` and ``FindHIP.cmake`` read, loaded from outside CMake.
+UNNAMED_ENVIRONMENT = ('CPATH', 'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH', 'COMPILER_PATH',
+                       'GCC_EXEC_PREFIX', '<PackageName>_DIR', 'ROCM_PATH', 'HIP_PATH', 'HIP_DIR', 'HIP_CLANG_PATH',
+                       'HIP_PLATFORM')
+
+
+def cmake_installation_environment(cmake: str) -> List[str]:
+    """Environment variables the CMake installation behind ``cmake`` documents or reads in a module.
+
+    ``Help/envvar`` titles are what the ``cmake`` binary consults itself (``CMAKE_PREFIX_PATH``, ``CC``,
+    ``<PackageName>_ROOT``); ``Modules`` references are what a ``find_package`` or language detection reads.
+    Recorded under the cache root: reading the ~1700 module files costs about a second on a network file system.
+    """
+    stat = os.stat(cmake)
+    record = os.path.join(build_cache_root(), 'environment', build_cache.signature(cmake, stat.st_mtime_ns,
+                                                                                   stat.st_size))
+    try:
+        with open(record) as fp:
+            return fp.read().split()
+    except OSError:
+        pass
+    root = subprocess.run([cmake, '-P', '/dev/stdin'],
+                          input='message("${CMAKE_ROOT}")',
+                          capture_output=True,
+                          text=True,
+                          check=True).stderr.strip()
+    documented = glob.glob(os.path.join(root, 'Help', 'envvar', '*.rst'))
+    modules = [os.path.join(r, f) for r, _, fs in os.walk(os.path.join(root, 'Modules')) for f in fs]
+    if not (documented and modules):
+        raise OSError(f'no environment documentation or modules under CMAKE_ROOT {root!r}')
+    names = set()
+    for path in documented:
+        with open(path, errors='ignore') as fp:
+            names.add(fp.readline().strip())
+    for path in modules:
+        with open(path, errors='ignore') as fp:
+            names.update(ENVIRONMENT_REFERENCE.findall(fp.read()))
+    staging = f'{record}.{os.getpid()}'
+    try:
+        os.makedirs(os.path.dirname(record), exist_ok=True)
+        with open(staging, 'w') as fp:
+            fp.write('\n'.join(sorted(names)))
+        os.replace(staging, record)  # atomic, so a concurrent reader never sees a partial record
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.remove(staging)
+    return sorted(names)
+
+
+@lru_cache(maxsize=None, typed=True)
+def environment_pattern(cmake: Optional[str]) -> re.Pattern:
+    """Matches every environment variable that can change what a configure through ``cmake`` produces.
+
+    Derived from what reads them -- the CMake installation plus DaCe's own CMake files -- so a new module or
+    ``.cmake`` file cannot fall out of the key. An installation that cannot be read matches everything: the key
+    then over-separates, which costs hits, never correctness.
+    """
+    if cmake is None:
+        return re.compile(r'.*', re.DOTALL)
+    try:
+        names = cmake_installation_environment(cmake)
+    except (OSError, subprocess.SubprocessError):
+        return re.compile(r'.*', re.DOTALL)
+    dace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for root, dirs, files in os.walk(dace_root):
+        dirs[:] = [d for d in dirs if d != 'external']
+        for name in files:
+            if name == 'CMakeLists.txt' or name.endswith('.cmake'):
+                with open(os.path.join(root, name), errors='ignore') as fp:
+                    names += ENVIRONMENT_REFERENCE.findall(fp.read())
+    # ``<LANG>``-style placeholders stand for any name part.
+    alternatives = {re.sub(r'<\w+>', lambda m: r'\w*', re.escape(n)) for n in (*names, *UNNAMED_ENVIRONMENT)}
+    return re.compile('|'.join(sorted(alternatives)))
+
+
+def build_environment() -> str:
+    """The environment variables a configure through the ``cmake`` on ``PATH`` can read, with their values."""
+    pattern = environment_pattern(shutil.which('cmake'))
+    return '\0'.join(f'{name}={value}' for name, value in sorted(os.environ.items()) if pattern.fullmatch(name))
+
+
 def cache_key(*parts: object) -> str:
     # Everything keyed here was produced FOR this host: the default cpu args carry -march=native,
     # and a cache root on shared storage (DACE_BUILD_CACHE_DIR, or the default_build_folder
-    # fallback) is reachable from nodes whose CPUs differ. Those must miss, not reuse.
-    return hashlib.sha256('\0'.join(str(p) for p in (*parts, host_isa_id())).encode()).hexdigest()[:16]
+    # fallback) is reachable from nodes whose CPUs differ. Those must miss, not reuse. The same
+    # holds one level down for the environment CMake and the compiler read behind the command line.
+    identity = (*parts, host_isa_id(), build_environment())
+    return hashlib.sha256('\0'.join(str(p) for p in identity).encode()).hexdigest()[:16]
 
 
 def newest_mtime(path: str) -> float:
