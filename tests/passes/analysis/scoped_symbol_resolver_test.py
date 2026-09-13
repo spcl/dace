@@ -215,6 +215,19 @@ def test_an_interstate_assignment_declared_nowhere_resolves_from_its_edge():
     assert sut.resolve_dtype('zlcrit', sdfg, state, tasklet, interstate_edge=iedge) == dace.int64
 
 
+def test_an_interstate_assignment_ahead_of_the_node_resolves_without_naming_its_edge():
+    """A symbol bound on an edge before the node's state is in no scoped table (they fold in only the edges
+    into the start state), and canonicalization asks without an edge in hand (gromacs' ``ci_cluster_index``)."""
+    sdfg, state, tasklet = two_deep_map_nest()
+    ahead = sdfg.add_state('ahead', is_start_block=True)
+    sdfg.add_edge(ahead, state, dace.InterstateEdge(assignments={'zahead': 'N + 1'}))
+    sut = scopes.ScopedSymbolResolver()
+
+    assert 'zahead' not in sdfg.symbols
+    assert 'zahead' not in sut.defined_at(state, tasklet)
+    assert sut.resolve_dtype('zahead', sdfg, state, tasklet) == dace.int64
+
+
 if __name__ == '__main__':
     test_resolver_answers_every_node_of_a_map_nest_exactly_as_the_state_does()
     test_tabulating_one_state_leaves_the_other_states_untouched()
@@ -226,3 +239,4 @@ if __name__ == '__main__':
     test_the_ladder_prefers_each_more_specific_source_over_the_symbol_table()
     test_an_untyped_connector_falls_through_instead_of_answering_void()
     test_an_interstate_assignment_declared_nowhere_resolves_from_its_edge()
+    test_an_interstate_assignment_ahead_of_the_node_resolves_without_naming_its_edge()

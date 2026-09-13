@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Dict, Final, List, NoReturn, Optional, Set
 
 import dace
-from dace import properties
+from dace import dtypes, properties
 from dace.dtypes import typeclass
 from dace.memlet import Memlet
 from dace.sdfg import graph as dgraph
@@ -278,6 +278,27 @@ UNDETERMINED: Final[UndeterminedDType] = UndeterminedDType()
 UNTYPED_CONNECTOR: Final[typeclass] = typeclass(None)
 
 
+def edge_reaches(edge: dgraph.Edge[InterstateEdge], state: SDFGState) -> bool:
+    """Whether control reaches ``state`` after passing along ``edge``: the edge's graph holds ``state``, or a
+    region enclosing it, at or after the edge's destination."""
+    graph = edge.dst.parent_graph
+    block = state
+    while block is not None and block.parent_graph is not graph:
+        block = block.parent_graph
+    if block is None:
+        return False
+    seen = set()
+    frontier = [edge.dst]
+    while frontier:
+        current = frontier.pop()
+        if current is block:
+            return True
+        if current not in seen:
+            seen.add(current)
+            frontier.extend(graph.successors(current))
+    return False
+
+
 class UndeterminedSymbolDType(Exception):
     """No rung of :meth:`ScopedSymbolResolver.resolve_dtype`'s ladder declares the name."""
 
@@ -405,6 +426,17 @@ class ScopedSymbolResolver:
         declared_symbol = sdfg.symbols.get(name)
         if declared_symbol is not None:
             return declared_symbol
+
+        # Bound by an interstate edge the scoped tables never fold in: they read only the edges into the
+        # start state, so a symbol assigned ahead of the branch holding ``node`` (gromacs' ``ci_cluster_index``)
+        # is visible to nothing above. Only an edge control passes before reaching ``state`` binds it there.
+        bound = [] if state is None else [
+            edge.data.new_symbols(sdfg, sdfg.symbols).get(name) for edge in sdfg.all_interstate_edges()
+            if name in edge.data.assignments and edge_reaches(edge, state)
+        ]
+        bound = [dtype for dtype in bound if dtype is not None]
+        if bound:
+            return dtypes.result_type_of(bound[0], *bound)
 
         return UNDETERMINED
 
