@@ -18,7 +18,7 @@ from dace.transformation.passes.canonicalize.tracked_assumptions import record_a
 from dace.transformation.passes.canonicalize.untile_loops import (_audit_combined_access, _diff_is_zero,
                                                                   _intermediate_chain_clean, _iter_candidate_inners,
                                                                   _match_inner_case, _next_id, _tile_size,
-                                                                  UNTILE_PREFIX, count_applied)
+                                                                  UNTILE_PREFIX, count_applied, depends_only_on_sum)
 
 
 @properties.make_properties
@@ -161,26 +161,21 @@ class UntileLoopsAndBlocks(ppl.Pass):
         blocked: Dict[str, Tuple[List[bool], List[int]]] = {}
         for st in inner.all_states():
             for e in st.edges():
-                if e.data is None or e.data.is_empty() or e.data.subset is None:
+                if e.data is None or e.data.is_empty():
                     continue
-                ranges = e.data.subset.ranges
-                combined = True
-                mentions_tile = False
-                for rng in ranges:
-                    for comp in rng:
-                        free = self._free_syms(comp)
-                        has_i = i_sym in free
-                        has_ii = ii_sym in free
-                        if has_i or has_ii:
-                            mentions_tile = True
-                        if has_i != has_ii:
-                            combined = False
-                if not mentions_tile or combined:
-                    # Not tile-indexed or already combined: standard rewrite handles it.
+                bounds = [
+                    symbolic.pystr_to_symbolic(str(bound)) for subset in (e.data.subset, e.data.other_subset)
+                    if subset is not None for rng in subset.ranges for bound in rng
+                ]
+                # Naming both tile variables is not enough: ``2*i + ii`` collapses to ``k`` as well.
+                if all(
+                        depends_only_on_sum(ex, i_sym, ii_sym) for ex in bounds
+                        if i_sym in ex.free_symbols or ii_sym in ex.free_symbols):
                     continue
                 # Split access: must be a recognized block (concrete tile only).
-                if K_const is None:
+                if K_const is None or e.data.subset is None or e.data.other_subset is not None:
                     return None
+                ranges = e.data.subset.ranges
                 spec = self._match_block_memlet(sdfg, e.data.data, ranges, outer_var, inner_var, K_expr, K_const)
                 if spec is None:
                     return None

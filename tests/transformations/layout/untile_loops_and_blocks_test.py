@@ -104,6 +104,30 @@ def test_blocked_untile_still_applies_for_a_multiple_start():
     assert len(loop_vars(sdfg)) == 1, 'loop should have been untiled for a start of 0'
 
 
+@dace.program
+def tiled_skewed_read(a: dace.float64[N], b: dace.float64[2 * N]):
+    for i in range(0, N, K):
+        for ii in range(0, K):
+            a[i + ii] = b[2 * i + ii]
+
+
+def test_a_tile_read_that_is_not_a_function_of_the_sum_stays_tiled():
+    """``b[2*i + ii]`` names both tile variables but is not a function of ``i + ii``: collapsing it reads ``b[k]``."""
+    sdfg = tiled_skewed_read.to_sdfg(simplify=True)
+
+    res = UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert res is None, 'the skewed read must refuse the untile'
+    assert len(loop_vars(sdfg)) == 2, 'loop must stay tiled'
+    n = 32
+    b = numpy.random.default_rng(5).standard_normal(2 * n)
+    a = numpy.zeros(n)
+    run_isolated(sdfg, a=a, b=b, N=n)
+    element = numpy.arange(n)
+    assert numpy.array_equal(a, b[element + element // K * K]), 'element i + ii must read b[2*i + ii]'
+
+
 def test_untile_loops_alone_leaves_array_blocked_gap():
     """(a) Plain ``UntileLoops`` alone does NOT unblock the array -- it refuses the whole nest
     because the split ``A[int_floor(i, K), ii]`` subset fails its combined-access audit. The
