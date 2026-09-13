@@ -284,3 +284,24 @@ def test_a_write_on_a_back_edge_into_the_start_block_does_not_run_on_entry():
     assert sdfg.start_block is head, 'entering the SDFG must not run the back edge write (X[i - 1] at i = 0)'
     assert writes_per_path(sdfg, body, head, 's') == [1], 'the back edge runs its write exactly once'
     sdfg.validate()
+
+
+def test_an_assigning_edge_between_regions_holding_no_state_gets_its_own_write_state():
+    """Step 1 walks states only, so an SDFG with none must still reach step 2's edge split."""
+    sdfg = dace.SDFG('assignment_between_stateless_regions')
+    sdfg.add_array('X', [1], dace.float64)
+    sdfg.add_symbol('s', dace.float64)
+    before = dace.sdfg.state.ControlFlowRegion('before', sdfg)
+    after = dace.sdfg.state.ControlFlowRegion('after', sdfg)
+    sdfg.add_node(before, is_start_block=True)
+    sdfg.add_node(after)
+    sdfg.add_edge(before, after, dace.InterstateEdge(assignments={'s': 'X[0]'}))
+
+    sdutil.demote_symbol_to_scalar(sdfg, 's', dace.float64)
+
+    write_state = sdfg.successors(before)
+    assert len(write_state) == 1 and isinstance(write_state[0], dace.SDFGState)
+    assert sdfg.successors(write_state[0]) == [after]
+    assert writes_scalar(write_state[0], 's')
+    assert 's' not in sdfg.symbols and 's' in sdfg.arrays
+    assert all('s' not in edge.data.assignments for edge in sdfg.edges())

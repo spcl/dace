@@ -3139,7 +3139,7 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                 symbol_str = k.strip()
                 if symbol_str in state.sdfg.symbols:
                     state.sdfg.remove_symbol(symbol_str)
-                if symbol_str not in g.sdfg.arrays:
+                if symbol_str not in state.sdfg.arrays:
                     state.sdfg.add_scalar(name=symbol_str,
                                           dtype=sym_dtype,
                                           storage=dace.dtypes.StorageType.Register,
