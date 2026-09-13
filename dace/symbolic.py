@@ -9,6 +9,7 @@ import threading
 import pickle
 import re
 import types
+import weakref
 from typing import (Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Type, Union,
                     TYPE_CHECKING)
 import numpy
@@ -35,6 +36,36 @@ NUM_THREADS_SYMBOL = '__dace_num_threads'
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
+class AuthorityKey:
+    """Content fingerprint of one authority level, hashed once at push: a parse-cache lookup hashes its key per call.
+
+    Interned by content (:meth:`of`), so a re-pushed authority compares by identity instead of entry by entry."""
+    __slots__ = ('entries', 'digest', '__weakref__')
+
+    def __init__(self, entries: Tuple[Tuple[str, str], ...]) -> None:
+        self.entries = entries
+        self.digest = hash(entries)
+
+    @staticmethod
+    def of(entries: Tuple[Tuple[str, str], ...]) -> 'AuthorityKey':
+        key = INTERNED_AUTHORITY_KEYS.get(entries)
+        if key is None:
+            key = AuthorityKey(entries)
+            INTERNED_AUTHORITY_KEYS[entries] = key
+        return key
+
+    def __hash__(self) -> int:
+        return self.digest
+
+    def __eq__(self, other: object) -> bool:
+        return self is other or (isinstance(other, AuthorityKey) and self.digest == other.digest
+                                 and self.entries == other.entries)
+
+
+INTERNED_AUTHORITY_KEYS: 'weakref.WeakValueDictionary[Tuple[Tuple[str, str], ...], AuthorityKey]' = (
+    weakref.WeakValueDictionary())
+
+
 class _SymbolDTypeContext(threading.local):
 
     def __init__(self):
@@ -45,7 +76,7 @@ class _SymbolDTypeContext(threading.local):
         # alone, but the same text names a different symbol under a different authority, so the
         # fingerprint goes in the key. Maintained on push/pop -- computing it per parse would put
         # a sort on one of the hottest paths in the compiler.
-        self.key_stack: List[Tuple] = [()]
+        self.key_stack: List[AuthorityKey] = [AuthorityKey.of(())]
 
     def push(self, authority: Dict[str, 'dtypes.typeclass']) -> types.MappingProxyType[str, 'dtypes.typeclass']:
         """
@@ -58,7 +89,7 @@ class _SymbolDTypeContext(threading.local):
             for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)
         })
         self.ctx_stack.append(new_stack_level)
-        self.key_stack.append(tuple(sorted((n, dt.ctype) for n, dt in new_stack_level.items())))
+        self.key_stack.append(AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in new_stack_level.items()))))
         return self.ctx_stack[-1]
 
     def pop(self) -> "_SymbolDTypeContext":
@@ -75,7 +106,7 @@ class _SymbolDTypeContext(threading.local):
             raise IndexError("Symbol type stack is empty.")
         return self.ctx_stack[-1]
 
-    def cache_key(self) -> Tuple:
+    def cache_key(self) -> AuthorityKey:
         """Hashable stand-in for the active authority, for use in a parse cache key."""
         return self.key_stack[-1]
 
@@ -3549,7 +3580,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
 
 
 @lru_cache(maxsize=16384, typed=True)
-def _pystr_to_symbolic_cached(expr, simplify=None, authority_key: Tuple = ()) -> sympy.Basic:
+def _pystr_to_symbolic_cached(expr, simplify, authority_key: AuthorityKey) -> sympy.Basic:
     return _pystr_to_symbolic_uncached(expr, None, simplify)
 
 

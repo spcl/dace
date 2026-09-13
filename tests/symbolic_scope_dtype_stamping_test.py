@@ -43,6 +43,23 @@ def test_the_parse_cache_is_keyed_on_the_authority():
     assert wide.dtype == dtypes.int64, 'the cache served the previous scope\'s symbol'
 
 
+def test_one_authority_pushed_twice_is_served_from_the_parse_cache():
+    with symbolic.serialization_symbol_dtypes({'K': dtypes.int64}):
+        first = symbolic.pystr_to_symbolic('K + 7')
+    with symbolic.serialization_symbol_dtypes({'K': dtypes.int64}):
+        second = symbolic.pystr_to_symbolic('K + 7')
+    assert second is first
+
+
+def test_an_authority_differing_in_one_dtype_misses_the_parse_cache():
+    with symbolic.serialization_symbol_dtypes({'K': dtypes.int64, 'L': dtypes.int32}):
+        narrow = symbolic.pystr_to_symbolic('K + L')
+    with symbolic.serialization_symbol_dtypes({'K': dtypes.int64, 'L': dtypes.int64}):
+        wide = symbolic.pystr_to_symbolic('K + L')
+    assert {str(s): s.dtype for s in narrow.free_symbols} == {'K': dtypes.int64, 'L': dtypes.int32}
+    assert {str(s): s.dtype for s in wide.free_symbols} == {'K': dtypes.int64, 'L': dtypes.int64}
+
+
 def test_a_canonicalized_graph_spells_each_name_once():
     """End to end: after canonicalization no name appears under two dtypes."""
     N = dace.symbol('N', dtype=dace.int64)
