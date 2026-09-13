@@ -12,6 +12,8 @@ rather than part of the ordinary minter: the ordinary one runs thousands of time
 parse, once per temporary, and paying the walk there made parsing quadratic.
 """
 import dace
+from dace.sdfg import nodes
+from dace.transformation.interstate import InlineSDFG
 
 
 def sdfg_with_a_tmp_connector() -> dace.SDFG:
@@ -53,6 +55,33 @@ def test_minting_that_name_would_have_produced_an_invalid_sdfg():
 def test_the_connector_avoiding_name_is_safe_to_add():
     sdfg = sdfg_with_a_tmp_connector()
     sdfg.add_scalar(sdfg.find_new_name_avoiding_connectors('tmp'), dace.float64, transient=True)
+    sdfg.validate()
+
+
+def test_inlining_lifts_a_nested_transient_past_an_outer_connector_name() -> None:
+    sdfg = sdfg_with_a_tmp_connector()
+    inner = dace.SDFG('inner')
+    inner.add_array('x', [4], dace.float64)
+    inner.add_array('y', [4], dace.float64)
+    inner.add_scalar('tmp', dace.float64, transient=True)
+    body = inner.add_state()
+    copy_in = body.add_tasklet('copy_in', {'a'}, {'b'}, 'b = a')
+    copy_out = body.add_tasklet('copy_out', {'c'}, {'d'}, 'd = c')
+    body.add_edge(body.add_read('x'), None, copy_in, 'a', dace.Memlet('x[1]'))
+    tmp_node = body.add_access('tmp')
+    body.add_edge(copy_in, 'b', tmp_node, None, dace.Memlet('tmp'))
+    body.add_edge(tmp_node, None, copy_out, 'c', dace.Memlet('tmp'))
+    body.add_edge(copy_out, 'd', body.add_write('y'), None, dace.Memlet('y[1]'))
+    outer = sdfg.add_state_after(sdfg.start_block)
+    nested = outer.add_nested_sdfg(inner, {'x': None}, {'y': None})
+    outer.add_edge(outer.add_read('A'), None, nested, 'x', dace.Memlet('A'))
+    outer.add_edge(nested, 'y', outer.add_write('B'), None, dace.Memlet('B'))
+
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
+
+    assert not any(isinstance(node, nodes.NestedSDFG) for node in outer.nodes())
+    assert 'tmp' not in sdfg.arrays
+    assert 'tmp_0' in sdfg.arrays
     sdfg.validate()
 
 

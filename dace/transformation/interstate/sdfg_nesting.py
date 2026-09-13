@@ -13,6 +13,7 @@ import copy
 from dace import memlet, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation, utils
+from dace.sdfg import sdfg as sdfg_module
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
@@ -410,6 +411,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # exists, find new name)
         # Mapping from nested transient name to top-level name
         transients: Dict[str, str] = {}
+        # One connector walk for every name minted below: until the nested nodes move out, this adds
+        # descriptors and constants only, which the view reads live.
+        used_names = sdfg_module._UsedNames(sdfg, include_connectors=True)
         for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode):
                 datadesc = nsdfg.arrays[node.data]
@@ -420,7 +424,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
                     # Connector-aware: a nested name like a copy expansion's `_cpy_in` lifted into a
                     # graph that still holds unexpanded library nodes must dodge their connectors.
-                    new_name = sdfg.find_new_name_avoiding_connectors(new_name.replace('.', '_'))
+                    new_name = data.find_new_name(new_name.replace('.', '_'), used_names)
                     name = sdfg.add_datadesc(new_name, datadesc)
                     transients[node.data] = name
 
@@ -434,7 +438,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if (new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants):
                             new_name = f'{nsdfg.label}_{edge.data.data}'
 
-                        new_name = sdfg.find_new_name_avoiding_connectors(new_name.replace('.', '_'))
+                        new_name = data.find_new_name(new_name.replace('.', '_'), used_names)
                         name = sdfg.add_datadesc(new_name, datadesc)
                         transients[edge.data.data] = name
 
@@ -490,7 +494,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             # Connector-aware: a copy expansion's wrapper arrays are named after its connectors
             # (`_cpy_in`), and a view lifted under that name collides with any still-unexpanded
             # library node's connector at validation.
-            newname = sdfg.find_new_name_avoiding_connectors(newname.replace('.', '_'))
+            newname = data.find_new_name(newname.replace('.', '_'), used_names)
             newname, _ = sdfg.add_view(newname,
                                        desc.shape,
                                        desc.dtype,
