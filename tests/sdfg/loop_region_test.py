@@ -346,6 +346,39 @@ def test_loop_region_read_and_write_sets_bound_scalar():
     assert not PruneConnectors.can_be_applied_to(sdfg=sdfg, nsdfg=nsdfg_node, expr_index=0, permissive=False)
 
 
+def test_nested_loop_iterators_are_defined_for_a_nested_sdfg():
+    sdfg = dace.SDFG('nested_loop_iterators')
+    sdfg.using_explicit_control_flow = True
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', ['N'], dace.float64)
+    outer = LoopRegion(label='outer',
+                       condition_expr='i < N',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1')
+    sdfg.add_node(outer, is_start_block=True)
+    inner = LoopRegion(label='inner',
+                       condition_expr='j < i',
+                       loop_var='j',
+                       initialize_expr='j = 0',
+                       update_expr='j = j + 1')
+    outer.add_node(inner, is_start_block=True)
+    body = inner.add_state('body', is_start_block=True)
+    nsdfg = dace.SDFG('nested')
+    nsdfg.add_array('B', ['N'], dace.float64)
+    nstate = nsdfg.add_state('nstate')
+    tasklet = nstate.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    nstate.add_edge(tasklet, 'o', nstate.add_write('B'), None, dace.Memlet('B[j]'))
+
+    node = body.add_nested_sdfg(nsdfg, {}, {'B'}, symbol_mapping={'N': 'N'})
+    body.add_edge(node, 'B', body.add_write('A'), None, dace.Memlet('A'))
+
+    defined = body.symbols_defined_at(node)
+    assert body.defined_symbols()['i'] == defined['i']
+    assert nsdfg.symbols['j'] == defined['j']
+    assert str(node.symbol_mapping['j']) == 'j'
+
+
 if __name__ == '__main__':
     test_loop_regular_for()
     test_loop_regular_while()
@@ -360,3 +393,4 @@ if __name__ == '__main__':
     test_loop_to_stree_do_for_inverted_cond()
     test_loop_to_stree_triple_nested_for()
     test_loop_region_read_and_write_sets_bound_scalar()
+    test_nested_loop_iterators_are_defined_for_a_nested_sdfg()
