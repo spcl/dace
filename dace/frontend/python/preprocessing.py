@@ -1676,19 +1676,6 @@ class MPIResolver(ast.NodeTransformer):
         return node
 
 
-class ModuloConverter(ast.NodeTransformer):
-    """ Converts a % b expressions to (a + b) % b for C/C++ compatibility. """
-
-    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
-        if isinstance(node.op, ast.Mod):
-            left = self.generic_visit(node.left)
-            right = self.generic_visit(node.right)
-            newleft = ast.copy_location(ast.BinOp(left=left, op=ast.Add(), right=astutils.copy_tree(right)), left)
-            node.left = newleft
-            return node
-        return self.generic_visit(node)
-
-
 def preprocess_dace_program(f: Callable[..., Any],
                             argtypes: Dict[str, data.Data],
                             global_vars: Dict[str, Any],
@@ -1734,7 +1721,6 @@ def preprocess_dace_program(f: Callable[..., Any],
     # Guard the availability check only, so a genuine error inside the visitor still surfaces.
     if mpi4py_is_usable():
         src_ast = MPIResolver(global_vars).visit(src_ast)
-    src_ast = ModuloConverter().visit(src_ast)
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names

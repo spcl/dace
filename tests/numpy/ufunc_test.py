@@ -1145,7 +1145,7 @@ def test_ufunc_modf_c(A: dace.complex64[10]):
 
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_modf_f(A: dace.float32[10]):
-    Q, R = np.modfd(A)
+    Q, R = np.modf(A)
     return Q, R
 
 

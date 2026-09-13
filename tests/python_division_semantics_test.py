@@ -14,9 +14,9 @@ device code with warning #20011 rather than an error and deletes the region arou
 launched, returned success, and stored nothing (tsvc ``s315``). Only running it on the device says
 the branch survived.
 
-Division by zero is deliberately absent from the table and is a KNOWN divergence: numpy answers
-``0`` for integers and ``inf``/``nan`` for floats, where the emitted C traps or is undefined.
-Matching it would put a branch on every division, which is not a trade this makes silently.
+Both are halves of ``py_divmod``, which answers a zero divisor as numpy does (``0`` for integers,
+``inf``/``nan`` for floats); that and the other special values are tabled in
+``tests/numpy/ufunc_multi_output_test.py``.
 """
 import itertools
 

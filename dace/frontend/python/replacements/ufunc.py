@@ -193,7 +193,7 @@ ufuncs = dict(
               reduce="lambda a, b: cpp_mod(a, b)",
               initial=np.fmod.identity),
     divmod=dict(name="_numpy_divmod_",
-                operator="Div",
+                operator="Mod",
                 inputs=["__in1", "__in2"],
                 outputs=["__out1", "__out2"],
                 code="py_divmod(__in1, __in2, __out1, __out2)",

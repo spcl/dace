@@ -80,6 +80,10 @@ CASES = [
     ('py_floor', ('-7.0', '3.0'), '-3.0'),
     ('py_mod', ('-1', '5'), '4'),
     ('py_mod', ('-1.0', '5.0'), '4.0'),
+    ('py_floor', ('1.0', '0.1'), '9.0'),
+    ('py_mod', ('1.0e300', '7.0'), '1.0'),
+    ('py_floor', ('7', '0'), '0'),
+    ('py_mod', ('-7', '0'), '0'),
     ('floor_mod', ('-1', '5'), '4'),
     ('cpp_mod', ('-1', '5'), '-1'),
     ('cpp_mod', ('-1.0', '5.0'), '-1.0'),
@@ -103,6 +107,14 @@ STATEMENT_CASES = [
      DIVMOD_TYPES),
     ('py_divmod', 'long q = 0, r = 0; py_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(q);', -3.0, DIVMOD_TYPES),
     ('py_divmod', 'long q = 0, r = 0; py_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(r);', 2.0, DIVMOD_TYPES),
+    ('py_divmod', 'long q = 1, r = 1; py_divmod(7L, 0L, q, r); out[0] = static_cast<double>(q * 10 + r);', 0.0,
+     DIVMOD_TYPES),
+    ('py_divmod', 'long q = 1, r = 1; py_divmod(INT64_MIN, -1L, q, r); out[0] = static_cast<double>(q) + r;',
+     -9.223372036854775808e18, DIVMOD_TYPES),
+    ('py_divmod', 'double q = 0, r = 0; py_divmod(5.0, HUGE_VAL, q, r); out[0] = q + r * 10;', 50.0,
+     ('float64', 'float64', 'float64', 'float64')),
+    ('py_divmod', 'double q = 0, r = 0; py_divmod(-1.0, -0.1, q, r); out[0] = q;', 9.0, ('float64', 'float64',
+                                                                                         'float64', 'float64')),
     ('np_modf', 'double i = 0, f = 0; np_modf(2.5, i, f); out[0] = i + f * 10;', 7.0, ('float64', 'float64',
                                                                                        'float64')),
     ('np_frexp', 'double m = 0; int e = 0; np_frexp(8.0, m, e); out[0] = m * 100 + e;', 54.0, ('float64', 'float64',
@@ -254,14 +266,14 @@ def test_c_typed_helpers_are_emitted_callees_first(dtype):
     """A C function must be declared before the function that calls it, or the unit does not compile."""
     emitted = cpf_lowering.definitions_for({'cpf_py_mod_' + dtype}, Dialect.STANDALONE_C)
     order = [re.match(r'static inline \S+ (\w+)\(', text).group(1) for text in emitted]
-    assert order == ['cpf_int_floor_ni_' + dtype, 'cpf_py_floor_' + dtype, 'cpf_py_mod_' + dtype], order
+    assert order == ['cpf_py_divmod_' + dtype, 'cpf_py_mod_' + dtype], order
 
 
-def test_a_float_py_floor_calls_the_floor_of_its_own_width():
-    """``floor`` on a ``float`` quotient would round it through ``double``; the helper names ``floorf``."""
-    emitted = cpf_lowering.definitions_for({'cpf_py_floor_float32'}, Dialect.STANDALONE_C)
-    assert emitted == ('static inline float cpf_py_floor_float32(float numerator, float denominator) {\n'
-                       '    return floorf(numerator / denominator);\n}', ), emitted
+def test_a_float_py_floor_calls_the_libm_functions_of_its_own_width():
+    """``fmod`` or ``floor`` on a ``float`` would round it through ``double``; the helpers name the ``f`` ones."""
+    emitted = '\n'.join(cpf_lowering.definitions_for({'cpf_py_floor_float32'}, Dialect.STANDALONE_C))
+    called = set(re.findall(r'\b(fmod|floor|copysign)(f?)\(', emitted))
+    assert called == {('fmod', 'f'), ('floor', 'f'), ('copysign', 'f')}, called
 
 
 #: ``(helper, argument types)`` C has no typed helper for. Each would be a sign-sensitive body at a
@@ -307,13 +319,12 @@ def test_definitions_are_emitted_callees_first():
     """A helper is declared before the helper that calls it, or the unit does not compile."""
     emitted = cpf_lowering.definitions_for({'py_mod'}, Dialect.STANDALONE)
     order = [re.search(r'\binline\s+\w+\s+(\w+)\(', text).group(1) for text in emitted]
-    assert order == ['int_floor_ni', 'py_floor', 'py_mod'], order
+    assert order == ['py_divmod', 'py_mod'], order
 
 
 def test_dependency_closure_pulls_transitive_callees():
     """Asking for one helper brings everything it reaches."""
-    assert cpf_lowering.required_definitions({'floor_mod'},
-                                             Dialect.STANDALONE) == {'floor_mod', 'py_mod', 'py_floor', 'int_floor_ni'}
+    assert cpf_lowering.required_definitions({'floor_mod'}, Dialect.STANDALONE) == {'floor_mod', 'py_mod', 'py_divmod'}
 
 
 @pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)

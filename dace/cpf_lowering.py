@@ -605,16 +605,18 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     'py_floor':
     'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
     'static constexpr inline R py_floor(const T& numerator, const U& denominator) {\n'
-    '    if constexpr (std::is_integral_v<T> && std::is_integral_v<U>) {\n'
-    '        return int_floor_ni(numerator, denominator);\n'
-    '    } else {\n'
-    '        return std::floor(numerator / denominator);\n'
-    '    }\n'
+    '    R quotient = 0;\n'
+    '    R remainder = 0;\n'
+    '    py_divmod(static_cast<R>(numerator), static_cast<R>(denominator), quotient, remainder);\n'
+    '    return quotient;\n'
     '}',
     'py_mod':
     'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
     'static constexpr inline R py_mod(const T& numerator, const U& denominator) {\n'
-    '    return numerator - py_floor(numerator, denominator) * denominator;\n'
+    '    R quotient = 0;\n'
+    '    R remainder = 0;\n'
+    '    py_divmod(static_cast<R>(numerator), static_cast<R>(denominator), quotient, remainder);\n'
+    '    return remainder;\n'
     '}',
     'floor_mod':
     'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
@@ -661,10 +663,40 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     'template <typename T>\n'
     'static constexpr inline void py_divmod(const T& numerator, const T& denominator, T& quotient,\n'
     '                                       T& remainder) {\n'
-    '    cpp_divmod(numerator, denominator, quotient, remainder);\n'
-    '    T correction = (remainder != 0 && ((remainder < 0) != (denominator < 0)));\n'
-    '    quotient -= correction;\n'
-    '    remainder += correction * denominator;\n'
+    '    if constexpr (std::is_floating_point_v<T>) {\n'
+    '        const T ratio = numerator / denominator;\n'
+    '        remainder = std::fmod(numerator, denominator);\n'
+    '        if (denominator == 0) {\n'
+    '            quotient = ratio;\n'
+    '            return;\n'
+    '        }\n'
+    '        quotient = (numerator - remainder) / denominator;\n'
+    '        if (remainder == 0) {\n'
+    '            remainder = std::copysign(static_cast<T>(0), denominator);\n'
+    '        } else if ((denominator < 0) != (remainder < 0)) {\n'
+    '            remainder += denominator;\n'
+    '            quotient -= 1;\n'
+    '        }\n'
+    '        if (quotient == 0) {\n'
+    '            quotient = std::copysign(static_cast<T>(0), ratio);\n'
+    '        } else {\n'
+    '            const T floored = std::floor(quotient);\n'
+    '            quotient = quotient - floored > static_cast<T>(0.5) ? floored + 1 : floored;\n'
+    '        }\n'
+    '    } else if (denominator == 0) {\n'
+    '        quotient = 0;\n'
+    '        remainder = 0;\n'
+    '    } else if (numerator == std::numeric_limits<T>::min() && denominator == static_cast<T>(-1)) {\n'
+    '        quotient = numerator;\n'
+    '        remainder = 0;\n'
+    '    } else {\n'
+    '        quotient = static_cast<T>(numerator / denominator);\n'
+    '        remainder = static_cast<T>(numerator % denominator);\n'
+    '        if (remainder != 0 && ((remainder < 0) != (denominator < 0))) {\n'
+    '            quotient = static_cast<T>(quotient - 1);\n'
+    '            remainder = static_cast<T>(remainder + denominator);\n'
+    '        }\n'
+    '    }\n'
     '}',
     'np_modf':
     'template <typename T>\n'
@@ -711,10 +743,9 @@ DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     'scan_excl_min': ('min_identity', 'cpf_min'),
     'scan_excl_max': ('max_identity', 'cpf_max'),
     'find_first_index': ('find_first_chunk', ),
-    'py_floor': ('int_floor_ni', ),
-    'py_mod': ('py_floor', ),
+    'py_floor': ('py_divmod', ),
+    'py_mod': ('py_divmod', ),
     'floor_mod': ('py_mod', ),
-    'py_divmod': ('cpp_divmod', ),
 }
 
 #: System headers each inline definition needs, beyond :data:`BASE_HEADERS`.
@@ -726,8 +757,9 @@ DEFINITION_HEADERS: Dict[str, Tuple[str, ...]] = {
     'logical_right_shift': ('<type_traits>', ),
     'int_ceil': ('<utility>', ),
     'int_floor_ni': ('<utility>', ),
-    'py_floor': ('<type_traits>', '<utility>'),
+    'py_floor': ('<utility>', ),
     'py_mod': ('<utility>', ),
+    'py_divmod': ('<limits>', '<type_traits>'),
     'floor_mod': ('<utility>', ),
     'mod': ('<utility>', ),
     'cpp_mod': ('<type_traits>', '<utility>'),
@@ -1747,6 +1779,12 @@ C_DTYPE_LIBM_SUFFIXES: Dict[str, str] = {'float32': 'f', 'complex64': 'f'}
 #: sign of a ``double`` a ``double``, so a following ``/ 2`` does not become integer division.
 C_SIGN_BODY = 'return ({T})((({T})0 < value) - (value < ({T})0));'
 
+#: ``//`` and ``%`` are the two halves of ``py_divmod``, so the three cannot disagree about a sign,
+#: a zero divisor or an infinity. ``%s`` names the half returned.
+C_DIVMOD_HALF_BODY = (
+    '{T} quotient;\n{T} remainder;\ncpf_py_divmod_{t}(numerator, denominator, &quotient, &remainder);\n'
+    'return %s;')
+
 #: Runtime helper -> ``(parameters, (types, return type, body) groups)``.
 #:
 #: A call picks its helper by the type C's conversions give the arguments of the ``{T}`` parameters.
@@ -1764,12 +1802,10 @@ C_TYPED_HELPER_SPECS: Dict[str, Tuple[Tuple[Tuple[str, str], ...], Tuple[Tuple[T
                      ((C_SIGNED_DTYPES, '{T}', '{T} quotient = numerator / denominator;\n'
                        '{T} remainder = numerator % denominator;\n'
                        'return quotient - ((remainder != 0) && ((remainder < 0) != (denominator < 0)));'), )),
-    'py_floor': ((('{T}', 'numerator'), ('{T}', 'denominator')),
-                 ((C_SIGNED_DTYPES, '{T}', 'return cpf_int_floor_ni_{t}(numerator, denominator);'),
-                  (C_FLOATING_DTYPES, '{T}', 'return floor{f}(numerator / denominator);'))),
-    'py_mod':
-    ((('{T}', 'numerator'), ('{T}', 'denominator')),
-     ((C_ARITHMETIC_DTYPES, '{T}', 'return numerator - cpf_py_floor_{t}(numerator, denominator) * denominator;'), )),
+    'py_floor':
+    ((('{T}', 'numerator'), ('{T}', 'denominator')), ((C_ARITHMETIC_DTYPES, '{T}', C_DIVMOD_HALF_BODY % 'quotient'), )),
+    'py_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')), ((C_ARITHMETIC_DTYPES, '{T}',
+                                                                 C_DIVMOD_HALF_BODY % 'remainder'), )),
     'floor_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')),
                   ((C_ARITHMETIC_DTYPES, '{T}', 'return cpf_py_mod_{t}(numerator, denominator);'), )),
     'mod': ((('{T}', 'value'), ('{T}', 'modulus')), ((C_SIGNED_DTYPES, '{T}',
@@ -1812,12 +1848,41 @@ C_TYPED_HELPER_SPECS: Dict[str, Tuple[Tuple[Tuple[str, str], ...], Tuple[Tuple[T
     'cpp_divmod': ((('{T}', 'numerator'), ('{T}', 'denominator'), ('{T} *', 'quotient'), ('{T} *', 'remainder')),
                    ((C_SIGNED_DTYPES, 'void', '*quotient = ({T})(numerator / denominator);\n'
                      '*remainder = ({T})(numerator % denominator);'), )),
+    # ``x / -1`` is ``-x`` with remainder 0, negated through the unsigned type so ``MIN / -1`` wraps
+    # to ``MIN`` instead of trapping; ``x / 0`` is 0 remainder 0. Both are numpy's answers.
     'py_divmod': ((('{T}', 'numerator'), ('{T}', 'denominator'), ('{T} *', 'quotient'), ('{T} *', 'remainder')),
-                  ((C_SIGNED_DTYPES, 'void', '{T} correction;\n'
-                    'cpf_cpp_divmod_{t}(numerator, denominator, quotient, remainder);\n'
-                    'correction = (*remainder != 0 && ((*remainder < 0) != (denominator < 0)));\n'
-                    '*quotient -= correction;\n'
-                    '*remainder += correction * denominator;'), )),
+                  ((C_SIGNED_DTYPES, 'void', 'if (denominator == 0) {\n'
+                    '    *quotient = 0;\n'
+                    '    *remainder = 0;\n'
+                    '} else if (denominator == -1) {\n'
+                    '    *quotient = ({T})(({U})0 - ({U})numerator);\n'
+                    '    *remainder = 0;\n'
+                    '} else {\n'
+                    '    *quotient = numerator / denominator;\n'
+                    '    *remainder = numerator % denominator;\n'
+                    '    if (*remainder != 0 && ((*remainder < 0) != (denominator < 0))) {\n'
+                    '        *quotient -= 1;\n'
+                    '        *remainder += denominator;\n'
+                    '    }\n'
+                    '}'), (C_FLOATING_DTYPES, 'void', '{T} ratio = numerator / denominator;\n'
+                           '*remainder = fmod{f}(numerator, denominator);\n'
+                           'if (denominator == 0) {\n'
+                           '    *quotient = ratio;\n'
+                           '    return;\n'
+                           '}\n'
+                           '*quotient = (numerator - *remainder) / denominator;\n'
+                           'if (*remainder == 0) {\n'
+                           '    *remainder = copysign{f}(({T})0, denominator);\n'
+                           '} else if ((denominator < 0) != (*remainder < 0)) {\n'
+                           '    *remainder += denominator;\n'
+                           '    *quotient -= 1;\n'
+                           '}\n'
+                           'if (*quotient == 0) {\n'
+                           '    *quotient = copysign{f}(({T})0, ratio);\n'
+                           '} else {\n'
+                           '    {T} floored = floor{f}(*quotient);\n'
+                           '    *quotient = *quotient - floored > ({T})0.5 ? floored + 1 : floored;\n'
+                           '}'))),
     'np_modf': ((('{T}', 'value'), ('{T} *', 'integral'), ('{T} *', 'fractional')),
                 ((C_SIGNED_DTYPES, 'void', '*integral = value;\n*fractional = 0;'),
                  (C_FLOATING_DTYPES, 'void', '*fractional = modf{f}(value, integral);'))),

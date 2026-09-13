@@ -5,6 +5,7 @@
 #include <cfloat>
 #include <cmath>
 #include <complex>
+#include <limits>
 #include <numeric>
 #include <type_traits>
 
@@ -235,14 +236,62 @@ static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& deno
   return quotient - corr;
 }
 
-// Computes Python floor division
+// Computes NumPy divmod: the quotient rounded toward negative infinity, and the remainder, which
+// takes the divisor's sign. ``py_floor`` (``//``) and ``py_mod`` (``%``) are its two halves.
+// Integers never trap: ``x // 0`` and ``x % 0`` are 0, and ``MIN // -1`` wraps to ``MIN`` with
+// remainder 0, as NumPy answers.
 template <typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
-  return int_floor_ni(numerator, denominator);
+static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
+  if (denominator == 0) {
+    quotient = 0;
+    remainder = 0;
+  } else if (numerator == std::numeric_limits<T>::min() && denominator == static_cast<T>(-1)) {
+    quotient = numerator;
+    remainder = 0;
+  } else {
+    quotient = static_cast<T>(numerator / denominator);
+    remainder = static_cast<T>(numerator % denominator);
+    if (remainder != 0 && ((remainder < 0) != (denominator < 0))) {
+      quotient = static_cast<T>(quotient - 1);
+      remainder = static_cast<T>(remainder + denominator);
+    }
+  }
 }
-template <typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+// Floating point follows NumPy's npy_divmod: the remainder is fmod's, which is exact, and the
+// quotient is recovered from it and snapped to an integer. ``floor(a / b)`` is not: the division
+// rounds first (``1.0 // 0.1`` would be 10, ``5 % inf`` nan, ``1e300 % 7`` off by 1e283).
+template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
+  // Divided before any comparison: under -fno-signed-zeros GCC substitutes +0 for a divisor known
+  // to equal zero, so ``-5 // -0.`` would give -inf.
+  const T ratio = numerator / denominator;
+  remainder = std::fmod(numerator, denominator);
+  if (denominator == 0) {
+    quotient = ratio;
+    return;
+  }
+  quotient = (numerator - remainder) / denominator;
+  if (remainder == 0) {
+    remainder = std::copysign(T(0), denominator);
+  } else if ((denominator < 0) != (remainder < 0)) {
+    remainder += denominator;
+    quotient -= 1;
+  }
+  if (quotient == 0) {
+    quotient = std::copysign(T(0), ratio);
+  } else {
+    const T floored = std::floor(quotient);
+    quotient = (quotient - floored > T(0.5)) ? floored + 1 : floored;
+  }
+}
+
+// Computes Python floor division (also NumPy floor_divide)
+template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
-  return (T)std::floor(numerator / denominator);
+  T quotient = 0;
+  T remainder = 0;
+  py_divmod(numerator, denominator, quotient, remainder);
+  return quotient;
 }
 // Mixed-operand-type overload, the same shape ``py_mod`` carries below: ``a // 7`` deduces
 // nothing from an ``int64_t`` numerator and an ``int`` literal, so promote both to their common
@@ -274,14 +323,20 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(const std::com
   return std::pow((std::complex<double>)base, (std::complex<double>)exponent);
 }
 
-// Computes Python modulus (also NumPy remainder)
-// Formula: num - (num // den) * den
+// Computes Python modulus (also NumPy remainder): the remainder half of py_divmod
 // NOTE: This is different than Python math.remainder and C remainder,
 // which are equaivalent to the IEEE remainder: num - round(num / den) * den
-template <typename T>
+template <typename T, std::enable_if_t<std::is_arithmetic<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
-  T quotient = py_floor(numerator, denominator);
-  return (T)(numerator - quotient * denominator);
+  T quotient = 0;
+  T remainder = 0;
+  py_divmod(numerator, denominator, quotient, remainder);
+  return remainder;
+}
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_mod(const std::complex<T>& numerator,
+                                                       const std::complex<T>& denominator) {
+  return numerator - py_floor(numerator, denominator) * denominator;
 }
 
 // Mixed-operand-type overload (e.g. i % 64 with i int64_t): promote both operands to
@@ -327,20 +382,6 @@ template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = null
 static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
   quotient = (T)std::floor(numerator / denominator);
   remainder = (T)std::fmod(numerator, denominator);
-}
-
-// Computes Python divmod
-template <typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
-  cpp_divmod(numerator, denominator, quotient, remainder);
-  T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
-  quotient -= corr;
-  remainder += corr * denominator;
-}
-template <typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
-  quotient = (T)std::floor(numerator / denominator);
-  remainder = numerator - quotient * denominator;
 }
 
 // Computes absolute value (support for unsigned integers)
