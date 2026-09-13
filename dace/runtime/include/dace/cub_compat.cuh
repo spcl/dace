@@ -30,11 +30,10 @@
 // remain as device-side lambdas because ``cuda::std::minimum`` / ``maximum`` are
 // not part of the CCCL surface area as of 13.0.
 #include <cuda/std/functional>
-#define DACE_CUB_SUM_OP ::cuda::std::plus<>{}
-#define DACE_CUB_MIN_OP \
-    [] __device__(auto _a, auto _b) { return _a < _b ? _a : _b; }
-#define DACE_CUB_MAX_OP \
-    [] __device__(auto _a, auto _b) { return _a > _b ? _a : _b; }
+#define DACE_CUB_SUM_OP \
+  ::cuda::std::plus<> {}
+#define DACE_CUB_MIN_OP [] __device__(auto _a, auto _b) { return _a < _b ? _a : _b; }
+#define DACE_CUB_MAX_OP [] __device__(auto _a, auto _b) { return _a > _b ? _a : _b; }
 #else
 // CUB 1.x / 2.x (shipped with CUDA Toolkit 11 / 12): use the legacy structs.
 #define DACE_CUB_SUM_OP ::gpucub::Sum()
@@ -43,8 +42,7 @@
 #endif
 
 // ``product`` was never a CUB-provided functor in any version; use a lambda.
-#define DACE_CUB_MUL_OP \
-    [] __device__(auto _a, auto _b) { return _a * _b; }
+#define DACE_CUB_MUL_OP [] __device__(auto _a, auto _b) { return _a * _b; }
 
 // ---------------------------------------------------------------------------------------------
 // ArgMax / ArgMin, for the one libnode that emits them (``ArgReduce``'s CUDA expansion).
@@ -56,8 +54,8 @@
 // form's ``.key`` / ``.value`` member names are kept by the replacement buffer, so only the CUB
 // call itself differs and the rest of the routine is written once.
 
-#if (defined(HIPCUB_VERSION_MAJOR) && HIPCUB_VERSION_MAJOR >= 4) \
-    || (!defined(HIPCUB_VERSION_MAJOR) && defined(CUB_VERSION) && CUB_VERSION >= 200800)
+#if (defined(HIPCUB_VERSION_MAJOR) && HIPCUB_VERSION_MAJOR >= 4) || \
+    (!defined(HIPCUB_VERSION_MAJOR) && defined(CUB_VERSION) && CUB_VERSION >= 200800)
 #define DACE_CUB_ARG_REDUCE_SPLIT_OUTPUTS 1
 #else
 #define DACE_CUB_ARG_REDUCE_SPLIT_OUTPUTS 0
@@ -79,26 +77,30 @@ namespace cub {
 /// that applies. ``IdentityXf`` exists so the untransformed strided case has the same iterator
 /// shape as the transformed one, rather than a second code path.
 struct IdentityXf {
-    template <typename T>
-    __host__ __device__ __forceinline__ T operator()(const T &v) const { return v; }
+  template <typename T>
+  __host__ __device__ __forceinline__ T operator()(const T& v) const {
+    return v;
+  }
 };
 
 struct AbsXf {
-    /// ``v < 0 ? -v : v`` rather than a library call, so this holds for every arithmetic ``T`` the
-    /// node accepts. On an unsigned ``T`` the test is never taken, which is the right answer.
-    template <typename T>
-    __host__ __device__ __forceinline__ T operator()(const T &v) const { return v < T(0) ? -v : v; }
+  /// ``v < 0 ? -v : v`` rather than a library call, so this holds for every arithmetic ``T`` the
+  /// node accepts. On an unsigned ``T`` the test is never taken, which is the right answer.
+  template <typename T>
+  __host__ __device__ __forceinline__ T operator()(const T& v) const {
+    return v < T(0) ? -v : v;
+  }
 };
 
 /// ``j -> xf(base[j * stride])``: the whole non-contiguous read as one functor. ``stride`` is a
 /// runtime value because the lift may only know it as a symbol (TSVC ``s318``'s ``inc``).
 template <typename T, typename Xf>
 struct StridedGather {
-    const T *base;
-    long long stride;
-    Xf xf;
-    using result_type = T;  // pre-C++11-invoke_result thrust looks this up rather than deducing it
-    __host__ __device__ __forceinline__ T operator()(long long j) const { return xf(base[j * stride]); }
+  const T* base;
+  long long stride;
+  Xf xf;
+  using result_type = T;  // pre-C++11-invoke_result thrust looks this up rather than deducing it
+  __host__ __device__ __forceinline__ T operator()(long long j) const { return xf(base[j * stride]); }
 };
 
 /// A random-access iterator over :struct:`StridedGather`, with its category DECLARED.
@@ -114,58 +116,70 @@ struct StridedGather {
 /// Declaring the tag here is immune to what else the unit includes, on both backends.
 template <typename T, typename Xf>
 struct GatherIterator {
-    using iterator_category = ::std::random_access_iterator_tag;
-    using value_type = T;
-    using difference_type = long long;
-    using pointer = void;
-    using reference = T;  // a computed element has no storage to refer to
+  using iterator_category = ::std::random_access_iterator_tag;
+  using value_type = T;
+  using difference_type = long long;
+  using pointer = void;
+  using reference = T;  // a computed element has no storage to refer to
 
-    StridedGather<T, Xf> gather;
-    difference_type index;
+  StridedGather<T, Xf> gather;
+  difference_type index;
 
-    __host__ __device__ __forceinline__ T operator*() const { return gather(index); }
-    __host__ __device__ __forceinline__ T operator[](difference_type n) const { return gather(index + n); }
-    __host__ __device__ __forceinline__ GatherIterator operator+(difference_type n) const {
-        return GatherIterator{gather, index + n};
-    }
-    __host__ __device__ __forceinline__ GatherIterator operator-(difference_type n) const {
-        return GatherIterator{gather, index - n};
-    }
-    __host__ __device__ __forceinline__ difference_type operator-(const GatherIterator &o) const {
-        return index - o.index;
-    }
-    __host__ __device__ __forceinline__ GatherIterator &operator+=(difference_type n) { index += n; return *this; }
-    __host__ __device__ __forceinline__ GatherIterator &operator-=(difference_type n) { index -= n; return *this; }
-    __host__ __device__ __forceinline__ GatherIterator &operator++() { ++index; return *this; }
-    __host__ __device__ __forceinline__ GatherIterator operator++(int) {
-        GatherIterator prev = *this;
-        ++index;
-        return prev;
-    }
-    __host__ __device__ __forceinline__ GatherIterator &operator--() { --index; return *this; }
-    __host__ __device__ __forceinline__ GatherIterator operator--(int) {
-        GatherIterator prev = *this;
-        --index;
-        return prev;
-    }
-    __host__ __device__ __forceinline__ bool operator==(const GatherIterator &o) const { return index == o.index; }
-    __host__ __device__ __forceinline__ bool operator!=(const GatherIterator &o) const { return index != o.index; }
-    __host__ __device__ __forceinline__ bool operator<(const GatherIterator &o) const { return index < o.index; }
-    __host__ __device__ __forceinline__ bool operator>(const GatherIterator &o) const { return index > o.index; }
-    __host__ __device__ __forceinline__ bool operator<=(const GatherIterator &o) const { return index <= o.index; }
-    __host__ __device__ __forceinline__ bool operator>=(const GatherIterator &o) const { return index >= o.index; }
+  __host__ __device__ __forceinline__ T operator*() const { return gather(index); }
+  __host__ __device__ __forceinline__ T operator[](difference_type n) const { return gather(index + n); }
+  __host__ __device__ __forceinline__ GatherIterator operator+(difference_type n) const {
+    return GatherIterator{gather, index + n};
+  }
+  __host__ __device__ __forceinline__ GatherIterator operator-(difference_type n) const {
+    return GatherIterator{gather, index - n};
+  }
+  __host__ __device__ __forceinline__ difference_type operator-(const GatherIterator& o) const {
+    return index - o.index;
+  }
+  __host__ __device__ __forceinline__ GatherIterator& operator+=(difference_type n) {
+    index += n;
+    return *this;
+  }
+  __host__ __device__ __forceinline__ GatherIterator& operator-=(difference_type n) {
+    index -= n;
+    return *this;
+  }
+  __host__ __device__ __forceinline__ GatherIterator& operator++() {
+    ++index;
+    return *this;
+  }
+  __host__ __device__ __forceinline__ GatherIterator operator++(int) {
+    GatherIterator prev = *this;
+    ++index;
+    return prev;
+  }
+  __host__ __device__ __forceinline__ GatherIterator& operator--() {
+    --index;
+    return *this;
+  }
+  __host__ __device__ __forceinline__ GatherIterator operator--(int) {
+    GatherIterator prev = *this;
+    --index;
+    return prev;
+  }
+  __host__ __device__ __forceinline__ bool operator==(const GatherIterator& o) const { return index == o.index; }
+  __host__ __device__ __forceinline__ bool operator!=(const GatherIterator& o) const { return index != o.index; }
+  __host__ __device__ __forceinline__ bool operator<(const GatherIterator& o) const { return index < o.index; }
+  __host__ __device__ __forceinline__ bool operator>(const GatherIterator& o) const { return index > o.index; }
+  __host__ __device__ __forceinline__ bool operator<=(const GatherIterator& o) const { return index <= o.index; }
+  __host__ __device__ __forceinline__ bool operator>=(const GatherIterator& o) const { return index >= o.index; }
 };
 
 template <typename T, typename Xf>
-__host__ __device__ __forceinline__ GatherIterator<T, Xf> operator+(long long n, const GatherIterator<T, Xf> &it) {
-    return it + n;
+__host__ __device__ __forceinline__ GatherIterator<T, Xf> operator+(long long n, const GatherIterator<T, Xf>& it) {
+  return it + n;
 }
 
 /// The iterator CUB reduces over when the operand is strided and/or transformed. ``Xf`` is named
 /// explicitly by the caller; ``T`` is deduced from ``base``.
 template <typename Xf, typename T>
-inline GatherIterator<T, Xf> gather_iterator(const T *base, long long stride) {
-    return GatherIterator<T, Xf>{StridedGather<T, Xf>{base, stride, Xf{}}, 0};
+inline GatherIterator<T, Xf> gather_iterator(const T* base, long long stride) {
+  return GatherIterator<T, Xf>{StridedGather<T, Xf>{base, stride, Xf{}}, 0};
 }
 
 #if DACE_CUB_ARG_REDUCE_SPLIT_OUTPUTS
@@ -173,8 +187,8 @@ inline GatherIterator<T, Xf> gather_iterator(const T *base, long long stride) {
 /// is, and named to match the ``KeyValuePair`` it stands in for.
 template <typename T>
 struct ArgBuf {
-    long long key;
-    T value;
+  long long key;
+  T value;
 };
 #else
 template <typename T>
@@ -184,29 +198,27 @@ using ArgBuf = ::gpucub::KeyValuePair<int, T>;
 /// Which extremum an :func:`arg_reduce` call looks for. ``out`` is null only on CUB's
 /// size-query call, which never dereferences it.
 struct ArgMaxOp {
-    template <typename InIt, typename T>
-    static gpuError_t call(void *scratch, size_t &needed, InIt in, ArgBuf<T> *out, long long items,
-                           gpuStream_t stream) {
+  template <typename InIt, typename T>
+  static gpuError_t call(void* scratch, size_t& needed, InIt in, ArgBuf<T>* out, long long items, gpuStream_t stream) {
 #if DACE_CUB_ARG_REDUCE_SPLIT_OUTPUTS
-        return ::gpucub::DeviceReduce::ArgMax(scratch, needed, in, out ? &out->value : nullptr,
-                                              out ? &out->key : nullptr, items, stream);
+    return ::gpucub::DeviceReduce::ArgMax(scratch, needed, in, out ? &out->value : nullptr, out ? &out->key : nullptr,
+                                          items, stream);
 #else
-        return ::gpucub::DeviceReduce::ArgMax(scratch, needed, in, out, (int)items, stream);
+    return ::gpucub::DeviceReduce::ArgMax(scratch, needed, in, out, (int)items, stream);
 #endif
-    }
+  }
 };
 
 struct ArgMinOp {
-    template <typename InIt, typename T>
-    static gpuError_t call(void *scratch, size_t &needed, InIt in, ArgBuf<T> *out, long long items,
-                           gpuStream_t stream) {
+  template <typename InIt, typename T>
+  static gpuError_t call(void* scratch, size_t& needed, InIt in, ArgBuf<T>* out, long long items, gpuStream_t stream) {
 #if DACE_CUB_ARG_REDUCE_SPLIT_OUTPUTS
-        return ::gpucub::DeviceReduce::ArgMin(scratch, needed, in, out ? &out->value : nullptr,
-                                              out ? &out->key : nullptr, items, stream);
+    return ::gpucub::DeviceReduce::ArgMin(scratch, needed, in, out ? &out->value : nullptr, out ? &out->key : nullptr,
+                                          items, stream);
 #else
-        return ::gpucub::DeviceReduce::ArgMin(scratch, needed, in, out, (int)items, stream);
+    return ::gpucub::DeviceReduce::ArgMin(scratch, needed, in, out, (int)items, stream);
 #endif
-    }
+  }
 };
 
 /// One arg-reduction over a device sequence, answered on the HOST.
@@ -220,28 +232,27 @@ struct ArgMinOp {
 /// ``val_out`` may be null when only the index is wanted. Ties break toward the LOWER index,
 /// which is the first-occurrence rule the sequential source has.
 template <typename Op, typename InIt, typename T>
-inline gpuError_t arg_reduce(InIt in, T *val_out, long long *idx_out, long long items, gpuStream_t stream) {
-    size_t needed = 0;
-    gpuError_t status = Op::call(nullptr, needed, in, (ArgBuf<T> *)nullptr, items, stream);
-    if (status != gpuSuccess) return status;
-    const size_t head = ((sizeof(ArgBuf<T>) + 255) / 256) * 256;
-    void *scratch = get_scratch<ReduceTag>(head + needed, stream, &status);
-    if (scratch == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
-    ArgBuf<T> *dev = (ArgBuf<T> *)scratch;
-    status = Op::call((char *)scratch + head, needed, in, dev, items, stream);
-    if (status != gpuSuccess) return status;
-    ArgBuf<T> host;
-    status = gpuMemcpyAsync(&host, dev, sizeof(ArgBuf<T>), gpuMemcpyDeviceToHost, stream);
-    if (status != gpuSuccess) return status;
-    status = gpuStreamSynchronize(stream);
-    if (status != gpuSuccess) return status;
-    if (val_out != nullptr) *val_out = host.value;
-    *idx_out = (long long)host.key;
-    return gpuSuccess;
+inline gpuError_t arg_reduce(InIt in, T* val_out, long long* idx_out, long long items, gpuStream_t stream) {
+  size_t needed = 0;
+  gpuError_t status = Op::call(nullptr, needed, in, (ArgBuf<T>*)nullptr, items, stream);
+  if (status != gpuSuccess) return status;
+  const size_t head = ((sizeof(ArgBuf<T>) + 255) / 256) * 256;
+  void* scratch = get_scratch<ReduceTag>(head + needed, stream, &status);
+  if (scratch == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
+  ArgBuf<T>* dev = (ArgBuf<T>*)scratch;
+  status = Op::call((char*)scratch + head, needed, in, dev, items, stream);
+  if (status != gpuSuccess) return status;
+  ArgBuf<T> host;
+  status = gpuMemcpyAsync(&host, dev, sizeof(ArgBuf<T>), gpuMemcpyDeviceToHost, stream);
+  if (status != gpuSuccess) return status;
+  status = gpuStreamSynchronize(stream);
+  if (status != gpuSuccess) return status;
+  if (val_out != nullptr) *val_out = host.value;
+  *idx_out = (long long)host.key;
+  return gpuSuccess;
 }
 
 }  // namespace cub
 }  // namespace dace
-
 
 #endif  // __DACE_CUB_COMPAT_CUH

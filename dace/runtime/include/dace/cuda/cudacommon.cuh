@@ -71,11 +71,11 @@ typedef cudaError_t gpuError_t;
 // pointer (measured on an ``int**`` index array). One wrapper gives both backends the same
 // signature, so codegen names one function rather than branching.
 template <typename T>
-static inline gpuError_t gpuMallocHost(T **ptr, size_t size) {
+static inline gpuError_t gpuMallocHost(T** ptr, size_t size) {
 #if defined(__HIPCC__) || defined(WITH_HIP)
-  return hipHostMalloc(reinterpret_cast<void **>(ptr), size);
+  return hipHostMalloc(reinterpret_cast<void**>(ptr), size);
 #else
-  return cudaMallocHost(reinterpret_cast<void **>(ptr), size);
+  return cudaMallocHost(reinterpret_cast<void**>(ptr), size);
 #endif
 }
 

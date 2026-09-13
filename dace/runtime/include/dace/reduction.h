@@ -53,16 +53,16 @@ namespace dace {
 // the implementation according to T's properties.
 template <ReductionType REDTYPE, typename T>
 struct _wcr_fixed {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value);
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value);
 
-  DACE_HDFI T operator()(const T &a, const T &b) const;
+  DACE_HDFI T operator()(const T& a, const T& b) const;
 };
 
 // Custom reduction with a lambda function
 template <typename T>
 struct wcr_custom {
   template <typename WCR>
-  static DACE_HDFI T reduce_atomic(WCR wcr, T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(WCR wcr, T* ptr, const T& value) {
     // The slowest kind of atomic operations (locked/compare-and-swap),
     // this should only happen in case of unrecognized lambdas
     T old;
@@ -87,7 +87,7 @@ struct wcr_custom {
 
   // Non-conflicting version --> no critical section
   template <typename WCR>
-  static DACE_HDFI T reduce(WCR wcr, T *ptr, const T &value) {
+  static DACE_HDFI T reduce(WCR wcr, T* ptr, const T& value) {
     T old = *ptr;
     *ptr = wcr(old, value);
     return old;
@@ -98,18 +98,16 @@ struct wcr_custom {
 template <>
 struct wcr_custom<float> {
   template <typename WCR>
-  static DACE_HDFI float reduce_atomic(WCR wcr, float *ptr,
-                                       const float &value) {
+  static DACE_HDFI float reduce_atomic(WCR wcr, float* ptr, const float& value) {
 // The slowest kind of atomic operations (locked/compare-and-swap),
 // this should only happen in case of unrecognized lambdas
 #ifdef DACE_USE_GPU_ATOMICS
     // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
-    int *iptr = (int *)ptr;
+    int* iptr = (int*)ptr;
     int old = *iptr, assumed;
     do {
       assumed = old;
-      old = atomicCAS(iptr, assumed,
-                      __float_as_int(wcr(__int_as_float(assumed), value)));
+      old = atomicCAS(iptr, assumed, __float_as_int(wcr(__int_as_float(assumed), value)));
     } while (assumed != old);
     return __int_as_float(old);
 #else
@@ -125,7 +123,7 @@ struct wcr_custom<float> {
 
   // Non-conflicting version --> no critical section
   template <typename WCR>
-  static DACE_HDFI float reduce(WCR wcr, float *ptr, const float &value) {
+  static DACE_HDFI float reduce(WCR wcr, float* ptr, const float& value) {
     float old = *ptr;
     *ptr = wcr(old, value);
     return old;
@@ -135,19 +133,16 @@ struct wcr_custom<float> {
 template <>
 struct wcr_custom<double> {
   template <typename WCR>
-  static DACE_HDFI double reduce_atomic(WCR wcr, double *ptr,
-                                        const double &value) {
+  static DACE_HDFI double reduce_atomic(WCR wcr, double* ptr, const double& value) {
 // The slowest kind of atomic operations (locked/compare-and-swap),
 // this should only happen in case of unrecognized lambdas
 #ifdef DACE_USE_GPU_ATOMICS
     // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
-    unsigned long long *iptr = (unsigned long long *)ptr;
+    unsigned long long* iptr = (unsigned long long*)ptr;
     unsigned long long old = *ptr, assumed;
     do {
       assumed = old;
-      old = atomicCAS(
-          iptr, assumed,
-          __double_as_longlong(wcr(__longlong_as_double(assumed), value)));
+      old = atomicCAS(iptr, assumed, __double_as_longlong(wcr(__longlong_as_double(assumed), value)));
     } while (assumed != old);
     return __longlong_as_double(old);
 #else
@@ -163,7 +158,7 @@ struct wcr_custom<double> {
 
   // Non-conflicting version --> no critical section
   template <typename WCR>
-  static DACE_HDFI double reduce(WCR wcr, double *ptr, const double &value) {
+  static DACE_HDFI double reduce(WCR wcr, double* ptr, const double& value) {
     double old = *ptr;
     *ptr = wcr(old, value);
     return old;
@@ -173,7 +168,7 @@ struct wcr_custom<double> {
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Sum, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicAdd(ptr, value);
 #elif defined(_OPENMP) && _OPENMP >= 201107
@@ -191,64 +186,54 @@ struct _wcr_fixed<ReductionType::Sum, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return a + b; }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return a + b; }
 };
 
 // Implementation of double atomicAdd for CUDA architectures prior to 6.0
 #if defined(DACE_USE_GPU_ATOMICS) && !defined(DACE_USE_GPU_DOUBLE_ATOMICS)
 template <>
 struct _wcr_fixed<ReductionType::Sum, double> {
-  static DACE_HDFI double reduce_atomic(double *ptr, const double &value) {
-    unsigned long long int *address_as_ull = (unsigned long long int *)ptr;
+  static DACE_HDFI double reduce_atomic(double* ptr, const double& value) {
+    unsigned long long int* address_as_ull = (unsigned long long int*)ptr;
     unsigned long long int old = *address_as_ull, assumed;
     do {
       assumed = old;
-      old = atomicCAS(
-          address_as_ull, assumed,
-          __double_as_longlong(value + __longlong_as_double(assumed)));
+      old = atomicCAS(address_as_ull, assumed, __double_as_longlong(value + __longlong_as_double(assumed)));
     } while (assumed != old);
     return __longlong_as_double(old);
   }
 
-  DACE_HDFI double operator()(const double &a, const double &b) const {
-    return a + b;
-  }
+  DACE_HDFI double operator()(const double& a, const double& b) const { return a + b; }
 };
 #endif
 
 #if defined(DACE_USE_GPU_ATOMICS)
 template <>
 struct _wcr_fixed<ReductionType::Sum, int64_t> {
-  static DACE_HDFI int64_t reduce_atomic(int64_t *ptr, const int64_t &value) {
-    return _wcr_fixed<ReductionType::Sum, unsigned long long>::reduce_atomic(
-        (unsigned long long *)ptr, static_cast<unsigned long long>(value));
+  static DACE_HDFI int64_t reduce_atomic(int64_t* ptr, const int64_t& value) {
+    return _wcr_fixed<ReductionType::Sum, unsigned long long>::reduce_atomic((unsigned long long*)ptr,
+                                                                             static_cast<unsigned long long>(value));
   }
 
-  DACE_HDFI int64_t operator()(const int64_t &a, const int64_t &b) const {
-    return a + b;
-  }
+  DACE_HDFI int64_t operator()(const int64_t& a, const int64_t& b) const { return a + b; }
 };
 
 template <>
 struct _wcr_fixed<ReductionType::Sum, uint64_t> {
-  static DACE_HDFI uint64_t reduce_atomic(uint64_t *ptr,
-                                          const uint64_t &value) {
-    return _wcr_fixed<ReductionType::Sum, unsigned long long>::reduce_atomic(
-        (unsigned long long *)ptr, static_cast<unsigned long long>(value));
+  static DACE_HDFI uint64_t reduce_atomic(uint64_t* ptr, const uint64_t& value) {
+    return _wcr_fixed<ReductionType::Sum, unsigned long long>::reduce_atomic((unsigned long long*)ptr,
+                                                                             static_cast<unsigned long long>(value));
   }
 
-  DACE_HDFI uint64_t operator()(const uint64_t &a, const uint64_t &b) const {
-    return a + b;
-  }
+  DACE_HDFI uint64_t operator()(const uint64_t& a, const uint64_t& b) const { return a + b; }
 };
 #endif
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Product, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
-    return wcr_custom<T>::reduce(_wcr_fixed<ReductionType::Product, T>(), ptr,
-                                 value);
+    return wcr_custom<T>::reduce(_wcr_fixed<ReductionType::Product, T>(), ptr, value);
 #elif defined(_OPENMP) && _OPENMP >= 201107
     T old;
 #pragma omp atomic capture
@@ -264,84 +249,70 @@ struct _wcr_fixed<ReductionType::Product, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return a * b; }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return a * b; }
 };
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Min, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicMin(ptr, value);
 #else
-    return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Min, T>(),
-                                        ptr, value);
+    return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Min, T>(), ptr, value);
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return ::min(a, b); }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return ::min(a, b); }
 };
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Max, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicMax(ptr, value);
 #else
-    return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Max, T>(),
-                                        ptr, value);
+    return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Max, T>(), ptr, value);
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return ::max(a, b); }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return ::max(a, b); }
 };
 
 // Specialization for floating point types
 template <>
 struct _wcr_fixed<ReductionType::Min, float> {
-  static DACE_HDFI float reduce_atomic(float *ptr, const float &value) {
-    return wcr_custom<float>::reduce_atomic(
-        _wcr_fixed<ReductionType::Min, float>(), ptr, value);
+  static DACE_HDFI float reduce_atomic(float* ptr, const float& value) {
+    return wcr_custom<float>::reduce_atomic(_wcr_fixed<ReductionType::Min, float>(), ptr, value);
   }
 
-  DACE_HDFI float operator()(const float &a, const float &b) const {
-    return ::min(a, b);
-  }
+  DACE_HDFI float operator()(const float& a, const float& b) const { return ::min(a, b); }
 };
 
 template <>
 struct _wcr_fixed<ReductionType::Max, float> {
-  static DACE_HDFI float reduce_atomic(float *ptr, const float &value) {
-    return wcr_custom<float>::reduce_atomic(
-        _wcr_fixed<ReductionType::Max, float>(), ptr, value);
+  static DACE_HDFI float reduce_atomic(float* ptr, const float& value) {
+    return wcr_custom<float>::reduce_atomic(_wcr_fixed<ReductionType::Max, float>(), ptr, value);
   }
 
-  DACE_HDFI float operator()(const float &a, const float &b) const {
-    return ::max(a, b);
-  }
+  DACE_HDFI float operator()(const float& a, const float& b) const { return ::max(a, b); }
 };
 
 template <>
 struct _wcr_fixed<ReductionType::Min, double> {
-  static DACE_HDFI double reduce_atomic(double *ptr, const double &value) {
-    return wcr_custom<double>::reduce_atomic(
-        _wcr_fixed<ReductionType::Min, double>(), ptr, value);
+  static DACE_HDFI double reduce_atomic(double* ptr, const double& value) {
+    return wcr_custom<double>::reduce_atomic(_wcr_fixed<ReductionType::Min, double>(), ptr, value);
   }
 
-  DACE_HDFI double operator()(const double &a, const double &b) const {
-    return ::min(a, b);
-  }
+  DACE_HDFI double operator()(const double& a, const double& b) const { return ::min(a, b); }
 };
 
 template <>
 struct _wcr_fixed<ReductionType::Max, double> {
-  static DACE_HDFI double reduce_atomic(double *ptr, const double &value) {
-    return wcr_custom<double>::reduce_atomic(
-        _wcr_fixed<ReductionType::Max, double>(), ptr, value);
+  static DACE_HDFI double reduce_atomic(double* ptr, const double& value) {
+    return wcr_custom<double>::reduce_atomic(_wcr_fixed<ReductionType::Max, double>(), ptr, value);
   }
 
-  DACE_HDFI double operator()(const double &a, const double &b) const {
-    return ::max(a, b);
-  }
+  DACE_HDFI double operator()(const double& a, const double& b) const { return ::max(a, b); }
 };
 
 // half has no CUDA atomicMin/Max overload → 16-bit CAS (smallest atomic word, sm_70+),
@@ -349,14 +320,13 @@ struct _wcr_fixed<ReductionType::Max, double> {
 // (half min/max exact through float → bit-identical either way).
 template <>
 struct _wcr_fixed<ReductionType::Min, half> {
-  static DACE_HDFI half reduce_atomic(half *ptr, const half &value) {
+  static DACE_HDFI half reduce_atomic(half* ptr, const half& value) {
 #if defined(DACE_USE_GPU_ATOMICS) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
-    unsigned short int *iptr = (unsigned short int *)ptr;
+    unsigned short int* iptr = (unsigned short int*)ptr;
     unsigned short int old = *iptr, assumed;
     do {
       assumed = old;
-      old = atomicCAS(iptr, assumed,
-                      __half_as_ushort(half(::min(float(__ushort_as_half(assumed)), float(value)))));
+      old = atomicCAS(iptr, assumed, __half_as_ushort(half(::min(float(__ushort_as_half(assumed)), float(value)))));
     } while (assumed != old);
     return __ushort_as_half(old);
 #else
@@ -366,21 +336,18 @@ struct _wcr_fixed<ReductionType::Min, half> {
 #endif
   }
 
-  DACE_HDFI half operator()(const half &a, const half &b) const {
-    return half(::min(float(a), float(b)));
-  }
+  DACE_HDFI half operator()(const half& a, const half& b) const { return half(::min(float(a), float(b))); }
 };
 
 template <>
 struct _wcr_fixed<ReductionType::Max, half> {
-  static DACE_HDFI half reduce_atomic(half *ptr, const half &value) {
+  static DACE_HDFI half reduce_atomic(half* ptr, const half& value) {
 #if defined(DACE_USE_GPU_ATOMICS) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
-    unsigned short int *iptr = (unsigned short int *)ptr;
+    unsigned short int* iptr = (unsigned short int*)ptr;
     unsigned short int old = *iptr, assumed;
     do {
       assumed = old;
-      old = atomicCAS(iptr, assumed,
-                      __half_as_ushort(half(::max(float(__ushort_as_half(assumed)), float(value)))));
+      old = atomicCAS(iptr, assumed, __half_as_ushort(half(::max(float(__ushort_as_half(assumed)), float(value)))));
     } while (assumed != old);
     return __ushort_as_half(old);
 #else
@@ -390,15 +357,13 @@ struct _wcr_fixed<ReductionType::Max, half> {
 #endif
   }
 
-  DACE_HDFI half operator()(const half &a, const half &b) const {
-    return half(::max(float(a), float(b)));
-  }
+  DACE_HDFI half operator()(const half& a, const half& b) const { return half(::max(float(a), float(b))); }
 };
 // End of specialization
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Logical_And, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicAnd(ptr, value ? T(1) : T(0));
 #elif defined(_OPENMP) && _OPENMP >= 201107
@@ -418,12 +383,12 @@ struct _wcr_fixed<ReductionType::Logical_And, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return a && b; }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return a && b; }
 };
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Bitwise_And, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicAnd(ptr, value);
 #elif defined(_OPENMP) && _OPENMP >= 201107
@@ -441,12 +406,12 @@ struct _wcr_fixed<ReductionType::Bitwise_And, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return a & b; }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return a & b; }
 };
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Logical_Or, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicOr(ptr, value ? T(1) : T(0));
 #elif defined(_OPENMP) && _OPENMP >= 201107
@@ -466,12 +431,12 @@ struct _wcr_fixed<ReductionType::Logical_Or, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return a || b; }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return a || b; }
 };
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Bitwise_Or, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicOr(ptr, value);
 #elif defined(_OPENMP) && _OPENMP >= 201107
@@ -489,12 +454,12 @@ struct _wcr_fixed<ReductionType::Bitwise_Or, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return a | b; }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return a | b; }
 };
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Logical_Xor, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicXor(ptr, value ? T(1) : T(0));
 #elif defined(_OPENMP) && _OPENMP >= 201107
@@ -514,12 +479,12 @@ struct _wcr_fixed<ReductionType::Logical_Xor, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return a != b; }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return a != b; }
 };
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Bitwise_Xor, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicXor(ptr, value);
 #elif defined(_OPENMP) && _OPENMP >= 201107
@@ -537,12 +502,12 @@ struct _wcr_fixed<ReductionType::Bitwise_Xor, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return a ^ b; }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return a ^ b; }
 };
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Exchange, T> {
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
     return atomicExch(ptr, value);
 #else
@@ -556,7 +521,7 @@ struct _wcr_fixed<ReductionType::Exchange, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &, const T &b) const { return b; }
+  DACE_HDFI T operator()(const T&, const T& b) const { return b; }
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -570,39 +535,34 @@ using EnableIfScalar = typename std::enable_if<std::is_scalar<T>::value>::type;
 // do not support atomics. In these cases, we regress to locked updates.
 template <ReductionType REDTYPE, typename T, typename SFINAE = void>
 struct wcr_fixed {
-  static DACE_HDFI T reduce(T *ptr, const T &value) {
+  static DACE_HDFI T reduce(T* ptr, const T& value) {
     T old = *ptr;
     *ptr = _wcr_fixed<REDTYPE, T>()(old, value);
     return old;
   }
 
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
-    return wcr_custom<T>::template reduce_atomic<
-        decltype(_wcr_fixed<REDTYPE, T>())>(_wcr_fixed<REDTYPE, T>(), ptr,
-                                            value);
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
+    return wcr_custom<T>::template reduce_atomic<decltype(_wcr_fixed<REDTYPE, T>())>(_wcr_fixed<REDTYPE, T>(), ptr,
+                                                                                     value);
   }
 };
 
 // When atomics are supported, use _wcr_fixed normally
 template <ReductionType REDTYPE, typename T>
 struct wcr_fixed<REDTYPE, T, EnableIfScalar<T> > {
-  static DACE_HDFI T reduce(T *ptr, const T &value) {
+  static DACE_HDFI T reduce(T* ptr, const T& value) {
     T old = *ptr;
     *ptr = _wcr_fixed<REDTYPE, T>()(old, value);
     return old;
   }
 
-  static DACE_HDFI T reduce_atomic(T *ptr, const T &value) {
-    return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, value);
-  }
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) { return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, value); }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const {
-    return _wcr_fixed<REDTYPE, T>()(a, b);
-  }
+  DACE_HDFI T operator()(const T& a, const T& b) const { return _wcr_fixed<REDTYPE, T>()(a, b); }
 
   // Vector -> Scalar versions
   template <int N>
-  static DACE_HDFI T vreduce(T *ptr, const dace::vec<T, N> &value) {
+  static DACE_HDFI T vreduce(T* ptr, const dace::vec<T, N>& value) {
     T old = *ptr;
 
     T scal = value[0];
@@ -614,7 +574,7 @@ struct wcr_fixed<REDTYPE, T, EnableIfScalar<T> > {
   }
 
   template <int N>
-  static DACE_HDFI T vreduce_atomic(T *ptr, const dace::vec<T, N> &value) {
+  static DACE_HDFI T vreduce_atomic(T* ptr, const dace::vec<T, N>& value) {
     T scal = value[0];
     __DACE_UNROLL
     for (int i = 1; i < N; ++i) scal = _wcr_fixed<REDTYPE, T>()(scal, value[i]);
@@ -735,7 +695,7 @@ inline T bitwise_seed(T seed) {
 /// pair alone is widened here. Every other in-policy pair combines on its own and is passed through
 /// untouched, which keeps a narrow accumulator over wider input rounding exactly where it did.
 template <typename T, typename U>
-inline auto operand(const U &x) {
+inline auto operand(const U& x) {
   if constexpr (is_reducible<T>::value && !is_real<T>::value && !is_real<U>::value && !std::is_same<T, U>::value)
     return T(x);
   else
@@ -745,7 +705,7 @@ inline auto operand(const U &x) {
 /// Left-to-right fold of ``n`` elements of ``in`` taken ``s`` apart, seeded with ``seed``. The
 /// caller has already run ``seed`` through its op's policy check.
 template <typename T, typename U, typename Op>
-inline T fold(const U *in, long n, long s, T seed, Op op) {
+inline T fold(const U* in, long n, long s, T seed, Op op) {
   T acc = seed;
   if (s == 1) {
     for (long i = 0; i < n; ++i) acc = op(acc, in[i]);
@@ -768,7 +728,7 @@ constexpr long PAIRWISE_BLOCK = 128;
 /// each grow eight times slower than one running total would, which is the accuracy half of the
 /// same choice. numpy's reduction has this shape.
 template <typename T, typename U, typename Op, typename Merge>
-inline T fold_block(const U *in, long n, long s, Op op, Merge merge) {
+inline T fold_block(const U* in, long n, long s, Op op, Merge merge) {
   if (n < 8) {
     T acc = static_cast<T>(operand<T, U>(in[0]));
     for (long i = 1; i < n; ++i) acc = op(acc, in[i * s]);
@@ -804,7 +764,7 @@ inline T fold_block(const U *in, long n, long s, Op op, Merge merge) {
 /// as the accumulator outgrows the addend, and a tree keeps the partials the same size as each
 /// other. ``op`` combines the accumulator with an element, ``merge`` two accumulators.
 template <typename T, typename U, typename Op, typename Merge>
-inline T pairwise(const U *in, long n, long s, Op op, Merge merge) {
+inline T pairwise(const U* in, long n, long s, Op op, Merge merge) {
   if (n <= PAIRWISE_BLOCK) return fold_block<T, U>(in, n, s, op, merge);
   const long half = n / 2;
   return merge(pairwise<T, U>(in, half, s, op, merge), pairwise<T, U>(in + half * s, n - half, s, op, merge));
@@ -816,7 +776,7 @@ inline T pairwise(const U *in, long n, long s, Op op, Merge merge) {
 /// recursion. Everything else -- float, double, complex, the low-precision structs -- is where the
 /// association is the whole question.
 template <typename T, typename U, typename Op, typename Merge>
-inline T associative_fold(const U *in, long n, long s, T seed, Op op, Merge merge) {
+inline T associative_fold(const U* in, long n, long s, T seed, Op op, Merge merge) {
   if constexpr (std::is_integral<T>::value) {
     return fold(in, n, s, seed, op);
   } else {
@@ -830,7 +790,7 @@ inline T associative_fold(const U *in, long n, long s, T seed, Op op, Merge merg
 // --- PARALLEL SHAPE ------------------------------------------------------------
 
 template <typename T, typename U>
-inline T sum(const U *in, long n, long s, T seed) {
+inline T sum(const U* in, long n, long s, T seed) {
   T acc = detail::checked_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for simd reduction(+ : acc)
@@ -843,7 +803,7 @@ inline T sum(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T product(const U *in, long n, long s, T seed) {
+inline T product(const U* in, long n, long s, T seed) {
   T acc = detail::checked_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for simd reduction(* : acc)
@@ -864,7 +824,7 @@ inline T product(const U *in, long n, long s, T seed) {
 // keeps the policy-violating statement out of the instantiation entirely: the assert is then the
 // only diagnostic. Guard, don't restructure -- the taken branch is untouched for every legal T.
 template <typename T, typename U>
-inline T min(const U *in, long n, long s, T seed) {
+inline T min(const U* in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
   if constexpr (is_real<T>::value && is_real<U>::value) {
     if (s == 1) {
@@ -879,7 +839,7 @@ inline T min(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T max(const U *in, long n, long s, T seed) {
+inline T max(const U* in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
   if constexpr (is_real<T>::value && is_real<U>::value) {
     if (s == 1) {
@@ -896,10 +856,11 @@ inline T max(const U *in, long n, long s, T seed) {
 // Names its own reduction: the built-in ``&`` initializes its private copy from an unsigned all-ones
 // literal that clang reports as a signedness change on signed ``T``. Same identity, spelled -1.
 template <typename T, typename U>
-inline T bitwise_and(const U *in, long n, long s, T seed) {
+inline T bitwise_and(const U* in, long n, long s, T seed) {
   T acc = detail::bitwise_seed<T, U>(seed);
   if constexpr (is_bitwise<T>::value && is_bitwise<U>::value) {
-#pragma omp declare reduction(dace_band : T : omp_out = static_cast<T>(omp_out &omp_in)) initializer(omp_priv = static_cast<T>(-1))
+#pragma omp declare reduction(dace_band:T : omp_out = static_cast<T>(omp_out & omp_in)) \
+    initializer(omp_priv = static_cast<T>(-1))
     if (s == 1) {
 #pragma omp parallel for simd reduction(dace_band : acc)
       for (long i = 0; i < n; ++i) acc = static_cast<T>(acc & in[i]);
@@ -912,7 +873,7 @@ inline T bitwise_and(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T bitwise_or(const U *in, long n, long s, T seed) {
+inline T bitwise_or(const U* in, long n, long s, T seed) {
   T acc = detail::bitwise_seed<T, U>(seed);
   if constexpr (is_bitwise<T>::value && is_bitwise<U>::value) {
     if (s == 1) {
@@ -927,7 +888,7 @@ inline T bitwise_or(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T bitwise_xor(const U *in, long n, long s, T seed) {
+inline T bitwise_xor(const U* in, long n, long s, T seed) {
   T acc = detail::bitwise_seed<T, U>(seed);
   if constexpr (is_bitwise<T>::value && is_bitwise<U>::value) {
     if (s == 1) {
@@ -942,7 +903,7 @@ inline T bitwise_xor(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T logical_and(const U *in, long n, long s, T seed) {
+inline T logical_and(const U* in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
   if constexpr (is_real<T>::value && is_real<U>::value) {
     if (s == 1) {
@@ -957,7 +918,7 @@ inline T logical_and(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T logical_or(const U *in, long n, long s, T seed) {
+inline T logical_or(const U* in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
   if constexpr (is_real<T>::value && is_real<U>::value) {
     if (s == 1) {
@@ -976,18 +937,16 @@ inline T logical_or(const U *in, long n, long s, T seed) {
 namespace seq {
 
 template <typename T, typename U>
-inline T sum(const U *in, long n, long s, T seed) {
+inline T sum(const U* in, long n, long s, T seed) {
   return detail::associative_fold(
-      in, n, s, detail::checked_seed<T, U>(seed),
-      [](T a, U b) { return static_cast<T>(a + detail::operand<T, U>(b)); },
+      in, n, s, detail::checked_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a + detail::operand<T, U>(b)); },
       [](T a, T b) { return static_cast<T>(a + b); });
 }
 
 template <typename T, typename U>
-inline T product(const U *in, long n, long s, T seed) {
+inline T product(const U* in, long n, long s, T seed) {
   return detail::associative_fold(
-      in, n, s, detail::checked_seed<T, U>(seed),
-      [](T a, U b) { return static_cast<T>(a * detail::operand<T, U>(b)); },
+      in, n, s, detail::checked_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a * detail::operand<T, U>(b)); },
       [](T a, T b) { return static_cast<T>(a * b); });
 }
 
@@ -996,7 +955,7 @@ inline T product(const U *in, long n, long s, T seed) {
 // in ``real_seed``/``bitwise_seed`` lets the compiler's own operator error mask the runtime's named
 // one. Keeping the fold out of the instantiation for a policy-violating T leaves only the assert.
 template <typename T, typename U>
-inline T min(const U *in, long n, long s, T seed) {
+inline T min(const U* in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
   if constexpr (is_real<T>::value && is_real<U>::value)
     acc = detail::fold(in, n, s, acc, [](T a, U b) { return std::min<T>(a, static_cast<T>(b)); });
@@ -1004,7 +963,7 @@ inline T min(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T max(const U *in, long n, long s, T seed) {
+inline T max(const U* in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
   if constexpr (is_real<T>::value && is_real<U>::value)
     acc = detail::fold(in, n, s, acc, [](T a, U b) { return std::max<T>(a, static_cast<T>(b)); });
@@ -1012,7 +971,7 @@ inline T max(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T bitwise_and(const U *in, long n, long s, T seed) {
+inline T bitwise_and(const U* in, long n, long s, T seed) {
   T acc = detail::bitwise_seed<T, U>(seed);
   if constexpr (is_bitwise<T>::value && is_bitwise<U>::value)
     acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a & b); });
@@ -1020,7 +979,7 @@ inline T bitwise_and(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T bitwise_or(const U *in, long n, long s, T seed) {
+inline T bitwise_or(const U* in, long n, long s, T seed) {
   T acc = detail::bitwise_seed<T, U>(seed);
   if constexpr (is_bitwise<T>::value && is_bitwise<U>::value)
     acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a | b); });
@@ -1028,7 +987,7 @@ inline T bitwise_or(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T bitwise_xor(const U *in, long n, long s, T seed) {
+inline T bitwise_xor(const U* in, long n, long s, T seed) {
   T acc = detail::bitwise_seed<T, U>(seed);
   if constexpr (is_bitwise<T>::value && is_bitwise<U>::value)
     acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a ^ b); });
@@ -1036,7 +995,7 @@ inline T bitwise_xor(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T logical_and(const U *in, long n, long s, T seed) {
+inline T logical_and(const U* in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
   if constexpr (is_real<T>::value && is_real<U>::value)
     acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a && b); });
@@ -1044,7 +1003,7 @@ inline T logical_and(const U *in, long n, long s, T seed) {
 }
 
 template <typename T, typename U>
-inline T logical_or(const U *in, long n, long s, T seed) {
+inline T logical_or(const U* in, long n, long s, T seed) {
   T acc = detail::real_seed<T, U>(seed);
   if constexpr (is_real<T>::value && is_real<U>::value)
     acc = detail::fold(in, n, s, acc, [](T a, U b) { return static_cast<T>(a || b); });
@@ -1061,10 +1020,7 @@ struct StridedIteratorHelper {
   explicit StridedIteratorHelper(size_t stride) : stride(stride) {}
   size_t stride;
 
-  __host__ __device__ __forceinline__ size_t
-  operator()(const size_t &index) const {
-    return index * stride;
-  }
+  __host__ __device__ __forceinline__ size_t operator()(const size_t& index) const { return index * stride; }
 };
 
 inline auto stridedIterator(size_t stride) {
@@ -1077,13 +1033,11 @@ inline auto stridedIterator(size_t stride) {
           counting_iterator(0);
   StridedIteratorHelper conversion_op(stride);
 #ifdef DACE_THRUST_ITERATORS
-  thrust::transform_iterator<decltype(conversion_op),
-                             decltype(counting_iterator)>
-      itr(counting_iterator, conversion_op);
+  thrust::transform_iterator<decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator,
+                                                                                       conversion_op);
 #else
-  gpucub::TransformInputIterator<int, decltype(conversion_op),
-                              decltype(counting_iterator)>
-      itr(counting_iterator, conversion_op);
+  gpucub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator,
+                                                                                                conversion_op);
 #endif
 
   return itr;
@@ -1094,15 +1048,13 @@ inline auto stridedIterator(size_t stride) {
 template <ReductionType REDTYPE, typename T>
 struct warpReduce {
   static DACE_DFI T reduce(T v) {
-    for (int i = 1; i < 32; i = i * 2)
-      v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
+    for (int i = 1; i < 32; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
     return v;
   }
 
   template <int NUM_MW>
   static DACE_DFI T mini_reduce(T v) {
-    for (int i = 1; i < NUM_MW; i = i * 2)
-      v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
+    for (int i = 1; i < NUM_MW; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
     return v;
   }
 };
@@ -1110,15 +1062,13 @@ struct warpReduce {
 template <ReductionType REDTYPE, typename T>
 struct warpReduce {
   static DACE_DFI T reduce(T v) {
-    for (int i = 1; i < warpSize; i = i * 2)
-      v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor(v, i));
+    for (int i = 1; i < warpSize; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor(v, i));
     return v;
   }
 
   template <int NUM_MW>
   static DACE_DFI T mini_reduce(T v) {
-    for (int i = 1; i < NUM_MW; i = i * 2)
-      v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor(v, i));
+    for (int i = 1; i < NUM_MW; i = i * 2) v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor(v, i));
     return v;
   }
 };

@@ -15,8 +15,7 @@ namespace sparse {
 
 static void CheckHipsparseError(hipsparseStatus_t const& status) {
   if (status != HIPSPARSE_STATUS_SUCCESS) {
-    throw std::runtime_error("hipSPARSE failed with error code: " +
-                             std::to_string(status));
+    throw std::runtime_error("hipSPARSE failed with error code: " + std::to_string(status));
   }
 }
 

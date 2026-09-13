@@ -38,13 +38,12 @@ static bool create_directory(const char *dirpath) {
 #endif
 }
 
-static inline void write_parameter_pack(std::ofstream &ofs) {}
+static inline void write_parameter_pack(std::ofstream& ofs) {}
 
 template <typename T, typename... Args>
-static inline void write_parameter_pack(std::ofstream &ofs, T value,
-                                        Args... values) {
+static inline void write_parameter_pack(std::ofstream& ofs, T value, Args... values) {
   uint32_t cast = uint32_t(value);
-  ofs.write((const char *)&cast, sizeof(uint32_t));
+  ofs.write((const char*)&cast, sizeof(uint32_t));
   write_parameter_pack(ofs, values...);
 }
 
@@ -56,11 +55,10 @@ class DataSerializer {
   bool enable;
 
  public:
-  DataSerializer(const std::string &build_folder) : enable(true) {
-    long unsigned int tstart =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now().time_since_epoch())
-            .count();
+  DataSerializer(const std::string& build_folder) : enable(true) {
+    long unsigned int tstart = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::high_resolution_clock::now().time_since_epoch())
+                                   .count();
 
     if (build_folder.length() > 0) {
       std::stringstream ss;
@@ -88,11 +86,10 @@ class DataSerializer {
 
   ~DataSerializer() {}
 
-  void set_folder(const std::string &folder) { this->folder = folder; }
+  void set_folder(const std::string& folder) { this->folder = folder; }
 
   template <typename T>
-  void save_symbol(const std::string &symbol_name, const std::string &filename,
-                   const T symbol_value) {
+  void save_symbol(const std::string& symbol_name, const std::string& filename, const T symbol_value) {
     if (!this->enable) return;
     std::lock_guard<std::mutex> guard(this->_mutex);
 
@@ -124,8 +121,7 @@ class DataSerializer {
   }
 
   template <typename T>
-  T restore_symbol(const std::string &symbol_name,
-                   const std::string &filename) {
+  T restore_symbol(const std::string& symbol_name, const std::string& filename) {
     std::lock_guard<std::mutex> guard(this->_mutex);
 
     // Update version
@@ -138,8 +134,7 @@ class DataSerializer {
 
     // Read contents from file
     std::stringstream ss;
-    ss << this->folder << "/" << symbol_name << "/" << filename << "_"
-       << version;
+    ss << this->folder << "/" << symbol_name << "/" << filename << "_" << version;
     std::ifstream ifs(ss.str(), std::ios::in);
 
     // Read the symbol back
@@ -149,8 +144,8 @@ class DataSerializer {
   }
 
   template <typename T, typename... Args>
-  void save(const T *buffer, size_t size, const std::string &arrayname,
-            const std::string &filename, Args... shape_stride) {
+  void save(const T* buffer, size_t size, const std::string& arrayname, const std::string& filename,
+            Args... shape_stride) {
     // NOTE: The "shape_stride" parameter is two concatenated tuples of shape,
     // strides
     if (!this->enable) return;
@@ -181,14 +176,13 @@ class DataSerializer {
     ss << "/" << filename << "_" << version << ".bin";
     std::ofstream ofs(ss.str(), std::ios::binary);
     uint32_t ndims = sizeof...(shape_stride) / 2;
-    ofs.write((const char *)&ndims, sizeof(uint32_t));
+    ofs.write((const char*)&ndims, sizeof(uint32_t));
     write_parameter_pack(ofs, shape_stride...);
-    ofs.write((const char *)buffer, sizeof(T) * size);
+    ofs.write((const char*)buffer, sizeof(T) * size);
   }
 
   template <typename T>
-  void restore(T *buffer, size_t size, const std::string &arrayname,
-               const std::string &filename) {
+  void restore(T* buffer, size_t size, const std::string& arrayname, const std::string& filename) {
     std::lock_guard<std::mutex> guard(this->_mutex);
 
     // Update version
@@ -201,17 +195,16 @@ class DataSerializer {
 
     // Read contents from file
     std::stringstream ss;
-    ss << this->folder << "/" << arrayname << "/" << filename << "_" << version
-       << ".bin";
+    ss << this->folder << "/" << arrayname << "/" << filename << "_" << version << ".bin";
     std::ifstream ifs(ss.str(), std::ios::binary);
 
     // Ignore header (dimensions, shape, and strides)
     uint32_t ndims;
-    ifs.read((char *)&ndims, sizeof(uint32_t));
+    ifs.read((char*)&ndims, sizeof(uint32_t));
     ifs.ignore(ndims * 2 * sizeof(uint32_t));
 
     // Read contents
-    ifs.read((char *)buffer, sizeof(T) * size);
+    ifs.read((char*)buffer, sizeof(T) * size);
   }
 };
 

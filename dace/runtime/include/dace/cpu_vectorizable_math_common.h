@@ -61,10 +61,8 @@
     out[i] = (EXPR);                       \
   }
 
-#define _DACE_VEC_BODY_AV(EXPR)                                          \
-  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) { \
-    out[i] = (EXPR);                                                     \
-  }
+#define _DACE_VEC_BODY_AV(EXPR) \
+  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) { out[i] = (EXPR); }
 
 #define _DACE_VEC_BODY_PSCALAR_MASKED(EXPR) \
   for (int i = 0; i < vector_width; i++) {  \
@@ -77,99 +75,86 @@
   }
 
 // Binary op (vec + vec).
-#define DACE_VEC_DEFINE_BINOP(NAME, EXPR)                                      \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_pscalar(                                         \
-      T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) { \
-    _DACE_VEC_BODY_PSCALAR(EXPR)                                               \
-  }                                                                            \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_av(T* __restrict__ out, const T* __restrict__ a, \
-                                 const T* __restrict__ b) {                    \
-    _DACE_VEC_BODY_AV(EXPR)                                                    \
-  }                                                                            \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_pscalar_masked(                                  \
-      T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,   \
-      const bool* __restrict__ mask) {                                         \
-    _DACE_VEC_BODY_PSCALAR_MASKED(EXPR)                                        \
-  }                                                                            \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_av_masked(                                       \
-      T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,   \
-      const bool* __restrict__ mask) {                                         \
-    _DACE_VEC_BODY_AV_MASKED(EXPR)                                             \
+#define DACE_VEC_DEFINE_BINOP(NAME, EXPR)                                                                             \
+  template <typename T, int vector_width>                                                                             \
+  static inline void vector_##NAME##_pscalar(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) { \
+    _DACE_VEC_BODY_PSCALAR(EXPR)                                                                                      \
+  }                                                                                                                   \
+  template <typename T, int vector_width>                                                                             \
+  static inline void vector_##NAME##_av(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {      \
+    _DACE_VEC_BODY_AV(EXPR)                                                                                           \
+  }                                                                                                                   \
+  template <typename T, int vector_width>                                                                             \
+  static inline void vector_##NAME##_pscalar_masked(T* __restrict__ out, const T* __restrict__ a,                     \
+                                                    const T* __restrict__ b, const bool* __restrict__ mask) {         \
+    _DACE_VEC_BODY_PSCALAR_MASKED(EXPR)                                                                               \
+  }                                                                                                                   \
+  template <typename T, int vector_width>                                                                             \
+  static inline void vector_##NAME##_av_masked(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, \
+                                               const bool* __restrict__ mask) {                                       \
+    _DACE_VEC_BODY_AV_MASKED(EXPR)                                                                                    \
   }
 
 // Binary op with scalar constant (vec + scalar). EXPR uses ``constant``.
-#define DACE_VEC_DEFINE_BINOP_W_SCALAR(NAME, EXPR)                             \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_pscalar(                                         \
-      T* __restrict__ out, const T* __restrict__ a, const T constant) {        \
-    _DACE_VEC_BODY_PSCALAR(EXPR)                                               \
-  }                                                                            \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_av(T* __restrict__ out, const T* __restrict__ a, \
-                                 const T constant) {                           \
-    _DACE_VEC_BODY_AV(EXPR)                                                    \
-  }                                                                            \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_pscalar_masked(                                  \
-      T* __restrict__ out, const T* __restrict__ a, const T constant,          \
-      const bool* __restrict__ mask) {                                         \
-    _DACE_VEC_BODY_PSCALAR_MASKED(EXPR)                                        \
-  }                                                                            \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_av_masked(                                       \
-      T* __restrict__ out, const T* __restrict__ a, const T constant,          \
-      const bool* __restrict__ mask) {                                         \
-    _DACE_VEC_BODY_AV_MASKED(EXPR)                                             \
+#define DACE_VEC_DEFINE_BINOP_W_SCALAR(NAME, EXPR)                                                                  \
+  template <typename T, int vector_width>                                                                           \
+  static inline void vector_##NAME##_pscalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {      \
+    _DACE_VEC_BODY_PSCALAR(EXPR)                                                                                    \
+  }                                                                                                                 \
+  template <typename T, int vector_width>                                                                           \
+  static inline void vector_##NAME##_av(T* __restrict__ out, const T* __restrict__ a, const T constant) {           \
+    _DACE_VEC_BODY_AV(EXPR)                                                                                         \
+  }                                                                                                                 \
+  template <typename T, int vector_width>                                                                           \
+  static inline void vector_##NAME##_pscalar_masked(T* __restrict__ out, const T* __restrict__ a, const T constant, \
+                                                    const bool* __restrict__ mask) {                                \
+    _DACE_VEC_BODY_PSCALAR_MASKED(EXPR)                                                                             \
+  }                                                                                                                 \
+  template <typename T, int vector_width>                                                                           \
+  static inline void vector_##NAME##_av_masked(T* __restrict__ out, const T* __restrict__ a, const T constant,      \
+                                               const bool* __restrict__ mask) {                                     \
+    _DACE_VEC_BODY_AV_MASKED(EXPR)                                                                                  \
   }
 
 // Unary op (vec).
-#define DACE_VEC_DEFINE_UNOP(NAME, EXPR)                                      \
-  template <typename T, int vector_width>                                     \
-  static inline void vector_##NAME##_pscalar(T* __restrict__ out,                    \
-                                      const T* __restrict__ a) {              \
-    _DACE_VEC_BODY_PSCALAR(EXPR)                                              \
-  }                                                                           \
-  template <typename T, int vector_width>                                     \
-  static inline void vector_##NAME##_av(T* __restrict__ out,                         \
-                                 const T* __restrict__ a) {                   \
-    _DACE_VEC_BODY_AV(EXPR)                                                   \
-  }                                                                           \
-  template <typename T, int vector_width>                                     \
-  static inline void vector_##NAME##_pscalar_masked(T* __restrict__ out,             \
-                                             const T* __restrict__ a,         \
-                                             const bool* __restrict__ mask) { \
-    _DACE_VEC_BODY_PSCALAR_MASKED(EXPR)                                       \
-  }                                                                           \
-  template <typename T, int vector_width>                                     \
-  static inline void vector_##NAME##_av_masked(T* __restrict__ out,                  \
-                                        const T* __restrict__ a,              \
-                                        const bool* __restrict__ mask) {      \
-    _DACE_VEC_BODY_AV_MASKED(EXPR)                                            \
+#define DACE_VEC_DEFINE_UNOP(NAME, EXPR)                                                          \
+  template <typename T, int vector_width>                                                         \
+  static inline void vector_##NAME##_pscalar(T* __restrict__ out, const T* __restrict__ a) {      \
+    _DACE_VEC_BODY_PSCALAR(EXPR)                                                                  \
+  }                                                                                               \
+  template <typename T, int vector_width>                                                         \
+  static inline void vector_##NAME##_av(T* __restrict__ out, const T* __restrict__ a) {           \
+    _DACE_VEC_BODY_AV(EXPR)                                                                       \
+  }                                                                                               \
+  template <typename T, int vector_width>                                                         \
+  static inline void vector_##NAME##_pscalar_masked(T* __restrict__ out, const T* __restrict__ a, \
+                                                    const bool* __restrict__ mask) {              \
+    _DACE_VEC_BODY_PSCALAR_MASKED(EXPR)                                                           \
+  }                                                                                               \
+  template <typename T, int vector_width>                                                         \
+  static inline void vector_##NAME##_av_masked(T* __restrict__ out, const T* __restrict__ a,      \
+                                               const bool* __restrict__ mask) {                   \
+    _DACE_VEC_BODY_AV_MASKED(EXPR)                                                                \
   }
 
 // Broadcast (scalar -> vec): vector_<name>(out, constant).
-#define DACE_VEC_DEFINE_BROADCAST(NAME, EXPR)                                  \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_pscalar(T* __restrict__ out, const T constant) { \
-    _DACE_VEC_BODY_PSCALAR(EXPR)                                               \
-  }                                                                            \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_av(T* __restrict__ out, const T constant) {      \
-    _DACE_VEC_BODY_AV(EXPR)                                                    \
-  }                                                                            \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_pscalar_masked(                                  \
-      T* __restrict__ out, const T constant, const bool* __restrict__ mask) {  \
-    _DACE_VEC_BODY_PSCALAR_MASKED(EXPR)                                        \
-  }                                                                            \
-  template <typename T, int vector_width>                                      \
-  static inline void vector_##NAME##_av_masked(T* __restrict__ out, const T constant, \
-                                        const bool* __restrict__ mask) {       \
-    _DACE_VEC_BODY_AV_MASKED(EXPR)                                             \
+#define DACE_VEC_DEFINE_BROADCAST(NAME, EXPR)                                                                          \
+  template <typename T, int vector_width>                                                                              \
+  static inline void vector_##NAME##_pscalar(T* __restrict__ out, const T constant) {                                  \
+    _DACE_VEC_BODY_PSCALAR(EXPR)                                                                                       \
+  }                                                                                                                    \
+  template <typename T, int vector_width>                                                                              \
+  static inline void vector_##NAME##_av(T* __restrict__ out, const T constant) {                                       \
+    _DACE_VEC_BODY_AV(EXPR)                                                                                            \
+  }                                                                                                                    \
+  template <typename T, int vector_width>                                                                              \
+  static inline void vector_##NAME##_pscalar_masked(T* __restrict__ out, const T constant,                             \
+                                                    const bool* __restrict__ mask) {                                   \
+    _DACE_VEC_BODY_PSCALAR_MASKED(EXPR)                                                                                \
+  }                                                                                                                    \
+  template <typename T, int vector_width>                                                                              \
+  static inline void vector_##NAME##_av_masked(T* __restrict__ out, const T constant, const bool* __restrict__ mask) { \
+    _DACE_VEC_BODY_AV_MASKED(EXPR)                                                                                     \
   }
 
 // ============================================================================
@@ -262,27 +247,20 @@ DACE_VEC_DEFINE_BINOP_W_SCALAR(pow_w_scalar, std::pow(a[i], constant))
 // exactly as ``out[i] = e`` would have — minus the OOB.
 // ============================================================================
 template <typename T, int vector_width, typename CondT = bool>
-static inline void vector_select_pscalar(T* __restrict__ out,
-                                  const CondT* __restrict__ cond,
-                                  const T* __restrict__ t,
-                                  const T* __restrict__ e) {
+static inline void vector_select_pscalar(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+                                         const T* __restrict__ e) {
   for (int i = 0; i < vector_width; i++) out[i] = cond[i] ? t[i] : e[i];
 }
 
 template <typename T, int vector_width, typename CondT = bool>
-static inline void vector_select_av(T* __restrict__ out,
-                             const CondT* __restrict__ cond,
-                             const T* __restrict__ t, const T* __restrict__ e) {
-  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] =
-      cond[i] ? t[i] : e[i];
+static inline void vector_select_av(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+                                    const T* __restrict__ e) {
+  _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] = cond[i] ? t[i] : e[i];
 }
 
 template <typename T, int vector_width, typename CondT = bool>
-static inline void vector_select_av_masked(T* __restrict__ out,
-                                    const CondT* __restrict__ cond,
-                                    const T* __restrict__ t,
-                                    const T* __restrict__ e,
-                                    const bool* __restrict__ mask) {
+static inline void vector_select_av_masked(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
+                                           const T* __restrict__ e, const bool* __restrict__ mask) {
   _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) {
     if (mask[i]) out[i] = cond[i] ? t[i] : e[i];
   }
@@ -343,19 +321,19 @@ static inline void vector_int_ceil_w_scalar_c(T* __restrict__ out, const T const
 // ``T`` (the emitter never emits ``&|^`` on a float accumulator), so
 // the templates stay lazily well-formed for ``T = double``.
 // ============================================================================
-#define _DACE_HREDUCE_TREE(NAME, OP)                            \
-  template <typename T, int vector_width>                       \
-  static inline T _dace_horizontal_tree_##NAME(const T* __restrict__ a) { \
-    T buf[vector_width];                                        \
-    for (int i = 0; i < vector_width; i++) buf[i] = a[i];       \
-    int n = vector_width;                                       \
-    while (n > 1) {                                             \
-      int half = n / 2;                                         \
+#define _DACE_HREDUCE_TREE(NAME, OP)                                          \
+  template <typename T, int vector_width>                                     \
+  static inline T _dace_horizontal_tree_##NAME(const T* __restrict__ a) {     \
+    T buf[vector_width];                                                      \
+    for (int i = 0; i < vector_width; i++) buf[i] = a[i];                     \
+    int n = vector_width;                                                     \
+    while (n > 1) {                                                           \
+      int half = n / 2;                                                       \
       for (int i = 0; i < half; i++) buf[i] = OP(buf[2 * i], buf[2 * i + 1]); \
-      if (n & 1) buf[half] = buf[n - 1];                        \
-      n = half + (n & 1);                                       \
-    }                                                           \
-    return buf[0];                                              \
+      if (n & 1) buf[half] = buf[n - 1];                                      \
+      n = half + (n & 1);                                                     \
+    }                                                                         \
+    return buf[0];                                                            \
   }
 
 #define _DACE_HREDUCE_ADD(x, y) ((x) + (y))

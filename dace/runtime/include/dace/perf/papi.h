@@ -87,8 +87,7 @@ template <typename T, size_t Alignment = CACHE_LINE_SIZE>
 class AlignedElement {
  public:
   static constexpr size_t alignment_padding =
-      (sizeof(T) == Alignment) ? (0)
-                               : (Alignment - (sizeof(T) & (Alignment - 1)));
+      (sizeof(T) == Alignment) ? (0) : (Alignment - (sizeof(T) & (Alignment - 1)));
 
   AlignedElement() {}
   AlignedElement(const T& x) : m_elem(x) {}
@@ -110,19 +109,14 @@ template <typename T, size_t Alignment = CACHE_LINE_SIZE>
 class AlignedContainer {
  public:
   static constexpr auto realsize =
-      (sizeof(T) == Alignment) ? (sizeof(T))
-                               : ((sizeof(T) + Alignment) & ~(Alignment - 1));
+      (sizeof(T) == Alignment) ? (sizeof(T)) : ((sizeof(T) + Alignment) & ~(Alignment - 1));
   static_assert(realsize >= sizeof(T), "Realsize is less than an object!");
-  static_assert(realsize <= sizeof(T) + Alignment,
-                "Realsize larger than necessary");
+  static_assert(realsize <= sizeof(T) + Alignment, "Realsize larger than necessary");
   static_assert(realsize == sizeof(AlignedElement<T, Alignment>),
                 "realsize should be identical to aligned element size");
 
   AlignedContainer()
-      : m_rawdat(nullptr),
-        align_offset(std::numeric_limits<size_t>::max()),
-        m_size(0),
-        m_alloc_size(0) {}
+      : m_rawdat(nullptr), align_offset(std::numeric_limits<size_t>::max()), m_size(0), m_alloc_size(0) {}
 
   ~AlignedContainer() { clear(); }
 
@@ -139,8 +133,7 @@ class AlignedContainer {
       LogError("Failed to allocate buffer\n");
     }
 
-    align_offset = Alignment - (reinterpret_cast<uintptr_t>(m_rawdat.get()) &
-                                (Alignment - 1));
+    align_offset = Alignment - (reinterpret_cast<uintptr_t>(m_rawdat.get()) & (Alignment - 1));
 
     m_size = n;
     initialize_elements();
@@ -176,11 +169,9 @@ class AlignedContainer {
     assert(align_offset != std::numeric_limits<size_t>::max());
     assert(m_rawdat.get() != nullptr);
 #endif
-    auto* ptr = reinterpret_cast<AlignedElement<T, Alignment>*>(m_rawdat.get() +
-                                                                align_offset);
+    auto* ptr = reinterpret_cast<AlignedElement<T, Alignment>*>(m_rawdat.get() + align_offset);
 #ifdef CHECK_BOUNDS
-    assert((uint8_t*)ptr > m_rawdat.get() &&
-           (uint8_t*)ptr < m_rawdat.get() + m_alloc_size && "out of bounds");
+    assert((uint8_t*)ptr > m_rawdat.get() && (uint8_t*)ptr < m_rawdat.get() + m_alloc_size && "out of bounds");
 #endif
     return ptr;
   }
@@ -188,9 +179,7 @@ class AlignedContainer {
   T& operator[](size_t index) {
     auto* ptr = &(elementArray()[index]);
 #ifdef CHECK_BOUNDS
-    assert((uint8_t*)ptr > m_rawdat.get() &&
-           (uint8_t*)ptr + 1 < m_rawdat.get() + m_alloc_size &&
-           "out of bounds");
+    assert((uint8_t*)ptr > m_rawdat.get() && (uint8_t*)ptr + 1 < m_rawdat.get() + m_alloc_size && "out of bounds");
 #endif
     return *ptr;
   }
@@ -219,8 +208,7 @@ int64_t getThreadID() {
   // GetCurrentProcessorNumber() does not work with > 64 Threads.
   PROCESSOR_NUMBER pn;
   GetCurrentProcessorNumberEx(&pn);
-  const auto thread_id =
-      static_cast<size_t>(pn.Group) * 64 + static_cast<size_t>(pn.Number);
+  const auto thread_id = static_cast<size_t>(pn.Group) * 64 + static_cast<size_t>(pn.Number);
 #else
 #error Unsupported platform, provide code to get hardware thread number here.
 #endif
@@ -229,8 +217,7 @@ int64_t getThreadID() {
 
 class ThreadLockReleaser {
  public:
-  ThreadLockReleaser(thread_lock_context_t& ctx)
-      : m_ctx(ctx), m_iteration(ctx.iteration) {}
+  ThreadLockReleaser(thread_lock_context_t& ctx) : m_ctx(ctx), m_iteration(ctx.iteration) {}
 
   ~ThreadLockReleaser() {
     m_ctx.notified = true;
@@ -252,8 +239,7 @@ void lockThreadID(unsigned long core) {
   CPU_SET(core, &cpu_set);
   auto done = pthread_setaffinity_np(threadid, sizeof(cpu_set_t), &cpu_set);
   if (done != 0) {
-    std::cout << "Failed pthread_setaffinity_np with code " << done
-              << std::endl;
+    std::cout << "Failed pthread_setaffinity_np with code " << done << std::endl;
     exit(-1);
   }
 #else
@@ -326,8 +312,7 @@ class PAPI {
   }
 
   static void init_threads() {
-    const auto r_init =
-        ::PAPI_thread_init((long unsigned int (*)())omp_get_thread_num);
+    const auto r_init = ::PAPI_thread_init((long unsigned int (*)())omp_get_thread_num);
 #ifndef SKIP_RETVAL_CHECKS
     if (r_init != PAPI_VER_CURRENT && r_init != PAPI_OK) {
       LogError("init_threads error: %d\n", r_init);
@@ -364,12 +349,8 @@ class PAPIValueSet {
  public:
   PAPIValueSet() : m_flags(ValueSetType::Default) {}
 
-  PAPIValueSet(uint32_t nodeid, uint32_t coreid, uint32_t iteration,
-               ValueSetType flags = ValueSetType::Default)
-      : m_nodeid(nodeid),
-        m_coreid(coreid),
-        m_iteration(iteration),
-        m_flags(flags) {}
+  PAPIValueSet(uint32_t nodeid, uint32_t coreid, uint32_t iteration, ValueSetType flags = ValueSetType::Default)
+      : m_nodeid(nodeid), m_coreid(coreid), m_iteration(iteration), m_flags(flags) {}
 
   ~PAPIValueSet() {}
 
@@ -382,24 +363,19 @@ class PAPIValueSet {
     const char* counter_name = nullptr;
 
     if (m_flags == ValueSetType::Default || m_flags == ValueSetType::Copy) {
-      entry_name += " (" + std::to_string(m_nodeid) + ", " +
-                    std::to_string(m_coreid) + ", " +
-                    std::to_string(m_iteration) + ", " +
-                    std::to_string((int)m_flags) + ") ";
+      entry_name += " (" + std::to_string(m_nodeid) + ", " + std::to_string(m_coreid) + ", " +
+                    std::to_string(m_iteration) + ", " + std::to_string((int)m_flags) + ") ";
       counter_name = entry_name.c_str();
     } else if (m_flags == ValueSetType::OverheadComp) {
       entry_name = "papi_overhead";
       counter_name = entry_name.c_str();
     } else if (m_flags == ValueSetType::marker_section_start) {
-      entry_name = "papi_section_start (node " + std::to_string(m_nodeid) +
-                   ", core " + std::to_string(m_coreid) + ") ";
+      entry_name = "papi_section_start (node " + std::to_string(m_nodeid) + ", core " + std::to_string(m_coreid) + ") ";
       counter_name = (entry_name + "bytes").c_str();
-      rep.add_counter((entry_name + "bytes").c_str(), "papi", counter_name,
-                      static_cast<double>(m_values[0]));
+      rep.add_counter((entry_name + "bytes").c_str(), "papi", counter_name, static_cast<double>(m_values[0]));
       if (m_values[1] != 0) {
         counter_name = (entry_name + "input_bytes").c_str();
-        rep.add_counter((entry_name + "input_bytes").c_str(), "papi",
-                        counter_name, static_cast<double>(m_values[1]));
+        rep.add_counter((entry_name + "input_bytes").c_str(), "papi", counter_name, static_cast<double>(m_values[1]));
       }
       return;
     } else if (m_flags == ValueSetType::OMP_marker_parfor_start) {
@@ -423,16 +399,17 @@ class PAPIValueSet {
       std::string event_name(buff);*/
       rep.add_counter(
           //(entry_name + event_name).c_str(),
-          (entry_name + std::to_string(e)).c_str(), "papi", counter_name,
-          static_cast<double>(m_values[i]));
+          (entry_name + std::to_string(e)).c_str(), "papi", counter_name, static_cast<double>(m_values[i]));
       ++i;
     }
   }
 
   // Return a reference to the value-array
-  long long (&store())[sizeof...(events)] { return m_values; }
+  long long (&store()) [sizeof...(events)] { return m_values; }
 
-  const long long (&cstore() const)[sizeof...(events)] { return m_values; }
+  const long long (&cstore() const)[sizeof...(events)] {
+    return m_values;
+  }
 
   std::array<int, sizeof...(events)> event_array() const { return {events...}; }
 
@@ -467,8 +444,7 @@ class PAPIValueStore {
  public:
   static constexpr size_t store_reserve_size = 4096 * 1024;
   PAPIValueStore(Report& report) : m_report(report) {
-    assert(m_moved_bytes.is_lock_free() &&
-           "Moved byte counter is not lockfree!");
+    assert(m_moved_bytes.is_lock_free() && "Moved byte counter is not lockfree!");
     // Skip first few growth operations
     // m_values.reserve(store_reserve_size);
     m_values.resize(store_reserve_size);
@@ -495,8 +471,7 @@ class PAPIValueStore {
     for (auto& x : _max.store()) x = std::numeric_limits<long long>::min();
 
     auto set_min_max = [&](const auto& vs) {
-      for (size_t i = 0; i < sizeof(vs.cstore()) / sizeof(vs.cstore()[0]);
-           ++i) {
+      for (size_t i = 0; i < sizeof(vs.cstore()) / sizeof(vs.cstore()[0]); ++i) {
         _min.store()[i] = std::min(_min.store()[i], vs.cstore()[i]);
         _max.store()[i] = std::max(_max.store()[i], vs.cstore()[i]);
       }
@@ -561,16 +536,14 @@ class PAPIValueStore {
     if (m_insertion_position > 0) {
 #ifndef NO_RUNTIME_BYTEMOVEMENT_ACCUMULATION
       byte_counter_size_t bm = collectBytesMoved();
-      this->m_report.add_counter("papi_moved_bytes", "papi", "papi_moved_bytes",
-                                 static_cast<double>(bm));
+      this->m_report.add_counter("papi_moved_bytes", "papi", "papi_moved_bytes", static_cast<double>(bm));
 #endif
       // Also store contention
       uint64_t cont = 0;
       cont = m_contention_value.exchange(cont);
 
       if (cont != 0)
-        this->m_report.add_counter("papi_contention", "papi", "papi_contention",
-                                   static_cast<double>(cont));
+        this->m_report.add_counter("papi_contention", "papi", "papi_contention", static_cast<double>(cont));
     }
     m_values.clear();
     m_values.resize(store_reserve_size);
@@ -579,12 +552,9 @@ class PAPIValueStore {
 
   // This is to provide a default sync point. Its effect on the output can be
   // disregarded
-  void markSuperSectionStart(
-      uint32_t nodeid,
-      ValueSetType flags = ValueSetType::marker_supersection_start) {
+  void markSuperSectionStart(uint32_t nodeid, ValueSetType flags = ValueSetType::marker_supersection_start) {
     if (this->m_insertion_position >=
-        static_cast<size_t>(store_reserve_size *
-                            DACE_INSTRUMENTATION_SUPERSECTION_FLUSH_THRESHOLD))
+        static_cast<size_t>(store_reserve_size * DACE_INSTRUMENTATION_SUPERSECTION_FLUSH_THRESHOLD))
       flush();
 
     PAPIValueSet<events...> set(nodeid, 0, 0, flags);
@@ -594,19 +564,15 @@ class PAPIValueStore {
   // This marks sections in a threadsafe way. In principle, instead of being a
   // "barrier" syncing threads, it now just guarantees serial properties per
   // thread
-  void markSectionStart(
-      uint32_t nodeid, long long SizeInBytes, long long InputSize,
-      uint32_t threadid, uint32_t iteration = 0,
-      ValueSetType flags = ValueSetType::marker_section_start) {
+  void markSectionStart(uint32_t nodeid, long long SizeInBytes, long long InputSize, uint32_t threadid,
+                        uint32_t iteration = 0, ValueSetType flags = ValueSetType::marker_section_start) {
     // Difference SizeInBytes and InputSize: InputSize is just the amount of
     // bytes moved INTO the section, while sizeInBytes is the amount of bytes
     // MOVED inside a section (without reuses of the same data)
     PAPIValueSet<events...> set(nodeid, threadid, iteration, flags);
     set.store()[0] = SizeInBytes;  // Use the first slot for memory information
-    set.store()[1] =
-        InputSize;  // Use the second slot for memory input information
-    static_assert(sizeof...(events) >= 2,
-                  "Must have at least 2 counters specified");
+    set.store()[1] = InputSize;    // Use the second slot for memory input information
+    static_assert(sizeof...(events) >= 2, "Must have at least 2 counters specified");
     addEntry(set);
   }
 
@@ -664,17 +630,15 @@ class PAPIValueStore {
   }
 
   template <int... counterevents>
-  PAPIValueSet<events...>& getNewValueSet(
-      const PAPIPerf<counterevents...>& perf, uint32_t nodeid, uint32_t coreid,
-      uint32_t iteration, ValueSetType type = ValueSetType::Default) {
+  PAPIValueSet<events...>& getNewValueSet(const PAPIPerf<counterevents...>& perf, uint32_t nodeid, uint32_t coreid,
+                                          uint32_t iteration, ValueSetType type = ValueSetType::Default) {
     // If counterevents and store events are not the same, we have an issue.
     // The value set must have the same arguments as the store, so it will
     // always print the same counter ids. But in this case, the counterids are
     // not the same. We therefore have to mark the entries as invalid so the
     // store can deal with it.
 
-    static_assert(sizeof...(counterevents) <= sizeof...(events),
-                  "Counter event size must not exceed store size");
+    static_assert(sizeof...(counterevents) <= sizeof...(events), "Counter event size must not exceed store size");
 
     int codes[] = {counterevents...};
     int storecodes[] = {events...};
@@ -695,8 +659,7 @@ class PAPIValueStore {
     auto pos = getNewSlotPosition<2>();
 
     // Mark the first one to override the counters.
-    m_values[pos] = PAPIValueSet<events...>(nodeid, coreid, iteration,
-                                            ValueSetType::CounterOverride);
+    m_values[pos] = PAPIValueSet<events...>(nodeid, coreid, iteration, ValueSetType::CounterOverride);
 
     // Store the events in the "value"-fields. Write 0 to unused fields
     for (size_t i = 0; i < sizeof...(counterevents); ++i) {
@@ -707,32 +670,26 @@ class PAPIValueStore {
     }
   }
 
-  inline PAPIValueSet<events...>& getNewValueSet(
-      const PAPIPerf<events...>& perf, uint32_t nodeid, uint32_t coreid,
-      uint32_t iteration, ValueSetType type = ValueSetType::Default) {
+  inline PAPIValueSet<events...>& getNewValueSet(const PAPIPerf<events...>& perf, uint32_t nodeid, uint32_t coreid,
+                                                 uint32_t iteration, ValueSetType type = ValueSetType::Default) {
     return __impl_getNewValueSet(nodeid, coreid, iteration, type);
   }
 
-  PAPIValueSet<events...>& __impl_getNewValueSet(
-      uint32_t nodeid, uint32_t coreid, uint32_t iteration,
-      ValueSetType type = ValueSetType::Default) {
-    auto& retval =
-        addEntry(PAPIValueSet<events...>(nodeid, coreid, iteration, type));
+  PAPIValueSet<events...>& __impl_getNewValueSet(uint32_t nodeid, uint32_t coreid, uint32_t iteration,
+                                                 ValueSetType type = ValueSetType::Default) {
+    auto& retval = addEntry(PAPIValueSet<events...>(nodeid, coreid, iteration, type));
 #ifdef TEST_ALIGNMENT
     uintptr_t val = (uintptr_t)&retval;
     auto lower_bits = val & (CACHE_LINE_SIZE - 1);
     if (lower_bits != 0) {
-      LogError("ERROR: Values not aligned. Expected lower_bits=0, got %d\n",
-               lower_bits);
+      LogError("ERROR: Values not aligned. Expected lower_bits=0, got %d\n", lower_bits);
     }
     assert(lower_bits == 0);
 #endif
     return retval;
   }
 
-  PAPIValueSet<events...>& getNewValueSet() {
-    return getNewValueSet(PAPIPerf<events...>(), 0, 0, 0);
-  }
+  PAPIValueSet<events...>& getNewValueSet() { return getNewValueSet(PAPIPerf<events...>(), 0, 0, 0); }
 };
 
 template <int... events>
@@ -758,8 +715,7 @@ class PAPIPerf {
 #ifndef SKIP_RETVAL_CHECKS
     if (r_add_events != PAPI_OK) {
       PAPI_cleanup_eventset(m_event_set);
-      LogError("Failed to add events to event set with code %d\n",
-               r_add_events);
+      LogError("Failed to add events to event set with code %d\n", r_add_events);
     }
 #endif
 #ifdef PAPI_EXPLICIT_THREADS
@@ -786,16 +742,13 @@ class PAPIPerf {
   void enable_multiplexing() {
     const auto r_multiplex = PAPI_set_multiplex(m_event_set);
     if (r_multiplex != PAPI_OK) {
-      std::cerr << "Failed to enable multiplexing, code " << r_multiplex
-                << std::endl;
+      std::cerr << "Failed to enable multiplexing, code " << r_multiplex << std::endl;
       exit(-1);
     }
   }
 
  public:
-  static PAPIValueSet<events...> ValueSet() {
-    return PAPIValueSet<events...>();
-  }
+  static PAPIValueSet<events...> ValueSet() { return PAPIValueSet<events...>(); }
 
   void enterCritical() {
     static bool error_reported = false;

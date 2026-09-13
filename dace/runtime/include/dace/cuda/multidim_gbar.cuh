@@ -29,8 +29,8 @@
 
 /**
  * \file
- * dace::MultidimGridBarrier implements a software global barrier among thread blocks within a multidimensional CUDA grid
- * Implemented over CUB's GridBarrier
+ * dace::MultidimGridBarrier implements a software global barrier among thread blocks within a multidimensional CUDA
+ * grid Implemented over CUB's GridBarrier
  */
 
 #pragma once
@@ -42,8 +42,6 @@
 // The barrier lives in dace's own namespace. It was reopening CUB's, which cannot be done through
 // an alias and made the class a hostage of whichever CUB the include happened to find.
 namespace dace {
-
-
 
 /**
  * \addtogroup GridModule
@@ -101,10 +99,9 @@ public:
             // Wait for everyone else to report in
             for (int peer_block = linear_tid; peer_block < grid; peer_block += block)
             {
-                while (gpucub::ThreadLoad<gpucub::LOAD_CG>(d_sync + peer_block) == 0)
-                {
-                    __threadfence_block();
-                }
+              while (gpucub::ThreadLoad<gpucub::LOAD_CG>(d_sync + peer_block) == 0) {
+                __threadfence_block();
+              }
             }
 
             __syncthreads();
@@ -123,9 +120,8 @@ public:
                 d_vol_sync[linear_blockid] = 1;
 
                 // Wait for acknowledgment
-                while (gpucub::ThreadLoad<gpucub::LOAD_CG>(d_sync + linear_blockid) == 1)
-                {
-                    __threadfence_block();
+                while (gpucub::ThreadLoad<gpucub::LOAD_CG>(d_sync + linear_blockid) == 1) {
+                  __threadfence_block();
                 }
             }
 
@@ -159,26 +155,23 @@ public:
     /**
      * DeviceFrees and resets the progress counters
      */
-    gpuError_t HostReset()
-    {
-        gpuError_t retval = gpuSuccess;
-        if (d_sync)
-        {
-            DACE_GPUCUB_DEBUG(retval = gpuFree(d_sync));
-            d_sync = NULL;
-        }
-        sync_bytes = 0;
-        return retval;
+    gpuError_t HostReset() {
+      gpuError_t retval = gpuSuccess;
+      if (d_sync) {
+        DACE_GPUCUB_DEBUG(retval = gpuFree(d_sync));
+        d_sync = NULL;
+      }
+      sync_bytes = 0;
+      return retval;
     }
-
 
     /**
      * Destructor
      */
     virtual ~GridBarrierLifetime()
     {
-        // A destructor has nowhere to report to, and hipCUB's error type is [[nodiscard]].
-        (void) HostReset();
+      // A destructor has nowhere to report to, and hipCUB's error type is [[nodiscard]].
+      (void)HostReset();
     }
 
 
@@ -186,27 +179,24 @@ public:
      * Sets up the progress counters for the next kernel launch (lazily
      * allocating and initializing them if necessary)
      */
-    gpuError_t Setup(int sweep_grid_size)
-    {
-        gpuError_t retval = gpuSuccess;
-        do {
-            size_t new_sync_bytes = sweep_grid_size * sizeof(SyncFlag);
-            if (new_sync_bytes > sync_bytes)
-            {
-                if (d_sync)
-                {
-                    if (DACE_GPUCUB_DEBUG(retval = gpuFree(d_sync))) break;
-                }
+    gpuError_t Setup(int sweep_grid_size) {
+      gpuError_t retval = gpuSuccess;
+      do {
+        size_t new_sync_bytes = sweep_grid_size * sizeof(SyncFlag);
+        if (new_sync_bytes > sync_bytes) {
+          if (d_sync) {
+            if (DACE_GPUCUB_DEBUG(retval = gpuFree(d_sync))) break;
+          }
 
-                sync_bytes = new_sync_bytes;
+          sync_bytes = new_sync_bytes;
 
-                // Allocate and initialize to zero
-                if (DACE_GPUCUB_DEBUG(retval = gpuMalloc((void**) &d_sync, sync_bytes))) break;
-                if (DACE_GPUCUB_DEBUG(retval = gpuMemset(d_sync, 0, new_sync_bytes))) break;
-            }
-        } while (0);
+          // Allocate and initialize to zero
+          if (DACE_GPUCUB_DEBUG(retval = gpuMalloc((void**)&d_sync, sync_bytes))) break;
+          if (DACE_GPUCUB_DEBUG(retval = gpuMemset(d_sync, 0, new_sync_bytes))) break;
+        }
+      } while (0);
 
-        return retval;
+      return retval;
     }
 };
 

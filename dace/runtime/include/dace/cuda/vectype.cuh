@@ -319,29 +319,31 @@ DEFINE_ALL_EXT_TYPES(float64,double);
 // to reach global scope for the overloads, then reopen it for the code below.
 }  // namespace dace
 
-#define DACE_EXTTYPE_MINMAX(EXTTYPE, MAXEXPR, MINEXPR)                                     \
-    static DACE_HDFI dace::EXTTYPE max(const dace::EXTTYPE &a, const dace::EXTTYPE &b) {   \
-        dace::EXTTYPE r; MAXEXPR; return r; }                                             \
-    static DACE_HDFI dace::EXTTYPE min(const dace::EXTTYPE &a, const dace::EXTTYPE &b) {   \
-        dace::EXTTYPE r; MINEXPR; return r; }
+#define DACE_EXTTYPE_MINMAX(EXTTYPE, MAXEXPR, MINEXPR)                                 \
+  static DACE_HDFI dace::EXTTYPE max(const dace::EXTTYPE& a, const dace::EXTTYPE& b) { \
+    dace::EXTTYPE r;                                                                   \
+    MAXEXPR;                                                                           \
+    return r;                                                                          \
+  }                                                                                    \
+  static DACE_HDFI dace::EXTTYPE min(const dace::EXTTYPE& a, const dace::EXTTYPE& b) { \
+    dace::EXTTYPE r;                                                                   \
+    MINEXPR;                                                                           \
+    return r;                                                                          \
+  }
 #define DACE_LANE_MAX(L) r.L = (a.L > b.L) ? a.L : b.L
 #define DACE_LANE_MIN(L) r.L = (a.L < b.L) ? a.L : b.L
 
 DACE_EXTTYPE_MINMAX(exttype_float32_1, (DACE_LANE_MAX(x)), (DACE_LANE_MIN(x)))
-DACE_EXTTYPE_MINMAX(exttype_float32_2, (DACE_LANE_MAX(x), DACE_LANE_MAX(y)),
-                                       (DACE_LANE_MIN(x), DACE_LANE_MIN(y)))
+DACE_EXTTYPE_MINMAX(exttype_float32_2, (DACE_LANE_MAX(x), DACE_LANE_MAX(y)), (DACE_LANE_MIN(x), DACE_LANE_MIN(y)))
 DACE_EXTTYPE_MINMAX(exttype_float32_3, (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z)),
-                                       (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z)))
-DACE_EXTTYPE_MINMAX(exttype_float32_4,
-                    (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z), DACE_LANE_MAX(w)),
+                    (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z)))
+DACE_EXTTYPE_MINMAX(exttype_float32_4, (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z), DACE_LANE_MAX(w)),
                     (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z), DACE_LANE_MIN(w)))
 DACE_EXTTYPE_MINMAX(exttype_float64_1, (DACE_LANE_MAX(x)), (DACE_LANE_MIN(x)))
-DACE_EXTTYPE_MINMAX(exttype_float64_2, (DACE_LANE_MAX(x), DACE_LANE_MAX(y)),
-                                       (DACE_LANE_MIN(x), DACE_LANE_MIN(y)))
+DACE_EXTTYPE_MINMAX(exttype_float64_2, (DACE_LANE_MAX(x), DACE_LANE_MAX(y)), (DACE_LANE_MIN(x), DACE_LANE_MIN(y)))
 DACE_EXTTYPE_MINMAX(exttype_float64_3, (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z)),
-                                       (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z)))
-DACE_EXTTYPE_MINMAX(exttype_float64_4,
-                    (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z), DACE_LANE_MAX(w)),
+                    (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z)))
+DACE_EXTTYPE_MINMAX(exttype_float64_4, (DACE_LANE_MAX(x), DACE_LANE_MAX(y), DACE_LANE_MAX(z), DACE_LANE_MAX(w)),
                     (DACE_LANE_MIN(x), DACE_LANE_MIN(y), DACE_LANE_MIN(z), DACE_LANE_MIN(w)))
 
 #undef DACE_EXTTYPE_MINMAX

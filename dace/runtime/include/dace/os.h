@@ -6,7 +6,7 @@
 #include <string>
 
 #ifdef _MSC_VER
-inline int setenv(const char *name, const char *value, int overwrite) {
+inline int setenv(const char* name, const char* value, int overwrite) {
   int errcode = 0;
   if (!overwrite) {
     size_t envsize = 0;
@@ -15,7 +15,7 @@ inline int setenv(const char *name, const char *value, int overwrite) {
   }
   return _putenv_s(name, value);
 }
-inline int unsetenv(const char *name) { return _putenv_s(name, ""); }
+inline int unsetenv(const char* name) { return _putenv_s(name, ""); }
 #endif  // _MSC_VER
 
 namespace dace {

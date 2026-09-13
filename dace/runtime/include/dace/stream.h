@@ -25,14 +25,8 @@ class GPUStream {
   uint32_t *m_start, *m_end, *m_pending;
   uint32_t m_capacity_mask;
 
-  GPUStream()
-      : m_data(nullptr),
-        m_start(nullptr),
-        m_end(nullptr),
-        m_pending(nullptr),
-        m_capacity_mask(0) {}
-  GPUStream(T* data, uint32_t capacity, uint32_t* start, uint32_t* end,
-            uint32_t* pending)
+  GPUStream() : m_data(nullptr), m_start(nullptr), m_end(nullptr), m_pending(nullptr), m_capacity_mask(0) {}
+  GPUStream(T* data, uint32_t capacity, uint32_t* start, uint32_t* end, uint32_t* pending)
       : m_data(data),
         m_start(start),
         m_end(end),
@@ -175,8 +169,7 @@ class ArrayStreamView {
   template <int VECTOR_LEN>
   void push(const dace::vec<T, VECTOR_LEN>& element) {
     // The internal pointer type relies on the alignment of the original array
-    typedef typename std::conditional<ALIGNED, vec<T, VECTOR_LEN>,
-                                      vecu<T, VECTOR_LEN>>::type vec_t;
+    typedef typename std::conditional<ALIGNED, vec<T, VECTOR_LEN>, vecu<T, VECTOR_LEN>>::type vec_t;
 
     const unsigned int offset = m_elements.fetch_add(VECTOR_LEN);
     *((vec_t*)(m_array + offset)) = element;
@@ -190,8 +183,7 @@ class ArrayStreamView {
   }
 
   template <int VECTOR_LEN>
-  void push_if(const dace::vec<T, VECTOR_LEN>& element,
-               const dace::vec<int, VECTOR_LEN>& mask) {
+  void push_if(const dace::vec<T, VECTOR_LEN>& element, const dace::vec<int, VECTOR_LEN>& mask) {
     int ppcnt = 0;
     for (int v = 0; v < VECTOR_LEN; ++v) ppcnt += (mask[v] ? 1 : 0);
     const unsigned int off = m_elements.fetch_add(ppcnt);
@@ -221,11 +213,9 @@ class ArrayStreamView {
   }
 
   template <int VECTOR_LEN>
-  void push(const dace::vec<T, VECTOR_LEN>* elements,
-            unsigned int num_elements) {
+  void push(const dace::vec<T, VECTOR_LEN>* elements, unsigned int num_elements) {
     // The internal pointer type relies on the alignment of the original array
-    typedef typename std::conditional<ALIGNED, vec<T, VECTOR_LEN>,
-                                      vecu<T, VECTOR_LEN>>::type vec_t;
+    typedef typename std::conditional<ALIGNED, vec<T, VECTOR_LEN>, vecu<T, VECTOR_LEN>>::type vec_t;
 
     const unsigned int offset = m_elements.fetch_add(num_elements * VECTOR_LEN);
     std::copy(elements, elements + num_elements, (vec_t*)(m_array + offset));
@@ -255,8 +245,7 @@ class ArrayStreamViewThreadlocal {
   template <int VECTOR_LEN>
   void push(const dace::vec<T, VECTOR_LEN>& element) {
     // The internal pointer type relies on the alignment of the original array
-    typedef typename std::conditional<ALIGNED, vec<T, VECTOR_LEN>,
-                                      vecu<T, VECTOR_LEN>>::type vec_t;
+    typedef typename std::conditional<ALIGNED, vec<T, VECTOR_LEN>, vecu<T, VECTOR_LEN>>::type vec_t;
 
     *((vec_t*)(m_array + m_elements)) = element;
     m_elements += VECTOR_LEN;
@@ -269,8 +258,7 @@ class ArrayStreamViewThreadlocal {
   }
 
   template <int VECTOR_LEN>
-  void push_if(const dace::vec<T, VECTOR_LEN>& element,
-               const dace::vec<int, VECTOR_LEN>& mask) {
+  void push_if(const dace::vec<T, VECTOR_LEN>& element, const dace::vec<int, VECTOR_LEN>& mask) {
     for (int v = 0; v < VECTOR_LEN; ++v) {
       if (mask[v]) {
         m_array[m_elements++] = element[v];
@@ -310,14 +298,11 @@ class ArrayStreamViewThreadlocal {
   }
 
   template <int VECTOR_LEN>
-  void push(const dace::vec<T, VECTOR_LEN>* elements,
-            unsigned int num_elements) {
+  void push(const dace::vec<T, VECTOR_LEN>* elements, unsigned int num_elements) {
     // The internal pointer type relies on the alignment of the original array
-    typedef typename std::conditional<ALIGNED, vec<T, VECTOR_LEN>,
-                                      vecu<T, VECTOR_LEN>>::type vec_t;
+    typedef typename std::conditional<ALIGNED, vec<T, VECTOR_LEN>, vecu<T, VECTOR_LEN>>::type vec_t;
 
-    std::copy(elements, elements + num_elements,
-              (vec_t*)(m_array + m_elements));
+    std::copy(elements, elements + num_elements, (vec_t*)(m_array + m_elements));
     m_elements += num_elements * VECTOR_LEN;
   }
 };
@@ -327,10 +312,8 @@ struct Consume;
 
 template <int CHUNKSIZE>
 struct Consume {
-  template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
-            typename Functor>
-  static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads,
-                      Functor&& contents) {
+  template <template <typename, bool> class StreamT, typename T, bool ALIGNED, typename Functor>
+  static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads, Functor&& contents) {
     std::vector<std::thread> threads;
     auto thread_contents = [&](int pe) {
       T consumed_elements[CHUNKSIZE];
@@ -342,16 +325,14 @@ struct Consume {
         }
       }
     };
-    for (unsigned i = 0; i < num_threads; ++i)
-      threads.emplace_back(std::thread(thread_contents, i));
+    for (unsigned i = 0; i < num_threads; ++i) threads.emplace_back(std::thread(thread_contents, i));
 
     for (auto& t : threads) t.join();
   }
 
-  template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
-            typename CondFunctor, typename Functor>
-  static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads,
-                           CondFunctor&& quiescence, Functor&& contents) {
+  template <template <typename, bool> class StreamT, typename T, bool ALIGNED, typename CondFunctor, typename Functor>
+  static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads, CondFunctor&& quiescence,
+                           Functor&& contents) {
     std::vector<std::thread> threads;
     auto thread_contents = [&](int pe) {
       T consumed_elements[CHUNKSIZE];
@@ -363,8 +344,7 @@ struct Consume {
         }
       }
     };
-    for (unsigned i = 0; i < num_threads; ++i)
-      threads.emplace_back(std::thread(thread_contents, i));
+    for (unsigned i = 0; i < num_threads; ++i) threads.emplace_back(std::thread(thread_contents, i));
 
     for (auto& t : threads) t.join();
   }
@@ -373,10 +353,8 @@ struct Consume {
 // Specialization for consumption of 1 element
 template <>
 struct Consume<1> {
-  template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
-            typename Functor>
-  static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads,
-                      Functor&& contents) {
+  template <template <typename, bool> class StreamT, typename T, bool ALIGNED, typename Functor>
+  static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads, Functor&& contents) {
     std::vector<std::thread> threads;
     auto thread_contents = [&](int pe) {
       T consumed_element;
@@ -387,16 +365,14 @@ struct Consume<1> {
         }
       }
     };
-    for (unsigned i = 0; i < num_threads; ++i)
-      threads.emplace_back(std::thread(thread_contents, i));
+    for (unsigned i = 0; i < num_threads; ++i) threads.emplace_back(std::thread(thread_contents, i));
 
     for (auto& t : threads) t.join();
   }
 
-  template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
-            typename CondFunctor, typename Functor>
-  static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads,
-                           CondFunctor&& quiescence, Functor&& contents) {
+  template <template <typename, bool> class StreamT, typename T, bool ALIGNED, typename CondFunctor, typename Functor>
+  static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads, CondFunctor&& quiescence,
+                           Functor&& contents) {
     std::vector<std::thread> threads;
     auto thread_contents = [&](int pe) {
       T consumed_element;
@@ -407,8 +383,7 @@ struct Consume<1> {
         }
       }
     };
-    for (unsigned i = 0; i < num_threads; ++i)
-      threads.emplace_back(std::thread(thread_contents, i));
+    for (unsigned i = 0; i < num_threads; ++i) threads.emplace_back(std::thread(thread_contents, i));
 
     for (auto& t : threads) t.join();
   }

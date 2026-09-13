@@ -28,9 +28,7 @@ struct complexJ {
   explicit DACE_HDFI complexJ(int v = 1) : val(v) {}
 };
 
-static DACE_HDFI int operator*(const complexJ& j1, const complexJ& j2) {
-  return -j1.val * j2.val;
-}
+static DACE_HDFI int operator*(const complexJ& j1, const complexJ& j2) { return -j1.val * j2.val; }
 template <typename T>
 cmplx<T> DACE_HDFI operator*(const complexJ& j, const T& other) {
   return cmplx<T>(T(0), j.val * other);
@@ -47,15 +45,9 @@ template <typename T>
 cmplx<T> DACE_HDFI operator*(const cmplx<T>& other, const complexJ& j) {
   return cmplx<T>(T(0), j.val) * other;
 }
-static DACE_HDFI complexJ operator*(const int& other, const complexJ& j) {
-  return complexJ(j.val * other);
-}
-static DACE_HDFI complexJ operator*(const complexJ& j, const int& other) {
-  return complexJ(j.val * other);
-}
-static DACE_HDFI complexJ operator-(const complexJ& j) {
-  return complexJ(-j.val);
-}
+static DACE_HDFI complexJ operator*(const int& other, const complexJ& j) { return complexJ(j.val * other); }
+static DACE_HDFI complexJ operator*(const complexJ& j, const int& other) { return complexJ(j.val * other); }
+static DACE_HDFI complexJ operator-(const complexJ& j) { return complexJ(-j.val); }
 }  // namespace dace
 
 #ifndef __CUDACC__

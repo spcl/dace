@@ -45,8 +45,7 @@ DACE_CONSTEXPR DACE_HDFI T min(const T& val) {
   return val;
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type min(
-    const T& a, const Ts&... ts) {
+DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type min(const T& a, const Ts&... ts) {
   return (min(ts...) < a) ? min(ts...) : a;
 }
 
@@ -55,8 +54,7 @@ DACE_CONSTEXPR DACE_HDFI T max(const T& val) {
   return val;
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(
-    const T& a, const Ts&... ts) {
+DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& a, const Ts&... ts) {
   return (a < max(ts...)) ? max(ts...) : a;
 }
 
@@ -85,14 +83,12 @@ static DACE_CONSTEXPR DACE_HDFI T Modulo(const T& value, const T& modulus) {
 }
 
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Modulo_float(const T& value,
-                                               const T& modulus) {
+static DACE_CONSTEXPR DACE_HDFI T Modulo_float(const T& value, const T& modulus) {
   return value - floor(value / modulus) * modulus;
 }
 
 // Implement to support a match wtih Fortran's intrinsic EXPONENT
-template <typename T,
-          std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
   int exponent = 0;
   std::frexp(a, &exponent);
@@ -102,8 +98,7 @@ static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
 // Fortran ``SCALE(x, n)`` -- return ``x * 2^n``.  Matches C's
 // ``std::ldexp`` exactly.  Templated so the same name covers
 // f32 / f64 operands without the frontend having to specialise.
-template <typename T,
-          std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
   return std::ldexp(x, n);
 }
@@ -113,8 +108,7 @@ static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
 // Equivalent to ``std::frexp``'s second result; ``ilogb(x) + 1`` for
 // finite ``x``.  Provide as ``ilogb`` so the bridge's runtime-call
 // recognition can map ``_FortranAExponent*`` to a single short name.
-template <typename T,
-          std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int ilogb(const T& x) {
   int e = 0;
   std::frexp(x, &e);
@@ -122,15 +116,13 @@ static DACE_CONSTEXPR DACE_HDFI int ilogb(const T& x) {
 }
 
 // Implement to support Fortran's intrinsic NINT - round, but return an integer
-template <typename T,
-          std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int iround(const T& a) {
   return static_cast<int>(round(a));
 }
 
 template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T int_ceil(const T& numerator,
-                                           const T2& denominator) {
+static DACE_CONSTEXPR DACE_HDFI T int_ceil(const T& numerator, const T2& denominator) {
   return (numerator + denominator - 1) / denominator;
 }
 
@@ -141,8 +133,7 @@ static DACE_HDFI float ceiling(float /*arg*/) { return FLT_MAX; }
 static DACE_HDFI double ceiling(double /*arg*/) { return DBL_MAX; }
 
 template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T int_floor(const T& numerator,
-                                            const T2& denominator) {
+static DACE_CONSTEXPR DACE_HDFI T int_floor(const T& numerator, const T2& denominator) {
   return numerator / denominator;
 }
 
@@ -152,20 +143,17 @@ static DACE_CONSTEXPR DACE_HDFI int sgn(T val) {
 }
 
 template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T bitwise_and(const T& left_operand,
-                                              const T2& right_operand) {
+static DACE_CONSTEXPR DACE_HDFI T bitwise_and(const T& left_operand, const T2& right_operand) {
   return left_operand & right_operand;
 }
 
 template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T bitwise_or(const T& left_operand,
-                                             const T2& right_operand) {
+static DACE_CONSTEXPR DACE_HDFI T bitwise_or(const T& left_operand, const T2& right_operand) {
   return left_operand | right_operand;
 }
 
 template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T bitwise_xor(const T& left_operand,
-                                              const T2& right_operand) {
+static DACE_CONSTEXPR DACE_HDFI T bitwise_xor(const T& left_operand, const T2& right_operand) {
   return left_operand ^ right_operand;
 }
 
@@ -177,14 +165,12 @@ static DACE_CONSTEXPR DACE_HDFI T bitwise_invert(const T& value) {
 }
 
 template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T right_shift(const T& left_operand,
-                                              const T2& right_operand) {
+static DACE_CONSTEXPR DACE_HDFI T right_shift(const T& left_operand, const T2& right_operand) {
   return left_operand >> right_operand;
 }
 
 template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand,
-                                             const T2& right_operand) {
+static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand, const T2& right_operand) {
   return left_operand << right_operand;
 }
 
@@ -195,17 +181,13 @@ static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand,
 // which is what the Fortran frontend lowers a logical shift to: e.g.
 // ``ishft(-182, -2)`` must zero-fill, not propagate the sign bit.
 template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& left_operand,
-                                                     const T2& right_operand) {
-  return static_cast<T>(
-      static_cast<typename std::make_unsigned<T>::type>(left_operand) << right_operand);
+static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& left_operand, const T2& right_operand) {
+  return static_cast<T>(static_cast<typename std::make_unsigned<T>::type>(left_operand) << right_operand);
 }
 
 template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T logical_right_shift(const T& left_operand,
-                                                      const T2& right_operand) {
-  return static_cast<T>(
-      static_cast<typename std::make_unsigned<T>::type>(left_operand) >> right_operand);
+static DACE_CONSTEXPR DACE_HDFI T logical_right_shift(const T& left_operand, const T2& right_operand) {
+  return static_cast<T>(static_cast<typename std::make_unsigned<T>::type>(left_operand) >> right_operand);
 }
 
 #define AND(x, y) ((x) && (y))
@@ -223,33 +205,29 @@ static DACE_CONSTEXPR DACE_HDFI T ROUND(const T& value) {
 //          device-only functions as well.
 #ifdef __CUDACC__
 template <typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(
-    const dace::float16& a, const dace::float16& b, const Ts&... c) {
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const dace::float16& a, const dace::float16& b,
+                                                            const Ts&... c) {
   return (b < a) ? min(b, c...) : min(a, c...);
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(
-    const dace::float16& a, const T& b, const Ts&... c) {
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const dace::float16& a, const T& b, const Ts&... c) {
   return (dace::float16(b) < a) ? min(dace::float16(b), c...) : min(a, c...);
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(
-    const T& a, const dace::float16& b, const Ts&... c) {
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 min(const T& a, const dace::float16& b, const Ts&... c) {
   return (b < dace::float16(a)) ? min(b, c...) : min(dace::float16(a), c...);
 }
 template <typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(
-    const dace::float16& a, const dace::float16& b, const Ts&... c) {
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const dace::float16& a, const dace::float16& b,
+                                                            const Ts&... c) {
   return (a < b) ? max(b, c...) : max(a, c...);
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(
-    const dace::float16& a, const T& b, const Ts&... c) {
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const dace::float16& a, const T& b, const Ts&... c) {
   return (a < dace::float16(b)) ? max(dace::float16(b), c...) : max(a, c...);
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(
-    const T& a, const dace::float16& b, const Ts&... c) {
+DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const T& a, const dace::float16& b, const Ts&... c) {
   return (dace::float16(a) < b) ? max(b, c...) : max(dace::float16(a), c...);
 }
 #endif
@@ -258,10 +236,8 @@ DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(
 
 // Computes integer floor, rounding the remainder towards negative infinity.
 // https://stackoverflow.com/a/39304947
-template <typename T, std::enable_if_t<std::is_integral<T>::value &&
-                                       std::is_signed<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator,
-                                               const T& denominator) {
+template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
   // ``/`` and ``%``, not ``std::div``: that one is HOST-ONLY, and nvcc answers a call to it from
   // device code with a warning rather than an error. The guarded region holding the call is then
   // deleted outright -- tsvc s315's ``a[i] = (7*i) % LEN`` compiled to an EMPTY kernel and the
@@ -272,10 +248,8 @@ static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator,
   const T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
   return quotient - corr;
 }
-template <typename T, std::enable_if_t<std::is_integral<T>::value &&
-                                       std::is_unsigned<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator,
-                                               const T& denominator) {
+template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
   T quotient = numerator / denominator;
   T remainder = numerator % denominator;
   T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
@@ -284,15 +258,11 @@ static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator,
 
 // Computes Python floor division
 template <typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator,
-                                           const T& denominator) {
+static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
   return int_floor_ni(numerator, denominator);
 }
-template <typename T,
-          std::enable_if_t<!std::is_integral<T>::value &&
-                           std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator,
-                                           const T& denominator) {
+template <typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
   return (T)std::floor(numerator / denominator);
 }
 // Mixed-operand-type overload, the same shape ``py_mod`` carries below: ``a // 7`` deduces
@@ -306,8 +276,8 @@ static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& den
   return py_floor<T>((T)numerator, (T)denominator);
 }
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(
-    const std::complex<T>& numerator, const std::complex<T>& denominator) {
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(const std::complex<T>& numerator,
+                                                         const std::complex<T>& denominator) {
   std::complex<T> quotient = numerator / denominator;
   quotient.real(std::floor(quotient.real()));
   quotient.imag(0);
@@ -316,13 +286,12 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(
 
 // Computes NumPy float power
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI double np_float_pow(const T& base,
-                                                    const T& exponent) {
+static DACE_CONSTEXPR DACE_HDFI double np_float_pow(const T& base, const T& exponent) {
   return std::pow((double)base, (double)exponent);
 }
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(
-    const std::complex<T>& base, const std::complex<T>& exponent) {
+static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(const std::complex<T>& base,
+                                                                  const std::complex<T>& exponent) {
   return std::pow((std::complex<double>)base, (std::complex<double>)exponent);
 }
 
@@ -331,8 +300,7 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(
 // NOTE: This is different than Python math.remainder and C remainder,
 // which are equaivalent to the IEEE remainder: num - round(num / den) * den
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator,
-                                         const T& denominator) {
+static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
   T quotient = py_floor(numerator, denominator);
   return (T)(numerator - quotient * denominator);
 }
@@ -352,15 +320,11 @@ static DACE_CONSTEXPR DACE_HDFI auto py_mod(const T1& numerator, const T2& denom
 
 // Computes C/C++ modulus (operator % and fmod)
 template <typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator,
-                                          const T& denominator) {
+static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
   return numerator % denominator;
 }
-template <typename T,
-          std::enable_if_t<!std::is_integral<T>::value &&
-                           std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator,
-                                          const T& denominator) {
+template <typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
   return (T)std::fmod(numerator, denominator);
 }
 
@@ -373,69 +337,51 @@ static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator,
 // directly to ``arith.remsi`` for ints / ``std::fmod`` for floats and
 // doesn't need a helper.
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T floor_mod(const T& numerator,
-                                            const T& denominator) {
+static DACE_CONSTEXPR DACE_HDFI T floor_mod(const T& numerator, const T& denominator) {
   return py_mod(numerator, denominator);
 }
 
 // Computes C/C++ divmod (std::div)
-template <typename T, std::enable_if_t<std::is_integral<T>::value &&
-                                       std::is_signed<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator,
-                                                const T& denominator,
-                                                T& quotient, T& remainder) {
+template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
   auto divresult = std::div(numerator, denominator);
   quotient = (T)divresult.quot;
   remainder = (T)divresult.rem;
 }
-template <typename T, std::enable_if_t<std::is_integral<T>::value &&
-                                       std::is_unsigned<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator,
-                                                const T& denominator,
-                                                T& quotient, T& remainder) {
+template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
   quotient = numerator / denominator;
   remainder = numerator % denominator;
 }
-template <typename T,
-          std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator,
-                                                const T& denominator,
-                                                T& quotient, T& remainder) {
+template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
   quotient = (T)std::floor(numerator / denominator);
   remainder = (T)std::fmod(numerator, denominator);
 }
 
 // Computes Python divmod
 template <typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator,
-                                               const T& denominator,
-                                               T& quotient, T& remainder) {
+static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
   cpp_divmod(numerator, denominator, quotient, remainder);
   T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
   quotient -= corr;
   remainder += corr * denominator;
 }
-template <typename T,
-          std::enable_if_t<!std::is_integral<T>::value &&
-                           std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator,
-                                               const T& denominator,
-                                               T& quotient, T& remainder) {
+template <typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
   quotient = (T)std::floor(numerator / denominator);
   remainder = numerator - quotient * denominator;
 }
 
 // Computes absolute value (support for unsigned integers)
-template <typename T, std::enable_if_t<std::is_integral<T>::value &&
-                                       std::is_unsigned<T>::value>* = nullptr>
+template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T abs(const T& a) {
   return a;
 }
 
 // Rounds to nearest integer (support for complex numbers)
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI std::complex<T> round(
-    const std::complex<T>& a) {
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> round(const std::complex<T>& a) {
   return std::complex<T>(round(a.real()), round(a.imag()));
 }
 
@@ -449,8 +395,7 @@ static DACE_CONSTEXPR DACE_HDFI T sign(const T& x) {
 }
 template <typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign(const std::complex<T>& x) {
-  return (x.real() != 0) ? std::complex<T>(sign(x.real()), 0)
-                         : std::complex<T>(sign(x.imag()), 0);
+  return (x.real() != 0) ? std::complex<T>(sign(x.real()), 0) : std::complex<T>(sign(x.imag()), 0);
 }
 // Numpy v2.0 or higher for complex inputs: sign(x) = x / abs(x)
 template <typename T>
@@ -459,10 +404,8 @@ static DACE_CONSTEXPR DACE_HDFI T sign_numpy_2(const T& x) {
   // return (x < 0) ? -1 : ( (x > 0) ? 1 : 0);
 }
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign_numpy_2(
-    const std::complex<T>& x) {
-  return (x.real() != 0 && x.imag() != 0) ? x / std::abs(x)
-                                          : std::complex<T>(0, 0);
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign_numpy_2(const std::complex<T>& x) {
+  return (x.real() != 0 && x.imag() != 0) ? x / std::abs(x) : std::complex<T>(0, 0);
 }
 
 // Computes the Heaviside step function
@@ -498,15 +441,13 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> log2(const std::complex<T>& n) {
 // Computes the e raised to the given power n, minus 1.0 (support for complex
 // numbers)
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI std::complex<T> expm1(
-    const std::complex<T>& n) {
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> expm1(const std::complex<T>& n) {
   return std::exp(n) - T(1);
 }
 
 // Computes the base-e logarithm of 1 + n (support for complex numbers)
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI std::complex<T> log1p(
-    const std::complex<T>& n) {
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> log1p(const std::complex<T>& n) {
   return std::log(n + T(1));
 }
 
@@ -516,8 +457,7 @@ static DACE_CONSTEXPR DACE_HDFI T reciprocal(const T& a) {
   return T(1) / a;
 }
 template <typename T>
-static DACE_CONSTEXPR DACE_HDFI std::complex<T> reciprocal(
-    const std::complex<T>& a) {
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> reciprocal(const std::complex<T>& a) {
   return T(1) / a;
 }
 
@@ -615,24 +555,18 @@ static DACE_CONSTEXPR DACE_HDFI bool signbit(const T& a) {
 
 // Computes modf (compatibility between Python tasklets and C++ modf)
 template <typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void np_modf(const T& a, double& integral,
-                                             double& fractional) {
+static DACE_CONSTEXPR DACE_HDFI void np_modf(const T& a, double& integral, double& fractional) {
   integral = double(a);
   fractional = double(0);
 }
-template <typename T,
-          std::enable_if_t<!std::is_integral<T>::value &&
-                           std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void np_modf(const T& a, T& integral,
-                                             T& fractional) {
+template <typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void np_modf(const T& a, T& integral, T& fractional) {
   fractional = std::modf(a, &integral);
 }
 
 // Computes frexp (compatibility between Python tasklets and C++ frexp)
-template <typename T,
-          std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI void np_frexp(const T& a, T& mantissa,
-                                              int& exponent) {
+template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void np_frexp(const T& a, T& mantissa, int& exponent) {
   mantissa = std::frexp(a, &exponent);
 }
 
@@ -667,14 +601,12 @@ DACE_CONSTEXPR DACE_HDFI T exp(const T& a) {
 
 #ifdef __CUDACC__
 template <typename T>
-DACE_CONSTEXPR DACE_HDFI thrust::complex<T> pow(const thrust::complex<T>& a,
-                                                const thrust::complex<T>& b) {
+DACE_CONSTEXPR DACE_HDFI thrust::complex<T> pow(const thrust::complex<T>& a, const thrust::complex<T>& b) {
   return (thrust::complex<T>)thrust::pow(a, b);
 }
 #endif
 template <typename T, typename U,
-          typename std::enable_if<!(std::is_integral<T>::value &&
-                                    std::is_integral<U>::value)>::type* = nullptr>
+          typename std::enable_if<!(std::is_integral<T>::value && std::is_integral<U>::value)>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b) {
   return std::pow(a, b);
 }
@@ -687,8 +619,7 @@ DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b) {
 // offset (``complex128* + double``), which is what stopped stockham_fft from building at all.
 // Negative exponents answer 0, the convention the ``int`` overload already set.
 template <typename T, typename U,
-          typename std::enable_if<std::is_integral<T>::value &&
-                                  std::is_integral<U>::value>::type* = nullptr>
+          typename std::enable_if<std::is_integral<T>::value && std::is_integral<U>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const U& b) {
   if (b < U(0)) return T(0);
   T result = T(1);
@@ -702,8 +633,7 @@ DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const U& b) {
 // (RelaxIntegerPowers lowers integer powers in shapes/strides to ``ipow``); a non-constexpr callee
 // there is -Winvalid-constexpr and not a constant expression. Additive: runtime call sites are
 // unchanged.
-template <typename T,
-          typename std::enable_if<std::is_constructible<T, int>::value>::type* = nullptr>
+template <typename T, typename std::enable_if<std::is_constructible<T, int>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI T ipow(const T a, const unsigned int b) {
   T result = T(1);
   for (unsigned int i = 0; i < b; ++i) result *= a;
@@ -712,22 +642,19 @@ DACE_CONSTEXPR DACE_HDFI T ipow(const T a, const unsigned int b) {
 
 // Vector types have no scalar constructor, so seed at ``a``. Only ever reached with a
 // compile-time exponent >= 1 (the constant-power path emits a literal 1 for exponent 0).
-template <typename T,
-          typename std::enable_if<!std::is_constructible<T, int>::value>::type* = nullptr>
+template <typename T, typename std::enable_if<!std::is_constructible<T, int>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI T ipow(const T a, const unsigned int b) {
   T result = a;
   for (unsigned int i = 1; i < b; ++i) result *= a;
   return result;
 }
 
-template <typename T,
-          typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
+template <typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a) {
   return a;
 }
 
-template <typename T, typename std::enable_if<
-                          std::is_floating_point<T>::value>::type* = nullptr>
+template <typename T, typename std::enable_if<std::is_floating_point<T>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI int ifloor(const T& a) {
   return (int)std::floor(a);
 }
@@ -880,10 +807,8 @@ DACE_MATH_FMA_LP(dace::bfloat16)
 // 16-bit floats have no libm entry of their own: cast to fp32, call that, cast back -- the same
 // route ``fma`` above needed, rather than leaning on user-defined-conversion ranking between the
 // float/double/long double overloads of ``std::sqrt``/``exp``/``log``.
-#define DACE_MATH_UNARY_LP(NAME, TYPE)         \
-  static DACE_HDFI TYPE NAME(const TYPE& a) {  \
-    return TYPE(std::NAME(float(a)));          \
-  }
+#define DACE_MATH_UNARY_LP(NAME, TYPE) \
+  static DACE_HDFI TYPE NAME(const TYPE& a) { return TYPE(std::NAME(float(a))); }
 DACE_MATH_UNARY_LP(sqrt, dace::float16)
 DACE_MATH_UNARY_LP(sqrt, dace::bfloat16)
 // ``dace::float16`` IS ``half`` under CUDA, where dace/cuda/halfvec.cuh already declares a native

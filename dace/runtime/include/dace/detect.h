@@ -45,16 +45,16 @@ static constexpr long long FIND_FIRST_CHUNKS_PER_THREAD = 4;
  * :cvar:`FIND_FIRST_CHUNKS_PER_THREAD` for the small-span floor.
  */
 inline long long find_first_chunk(long long span, bool parallel) {
-    long long chunk = (long long)(FIND_FIRST_CHUNK_SCALE * std::sqrt((double)span));
-    long long threads = 1;
+  long long chunk = (long long)(FIND_FIRST_CHUNK_SCALE * std::sqrt((double)span));
+  long long threads = 1;
 #ifdef _OPENMP
-    if (parallel) threads = (long long)omp_get_max_threads();
+  if (parallel) threads = (long long)omp_get_max_threads();
 #endif
-    long long ceiling = span / (FIND_FIRST_CHUNKS_PER_THREAD * threads);
-    if (ceiling < 1) ceiling = 1;
-    if (chunk > ceiling) chunk = ceiling;
-    if (chunk < 1) chunk = 1;
-    return chunk;
+  long long ceiling = span / (FIND_FIRST_CHUNKS_PER_THREAD * threads);
+  if (ceiling < 1) ceiling = 1;
+  if (chunk > ceiling) chunk = ceiling;
+  if (chunk < 1) chunk = 1;
+  return chunk;
 }
 
 /**
@@ -85,20 +85,20 @@ inline long long find_first_chunk(long long span, bool parallel) {
  * @return 1 if any duplicate was found, 0 otherwise.
  */
 template <typename T, typename TagT>
-inline long long detect_collision(const T *idx, long long n, TagT *owner, long long capacity, bool parallel = true) {
+inline long long detect_collision(const T* idx, long long n, TagT* owner, long long capacity, bool parallel = true) {
 #pragma omp parallel for if (parallel : parallel)
-    for (long long i = 0; i < n; ++i) {
-        const long long v = static_cast<long long>(idx[i]);
-        if (v >= 0 && v < capacity) owner[v] = static_cast<TagT>(i);
-    }
-    long long c = 0;
-    // Bitwise-or is simd-safe (see reduction.h), so the verify pass carries simd as well.
+  for (long long i = 0; i < n; ++i) {
+    const long long v = static_cast<long long>(idx[i]);
+    if (v >= 0 && v < capacity) owner[v] = static_cast<TagT>(i);
+  }
+  long long c = 0;
+  // Bitwise-or is simd-safe (see reduction.h), so the verify pass carries simd as well.
 #pragma omp parallel for simd if (parallel : parallel) reduction(| : c)
-    for (long long i = 0; i < n; ++i) {
-        const long long v = static_cast<long long>(idx[i]);
-        if (v >= 0 && v < capacity) c |= (static_cast<long long>(owner[v]) != i) ? 1LL : 0LL;
-    }
-    return c;
+  for (long long i = 0; i < n; ++i) {
+    const long long v = static_cast<long long>(idx[i]);
+    if (v >= 0 && v < capacity) c |= (static_cast<long long>(owner[v]) != i) ? 1LL : 0LL;
+  }
+  return c;
 }
 
 /**
@@ -108,15 +108,15 @@ inline long long detect_collision(const T *idx, long long n, TagT *owner, long l
  * taking a caller-owned buffer wherever the scattered array's domain is known.
  */
 template <typename T>
-inline long long detect_collision(const T *idx, long long n, bool parallel = true) {
-    long long mx = 0;
+inline long long detect_collision(const T* idx, long long n, bool parallel = true) {
+  long long mx = 0;
 #pragma omp parallel for simd if (parallel : parallel) reduction(max : mx)
-    for (long long i = 0; i < n; ++i) {
-        const long long v = static_cast<long long>(idx[i]);
-        mx = v > mx ? v : mx;
-    }
-    std::unique_ptr<long long[]> owner(new long long[static_cast<size_t>(mx) + 1]);
-    return detect_collision(idx, n, owner.get(), mx + 1, parallel);
+  for (long long i = 0; i < n; ++i) {
+    const long long v = static_cast<long long>(idx[i]);
+    mx = v > mx ? v : mx;
+  }
+  std::unique_ptr<long long[]> owner(new long long[static_cast<size_t>(mx) + 1]);
+  return detect_collision(idx, n, owner.get(), mx + 1, parallel);
 }
 
 /**
@@ -128,14 +128,14 @@ inline long long detect_collision(const T *idx, long long n, bool parallel = tru
  * to do with a 0; nothing here traps.
  */
 template <typename T>
-inline long long detect_all_positive(const T *a, long long n, bool parallel = true) {
-    long long ok = 1;
+inline long long detect_all_positive(const T* a, long long n, bool parallel = true) {
+  long long ok = 1;
 #pragma omp parallel for simd if (parallel : parallel) reduction(min : ok)
-    for (long long i = 0; i < n; ++i) {
-        const long long flag = a[i] > 0 ? 1 : 0;
-        ok = flag < ok ? flag : ok;
-    }
-    return ok;
+  for (long long i = 0; i < n; ++i) {
+    const long long flag = a[i] > 0 ? 1 : 0;
+    ok = flag < ok ? flag : ok;
+  }
+  return ok;
 }
 
 /**
@@ -169,55 +169,55 @@ inline long long detect_all_positive(const T *a, long long n, bool parallel = tr
  */
 template <typename Pred>
 inline long long find_first_index(long long begin, long long end, Pred pred, bool parallel = true) {
-    if (begin >= end) return end;
-    const long long span = end - begin;
-    const long long chunk = find_first_chunk(span, parallel);
-    const long long nchunks = (span + chunk - 1) / chunk;
-    long long best = end;
-    long long hint = end;
+  if (begin >= end) return end;
+  const long long span = end - begin;
+  const long long chunk = find_first_chunk(span, parallel);
+  const long long nchunks = (span + chunk - 1) / chunk;
+  long long best = end;
+  long long hint = end;
 
 #pragma omp parallel for schedule(dynamic, 1) if (parallel : parallel) reduction(min : best)
-    for (long long c = 0; c < nchunks; ++c) {
-        long long seen;
+  for (long long c = 0; c < nchunks; ++c) {
+    long long seen;
 #pragma omp atomic read
-        seen = hint;
-        const long long lo = begin + c * chunk;
-        if (lo >= seen) continue;  // this chunk cannot hold the minimum
-        long long hi = lo + chunk;
-        if (hi > end) hi = end;
-        if (hi > seen) hi = seen;  // nothing at or past the hint can win
+    seen = hint;
+    const long long lo = begin + c * chunk;
+    if (lo >= seen) continue;  // this chunk cannot hold the minimum
+    long long hi = lo + chunk;
+    if (hi > end) hi = end;
+    if (hi > seen) hi = seen;  // nothing at or past the hint can win
 
-        long long found = end;
-        for (long long b = lo; b < hi; b += FIND_FIRST_SIMD_BLOCK) {
-            long long be = b + FIND_FIRST_SIMD_BLOCK;
-            if (be > hi) be = hi;
-            long long block = end;
+    long long found = end;
+    for (long long b = lo; b < hi; b += FIND_FIRST_SIMD_BLOCK) {
+      long long be = b + FIND_FIRST_SIMD_BLOCK;
+      if (be > hi) be = hi;
+      long long block = end;
 #pragma omp simd reduction(min : block)
-            for (long long i = b; i < be; ++i) {
-                const long long v = pred(i) ? i : end;
-                block = v < block ? v : block;
-            }
-            if (block < end) {
-                found = block;
-                break;
-            }
-        }
-        if (found < end) {
-            if (found < best) best = found;  // the ANSWER: a reduction, so no update can be lost
-            long long cur;
-#pragma omp atomic read
-            cur = hint;
-            if (found < cur) {
-                // The HINT, advisory only. This read-compare-write is not atomic as a whole, so a
-                // concurrent smaller write can be overwritten by a larger one -- which costs
-                // pruning and nothing else, because every value the hint takes is a real firing
-                // index and therefore never below the answer.
-#pragma omp atomic write
-                hint = found;
-            }
-        }
+      for (long long i = b; i < be; ++i) {
+        const long long v = pred(i) ? i : end;
+        block = v < block ? v : block;
+      }
+      if (block < end) {
+        found = block;
+        break;
+      }
     }
-    return best;
+    if (found < end) {
+      if (found < best) best = found;  // the ANSWER: a reduction, so no update can be lost
+      long long cur;
+#pragma omp atomic read
+      cur = hint;
+      if (found < cur) {
+        // The HINT, advisory only. This read-compare-write is not atomic as a whole, so a
+        // concurrent smaller write can be overwritten by a larger one -- which costs
+        // pruning and nothing else, because every value the hint takes is a real firing
+        // index and therefore never below the answer.
+#pragma omp atomic write
+        hint = found;
+      }
+    }
+  }
+  return best;
 }
 
 }  // namespace dace

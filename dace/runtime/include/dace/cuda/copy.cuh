@@ -373,10 +373,7 @@ namespace dace
                     {
                         // Read remainder
                         smem[(REMOFF + ltid) * DST_XSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
-                            *(ptr +
-                              src_xstride * (REMOFF + ltid) +
-                              src_ystride * j +
-                              src_zstride * i);
+                            *(ptr + src_xstride * (REMOFF + ltid) + src_ystride * j + src_zstride * i);
                     }
                 }
             }
@@ -435,52 +432,43 @@ namespace dace
     // for a static shape and this is force-inlined, so they fold. 128x128 fp32 measured 1413 GB/s
     // folded against 454 with genuinely runtime extents.
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH, bool ASYNC>
-    struct BlockCollective3D
-    {
-        static constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
+    struct BlockCollective3D {
+      static constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
 
-        static DACE_DFI void Copy(const T *src, int src_zstride, int src_ystride, int src_xstride,
-                                  T *dst, int dst_zstride, int dst_ystride, int dst_xstride,
-                                  int zlen, int ylen, int xlen)
-        {
-            const int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
+      static DACE_DFI void Copy(const T* src, int src_zstride, int src_ystride, int src_xstride, T* dst,
+                                int dst_zstride, int dst_ystride, int dst_xstride, int zlen, int ylen, int xlen) {
+        const int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
 
-            int lanes = (xlen >= COLLECTIVE_LANE_WIDTH)
-                            ? ((xlen + COLLECTIVE_LANE_WIDTH - 1) / COLLECTIVE_LANE_WIDTH) *
-                                  COLLECTIVE_LANE_WIDTH
-                            : xlen;
-            if (lanes > BLOCK_SIZE) lanes = BLOCK_SIZE;
-            if (lanes < 1) lanes = 1;   // an empty region still needs sane loop bounds
+        int lanes = (xlen >= COLLECTIVE_LANE_WIDTH)
+                        ? ((xlen + COLLECTIVE_LANE_WIDTH - 1) / COLLECTIVE_LANE_WIDTH) * COLLECTIVE_LANE_WIDTH
+                        : xlen;
+        if (lanes > BLOCK_SIZE) lanes = BLOCK_SIZE;
+        if (lanes < 1) lanes = 1;  // an empty region still needs sane loop bounds
 
-            const int rows_at_once = BLOCK_SIZE / lanes;
-            const int y0 = ltid / lanes;
-            const int x0 = ltid - y0 * lanes;
+        const int rows_at_once = BLOCK_SIZE / lanes;
+        const int y0 = ltid / lanes;
+        const int x0 = ltid - y0 * lanes;
 
-            // lanes need not divide BLOCK_SIZE (a 53-wide row leaves 44 threads over). Parking the
-            // remainder keeps two groups from writing the same row.
-            if (y0 < rows_at_once)
-            {
-                // Middle-axis distribution only: recovering (y, z) from a flat row index costs a
-                // runtime div, measured 2263 GB/s vs 3010 on 2d 8x256 fp64. The price is that a
-                // region with ylen < rows_at_once leaves the surplus wavefront groups idle.
-                for (int z = 0; z < zlen; ++z)
-                {
-                    const T *szp = src + z * src_zstride;
-                    T *dzp = dst + z * dst_zstride;
-                    for (int y = y0; y < ylen; y += rows_at_once)
-                    {
-                        const T *srow = szp + y * src_ystride;
-                        T *drow = dzp + y * dst_ystride;
-                        // Bounded by the real extent, so a partial edge tile touches nothing past it.
-                        for (int x = x0; x < xlen; x += lanes)
-                            drow[x * dst_xstride] = srow[x * src_xstride];
-                    }
-                }
+        // lanes need not divide BLOCK_SIZE (a 53-wide row leaves 44 threads over). Parking the
+        // remainder keeps two groups from writing the same row.
+        if (y0 < rows_at_once) {
+          // Middle-axis distribution only: recovering (y, z) from a flat row index costs a
+          // runtime div, measured 2263 GB/s vs 3010 on 2d 8x256 fp64. The price is that a
+          // region with ylen < rows_at_once leaves the surplus wavefront groups idle.
+          for (int z = 0; z < zlen; ++z) {
+            const T* szp = src + z * src_zstride;
+            T* dzp = dst + z * dst_zstride;
+            for (int y = y0; y < ylen; y += rows_at_once) {
+              const T* srow = szp + y * src_ystride;
+              T* drow = dzp + y * dst_ystride;
+              // Bounded by the real extent, so a partial edge tile touches nothing past it.
+              for (int x = x0; x < xlen; x += lanes) drow[x * dst_xstride] = srow[x * src_xstride];
             }
-
-            if (!ASYNC)
-                __syncthreads();
+          }
         }
+
+        if (!ASYNC) __syncthreads();
+      }
     };
 
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
@@ -722,10 +710,7 @@ namespace dace
                     {
                         // Read remainder
                         smem[(REMOFF + ltid) * DST_XSTRIDE + j * DST_YSTRIDE + i * DST_ZSTRIDE] =
-                            *(ptr +
-                              src_xstride * (REMOFF + ltid) +
-                              src_ystride * j +
-                              src_zstride * i);
+                            *(ptr + src_xstride * (REMOFF + ltid) + src_ystride * j + src_zstride * i);
                     }
                 }
             }

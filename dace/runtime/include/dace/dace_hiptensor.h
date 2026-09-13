@@ -19,8 +19,7 @@ namespace linalg {
 
 static void CheckHipTensorError(hiptensorStatus_t const& status) {
   if (status != HIPTENSOR_STATUS_SUCCESS) {
-    throw std::runtime_error("hipTensor failed with error code: " +
-                             std::string(hiptensorGetErrorString(status)));
+    throw std::runtime_error("hipTensor failed with error code: " + std::string(hiptensorGetErrorString(status)));
   }
 }
 

@@ -29,18 +29,18 @@ namespace cub {
 /// SDFGs). Stream entries are allocated lazily on first use.
 
 namespace _detail {
-    struct ScratchEntry {
-        void *storage = nullptr;
-        std::size_t bytes = 0;
-    };
+struct ScratchEntry {
+  void* storage = nullptr;
+  std::size_t bytes = 0;
+};
 
-    /// Per-Tag map ``gpuStream_t -> ScratchEntry``. Each ``Tag`` instantiation
-    /// owns an independent map; each stream gets a lazy entry on first use.
-    template<typename Tag>
-    inline std::unordered_map<gpuStream_t, ScratchEntry> &pool_map() {
-        static std::unordered_map<gpuStream_t, ScratchEntry> m;
-        return m;
-    }
+/// Per-Tag map ``gpuStream_t -> ScratchEntry``. Each ``Tag`` instantiation
+/// owns an independent map; each stream gets a lazy entry on first use.
+template <typename Tag>
+inline std::unordered_map<gpuStream_t, ScratchEntry>& pool_map() {
+  static std::unordered_map<gpuStream_t, ScratchEntry> m;
+  return m;
+}
 }  // namespace _detail
 
 /// Return a device pointer to a scratch buffer at least ``bytes_needed`` bytes
@@ -51,43 +51,43 @@ namespace _detail {
 /// is called for that ``Tag``. ``status``, when given, receives the allocation's error code; a
 /// failed allocation returns ``nullptr``, which the caller MUST treat as an error rather than pass
 /// on to CUB (see below).
-template<typename Tag>
-inline void *get_scratch(std::size_t bytes_needed, gpuStream_t stream = 0, gpuError_t *status = nullptr) {
-    // Keyed per stream, and the default/null stream (0) is just another key -- entries never share.
-    auto &e = _detail::pool_map<Tag>()[stream];
-    if (status) *status = gpuSuccess;
-    // ``!e.storage`` and the 1-byte floor are both load-bearing: CUB reads a NULL workspace as "only
-    // report the size" and leaves the output untouched, so handing back a null pointer turns the
-    // reduction into a silent no-op rather than an error. A zero-byte request hits that twice --
-    // ``0 > 0`` skips the allocation, and gpuMalloc(0) hands back null anyway.
-    if (bytes_needed > e.bytes || !e.storage) {
-        // Discarded on purpose, and explicitly: the buffer is being replaced either way, and
-        // the backend's free is [[nodiscard]] (warnings are errors).
-        if (e.storage) (void)gpuFree(e.storage);
-        gpuError_t err = gpuMalloc(&e.storage, bytes_needed ? bytes_needed : 1);
-        if (err != gpuSuccess) {
-            // The entry has to go back to empty: gpuMalloc leaves the pointer unspecified on
-            // failure, and a stale non-null one would be handed to the next caller as a live buffer.
-            e.storage = nullptr;
-            e.bytes = 0;
-            if (status) *status = err;
-            return nullptr;
-        }
-        e.bytes = bytes_needed;
+template <typename Tag>
+inline void* get_scratch(std::size_t bytes_needed, gpuStream_t stream = 0, gpuError_t* status = nullptr) {
+  // Keyed per stream, and the default/null stream (0) is just another key -- entries never share.
+  auto& e = _detail::pool_map<Tag>()[stream];
+  if (status) *status = gpuSuccess;
+  // ``!e.storage`` and the 1-byte floor are both load-bearing: CUB reads a NULL workspace as "only
+  // report the size" and leaves the output untouched, so handing back a null pointer turns the
+  // reduction into a silent no-op rather than an error. A zero-byte request hits that twice --
+  // ``0 > 0`` skips the allocation, and gpuMalloc(0) hands back null anyway.
+  if (bytes_needed > e.bytes || !e.storage) {
+    // Discarded on purpose, and explicitly: the buffer is being replaced either way, and
+    // the backend's free is [[nodiscard]] (warnings are errors).
+    if (e.storage) (void)gpuFree(e.storage);
+    gpuError_t err = gpuMalloc(&e.storage, bytes_needed ? bytes_needed : 1);
+    if (err != gpuSuccess) {
+      // The entry has to go back to empty: gpuMalloc leaves the pointer unspecified on
+      // failure, and a stale non-null one would be handed to the next caller as a live buffer.
+      e.storage = nullptr;
+      e.bytes = 0;
+      if (status) *status = err;
+      return nullptr;
     }
-    return e.storage;
+    e.bytes = bytes_needed;
+  }
+  return e.storage;
 }
 
 /// Free every per-stream scratch entry tagged ``Tag``. Idempotent: a no-op if
 /// no entries were ever allocated or all have already been released. Intended
 /// for SDFG-finalize code.
-template<typename Tag>
+template <typename Tag>
 inline void release_scratch() {
-    auto &m = _detail::pool_map<Tag>();
-    for (auto &kv : m) {
-        if (kv.second.storage) (void)gpuFree(kv.second.storage);  // finalize: nothing to report to
-    }
-    m.clear();
+  auto& m = _detail::pool_map<Tag>();
+  for (auto& kv : m) {
+    if (kv.second.storage) (void)gpuFree(kv.second.storage);  // finalize: nothing to report to
+  }
+  m.clear();
 }
 
 // -- Tag structs for the CUB-backed libnodes ---------------------------------

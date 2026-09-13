@@ -16,7 +16,7 @@ class range {
 
    public:
     DACE_HDFI int operator*() const { return i_; }
-    DACE_HDFI const iterator &operator++() {
+    DACE_HDFI const iterator& operator++() {
       i_ += s_;
       return *this;
     }
@@ -26,12 +26,8 @@ class range {
       return copy;
     }
 
-    DACE_HDFI bool operator==(const iterator &other) const {
-      return i_ == other.i_;
-    }
-    DACE_HDFI bool operator!=(const iterator &other) const {
-      return i_ != other.i_;
-    }
+    DACE_HDFI bool operator==(const iterator& other) const { return i_ == other.i_; }
+    DACE_HDFI bool operator!=(const iterator& other) const { return i_ != other.i_; }
 
    protected:
     DACE_HDFI iterator(int start, int skip = 1) : i_(start), s_(skip) {}
@@ -44,8 +40,7 @@ class range {
   DACE_HDFI iterator end() const { return end_; }
   DACE_HDFI range(int end) : begin_(0), end_(end) {}
   DACE_HDFI range(int begin, int end) : begin_(begin), end_(end) {}
-  DACE_HDFI range(int begin, int end, int skip)
-      : begin_(begin, skip), end_(end, skip) {}
+  DACE_HDFI range(int begin, int end, int skip) : begin_(begin, skip), end_(end, skip) {}
 
  private:
   iterator begin_;
@@ -62,30 +57,26 @@ template <typename... Ts>
 struct _dace_minmax_same_kind : std::true_type {};
 template <typename T0, typename T1, typename... Ts>
 struct _dace_minmax_same_kind<T0, T1, Ts...>
-    : std::integral_constant<
-          bool, (std::is_floating_point<T0>::value ==
-                 std::is_floating_point<T1>::value) &&
-                    _dace_minmax_same_kind<T1, Ts...>::value> {};
+    : std::integral_constant<bool, (std::is_floating_point<T0>::value == std::is_floating_point<T1>::value) &&
+                                       _dace_minmax_same_kind<T1, Ts...>::value> {};
 
 // Sympy functions. The return type follows ``std::common_type`` (matching the
 // lowercase ``min``/``max`` templates) so the result is never narrowed to the
 // first argument's type. The static_assert turns the silent int/double mixing
 // bug into a clear compile-time error.
-#define _DACE_MINMAX_MIXED_MSG                                              \
+#define _DACE_MINMAX_MIXED_MSG                                             \
   "DaCe Min/Max: mixing floating-point and integer arguments is not "      \
   "allowed -- the integer argument truncates the floating-point result. "  \
   "Cast the operands to a common type (e.g. write min(x, 1.0) instead of " \
   "min(x, 1))."
 
 template <typename U, typename... T>
-static DACE_HDFI typename std::common_type<U, T...>::type Min(U val,
-                                                              T... vals) {
+static DACE_HDFI typename std::common_type<U, T...>::type Min(U val, T... vals) {
   static_assert(_dace_minmax_same_kind<U, T...>::value, _DACE_MINMAX_MIXED_MSG);
   return min(val, vals...);
 }
 template <typename U, typename... T>
-static DACE_HDFI typename std::common_type<U, T...>::type Max(U val,
-                                                              T... vals) {
+static DACE_HDFI typename std::common_type<U, T...>::type Max(U val, T... vals) {
   static_assert(_dace_minmax_same_kind<U, T...>::value, _DACE_MINMAX_MIXED_MSG);
   return max(val, vals...);
 }
@@ -96,8 +87,8 @@ static DACE_HDFI auto Abs(T val) {
     return abs(val);
 }
 template <typename T, typename U>
-DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, U>::type IfExpr(
-    bool condition, const T &iftrue, const U &iffalse) {
+DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, U>::type IfExpr(bool condition, const T& iftrue,
+                                                                      const U& iffalse) {
   return condition ? iftrue : iffalse;
 }
 

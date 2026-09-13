@@ -14,9 +14,7 @@ namespace lapack {
 
 // rocSOLVER returns a rocblas_status, so the rocBLAS check is the right one; this alias exists so a
 // libnode expansion can name a lapack-side symbol and not reach across into blas::.
-inline void CheckRocsolverError(rocblas_status const& status) {
-  dace::blas::CheckRocblasError(status);
-}
+inline void CheckRocsolverError(rocblas_status const& status) { dace::blas::CheckRocblasError(status); }
 
 }  // namespace lapack
 

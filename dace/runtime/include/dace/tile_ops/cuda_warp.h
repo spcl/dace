@@ -29,10 +29,8 @@ static constexpr int kMaxLanes = 32;
 // follows tile_reduce ('+', '*', 'm', 'M'), applied in native T (fp64 included).
 template <typename T, char Op, int W = 32>
 DACE_DFI T tile_reduce_warp(T partial) {
-  static_assert(W > 0 && (W & (W - 1)) == 0 && W <= kMaxLanes,
-                "W must be a power of two lane count within a warp");
-  constexpr lane_mask_t mask =
-      (W == kMaxLanes) ? ~lane_mask_t(0) : ((lane_mask_t(1) << W) - lane_mask_t(1));
+  static_assert(W > 0 && (W & (W - 1)) == 0 && W <= kMaxLanes, "W must be a power of two lane count within a warp");
+  constexpr lane_mask_t mask = (W == kMaxLanes) ? ~lane_mask_t(0) : ((lane_mask_t(1) << W) - lane_mask_t(1));
 #pragma unroll
   for (int off = W / 2; off > 0; off >>= 1) {
     const T other = __shfl_xor_sync(mask, partial, off);
