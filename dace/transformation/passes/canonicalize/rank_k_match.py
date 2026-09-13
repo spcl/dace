@@ -1,9 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Recognise a hand-written symmetric rank-k / rank-2k update loop nest.
 
-Shared machinery for :class:`~dace.transformation.passes.canonicalize.loop_to_syrk.LoopToSyrk`
-and :class:`~dace.transformation.passes.canonicalize.loop_to_syr2k.LoopToSyr2k`. Both
-recognise the same skeleton -- the polybench / npbench slice-vectorized form::
+Shared machinery for :class:`~dace.transformation.passes.canonicalize.loop_to_rank_k_update.LoopToRankKUpdate`.
+Both update kinds share one skeleton -- the polybench / npbench slice-vectorized form::
 
     for i in range(N):                                  # outer LoopRegion
         C[i, :i + 1] *= beta[0]                         # beta-scale state

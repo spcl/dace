@@ -8,7 +8,7 @@ lower / ``'U'`` upper) triangle of the symmetric ``N x N`` result ``C``. The opp
 triangle is neither read nor written. This is the BLAS ``xSYR2K`` primitive -- the
 operation polybench ``syr2k`` implements by hand as a per-row triangular accumulation.
 
-Lifting the hand-written nest to this node (see :class:`LoopToSyr2k`) halves the flops
+Lifting the hand-written nest to this node (see :class:`LoopToRankKUpdate`) halves the flops
 of the equivalent pair of ``gemm`` calls (only one triangle is computed) and dispatches
 to the vendor ``dsyr2k`` / ``cublasDsyr2k`` kernels; the ``pure`` expansion is a
 correct reference lowering that likewise writes only the ``uplo`` triangle.

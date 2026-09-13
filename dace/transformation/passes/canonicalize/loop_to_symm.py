@@ -35,7 +35,7 @@ column slices and an explicit inner product instead of a scalar ``k`` loop::
 
 That one is NOT a map with a NestedSDFG body -- it is a two-level ``LoopRegion`` nest
 whose statements the frontend spreads over staging temporaries -- so it is matched the
-way ``loop_to_syrk`` matches its nest: by RESOLVING the dataflow of each body state to
+way ``loop_to_rank_k_update`` matches its nest: by RESOLVING the dataflow of each body state to
 a sympy expression and comparing that against what ``symm`` is defined to compute (see
 :mod:`~dace.transformation.passes.canonicalize.rank_k_match`). The ``beta`` prescale is
 a separate statement there and is deliberately left alone: the lift emits ``Symm`` with
@@ -45,7 +45,7 @@ to the same ``C := alpha*A*B + beta*C``.
 Both matches are deliberately conservative -- any deviation is a clean no-op. The
 map form must run BEFORE ``normalize_reduction`` so it sees the raw frontend boundary
 (which that stage would otherwise rewrite); the slice form needs the body states
-already fused, so the pass is scheduled a second time next to ``loop_to_syrk``. Only
+already fused, so the pass is scheduled a second time next to ``loop_to_rank_k_update``. Only
 the polybench orientation (``side='L'``, ``uplo='L'``) is recognised; other
 orientations fall through untouched.
 """

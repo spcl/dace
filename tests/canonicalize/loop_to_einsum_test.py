@@ -144,7 +144,7 @@ def mixed_loop_map_matmul(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.
 def triangular_matvec(A: dace.float64[N, N], x: dace.float64[N], y: dace.float64[N]):
     """A parameter-dependent (triangular) inner bound. Lifting it to a dense einsum would
     contract over the FULL rectangle, so it must be refused -- this is also what keeps the
-    generic matcher off the triangular shapes ``LoopToSyrk``/``LoopToSyr2k`` own."""
+    generic matcher off the triangular shapes ``LoopToRankKUpdate`` owns."""
     for i in range(N):
         for j in range(i):
             y[i] += A[i, j] * x[j]
@@ -395,7 +395,7 @@ def test_mixed_loop_and_map_contraction_lifts():
 def test_refused_shapes(program, reason):
     """Shapes that look like a contraction but must NOT be lifted. The triangular case
     doubles as the guard that keeps this generic lift off the shapes the dedicated
-    ``LoopToSyrk`` / ``LoopToSyr2k`` BLAS lifts claim earlier in the pipeline."""
+    ``LoopToRankKUpdate`` BLAS lift claims earlier in the pipeline."""
     sdfg = program.to_sdfg(simplify=True)
     loops_before = _n_loops(sdfg)
     LoopToEinsum().apply_pass(sdfg, {})

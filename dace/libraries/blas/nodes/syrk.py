@@ -8,7 +8,7 @@ result ``C``. The opposite triangle is neither read nor written. This is the
 BLAS ``xSYRK`` primitive -- the operation polybench ``syrk`` implements by hand as a
 per-row triangular accumulation.
 
-Lifting the hand-written nest to this node (see :class:`LoopToSyrk`) halves the flops
+Lifting the hand-written nest to this node (see :class:`LoopToRankKUpdate`) halves the flops
 of the equivalent ``gemm`` (only one triangle is computed) and dispatches to the
 vendor ``dsyrk`` / ``cublasDsyrk`` kernels; the ``pure`` expansion is a correct
 reference lowering that likewise writes only the ``uplo`` triangle.

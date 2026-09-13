@@ -206,7 +206,7 @@ def test_rank_k(kind, impl, dtype, npdtype, tol, uplo, trans, alpha, beta):
 @pytest.mark.parametrize("beta_input", [False, True])
 def test_rank_k_runtime_coeffs(kind, impl, dtype, npdtype, tol, uplo, beta_input):
     """alpha (and optionally beta) wired as runtime scalar connectors must match the
-    reference -- this is the shape ``LoopToSyrk`` / ``LoopToSyr2k`` emit."""
+    reference -- this is the shape ``LoopToRankKUpdate`` emits."""
     beta = 1.2 if beta_input else 0.0
     run(kind, impl, dtype, npdtype, tol, uplo, "N", 1.5, beta, alpha_rt=True, beta_rt=beta_input, seed=1)
 
