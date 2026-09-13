@@ -321,6 +321,10 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             if name is not None and not dtypes.validate_name(name):
                 raise InvalidSDFGError("Invalid array name %s" % name, sdfg, None)
             # Allocation lifetime checks
+            if isinstance(desc, (dt.View, dt.Reference)) and desc.lifetime != dtypes.AllocationLifetime.Scope:
+                raise InvalidSDFGError(
+                    f'View or reference "{name}" has {desc.lifetime} allocation lifetime; views and references '
+                    'only support Scope lifetime', sdfg, None)
             if (desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
                     and desc.storage == dtypes.StorageType.Register):
                 raise InvalidSDFGError(
