@@ -512,6 +512,26 @@ def test_for_with_field():
     assert np.allclose(A, expected)
 
 
+def test_a_loop_counter_does_not_rebind_a_captured_extent_of_the_same_name():
+    """A program built inside a library expansion captures its extent from the caller, where the symbol
+    can be named like one of the program's own counters (Cholesky's ``k``); the extent must stay fixed."""
+    n = dace.symbol('k')
+
+    @dace.program
+    def lower_row_sums(a: dace.float64[n, n], out: dace.float64[n]):
+        for j in range(n):
+            total = 0.0
+            for k in range(j):
+                total = total + a[j, k]
+            out[j] = total
+
+    a = np.arange(1, 26, dtype=np.float64).reshape(5, 5).copy()
+    out = np.zeros(5)
+    lower_row_sums(a, out, k=5)
+    expected = np.array([a[j, :j].sum() for j in range(5)])
+    assert np.array_equal(out, expected), (out, expected)
+
+
 if __name__ == "__main__":
     test_for_loop()
     test_for_loop_with_break_continue()
