@@ -123,7 +123,6 @@ def test_the_emitted_pragma_carries_the_clause():
     assert 'schedule(dynamic, 1)' in code, 'the schedule never reached the pragma'
 
 
-# ---------------------------------------------------------------------------------------------
 # The corpus shapes the decision was actually made on.
 #
 # Transcribed from ``loop_level_reasoning``: ``tsvc_2_s141``, ``tsvc_2_s1232``, ``wf_triangular``
@@ -131,7 +130,6 @@ def test_the_emitted_pragma_carries_the_clause():
 # the whole measured argument for the pass -- two it must fire on (3.01x, 1.63x) and two it must
 # stay silent on (0.68x, 0.03x) -- so they are the cases that have to keep behaving, not the
 # synthetic nest above.
-# ---------------------------------------------------------------------------------------------
 
 VLEN = dace.symbol('VLEN', dtype=dace.int64)
 
@@ -239,13 +237,11 @@ def test_every_corpus_kernel_still_computes_on_cpu(name):
         assert np.allclose(args[key], expected), f'{name}: {key} is wrong'
 
 
-# ---------------------------------------------------------------------------------------------
 # The same triangular shapes on a device.
 #
 # ``omp_schedule`` means nothing to a GPU, so what these check is the other half of the claim:
 # the triangular nests the CPU stage reschedules are the same nests the GPU stage has to lower
 # CORRECTLY without any of that, and no OpenMP clause may survive into a device graph.
-# ---------------------------------------------------------------------------------------------
 
 TRIANGULAR_ON_GPU = ['s141_shape', 's1232_shape', 'wf_triangular_shape']
 

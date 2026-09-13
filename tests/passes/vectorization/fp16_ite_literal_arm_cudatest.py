@@ -76,9 +76,7 @@ def _oracle(x: np.ndarray) -> np.ndarray:
     return np.where(x > 0, np.float16(0.0), x).astype(np.float16)
 
 
-# ------------------------------------------------------------------------------------------------
 # Structural: what reaches the C++ ternary (no GPU device and no nvcc needed)
-# ------------------------------------------------------------------------------------------------
 def test_every_ite_arm_is_typed():
     """The scalar tail's ternary must not mix an untyped literal with an fp16 value.
 
@@ -110,9 +108,7 @@ def test_generated_code_compiles():
     _vectorized(name="fp16_ite_literal_arm_compile").compile()
 
 
-# ------------------------------------------------------------------------------------------------
 # GPU: the numbers. The tail is what an odd extent executes, so that is where the arm's dtype shows.
-# ------------------------------------------------------------------------------------------------
 def _body_bitexact():
     """``apply_gpu_transformations`` keeps the ENTRY on the host and copies in/out around the
     kernel, so the arguments are host arrays -- the device round trip is what runs."""

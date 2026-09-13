@@ -210,10 +210,8 @@ def test_tilestore_gather_dims_symmetric():
     assert "_idx_0" in node.in_connectors
 
 
-# ---------------------------------------------------------------------
 # End-to-end correctness: the pure expansion compiles + runs correctly
 # for each lane-dependency pattern.
-# ---------------------------------------------------------------------
 
 
 def _run_gather_load(src_np, idx_np_per_d, widths, gather_dims, src_dims=None):

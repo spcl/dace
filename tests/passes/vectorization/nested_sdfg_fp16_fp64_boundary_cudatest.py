@@ -74,9 +74,7 @@ def device_code(sdfg: dace.SDFG) -> str:
     return "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
 
 
-# ------------------------------------------------------------------------------------------------
 # Structural: what reaches the C++ divide (no GPU device and no nvcc needed)
-# ------------------------------------------------------------------------------------------------
 def test_boundary_division_operand_is_explicitly_typed():
     """The divide inherited from the fp64 nested program must not reach C++ with an untyped literal
     against a bare ``dace::float16`` operand -- that pairing is what nvcc rejects as ambiguous, and
@@ -93,9 +91,7 @@ def test_boundary_division_operand_is_explicitly_typed():
             f"an fp64/fp16 nested-SDFG boundary division reached C++ without an explicit cast: {expr}"
 
 
-# ------------------------------------------------------------------------------------------------
 # GPU: compiling and running the same program
-# ------------------------------------------------------------------------------------------------
 @pytest.mark.gpu
 @pytest.mark.skipif(not HAS_NVCC, reason="nvcc required to compile the generated device code")
 def test_generated_code_compiles():

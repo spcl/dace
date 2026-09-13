@@ -92,9 +92,7 @@ def _run_gpu_and_check(program,
         np.testing.assert_allclose(args[name], want, rtol=rtol, atol=atol, err_msg=f'arg "{name}" mismatch')
 
 
-# ---------------------------------------------------------------------------
 # Case 1: three-state CPU -> GPU -> CPU
-# ---------------------------------------------------------------------------
 @dace.program
 def _three_state_cpu_gpu_cpu(A: dace.float64[_N], B: dace.float64[_N], C: dace.float64[_N]):
     scale = np.float64(0.0)
@@ -126,9 +124,7 @@ def test_three_state_cpu_gpu_cpu_chain_has_one_sync_and_matches_numpy():
                        rtol=1e-12)
 
 
-# ---------------------------------------------------------------------------
 # Case 2: mixed-class single source state
-# ---------------------------------------------------------------------------
 @dace.program
 def _mixed_class_single_state(A: dace.float64[_N], B: dace.float64[_N]):
     scratch = np.zeros((_N, ), dtype=np.float64)
@@ -153,9 +149,7 @@ def test_mixed_class_single_state_has_one_sync_and_matches_numpy():
                        expected_sync_count=1)
 
 
-# ---------------------------------------------------------------------------
 # Case 3: two independent parallel components feeding one host reader
-# ---------------------------------------------------------------------------
 @dace.program
 def _two_parallel_writers_one_host_reader(A: dace.float64[_N], B: dace.float64[_N], C: dace.float64[_N]):
     X = np.empty((_N, ), dtype=np.float64)
@@ -183,9 +177,7 @@ def test_two_independent_parallel_writers_one_host_reader_has_one_sync_and_match
                        expected_sync_count=1)
 
 
-# ---------------------------------------------------------------------------
 # Case 4: parallel output consumed by host loop
-# ---------------------------------------------------------------------------
 @dace.program
 def _parallel_output_consumed_by_host_loop(A: dace.float64[_N], B: dace.float64[_N], C: dace.float64[_N]):
     for i in dace.map[0:_N]:
@@ -210,9 +202,7 @@ def test_parallel_output_consumed_by_host_loop_has_one_sync_and_matches_numpy():
                        expected_sync_count=1)
 
 
-# ---------------------------------------------------------------------------
 # Case 5: loop body alternating host init and parallel compute per iteration
-# ---------------------------------------------------------------------------
 @dace.program
 def _per_iter_host_then_parallel_then_host(A: dace.float64[_N], B: dace.float64[_N]):
     for k in range(4):

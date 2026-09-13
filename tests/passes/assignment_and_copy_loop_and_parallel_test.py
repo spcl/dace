@@ -85,9 +85,7 @@ def _zero_loop(dst: dace.float64[N]):
         dst[i] = 0.0
 
 
-# ---------------------------------------------------------------------------
 # LoopRegion lift
-# ---------------------------------------------------------------------------
 @temporarily_disable_autoopt_and_serialization
 def test_copy_loop_lifts_to_copy_libnode():
     """``for i: dst[i] = src[i]`` -> a single ``CopyLibraryNode``, the loop gone, bit-exact."""
@@ -143,9 +141,7 @@ def test_self_referential_copy_loop_is_not_lifted():
     assert _count(sdfg, CopyLibraryNode) == 0
 
 
-# ---------------------------------------------------------------------------
 # Parallel vs serial CPU expansion selection + generated code
-# ---------------------------------------------------------------------------
 def _copy_libnode_sdfg(n) -> tuple:
     sdfg = dace.SDFG(f"copy_{n}")
     sdfg.add_array("src", [n], dace.float64, dace.dtypes.StorageType.CPU_Heap)
@@ -251,9 +247,7 @@ def test_symbolic_copy_selects_parallel_map():
     assert np.array_equal(src, dst)
 
 
-# ---------------------------------------------------------------------------
 # Delegation: the expansion emits the parallel map, the band sequentializes it
-# ---------------------------------------------------------------------------
 def _loop_wrapped_copy_sdfg(name: str, trip: str, contiguous: bool):
     """``for k in range(trip): dst[...] = src[:]`` with the copy as a ``CopyLibraryNode``.
 

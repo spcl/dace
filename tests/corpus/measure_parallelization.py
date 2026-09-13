@@ -94,9 +94,9 @@ def cpu_params(peel_limit: int = 4, reconstruct_wavefront_nest: bool = False) ->
                 reconstruct_wavefront_nest=reconstruct_wavefront_nest)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Structural counters.                                                         #
-# --------------------------------------------------------------------------- #
+# #
 #: Column names of :func:`count`, in order -- the single source of truth for the
 #: report width, so a new counter needs no second literal kept in sync.
 COUNTERS = ('loops', 'inmap', 'maps', 'reduce', 'scan', 'libnode', 'states', 'guards')
@@ -204,11 +204,11 @@ def guarded_fallback_loops(sdfg) -> int:
     return len(guarded_fallback_loop_set(sdfg))
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Per-corpus adapters: name -> (baseline_sdfg, check(finalized_sdfg) -> bool).  #
 # The baseline is the simplified SDFG; ``check`` compiles + runs a finalized    #
 # copy and compares to the corpus reference (value-preserving == True).         #
-# --------------------------------------------------------------------------- #
+# #
 def _poly_names() -> List[str]:
     return [k.name for k in _PB.collect()]
 

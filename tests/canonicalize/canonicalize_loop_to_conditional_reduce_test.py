@@ -21,9 +21,7 @@ def _num_loops(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
 
 
-# -----------------------------------------------------------------------------
 # Positive: TSVC s3111-style conditional accumulators.
-# -----------------------------------------------------------------------------
 
 
 def test_tsvc_s3111_conditional_sum():
@@ -119,9 +117,7 @@ def test_all_positives_acts_like_unconditional_sum():
     assert np.isclose(b[0], float(np.sum(a)))
 
 
-# -----------------------------------------------------------------------------
 # Refusal contracts.
-# -----------------------------------------------------------------------------
 
 
 def test_refuses_unconditional_accumulator():
@@ -181,9 +177,7 @@ def test_refuses_else_branch_with_content():
     assert res is None
 
 
-# -----------------------------------------------------------------------------
 # Cross-pass non-interference.
-# -----------------------------------------------------------------------------
 
 
 def test_doesnt_lift_an_argmax_loop():

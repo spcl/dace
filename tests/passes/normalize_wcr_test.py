@@ -63,9 +63,7 @@ def _wcr_edges(sdfg: dace.SDFG, single: bool):
     return out
 
 
-# ---------------------------------------------------------------------------
 # Corpus tests: value-preservation on the untransformed baseline (normalize only).
-# ---------------------------------------------------------------------------
 # azimint_* carry the target write-only in-nsdfg reduction; the polybench kernels carry a
 # nested reduction the pass must leave value-preserving (symm/covariance/gramschmidt are
 # already-normalized or symbol-guarded, floyd_warshall exercises the ``min`` op/identity).
@@ -219,9 +217,7 @@ def test_azimint_naive_structure_after_normalize():
     assert all(w is not None for w in tmp_exit_wcr), f'map-exit edge feeding tmp must carry a WCR; got {tmp_exit_wcr}'
 
 
-# ---------------------------------------------------------------------------
 # Hand-built micro SDFGs: the single-accumulator ``+`` and ``min`` cases.
-# ---------------------------------------------------------------------------
 def _build_masked_reduction(op_wcr: str, seed_outer: bool) -> dace.SDFG:
     """``acc OP= data[i]`` guarded by ``mask[i] > 0``, with the body wrapped in a
     NestedSDFG whose accumulator is a WRITE-ONLY output connector carrying an in-body
@@ -309,12 +305,10 @@ def test_micro_no_op_when_map_exit_edge_already_has_wcr():
     assert res is None
 
 
-# ---------------------------------------------------------------------------
 # Two INDEPENDENT reductions in one map + the NestInnermostMapBodyIntoNSDFG (vectorizer
 # entry) / ExpandNestedSDFGInputs interaction. The supported shape is ``nsdfg -> AN
 # -[wcr]-> MapExit -> [wcr]`` for a single-element / scalar accumulator; nesting the map
 # body one level deeper and expanding the boundary must keep BOTH reductions correct.
-# ---------------------------------------------------------------------------
 def _build_two_independent_reductions() -> dace.SDFG:
     """A map with TWO INDEPENDENT scalar reductions ``acc1 += data1[i]`` and
     ``acc2 += data2[i]`` in one body NestedSDFG -- each a WRITE-ONLY output connector
@@ -396,7 +390,6 @@ def test_two_independent_reductions_through_nest_body_and_expand():
     assert np.isclose(a2[0], d2.sum()), f'acc2 wrong after nest+normalize+expand: {a2[0]} vs {d2.sum()}'
 
 
-# ---------------------------------------------------------------------------
 # Currently-BREAKING pattern (documented gap): an in-place aug-assign ``b[i] += addend``
 # lifted to a WCR-map makes ``b`` a READ-WRITE output connector (in BOTH in and out
 # connectors) with a redundant interior WCR alongside the already-surfaced boundary WCR.
@@ -404,7 +397,6 @@ def test_two_independent_reductions_through_nest_body_and_expand():
 # the tiler's "no WCR inside the body NSDFG" invariant then trips (TSVC s212). A naive
 # drop-to-plain of the interior WCR mis-scopes the boundary index in codegen, so the fix is
 # deferred -- this test pins the current behavior so a future fix flips the xfail.
-# ---------------------------------------------------------------------------
 def _build_readwrite_redundant_interior_wcr() -> dace.SDFG:
     """``b[i] += data[i]`` as a WCR-map: ``b`` is BOTH an in and out connector of the body
     NestedSDFG, the interior writes the addend into ``b`` via a scalar ``+`` WCR (write-only

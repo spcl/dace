@@ -248,7 +248,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 lifted += 1
         return lifted or None
 
-    # ----------------------------------- match -----------------------------------
+    # match
 
     def match_loop(self, loop: LoopRegion, sdfg: SDFG) -> Optional[CompactionMatch]:
         nest = self.match_nest(loop)
@@ -624,7 +624,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 found.append(region)
         return found[0] if len(found) == 1 else None
 
-    # -------------------------------- match helpers --------------------------------
+    # match helpers
 
     def meta_reads(self, loop: LoopRegion, sdfg: SDFG) -> List[mm.Memlet]:
         """Every data read outside dataflow: interstate assignments/conditions and branch guards."""
@@ -654,7 +654,7 @@ class LoopToStreamCompaction(ppl.Pass):
                 return True
         return False
 
-    # ---------------------------------- rewrite ----------------------------------
+    # rewrite
 
     def rewrite(self, m: CompactionMatch, resolver: scopes.ScopedSymbolResolver) -> None:
         sdfg, parent, root = m.sdfg, m.parent, m.root

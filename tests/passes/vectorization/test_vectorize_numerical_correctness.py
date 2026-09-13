@@ -50,7 +50,7 @@ def _assert_really_vectorized(sdfg: dace.SDFG, pristine: dace.SDFG) -> None:
     assert _tile_op_count(sdfg) > 0, "no tile op emitted -- the pass refused and returned the pristine SDFG"
 
 
-# --------------------------- elementwise arithmetic ---------------------------
+# elementwise arithmetic
 @dace.program
 def _arith(A: dace.float32[M], B: dace.float32[M], D: dace.float32[M], C: dace.float32[M]):
     for i in dace.map[0:M]:
@@ -69,7 +69,7 @@ def test_elementwise_arithmetic():
     assert np.allclose(C, ref, rtol=1e-5, atol=1e-5), np.max(np.abs(C - ref))
 
 
-# --------------------------- broadcast constant ---------------------------
+# broadcast constant
 @dace.program
 def _axpy_const(A: dace.float32[M], B: dace.float32[M], C: dace.float32[M]):
     for i in dace.map[0:M]:
@@ -87,7 +87,7 @@ def test_broadcast_constant():
     assert np.allclose(C, ref, rtol=1e-5, atol=1e-5), np.max(np.abs(C - ref))
 
 
-# --------------------------- transcendental unops ---------------------------
+# transcendental unops
 # One @dace.program per op (the frontend needs each at module scope). The numpy
 # oracle is looked up by name; inputs are drawn in a safe domain per op.
 @dace.program
@@ -151,7 +151,7 @@ def test_transcendental_unop(prog, ref):
     assert np.allclose(C, ref(A), rtol=1e-4, atol=1e-5), np.nanmax(np.abs(C - ref(A)))
 
 
-# --------------------------- min / max with a constant ---------------------------
+# min / max with a constant
 @dace.program
 def _clamp(A: dace.float32[M], C: dace.float32[M]):
     for i in dace.map[0:M]:
@@ -168,7 +168,7 @@ def test_min_max_constant():
     assert np.allclose(C, ref, rtol=1e-6, atol=1e-6), np.max(np.abs(C - ref))
 
 
-# --------------------------- 2-D stencil ---------------------------
+# 2-D stencil
 @dace.program
 def _jacobi2d(A: dace.float32[M, M], B: dace.float32[M, M]):
     for i, j in dace.map[1:M - 1, 1:M - 1]:
@@ -186,7 +186,7 @@ def test_stencil_jacobi2d():
     assert np.allclose(B, ref, rtol=1e-5, atol=1e-5), np.max(np.abs(B - ref))
 
 
-# --------------------------- fp16 bit-exactness (the half2 element type) ------
+# fp16 bit-exactness (the half2 element type)
 @dace.program
 def _fp16_fma(A: dace.float16[M], B: dace.float16[M], C: dace.float16[M]):
     for i in dace.map[0:M]:

@@ -542,7 +542,6 @@ def test_inplace_same_array_read_and_write_no_double_offset():
     assert np.allclose(a, a_ref), f"max diff: {np.abs(a - a_ref).max():.3e}"
 
 
-# ---------------------------------------------------------------------------
 # Gather / scatter index-array threading (spcl/dace#2429). A data-dependent
 # ``A[B[i]]`` index array ``B`` is referenced ONLY inside another memlet's
 # subset, so the vectorizer's body-NSDFG nest never makes it a boundary
@@ -552,7 +551,6 @@ def test_inplace_same_array_read_and_write_no_double_offset():
 #     connector rename, else it collapses to a loop-invariant ``dst[idx]``;
 #   * case 2 -- a direct-array index (``src[ip[i]]``, ``ip`` never a connector)
 #     is added as a full-array read boundary, else the index dangles.
-# ---------------------------------------------------------------------------
 @dace.program
 def _gather_indirect(src: dace.float64[N], ip: dace.int64[N], dst: dace.float64[N]):
     for i in dace.map[0:N]:

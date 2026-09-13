@@ -73,9 +73,9 @@ def trivial_sdfg(name):
     return sdfg
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  time_cpu
-# --------------------------------------------------------------------------- #
+# #
 def test_time_cpu_invokes_fn_reps_plus_warmup():
     """``time_cpu`` warms up ``warmup`` times then samples ``reps`` times -> exactly reps+warmup
     calls, and returns a non-negative float (the median sample)."""
@@ -90,9 +90,9 @@ def test_time_cpu_invokes_fn_reps_plus_warmup():
     assert isinstance(t2, float) and t2 >= 0.0
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  best() in isolation
-# --------------------------------------------------------------------------- #
+# #
 def test_best_selects_first_correct_or_none():
     """``best`` returns the first correct result (the list is pre-ranked) or ``None`` if none
     verified; ``SweepResult`` defaults are empty/optional."""
@@ -143,9 +143,9 @@ def test_best_still_applies_the_relative_window_for_positive_times():
     assert best(results, noise_floor=0.0).name == "fastest"  # no window -> only the exact minimum ties
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  ranking: fastest correct first
-# --------------------------------------------------------------------------- #
+# #
 def test_sweep_ranks_fastest_correct_first():
     """Two correct candidates timed 0.9 and 0.1; the sweep ranks the faster one first and ``best``
     returns it -- proving the ranking key is (correct-first, ascending time)."""
@@ -167,9 +167,9 @@ def test_sweep_ranks_fastest_correct_first():
     assert best(results).name == "fast"
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  core invariant: incorrect / build-failing candidates are never timed, never best
-# --------------------------------------------------------------------------- #
+# #
 def test_incorrect_and_build_failure_never_timed_never_best():
     """A wrong-answer candidate and a builder that raises are both flagged not-correct, neither is
     timed (the stub timer fires only once, for the correct candidate), and ``best`` skips them."""
@@ -212,9 +212,9 @@ def test_incorrect_and_build_failure_never_timed_never_best():
     assert correct_flags == sorted(correct_flags, reverse=True)
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  compare hook is consulted
-# --------------------------------------------------------------------------- #
+# #
 def test_custom_compare_is_consulted():
     """The ``compare`` predicate decides correctness: a predicate that always rejects yields no
     correct candidate (best is None) even though the outputs equal the reference; the default
@@ -232,9 +232,9 @@ def test_custom_compare_is_consulted():
     assert accepted[0].correct and best(accepted) is not None
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  a run that omits a reference key is incorrect, not a crash
-# --------------------------------------------------------------------------- #
+# #
 def test_missing_output_key_is_incorrect():
     """If ``run`` returns outputs missing a reference key, the candidate is flagged incorrect (the
     ``name in out`` guard short-circuits before ``compare``), with no error and no timing."""
@@ -250,9 +250,9 @@ def test_missing_output_key_is_incorrect():
     assert best(results) is None
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  do_time=False leaves time unset; do_time=True populates it
-# --------------------------------------------------------------------------- #
+# #
 def test_do_time_flag_controls_timing():
     """A correct candidate has ``time is None`` under ``do_time=False`` and a non-negative float
     under ``do_time=True`` with the default whole-call timer."""
@@ -269,9 +269,9 @@ def test_do_time_flag_controls_timing():
     assert on[0].correct and on[0].time is not None and on[0].time >= 0.0
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  isolate deadline and list-shaped timer results
-# --------------------------------------------------------------------------- #
+# #
 def test_isolate_timeout_is_threaded_to_run_isolated():
     """``sweep(isolate=True)`` must hand its own ``isolate_timeout`` to every ``run_isolated`` fork.
     The deadline was hard-wired to ``run_isolated``'s 900 s default, so a single hung candidate stalled
@@ -333,9 +333,9 @@ def test_list_timer_result_is_unpacked_like_a_tuple():
     assert best(results).name == "a"
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  enumerators: named candidate sets
-# --------------------------------------------------------------------------- #
+# #
 def test_permutation_candidates_3d_named_set():
     """``permutation_candidates`` yields one candidate per dimension permutation (identity included):
     for ndim=3 that is all 6 permutations, named ``permute_<arr>_<perm>``."""
@@ -362,9 +362,9 @@ def test_shuffle_candidates_named_set():
     assert names == {"noshuffle_A", "shuffle_A_rot", "shuffle_A_swz"}
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  end-to-end bit-exact family sweeps
-# --------------------------------------------------------------------------- #
+# #
 def test_permutation_sweep_3d_bit_exact():
     """A global dimension permutation of a 3-D input is transparent (add_permute_maps wraps it), so
     all 6 permutation candidates compile and reproduce C = A*2+1 bit-exactly."""

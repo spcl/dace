@@ -223,7 +223,7 @@ def _build_velocity_for_it_35_pattern():
     IST = dace.symbol("IST")
     IEN = dace.symbol("IEN")
 
-    # -- Inner NSDFG (single state, two sibling inner maps) -------------
+    # Inner NSDFG (single state, two sibling inner maps)
     inner = SDFG("loop_body")
     inner.add_array("cfl_clipping", [NPROMA, KLEV], dace.int32)
     inner.add_array("z_w_con_c", [NPROMA, KLEV], dace.float64)
@@ -312,7 +312,7 @@ def _build_velocity_for_it_35_pattern():
     ist.add_edge(mx37, "OUT_maxvcfl", w_maxvcfl, None, mm.Memlet("maxvcfl[0:KLEV, 0:NPROMA]"))
     ist.add_edge(mx37, "OUT_z_w_con_c", w_zwcon, None, mm.Memlet("z_w_con_c[0:NPROMA, 0:KLEV]"))
 
-    # -- Outer SDFG: parent _for_it_35 around the NSDFG ------------------
+    # Outer SDFG: parent _for_it_35 around the NSDFG
     outer = SDFG("velocity_for_it_35")
     outer.add_array("cfl_clipping", [NPROMA, KLEV], dace.int32)
     outer.add_array("z_w_con_c", [NPROMA, KLEV], dace.float64)

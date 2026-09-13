@@ -58,7 +58,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int
     for s in arm_states.values():
         inside_states |= s
 
-    # ---- Outside-read set (rule 2). ----
+    # Outside-read set (rule 2).
     outside_reads: set[str] = set()
     for state in local_sdfg.all_states():
         if state in inside_states:
@@ -93,7 +93,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int
             text = c.as_string if isinstance(c, CodeBlock) else str(c)
             outside_reads |= symbolic.symbols_in_code(text, potential_symbols=array_names)
 
-    # ---- Per-arm read sets for rule 3. ----
+    # Per-arm read sets for rule 3.
     arm_reads: dict[int, set[str]] = {}
     for i, body in enumerate(arm_bodies):
         reads: set[str] = set()
@@ -103,7 +103,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int
                 reads |= r
         arm_reads[i] = reads
 
-    # ---- Classify per-arm writes. ----
+    # Classify per-arm writes.
     result: dict[int, set[str]] = {}
     for i, body in enumerate(arm_bodies):
         escaping: set[str] = set()

@@ -244,11 +244,9 @@ def test_parallelize_peel_limit_zero_disables():
     assert _num_loops(sdfg) == before  # untouched
 
 
-# -----------------------------------------------------------------------------
 # Unrolling a 3-level (double-tiled) nest: the shape ``UntileLoops`` hands over
 # when it cannot collapse a tile, and the shape that decides whether the tile
 # gets re-baked into the body as straight-line code.
-# -----------------------------------------------------------------------------
 
 
 def _num_tasklets(sdfg: dace.SDFG) -> int:

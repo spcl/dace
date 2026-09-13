@@ -28,9 +28,7 @@ from tests.ab_perf._harness import format_ab, time_cpu, time_gpu, to_gpu
 
 N = dace.symbol('N')
 
-# ---------------------------------------------------------------------------
 # Peel-limit A/B: multi-front conflict-write loop
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -157,9 +155,7 @@ def test_peel_limit_ab_cpu_gpu(peel_limits, ab_iters, ab_warmup, ab_gpu_enabled,
         print('\n'.join(lines))
 
 
-# ---------------------------------------------------------------------------
 # break_anti_dependence A/B: read-ahead anti-dep loop
-# ---------------------------------------------------------------------------
 
 
 @dace.program

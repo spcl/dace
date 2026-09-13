@@ -62,9 +62,9 @@ def residual_loops(sdfg: dace.SDFG) -> int:
                if isinstance(cfr, LoopRegion) and cfr.loop_variable)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Case 1 -- guarded polynomial indirection.                                    #
-# --------------------------------------------------------------------------- #
+# #
 # ``A[i] = A[IDX[i] * IDX[i-1]] + 1`` under the guard ``IDX[i]*IDX[i-1] > i``. Affine analysis
 # sees a non-linear product feeding an indirect read and must assume a loop-carried RAW for
 # every iteration. The solver asks whether the write at k can be the read at k+1: a real
@@ -114,9 +114,9 @@ def test_guarded_poly_indirection_parallelizes():
     assert residual_loops(sdfg) == 0
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Case 2 -- asserted unique scatter.                                           #
-# --------------------------------------------------------------------------- #
+# #
 # ``A[IDX[k]] += B[k]``. Whether this is parallel depends on a fact no compiler can read off
 # the code: that IDX holds no duplicates. Under the programmer assertion
 # ``forall i<j: IDX[i] != IDX[j]`` the solver (LIA + theory of arrays) certifies no two
@@ -257,9 +257,9 @@ def test_accumulating_scatter_is_exempt_and_stays_right_under_duplicates():
     assert np.allclose(got, expected), 'every duplicate must still fold into its slot'
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Case 3 -- hybrid sparse kernel, conditional recurrence.                      #
-# --------------------------------------------------------------------------- #
+# #
 # A sparse row product feeding a CONDITIONAL recurrence: ``y[i] = sum[i]`` for ``i < K`` (no
 # carried dependence) and ``y[i] = sum[i] + y[i-1]`` beyond. Seeing ``y[i-1]`` anywhere in the
 # body, affine analysis serializes the whole iteration space. The solver refutes FULL
@@ -309,9 +309,9 @@ def test_hybrid_sparse_partitions_at_k():
     assert residual_loops(sdfg) == 1
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Case 4 -- CLOUDSC triangular nest.                                           #
-# --------------------------------------------------------------------------- #
+# #
 # ``j`` ranges over ``[i+1, M)`` and every ``(i, j)`` reads ``(i,i)`` and ``(j,i)`` to update
 # ``(j,i)``. Writes land strictly in the lower triangle, so the diagonal stays read-only and
 # the nest is reducible -- but only once ``i < j`` is modelled formally. This is the shape
@@ -350,9 +350,9 @@ def test_triangular_update_already_parallelizes():
     assert residual_loops(sdfg) == 0
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Case 5 -- non-linear injective subscript.                                    #
-# --------------------------------------------------------------------------- #
+# #
 # ``A[i*i]`` is injective on ``[0, N)``, so the writes never collide, but the subscript is
 # quadratic and outside affine reach. The solver discharges
 # ``i1*i1 == i2*i2 AND 0 <= i1 < i2 < N`` as UNSAT.
@@ -386,9 +386,9 @@ def test_quadratic_scatter_parallelizes():
     assert residual_loops(sdfg) == 0
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Negative -- must stay sequential forever.                                    #
-# --------------------------------------------------------------------------- #
+# #
 # ``A[min(i, N-1-i)]`` is NOT injective: ``i`` and ``N-1-i`` collide. A solver asked the same
 # question returns SAT, so this must never be parallelized. Deliberately NOT xfail -- the day
 # this starts passing in parallel form, something is unsound.

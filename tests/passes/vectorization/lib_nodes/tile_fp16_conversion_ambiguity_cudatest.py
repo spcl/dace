@@ -41,9 +41,7 @@ from dace.libraries.tileops import TileBinop, TileUnop
 from dace.libraries.tileops._pure_codegen import half_disambiguated
 
 
-# --------------------------------------------------------------------------------------------------
 # The disambiguation rule itself, in isolation.
-# --------------------------------------------------------------------------------------------------
 def test_half_disambiguated_hops_only_when_leaving_float16():
     """``half_disambiguated`` hops a float16 value meeting a different type,
     and leaves everything else (including float16 meeting float16) alone."""
@@ -53,9 +51,7 @@ def test_half_disambiguated_hops_only_when_leaving_float16():
     assert half_disambiguated("_a[0]", "double", "double") == "_a[0]"
 
 
-# --------------------------------------------------------------------------------------------------
 # Structural: the emitted tasklet text, no compiler needed.
-# --------------------------------------------------------------------------------------------------
 def _pure_tasklet_code(node, edges):
     """Build a one-state SDFG around ``node``, wire ``edges`` (list of
     ``(src_name, src_conn, dst_conn, dtype, shape)`` for inputs and
@@ -127,9 +123,7 @@ def test_unop_neg_does_not_hop():
     assert "(float)(" not in code, f"neg must not be widened (native __half operator-): {code}"
 
 
-# --------------------------------------------------------------------------------------------------
 # GPU: the actual nvcc ambiguity, and the numeric gate.
-# --------------------------------------------------------------------------------------------------
 def _gpu_map_wrapped(node, in_edges, out_edge):
     """Wrap ``node`` in a trivial ``GPU_Device``-scheduled map with GPU_Global
     transients fed from / drained to host-visible arrays, mirroring how the

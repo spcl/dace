@@ -83,7 +83,7 @@ def offload_cloudsc_to_gpu(sdfg: dace.SDFG,
     sdfg.validate()
 
 
-# -- Phase 0: default stream and dynamic map ranges -----------------------------------------------
+# Phase 0: default stream and dynamic map ranges
 
 
 def pin_default_gpu_stream() -> None:
@@ -193,7 +193,7 @@ def symbolize_readonly_range_scalars(sdfg: dace.SDFG) -> int:
     return converted
 
 
-# -- Phase 1: schedules -------------------------------------------------------------------------
+# Phase 1: schedules
 
 
 def is_block_map(entry: nodes.MapEntry, block_symbols: FrozenSet[str]) -> bool:
@@ -239,7 +239,7 @@ def assign_schedules(sdfg: dace.SDFG, block_symbols: FrozenSet[str], in_kernel: 
                 assign_schedules(node.sdfg, block_symbols, below)
 
 
-# -- Phase 2: constant classification ------------------------------------------------------------
+# Phase 2: constant classification
 
 
 def constant_offload_data(sdfg: dace.SDFG, candidates: Set[str]) -> Dict[str, Optional[SDFGState]]:
@@ -358,7 +358,7 @@ def as_constant(expression) -> Optional[int]:
     return int(value) if value.is_Integer else None
 
 
-# -- Phase 3: mirror kernel-side non-transients ---------------------------------------------------
+# Phase 3: mirror kernel-side non-transients
 
 
 def mirror_nontransients_to_gpu(sdfg: dace.SDFG, excluded: FrozenSet[str]) -> None:
@@ -606,7 +606,7 @@ def edge_is_kernel_side(edge, state: SDFGState, sdict: Dict, retargeted: Set[int
     return device_facing(path[0].src, state, sdict) or device_facing(path[-1].dst, state, sdict)
 
 
-# -- Phase 4: transient promotion and NSDFG storage propagation -----------------------------------
+# Phase 4: transient promotion and NSDFG storage propagation
 
 
 def interstate_read_arrays(graph: dace.SDFG) -> Set[str]:

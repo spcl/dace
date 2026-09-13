@@ -20,7 +20,7 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (Ve
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from tests.passes.vectorization.tile_assertions import assert_tiled
 
-# ----- K=2 kernels -------------------------------------------------------
+# K=2 kernels
 
 
 def _build_k2_copy_sdfg(M, N):
@@ -168,7 +168,7 @@ def test_k2_mixed_chain_matches_reference(M, N):
     np.testing.assert_allclose(c_vec, c_ref, rtol=1e-12, atol=1e-12)
 
 
-# ----- K=3 (limited) -----------------------------------------------------
+# K=3 (limited)
 
 
 def _build_k3_copy_sdfg(M, N, P):

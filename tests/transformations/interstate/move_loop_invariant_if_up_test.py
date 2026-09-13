@@ -38,9 +38,9 @@ def _guard_wraps_a_loop(sdfg):
     return False
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Invariant on a symbolic/scalar expression (no loop var) -> hoist             #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -63,9 +63,9 @@ def test_invariant_symbolic_guard_hoisted_and_e2e():
         assert np.allclose(out, a + 1.0 if av > 0 else 9.0), f"mismatch active={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Invariant on data not written in the loop (no loop var) -> hoist             #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -88,9 +88,9 @@ def test_invariant_data_guard_hoisted_and_e2e():
         assert np.allclose(out, a * 2.0 if tv > 0.5 else 3.0), f"mismatch thr={tv}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Condition depends on the loop variable -> MUST NOT hoist                     #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -116,9 +116,9 @@ def test_loopvar_dependent_guard_not_hoisted_and_e2e():
     assert np.allclose(out, ref) and np.allclose(out, exp)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Innermost guard sifts all the way up through nested loops (fixpoint)         #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -154,9 +154,9 @@ def _ancestors(sdfg, block):
     return out
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Interstate symbol-assignment chain is hoisted WITH the guard                 #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -179,9 +179,9 @@ def test_invariant_assignment_chain_hoisted_with_guard_and_e2e():
         assert np.allclose(out, a + 1.0 if fv * 3 > 2 else 4.0), f"mismatch flag={fv}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Condition depends on data INDEXED BY the loop variable -> MUST NOT hoist     #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -207,9 +207,9 @@ def test_data_and_loopvar_guard_not_hoisted_and_e2e():
     assert np.allclose(out, ref) and np.allclose(out, exp)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Empty boundary states in the loop body are cleaned when the guard hoists     #
-# --------------------------------------------------------------------------- #
+# #
 
 
 def test_empty_boundary_states_cleaned_and_e2e():
@@ -257,10 +257,10 @@ def test_empty_boundary_states_cleaned_and_e2e():
         assert np.allclose(out, a + 1.0 if av > 0 else 4.0), f"mismatch active={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Mixed map + loop nest: the guard hoists out of the (inner) loop, the map     #
 # stays; value-preserving (the pass must work with a mix of maps and loops)    #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -289,10 +289,10 @@ def test_mixed_map_loop_guard_hoisted_out_of_loop_and_e2e():
         assert np.allclose(out, a + 1.0 if av > 0 else 8.0), f"mismatch active={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Data-dependent guards on an (i, j) nest: how far the guard can sift, and     #
 # the all-or-nothing ``require_full_hoist`` mode                               #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program

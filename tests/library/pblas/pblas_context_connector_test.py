@@ -38,9 +38,7 @@ IMPLEMENTATIONS = ('MKLMPICH', 'MKLOpenMPI', 'ReferenceMPICH', 'ReferenceOpenMPI
 GM, GN, GK = (dace.symbol(s, positive=True) for s in ('GM', 'GN', 'GK'))
 LMx, LNy, LKx, LKy = (dace.symbol(s, positive=True) for s in ('LMx', 'LNy', 'LKx', 'LKy'))
 
-###############################################################################
 # Helpers
-###############################################################################
 
 
 def _expanded_code(node, state, sdfg, implementation):
@@ -79,9 +77,7 @@ def _wire_context(sdfg, state, node):
     return gridinit
 
 
-###############################################################################
 # SDFG builders (one fresh node per variant so resolution is independent)
-###############################################################################
 
 
 def _build_pgemm():
@@ -120,9 +116,7 @@ def _build_pgemv():
 
 _BUILDERS = {'pgemm': _build_pgemm, 'pgemv': _build_pgemv}
 
-###############################################################################
 # Tests
-###############################################################################
 
 
 @pytest.mark.parametrize('name', list(_BUILDERS))

@@ -124,7 +124,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         self._merge(sdfg, graph, first, self.second)
         self._contract_localized_intermediates(sdfg, first)
 
-    # ----- legality kernel (shared source of truth; the FuseLoops pass calls this transformation) -----
+    # legality kernel (shared source of truth; the FuseLoops pass calls this transformation)
 
     @staticmethod
     def _is_doall(sdfg: SDFG, loop: LoopRegion) -> bool:
@@ -385,7 +385,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             cfg.add_edge(first, e.dst, copy.deepcopy(e.data))
         set_nested_sdfg_parent_references(sdfg)
 
-    # ----- intermediate contraction (the buffer-shrink MapFusion does, for the loop path) -------------
+    # intermediate contraction (the buffer-shrink MapFusion does, for the loop path)
 
     def _contract_localized_intermediates(self, sdfg: SDFG, loop: LoopRegion) -> None:
         """Shrink every transient the fused loop produces-and-consumes within a single iteration to a

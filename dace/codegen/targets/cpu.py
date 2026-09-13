@@ -3123,14 +3123,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 nested_stream.write('}\n\n', cfg, state_id, node)
 
-            ########################
             if not inline:
                 # Generate function call
                 callsite_stream.write(
                     codegen.generate_nsdfg_call(sdfg, cfg, state_dfg, node, memlet_references, sdfg_label), cfg,
                     state_id, node)
 
-                ###############################################################
                 # Write generated code in the proper places (nested SDFG writes
                 # location info)
                 if do_split and (not unique_functions or not code_already_generated):

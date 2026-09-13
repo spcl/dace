@@ -171,7 +171,7 @@ def main():
     print("=" * 78)
     print()
 
-    # ---- Group A: same kernel, different test wrappers ----
+    # Group A: same kernel, different test wrappers
     kernel_to_tests: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
     for (f, t), k in test_kernel.items():
         if k:
@@ -187,7 +187,7 @@ def main():
         print("  (none)")
     print()
 
-    # ---- Group B: structurally similar kernels ----
+    # Group B: structurally similar kernels
     fp_to_kernels: Dict[Tuple, List[Tuple[str, str]]] = defaultdict(list)
     for (f, name), fn in all_programs.items():
         fp = kernel_fingerprint(fn)
@@ -209,7 +209,7 @@ def main():
         print("  (none)")
     print()
 
-    # ---- Group C: tests with identical kernel + nearly-identical bodies ----
+    # Group C: tests with identical kernel + nearly-identical bodies
     # Heuristic: tests in the same file calling the same kernel with bodies of
     # the same line-count (within 3 lines) are likely the wrapper-only variants
     # the plan calls out (test_v_const_subs_cpu vs test_v_const_subs_two_cpu etc).

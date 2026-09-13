@@ -245,7 +245,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         return (f'PromoteConstantIndexAccess: promoted {slots} constant-index slot(s) to '
                 f'unblock {len(pass_retval)} loop(s)')
 
-    # -- core ---------------------------------------------------------------------------
+    # core
 
     def _promote_sdfg(self, sdfg: SDFG) -> Dict[str, List[str]]:
         """Promote beneficial slots for the loops of a single SDFG (speculate, then verify)."""
@@ -314,7 +314,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             except Exception:
                 return False
 
-    # -- slot detection -----------------------------------------------------------------
+    # slot detection
 
     def _privatizable_slots(self, sdfg: SDFG, loop: LoopRegion) -> List[Tuple[str, subsets.Range]]:
         """The ``(arr, constant_subset)`` pairs that are safe to privatize in ``loop``.
@@ -846,7 +846,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             return list(block.all_states())
         return []
 
-    # -- rewrite ------------------------------------------------------------------------
+    # rewrite
 
     def _arr_accesses_only_at_slot(self, loop: LoopRegion, arr_name: str, c_subset: subsets.Range) -> bool:
         """True if every ``arr`` access inside ``loop`` matches ``c_subset``.

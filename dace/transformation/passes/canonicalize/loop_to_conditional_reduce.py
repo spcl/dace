@@ -170,7 +170,7 @@ class LoopToConditionalReduce(ppl.Pass):
                     rewritten += 1
         return rewritten or None
 
-    # --------------------------- match ---------------------------
+    # match
 
     def _match(self, loop: LoopRegion, sdfg: SDFG) -> Optional[_Match]:
         # Find exactly one ConditionalBlock; other body blocks must be empty SDFGStates.
@@ -313,7 +313,7 @@ class LoopToConditionalReduce(ppl.Pass):
             identity_value=identity_value,
         )
 
-    # ------------------------- match helpers -------------------------
+    # match helpers
 
     def _branch_has_content(self, branch) -> bool:
         if not isinstance(branch, ControlFlowRegion):
@@ -391,7 +391,7 @@ class LoopToConditionalReduce(ppl.Pass):
                 return pred.src.data, pred.data.subset
         return src.data, addend_edge.data.subset
 
-    # ---------------------------- rewrite ----------------------------
+    # rewrite
 
     def _rewrite(self, m: _Match, sdfg: SDFG):
         """Turn the guarded update into an UNCONDITIONAL masked reduction by

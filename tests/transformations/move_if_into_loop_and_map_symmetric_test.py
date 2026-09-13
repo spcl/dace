@@ -75,9 +75,9 @@ def _assert_guard_moved_inside(sdfg):
     assert _any_cond(sdfg), "the guard must be duplicated inside, not dropped"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Scenario 1: invariant scalar/symbolic guard over an elementwise body         #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -122,9 +122,9 @@ def test_s1_invariant_guard_map():
         assert np.allclose(out, _s1_oracle(a, av, n)), f"map av={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Scenario 2: invariant guard over an ICON-style neighbour-gather 2-D body     #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -174,9 +174,9 @@ def test_s2_gather_guard_map():
         assert np.allclose(out, _s2_oracle(w, cidx, av, n, m)), f"map av={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Scenario 3: the guard's prep state READS what the loop writes               #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program

@@ -22,7 +22,7 @@ from dace.transformation.layout.block_aware_map_tiling import BlockAwareMapTilin
 
 N = dace.symbol("N")
 
-# ============================ build_relayout vs numpy ============================ #
+# build_relayout vs numpy ============================
 _relayout_counter = [0]
 
 
@@ -108,7 +108,7 @@ def test_relayout_pad_grows_and_copies_live_region():
     assert numpy.array_equal(out[:n], A)
 
 
-# ============================ PermuteDimensions pass (add_permute_maps) ============================ #
+# PermuteDimensions pass (add_permute_maps) ============================
 def _permute_pass_kernel_check(prog, permute_map, shapes, seed=0):
     """Run a kernel with PermuteDimensions(add_permute_maps=True); inputs/outputs stay original."""
     original = prog.to_sdfg(simplify=False)
@@ -147,7 +147,7 @@ def test_permute_pass_elementwise_3d(perm):
     })
 
 
-# ============================ SplitDimensions (Block) pass ============================ #
+# SplitDimensions (Block) pass ============================
 @dace.program
 def madd2d(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N] @ dace.ScheduleType.Sequential:
@@ -176,7 +176,7 @@ def test_block_pass_matrix(fa, fb):
     assert numpy.allclose(C1, C0)
 
 
-# ============================ PadDimensions pass ============================ #
+# PadDimensions pass ============================
 @dace.program
 def stencil1d(A: dace.float64[N], B: dace.float64[N]):
     for i in dace.map[1:N - 1] @ dace.ScheduleType.Sequential:
@@ -221,7 +221,7 @@ def test_pad_pass_elementwise_2d(pi, pj):
     assert numpy.allclose(B1[:n, :n], B0)
 
 
-# ============================ ZipArrays pass ============================ #
+# ZipArrays pass ============================
 @dace.program
 def zip3(A: dace.float64[N], B: dace.float64[N], D: dace.float64[N], C: dace.float64[N]):
     for i in dace.map[0:N] @ dace.ScheduleType.Sequential:
@@ -271,7 +271,7 @@ def test_zip_2d_homogeneous():
     assert numpy.allclose(C1, C0)
 
 
-# ============================ BlockAwareMapTiling (schedule-only) ============================ #
+# BlockAwareMapTiling (schedule-only) ============================
 @dace.program
 def ew2d_tile(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N] @ dace.ScheduleType.Sequential:

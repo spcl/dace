@@ -43,7 +43,7 @@ def test_clang_tidy_excludes_unsafe_checks():
     assert 'readability-*' in CLANG_TIDY_CHECKS
 
 
-# --- N = number of samples, B = number of histogram bins ---
+# N = number of samples, B = number of histogram bins
 N, B = 64, 8
 
 

@@ -129,7 +129,7 @@ def test_two_symbol_broadcast_matches_reference(N):
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
 
 
-# ---- structural tests -----------------------------------------------------
+# structural tests
 
 
 def test_symbol_invariant_does_not_materialise_a_tile():

@@ -142,7 +142,7 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
         in_state_init_an = n
         break
 
-    # --- Redirect the WCR target: rewrite both the in-edge (tasklet -> MapExit)
+    # Redirect the WCR target: rewrite both the in-edge (tasklet -> MapExit)
     # and the out-edge (MapExit -> AccessNode) to refer to the scalar.
     wcr = wcr_edge.data.wcr
     wcr_edge.data.data = scalar_name
@@ -166,7 +166,7 @@ def privatize_reduction_accumulator(state: SDFGState, map_exit: nodes.MapExit, w
                        mm.Memlet(data=arr_node.data, subset=subsets.Range.from_string(str(write_subset))))
         return True
 
-    # --- Cross-state pattern (no in-state init): init state BEFORE the
+    # Cross-state pattern (no in-state init): init state BEFORE the
     # current state seeds ``_priv_dot`` from the surviving ``arr_node``;
     # writeback state AFTER copies back.
     init_state = parent_graph.add_state_before(state, label=f"priv_init_{scalar_name}")

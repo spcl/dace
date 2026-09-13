@@ -49,9 +49,9 @@ def _atax_inputs(m, n, seed=3):
     return A, x, A.T @ (A @ x)
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Fold Transpose -> MatMul into the transpose flag
-# --------------------------------------------------------------------------- #
+# #
 def test_fold_transpose_into_matmul_removes_node():
     sdfg = atax_blas.to_sdfg(simplify=True)
     assert any(isinstance(n, Transpose) for s in sdfg.states() for n in s.nodes())
@@ -70,9 +70,9 @@ def test_fold_transpose_into_matmul_removes_node():
     assert numpy.allclose(y, ref)
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Permuting the shared operand flips both flags -- CPU
-# --------------------------------------------------------------------------- #
+# #
 def _build_atax(perm):
     sdfg = atax_blas.to_sdfg(simplify=True)
     FoldTransposeIntoMatMul().apply_pass(sdfg, {})
@@ -124,9 +124,9 @@ def test_atax_permute_flips_flags_gpu():
         assert numpy.allclose(y, ref), f"perm={perm}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Syrk / Symm flag flips (triangle-preserving, in place)
-# --------------------------------------------------------------------------- #
+# #
 def _syrk_sdfg(nn, k):
     sdfg = dace.SDFG("syrk_flip")
     sdfg.add_array("A", [nn, k], dace.float64)
@@ -192,9 +192,9 @@ def test_symm_permute_flips_uplo():
     assert numpy.allclose(C, ref)
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Refusals -- never silently miscompile an unabsorbable layout
-# --------------------------------------------------------------------------- #
+# #
 def test_flip_refuses_syr2k():
     node = Syr2k("s", uplo="L", trans="N", alpha=1, beta=0)
     with pytest.raises(NotImplementedError):
@@ -223,9 +223,9 @@ def test_permute_refuses_non_transpose_gemm_operand():
         PermuteDimensions(permute_map={"A": [0, 2, 1]}, add_permute_maps=False).apply_pass(sdfg, {})
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Tensor-contraction fallback
-# --------------------------------------------------------------------------- #
+# #
 def test_syrk_to_tensordot_full_output():
     nn, k = 12, 9
     rng = numpy.random.default_rng(0)

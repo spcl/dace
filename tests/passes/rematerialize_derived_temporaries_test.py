@@ -314,7 +314,7 @@ def test_refuses_a_temporary_named_by_control_flow():
     assert arrays(sdfg) == before
 
 
-# ------------------------------------------------------------------ heat3d, on the real transformation path
+# heat3d, on the real transformation path
 
 
 @dace.program

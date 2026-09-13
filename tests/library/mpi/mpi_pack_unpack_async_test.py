@@ -17,8 +17,6 @@ import pytest
 
 COL = 2
 
-###############################################################################
-
 
 def _wire_irecv_wait(state, y_name, col):
     """Irecv into column ``col`` of ``y_name`` (strided) + a Wait on the shared recv request."""
@@ -81,9 +79,6 @@ def _unpack_state(sdfg):
     return None
 
 
-###############################################################################
-
-
 def test_irecv_unpack_after_wait():
     """Flat: the strided Irecv gets a packed recv buffer + an unpack in a NEW state after the Wait."""
     sdfg, state, wait, _ = _irecv_wait_sdfg(in_loop=False)
@@ -120,9 +115,7 @@ def _irecv(state):
     return next(n for n in state.nodes() if isinstance(n, mpi.nodes.irecv.Irecv))
 
 
-###############################################################################
 #  Runtime: 2-rank async ring exchanging a strided column (Isend + Irecv + Waitall)
-###############################################################################
 
 
 def _async_ring_sdfg(dtype):

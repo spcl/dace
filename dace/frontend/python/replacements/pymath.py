@@ -145,9 +145,7 @@ def _pow(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: Union[str, Number,
     return implement_ufunc(pv, None, sdfg, state, 'power', [x, y], {})[0]
 
 
-########################################################################
 # Element-wise NumPy predicates and repairs
-########################################################################
 
 
 def is_data(sdfg: SDFG, operand: Any) -> bool:

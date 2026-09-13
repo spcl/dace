@@ -56,9 +56,7 @@ def _build_allany_sdfg(tag,
     return sdfg
 
 
-# ---------------------------------------------------------------------------
 # reduction expansion -- whole-array reduce, 1-D
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -79,9 +77,7 @@ def test_reduction_whole_array_1d(op, mask, expected):
     assert int(out[0]) == expected
 
 
-# ---------------------------------------------------------------------------
 # reduction expansion -- whole-array reduce, 2-D
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("op", ["all", "any"])
@@ -95,9 +91,7 @@ def test_reduction_whole_array_2d(op):
     assert int(out[0]) == expected
 
 
-# ---------------------------------------------------------------------------
 # reduction expansion -- per-dim reduce (dim=k Fortran 1-based)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("op,dim", [("all", 1), ("all", 2), ("any", 1), ("any", 2)])
@@ -114,9 +108,7 @@ def test_reduction_dimwise_reduce(op, dim):
     np.testing.assert_array_equal(out.astype(np.int32), expected)
 
 
-# ---------------------------------------------------------------------------
 # reduction expansion -- sectioned input
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("op", ["all", "any"])
@@ -137,9 +129,7 @@ def test_reduction_sectioned_input(op):
     assert int(out[0]) == expected
 
 
-# ---------------------------------------------------------------------------
 # reduction expansion -- non-int (LOGICAL(1) <-> uint8) mask
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("op,expected", [("all", 0), ("any", 1)])
@@ -151,9 +141,7 @@ def test_reduction_uint8_mask(op, expected):
     assert int(out[0]) == expected
 
 
-# ---------------------------------------------------------------------------
 # default implementation is ``reduction``
-# ---------------------------------------------------------------------------
 
 
 def test_default_implementation_is_reduction():
@@ -173,9 +161,7 @@ def test_default_implementation_is_reduction():
     assert int(out[0]) == 1
 
 
-# ---------------------------------------------------------------------------
 # sequential expansion -- short-circuit (break) via the Python frontend
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

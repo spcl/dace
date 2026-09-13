@@ -158,9 +158,7 @@ def _sass_ops(build_folder) -> collections.Counter:
     return ops
 
 
-# --------------------------------------------------------------------------------------------------
 # Structural: which template argument each residue produces (no GPU device needed)
-# --------------------------------------------------------------------------------------------------
 def test_odd_neighbour_load_is_shifted_even_is_plain():
     """``A[i, j±1]`` (odd offset) carries the shift argument; the aligned tile carries only the
     alignment; and the odd-offset store keeps the 3-argument (scalar) call."""
@@ -266,10 +264,8 @@ def test_symbolic_stride_widens_under_assume_even():
         f"expected the aligned +-1 neighbours and the shifted centre, got {set(loads)}"
 
 
-# --------------------------------------------------------------------------------------------------
 # GPU: the SASS gate and the numeric gate. Each body runs in a fresh interpreter (see
 # ``_run_isolated``); the pytest wrappers only check its exit status.
-# --------------------------------------------------------------------------------------------------
 def _body_heat3d_sass():
     """The stencil kernels must load 32 bits at a time. ``PRMT`` is not the metric -- an aligned
     load plus a register ``PRMT`` is the intended lowering -- ``LDG.E.U16`` is, plus the total

@@ -89,7 +89,7 @@ def leaf_sdfg(label: str, free_symbol: str) -> SDFG:
     return inner
 
 
-# --- vectorize_multi_dim: the symbol-alias inliner, several NSDFGs down -------------------------
+# vectorize_multi_dim: the symbol-alias inliner, several NSDFGs down
 
 
 def two_deep_alias_nest() -> tuple[SDFG, SDFG, dace.dtypes.typeclass]:
@@ -150,7 +150,7 @@ def test_a_free_symbol_bound_back_onto_a_body_keeps_the_map_parameters_own_dtype
     assert cancels_against('i', leaf.symbols['i'], authoritative)
 
 
-# --- widen_accesses: the per-lane fanout of an interstate-defined gather index -------------------
+# widen_accesses: the per-lane fanout of an interstate-defined gather index
 
 
 def test_per_lane_gather_planes_inherit_the_dtype_of_the_edge_that_defined_the_index():
@@ -171,7 +171,7 @@ def test_per_lane_gather_planes_inherit_the_dtype_of_the_edge_that_defined_the_i
     assert all(cancels_against(name, inner.symbols[name], dace.int32) for name in planes.values())
 
 
-# --- utils/subsets: the dtype lives one level below Range.free_symbols --------------------------
+# utils/subsets: the dtype lives one level below Range.free_symbols
 
 
 def test_a_lane_offset_symbol_inherits_the_dtype_carried_by_the_subsets_own_symbol():
@@ -191,7 +191,7 @@ def test_a_lane_offset_symbol_inherits_the_dtype_carried_by_the_subsets_own_symb
     assert cancels_against(lane_names[0], sdfg.symbols[lane_names[0]], k.dtype)
 
 
-# --- utils/tasklets: the emitted cast is the descriptor's, not a repeated spelling ---------------
+# utils/tasklets: the emitted cast is the descriptor's, not a repeated spelling
 
 
 def test_the_index_tile_cast_is_read_off_the_tile_descriptor():
@@ -209,7 +209,7 @@ def test_the_index_tile_cast_is_read_off_the_tile_descriptor():
     assert len([line for line in tasklet.code.as_string.splitlines() if '_out[' in line]) == 1
 
 
-# --- mask_scaffold: the mask's bound symbols threaded into the body -----------------------------
+# mask_scaffold: the mask's bound symbols threaded into the body
 
 
 def test_a_mask_bound_symbol_threaded_into_a_body_keeps_the_map_parameters_own_dtype():
@@ -232,7 +232,7 @@ def test_a_mask_bound_symbol_threaded_into_a_body_keeps_the_map_parameters_own_d
     assert node.symbol_mapping['i'] == symbolic.pystr_to_symbolic('i')
 
 
-# --- fuse_branched_tail_remainder: the fused body re-declares the fused map's own parameter ------
+# fuse_branched_tail_remainder: the fused body re-declares the fused map's own parameter
 
 
 def tile_body(label: str) -> SDFG:

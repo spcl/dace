@@ -20,9 +20,7 @@ class SingleIterationMapPhase():
         for state in hybrid_states:
             self.make_size1_map_wrappers(sdfg, state)
 
-    ########################
-    ### Wrapping Helpers ###
-    ########################
+    # Wrapping Helpers
 
     def _get_root_nodes(self, state: SDFGState, bounded_set: OrderedSet):
         return OrderedSet(node for node in bounded_set if state.in_degree(node) == 0)
@@ -42,9 +40,7 @@ class SingleIterationMapPhase():
     def _get_exit_nodes(self, state: SDFGState, bounded_set: OrderedSet):
         return OrderedSet(node for node in bounded_set if all(e.dst not in bounded_set for e in state.out_edges(node)))
 
-    ######################
-    ### Wrapping Logic ###
-    ######################
+    # Wrapping Logic
 
     def make_size1_map_wrappers(self, sdfg: SDFG, state: SDFGState) -> None:
         # top level GPU nodes partition the graph
@@ -206,9 +202,7 @@ class SingleIterationMapPhase():
 
         return map_entry, map_exit
 
-    ######################
-    ### Parition Logic ###
-    ######################
+    # Parition Logic
 
     def subgraphs_after_removing_partition_nodes(self, state: SDFGState,
                                                  partition_nodes: OrderedSet) -> list[OrderedSet[nodes.Node]]:
@@ -252,9 +246,7 @@ class SingleIterationMapPhase():
             outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
             nodes_to_remove = OrderedSet(node for node in outer_nodes if isinstance(node, nodes.AccessNode))
 
-    ###############################
-    ### Clean Up After Wrapping ###
-    ###############################
+    # Clean Up After Wrapping
 
     def insert_access_between_adjacent_maps(self, state: SDFGState, map_exit: nodes.MapExit) -> None:
         # avoid illegal direct map-to-map connections by routing through an access node.

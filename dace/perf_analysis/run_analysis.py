@@ -27,9 +27,7 @@ from collections.abc import Callable, Sequence
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(OUT_DIR))
 
-# ---------------------------------------------------------------------------
 # Configuration
-# ---------------------------------------------------------------------------
 
 #: group id -> (title, corpus suites of ``tests/corpus/corpus_suite.py``).
 GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -104,9 +102,7 @@ METRIC2_CONFIGS = (
     ('simplify_old', 'simplify_old', '(ii) simplify + old codegen'),
 )
 
-# ---------------------------------------------------------------------------
 # Worker: one kernel, all variants, all counts
-# ---------------------------------------------------------------------------
 
 
 def pipelines() -> tuple[tuple[str, Callable, str], ...]:
@@ -376,9 +372,7 @@ def analyze_kernel(suite: str, name: str) -> dict:
     return result
 
 
-# ---------------------------------------------------------------------------
 # Parent: serialized sweep + report
-# ---------------------------------------------------------------------------
 
 
 def result_path(suite: str, name: str) -> str:

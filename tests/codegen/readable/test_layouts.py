@@ -39,9 +39,9 @@ from dace.dtypes import StorageType
 from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY, run_isolated, use_implementation
 
 
-# --------------------------------------------------------------------------- #
+# #
 # SDFG builders: A (plain C) -> T (exotic layout) -> B (plain C)
-# --------------------------------------------------------------------------- #
+# #
 def elementwise_2d_sdfg(name, strides, offset, total_size, irange, jrange, alignment=0):
     """``T[i,j] = A[i,j] + 1`` then ``B[i,j] = T[i,j] * 2`` over ``irange x jrange``.
 
@@ -132,9 +132,9 @@ def aligned_1d_sdfg(name, n, alignment):
     return sdfg
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Equivalence + codegen-inspection helpers
-# --------------------------------------------------------------------------- #
+# #
 def run_variant(build, name, implementation, base):
     """Build + compile + run one variant on a deep copy of ``base``; return outputs.
 
@@ -184,9 +184,9 @@ def index_function_body(code):
     return lines[0]
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Cases
-# --------------------------------------------------------------------------- #
+# #
 def test_fortran_column_major(require_experimental):
     """Case 1: column-major / Fortran strides ``[1, 6]`` on a ``(6, 8)`` transient."""
     base = dict(A=np.random.rand(6, 8), B=np.zeros((6, 8)))

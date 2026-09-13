@@ -129,12 +129,10 @@ def test_accepts_disjoint_outer_dimension():
     assert np.array_equal(b, ref)
 
 
-# ---------------------------------------------------------------------------
 # Indirect / nonlinear subscripts must NOT be certified disjoint by the new
 # affine fast path. ``idx`` is not known to be a permutation, and ``i*i`` /
 # ``i % k`` fall outside the affine ``a*i + b`` model, so the loop must stay
 # sequential (no Map) regardless of the gcd-disjointness reasoning.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -237,13 +235,11 @@ def test_rejects_nonlinear_mod_write():
     assert np.array_equal(a, a_ref)
 
 
-# ---------------------------------------------------------------------------
 # A dimension that both writes index by the same injective function of the loop
 # variable pins any collision to a single iteration, so the writes are disjoint
 # across iterations even when the *other* indices are opaque symbols the affine
 # model cannot certify. This is the CloudSC scatter pattern
 # ``zsolqa[0, imelt, i]`` / ``zsolqa[imelt, 0, i]`` (``i`` the parallel column).
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -285,14 +281,12 @@ def test_rejects_shared_constant_dimension_with_shift():
     assert _applies(shared_constant_dim_shifted) == 0
 
 
-# ---------------------------------------------------------------------------
 # Transpose-symmetric writes: the loop variable lands in DIFFERENT dimensions
 # of the two writes (``A[i, C]`` and ``A[C, i]``), so no single dimension is
 # provably disjoint, yet a collision ``A[p, C] == A[C, q]`` forces ``p == C``
 # AND ``C == q``, i.e. ``p == q == C`` -- one iteration. This is the polybench
 # covariance pattern ``cov[i, j]`` / ``cov[j, i]``. Certified by the
 # whole-subset collision system (``_collision_forces_same_iteration``).
-# ---------------------------------------------------------------------------
 
 _TP = dace.symbol('TP')
 _TC = dace.symbol('TC')

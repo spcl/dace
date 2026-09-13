@@ -960,12 +960,10 @@ def test_cloudsc_for_1133_shape_after_inner_l2m():
     assert _num_scan_nodes(sdfg) == 0
 
 
-# -----------------------------------------------------------------------------
 # Refusal-mode probes for the cloudsc pfsqXf shapes. Each exercises ONE failure gate
 # in ``LoopToScan._match_all`` that the cloudsc-actual bodies trip. Marked
 # ``xfail(strict=True)`` -> when the matcher is extended the test XPASSes and forces
 # removing the marker, locking in the extension.
-# -----------------------------------------------------------------------------
 
 
 def test_outer_body_with_extra_content_state_alongside_inner_loop():
@@ -1243,9 +1241,7 @@ def test_scan_with_conditional_body_descends_into_if():
                                         f'expected {expected}, max-diff {np.abs(out - expected).max()}')
 
 
-# -----------------------------------------------------------------------------
 # Scalar-carry prefix scan (TSVC s3112 family).
-# -----------------------------------------------------------------------------
 
 
 def test_scalar_carry_inclusive_sum_s3112():
@@ -2275,7 +2271,7 @@ def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
     assert np.allclose(a, expected), f'second-order recurrence diverged: max diff {np.abs(a - expected).max():.2e}'
 
 
-# -- the carry at a SYMBOLIC distance ------------------------------------------------------------
+# the carry at a SYMBOLIC distance
 #
 # ``a[i] = c * a[i - K] + d[i]`` is not one loop shape but three, and which one it is is not known
 # until K has a value: a scan at K >= 1, a plain map at K == 0, an anti-dependence at K < 0. The

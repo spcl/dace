@@ -795,7 +795,7 @@ class OffloadToAccelerator(ppl.Pass):
                 self.cached_scopes[state] = state.scope_dict()
                 self.cached_scope_children[state] = state.scope_children()
 
-    ### STEP 1 ###
+    # STEP 1
     def find_taskloops(self, sdfg: SDFG) -> None:
         """Record which maps belong on the host.
 
@@ -840,7 +840,7 @@ class OffloadToAccelerator(ppl.Pass):
                                f"schedule before pass. Node {node} has schedule type {self.get_schedule(node)}")
         node.schedule = schedule
 
-    ### generic HELPERS ###
+    # generic HELPERS
 
     def get_schedule(self, node):
         if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
@@ -858,9 +858,9 @@ class OffloadToAccelerator(ppl.Pass):
     def get_predecessors(self, state, node):
         return OrderedSet(e.src for e in state.in_edges(node))
 
-    ### STEP 2: copy analysis ###
+    # STEP 2: copy analysis
 
-    ### Helpers to get the set of arrays accessed by specific nodes or edges ###
+    # Helpers to get the set of arrays accessed by specific nodes or edges
 
     def get_data_used_by_incoming_access_nodes(self,
                                                sdfg: SDFG,
@@ -1042,7 +1042,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         return arrays
 
-    ### Data Analysis: traverse the graph and sort all accessed arrays into gpu and cpu sets ###
+    # Data Analysis: traverse the graph and sort all accessed arrays into gpu and cpu sets
 
     def get_data_locations_of_map(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
         """
@@ -1357,7 +1357,7 @@ class OffloadToAccelerator(ppl.Pass):
     #def get_data_locations(self, sdfg:SDFG) -> tuple[OrderedSet[str], OrderedSet[str]]:
     #    return self.get_data_locations_of_cfregion(sdfg, sdfg)
 
-    ### STEP 3: Intermediate Representation ###
+    # STEP 3: Intermediate Representation
     def is_array_stored_on_GPU(self, sdfg, array_name):
         storage = sdfg.arrays[array_name].storage
         if storage in GPU_RESIDENT_STORAGES:
@@ -1817,7 +1817,7 @@ class OffloadToAccelerator(ppl.Pass):
         written |= self.written_arrays(sdfg)
         self.__traverse_IR(IR, eval)
 
-    ### Step 4: Copy Insertion ###
+    # Step 4: Copy Insertion
     # create ONE copy state for all arrays in array_names
 
     def create_interstate_copy(self, sdfg, state1, state2, array_names, to_gpu: bool):
@@ -1927,7 +1927,7 @@ class OffloadToAccelerator(ppl.Pass):
             return f"buffer__return{name[8:]}_gpu"
         return f"{name}_gpu"
 
-##### OPTIMIZATION #####
+# OPTIMIZATION
 
 # heuristic: size1 maps are faster than more CPU-GPU copies
 
@@ -2308,7 +2308,6 @@ class OffloadToAccelerator(ppl.Pass):
         return new_maps
 
 
-################################################################
 ## Fix Point Iteration Over Lattice                           ##
 # A GPU-scheduled map that writes a variable needs it to be a len-1 ARRAY: a scalar is
 # passed by value, so the written value is lost. The rule propagates -- if any input or

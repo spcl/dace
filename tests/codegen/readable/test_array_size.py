@@ -30,9 +30,9 @@ from dace.dtypes import StorageType
 from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY, run_isolated, use_implementation
 
 
-# --------------------------------------------------------------------------- #
+# #
 # SDFG builders: A (external) -> T (CPU_Heap, size under test) -> B (external)
-# --------------------------------------------------------------------------- #
+# #
 def heap_pipeline_1d(name: str, shape, rng: str) -> dace.SDFG:
     """Build ``T[i] = A[i] + 1`` then ``B[i] = T[i] * 2`` over ``rng``.
 
@@ -114,9 +114,9 @@ def nested_same_name_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Equivalence + codegen-inspection helpers
-# --------------------------------------------------------------------------- #
+# #
 def run_variant(build: Callable[[str], dace.SDFG], name: str, implementation: str,
                 base: Dict[str, object]) -> Dict[str, np.ndarray]:
     """Build + compile + run one variant on a deep copy of ``base``; return outputs.
@@ -194,9 +194,9 @@ def allocation_line(code: str, array: str) -> str:
     return lines[0]
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Cases
-# --------------------------------------------------------------------------- #
+# #
 def test_symbolic_size_helper(require_experimental):
     """Symbolic ``T[N*M]`` heap transient -> ``constexpr T_size(int64_t M, int64_t N)``."""
     n, m = dace.symbol('N'), dace.symbol('M')

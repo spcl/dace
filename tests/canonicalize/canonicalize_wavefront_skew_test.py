@@ -914,9 +914,9 @@ def test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable):
     assert xform.can_be_applied(outer[0].parent_graph, 0, sdfg) is interchangeable
 
 
-# =========================================================================== #
+# #
 #  Wavefronts the corpora carry, found through the full pipeline.             #
-# =========================================================================== #
+# #
 #
 # A kernel can only hide a wavefront where TWO sequential axes survive canonicalize. Over the four
 # corpora that is a short list, and on it are four nests whose diagonals are genuinely parallel.
@@ -960,9 +960,9 @@ def skew_diagonals(sdfg):
     return [c for c in residual_loops(sdfg) if c.loop_variable.startswith(SKEW_T_PREFIX)]
 
 
-# --------------------------------------------------------------------------- #
+# #
 # C1 -- polybench seidel_2d, the ``(i, j)`` nest at fixed ``t``.               #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -1039,9 +1039,9 @@ def test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs():
     assert len(residual_loops(off)) == 3, 'default knobs leave t, i and the in-row scan sequential'
 
 
-# --------------------------------------------------------------------------- #
+# #
 # C2 -- the ``(t, i)`` ROW-granularity wavefront behind a slice-shaped read.   #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -1099,10 +1099,10 @@ def test_row_sweep_ti_wavefront_is_detected():
     assert np.allclose(got, row_sweep_reference(a0.copy(), steps, n)), 'the (t, i) skew is not value-preserving'
 
 
-# --------------------------------------------------------------------------- #
+# #
 # C3 / C4 -- polybench lu and ludcmp: an outer loop with TWO sibling inner     #
 # loops, which ``extract_two_level_nest`` refuses outright.                    #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program

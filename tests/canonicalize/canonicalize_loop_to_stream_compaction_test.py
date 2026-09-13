@@ -79,9 +79,7 @@ def build(program) -> dace.SDFG:
     return sdfg
 
 
-# -----------------------------------------------------------------------------
 # Executable numpy oracles -- the reference is the sequential loop itself.
-# -----------------------------------------------------------------------------
 
 
 def oracle_s341(a, b):
@@ -112,9 +110,7 @@ def oracle_s343(aa, bb, flat):
     return k
 
 
-# -----------------------------------------------------------------------------
 # Positive: the lift fires, parallelizes, and preserves values.
-# -----------------------------------------------------------------------------
 
 
 @dace.program
@@ -447,9 +443,7 @@ def test_degenerate_masks(pattern):
     assert int(got_j[0]) == want_j
 
 
-# -----------------------------------------------------------------------------
 # Refusals -- firing on any of these is a silent miscompile.
-# -----------------------------------------------------------------------------
 
 
 @dace.program
@@ -726,7 +720,6 @@ def test_pass_is_a_no_op_when_it_refuses():
     assert sdfg.to_json() == before
 
 
-# -----------------------------------------------------------------------------
 # Renaming an axis must not retype it.
 #
 # Each phase copy gets its own iterator so ``LoopToMap`` does not see a counter another block
@@ -741,7 +734,6 @@ def test_pass_is_a_no_op_when_it_refuses():
 # symbolic stride over int32 bounds infers int32. Only the first shape can reach this pass today
 # -- ``loop_extent`` refuses any stride but 1 -- which is exactly why an assumed int64 looks
 # right here and would still be an assumption.
-# -----------------------------------------------------------------------------
 
 
 def stride_loop_sdfg(stride: str) -> tuple[dace.SDFG, LoopRegion]:
@@ -791,7 +783,6 @@ def test_a_unit_stride_axis_is_renamed_at_the_64_bit_width_its_step_infers():
     assert sdfg.symbols[new_name] == dace.int64
 
 
-# -----------------------------------------------------------------------------
 # ... and the width has to reach the SUBSET, not only the declaration.
 #
 # The renamed axis indexes ``mask`` and ``rank`` at one point per level. Formatting that point
@@ -802,7 +793,6 @@ def test_a_unit_stride_axis_is_renamed_at_the_64_bit_width_its_step_infers():
 # FOLDING: over a re-minted axis ``it - it`` does not cancel. Not every consumer splits -- ``subs``
 # keyed on the declared symbol still hits the re-minted one, because ``_eval_subs`` matches on the
 # NAME -- so the fold is the property to assert, and the width is the cause to assert beside it.
-# -----------------------------------------------------------------------------
 
 
 def probe_point_subset(stride: str) -> tuple[dace.SDFG, str, subsets.Range]:

@@ -175,9 +175,7 @@ def init_tendency_ref(
                 tendency_loc_cld[jm - 1, jk - 1, jl - kidia] = 0.0
 
 
-# ----------------------------------------------------------------
 # Helpers
-# ----------------------------------------------------------------
 def xfill(shape, lo=0.0, hi=1.0):
     a = np.empty(shape, np.float64)
     n = a.size

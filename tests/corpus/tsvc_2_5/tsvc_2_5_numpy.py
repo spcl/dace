@@ -307,9 +307,7 @@ def ref_masked_store_sym(a: np.ndarray, b: np.ndarray, threshold_data: np.ndarra
             a[i] = b[i]
 
 
-# ---------------------------------------------------------------------------
 #  Quasi-affine subscript / iteration patterns
-# ---------------------------------------------------------------------------
 
 
 def ref_quasi_affine_reduce_even(a: np.ndarray, out: np.ndarray) -> None:
@@ -346,9 +344,7 @@ def ref_quasi_affine_floor_div_scatter(a: np.ndarray, b: np.ndarray) -> None:
     np.add.at(b, idx, a)
 
 
-# ---------------------------------------------------------------------------
 #  Wavefront / loop-skew
-# ---------------------------------------------------------------------------
 
 
 def ref_wavefront2d(a: np.ndarray) -> None:
@@ -362,9 +358,7 @@ def ref_wavefront2d(a: np.ndarray) -> None:
             a[i, j] = 0.25 * (a[i, j] + a[i - 1, j] + a[i, j - 1] + a[i - 1, j - 1])
 
 
-# ---------------------------------------------------------------------------
 #  Early-exit / find-first (break loops)
-# ---------------------------------------------------------------------------
 
 
 def ref_break_find_first(a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray) -> None:
@@ -399,9 +393,7 @@ def ref_break_capture(a: np.ndarray, out_index: np.ndarray, out_value: np.ndarra
             break
 
 
-# ---------------------------------------------------------------------------
 #  Conditional reduction
-# ---------------------------------------------------------------------------
 
 
 def ref_cond_reduce_sum(a: np.ndarray, out: np.ndarray) -> None:
@@ -414,9 +406,7 @@ def ref_cond_reduce_sym(a: np.ndarray, out: np.ndarray, k: float) -> None:
     out[0] = float(a[a > k].sum())
 
 
-# ---------------------------------------------------------------------------
 #  Induction-variable closed form
-# ---------------------------------------------------------------------------
 
 
 def ref_iv_additive(out: np.ndarray, n: int) -> None:
@@ -436,9 +426,7 @@ def ref_iv_multiplicative(out: np.ndarray, n: int) -> None:
     out[0] = s
 
 
-# ---------------------------------------------------------------------------
 #  Argmax / argmin value
-# ---------------------------------------------------------------------------
 
 
 def ref_argmax_value(a: np.ndarray, out: np.ndarray) -> None:
@@ -451,9 +439,7 @@ def ref_argmin_value(a: np.ndarray, out: np.ndarray) -> None:
     out[0] = float(a.min())
 
 
-# ---------------------------------------------------------------------------
 #  Negative stride + manual unroll
-# ---------------------------------------------------------------------------
 
 
 def ref_neg_stride_rev(a: np.ndarray, b: np.ndarray) -> None:
@@ -478,9 +464,7 @@ def ref_reroll_saxpy7(a: np.ndarray, b: np.ndarray) -> None:
         a[i + 6] = a[i + 6] + b[i + 6] * 2.0
 
 
-# ---------------------------------------------------------------------------
 #  Strided / multiple scans
-# ---------------------------------------------------------------------------
 
 
 def ref_scan_strided_2(a: np.ndarray, x: np.ndarray) -> None:
@@ -508,9 +492,7 @@ def ref_scan_multi_carry(a: np.ndarray, b: np.ndarray, x: np.ndarray, y: np.ndar
         b[i] = b[i - 1] * y[i]
 
 
-# ---------------------------------------------------------------------------
 #  Canonicalize unit-test gap kernels
-# ---------------------------------------------------------------------------
 
 
 def ref_scan_conditional(out: np.ndarray, delta: np.ndarray, mask: np.ndarray) -> None:
@@ -603,9 +585,7 @@ def ref_fuse_move_ifs(a: np.ndarray, b: np.ndarray, src: np.ndarray, cond: np.nd
         b[:, :] = src + 1.0
 
 
-# ---------------------------------------------------------------------------
 #  Transformation-test gap kernels (fusion / loop-to-map / indirect fission)
-# ---------------------------------------------------------------------------
 
 
 def ref_fuse_stencil_through_transient(out: np.ndarray, a: np.ndarray) -> None:
@@ -668,9 +648,7 @@ def ref_fission_scatter_2body(b: np.ndarray, e: np.ndarray, a: np.ndarray, c: np
     e[idx] = c + 1.0
 
 
-# ---------------------------------------------------------------------------
 #  Generalized 2-D wavefront + disjoint-image challenge kernels
-# ---------------------------------------------------------------------------
 
 
 def ref_wf_north_west(a: np.ndarray) -> None:

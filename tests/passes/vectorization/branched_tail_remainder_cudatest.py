@@ -144,9 +144,7 @@ def _run_in_fork(work) -> int:
     return status
 
 
-# --------------------------------------------------------------------------------------------------
 # Structural / gating tests (no GPU device needed)
-# --------------------------------------------------------------------------------------------------
 def test_branched_tail_refused_on_cpu():
     """The strategy is GPU-only: a CPU config raises ``NotImplementedError`` at construction."""
     with pytest.raises(NotImplementedError, match="branched_tail.*GPU-only"):
@@ -408,9 +406,7 @@ def test_branched_tail_where_literal_arm_typed_not_bare_double():
             assert desc.dtype == dace.float16, f"output array {name!r} is {desc.dtype}, expected float16"
 
 
-# --------------------------------------------------------------------------------------------------
 # GPU-executing numeric tests (forked; bit-exact vs the NumPy fp16 oracle)
-# --------------------------------------------------------------------------------------------------
 @pytest.mark.gpu
 @pytest.mark.parametrize("width", [8, 4])
 def test_branched_tail_elementwise_bitexact(width):

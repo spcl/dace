@@ -32,9 +32,7 @@ N = dace.symbol('N')
 M = dace.symbol('M')
 
 
-# ----------------------------------------------------------------------------------------------
 # helpers
-# ----------------------------------------------------------------------------------------------
 def _num_maps(sdfg: dace.SDFG) -> int:
     return len([n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)])
 
@@ -108,9 +106,7 @@ def _scratch_sdfg(buf_transient: bool, ndim: int = 1, base: int = 0):
     return sdfg, loop
 
 
-# ----------------------------------------------------------------------------------------------
 # _loop_index -- the off-by-one guard
-# ----------------------------------------------------------------------------------------------
 @pytest.mark.parametrize('lo,hi,count', [(0, 8, 8), (3, 11, 8), (0, 1, 1)])
 def test_loop_index_reports_one_slot_per_iteration(lo, hi, count):
     """The private dimension must hold exactly one slot per iteration. ``get_loop_end`` returns the
@@ -155,9 +151,7 @@ def test_loop_index_refuses_non_unit_step():
     assert BufferExpansion._loop_index(loop) is None
 
 
-# ----------------------------------------------------------------------------------------------
 # _expand -- expansion is bit-exact, correctly sized, and unblocks LoopToMap
-# ----------------------------------------------------------------------------------------------
 def test_expand_1d_scratch_unblocks_loop_to_map_bit_exact():
     """A 1-D scratch buffer that ``LoopToMap`` refuses (non-iter-indexed write) becomes a validated
     ``Map`` after expansion, and the run matches the sequential baseline at full precision."""
@@ -246,9 +240,7 @@ def test_expand_offset_base_subset_bit_exact():
     assert np.allclose(out_map, expected)
 
 
-# ----------------------------------------------------------------------------------------------
 # defined_before_read / _privatizable_buffers -- the soundness guard
-# ----------------------------------------------------------------------------------------------
 def _fill(state, lo, hi, name='buf'):
     w = state.add_access(name)
     me, mx = state.add_map('wm', dict(j=f'{lo}:{hi}'))
@@ -412,9 +404,7 @@ def test_recurrence_a_i_from_a_i_minus_one_not_expanded_and_preserved():
     assert np.allclose(out, ref)
 
 
-# ----------------------------------------------------------------------------------------------
 # pass-level behaviour -- no needless growth, value-preserving
-# ----------------------------------------------------------------------------------------------
 def test_no_growth_when_loop_to_map_already_accepts():
     """A loop-local *transient* scratch buffer is one ``LoopToMap`` already privatises on its own,
     so expanding it would only grow the SDFG. The pass must leave it untouched (return ``None`` and

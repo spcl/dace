@@ -48,9 +48,7 @@ def _build_count_sdfg(name_tag: str, mask_shape, mask_dtype, dim, out_shape, out
     return sdfg
 
 
-# ---------------------------------------------------------------------------
 # Mode A — whole-array reduce
-# ---------------------------------------------------------------------------
 
 
 def test_mode_a_whole_array_int_mask_1d():
@@ -79,9 +77,7 @@ def test_mode_a_whole_array_int_mask_2d():
     assert int(out[0]) == int(mask.sum())
 
 
-# ---------------------------------------------------------------------------
 # Mode B — per-dim reduce
-# ---------------------------------------------------------------------------
 
 
 def test_mode_b_dim2_collapses_second_axis():
@@ -110,9 +106,7 @@ def test_mode_b_dim1_collapses_first_axis():
     np.testing.assert_array_equal(out, mask.sum(axis=0))
 
 
-# ---------------------------------------------------------------------------
 # Mode C — sectioned input subset
-# ---------------------------------------------------------------------------
 
 
 def test_mode_c_sectioned_input_subset():
@@ -143,9 +137,7 @@ def test_mode_c_sectioned_input_subset():
     assert int(out[0]) == 3
 
 
-# ---------------------------------------------------------------------------
 # Mode D — narrower mask kind
-# ---------------------------------------------------------------------------
 
 
 def test_mode_d_uint8_mask_widens_to_int32():

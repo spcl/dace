@@ -88,9 +88,7 @@ def _nloops(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
 
 
-# ----------------------------------------------------------------------
 # Outer-only invariant promotions (the canonical "lift-able" cases)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -199,9 +197,7 @@ def test_multiple_distinct_outer_bounds_value_preserving():
     assert np.allclose(out, exp)
 
 
-# ----------------------------------------------------------------------
 # Loop-variable-dependent expressions (must NOT lift)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -268,9 +264,7 @@ def test_mixed_outer_plus_loop_var_value_preserving():
     assert assignment_sites(sdfg) == [], f'the invariant offset is recomputed per iteration: {assignment_sites(sdfg)}'
 
 
-# ----------------------------------------------------------------------
 # Data-dependent symbols (read from arrays at runtime)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -331,9 +325,7 @@ def test_data_dependent_bound_value_preserving():
         f'the per-row bound is materialised at SDFG scope: {assignment_sites(sdfg)}'
 
 
-# ----------------------------------------------------------------------
 # Clutter / robustness
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -363,9 +355,7 @@ def test_irrelevant_outer_symbol_clutter_robust_to_unused_symbols():
     assert np.allclose(out, a + 1.0)
 
 
-# ----------------------------------------------------------------------
 # Combined patterns
-# ----------------------------------------------------------------------
 
 _kidia = dace.symbol('kidia')
 _kfdia = dace.symbol('kfdia')
@@ -440,9 +430,7 @@ def test_guarded_promoted_bound_value_preserving(cv):
     assert np.allclose(out, exp), f'value mismatch for c={cv}'
 
 
-# ----------------------------------------------------------------------
 # Deferred: reduction-with-inner-accumulator (known failing shape)
-# ----------------------------------------------------------------------
 
 
 @dace.program

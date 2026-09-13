@@ -14,7 +14,7 @@ from dace.sdfg.analysis import polyhedral_isl as poly
 
 p = symbolic.pystr_to_symbolic
 
-# --- to_isl / render_affine ---------------------------------------------------------
+# to_isl / render_affine
 
 
 def test_to_isl_affine_renders_and_isl_parses():
@@ -71,7 +71,7 @@ def test_to_isl_symbolic_divisor_raises():
         poly.to_isl(p('int_floor(N, M)'))
 
 
-# --- is_domain_empty ----------------------------------------------------------------
+# is_domain_empty
 
 
 def test_is_domain_empty_unsatisfiable_is_empty():
@@ -101,7 +101,7 @@ def test_is_domain_empty_s114_constraint_list_returns_bool_without_raising():
     assert isinstance(result, bool)
 
 
-# --- classify_dim -------------------------------------------------------------------
+# classify_dim
 
 
 def test_classify_dim_positive_unit_coefficient_is_lower_bound():
@@ -139,7 +139,7 @@ def test_classify_dim_negative_non_unit_coefficient_is_floor_upper_bound():
     assert len(hi) == 1 and hi[0] == int_floor(p('7'), p('2'))
 
 
-# --- constraint_to_sympy ------------------------------------------------------------
+# constraint_to_sympy
 
 
 def test_constraint_to_sympy_reconstructs_symbolic_expressions():

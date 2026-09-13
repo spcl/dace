@@ -23,9 +23,7 @@ from dace.transformation.passes.loop_to_scan import LoopToScan
 
 N = dace.symbol('N')
 
-# ---------------------------------------------------------------------------
 # 1. Library-node lifting -- LLVM can only SIMD-vectorize, never call cub::DeviceScan
-# ---------------------------------------------------------------------------
 
 
 def test_loop_lifts_to_scan_libnode_not_just_simd():
@@ -80,9 +78,7 @@ def test_residue_class_scan_with_stride_LLVM_cannot_vectorize():
         f'Stride-2 residue-class scan should set Scan.stride=2; got {[int(s.stride) for s in scans]}.')
 
 
-# ---------------------------------------------------------------------------
 # 2. Multiplicative recurrence closed form -- LLVM SCEV only models AddRec
-# ---------------------------------------------------------------------------
 
 
 def test_multiplicative_recurrence_collapses_to_closed_form():
@@ -124,9 +120,7 @@ def test_multiplicative_recurrence_collapses_to_closed_form():
                                        f'``acc *= 0.99 ** M``; {len(surviving_loops)} loops survived.')
 
 
-# ---------------------------------------------------------------------------
 # 3. Symbolic loop bounds + symbolic shapes -- LLVM specialises per-trip-count
-# ---------------------------------------------------------------------------
 
 
 def test_symbolic_loop_bound_no_specialization_needed():
@@ -166,9 +160,7 @@ def test_symbolic_loop_bound_no_specialization_needed():
         assert np.allclose(out, expected), f'symbolic-N scan diverged at N={n}'
 
 
-# ---------------------------------------------------------------------------
 # 4. Symbolic subset non-overlap proof -- LLVM AA must assume worst case
-# ---------------------------------------------------------------------------
 
 
 def test_symbolic_subset_non_overlap_proven_at_ir_level():
@@ -198,9 +190,7 @@ def test_symbolic_subset_non_overlap_proven_at_ir_level():
                              f'intersects() returned {result!r} (expected False)')
 
 
-# ---------------------------------------------------------------------------
 # 5. WCR is explicit on the edge -- LLVM has to pattern-match RecurrenceDescriptor
-# ---------------------------------------------------------------------------
 
 
 def test_wcr_explicit_no_reduction_pattern_match_needed():
@@ -239,9 +229,7 @@ def test_wcr_explicit_no_reduction_pattern_match_needed():
         for e in wcr_edges), ('reduction op should be explicit on the WCR edge string; codegen reads it directly.')
 
 
-# ---------------------------------------------------------------------------
 # 6. Hierarchical IR -- NestedSDFG composition with symbol_mapping
-# ---------------------------------------------------------------------------
 
 
 def test_nested_sdfg_composition_with_symbol_mapping():
@@ -281,9 +269,7 @@ def test_nested_sdfg_composition_with_symbol_mapping():
     assert np.isclose(out[0], 7.0)
 
 
-# ---------------------------------------------------------------------------
 # 7. Multi-backend codegen from one SDFG -- LLVM compiles per-target
-# ---------------------------------------------------------------------------
 
 
 def test_same_sdfg_lowers_to_cpu_and_gpu_via_schedule_only():
@@ -320,9 +306,7 @@ def test_same_sdfg_lowers_to_cpu_and_gpu_via_schedule_only():
         pytest.fail('expected at least one MapEntry to flip schedule on')
 
 
-# ---------------------------------------------------------------------------
 # 8. Memlets carry exact subsets -- no aliasing reconstruction needed
-# ---------------------------------------------------------------------------
 
 
 def test_memlet_subset_is_explicit_no_aliasing_reconstruction():
@@ -371,9 +355,7 @@ def test_memlet_subset_is_explicit_no_aliasing_reconstruction():
     assert np.allclose(b, a + 1.0)
 
 
-# ---------------------------------------------------------------------------
 # 9. Symbolic stride/shape on descriptors -- LLVM is byte-pointer-only
-# ---------------------------------------------------------------------------
 
 
 def test_symbolic_shape_and_strides_in_descriptor():

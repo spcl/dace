@@ -298,9 +298,9 @@ class FuseConsecutiveLoops(ppl.Pass):
 
 __all__ = ['FuseConsecutiveLoops', 'GuardedFusionPlan', 'plan_guarded_fusion', 'commit_guarded_fusion']
 
-# --------------------------------------------------------------------------- #
+# #
 # Guarded fusion: the same adjacent-range rewrite for loops whose bodies DIFFER.
-# --------------------------------------------------------------------------- #
+# #
 #
 # ``FuseConsecutiveLoops`` above fuses a chain only when the bodies are identical, because then
 # the merge is free -- widen one bound, drop the twin. When the bodies differ the index sequence

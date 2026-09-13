@@ -1167,7 +1167,6 @@ def _get_unstructured_access_cloudsc_sdfg(layout: str = "C") -> dace.SDFG:
     state_inner2 = sdfg_inner.add_state("inner_s2")
 
     # Populate inner SDFG
-    # ==============================
     if layout == "Fortran":
         sdfg_inner.add_edge(state_inner1, state_inner2, InterstateEdge(assignments={"jo": "iorder[_for_it_88, 0]"}))
     else:
@@ -1205,8 +1204,6 @@ def _get_unstructured_access_cloudsc_sdfg(layout: str = "C") -> dace.SDFG:
         state_inner2.add_edge(t3, "_out", zratio, None, dace.memlet.Memlet("zratio[_for_it_88, jo -1]"))
     else:
         state_inner2.add_edge(t3, "_out", zratio, None, dace.memlet.Memlet("zratio[jo -1, _for_it_88]"))
-
-    # ==============================
 
     map_entry, map_exit = state_outer.add_map("m1", {"_for_it_88": "0:klon:1"})
 

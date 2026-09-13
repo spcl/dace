@@ -51,9 +51,7 @@ def loops_with_var(sdfg: dace.SDFG, var: str):
     ]
 
 
-# ---------------------------------------------------------------------------
 # Positive: the alias is confined to distance 0, so the axis is DOALL.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -134,9 +132,7 @@ def test_scaled_triangular_inner_axis_maps():
     assert np.allclose(aa, ref)
 
 
-# ---------------------------------------------------------------------------
 # Negative: a dependence carried at distance != 0 must STILL refuse.
-# ---------------------------------------------------------------------------
 
 
 def test_outer_transpose_axis_stays_sequential():

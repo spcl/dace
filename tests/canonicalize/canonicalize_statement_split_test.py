@@ -61,9 +61,7 @@ def _rand(*shape, seed=0):
     return np.random.default_rng(seed).random(shape)
 
 
-# ===========================================================================
 # Independent / dependent-but-splittable statements
-# ===========================================================================
 @dace.program
 def _dependent_same_index(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], V: dace.float64[N]):
     for i in range(N):
@@ -122,10 +120,8 @@ def test_pass_through_write_then_direct_read():
     _canon_vs_raw(_pass_through_write_read, ins, N=n)
 
 
-# ===========================================================================
 # Anti-dependence by value: a later statement reads the ORIGINAL value of an
 # array the loop also writes.
-# ===========================================================================
 @dace.program
 def _forward_read_antidep(A: dace.float64[N], B: dace.float64[N], D: dace.float64[N]):
     for i in range(N - 1):
@@ -192,9 +188,7 @@ def test_recurrence_plus_read_of_original_value():
     _canon_vs_raw(_recurrence_then_read_original, ins, N=n)
 
 
-# ===========================================================================
 # Genuinely loop-carried: must stay a correct sequential loop (or a scan).
-# ===========================================================================
 @dace.program
 def _prefix_sum(A: dace.float64[N], B: dace.float64[N]):
     for i in range(1, N):
@@ -212,9 +206,7 @@ def test_prefix_sum_stays_correct():
     _canon_vs_raw(_prefix_sum, ins, N=n)
 
 
-# ===========================================================================
 # Perfect vs. imperfect 2-D nests.
-# ===========================================================================
 @dace.program
 def _perfect_2d(A: dace.float64[N, M], B: dace.float64[N, M], C: dace.float64[N, M]):
     for i in range(N):
@@ -281,12 +273,10 @@ def test_forward_read_anti_dependence_snapshots_and_stays_bit_exact():
     assert any('snap' in nm for nm in cand.arrays), "forward-read anti-dependence should snapshot the array"
 
 
-# ===========================================================================
 # The per-edge forward-read break -- one fixture per shape. These live with
 # ``BreakAntiDependence(forward_reads=True)``, which owns the rewrite; ``SplitStatements``
 # distributes and breaks nothing. Hand-built single-compute-state loops -- the frontend
 # leaves slice states, which yield no single compute state.
-# ===========================================================================
 def _mixed_loop(name):
     """A ``for i in range(N - 1)`` loop with one (empty) body state."""
     sdfg = dace.SDFG(name)
@@ -474,10 +464,8 @@ def test_forward_reads_transient_write_not_snapshotted():
     assert not _split_snaps(sdfg)
 
 
-# ===========================================================================
 # Black-box (opaque) map bodies: statement splitting clones a body once per
 # output, so a node whose effect is not just its out-memlets must block the split.
-# ===========================================================================
 def _two_output_map(name, second_tasklet):
     """``for i: A[i] = B[i] + 1; C[i] = <second_tasklet>`` as one straight-line map."""
     sdfg = dace.SDFG(name)

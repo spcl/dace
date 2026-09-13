@@ -167,9 +167,7 @@ class PythonEmitter:
         lines.extend(body.lines)
         return lines
 
-    # ------------------------------------------------------------------
     # SDFG-level emission
-    # ------------------------------------------------------------------
 
     def _emit_sdfg(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
         buf.line(f"# Top-level SDFG: {sdfg.name!r}")
@@ -214,14 +212,12 @@ class PythonEmitter:
             buf.line("# --- Control flow body ---")
             buf.line(f"{populator}({var}, {var})")
 
-    # ------------------------------------------------------------------
     # Bulk emission for symbols / constants / descriptors
     #
     # The SDFG-level pre-state setup (symbols, constants, data descriptors)
     # is emitted as data-driven loops over Python literal lists rather than
     # one ``add_X`` line per item. This keeps a 200-symbol SDFG readable —
     # the table of names is data, the loop body is the "how to add" code.
-    # ------------------------------------------------------------------
 
     def _emit_symbol_block(self, sdfg: SDFG, var: str, buf: "_IndentedBuffer"):
         items = list(sdfg.symbols.items())
@@ -367,9 +363,7 @@ class PythonEmitter:
             groups.setdefault(key, []).append(name)
         return groups
 
-    # ------------------------------------------------------------------
     # Control flow region body
-    # ------------------------------------------------------------------
 
     def _emit_cfg_populator(self, cfg: AbstractControlFlowRegion, kind: str = "cfg") -> Optional[str]:
         """Emit a top-level ``_populate_<kind>_<N>(cfg, sdfg)`` function for
@@ -579,9 +573,7 @@ class PythonEmitter:
         extra = ", is_start_block=True" if is_start else ""
         buf.line(f"{parent_var}.add_node({var}{extra})")
 
-    # ------------------------------------------------------------------
     # State body
-    # ------------------------------------------------------------------
 
     def _emit_state_populator(self, state: SDFGState) -> Optional[str]:
         """Emit a top-level ``_populate_state_<N>(state)`` function for this
@@ -772,9 +764,7 @@ class PythonEmitter:
                                   f"(label={getattr(node, 'label', '?')!r}); extend "
                                   f"to_python._emit_state_node")
 
-    # ------------------------------------------------------------------
     # NestedSDFG support
-    # ------------------------------------------------------------------
 
     def _emit_nested_factory(self, nested: SDFG) -> str:
         # Reserve our slot BEFORE recursing — otherwise any nested-SDFG
@@ -796,9 +786,7 @@ class PythonEmitter:
         self._nested_factories[idx] = nested_lines
         return fn_name
 
-    # ------------------------------------------------------------------
     # LibraryNode
-    # ------------------------------------------------------------------
 
     def _emit_library_node(self, node, state: SDFGState, state_var: str, buf: "_IndentedBuffer"):
         cls = type(node)
@@ -896,9 +884,7 @@ class PythonEmitter:
             n += 1
 
 
-# ------------------------------------------------------------------------
 # Helpers
-# ------------------------------------------------------------------------
 
 _MISSING = object()
 
@@ -1267,7 +1253,6 @@ def _emit_subset(subset) -> str:
     return _pyrepr(str(subset))
 
 
-# ----------------------------------------------------------------------
 # Compact helper kit: pattern recognition + helper definitions
 #
 # These detect the most common stamped patterns in DaCe codegen output
@@ -1275,7 +1260,6 @@ def _emit_subset(subset) -> str:
 # emitter can collapse them to short helper calls. Definitions of the
 # helpers themselves are emitted at the top of the generated file when
 # their pattern is used often enough.
-# ----------------------------------------------------------------------
 
 _BINOP_TASKLET_RE = re.compile(r'^__out = \(__in1 ([+\-*/%]) __in2\)$')
 _CONST_TASKLET_RE = re.compile(r'^__out = (.+)$')
@@ -1513,9 +1497,7 @@ def _values_equal(a, b) -> bool:
         return False
 
 
-# ----------------------------------------------------------------------
 # CLI entry point — ``python -m dace.sdfg.to_python <sdfg> [-o out.py]``
-# ----------------------------------------------------------------------
 
 
 def _main():

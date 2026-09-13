@@ -197,9 +197,7 @@ def ensure_dace_pch(cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtim
         return None  # any trouble -> compile without the PCH
 
 
-# ---------------------------------------------------------------------------
 # CMake configure cache
-# ---------------------------------------------------------------------------
 
 #: The configure state worth transplanting into a fresh build folder. ``CMakeCache.txt`` holds the
 #: ``find_package`` results; ``CMakeFiles/<cmake-version>/`` holds the compiler identification and

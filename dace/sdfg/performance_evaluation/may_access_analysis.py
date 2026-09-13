@@ -409,9 +409,7 @@ def approximate_total_volume(sdfg: SDFG, symbol_mapping):
     return sum
 
 
-################################################################################
-# Utility functions for running the analysis from the command line #############
-################################################################################
+# Utility functions for running the analysis from the command line
 
 
 def main() -> None:

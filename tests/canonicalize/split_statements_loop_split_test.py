@@ -126,9 +126,7 @@ def _refuses(sdfg):
     return fired is None and sdfg.hash_sdfg() == before
 
 
-# ===========================================================================
 # The flat loop is distributed into one loop per statement.
-# ===========================================================================
 def test_flat_loop_splits_into_two_loops():
     """One loop in, two loops out -- the carry and the parallel statement, each self-contained."""
     sdfg = carry_loop('flat_split')
@@ -342,9 +340,7 @@ def test_loop_split_is_deterministic():
     assert hashes[0] == hashes[1]
 
 
-# ===========================================================================
 # Refusals -- each one must leave the loop byte-identical.
-# ===========================================================================
 def test_rmw_read_by_another_group_is_ordered_writer_first():
     """``a[i] = a[i-1] + x[i]; b[i] = a[i-1] * 2`` -- ``b`` reads ``a`` one BEHIND the write.
 
@@ -582,10 +578,8 @@ def test_single_output_loop_is_left_alone():
     assert _refuses(sdfg)
 
 
-# ===========================================================================
 # End to end: the pipeline outcome does not regress now that the split, and no
 # longer LoopFission, is what distributes this loop.
-# ===========================================================================
 def test_canonicalize_still_parallelizes_the_motivating_kernel():
     """Canonicalization ends with no loops left and the parallel statement in a map."""
     from dace.transformation.passes.canonicalize.pipeline import canonicalize

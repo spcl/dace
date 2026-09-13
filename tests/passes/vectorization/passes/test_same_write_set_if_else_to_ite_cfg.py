@@ -184,7 +184,6 @@ def test_pass_is_idempotent_after_first_run():
     assert second is None
 
 
-# ---------------------------------------------------------------------------
 # Two-arm same-write-set with the python-frontend empty entry-state pattern.
 # Each arm begins with an EMPTY state whose only out-edge carries an
 # interstate symbol binding (e.g. ``__sym_z = z``); the substantive compute
@@ -193,7 +192,6 @@ def test_pass_is_idempotent_after_first_run():
 # sequential single-arm fallback in ``BranchNormalization`` would silently
 # wire ``_old`` to the original output array, breaking the dataflow.
 # These tests pin the hoist + entry-state removal.
-# ---------------------------------------------------------------------------
 
 
 def _build_same_write_if_else_with_empty_entry_states_sdfg():
@@ -473,9 +471,7 @@ def test_two_writes_per_arm_numerical_correctness():
             np.testing.assert_allclose(C, exp_C, err_msg=f"C: c={c}, b={b}, got={C}, want={exp_C}")
 
 
-# ---------------------------------------------------------------------------
 # Use-count gating, _symbol_has_external_consumer
-# ---------------------------------------------------------------------------
 
 
 def _build_sdfg_with_cb_only(sym_name: str):
@@ -584,9 +580,7 @@ def test_promote_gather_indices_noop_without_edge():
     assert p._promote_gather_indices(sdfg, None, "w[idx[i]]") == "w[idx[i]]"
 
 
-# ---------------------------------------------------------------------------
 # Array-predicate guard lifting (``_lift_array_predicate_cond``).
-# ---------------------------------------------------------------------------
 
 
 def test_lift_array_predicate_cond_stages_array_read_as_connector():
@@ -617,9 +611,7 @@ def test_lift_array_predicate_cond_skips_pure_symbol_condition():
     assert SameWriteSetIfElseToITECFG()._lift_array_predicate_cond(sdfg, state, "K > 0", "i") is None
 
 
-# ---------------------------------------------------------------------------
 # s279-shaped mixed cond: array transient vs interstate staged array read.
-# ---------------------------------------------------------------------------
 
 
 def build_s279_shaped_guard_sdfg():
@@ -721,13 +713,11 @@ def test_pass_mixed_cond_numerical_correctness():
                 np.testing.assert_allclose(c[0], expected, err_msg=f"a={av} b={bv} c={cv}")
 
 
-# ---------------------------------------------------------------------------
 # Extended gather-index promotion (``_promote_gather_indices``) edge cases.
 # A guard reading a gather (``w[idx[i], k] > K``) carries a nested subscript no
 # plain memlet can express; the lift promotes each nested index ``idx[i]`` to a
 # fresh interstate symbol ``_gidx`` assigned on the edge(s) feeding the merge
 # state, so the staged read becomes ``w[_gidx, k]``.
-# ---------------------------------------------------------------------------
 
 
 def _gather_merge_two_preds_sdfg():

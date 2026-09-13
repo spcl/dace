@@ -136,8 +136,6 @@ def test_solve(implementation, dtype, size, shape):
     assert (np.linalg.norm(ref - B2[out_subset]) / np.linalg.norm(ref)) < rtol
 
 
-###############################################################################
-
 # A single right-hand side reaches the library node RANK-1 whichever way the caller spelled it:
 # ``Solve.validate`` squeezes the memlet subsets, so an ``(n, 1)`` container arrives with the same
 # squeezed shape as a plain vector. The vendor path therefore has to serve both spellings.

@@ -71,7 +71,6 @@ def test_isolated_node_in_nested_region_is_printable():
     assert 'unresolved' not in text, text
 
 
-########################################
 # Nested failures, each with a DECOY block at the same index of the top-level SDFG
 
 
@@ -276,7 +275,6 @@ def test_debuginfo_is_reported_for_every_node_type_that_carries_it():
     assert 'Originating' not in str(InvalidSDFGNodeError('boom', sdfg, 0, None))
 
 
-########################################
 # Acceptance: the fix changes only what the message says, never which SDFGs validate
 
 

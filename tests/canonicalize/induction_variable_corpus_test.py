@@ -187,9 +187,7 @@ def tsvc25_program(name: str):
     return [p for p in tsvc_2_5.collect() if p.f.__name__ == name][0]
 
 
-# =====================================================================================
 # TRUE_IV -- closed forms, verified independently (Python trace + symbolic subset check).
-# =====================================================================================
 #
 # s126: k := k+1 stepped once per inner iter and once more per outer iter (TWO sites); k=1
 #   seed. Closed form k(i,j) = i*LEN_2D + j, verified by hand-tracing bb/flat_2d_array
@@ -387,9 +385,7 @@ def test_true_induction_variable_closes(name, bare_fires, check_closed):
         assert allclose(ref[n], got[n]), f"{name}/{n}: closed-form result diverges from the numpy reference"
 
 
-# =====================================================================================
 # REFUSE -- conditional counters and reductions wearing an induction variable's clothes.
-# =====================================================================================
 #
 # Conditional: `if c: j += 1` makes j a COUNT of true predicates -- not affine in the loop
 # indices, no closed form exists. s341/s342/s343 increment only inside the `if`, no matching

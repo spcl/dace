@@ -54,7 +54,7 @@ def assert_refused(xform, sdfg: dace.SDFG, first: SDFGState, second: SDFGState) 
         assert match(xform, sdfg, first, second).can_be_applied(sdfg, 0, sdfg, permissive=permissive) is False
 
 
-# --------------------------------------------------------------------------- cycles
+# cycles
 def make_cyclic(name: str, cyclic_second: bool) -> Tuple[dace.SDFG, SDFGState, SDFGState]:
     """One state holds ``A -> t -> A``: a self-feeding access node, i.e. a cycle."""
     sdfg, first, second = two_states(name)
@@ -87,7 +87,7 @@ def test_cyclic_state_not_fused_by_driver(cyclic_second):
     assert sdfg.number_of_nodes() == 2
 
 
-# --------------------------------------------------------------------------- broken scope
+# broken scope
 def make_dangling_exit(name: str, on_second: bool) -> Tuple[dace.SDFG, SDFGState, SDFGState]:
     """A MapExit whose body edge was deleted: its sink is unreachable from any source, so
     ``scope_children`` raises ``RuntimeError('Leftover nodes in queue')``."""
@@ -127,7 +127,7 @@ def test_map_scope_without_exit_refused(xform):
     assert_refused(xform, sdfg, first, second)
 
 
-# --------------------------------------------------------------------------- connector shapes
+# connector shapes
 def make_scope_edge_damage(name: str, kind: str) -> Tuple[dace.SDFG, SDFGState, SDFGState]:
     """Second state is ``B -> me -> t -> mx -> A``; ``kind`` damages the exit's connectors."""
     sdfg, first, second = two_states(name)
@@ -170,7 +170,7 @@ def test_damaged_scope_connector_refused(xform, kind):
     assert_refused(xform, sdfg, first, second)
 
 
-# --------------------------------------------------------------------------- interstate assignments
+# interstate assignments
 @pytest.mark.parametrize('xform', XFORMS, ids=XFORM_IDS)
 def test_unparseable_assignment_refused(xform):
     """An assignment RHS that does not parse must never be absorbed into a predecessor edge."""
@@ -184,7 +184,7 @@ def test_unparseable_assignment_refused(xform):
     assert_refused(xform, sdfg, first, second)
 
 
-# --------------------------------------------------------------------------- missing descriptors
+# missing descriptors
 @pytest.mark.parametrize('xform', XFORMS, ids=XFORM_IDS)
 def test_missing_descriptor_refused(xform):
     """An AccessNode whose descriptor an earlier pass removed."""
@@ -200,7 +200,7 @@ def test_missing_descriptor_refused(xform):
     assert_refused(xform, sdfg, first, second)
 
 
-# --------------------------------------------------------------------------- SubsetUnion memlets
+# SubsetUnion memlets
 @pytest.mark.parametrize('xform', XFORMS, ids=XFORM_IDS)
 def test_subset_union_memlet_is_indeterminate(xform):
     """``subsets.intersects`` has no answer for a SubsetUnion; the conservative one is
@@ -217,7 +217,7 @@ def test_subset_union_memlet_is_indeterminate(xform):
     assert match(xform, sdfg, first, second).can_be_applied(sdfg, 0, sdfg) in (True, False)
 
 
-# --------------------------------------------------------------------------- apply-side repairs
+# apply-side repairs
 @pytest.mark.parametrize('xform', XFORMS, ids=XFORM_IDS)
 def test_start_block_repinned_without_raising(xform):
     """``apply`` removes the start block; the region then has two source blocks and no pin, so
@@ -276,7 +276,7 @@ def test_extended_preexisting_bad_memlet_does_not_crash_apply():
     assert sdfg.number_of_nodes() == 1
 
 
-# --------------------------------------------------------------------------- no over-refusal
+# no over-refusal
 @pytest.mark.parametrize('xform', XFORMS, ids=XFORM_IDS)
 def test_well_formed_map_pair_still_fuses(xform):
     """The structural precondition must not refuse a perfectly ordinary map-to-map RAW pair."""

@@ -198,9 +198,9 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
                                              f"max|diff|={max_abs_diff(lv, ev):.3e}")
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Fixtures
-# --------------------------------------------------------------------------- #
+# #
 @pytest.fixture
 def require_experimental():
     """Assert the readable generator is wired up; it is required, not optional."""

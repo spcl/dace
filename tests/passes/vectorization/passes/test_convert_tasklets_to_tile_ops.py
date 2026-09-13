@@ -101,7 +101,7 @@ def test_converter_refuses_invalid_widths():
         ConvertTaskletsToTileOps(widths=(8, 8, 8, 8))
 
 
-# ---- unary tasklet conversion (TileUnop) ----------------------------------
+# unary tasklet conversion (TileUnop)
 
 
 def _build_inner_body_with_unop(op="abs"):
@@ -161,7 +161,7 @@ def test_converter_unop_preserves_memlets_on_rewired_edges():
     assert str(c_edge.data) == "C[ii]"
 
 
-# ---- ternary if-then-else (TileITE) -----------------------------------------
+# ternary if-then-else (TileITE)
 
 
 def _build_inner_body_with_ite():
@@ -226,7 +226,7 @@ def test_converter_ite_wires_cond_t_e_connectors_correctly():
     assert str(out_edge.data) == "O[ii]"
 
 
-# ---- operand-kind detection (Scalar broadcast) ---------------------------
+# operand-kind detection (Scalar broadcast)
 
 
 def _build_inner_body_with_tile_plus_scalar(op="+"):
@@ -307,7 +307,7 @@ def test_converter_unop_with_scalar_source_sets_scalar_kind():
     assert unop.kind_a == "Scalar"
 
 
-# ---- reduction (TileReduce) ---------------------------------------------
+# reduction (TileReduce)
 
 
 def _build_inner_body_with_reduction(op="+"):
@@ -381,7 +381,7 @@ def test_converter_skips_non_inplace_binop():
     assert any(isinstance(n, TileBinop) for n in body_state.nodes())
 
 
-# ---- forward-analysis output transient widening -------------------------------
+# forward-analysis output transient widening
 
 
 def test_widening_done_by_widen_accesses_pre_pass():
@@ -457,7 +457,7 @@ def test_converter_leaves_length1_output_unchanged_for_all_scalar_binop():
         f"expected mid_t to stay length-1 for all-Scalar op (Scalar output), got {tuple(desc.shape)}"
 
 
-# ---- Symbol operand kind --------------------------------------------------
+# Symbol operand kind
 
 
 def _build_inner_body_with_symbol_binop(body_str):
@@ -520,7 +520,7 @@ def test_converter_handles_symbol_in_min_function():
     assert binop.expr_b == "0.5"
 
 
-# ---- mask wiring on converted lib nodes ------------------------------------
+# mask wiring on converted lib nodes
 
 
 def _build_body_with_mask(body_str, n_in_conns=2, has_b_arr=True):
@@ -621,7 +621,7 @@ def test_converter_keeps_mask_producer_an_alive_for_reductions():
     assert any(isinstance(n, TileMaskGen) for n in body_state.nodes())
 
 
-# ---- Symbol operand: data-independent vs lane-id-dependent -----------------
+# Symbol operand: data-independent vs lane-id-dependent
 
 
 def _build_body_with_zero_in_conn(body_str, add_symbol_N=True):
@@ -700,7 +700,7 @@ def test_converter_emits_mixed_tilebinop_with_lane_id_and_invariant_symbols():
     assert {binop.kind_a, binop.kind_b} == {"Tile", "Symbol"}
 
 
-# ---- ``**`` / ``pow`` lowering -----------------------------------------------
+# ``**`` / ``pow`` lowering
 
 
 @pytest.mark.parametrize("body_form", [

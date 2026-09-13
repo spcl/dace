@@ -50,9 +50,7 @@ def _check(prog, inputs, expected, horizontal=True, syms=None):
     return before, after
 
 
-# ---------------------------------------------------------------------------
 # Vertical fusion: producer -> consumer chains.
-# ---------------------------------------------------------------------------
 
 
 def test_vertical_two_elementwise_chain():
@@ -140,9 +138,7 @@ def test_vertical_long_chain_five():
     assert before == 5 and after == 1
 
 
-# ---------------------------------------------------------------------------
 # Horizontal fusion: independent maps sharing inputs / iteration space.
-# ---------------------------------------------------------------------------
 
 
 def test_horizontal_shared_inputs():
@@ -192,9 +188,7 @@ def test_horizontal_three_way():
     assert before == 3 and after < before
 
 
-# ---------------------------------------------------------------------------
 # Reductions + mixed.
-# ---------------------------------------------------------------------------
 
 
 def test_elementwise_then_reduction_value_preserving():
@@ -248,9 +242,7 @@ def test_mixed_vertical_and_horizontal():
     assert after < before
 
 
-# ---------------------------------------------------------------------------
 # Refusal / no-op: nothing to fuse, or shapes incompatible.
-# ---------------------------------------------------------------------------
 
 
 def test_single_map_no_fuse():

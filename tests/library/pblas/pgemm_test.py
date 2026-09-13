@@ -236,7 +236,6 @@ def test_pgemm():
             M, N, K, R, S = N, K, R, S, M
 
 
-###############################################################################
 # Regression test for the b_block_sizes "(name, range)" spelling.
 #
 # distr.MatMult accepts a_block_sizes/b_block_sizes as either a literal tuple of
@@ -373,7 +372,6 @@ def test_pgemm_named_block_sizes():
         commworld.Barrier()
 
 
-###############################################################################
 # Two process grids, one compiled object.
 #
 # The grid used to be built in __dace_init_ out of the Px / Py symbols. A

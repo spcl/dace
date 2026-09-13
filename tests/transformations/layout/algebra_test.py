@@ -10,7 +10,7 @@ N = sympy.Symbol('N', nonnegative=True, integer=True)
 M = sympy.Symbol('M', nonnegative=True, integer=True)
 
 
-# --------------------------- compose (semantics) --------------------------- #
+# compose (semantics) ---------------------------
 def test_identity_map():
     m = identity_map([N, M])
     assert m.digits == (Digit(0, 1, N), Digit(1, 1, M))
@@ -36,7 +36,7 @@ def test_block_then_unblock_map_roundtrip_divisible():
     assert m.digits == (Digit(0, 1, 128), )
 
 
-# --------------------------- optimizer (rewrite rules) --------------------------- #
+# optimizer (rewrite rules) ---------------------------
 def test_block_unblock_cancels():
     assert is_identity([Block(0, 16), Unblock(0, 16)])
     assert is_identity([Unblock(0, 16), Block(0, 16)])
@@ -86,7 +86,7 @@ def test_block_block_kept():
     assert out == [Block(0, 16), Block(0, 4)]
 
 
-# ------------------------- emission (rounding kept) ------------------------- #
+# emission (rounding kept) -------------------------
 def test_block_extent_divides_the_whole_numerator():
     # `sympy.ceiling(e / b)` distributes the division over a sum numerator, and sym2cpp prints the
     # argument without the ceiling -- so each term truncates alone and the `1/16` term emits as C

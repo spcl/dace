@@ -20,7 +20,7 @@ TERNARY_SLOTS = {
 }
 
 tasklet_infos = [
-    # === ARRAY + SYMBOL === constant comes from the free-symbol path
+    # ARRAY + SYMBOL === constant comes from the free-symbol path
     ("out = in_a - sym_b", "array", {"a"}, {}, {"sym_b"}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
         "lhs": "out",
@@ -31,7 +31,7 @@ tasklet_infos = [
         "constant2": "sym_b"
     }),
 
-    # === ARRAY + CONSTANT === constant comes from the AST-literal path instead
+    # ARRAY + CONSTANT === constant comes from the AST-literal path instead
     ("out = in_a / 2.5", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
         "lhs": "out",
@@ -42,7 +42,7 @@ tasklet_infos = [
         "constant2": "2.5"
     }),
 
-    # === ARRAY + ARRAY ===
+    # ARRAY + ARRAY
     ("out = in_a - in_b", "array", {"a", "b"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
         "lhs": "out",
@@ -53,7 +53,7 @@ tasklet_infos = [
         "constant2": None
     }),
 
-    # === SCALAR + SYMBOL ===
+    # SCALAR + SYMBOL
     ("out = in_x - sym_y", "scalar", {}, {"x"}, {"sym_y"}, {
         "type": tutil.TaskletType.SCALAR_SYMBOL,
         "lhs": "out",
@@ -64,7 +64,7 @@ tasklet_infos = [
         "constant2": "sym_y"
     }),
 
-    # === SYMBOL + SYMBOL === two free symbols, no connectors
+    # SYMBOL + SYMBOL === two free symbols, no connectors
     ("out = sym_a / sym_b", "scalar", {}, {}, {"sym_a", "sym_b"}, {
         "type": tutil.TaskletType.SYMBOL_SYMBOL,
         "lhs": "out",
@@ -75,7 +75,7 @@ tasklet_infos = [
         "constant2": "sym_b"
     }),
 
-    # === UNARY / FUNCTIONAL OPS === function name is read verbatim off the AST call, so one per shape
+    # UNARY / FUNCTIONAL OPS === function name is read verbatim off the AST call, so one per shape
     ("out = sqrt(in_a)", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.UNARY_ARRAY,
         "lhs": "out",
@@ -125,7 +125,7 @@ tasklet_infos = [
         "constant2": None
     }),
 
-    # === ASSIGNMENTS === all four descriptor combinations, output descriptor IS inspected here
+    # ASSIGNMENTS === all four descriptor combinations, output descriptor IS inspected here
     ("out = in_a", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT,
         "lhs": "out",
@@ -172,7 +172,7 @@ tasklet_infos = [
         "constant2": None,
     }),
 
-    # === SINGLE-INPUT TWO RHS CASE === one connector used twice -> binary, not unary
+    # SINGLE-INPUT TWO RHS CASE === one connector used twice -> binary, not unary
     ("out = in_a * in_a", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
         "lhs": "out",
@@ -260,7 +260,7 @@ tasklet_infos = [
         "constant2": None,
     }),
 
-    # === LOGICAL OPERATORS === ast.BoolOp / ast.UnaryOp, and the word-delimiter split in `_reorder_rhs`
+    # LOGICAL OPERATORS === ast.BoolOp / ast.UnaryOp, and the word-delimiter split in `_reorder_rhs`
     ("out = in_a and in_b", "array", {"a", "b"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
         "lhs": "out",
@@ -299,7 +299,7 @@ tasklet_infos = [
         "constant2": "False",
     }),
 
-    # === COMPARISONS === one `_CMP_SYMBOLS` entry each, spread over the operand shapes
+    # COMPARISONS === one `_CMP_SYMBOLS` entry each, spread over the operand shapes
     ("out = in_a < in_b", "array", {"a", "b"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
         "lhs": "out",
@@ -347,7 +347,7 @@ tasklet_infos = [
         "constant2": None
     }),
 
-    # === TERNARY (ITE) === the only shape filling rhs3/cond/then_arm/else_arm. The operand slots
+    # TERNARY (ITE) === the only shape filling rhs3/cond/then_arm/else_arm. The operand slots
     # and the semantic ones alias the same three connectors, in argument order.
     ("out = ITE(in_c, in_a, in_b)", "array", {"a", "b", "c"}, {}, {}, {
         "type": tutil.TaskletType.TERNARY_ARRAY,

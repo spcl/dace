@@ -77,9 +77,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         """Standalone pass: no dependencies."""
         return set()
 
-    # ------------------------------------------------------------------
     # Helpers
-    # ------------------------------------------------------------------
     @staticmethod
     def _array_side_subset(edge: MultiConnectorEdge[Memlet], array_name: str) -> subsets.Subset | None:
         """Return the subset of ``edge`` that addresses ``array_name``."""
@@ -272,9 +270,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                     return True
         return False
 
-    # ------------------------------------------------------------------
     # Collection
-    # ------------------------------------------------------------------
     def _collect_occurrences(
         self, state: 'dace.SDFGState'
     ) -> list[tuple[dace.nodes.AccessNode, list[MultiConnectorEdge[Memlet]], list[MultiConnectorEdge[Memlet]]]]:
@@ -344,9 +340,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             occurrences.append((node, producers, consumers))
         return occurrences
 
-    # ------------------------------------------------------------------
     # Rewrite
-    # ------------------------------------------------------------------
     def _apply_multi(self, sdfg: SDFG, state: 'dace.SDFGState', bridge: dace.nodes.AccessNode,
                      producers: list[MultiConnectorEdge[Memlet]], consumers: list[MultiConnectorEdge[Memlet]]) -> bool:
         """Replace the bridge with one scalar per distinct subset plus dep edges.
@@ -615,9 +609,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                             state.remove_edge(outer)
                     scope_node.remove_in_connector(in_conn)
 
-    # ------------------------------------------------------------------
     # Driver
-    # ------------------------------------------------------------------
     def _apply(self, sdfg: SDFG) -> int:
         """Stage every eligible bridge in ``sdfg`` and recurse into NSDFGs."""
         count = 0

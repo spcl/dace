@@ -67,9 +67,7 @@ def _bridge_is_staged(sdfg: dace.SDFG, bridge_name: str) -> bool:
     return False
 
 
-# ----------------------------------------------------------------------
 # Pattern builders
-# ----------------------------------------------------------------------
 def _build_inmap_single_bridge(N: int = 8):
     """``tasklet1 -[A[i]]-> A_bridge -[A[i]]-> tasklet2``, both tasklets inside the
     inner map. ``A_bridge`` is an in-map access node aliasing the global
@@ -319,9 +317,7 @@ def _build_nsdfg_single_bridge(N: int = 8):
     return sdfg
 
 
-# ----------------------------------------------------------------------
 # Tests
-# ----------------------------------------------------------------------
 def _stage(sdfg):
     """Apply :class:`StageGlobalArrayThroughScalars` in place."""
     from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (

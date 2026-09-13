@@ -87,9 +87,7 @@ def test_prepend_subscript_indices_leaves_unrelated_bodies_alone():
     assert _prepend_subscript_indices('tmp[k] = 1.0', 'tmp', []) is None
 
 
-# --------------------------------------------------------------------------------------------------
 # The lift prefixes memlets only where it reshaped the descriptor.
-# --------------------------------------------------------------------------------------------------
 def kernel_with_scratch_below_a_nested_sdfg() -> dace.SDFG:
     """``out[i, k] = 2 * a[i, NZ - 1 - k] + 1`` through a per-iteration ``tmp[NZ]`` that is passed
     one level FURTHER DOWN than where it is defined.

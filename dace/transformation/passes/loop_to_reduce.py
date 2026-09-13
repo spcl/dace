@@ -1752,7 +1752,7 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     desc = root.arrays[accum_name]
     priv_name, _ = root.add_scalar(f"_priv_{accum_name}", dtype=desc.dtype, transient=True, find_new_name=True)
 
-    # ---- rewrite the tasklet's RHS to drop the carry operand ----
+    # rewrite the tasklet's RHS to drop the carry operand
     tree = ast.parse((final_tasklet.code.as_string or "").strip())
     assign_node = tree.body[0]
     rhs = assign_node.value
@@ -1784,7 +1784,7 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     if state.degree(src_an) == 0:
         state.remove_node(src_an)
 
-    # ---- retarget the final write to ``_priv_X`` with WCR ----
+    # retarget the final write to ``_priv_X`` with WCR
     last_src = last_write_edge.src
     last_src_conn = last_write_edge.src_conn
     state.remove_edge(last_write_edge)
@@ -1794,7 +1794,7 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     if state.degree(sink_an) == 0:
         state.remove_node(sink_an)
 
-    # ---- wrap the loop with init + writeback states ----
+    # wrap the loop with init + writeback states
     was_start = parent.start_block is loop
     in_edges = list(parent.in_edges(loop))
     out_edges = list(parent.out_edges(loop))

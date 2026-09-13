@@ -91,7 +91,7 @@ def _icon_inputs(rng):
 
 ICON_PARAMS = {"NB": NB_VAL, "NLEV": NLEV_VAL, "NPROMA": NPROMA_VAL}
 
-# ---------------------------------------------------------------- direct gather store
+# direct gather store
 
 
 @dace.program
@@ -127,7 +127,7 @@ def test_direct_double_gather_to_output_store():
     _run_compare(_gather_both_direct, _icon_inputs, ICON_PARAMS)
 
 
-# ---------------------------------------------------------------- multi-gather of one array
+# multi-gather of one array
 
 
 @dace.program
@@ -160,7 +160,7 @@ def test_multiple_distinct_gathers_of_one_array(kern):
     _run_compare(kern, _icon_inputs, ICON_PARAMS)
 
 
-# ---------------------------------------------------------------- multi structured of one array
+# multi structured of one array
 
 
 @dace.program
@@ -179,7 +179,7 @@ def test_multiple_distinct_structured_reads_of_one_array():
     _run_compare(_struct_sum3, _icon_inputs, ICON_PARAMS)
 
 
-# ---------------------------------------------------------------- gather x structured (full ICON)
+# gather x structured (full ICON)
 
 
 @dace.program
@@ -201,7 +201,7 @@ def test_icon_zekinh_full_gather_times_structured():
     _run_compare(_icon_zekinh_full, _icon_inputs, ICON_PARAMS)
 
 
-# ---------------------------------------------------------------- predicated branch (cloudsc tidy)
+# predicated branch (cloudsc tidy)
 
 
 def _branch_inputs(rng):

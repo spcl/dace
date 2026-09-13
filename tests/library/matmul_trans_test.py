@@ -23,9 +23,7 @@ import numpy as np
 import pytest
 from dace.libraries.blas import MatMul
 
-# ----------------------------------------------------------------
 # Helpers
-# ----------------------------------------------------------------
 
 
 def _build_matmul_sdfg(m, k, n, dtype, transA, transB):

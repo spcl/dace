@@ -54,9 +54,7 @@ def walk_is_degenerate(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     return len(state.all_nodes_between(map_entry, state.exit_node(map_entry))) == 0
 
 
-# ---------------------------------------------------------------------------
 # Fixtures, one shape per gate.
-# ---------------------------------------------------------------------------
 
 
 def elementwise_map(with_sink: bool) -> tuple[dace.SDFG, SDFGState, nodes.MapEntry]:
@@ -193,9 +191,7 @@ def lifted_reduction_with_dynamic_trip(
     return sdfg, state, me, mx, buf_node, red
 
 
-# ---------------------------------------------------------------------------
 # pass_invariants.no_wcr_in_map_body -- the invariant must be able to FAIL.
-# ---------------------------------------------------------------------------
 
 
 def test_scatter_reduction_is_reported_although_the_body_ends_in_a_scratch_scalar() -> None:
@@ -223,9 +219,7 @@ def test_elementwise_body_ending_in_a_scratch_scalar_carries_no_write_conflict()
     assert all(e.data.wcr is None for e in state.edges() if e.data is not None)
 
 
-# ---------------------------------------------------------------------------
 # map_predicates -- single-NSDFG body recognition.
-# ---------------------------------------------------------------------------
 
 
 def test_a_body_nest_beside_a_scratch_scalar_is_not_a_single_nsdfg_body() -> None:
@@ -253,9 +247,7 @@ def test_a_bare_tasklet_body_ending_in_a_scratch_scalar_holds_no_nest() -> None:
     assert get_single_nsdfg_inside_map(state, map_entry) is None
 
 
-# ---------------------------------------------------------------------------
 # NestInnermostMapBodyIntoNSDFG -- the body the emitters require gets built.
-# ---------------------------------------------------------------------------
 
 
 def test_a_body_ending_in_a_scratch_scalar_is_left_unnested_so_the_emitters_stay_away() -> None:
@@ -335,9 +327,7 @@ def test_a_bare_tasklet_body_beside_a_scratch_scalar_is_not_an_already_nested_re
     assert pass_instance._body_is_nested_reduction(state, map_entry) is False
 
 
-# ---------------------------------------------------------------------------
 # lift_map_reduction -- the innermost guard and the re-nest cluster.
-# ---------------------------------------------------------------------------
 
 
 def test_a_map_nesting_another_map_is_no_pure_wcr_candidate_although_it_ends_in_a_scratch_scalar() -> None:
@@ -374,9 +364,7 @@ def test_the_dynamic_range_wrap_keeps_the_fill_body_inside_its_own_map() -> None
     sdfg.validate()
 
 
-# ---------------------------------------------------------------------------
 # stage_global_array_through_scalars -- body composition gate.
-# ---------------------------------------------------------------------------
 
 
 def test_a_map_holding_a_body_nest_is_ineligible_for_staging_although_it_ends_in_a_scratch_scalar() -> None:
@@ -395,9 +383,7 @@ def test_a_flat_map_body_ending_in_a_scratch_scalar_stays_eligible_and_is_enumer
                   for n in eligible[map_entry]) == ['scale', 'stage', SINK]
 
 
-# ---------------------------------------------------------------------------
 # reduction_scalar_local_prep -- innermost-only widening candidate.
-# ---------------------------------------------------------------------------
 
 
 def test_a_map_nesting_another_map_is_no_widening_candidate_although_it_ends_in_a_scratch_scalar() -> None:
@@ -413,9 +399,7 @@ def test_an_innermost_map_ending_in_a_scratch_scalar_stays_a_widening_candidate(
     assert PrepareReductionForWidening._map_is_widening_candidate(state, state.exit_node(map_entry)) is True
 
 
-# ---------------------------------------------------------------------------
 # utils.reductions -- innermost-only map reduction recognition.
-# ---------------------------------------------------------------------------
 
 
 def test_a_map_nesting_another_map_is_not_recognized_as_a_carried_reduction() -> None:

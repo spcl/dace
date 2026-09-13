@@ -38,9 +38,7 @@ from dace.transformation.passes import canonicalize
 N = dace.symbol('N')
 
 
-# --------------------------------------------------------------------------
 # Kernels
-# --------------------------------------------------------------------------
 @dace.program
 def guarded_independent(cond: dace.int32, a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
     """Two data-independent outputs under a map-invariant guard."""
@@ -71,9 +69,7 @@ def guarded_forward_read_war(cond: dace.int32, a: dace.float64[N], d: dace.float
             a[i] = a[i] * 2.0
 
 
-# --------------------------------------------------------------------------
 # Structural helpers
-# --------------------------------------------------------------------------
 def _top_map_entries(sdfg: dace.SDFG):
     """Top-level (non-nested) MapEntry nodes across every state."""
     return [
@@ -112,9 +108,7 @@ def _canon():
 CANON = [pytest.param(_canon(), id='full')]
 
 
-# --------------------------------------------------------------------------
 # Item 1 (independent) + Item 2 (hoist-out merge)
-# --------------------------------------------------------------------------
 @pytest.mark.parametrize('canon', CANON)
 def test_guarded_independent_hoists_and_merges(canon):
     n = 16
@@ -160,9 +154,7 @@ def test_guarded_index_dependent_merges_in_map(canon):
     assert np.allclose(c, np.where(even, a * 2.0, 0.0)), "c mismatch"
 
 
-# --------------------------------------------------------------------------
 # Item 1 (data-dependent but splittable)
-# --------------------------------------------------------------------------
 @pytest.mark.parametrize('canon', CANON)
 def test_guarded_forward_read_war_splits_and_merges(canon):
     n = 16

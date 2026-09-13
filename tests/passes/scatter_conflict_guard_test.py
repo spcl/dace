@@ -24,7 +24,7 @@ from dace.transformation.passes.scatter_conflict_guard import (GuardScatterConfl
 
 N = dace.symbol('N')
 
-# -- TSVC scatter kernels (1-D, integer index ``ip``) ------------------------
+# TSVC scatter kernels (1-D, integer index ``ip``)
 
 
 @dace.program
@@ -48,7 +48,7 @@ def tsvc_vas(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N]):
         a[ip[i]] = b[i]
 
 
-# -- Helpers ------------------------------------------------------------------
+# Helpers
 
 
 def _has_conflict_check(sdfg: dace.SDFG) -> bool:
@@ -85,7 +85,7 @@ def _lines_inside_a_function(code: str, needle: str) -> list:
     return found
 
 
-# -- Per-TSVC tests -----------------------------------------------------------
+# Per-TSVC tests
 
 
 def test_s4113_permutation_runs_cleanly():
@@ -147,7 +147,7 @@ def test_vas_permutation_runs_cleanly():
     assert np.allclose(a, a_ref)
 
 
-# -- Structural checks --------------------------------------------------------
+# Structural checks
 
 
 def test_guard_states_inserted_before_scatter():
@@ -210,7 +210,7 @@ def test_guard_refuses_double_emit():
         insert_scatter_guard(sdfg, 'ip')
 
 
-# -- Tag array: DaCe-owned transient, allocated outside the program body ------
+# Tag array: DaCe-owned transient, allocated outside the program body
 
 
 def test_tag_array_is_a_persistent_transient_sized_by_the_scatter_domain():
@@ -288,7 +288,7 @@ def test_tag_array_omitted_when_no_scatter_target_is_visible():
     assert '_scatter_guard_owner_ip' not in sdfg.arrays
 
 
-# -- Lever 1: static-injective elision ----------------------------------------
+# Lever 1: static-injective elision
 
 
 @dace.program
@@ -415,7 +415,7 @@ def test_constant_duplicate_idx_not_injective():
     assert not scatter_index_is_provably_injective(sdfg, 'ip')
 
 
-# -- Abort-on-duplicate (subprocess; SIGABRT/SIGILL is expected) --------------
+# Abort-on-duplicate (subprocess; SIGABRT/SIGILL is expected)
 
 _DUPLICATE_ABORT_SCRIPT = textwrap.dedent(f"""
     import sys

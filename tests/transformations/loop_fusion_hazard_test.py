@@ -58,7 +58,7 @@ from .map_fusion_hazard_test import (
 )
 from .map_fusion_vertical_test import unique_name
 
-# ----- shared helpers -----------------------------------------------------------------------------
+# shared helpers
 
 
 def map_entries(sdfg: dace.SDFG) -> list:
@@ -117,7 +117,7 @@ def force_fuse(sdfg: dace.SDFG, first: LoopRegion, second: LoopRegion) -> None:
     sdfg.validate()
 
 
-# --- copy-memlet naming the inner container hides the write (map verdict: REFUSE) ----------------------
+# copy-memlet naming the inner container hides the write (map verdict: REFUSE)
 
 
 def build_copy_memlet_hides_write_map_form() -> dace.SDFG:
@@ -162,7 +162,7 @@ def test_copy_memlet_naming_the_inner_container_hides_the_write_loop_form():
     assert loop_applied == 0, "expected LoopFusion to refuse this WAW hazard, matching MapFusionHorizontal"
 
 
-# --- a View of the written array is not a different array (map verdict: REFUSE) -----------------------
+# a View of the written array is not a different array (map verdict: REFUSE)
 
 
 def build_view_aliases_array_map_form() -> dace.SDFG:
@@ -214,7 +214,7 @@ def test_view_of_the_same_array_is_not_a_different_array_loop_form():
     assert loop_applied == 0, "expected LoopFusion to refuse this WAR-through-a-View hazard"
 
 
-# --- an unknown boundary subset must not erase the access sets (map verdict: fails closed) --------------
+# an unknown boundary subset must not erase the access sets (map verdict: fails closed)
 
 
 def test_unknown_boundary_subset_must_not_erase_the_access_sets_loop_form():
@@ -255,7 +255,7 @@ def test_unknown_boundary_subset_must_not_erase_the_access_sets_loop_form():
         "an unresolvable write subset must refuse fusion (fail closed), not silently allow it"
 
 
-# --- InOut split must not redirect a cross-state read (map verdict: REFUSE) -----------------------------
+# InOut split must not redirect a cross-state read (map verdict: REFUSE)
 
 
 def build_inout_split_loop_form_unified_names() -> dace.SDFG:
@@ -347,7 +347,7 @@ def test_inout_split_must_not_redirect_a_cross_state_read_loop_form():
             f"forced fuse past the DOALL guard changed {name} -- would be the InOut-split miscompile class"
 
 
-# --- WCR shapes: reduction consumed vs. independent -----------------------------------------------------
+# WCR shapes: reduction consumed vs. independent
 
 
 def build_wcr_loop_form(reduction_is_consumed: bool) -> dace.SDFG:
@@ -467,7 +467,7 @@ def test_reduction_independent_of_the_second_loop_is_refused_by_a_doall_guard():
         assert np.array_equal(got[name], expected), f"forced fuse changed {name} -- would contradict _fusion_legal"
 
 
-# --- shape-gate relaxation: a ConditionalBlock / multi-state body is judged on legality, not shape -----
+# shape-gate relaxation: a ConditionalBlock / multi-state body is judged on legality, not shape
 #
 # `LoopFusion.can_be_applied` used to gate on `_single_compute_state` (`loop_fission.py`): any body that
 # was not "one plain SDFGState, optionally with empty companion states" was refused outright, before
@@ -580,7 +580,7 @@ def test_conditional_block_body_is_accepted_once_the_shape_gate_is_relaxed():
         assert np.array_equal(got[name], oracle[name]), f"fusing the ConditionalBlock bodies changed {name}"
 
 
-# --- multi-state body pair with a genuine read-ahead flow hazard: relaxation must stay sound ------------
+# multi-state body pair with a genuine read-ahead flow hazard: relaxation must stay sound
 
 
 def build_read_ahead_multi_state_pair() -> dace.SDFG:

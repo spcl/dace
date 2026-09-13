@@ -136,9 +136,9 @@ def names_behind(sdfg: dace.SDFG, condition: str) -> OrderedSet[str]:
     return names
 
 
-# --------------------------------------------------------------------------------------------- #
+# #
 # ext_war_unit: a[i] = a[i+1] + b[i] -- a real distance-1 WAR, resolved by chunking.             #
-# --------------------------------------------------------------------------------------------- #
+# #
 
 WAR_LEN_1D = dace.symbol('LEN_1D', dtype=dace.int64, positive=True)
 
@@ -205,9 +205,9 @@ def test_ext_war_unit_sequential_maps_are_single_iteration_seams():
         'exactly one seam map must be nested inside the chunk-parallel map'
 
 
-# --------------------------------------------------------------------------------------------- #
+# #
 # fuse_move_ifs: two nests that fuse into ONE flat parallel map, guard kept as a predicate.      #
-# --------------------------------------------------------------------------------------------- #
+# #
 
 FMI_LEN_2D = dace.symbol('LEN_2D', dtype=dace.int64, positive=True)
 FMI_K = dace.symbol('K', dtype=dace.int64, positive=True)
@@ -317,9 +317,9 @@ def test_fuse_move_ifs_fuses_to_one_parallel_region_and_keeps_the_guard_as_a_pre
             f'{tasklet.label} is guarded by {conditions}, which no longer tests cond'
 
 
-# --------------------------------------------------------------------------------------------- #
+# #
 # tsvc_2_s1232: same no-nested-parallelism policy, on the untiled TSVC corpus kernel.            #
-# --------------------------------------------------------------------------------------------- #
+# #
 
 
 def canonicalized_s1232(tag: str) -> typing.Tuple[object, dace.SDFG]:

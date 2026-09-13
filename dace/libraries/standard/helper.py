@@ -112,8 +112,6 @@ def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
 
 
-# --------------------------------------------------------------------------------------------
-
 #: An enclosing loop of provably fewer than this many trips pays the fork/join of a library node
 #: inside it few enough times to ignore, so it does not count as re-entry.
 REENTRY_SHORT_LOOP_TRIPS = 8

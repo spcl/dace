@@ -48,9 +48,7 @@ def idft_explicit(_inp, _out, N: dace.compiletime, factor: dace.compiletime):
             b >> _out(1, lambda a, b: a + b)[i]
 
 
-##################################################################################################
 # N-dimensional native DFT (separable, rank-generic)
-##################################################################################################
 
 
 def _add_zero_state(sdfg, after, dst, shape):

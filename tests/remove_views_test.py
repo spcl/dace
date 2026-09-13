@@ -34,9 +34,7 @@ def _count_views(sdfg: dace.SDFG) -> int:
     return num
 
 
-# ---------------------------------------------------------------------------
 # Tests
-# ---------------------------------------------------------------------------
 
 
 def test_view_array_array():
@@ -480,9 +478,7 @@ def test_write_view():
     np.testing.assert_allclose(A_new, A_ref)
 
 
-# ---------------------------------------------------------------------------
 # Column views, strided views, flatten
-# ---------------------------------------------------------------------------
 
 
 def test_column_view():
@@ -1006,8 +1002,6 @@ def test_view_with_ordering_edge_and_no_reader_is_kept():
     assert _empty_edges(state) == [('X', 'V')]
     assert len(state.edges_between(a, v)) == 1
 
-
-# ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
     test_view_array_array()

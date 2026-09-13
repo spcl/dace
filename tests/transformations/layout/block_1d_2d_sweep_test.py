@@ -35,9 +35,9 @@ BETA = 1.0
 W0, W1, W2 = 0.25, 0.5, 0.25
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Kernel builders (fresh dtype-parametrized SDFGs)
-# --------------------------------------------------------------------------- #
+# #
 def build_scale1d(dt):
     N = dace.symbol("N")
 
@@ -83,9 +83,9 @@ def build_transpose2d(dt):
     return transpose2d.to_sdfg(simplify=True)
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Inputs and numpy oracles (computed in the operand dtype)
-# --------------------------------------------------------------------------- #
+# #
 def scale1d_inputs(np_dt):
     return {"x": numpy.random.default_rng(0).random(32).astype(np_dt)}
 
@@ -179,9 +179,9 @@ NP_DTYPE = {"float64": numpy.float64, "float32": numpy.float32}
 FACTORS = (2, 4, 8)
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Pack (logical -> physical blocked descriptor) and its inverse
-# --------------------------------------------------------------------------- #
+# #
 def split_layout(logical_shape, masks, factors):
     """Split order axes for a blocked descriptor: the intermediate ``reshape`` shape plus the
     position axes (kept up front, in dim order) and tile axes (moved to the end)."""
@@ -220,9 +220,9 @@ def block_unpack(phys, masks, factors, logical_shape):
     return phys.transpose(inv).reshape(logical_shape).copy()
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Case enumeration
-# --------------------------------------------------------------------------- #
+# #
 def build_cases():
     """Enumerate ``(kernel, dtype, array, dim, factor)`` -- each blockable dimension of every array
     (input and output) blocked by every divisible factor, over both dtypes."""

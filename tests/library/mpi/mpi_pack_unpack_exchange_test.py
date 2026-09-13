@@ -15,8 +15,6 @@ import pytest
 
 COL = 2
 
-###############################################################################
-
 
 def make_sdfg(dtype):
     n = dace.symbol("n")
@@ -41,9 +39,6 @@ def make_sdfg(dtype):
     # Strided columns -> contiguous packed buffers, so Sendrecv sees no stride.
     assert MpiPackUnpack().apply_pass(sdfg, {}) == 2  # one pack (send) + one unpack (recv)
     return sdfg
-
-
-###############################################################################
 
 
 def _test_mpi(sdfg, dtype):

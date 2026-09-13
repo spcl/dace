@@ -447,9 +447,7 @@ def _replace_loop_with_closed_form(parent: ControlFlowRegion, loop: LoopRegion, 
     parent.remove_node(loop)
 
 
-# -----------------------------------------------------------------------------
 # Use-site closed-form substitution (SCEV expansion) for a DATA accumulator
-# -----------------------------------------------------------------------------
 
 
 def trip_index(loop: LoopRegion, start, stride):
@@ -678,9 +676,7 @@ def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, sta
     parent.add_edge(loop, iv_post, dace.InterstateEdge())
 
 
-# -----------------------------------------------------------------------------
 # Iedge-based IV substitution (multi-statement bodies)
-# -----------------------------------------------------------------------------
 
 
 def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -> bool:
@@ -1294,9 +1290,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     return True
 
 
-# -----------------------------------------------------------------------------
 # Loop-carried ROTATION substitution (a delay line -> a shifted array read)
-# -----------------------------------------------------------------------------
 #
 # A carried scalar that is OVERWRITTEN every iteration with a loop-varying array element -- TSVC
 # ``s254``::

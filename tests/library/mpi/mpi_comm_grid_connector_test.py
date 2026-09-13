@@ -31,9 +31,7 @@ import dace.frontend.python.replacements.mpi as comm_repl
 _COMM_AS_COMM = ("(_comm", "_comm,", "_comm)", "_comm;")
 _GRID_AS_COMM = ("(_grid", "_grid,", "_grid)", "_grid;")
 
-###############################################################################
 # Helpers
-###############################################################################
 
 
 class _MockProgramVisitor:
@@ -83,9 +81,7 @@ def _wire_grid(sdfg, state, node):
     state.add_edge(state.add_read(grid), None, node, '_grid', Memlet(data=grid))
 
 
-###############################################################################
 # SDFG builders (one fresh node per variant so resolution is independent)
-###############################################################################
 
 
 def _build_allgather():
@@ -153,9 +149,7 @@ _BUILDERS = {
     "redistribute": _build_redistribute,
 }
 
-###############################################################################
 # Tests
-###############################################################################
 
 
 @pytest.mark.parametrize("name", list(_BUILDERS))

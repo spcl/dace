@@ -325,9 +325,9 @@ def test_scalar_connector_not_renamed():
     assert sdfg.to_json() == before
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Codegen-level: the pass + per-file dedup produce collision-free emitted C++.
-# --------------------------------------------------------------------------- #
+# #
 def test_synthetic_view_emits_no_colliding_helper(require_experimental):
     """End-to-end reproduction on a synthetic SDFG: a nested ``A`` that is a differently-strided view of
     the parent ``A``, forced ``no_inline``, must NOT yield two ``A_idx`` helpers (identical OR

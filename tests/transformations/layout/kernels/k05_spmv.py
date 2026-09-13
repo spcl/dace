@@ -56,7 +56,7 @@ def spmv_ell(ecol: dace.int64[NR, W], eval_: dace.float64[NR, W], x: dace.float6
         y[i] += eval_[i, k] * g[i, k]  # WCR reduction over the W columns
 
 
-# --------------------------------------------------------------- graph -> ELL (numpy spec) --------- #
+# graph -> ELL (numpy spec) ---------
 def grid5(side):
     """2D ``side x side`` 5-point Laplacian as a symmetric edge list (upper triangle), ``NR = side^2``."""
     idx = numpy.arange(side * side).reshape(side, side)

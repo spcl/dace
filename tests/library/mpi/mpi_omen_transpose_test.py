@@ -92,9 +92,9 @@ def build_distributed_sdfg():
     return sdfg
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  oracle + inputs (single-process k10 self-energy)
-# --------------------------------------------------------------------------- #
+# #
 def make_inputs(seed=0):
     rng = numpy.random.default_rng(seed)
     c = lambda *s: (rng.random(s) + 1j * rng.random(s)).astype(numpy.complex128)
@@ -113,10 +113,10 @@ def oracle(H, X, D):
     return Sig
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Offline: the DaCe compute + pack/unpack kernels with the Alltoall simulated
 #  in numpy (a P x P chunk swap). Exercises the real reindexing without MPI.
-# --------------------------------------------------------------------------- #
+# #
 def test_omen_transpose_kernels_offline():
     H, X, D = make_inputs()
     ref = oracle(H, X, D)
@@ -139,9 +139,9 @@ def test_omen_transpose_kernels_offline():
     assert numpy.allclose(Sig, ref), numpy.abs(Sig - ref).max()
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Distributed: real 2-rank MPI_Alltoall transpose. Run under `mpirun -n 2`.
-# --------------------------------------------------------------------------- #
+# #
 @pytest.mark.mpi
 def test_omen_transpose_mpi():
     from mpi4py import MPI as MPI4PY

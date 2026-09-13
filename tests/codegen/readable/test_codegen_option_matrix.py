@@ -236,9 +236,9 @@ def test_arm_matches_numpy_reference(arm_id: str, path: Optional[Tuple[str, ...]
     assert np.array_equal(B, _EXPECTED_B), f'{arm_id}: numeric result diverges from the numpy reference'
 
 
-# --------------------------------------------------------------------------------------------- #
+# #
 # Non-vacuity: prove the kernel actually reaches the knobs (>= 3 required; these are 8).
-# --------------------------------------------------------------------------------------------- #
+# #
 def cpp_text(sdfg_name: str, path: Optional[Tuple[str, ...]] = None, value: object = None) -> str:
     """Codegen-only (no compile) C++ text for a FRESH build under (path, value). Pass the SAME
     ``sdfg_name`` to a paired call for a byte-comparable pair -- the name is baked into the output."""
@@ -325,11 +325,11 @@ def test_loop_access_form_ptr_increment_walks_the_sequential_maps() -> None:
     assert '__walk_' not in default
 
 
-# --------------------------------------------------------------------------------------------- #
+# #
 # Degenerate arms: each requested value below is confirmed (by reading the branch, then verifying
 # here) to be indistinguishable from an existing value rather than a genuine third state. Each is
 # still exercised for the numeric invariant in ARMS above; these pin what it ACTUALLY does.
-# --------------------------------------------------------------------------------------------- #
+# #
 def test_index_fn_qualifier_inline_is_not_a_recognized_value() -> None:
     """Only the literal 'always_inline' is special-cased; 'inline' takes the same path as leaving the
     key at its default ('inline_constexpr') -- byte-identical output."""

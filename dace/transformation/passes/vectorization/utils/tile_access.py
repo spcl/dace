@@ -166,7 +166,7 @@ class TileAccess:
 ScanCache: TypeAlias = tuple[dict[str, set[str]], dict[str, set[sympy.Expr]], set[str], dict[str, sympy.Expr],
                              dict[str, sympy.Expr | None], set[str], dict[sympy.Expr, frozenset[str]]]
 
-# ----- internal helpers --------------------------------------------------
+# internal helpers
 
 
 def _safe_sympify(expr: object) -> sympy.Expr | None:
@@ -325,14 +325,14 @@ def build_symbol_definition_map(inner_sdfg: SDFG | None,
     if cached is not None:
         ise_rhs, scalar_defs, unreadable_writes, unique_ise_defs, sympify_memo, recurrence_syms, free_names = cached
     else:
-        # --- source 1: interstate-edge symbol assignments ---
+        # source 1: interstate-edge symbol assignments
         ise_rhs: dict[str, set[str]] = {}
         for edge in inner_sdfg.all_interstate_edges():
             assigns = edge.data.assignments if edge.data is not None else {}
             for k, v in assigns.items():
                 ise_rhs.setdefault(k, set()).add(str(v))
 
-        # --- source 2: scalars written by a single tasklet ``__out = <body>`` ---
+        # source 2: scalars written by a single tasklet ``__out = <body>``
         # name -> set of resolved exprs; keep only unambiguous singletons. Keyed on the EXPRESSION,
         # not its printed form: sympy expressions hash structurally, so they dedupe just as well, and
         # printing one is expensive -- the round trip (print here, re-parse below, print again for
@@ -895,7 +895,7 @@ def _resolve_gather_index_an(inner_sdfg: SDFG | None, expr: sympy.Expr) -> nodes
     return None
 
 
-# ----- public API --------------------------------------------------------
+# public API
 
 
 def classify_tile_access(subset: Range,

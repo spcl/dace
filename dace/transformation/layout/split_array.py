@@ -111,9 +111,9 @@ class SplitArray(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    # ------------------------------------------------------------------ #
+    # #
     #  Phase 0: Unroll loops/maps over split dimensions
-    # ------------------------------------------------------------------ #
+    # #
     def _unroll_loops_that_depend_only_on_split_dimensions(self, sdfg: dace.SDFG) -> int:
         """Unroll maps/loops whose range matches a split extent, one at a time (unrolling invalidates node refs).
 
@@ -178,9 +178,9 @@ class SplitArray(ppl.Pass):
 
         return unrolled
 
-    # ------------------------------------------------------------------ #
+    # #
     #  Phase 1: Identify which arrays/dimensions to split
-    # ------------------------------------------------------------------ #
+    # #
 
     def _collect_arrays_to_split(self, sdfg: dace.SDFG) -> Dict[str, List[Optional[str]]]:
         """Map each array to a per-dim split config: None (keep) or symbol name (split); omits unsplit arrays."""
@@ -201,9 +201,9 @@ class SplitArray(ppl.Pass):
                     split_map[arrname] = split_list
         return split_map
 
-    # ------------------------------------------------------------------ #
+    # #
     #  Phase 2: Create new split data descriptors
-    # ------------------------------------------------------------------ #
+    # #
 
     def _split_data_descriptors(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
         """Create one new array descriptor per Cartesian-product combination of split indices."""
@@ -260,9 +260,9 @@ class SplitArray(ppl.Pass):
         for name, desc in new_descs.items():
             sdfg.add_datadesc(name, desc)
 
-    # ------------------------------------------------------------------ #
+    # #
     #  Memlet rewriting helpers
-    # ------------------------------------------------------------------ #
+    # #
 
     def _get_corresponding_array(
         self,
@@ -388,9 +388,9 @@ class SplitArray(ppl.Pass):
                             dims.add(splitd)
         return dims
 
-    # ------------------------------------------------------------------ #
+    # #
     #  Phase 3: Rewrite memlets and generate branches for dynamic accesses
-    # ------------------------------------------------------------------ #
+    # #
 
     def _replace_memlets(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
         """Rewrite memlets to the new split arrays; data-dependent accesses get a ConditionalBlock per index value."""
@@ -458,9 +458,9 @@ class SplitArray(ppl.Pass):
                                                        wcr_nonatomic=edge.data.wcr_nonatomic,
                                                        dynamic=edge.data.dynamic)
 
-    # ------------------------------------------------------------------ #
+    # #
     #  Phase 3b: Rewrite interstate-edge symbolic expressions
-    # ------------------------------------------------------------------ #
+    # #
 
     def _replace_iedges(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
         """Rewrite interstate-edge array accesses to the split name (handles both AppliedUndef and Subscript SymPy shapes)."""
@@ -577,9 +577,9 @@ class SplitArray(ppl.Pass):
                         raise Exception(f"TODO: Split arrays passed to nested SDFGs not supported yet."
                                         f" Found in {n} of {state}. Split arrays: {list(split_map.keys())}")
 
-    # ------------------------------------------------------------------ #
+    # #
     #  Entry point
-    # ------------------------------------------------------------------ #
+    # #
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """Split every array whose shape carries a mapped symbol into one array per index.

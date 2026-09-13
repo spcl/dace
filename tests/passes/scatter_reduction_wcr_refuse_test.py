@@ -53,7 +53,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 N, bins = (dace.symbol(s, dtype=dace.int64) for s in ('N', 'bins'))
 
 
-# -- Frontend kernels ---------------------------------------------------------
+# Frontend kernels
 @dace.program
 def weighted_histogram(binidx: dace.int64[N], weights: dace.float64[N]):
     hist = np.ndarray((bins, ), dtype=np.float64)
@@ -72,7 +72,7 @@ def subtracted_histogram(binidx: dace.int64[N], weights: dace.float64[N]):
     return hist
 
 
-# -- Helpers ------------------------------------------------------------------
+# Helpers
 def codegen_text(sdfg: dace.SDFG) -> str:
     """Generated C++ for ``sdfg``, pinned to the generator canonicalize targets.
 
@@ -199,7 +199,7 @@ def build_self_ref_via_view() -> dace.SDFG:
     return sdfg
 
 
-# -- Detection unit tests -----------------------------------------------------
+# Detection unit tests
 def test_data_dependent_scatter_sink_is_op_agnostic():
     """``is_data_dependent_scatter_sink`` fires for ANY op (the fail-safe refuse predicate),
     while ``scatter_reduction_wcr_edge`` narrows to the OpenMP-reducible ops."""
@@ -224,7 +224,7 @@ def test_map_is_parallel_predicate():
         assert map_is_parallel(st, me) is expected
 
 
-# -- NormalizeWCR / NormalizeWCRSource refuse (bugs 1 + 2) ---------------------
+# NormalizeWCR / NormalizeWCRSource refuse (bugs 1 + 2)
 @pytest.mark.parametrize('prog', [weighted_histogram, subtracted_histogram], ids=['plus', 'minus'])
 def test_normalize_wcr_refuses_data_dependent_scatter(prog):
     """``NormalizeWCR`` alone refuses the drop-WCR / whole-buffer rewrite for a
@@ -251,7 +251,7 @@ def test_normalize_wcr_source_skips_scatter_sink_regardless_of_op():
         'scatter WCR must stay on the direct NestedSDFG -> MapExit edge (no whole-array _wcr_priv)'
 
 
-# -- CPU end-to-end: parallel privatizes, refuse cases fall back --------------
+# CPU end-to-end: parallel privatizes, refuse cases fall back
 def test_cpu_parallel_reducible_scatter_privatized_and_bit_exact():
     """Regression guard (do not over-refuse): the parallel ``+`` histogram STILL privatizes to
     the fast ``reduction(+:hist[0:n])`` clause, with no ``_nnr_out`` buffer, and matches numpy."""
@@ -324,7 +324,7 @@ def test_gpu_target_scatter_not_whole_array_buffered():
     assert not nnr_out_arrays(sdfg), 'GPU scatter must not be wrapped in a whole-array _nnr_out buffer'
 
 
-# -- Self-reference through a View (bug 3) ------------------------------------
+# Self-reference through a View (bug 3)
 def test_self_reference_via_view_refused_and_matches_reference():
     """Bug 3: the map READS the accumulator through a View (``acc_view`` of ``acc``). A
     name-only self-reference check misses it, surfacing a whole-buffer reduction whose private
@@ -365,7 +365,7 @@ def test_self_reference_via_view_refused_and_matches_reference():
     assert np.allclose(accbuf, ref, rtol=0.0, atol=1e-12), f'maxerr={np.max(np.abs(accbuf - ref))}'
 
 
-# -- Sequential scatter is not privatized (refinement) ------------------------
+# Sequential scatter is not privatized (refinement)
 def test_sequential_scatter_not_privatized_and_bit_exact():
     """A SEQUENTIAL scatter has no cross-thread contention, so it is left a plain serial WCR
     accumulate -- ``PrivatizeScatterReduction`` does not fire and no OpenMP reduction clause is

@@ -218,7 +218,7 @@ class WidenAccesses(ppl.Pass):
                 continue
             yield parent, nsdfgs[0], node
 
-    # --- Step 1: classify non-transient ANs ---------------------------------
+    # Step 1: classify non-transient ANs
     def _classify_non_transients(self, inner_sdfg: SDFG, iter_vars: tuple[str, ...]) -> set[str]:
         """Non-transient AN data names with >=1 non-CONSTANT adjacent edge; seed
         the lane-dep propagation.
@@ -273,7 +273,7 @@ class WidenAccesses(ppl.Pass):
                         break
         return lane_dep
 
-    # --- Step 2: widen non-transient boundary memlets -----------------------
+    # Step 2: widen non-transient boundary memlets
     def _widen_subset_inplace(self,
                               sub: subsets.Subset,
                               iter_vars: tuple[str, ...],
@@ -391,7 +391,7 @@ class WidenAccesses(ppl.Pass):
                     changed = True
         return changed
 
-    # --- Step 3: propagate lane-dep through Tasklets (DFS / topological) ----
+    # Step 3: propagate lane-dep through Tasklets (DFS / topological)
     @staticmethod
     def _tasklet_references_iter_var(tasklet: Tasklet, iter_vars: tuple[str, ...]) -> bool:
         """True iff ``tasklet``'s code body references any tile iter-var name."""
@@ -675,7 +675,7 @@ class WidenAccesses(ppl.Pass):
             return True
         return not all(k == PerDimKind.CONSTANT for k in record.per_dim_kind)
 
-    # --- Step 4: widen lane-dep transient descriptors -----------------------
+    # Step 4: widen lane-dep transient descriptors
     def _accesses_bind_a_tile_var(self, inner_sdfg: SDFG, name: str, iter_vars: tuple[str, ...],
                                   memo: dict[str, bool]) -> bool:
         """:func:`data_is_lane_indexed`, memoized for the duration of one fixpoint."""
@@ -721,7 +721,7 @@ class WidenAccesses(ppl.Pass):
                                    f"{tuple(desc.shape)}; widening a multi-element per-lane buffer to (W, ...) is "
                                    f"unsupported. Refusing rather than emitting an under-widened tile.")
 
-    # --- Step 5: seed per-lane symbols for Bypass-form gathers --------------
+    # Step 5: seed per-lane symbols for Bypass-form gathers
     def _seed_per_lane_symbols(self,
                                inner_sdfg: SDFG,
                                iter_vars: tuple[str, ...],
@@ -870,7 +870,7 @@ class WidenAccesses(ppl.Pass):
         except (TypeError, ValueError):
             return True
 
-    # --- Step 0: lower seeded reduction copybacks to a fold tasklet ----------
+    # Step 0: lower seeded reduction copybacks to a fold tasklet
     def _boundary_reduction_wcr(self, state: SDFGState, nsdfg_node: NestedSDFG, oc: str) -> str | None:
         """The reduction WCR lambda on the OUTER boundary of output connector ``oc``, else ``None``.
 
@@ -958,7 +958,7 @@ class WidenAccesses(ppl.Pass):
         ist.add_edge(tasklet, '__out', edge.dst, None, Memlet(data=oc, subset=copy.deepcopy(oc_sub)))
         ist.remove_edge(edge)
 
-    # --- Driver --------------------------------------------------------------
+    # Driver
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Run the unified widening over every tile-tagged body NSDFG.
 

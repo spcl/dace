@@ -38,9 +38,9 @@ def _top_level_conds(sdfg):
     return [b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)]
 
 
-# --------------------------------------------------------------------------- #
+# #
 # MoveIfIntoLoop -- guarded stencils (dimension guard / whole stencil in if)   #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -228,9 +228,9 @@ def test_move_if_into_nested_dimension_guards():
             assert np.allclose(out, 8.0)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # MoveIfIntoLoop -- precondition refusals (no-op, still correct)               #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -302,9 +302,9 @@ def test_move_if_into_loop_fires_on_free_state_imperfect_nest():
         assert np.allclose(out, ref), f"mismatch active={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # LoopFission -- independent split, recurrence kept whole, indirect inputs     #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program

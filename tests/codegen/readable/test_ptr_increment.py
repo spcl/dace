@@ -23,7 +23,7 @@ from tests.helpers.isolation import call_in_child
 
 N = dace.symbol('N')
 
-# -- SDFG builders (low-level API: explicit schedules, no frontend) ------------------------------
+# SDFG builders (low-level API: explicit schedules, no frontend)
 
 
 def elementwise_sdfg(name, schedule):
@@ -99,7 +99,7 @@ def mixed_sdfg(name):
     return sdfg
 
 
-# -- helpers -------------------------------------------------------------------------------------
+# helpers
 
 
 def generate(builder, name, implementation, loop_access_form):
@@ -109,7 +109,7 @@ def generate(builder, name, implementation, loop_access_form):
         return '\n'.join(o.code for o in builder(name).generate_code() if o.language == 'cpp')
 
 
-# -- (3) ptr_increment emits walking pointers and runs bit-identical -----------------------------
+# (3) ptr_increment emits walking pointers and runs bit-identical
 
 
 def test_ptr_increment_emits_walking_pointers():
@@ -169,7 +169,7 @@ def test_stencil_multi_cursor_runs_bit_identical():
     assert '__walk_A' in code and '__walk_A_1' in code and '__walk_A_2' in code, code
 
 
-# -- (4) a mixed-index nest: one cursor per side, each with its own stride ------------------------
+# (4) a mixed-index nest: one cursor per side, each with its own stride
 
 
 def test_transpose_walks_each_side_with_its_own_stride():
@@ -202,7 +202,7 @@ def test_transpose_runs_bit_identical():
     assert numpy.allclose(walked, numpy.random.default_rng(2).random((24, 24)).T)
 
 
-# -- (2) LOAD-BEARING: a parallel map is byte-identical under the flag ----------------------------
+# (2) LOAD-BEARING: a parallel map is byte-identical under the flag
 
 
 @pytest.mark.parametrize('implementation', [LEGACY, EXPERIMENTAL])
@@ -226,7 +226,7 @@ def test_parallel_map_keeps_canonical_loop():
     assert '__walk_' not in code
 
 
-# -- (5) flag-OFF byte-identical for both generators on a mixed SDFG ------------------------------
+# (5) flag-OFF byte-identical for both generators on a mixed SDFG
 
 
 @pytest.mark.parametrize('implementation', [LEGACY, EXPERIMENTAL])

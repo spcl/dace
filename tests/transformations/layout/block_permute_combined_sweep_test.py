@@ -131,7 +131,7 @@ def run_combined(ndim: int, order: str, blocked_dim: int, factor: int, perm):
 # (ndim, order, blocked_dim, factor, perm) -- perm has length ndim (permute_then_block) or
 # ndim + 1 (block_then_permute, the blocked descriptor's physical axes).
 CASES = [
-    # ---- 2D, block_then_permute (perm over the 3 physical axes) --------------------------------
+    # 2D, block_then_permute (perm over the 3 physical axes)
     (2, "block_then_permute", 0, 2, [2, 0, 1]),
     (2, "block_then_permute", 0, 2, [1, 2, 0]),
     (2, "block_then_permute", 0, 4, [0, 2, 1]),
@@ -140,21 +140,21 @@ CASES = [
     (2, "block_then_permute", 1, 2, [0, 2, 1]),
     (2, "block_then_permute", 1, 4, [1, 0, 2]),
     (2, "block_then_permute", 1, 4, [2, 0, 1]),
-    # ---- 2D, permute_then_block (perm over the 2 logical axes) ---------------------------------
+    # 2D, permute_then_block (perm over the 2 logical axes)
     (2, "permute_then_block", 0, 2, [1, 0]),
     (2, "permute_then_block", 1, 4, [1, 0]),
     (2, "permute_then_block", 0, 4, [1, 0]),
     (2, "permute_then_block", 1, 2, [1, 0]),
     (2, "permute_then_block", 0, 3, [1, 0]),
     (2, "permute_then_block", 1, 4, [0, 1]),
-    # ---- 3D, block_then_permute (perm over the 4 physical axes) --------------------------------
+    # 3D, block_then_permute (perm over the 4 physical axes)
     (3, "block_then_permute", 0, 2, [3, 0, 1, 2]),
     (3, "block_then_permute", 0, 4, [2, 3, 0, 1]),
     (3, "block_then_permute", 1, 3, [0, 2, 3, 1]),
     (3, "block_then_permute", 1, 4, [3, 0, 1, 2]),
     (3, "block_then_permute", 2, 2, [3, 0, 1, 2]),
     (3, "block_then_permute", 2, 3, [1, 2, 0, 3]),
-    # ---- 3D, permute_then_block (perm over the 3 logical axes) ---------------------------------
+    # 3D, permute_then_block (perm over the 3 logical axes)
     (3, "permute_then_block", 0, 2, [1, 2, 0]),
     (3, "permute_then_block", 1, 3, [2, 0, 1]),
     (3, "permute_then_block", 2, 2, [2, 1, 0]),

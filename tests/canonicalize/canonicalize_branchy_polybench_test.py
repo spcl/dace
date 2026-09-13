@@ -65,9 +65,7 @@ def branch_conditions(region):
     ]
 
 
-# ----------------------------------------------------------------------
 # Nussinov boundary guards
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -128,9 +126,7 @@ def test_nussinov_invariant_boundary_guard_not_evaluated_per_j():
     assert not per_j, f'the i-invariant boundary guard is re-evaluated per j iteration: {per_j}'
 
 
-# ----------------------------------------------------------------------
 # Floyd-Warshall: data-dependent guarded update
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -211,9 +207,7 @@ def test_floyd_warshall_step_i_parallel_via_index_split():
     assert all(len(m.map.params) == 1 for m in maps), 'each segment maps the i dimension alone'
 
 
-# ----------------------------------------------------------------------
 # Correlation-style masked write
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -256,9 +250,7 @@ def test_masked_threshold_write_stays_one_map():
     assert _nmaps(sdfg) == 1, f'masked elementwise write split to {_nmaps(sdfg)} maps'
 
 
-# ----------------------------------------------------------------------
 # Loop-invariant boundary guard (synthetic nussinov-like distilled case)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -308,9 +300,7 @@ def test_loop_invariant_guard_over_inner_hoisted_to_top():
                                  f'block(s) total, {len(top_conds)} at top level')
 
 
-# ----------------------------------------------------------------------
 # Gramschmidt-style safety guard around a division
-# ----------------------------------------------------------------------
 
 
 @dace.program

@@ -230,11 +230,9 @@ def test_gemm_symbolic_1():
         sdfg.validate()
 
 
-# ---------------------------------------------------------------------------
 # Row-wise (ikj) pure expansion: ``for i (parallel): for k (seq): for j (vector)``.
 # Selected by canonicalization for known-small GEMMs (see
 # dace/transformation/passes/canonicalize/finalize.py).
-# ---------------------------------------------------------------------------
 _rowwise_params = [
     dict(M=8, N=6, K=5),  # plain, non-square (catches index/transpose swaps); beta=1 -> C accumulate
     dict(M=8, N=6, K=5, transA=True),

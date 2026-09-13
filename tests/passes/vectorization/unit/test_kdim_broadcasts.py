@@ -87,7 +87,7 @@ def _vectorize_k2(sdfg: dace.SDFG) -> None:
         )).apply_pass(sdfg, {})
 
 
-# ---------------------------------------------------------------- shapes
+# shapes
 
 
 @dace.program
@@ -203,7 +203,7 @@ def _fully_unstructured_2d_index(a: dace.float64[NK], idx: dace.int32[NK, NJ], c
             c[jk, jc] = a[idx[jk, jc]]
 
 
-# ---------------------------------------------------------------- tests
+# tests
 
 
 def test_scalar_broadcast_descent_to_tile_only():

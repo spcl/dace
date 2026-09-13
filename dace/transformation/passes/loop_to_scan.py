@@ -1271,10 +1271,8 @@ def _match(loop: LoopRegion, sdfg: SDFG) -> Optional[_Scan]:
     return infos[0]
 
 
-# ---------------------------------------------------------------------------
 # Loop-interchange path for the Map-wrapped carry shape (cloudsc for_1133).
 # Gated by the ``LoopToScan.interchange_carry_with_map`` Property.
-# ---------------------------------------------------------------------------
 
 
 class _CarryMapShape(NamedTuple):
@@ -4276,9 +4274,7 @@ def _emit_scalar_carry_acc_post(state: SDFGState, sdfg: SDFG, info: _ScalarCarry
     state.add_edge(t, '__o', acc_write, None, mm.Memlet(data=info.acc_name, subset=subsets.Range([(0, 0, 1)])))
 
 
-# ---------------------------------------------------------------------------------------------
 # AFFINE (first-order linear) recurrence: ``out[i + k_w] = c(i) * out[i + k_w - 1] + d(i)``
-# ---------------------------------------------------------------------------------------------
 # Everything above lifts a loop whose carry is a VALUE combined by one associative scalar op.
 # This section lifts the shape those matchers deliberately refuse (see :func:`_stores_scan_result`):
 # a recurrence LINEAR in the carry rather than a plain combine. It is still a scan -- the carry is

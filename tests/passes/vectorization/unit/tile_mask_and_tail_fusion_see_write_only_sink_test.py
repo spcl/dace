@@ -111,9 +111,7 @@ def body_nest_of(state: SDFGState, map_entry: nodes.MapEntry) -> nodes.NestedSDF
     return next(n for n in map_body_nodes(state, map_entry) if isinstance(n, nodes.NestedSDFG))
 
 
-# ---------------------------------------------------------------------------
 # GenerateTileIterationMask -- the mask must reach a body that ends in the sink.
-# ---------------------------------------------------------------------------
 
 
 def test_a_tiled_map_whose_body_ends_in_a_scratch_scalar_still_gets_its_iteration_mask() -> None:
@@ -191,9 +189,7 @@ def test_a_bare_tasklet_body_ending_in_a_scratch_scalar_carries_no_nest_to_mask(
     assert mask_generators(sdfg) == []
 
 
-# ---------------------------------------------------------------------------
 # FuseBranchedTailRemainder -- the emptied walk can only refuse, and does.
-# ---------------------------------------------------------------------------
 
 
 def test_an_interior_and_masked_tail_pair_of_single_nest_bodies_is_fused_into_one_branched_map() -> None:

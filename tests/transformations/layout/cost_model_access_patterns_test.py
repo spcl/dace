@@ -60,9 +60,9 @@ def efficiency_of(indices) -> float:
     return (distinct_elements * 8) / (blocks * 64)
 
 
-# --------------------------------------------------------------------------------------------- #
+# #
 #  Strided vs contiguous
-# --------------------------------------------------------------------------------------------- #
+# #
 def test_contiguous_touches_one_block_per_eight_iterations():
     """Stride 1: 8 fp64 elements share a block, so a block message every 8 iterations. eps = 1."""
     assert blocks_per_iter(1) == pytest.approx(1.0 / 8, rel=0.01)
@@ -95,9 +95,9 @@ def test_strided_access_is_bandwidth_bound_here_and_contiguous_is_more_so():
     assert float(t_strided) / float(t_contig) == pytest.approx(8.0, rel=0.05)
 
 
-# --------------------------------------------------------------------------------------------- #
+# #
 #  Unstructured: random-and-scattered vs random-and-close
-# --------------------------------------------------------------------------------------------- #
+# #
 def test_scattered_random_access_hits_the_one_eighth_floor():
     """Indices spread over a huge range almost never share a block -> one block per element."""
     rng = numpy.random.default_rng(0)
@@ -137,9 +137,9 @@ def test_a_scattered_gather_is_below_the_single_pass_relayout_threshold():
     assert not relayout_pays_by_efficiency(clustered, 1.0, passes=1)
 
 
-# --------------------------------------------------------------------------------------------- #
+# #
 #  Static replace, and inspector-executor as a THREAT TO VALIDITY
-# --------------------------------------------------------------------------------------------- #
+# #
 #  Static replace of a static indirection A[sigma[i]] reorders A once, at overhead_passes = 0.
 #
 #  We are NOT pursuing inspector-executor. These tests exist to keep the threat honest: I/E removes

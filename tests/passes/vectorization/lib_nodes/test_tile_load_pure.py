@@ -73,7 +73,7 @@ def test_tile_load_rejects_invalid_K():
         TileLoad(name="bad_stride_len", widths=(8, ), dim_strides=(1, 1))
 
 
-# ---- Replicate-factor spectrum ---------------------------------------
+# Replicate-factor spectrum
 
 
 def _build_replicate_load_sdfg(src_shape, widths, replicate_factor_per_dim):

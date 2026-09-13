@@ -208,7 +208,7 @@ class FFTInterpolatePure(xf.ExpandTransformation):
         st_ifft_state = None
         st_finalize = None
 
-        # --- 1. Zero the padded spectrum ------------------------------------
+        # 1. Zero the padded spectrum
         zero_ivars = [f'i{d}' for d in range(rank)]
         zero_ranges = {iv: f'0:{out_shape[d]}' for d, iv in enumerate(zero_ivars)}
         zero_index = ', '.join(zero_ivars)
@@ -217,7 +217,7 @@ class FFTInterpolatePure(xf.ExpandTransformation):
                                    '__z = 0', {'__z': Memlet(f'__padded_spec[{zero_index}]')},
                                    external_edges=True)
 
-        # --- 2. Cast input to complex ---------------------------------------
+        # 2. Cast input to complex
         cast_ivars = [f'i{d}' for d in range(rank)]
         cast_ranges = {iv: f'0:{in_shape[d]}' for d, iv in enumerate(cast_ivars)}
         cast_index = ', '.join(cast_ivars)
@@ -226,7 +226,7 @@ class FFTInterpolatePure(xf.ExpandTransformation):
                                   '__y = __x', {'__y': Memlet(f'__inp_c[{cast_index}]')},
                                   external_edges=True)
 
-        # --- 3. FFT on the input grid ---------------------------------------
+        # 3. FFT on the input grid
         # Rank-1: use the pure DFT lib node (returns an SDFG that nests
         # cleanly).  Rank > 1: emit the FFTW3 plan-and-execute inline so
         # the resulting Tasklet's ``_inp`` / ``_out`` connectors don't
@@ -251,7 +251,7 @@ class FFTInterpolatePure(xf.ExpandTransformation):
                                 direction='FFTW_FORWARD',
                                 envs=[FFTW3Env])
 
-        # --- 4. Symmetric-split spectrum copy -------------------------------
+        # 4. Symmetric-split spectrum copy
         # Per-axis (low, high) cuts.  For each combination of 'low'/'high'
         # across the ``rank`` axes (2**rank total: 2 endpoints in 1-D,
         # 4 quadrants in 2-D, 8 octants in 3-D) emit one copy tasklet that
@@ -276,7 +276,7 @@ class FFTInterpolatePure(xf.ExpandTransformation):
                                        external_edges=True)
             prev_state = st_copy
 
-        # --- 5. IFFT on the output grid --------------------------------------
+        # 5. IFFT on the output grid
         # Same rank dispatch as the forward FFT: pure DFT lib node for
         # rank-1, inline FFTW3 Tasklet otherwise.  Both produce
         # un-normalised output; the 1/Nin scaling is applied as a
@@ -301,7 +301,7 @@ class FFTInterpolatePure(xf.ExpandTransformation):
                                 direction='FFTW_BACKWARD',
                                 envs=[FFTW3Env])
 
-        # --- 6. Project to output dtype + apply 1/Nin scaling ----------------
+        # 6. Project to output dtype + apply 1/Nin scaling
         st_finalize = sdfg.add_state_after(st_ifft_state, 's_finalize')
         fin_ivars = [f'i{d}' for d in range(rank)]
         fin_ranges = {iv: f'0:{out_shape[d]}' for d, iv in enumerate(fin_ivars)}

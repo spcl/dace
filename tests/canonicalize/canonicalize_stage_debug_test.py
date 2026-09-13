@@ -37,9 +37,7 @@ def per_row_reduction(a: dace.float64[N, M], b: dace.float64[N]):
         b[i] = s
 
 
-# ----------------------------------------------------------------------
 # Building blocks
-# ----------------------------------------------------------------------
 
 
 def test_build_random_inputs_small_symbols_and_data():
@@ -73,9 +71,7 @@ def test_stage_result_ok_needs_both_validity_and_numerics():
     assert not StageCheckResult(2, 'fuse', 'P', True, None, False, 3.0, None).ok
 
 
-# ----------------------------------------------------------------------
 # Clean integration: every stage stays valid + numerically correct
-# ----------------------------------------------------------------------
 
 
 def test_elementwise_all_stages_ok():
@@ -105,9 +101,7 @@ def test_first_failing_stage_none_for_clean_kernel():
     assert first_failing_stage(sdfg) is None
 
 
-# ----------------------------------------------------------------------
 # Detection path: a corrupting stage must be caught
-# ----------------------------------------------------------------------
 
 
 class _PerturbOutputValues(ppl.Pass):

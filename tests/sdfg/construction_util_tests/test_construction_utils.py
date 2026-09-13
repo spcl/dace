@@ -53,9 +53,7 @@ def _scalar_sdfg(name: str, arrays=("a", "b", "c")) -> dace.SDFG:
     return sdfg
 
 
-# ---------------------------------------------------------------------------
 # copy_state_contents
-# ---------------------------------------------------------------------------
 
 
 def test_copy_state_contents_preserves_nodes_and_edges():
@@ -105,9 +103,7 @@ def test_copy_state_contents_into_empty_state_idempotent_on_source():
     assert list(src.edges()) == edges_before
 
 
-# ---------------------------------------------------------------------------
 # copy_graph_contents
-# ---------------------------------------------------------------------------
 
 
 def test_copy_graph_contents_preserves_start_block():
@@ -158,9 +154,7 @@ def test_copy_graph_contents_rejects_non_cfr():
         copy_graph_contents(src, state)
 
 
-# ---------------------------------------------------------------------------
 # move_state_after / move_state_before
-# ---------------------------------------------------------------------------
 
 
 def _linear_chain(sdfg: dace.SDFG, labels):
@@ -251,9 +245,7 @@ def test_move_state_before_noop_when_already_in_position():
     assert {(e.src, e.dst) for e in sdfg.edges()} == edges_before
 
 
-# ---------------------------------------------------------------------------
 # move_branch_cfg_up_discard_conditions
-# ---------------------------------------------------------------------------
 
 
 def _build_conditional_with_two_branches(sdfg: dace.SDFG):
@@ -347,11 +339,9 @@ def test_move_branch_cfg_up_preserves_start_block_when_conditional_was_start():
     assert sdfg.start_block.label.startswith("then_state")
 
 
-# ---------------------------------------------------------------------------
 # Numerical correctness — compile + run each helper's output and compare
 # against the plain-Python reference for the same computation. Per project
 # rule: SDFG-producing tests compare against a non-transformed reference.
-# ---------------------------------------------------------------------------
 
 
 def _build_add_state_into(sdfg: dace.SDFG, state_label: str, out_arr: str = "c"):

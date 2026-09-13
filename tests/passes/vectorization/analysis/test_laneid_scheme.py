@@ -73,7 +73,7 @@ def test_make_with_str_base_and_int_lane_only():
     assert LaneIdScheme.parse(LaneIdScheme.make("_laneid_5", 2)) == ("_laneid_5", 2)
 
 
-# --- Option B chunked-form API (A.1 infra) --------------------------------
+# Option B chunked-form API (A.1 infra)
 
 
 def test_make_dim_emits_canonical_chunk():

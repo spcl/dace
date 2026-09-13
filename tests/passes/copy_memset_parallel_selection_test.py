@@ -126,9 +126,7 @@ def test_threshold_config_flips_selection():
         dace.config.Config.set("compiler", "cpu", "parallel_transfer_min_elements", value=orig)
 
 
-# ---------------------------------------------------------------------------
 # The size gate itself
-# ---------------------------------------------------------------------------
 @pin_threshold
 @pytest.mark.parametrize("count,expected", [(SMALL_ELEMS, False), (TEST_THRESHOLD - 1, False), (TEST_THRESHOLD, True),
                                             (BIG_ELEMS, True), (N, True), (2 * N, True), (N * dace.symbol("M"), True)])
@@ -138,9 +136,7 @@ def test_size_gate_defaults_to_parallel(count, expected):
     assert is_parallel_cpu_transfer_size(count) is expected
 
 
-# ---------------------------------------------------------------------------
 # Fork/join cost model: owned here, consumed by the CPU specialization band
-# ---------------------------------------------------------------------------
 def _loop_nested_copy(name: str, trip: str):
     """``for k in range(trip): dst[0:BIG_ELEMS, k] = src[:]`` with the copy as a libnode."""
     sdfg = dace.SDFG(name)

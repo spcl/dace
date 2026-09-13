@@ -62,9 +62,7 @@ def _run_and_compare(prog, inputs, expected_apps: int, simplify: bool = False):
     return sdfg2
 
 
-# --------------------------------------------------------------------------
 # Tests
-# --------------------------------------------------------------------------
 
 
 def test_move_if_into_map_basic():
@@ -212,7 +210,7 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
     M_sym = dace.symbol("M")
     N_sym = dace.symbol("N")
 
-    # --- inner SDFG (body of inner map) ---
+    # inner SDFG (body of inner map)
     inner = SDFG("inner_tester")
     inner.add_array("a_in", [1], dace.float64)
     inner.add_array("a_out", [1], dace.float64)
@@ -223,7 +221,7 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
     is_.add_edge(ir, None, it, "x", mm.Memlet("a_in[0]"))
     is_.add_edge(it, "y", iw, None, mm.Memlet("a_out[0]"))
 
-    # --- mid SDFG (body of outer map, contains the ConditionalBlock) ---
+    # mid SDFG (body of outer map, contains the ConditionalBlock)
     mid = SDFG("mid_tester")
     mid.add_array("A_in", [M_sym, N_sym], dace.float64)
     mid.add_array("A_out", [M_sym, N_sym], dace.float64)
@@ -252,7 +250,7 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
     bstate.add_edge(ns, "a_out", mx, "IN_a", mm.Memlet("A_out[jb, jc]"))
     bstate.add_edge(mx, "OUT_a", aw, None, mm.Memlet("A_out[0:M, 0:N]"))
 
-    # --- outer SDFG ---
+    # outer SDFG
     outer = SDFG("outer_tester")
     outer.add_array("A_in", [M_sym, N_sym], dace.float64)
     outer.add_array("A_out", [M_sym, N_sym], dace.float64)

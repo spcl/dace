@@ -19,9 +19,7 @@ from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantC
 N = dace.symbol("N")
 K = dace.symbol("K")
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _build_loop(sdfg: dace.SDFG, loop_var: str, end_sym: str, label: str = "loop") -> LoopRegion:
@@ -61,9 +59,7 @@ def _run_and_check(sdfg: dace.SDFG, reference_fn, **inputs):
             assert np.allclose(a, b), f"mismatch in `{k}`: sdfg={a} ref={b}"
 
 
-# ---------------------------------------------------------------------------
 # 1. Pure scalar tasklet with outer inputs is hoisted to the preheader.
-# ---------------------------------------------------------------------------
 
 
 def test_pure_tasklet_hoisted_from_loop_region():
@@ -103,9 +99,7 @@ def test_pure_tasklet_hoisted_from_loop_region():
     _run_and_check(sdfg, py_ref, a=np.array([2.5]), b=np.array([1.5]), outp=np.zeros(7), N=7)
 
 
-# ---------------------------------------------------------------------------
 # 2. Memory read with no in-body writer: hoisted.
-# ---------------------------------------------------------------------------
 
 
 def test_invariant_load_without_inloop_writer_is_hoisted():
@@ -142,9 +136,7 @@ def test_invariant_load_without_inloop_writer_is_hoisted():
     _run_and_check(sdfg, py_ref, A=np.array([4.0]), outp=np.zeros(5), N=5)
 
 
-# ---------------------------------------------------------------------------
 # 3. Memory read with an in-body writer: NOT hoisted (alias).
-# ---------------------------------------------------------------------------
 
 
 def test_load_with_inloop_writer_is_not_hoisted():
@@ -177,9 +169,7 @@ def test_load_with_inloop_writer_is_not_hoisted():
     assert any(t.label == "ld" for t in _state_tasklets(body))
 
 
-# ---------------------------------------------------------------------------
 # 4. Transitive invariance chain: two dependent tasklets both hoisted.
-# ---------------------------------------------------------------------------
 
 
 def test_transitive_chain_is_hoisted():
@@ -301,9 +291,7 @@ def test_hoisted_chain_producer_and_consumer_stay_connected():
     _run_and_check(sdfg, py_ref, a=np.array([2.0]), b=np.array([3.0]), c=np.array([4.0]), outp=np.zeros(6), N=6)
 
 
-# ---------------------------------------------------------------------------
 # 5. Map scope: pure tasklet on outer data is hoisted through MapEntry.
-# ---------------------------------------------------------------------------
 
 
 def test_map_scope_pure_tasklet_hoisted():
@@ -344,10 +332,8 @@ def test_map_scope_pure_tasklet_hoisted():
     _run_and_check(sdfg, py_ref, a=np.array([1.0]), b=np.array([7.0]), outp=np.zeros(4), N=4)
 
 
-# ---------------------------------------------------------------------------
 # 6. Nested loop `for nl: for i: a[i] = b[i] + 1.0` — inner loop hoisted,
 #    outer body collapses to an empty hull. TSVC2 s000-family.
-# ---------------------------------------------------------------------------
 
 
 def test_tsvc2_s000_inner_loop_hoisted_leaves_hull():
@@ -384,9 +370,7 @@ def test_tsvc2_s000_inner_loop_hoisted_leaves_hull():
     _run_and_check(sdfg, py_ref, a=np.zeros(4), b=np.arange(4, dtype=np.float64), N=4, K=3)
 
 
-# ---------------------------------------------------------------------------
 # 6b. Hoisting from the MIDDLE of a body chain must splice, not cut.
-# ---------------------------------------------------------------------------
 
 
 def test_middle_child_hoist_keeps_body_chain_connected():
@@ -452,9 +436,7 @@ def test_middle_child_hoist_keeps_body_chain_connected():
                    K=3)
 
 
-# ---------------------------------------------------------------------------
 # 7. WCR output: never hoisted (observable side effect).
-# ---------------------------------------------------------------------------
 
 
 def test_wcr_output_is_not_hoisted():
@@ -478,9 +460,7 @@ def test_wcr_output_is_not_hoisted():
     assert len(_preheaders(sdfg, loop)) == 0
 
 
-# ---------------------------------------------------------------------------
 # 8. Loop-index-dependent memlet subset is not hoisted.
-# ---------------------------------------------------------------------------
 
 
 def test_loop_index_dependent_load_not_hoisted():
@@ -508,9 +488,7 @@ def test_loop_index_dependent_load_not_hoisted():
     assert len(_preheaders(sdfg, loop)) == 0
 
 
-# ---------------------------------------------------------------------------
 # 9. Hull is not re-hoisted (regression against an earlier infinite-loop bug).
-# ---------------------------------------------------------------------------
 
 
 def test_hull_is_not_rehoisted():
@@ -537,9 +515,7 @@ def test_hull_is_not_rehoisted():
     assert len(hulls) == 1
 
 
-# ---------------------------------------------------------------------------
 # TSVC2-derived LICM tests
-# ---------------------------------------------------------------------------
 # Three additional tests extracted from TSVC2 kernels whose outer `nl` wrapper
 # makes the entire inner computation loop-invariant under `nl`. Each pattern is
 # built directly with the SDFG API (no @dace.program) so the test is hermetic.
@@ -670,11 +646,9 @@ def test_tsvc2_s452_like_loop_body_uses_index_blocks_hoist():
     _run_and_check(sdfg, py_ref, a=np.zeros(5), b=rng.normal(size=5), c=rng.normal(size=5), N=5, K=2)
 
 
-# ---------------------------------------------------------------------------
 # Numpy ports of canonical LLVM `llvm/test/Transforms/LICM/*.ll` tests.
 # (LLVM aliasing-focused tests are deliberately omitted — DaCe assumes
 # non-aliasing inputs.)
-# ---------------------------------------------------------------------------
 
 
 def test_llvm_basictest_scalar_times_literal_hoisted():

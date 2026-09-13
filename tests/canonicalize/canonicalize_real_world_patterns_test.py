@@ -74,10 +74,8 @@ def _nreduce(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
 
 
-# ----------------------------------------------------------------------
 # ICON solve_nonhydro: per-jb bound + invariant istep guard + sibling
 # inner loops. Distilled from mo_solve_nonhydro.f90:540-616.
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -208,11 +206,9 @@ def test_icon_solve_nonhydro_shape_e2e():
         assert np.allclose(got['z_dexner_dz_c'], exp_dz), f'z_dexner_dz_c istep={istep}'
 
 
-# ----------------------------------------------------------------------
 # ICON velocity_advection: per-jb bound + IF istep == 1 guard around two
 # inner sibling jk loops sharing the same jc range. Distilled from
 # mo_velocity_advection.f90:485-567.
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -322,12 +318,10 @@ def test_icon_velocity_advection_istep_shape_e2e():
         assert np.allclose(got['w_concorr_c'], exp_wcc), f'w_concorr_c istep={istep}'
 
 
-# ----------------------------------------------------------------------
 # CLOUDSC IPHASE(JM) per-JM phase guards. Distilled from
 # cloudsc.F90:2729-2761. The guards depend on JM (the loop variable
 # of the outer JM=1..NCLV loop), so they CANNOT be hoisted past JM
 # -- only push-into-JL fusion is legal.
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -418,12 +412,10 @@ def test_cloudsc_iphase_shape_e2e():
     assert np.allclose(got['fluxq'], exp_fq)
 
 
-# ----------------------------------------------------------------------
 # CLOUDSC KLEV+1 promoted upper-bound. Distilled from cloudsc.F90:2795.
 # The outer loop's upper bound is a promoted symbol expression
 # (KLEV + 1); cascade-up must keep its iedge assignment at the outer
 # scope, not inside the loop body.
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -496,10 +488,8 @@ def test_cloudsc_klev_plus_1_shape_e2e():
     assert np.allclose(got, exp)
 
 
-# ----------------------------------------------------------------------
 # ICON / CLOUDSC ZQTMST = 1 / PTSPHY invariant scalar. Computed once
 # at outer-scope, read by every inner iteration. Cascade-up target.
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -551,11 +541,9 @@ def test_zqtmst_invariant_scalar_shape_e2e():
     assert np.allclose(out, exp)
 
 
-# ----------------------------------------------------------------------
 # CLOUDSC ``IF (ZQPRETOT(JL) < ZEPSEC)`` data-dependent guard.
 # Distilled from cloudsc.F90:2705-2719. The guard reads a per-JL
 # value; cascade-up MUST refuse to lift anything past JL.
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -631,14 +619,12 @@ def test_cloudsc_zqpretot_data_guard_shape_e2e():
     assert np.allclose(got['zqpretot'], exp_qp)
 
 
-# ----------------------------------------------------------------------
 # CLOUDSC config-flag chain ``IF (NSSOPT == 0) THEN ... ELSEIF
 # (NSSOPT == 1)`` inside the JL/JK nest. Distilled from
 # cloudsc.F90:1431-1444. The config flag is invariant on every loop;
 # MoveLoopInvariantIfUp should hoist it out, after which the
 # branches become independent computations to fuse with their
 # siblings.
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -689,12 +675,10 @@ def test_cloudsc_nssopt_config_chain_shape_e2e(nssopt):
     assert np.allclose(out, nssopt_oracle(arr, nssopt))
 
 
-# ----------------------------------------------------------------------
 # Standalone MoveLoopInvariantIfUp on the ICON shapes -- locks in the
 # istep top-level hoist contract independently of the pipeline.
 # Pipeline integration is deferred (MoveIfIntoLoop ping-pong; see
 # pipeline.py NOTE near move_loop_invariant_if_up).
-# ----------------------------------------------------------------------
 
 
 def _run_canonicalize_pre_parallelize(kernel):

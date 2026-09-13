@@ -185,9 +185,9 @@ def best(results: List[SweepResult], noise_floor: Optional[float] = None) -> Opt
     return min(window, key=lambda r: r.order)
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Candidate-family enumerators (apply closures over the layout passes)
-# --------------------------------------------------------------------------- #
+# #
 def permutation_candidates(array: str, ndim: int):
     """Yield ``(name, apply)`` for every dimension permutation of ``array`` (identity included); ``apply`` runs ``PermuteDimensions``."""
     from dace.transformation.layout.permute_dimensions import PermuteDimensions

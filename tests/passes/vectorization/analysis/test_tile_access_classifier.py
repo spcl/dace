@@ -34,7 +34,7 @@ def _R(*ranges):
     return Range(out)
 
 
-# ---- per-dim kind tests ----------------------------------------------
+# per-dim kind tests
 
 
 def test_per_dim_broadcast_constant():
@@ -116,7 +116,7 @@ def test_per_dim_gather_resolves_index_access_node():
     assert ta.gather_index_per_dim[0].data == "idx"
 
 
-# ---- whole-subset composition tests ----------------------------------
+# whole-subset composition tests
 
 
 def test_whole_subset_kind_gather_wins():
@@ -147,7 +147,7 @@ def test_whole_subset_kind_broadcast_when_all_broadcast():
     assert ta.kind == TileAccessKind.BROADCAST
 
 
-# ---- special-composition tests ---------------------------------------
+# special-composition tests
 
 
 def test_diagonal_iter_var_in_multiple_dims():
@@ -176,7 +176,7 @@ def test_canonical_order_no_transpose_flag():
     assert ta.transpose is None
 
 
-# ---- K-rank transition (broadcast) tests -----------------------------
+# K-rank transition (broadcast) tests
 
 
 def test_k0_to_k2_full_splat():
@@ -205,7 +205,7 @@ def test_k1_to_k2_broadcast_on_dim_1():
     assert ta.per_dim_kind == (PerDimKind.STRUCTURED_1, PerDimKind.BROADCAST)
 
 
-# ---- mixed-case / fallback tests -------------------------------------
+# mixed-case / fallback tests
 
 
 def test_gather_with_structured_other_dim_stays_gather():
@@ -234,7 +234,7 @@ def test_non_affine_iter_var_expression_is_gather():
     assert ta.gather_index_per_dim[0] is None
 
 
-# ---- REPLICATE / replicate_factor spectrum --------------------------
+# REPLICATE / replicate_factor spectrum
 
 
 def test_replicate_int_floor_factor_2():

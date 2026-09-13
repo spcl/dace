@@ -69,9 +69,7 @@ class CopyInsertionPhase():
                 if origin is not None and origin in sdfg.arrays:
                     sdfg.arrays[name].storage = sdfg.arrays[origin].storage
 
-    ################################################################
-    ### Ensure Correct Storage Locations Before Inserting Copies ###
-    ################################################################
+    # Ensure Correct Storage Locations Before Inserting Copies
 
     def correct_transient_storage_locations(self, sdfg: SDFG, IR: OffloadingIRNode) -> None:
         seen = OrderedSet()
@@ -117,12 +115,10 @@ class CopyInsertionPhase():
                 if origin is not None and origin in sdfg.arrays:
                     sdfg.arrays[data_name].storage = sdfg.arrays[origin].storage
 
-    #################################
-    ### Rename Copied Arrays      ###
-    ### A -> A_gpu or A -> A_host ###
-    #################################
+    # Rename Copied Arrays
+    # A -> A_gpu or A -> A_host
 
-    ### Renaming Conventions ###
+    # Renaming Conventions
     def _get_host_name(self, name: str) -> str:
         if name.startswith("__return"):
             return f"buffer__return{name[8:]}_host"
@@ -271,9 +267,7 @@ class CopyInsertionPhase():
             raise NotImplementedError(
                 f"in _correct_names_in_block: IR.block unhandled type: {block} is {block.__class__.__name__}")
 
-    ######################################################
-    ### Evaluate the IR to Find Copy Locations in SDFG ###
-    ######################################################
+    # Evaluate the IR to Find Copy Locations in SDFG
 
     def eval_IR(self, sdfg: SDFG, IR: OffloadingIRNode) -> None:
         # modifies SDFG in place & inserts all necessary copies
@@ -330,9 +324,7 @@ class CopyInsertionPhase():
 
         helpers.traverse_IR(IR, eval)
 
-    ########################################
-    ### Insert New Copy States into SDFG ###
-    ########################################
+    # Insert New Copy States into SDFG
 
     def insert_copies(self, sdfg: SDFG, node: OffloadingIRNode, next: OffloadingIRNode, node_block: ControlFlowBlock,
                       next_block: ControlFlowBlock) -> None:

@@ -497,9 +497,7 @@ def test_mixed_copy_and_product_reduce_detects_star_op():
     assert np.isclose(float(out[0]), float(np.prod(c))), "product reduction p=prod(c) wrong"
 
 
-# ---------------------------------------------------------------------------
 # OpenMP array-section reduction  reduction(op:A[0:n])  (openmp_array_reductions flag)
-# ---------------------------------------------------------------------------
 KK, NR, NM = 200, 5, 7
 
 

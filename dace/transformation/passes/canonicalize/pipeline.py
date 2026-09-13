@@ -965,7 +965,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     #   WCRToAugAssign        -- normalise WCR writes back into explicit ``a = a + b``
     #     augmented assignments, so every reduction reaches loop_to_reduce in one shape;
     #
-    #   --- "specialize -> unroll -> IV -> LICM -> simplify" block ---
+    # "specialize -> unroll -> IV -> LICM -> simplify" block
     #   PrivatizeScalars + SymbolProp + ConstProp -- specialize the symbols and fold
     #     constants into bounds/guards (visible accumulator initializers, concrete
     #     trip counts for unroll);

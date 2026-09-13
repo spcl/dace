@@ -115,7 +115,6 @@ def test_constant_read_no_tileload():
     assert len(tile_stores) == 1
 
 
-# ---------------------------------------------------------------------------
 # Regression tests for the empty-memlet (ordering-edge) family of defects.
 #
 # These three build the minimal state shape each defective function needs directly
@@ -127,7 +126,6 @@ def test_constant_read_no_tileload():
 # state_fusion_with_happens_before.py) produces when it fires inside a tile-tagged
 # NSDFG body; existing full-pipeline kernel corpora (TSVC/cloudsc/ICON) were swept and
 # did not happen to reach this exact adjacency, so this constructs it directly.
-# ---------------------------------------------------------------------------
 
 
 def test_stage_writes_skips_ordering_edge_as_representative():

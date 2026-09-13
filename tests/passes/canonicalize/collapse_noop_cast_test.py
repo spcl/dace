@@ -89,9 +89,7 @@ def test_non_cast_tasklet_untouched():
     assert tasklet.code.as_string == before
 
 
-# ----------------------------------------------------------------------------------
 # @dace.program fixtures -- same shapes, driven through the frontend.
-# ----------------------------------------------------------------------------------
 
 
 @dace.program
@@ -136,9 +134,7 @@ def test_program_genuine_astype_kept_and_correct():
     assert np.allclose(b, a.astype(np.float64))
 
 
-# ----------------------------------------------------------------------------------
 # Interaction with TrivialTaskletElimination.
-# ----------------------------------------------------------------------------------
 
 
 def test_collapsed_noop_then_eliminated():
@@ -166,7 +162,6 @@ def test_idempotent():
     assert tasklet.code.as_string == 'out = inp'
 
 
-# ----------------------------------------------------------------------------------
 # The cast argument is a SCOPED symbol -- a map parameter, which no declaration table holds.
 #
 # ``MapEntry.new_symbols`` types a parameter as ``result_type_of`` over the range's begin and
@@ -174,7 +169,6 @@ def test_idempotent():
 # sugared ``'0:N'`` reports int64 whatever ``N`` is declared, while an explicit ``Range`` over
 # two pure int32 bounds reports int32. Both cases have to be READ; a guessed int64 collapses the
 # genuine widening in the int32 case and drops a real conversion.
-# ----------------------------------------------------------------------------------
 
 
 def build_map_param_cast_sdfg(ndrange, out_ty, body):

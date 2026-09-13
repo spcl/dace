@@ -53,9 +53,7 @@ def _count_wcr_edges(sdfg: dace.SDFG):
     return wcr_arr_elem, wcr_scalar
 
 
-# ---------------------------------------------------------------------------
 # Basic shape: a dot product whose accumulator is an array slot.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -100,10 +98,8 @@ def test_array_slot_dot_product_privatized():
     assert np.isclose(dot[0], float((a * b).sum()))
 
 
-# ---------------------------------------------------------------------------
 # Multiple reductions in the same SDFG -- the pass must mint UNIQUE scalar
 # names across loop nests (no collisions).
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -145,11 +141,9 @@ def test_two_reductions_get_unique_scalar_names():
     assert np.isclose(out[0], float(a.sum()))
 
 
-# ---------------------------------------------------------------------------
 # Two reductions targeting the SAME array name (e.g. ``acc[0]`` and ``acc[1]``)
 # -- still must mint distinct scalar names, AND the writeback subsets must
 # point at the correct slots.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -185,9 +179,7 @@ def test_two_reductions_same_array_get_unique_names():
     assert np.isclose(acc[1], float(a.sum()))
 
 
-# ---------------------------------------------------------------------------
 # Idempotence: a second invocation must NOT re-privatize already-scalar WCRs.
-# ---------------------------------------------------------------------------
 
 
 def test_idempotent_no_double_privatize():

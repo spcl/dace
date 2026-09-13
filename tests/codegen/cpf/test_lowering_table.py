@@ -455,7 +455,7 @@ def test_non_constexpr_definitions_are_not_marked_constexpr(name):
         'GCC folds std::floor as a builtin and accepts it; clang rejects the same code.')
 
 
-# -- the C tables, held to the same anti-rot standard as the C++ ones ----------------------------
+# the C tables, held to the same anti-rot standard as the C++ ones
 
 #: Names the C tables deliberately do NOT cover, with the reason each one is refused rather than
 #: guessed. Kept as a test-side copy so a silent addition to ``C_UNSUPPORTED`` fails here: a

@@ -44,9 +44,7 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 
 N = dace.symbol("N")
 
-# ---------------------------------------------------------------------------
 # Kernels: reductions whose accumulator is a genuine multi-element ARRAY SLOT.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -114,9 +112,7 @@ def _tiled_map_steps(sdfg: dace.SDFG):
     return steps
 
 
-# ---------------------------------------------------------------------------
 # Structural: the pass rewrites the array-slot WCR into a scalar accumulator.
-# ---------------------------------------------------------------------------
 
 
 def test_array_slot_wcr_becomes_scalar():
@@ -177,9 +173,7 @@ def test_recurrence_is_left_alone():
     assert not count
 
 
-# ---------------------------------------------------------------------------
 # e2e: through the multi-dim tile vectorizer -- tiled and correct with or without the prep.
-# ---------------------------------------------------------------------------
 
 
 def _vectorize(prog, name):

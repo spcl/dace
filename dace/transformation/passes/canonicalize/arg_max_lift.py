@@ -740,11 +740,9 @@ class ArgMaxLift(ppl.Pass):
             last_wins=last_wins,
         )
 
-    # ------------------------- match helpers -------------------------
+    # match helpers
 
-    # ------------------------------------------------------------------
     # 2-D contiguous nested argmax (TSVC s3110 / s13110).
-    # ------------------------------------------------------------------
 
     def _single_child_region(self, region, want_type):
         """Return the unique child block of ``region`` of type ``want_type``,
@@ -1601,7 +1599,7 @@ class ArgMaxLift(ppl.Pass):
         except Exception:  # pragma: no cover -- defensive
             return None
 
-    # ------------------------- rewrite -------------------------
+    # rewrite
 
     def _seed_iteration(self, m: _Match, start: Any) -> Any:
         """The iteration the pre-loop seed stands at.
@@ -2030,7 +2028,7 @@ class ArgMaxLift(ppl.Pass):
         argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
         sdfg.reset_cfg_list()
 
-    # ------------------- predicate index (TSVC s331) -------------------
+    # predicate index (TSVC s331)
 
     def match_predicate_index(self, loop: LoopRegion, sdfg: SDFG, skeleton=None) -> Optional[MatchPredIndex]:
         """Match ``for i: if pred(a[i]): j = i`` -- a position tracked with NO value

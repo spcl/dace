@@ -27,7 +27,7 @@ from dace.transformation.layout.prepare import prepare_for_layout
 M, N, P = (dace.symbol(s) for s in ("M", "N", "P"))
 
 
-# ---- kernels ------------------------------------------------------------------------------------
+# kernels
 @dace.program
 def saxpy2d(a: dace.float64, x: dace.float64[M, N], y: dace.float64[M, N]):
     for i, j in dace.map[0:M, 0:N]:
@@ -59,7 +59,7 @@ def matvec(A: dace.float64[M, N], v: dace.float64[N], out: dace.float64[M]):
         out[i] += A[i, j] * v[j]
 
 
-# ---- per-kernel problem builders ----------------------------------------------------------------
+# per-kernel problem builders
 # Each builder returns (program, symbols, args, output_names, oracle). ``args`` holds LOGICAL numpy
 # inputs (read-only inputs plus zeroed / initial outputs); ``oracle`` is computed from the logical
 # inputs BEFORE the run, so an in-place output being mutated cannot corrupt the reference.
@@ -95,7 +95,7 @@ def build_problem(kernel, seed):
     raise ValueError(kernel)
 
 
-# ---- the sweep ----------------------------------------------------------------------------------
+# the sweep
 # Each case is (kernel, permute_map). The permute_map names only the subset of arrays to relayout;
 # arrays absent from it keep their logical layout. 1D arrays (matvec's v, out) carry the identity
 # permute [0] to exercise that path transparently.

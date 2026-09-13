@@ -52,13 +52,11 @@ def _order(sdfg):
     return order
 
 
-# ---------------------------------------------------------------------------
 #  Rectangular mixed-direction dependence (i:<, j:>): unit-stride i is OUTER,
 #  write a[j, i] reads a[j+1, i-1]. Moving i innermost reverses the anti-
 #  dependence -> the interchange is ILLEGAL. i is "parallelizable innermost"
 #  (for fixed j the write row j and read row j+1 never alias) but NOT freely
 #  interchangeable. Must be refused.
-# ---------------------------------------------------------------------------
 @dace.program
 def mixed_dir_2d(a: dace.float64[N, N], b: dace.float64[N, N]):
     for i in range(1, N):
@@ -91,11 +89,9 @@ def test_reject_mixed_direction_interchange_2d():
     assert np.array_equal(a_ref, a_got), "refused nest must compute the original result bit-exact"
 
 
-# ---------------------------------------------------------------------------
 #  3-level mixed-direction (i:<, j:>): unit-stride i outermost must bubble past
 #  j and k. The i-past-j swap is illegal (read a[k, j+1, i-1]). The DOALL oracle
 #  on the FINAL innermost position must not wrongly certify it.
-# ---------------------------------------------------------------------------
 @dace.program
 def mixed_dir_3d(a: dace.float64[N, N, N], b: dace.float64[N, N, N]):
     for i in range(1, N):
@@ -130,13 +126,11 @@ def test_reject_mixed_direction_interchange_3d():
     assert np.array_equal(a_ref, a_got)
 
 
-# ---------------------------------------------------------------------------
 #  Triangular between the moved axis and a non-adjacent bubbled-past axis:
 #  unit-stride i is DOALL (recurrence lives in j), but the innermost loop k has
 #  a bound k in range(i, N) that references i. A metadata swap of the i-k pair
 #  would change the iteration SET, so `_bounds_independent` refuses it and
 #  `_swap_trapezoid` rebuilds both bounds to enumerate the same set instead.
-# ---------------------------------------------------------------------------
 @dace.program
 def triangular_i_k(a: dace.float64[N, N, N], b: dace.float64[N, N, N]):
     for i in range(N):
@@ -214,10 +208,8 @@ def test_trapezoid_interchange_preserves_the_iteration_set(n):
     assert np.array_equal(a_ref, a_got)
 
 
-# ---------------------------------------------------------------------------
 #  Positive control: a genuinely DOALL unit-stride axis IS interchanged, and the
 #  result is bit-exact (no reduction reordering, no data movement change).
-# ---------------------------------------------------------------------------
 @dace.program
 def legal_doall_3d(a: dace.float64[N, N, N], b: dace.float64[N, N, N]):
     for i in range(N):

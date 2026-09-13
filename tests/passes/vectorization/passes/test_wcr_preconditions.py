@@ -48,9 +48,7 @@ def _outer_with_body_nsdfg():
     return outer, body, bstate
 
 
-# ---------------------------------------------------------------------------
 # WCRToAugAssign expr-2: AccessNode -[wcr]-> AccessNode copy.
-# ---------------------------------------------------------------------------
 
 
 def test_wcr_to_augassign_an_to_an_copy():
@@ -81,9 +79,7 @@ def test_wcr_to_augassign_an_to_an_copy():
     assert np.allclose(A, [15.0]), f"expected 15.0 (5 + 10), got {A}"
 
 
-# ---------------------------------------------------------------------------
 # BypassTrivialAssignTasklets carries the WCR across the bypass.
-# ---------------------------------------------------------------------------
 
 
 def test_bypass_carries_wcr_across_trivial_assign():
@@ -114,9 +110,7 @@ def test_bypass_carries_wcr_across_trivial_assign():
     assert surviving[0].data.wcr is not None, "WCR was dropped during the bypass (reduction lost)"
 
 
-# ---------------------------------------------------------------------------
 # Precondition checker: no_wcr_in_map_body (legacy).
-# ---------------------------------------------------------------------------
 
 
 def _map_with_optional_body_wcr(body_wcr: bool):
@@ -173,9 +167,7 @@ def test_no_wcr_in_map_body_allows_boundary_reduction():
     assert no_wcr_in_map_body(sdfg) is None
 
 
-# ---------------------------------------------------------------------------
 # Precondition checker: no_wcr_inside_nested_sdfgs (multi-dim).
-# ---------------------------------------------------------------------------
 
 
 def test_no_wcr_inside_nested_sdfgs_detects_inner_wcr():
@@ -229,9 +221,7 @@ def test_no_wcr_inside_nested_sdfgs_allows_scalar_reduction_out():
     assert no_wcr_inside_nested_sdfgs(outer) is None
 
 
-# ---------------------------------------------------------------------------
 # e2e: in-place RMW survives the tile-node vectorizer.
-# ---------------------------------------------------------------------------
 
 
 @dace.program

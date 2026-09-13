@@ -236,7 +236,7 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
     """
     code = tasklet.code.as_string
 
-    # ---- Python tasklet case ----
+    # Python tasklet case
     if tasklet.code.language == dace.dtypes.Language.Python:
         try:
             # Split into LHS and RHS (single assignment inside Python tasklet)
@@ -273,7 +273,7 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
             # Fallback to token-based match if symbolic parsing fails
             return token_match(code, symbol_str)
 
-    # ---- Non-Python tasklet (e.g., C++) ----
+    # Non-Python tasklet (e.g., C++)
     else:
         return token_match(code, symbol_str)
 

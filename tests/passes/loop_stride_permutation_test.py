@@ -60,10 +60,8 @@ def _loop_control_tokens(sdfg: dace.SDFG, variable: str):
     return found[0]
 
 
-# ---------------------------------------------------------------------------
 #  Rectangular recurrence: i is the unit-stride parallel axis (outer), j carries
 #  the recurrence (inner). Interchange must move i innermost.
-# ---------------------------------------------------------------------------
 @dace.program
 def recurrence_unit_stride_outer(aa: dace.float64[N, N], bb: dace.float64[N, N]):
     for i in range(N):
@@ -90,11 +88,9 @@ def test_interchange_moves_unit_stride_loop_innermost():
     assert np.allclose(got_aa, ref_aa), "interchange must preserve the result"
 
 
-# ---------------------------------------------------------------------------
 #  Triangular nest: the inner bound references the outer loop var, so a metadata
 #  swap would change the iteration set. The lower-bound (trapezoidal) form is
 #  rebuilt; the upper-bound form is refused.
-# ---------------------------------------------------------------------------
 @dace.program
 def trapezoid_lower_bound(aa: dace.float64[N, N], bb: dace.float64[N, N]):
     for j in range(N):
@@ -145,9 +141,7 @@ def test_reject_triangular_upper_bound():
     assert _loop_nest_order(sdfg) == before
 
 
-# ---------------------------------------------------------------------------
 #  Already canonical: the unit-stride axis (i) is already innermost -> no-op.
-# ---------------------------------------------------------------------------
 @dace.program
 def unit_stride_already_inner(aa: dace.float64[N, N], bb: dace.float64[N, N]):
     for j in range(1, N):
@@ -162,10 +156,8 @@ def test_noop_when_unit_stride_already_innermost():
     assert _loop_nest_order(sdfg) == ['j', 'i']
 
 
-# ---------------------------------------------------------------------------
 #  Unit-stride loop is NOT DOALL: the outer (unit-stride) loop carries the
 #  recurrence, so moving it inward is not provably legal -> rejected.
-# ---------------------------------------------------------------------------
 @dace.program
 def unit_stride_outer_carries_recurrence(aa: dace.float64[N, N], bb: dace.float64[N, N]):
     for i in range(1, N):
@@ -181,10 +173,8 @@ def test_reject_when_unit_stride_loop_not_doall():
     assert _loop_nest_order(sdfg) == before
 
 
-# ---------------------------------------------------------------------------
 #  N-level (3-deep) nest: the unit-stride DOALL axis (i) is outermost and must
 #  bubble all the way to innermost, past the two recurrence-carrying loops j, k.
-# ---------------------------------------------------------------------------
 @dace.program
 def three_level_unit_stride_outer(aa: dace.float64[N, N, N], bb: dace.float64[N, N, N]):
     for i in range(N):
@@ -214,10 +204,8 @@ def test_interchange_bubbles_unit_stride_through_three_levels():
     assert np.allclose(got_aa, ref_aa), "N-level interchange must preserve the result"
 
 
-# ---------------------------------------------------------------------------
 #  N-level: the unit-stride DOALL axis sits in the MIDDLE of a 3-deep nest and
 #  must bubble one level inward (past the inner recurrence loop) to innermost.
-# ---------------------------------------------------------------------------
 @dace.program
 def three_level_unit_stride_middle(bb: dace.float64[N, N, N], cc: dace.float64[N, N, N]):
     for i in range(1, N):
@@ -245,11 +233,9 @@ def test_interchange_bubbles_middle_axis_to_innermost():
     assert np.allclose(got, ref), "middle-axis interchange must preserve the result"
 
 
-# ---------------------------------------------------------------------------
 #  N-level reject: the unit-stride axis (i, outermost) itself carries a
 #  recurrence (aa[k, j, i-1]), so it is not DOALL once innermost -> whole bubble
 #  reverts, nest untouched.
-# ---------------------------------------------------------------------------
 @dace.program
 def three_level_unit_stride_outer_carries(aa: dace.float64[N, N, N], bb: dace.float64[N, N, N]):
     for i in range(1, N):
@@ -266,11 +252,9 @@ def test_reject_three_level_when_moved_axis_not_doall():
     assert _loop_nest_order(sdfg) == before
 
 
-# ---------------------------------------------------------------------------
 #  Imperfect nest (TSVC s2233 shape): the outer body holds TWO sibling inner
 #  loops, so it is not a perfect nest -> LoopStridePermutation is a no-op here
 #  (this shape needs LoopFission first, handled later in the pipeline).
-# ---------------------------------------------------------------------------
 @dace.program
 def imperfect_two_sibling_inner(aa: dace.float64[N, N], bb: dace.float64[N, N], cc: dace.float64[N, N]):
     for i in range(1, N):
@@ -288,11 +272,9 @@ def test_noop_on_imperfect_nest_two_sibling_inner_loops():
     assert _loop_nest_order(sdfg) == before
 
 
-# ---------------------------------------------------------------------------
 #  2D wavefront (TSVC s2111 shape): the unit-stride axis i is ALREADY innermost
 #  (and carries a dependence). No axis to move inward -> no-op (skewing, not
 #  permutation, is what unlocks this one).
-# ---------------------------------------------------------------------------
 @dace.program
 def wavefront_unit_stride_inner(aa: dace.float64[N, N]):
     for j in range(1, N):
@@ -311,10 +293,8 @@ if __name__ == '__main__':
     pytest.main([__file__, '-q'])
 
 
-# ---------------------------------------------------------------------------
 #  A/B: the interchange is the whole difference between the two binaries, so the
 #  measurement isolates access order (both nests stay sequential, same work).
-# ---------------------------------------------------------------------------
 @dace.program
 def s1232(aa: dace.float64[N, N], bb: dace.float64[N, N], cc: dace.float64[N, N]):
     for j in range(N):

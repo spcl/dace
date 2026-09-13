@@ -65,7 +65,7 @@ def _binop_broadcast_flags(code: str):
     return [tuple(f == "true" for f in m) for m in BINOP_FLAGS_RE.findall(code)]
 
 
-# --------------------------- kernels (module scope) ---------------------------
+# kernels (module scope)
 @dace.program
 def _cast_inline16(A: dace.float16[N], C: dace.float16[N]):
     # The cast-of-constant directly inline in the binop.
@@ -90,7 +90,7 @@ def _const_store64(C: dace.float64[N]):
         C[i] = 0.5
 
 
-# --------------------------- emitted-shape tests ---------------------------
+# emitted-shape tests
 @pytest.mark.parametrize("prog", [_cast_inline16, _cast_separate16])
 def test_cast_constant_broadcasts_no_fill(prog):
     """The cast-of-constant vectorizes to a broadcast operand (a ``true`` flag on the
@@ -121,7 +121,7 @@ def test_cast_and_separate_forms_emit_equivalent_shape():
         assert not const_fills, f"{prog.name}: constant must not be widened into a Symbol-source fill tile"
 
 
-# --------------------------- value-exactness vs numpy ---------------------------
+# value-exactness vs numpy
 def test_cast_inline_value_exact():
     sdfg = _vectorize(_cast_inline16)
     A = np.random.rand(M).astype(np.float16)
@@ -152,7 +152,7 @@ def test_pure_const_store_still_materialises_and_is_exact():
     assert np.allclose(C, np.full(M, 0.5))
 
 
-# --------------------------- same-domain classifier ---------------------------
+# same-domain classifier
 def test_same_domain_constant_classifier():
     """The see-through fires only for a same-domain narrowing (fp -> fp, int -> int) and
     is refused for a cross-domain fp <-> int cast or a non-constant symbol. Domains are

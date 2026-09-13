@@ -11,8 +11,6 @@ import dace.libraries.mpi as mpi
 import numpy as np
 import pytest
 
-###############################################################################
-
 
 def make_sdfg(dtype):
     n = dace.symbol("n")
@@ -42,9 +40,6 @@ def make_sdfg(dtype):
     state.add_memlet_path(recvtag, sr, dst_conn="_recvtag", memlet=Memlet.simple(recvtag, "0:1", num_accesses=1))
     state.add_memlet_path(sr, y, src_conn="_outbuffer", memlet=Memlet.simple(y, "0:n", num_accesses=n))
     return sdfg
-
-
-###############################################################################
 
 
 def _test_mpi(info, sdfg, dtype):

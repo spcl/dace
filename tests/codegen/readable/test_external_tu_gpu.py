@@ -60,9 +60,9 @@ def parent_frame(objects):
     return frames[0].clean_code or frames[0].code
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Fixtures -- device programs built directly (GPU_Global + explicit schedules).
-# --------------------------------------------------------------------------- #
+# #
 def two_sibling_kernels(name):
     """Flat nestedness: two top-level GPU maps (no enclosing control node) over a shared device input.
     Model 2 lifts each into its own standalone SDFG -> two ``.cu`` files, one ``__global__`` each."""
@@ -156,9 +156,9 @@ def device_array(host):
     return cp.asarray(host)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Codegen-shape tests (no GPU device needed) -- assert the per-kernel .cu split.
-# --------------------------------------------------------------------------- #
+# #
 def test_flag_off_single_cu(require_external_tu):
     """Off (default): one ``.cu`` carrying both kernels -- byte-for-byte the untouched generator."""
     objects = generate_with_ext_tu(two_sibling_kernels("off_one_cu"), on=False)
@@ -209,9 +209,9 @@ def test_external_call_emitted(require_external_tu):
         assert re.search(r"__dace_exit_%s\(__exttu_h_%s\)" % (re.escape(child), re.escape(child)), frame), child
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Compile + run tests (need a GPU) -- correctness vs the single-TU build, both builders.
-# --------------------------------------------------------------------------- #
+# #
 @pytest.mark.gpu
 @pytest.mark.parametrize("build_mode", ["cmake", "native"])
 def test_two_siblings_run_matches_single_tu(require_external_tu, build_mode):

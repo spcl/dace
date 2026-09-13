@@ -69,9 +69,7 @@ class CopyAnalysisPhase():
         if self.verbose: print(f"Phase2: full IR \n{IR}\n\n")
         return IR
 
-    #############################
-    ###       create IR       ###
-    #############################
+    # create IR
 
     def _parse_to_IR(self, sdfg: SDFG, cfr: ControlFlowRegion, curr_node: OffloadingIRNode) -> OffloadingIRNode:
         block: ControlFlowBlock
@@ -300,9 +298,7 @@ class CopyAnalysisPhase():
                         node.gpu_set.add(name)
                         changed = True
 
-    #######################################################
-    ###  Helpers get Arrays Used by Edges & Nodes ###
-    #######################################################
+    # Helpers get Arrays Used by Edges & Nodes
 
     def get_arrays_used_by_edge(self, sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge,
                                 is_out_edge: bool) -> OrderedSet:
@@ -360,9 +356,7 @@ class CopyAnalysisPhase():
 
         return arrays
 
-    ################################################################
-    ###  Recursive Analysis: Each SDFG Node has dedicated method ###
-    ################################################################
+    # Recursive Analysis: Each SDFG Node has dedicated method
 
     def get_data_locations_of_map(self, sdfg: SDFG, state: SDFGState,
                                   map_entry: nodes.MapEntry) -> Tuple[OrderedSet[str], OrderedSet[str]]:

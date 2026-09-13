@@ -59,9 +59,7 @@ def _region_writes(region, name: str) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------------------------
 # Frontend kernels (concrete inner bound => inner loop provably non-empty, so S1 passes).
-# ---------------------------------------------------------------------------------------------
 @dace.program
 def _pre_only(a: dace.float64[N, 5], b: dace.float64[N, 5], s: dace.float64[N]):
     for i in range(N):
@@ -149,9 +147,7 @@ def _build_interstate_sdfg() -> dace.SDFG:
     return sdfg
 
 
-# ---------------------------------------------------------------------------------------------
 # Tests
-# ---------------------------------------------------------------------------------------------
 def test_pre_only_sift():
     """``for i: { s[i]=a[i,0]; for j: b=a+s }`` -> the pre state moves into a ``j == 0`` guard
     that is the first inner block; outer body left with one child; bit-exact."""

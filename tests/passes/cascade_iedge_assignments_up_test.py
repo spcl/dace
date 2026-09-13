@@ -78,9 +78,7 @@ def _assignments_inside_loops(sdfg: dace.SDFG) -> List[Tuple[str, str, str]]:
     return out
 
 
-# ----------------------------------------------------------------------
 # T1. Outer-only invariant single hoist
-# ----------------------------------------------------------------------
 
 
 def test_outer_only_single_hoist_manual():
@@ -114,9 +112,7 @@ def test_outer_only_single_hoist_manual():
     assert ('kp1', 'K + 1') in root_assignments
 
 
-# ----------------------------------------------------------------------
 # T2. Two-loop shared hoist (one move serves both sibling loops)
-# ----------------------------------------------------------------------
 
 
 def _make_loop_with_iedge(name: str, key: str, rhs: str, loop_var: str = 'i') -> LoopRegion:
@@ -152,9 +148,7 @@ def test_two_sibling_loops_each_hoist_independently():
     assert not _assignments_inside_loops(sdfg)
 
 
-# ----------------------------------------------------------------------
 # T3. Mixed outer + loop-var: refuse
-# ----------------------------------------------------------------------
 
 
 def test_mixed_outer_plus_loop_var_refuses():
@@ -173,9 +167,7 @@ def test_mixed_outer_plus_loop_var_refuses():
     assert ('mix_loop', 'tmp', 'K + i') in _assignments_inside_loops(sdfg)
 
 
-# ----------------------------------------------------------------------
 # T4. Data-dependent (refuse): rhs reads an array
-# ----------------------------------------------------------------------
 
 
 def test_data_dependent_assignment_refuses_or_stays():
@@ -208,9 +200,7 @@ def test_data_dependent_assignment_refuses_or_stays():
     assert ('dd_loop', 'derived', 'per_iter + 1') in inside
 
 
-# ----------------------------------------------------------------------
 # T5. Conditional-guarded assignment (L5): refuse inside ConditionalBlock
-# ----------------------------------------------------------------------
 
 
 def test_conditional_branch_refuses_l5():
@@ -254,9 +244,7 @@ def test_conditional_branch_refuses_l5():
     assert found, 'guarded assignment was unexpectedly moved'
 
 
-# ----------------------------------------------------------------------
 # T6. Cross-NSDFG hoist (L6): v1 hoists within the inner SDFG, refuses to cross
-# ----------------------------------------------------------------------
 
 
 def test_cross_nsdfg_hoist_l6_stops_at_boundary():
@@ -290,9 +278,7 @@ def test_cross_nsdfg_hoist_l6_stops_at_boundary():
     outer.validate()
 
 
-# ----------------------------------------------------------------------
 # T7. Transitive chain: ``s1 = K + 1; s2 = 2 * s1``
-# ----------------------------------------------------------------------
 
 
 def test_transitive_chain_both_hoist():
@@ -328,9 +314,7 @@ def test_transitive_chain_both_hoist():
     assert not _assignments_inside_loops(sdfg)
 
 
-# ----------------------------------------------------------------------
 # T8. All-or-nothing: hoist one level legal, two levels not -> refuse
-# ----------------------------------------------------------------------
 
 
 def test_all_or_nothing_one_level_only_refuses():
@@ -383,9 +367,7 @@ def test_all_or_nothing_two_enclosing_loops_invariant_both_hoist():
     assert not _assignments_inside_loops(sdfg)
 
 
-# ----------------------------------------------------------------------
 # T9. Idempotence: a second application is a no-op
-# ----------------------------------------------------------------------
 
 
 def test_idempotent_second_application_noop():
@@ -399,9 +381,7 @@ def test_idempotent_second_application_noop():
     assert first == 1 and second == 0
 
 
-# ----------------------------------------------------------------------
 # T10. Value preservation: end-to-end via the Python frontend
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -432,9 +412,7 @@ def test_frontend_kp1_value_preserving():
     assert np.allclose(out, exp)
 
 
-# ----------------------------------------------------------------------
 # T11. Inside-fine: moving DOWN / sideways is never attempted
-# ----------------------------------------------------------------------
 
 
 def test_does_not_push_assignments_downward():
@@ -459,9 +437,7 @@ def test_does_not_push_assignments_downward():
     assert not _assignments_inside_loops(sdfg)
 
 
-# ----------------------------------------------------------------------
 # T12. ICON pattern: per-i beg/end + inner maps reading [beg:end]
-# ----------------------------------------------------------------------
 
 
 def test_icon_pattern_per_i_beg_end_is_noop():
@@ -583,11 +559,9 @@ def test_icon_pattern_frontend_value_preserving():
     assert np.allclose(out, exp)
 
 
-# ----------------------------------------------------------------------
 # Hard SDFG-API cases: deeply-nested loops, assignment must cascade all
 # the way up (user request: "the assignment ... should come from a parent
 # CFG, and then we should be able to move it up all the way up").
-# ----------------------------------------------------------------------
 
 
 def _nested_loops(sdfg: dace.SDFG, depth: int, key: str, rhs: str,

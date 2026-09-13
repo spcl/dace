@@ -51,9 +51,9 @@ def _neighbours(n, seed):
     return rng.integers(0, n, size=(n, 2)).astype(np.int32)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # MoveIfIntoLoop -- a guard over a neighbour-gather nest moves inside          #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -91,9 +91,9 @@ def test_move_if_into_loop_gather_nest_inside_and_e2e():
         assert np.allclose(out, exp), f"mismatch active={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # LoopFission -- two independent gather statements -> separate loops           #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -129,9 +129,9 @@ def test_loop_fission_splits_independent_gathers_and_e2e():
     assert np.allclose(ob, exp_b) and np.allclose(od, exp_d)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # MapFusionVertical -- producer/consumer gather through a transient -> 1 map   #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -166,9 +166,9 @@ def test_map_fusion_vertical_gather_merges_and_e2e():
     assert np.allclose(out, ref) and np.allclose(out, exp)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # LoopToMap -- a sequential gather nest is provably parallel -> maps           #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program

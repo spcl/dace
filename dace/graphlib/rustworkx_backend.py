@@ -184,7 +184,7 @@ class RustworkxGraphHandle:
         self._rx = rustworkx.PyDiGraph(multigraph=multigraph)
         self._index = NodeIndexMap()
 
-    # -- construction / mutation, mirrors networkx.DiGraph's own method signatures ----------
+    # construction / mutation, mirrors networkx.DiGraph's own method signatures
 
     def add_node(self, node_for_adding, **attr):
         if node_for_adding in self._index:
@@ -244,7 +244,7 @@ class RustworkxGraphHandle:
             if self.has_edge(u, v):
                 self.remove_edge(u, v)
 
-    # -- queries ------------------------------------------------------------------------------
+    # queries
 
     def has_node(self, node):
         return node in self._index

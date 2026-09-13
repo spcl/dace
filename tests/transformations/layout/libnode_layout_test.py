@@ -26,9 +26,9 @@ from dace.transformation.layout.prepare import prepare_for_layout
 M, K, Nn = (dace.symbol(s) for s in ("M", "K", "Nn"))
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Einsum operand permutation -- end-to-end compile + run
-# --------------------------------------------------------------------------- #
+# #
 def _einsum_sdfg(einsum_str, sa, sb, so):
     sdfg = dace.SDFG("es_" + einsum_str.replace(",", "_").replace("->", "to"))
     sdfg.add_array("A", sa, dace.float64)
@@ -77,9 +77,9 @@ def test_einsum_permute_operand1_bitexact():
     assert numpy.allclose(C, A @ B)
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  memset / copy under a layout change
-# --------------------------------------------------------------------------- #
+# #
 @dace.program
 def memset_add(A: dace.float64[M, Nn], C: dace.float64[M, Nn]):
     for i, j in dace.map[0:M, 0:Nn] @ dace.ScheduleType.Sequential:

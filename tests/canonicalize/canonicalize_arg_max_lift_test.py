@@ -30,9 +30,7 @@ def _num_reduces(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
 
 
-# -----------------------------------------------------------------------------
 # Positive: TSVC s314 (max) and s316 (min).
-# -----------------------------------------------------------------------------
 
 
 def test_tsvc_s314_max_value_only():
@@ -111,9 +109,7 @@ def test_max_corner_first_element_is_max():
     assert np.isclose(out[0], 100.0)
 
 
-# -----------------------------------------------------------------------------
 # Refusals: v1 out-of-scope shapes.
-# -----------------------------------------------------------------------------
 
 
 def test_lifts_abs_transform_s3113():
@@ -203,10 +199,8 @@ def test_refuses_subtraction_op():
     assert res is None
 
 
-# -----------------------------------------------------------------------------
 # Look-alike refusals: shapes that pattern-match argmax superficially but
 # don't actually compute argmax. The matcher must refuse all of these.
-# -----------------------------------------------------------------------------
 
 
 def test_lookalike_refuses_non_unit_stride():
@@ -338,10 +332,8 @@ def test_constant_init_carrier_matches_the_sequential_loop_on_all_negative_data(
                        f'got lifted={out[0]} sequential={ref[0]}')
 
 
-# -----------------------------------------------------------------------------
 # Cross-pass non-interference: ArgMax/Reduce/Scan look-alikes mustn't trigger
 # the wrong pass.
-# -----------------------------------------------------------------------------
 
 
 def test_argmax_doesnt_lift_a_plain_reduction_loop():
@@ -462,12 +454,10 @@ def test_loop_to_scan_doesnt_lift_a_reduction_loop():
     assert _num_scan_nodes(sdfg) == 0, "LoopToScan must not lift plain reductions"
 
 
-# -----------------------------------------------------------------------------
 # Symbol-carrier tests: the carrier ``x`` lives on interstate-edge assignments,
 # not as a Scalar / length-1 array. Constructed manually because the Python
 # frontend doesn't naturally produce symbol-bound argmax carriers; ``x``-as-
 # symbol is the cloudsc / ICON shape (e.g. iter counters bound via iedges).
-# -----------------------------------------------------------------------------
 
 
 def _build_symbol_argmax_sdfg(label: str, in_loop_write_rhs: str, op: str = '>', inline_cond: bool = False):
@@ -727,7 +717,6 @@ def test_symbol_carrier_min_inline_all_positive():
     assert np.isclose(out[0], np.min(a)), f"got {out[0]}, expected {np.min(a)} (identity bug returns 0)"
 
 
-# -----------------------------------------------------------------------------
 # Strided transform+index argmax/argmin (TSVC s318): ``maxv = max(|a[k]|)`` over
 # a strided gather ``k = inc*i`` with an index carrier. After
 # ``InductionVariableSubstitution`` closes the secondary IV ``k``, the gather is
@@ -736,7 +725,6 @@ def test_symbol_carrier_min_inline_all_positive():
 # (value + slice-local index). Built manually (mirrors the post-IV-subst frontend
 # shape; ``a`` is given its own length symbol ``AL`` so the strided positions
 # ``coeff*j`` stay in bounds).
-# -----------------------------------------------------------------------------
 
 _AL = dace.symbol('AL')
 
@@ -885,9 +873,7 @@ def test_s318_streamed_lift_keeps_the_first_extreme_on_ties(op, reducer):
     assert idx[0] == expected, f'index: got {idx[0]}, expected the first extreme at {expected}'
 
 
-# -----------------------------------------------------------------------------
 # False-positive guards for the strided transform+index path.
-# -----------------------------------------------------------------------------
 
 
 def test_strided_refuses_nonaffine_gather():
@@ -982,9 +968,7 @@ def test_strided_refuses_value_only_no_transform_no_index():
     assert ArgMaxLift().apply_pass(sdfg, {}) is None, "value-only strided gather must be refused"
 
 
-# -----------------------------------------------------------------------------
 # 2-D contiguous nested argmax (TSVC s3110 / s13110).
-# -----------------------------------------------------------------------------
 
 
 def test_2d_contiguous_argmax_with_two_indices():
@@ -1068,11 +1052,9 @@ def test_2d_argmax_refuses_non_contiguous_partial_rows():
     assert int(out[1]) == xi and int(out[2]) == yi
 
 
-# -----------------------------------------------------------------------------
 # Shifted gather: ``a[i + b]`` over a 0-based loop. Same reduced element set as
 # the unshifted ``a[i]`` over ``b:N``, which is exactly what rebasing a loop's
 # origin to 0 (``NormalizeLoopAndMapOrigin``) leaves behind.
-# -----------------------------------------------------------------------------
 
 
 def test_shifted_gather_max_value_only_lifts():
@@ -1202,9 +1184,7 @@ def test_shifted_gather_with_index_refused():
     assert int(out_idx[0]) == int(np.argmax(a))
 
 
-# -----------------------------------------------------------------------------
 # Predicate index, no value carrier (TSVC s331).
-# -----------------------------------------------------------------------------
 
 
 def _num_wcr_max_maps(sdfg) -> int:
@@ -1460,7 +1440,6 @@ def test_predicate_index_does_not_mutate_on_refusal():
     assert sdfg.to_json() == before
 
 
-# -----------------------------------------------------------------------------
 # FRONTEND-shaped argmax coverage (TSVC s318) and the value+index / index-only
 # contrast.
 #
@@ -1471,7 +1450,6 @@ def test_predicate_index_does_not_mutate_on_refusal():
 # ``InductionVariableSubstitution`` cannot close. These tests pin both ends: the
 # closed-form gather lifts, the un-closed frontend shape does not, and the
 # un-lifted loop still computes the right answer.
-# -----------------------------------------------------------------------------
 
 NA = dace.symbol('NA')
 NI = dace.symbol('NI')

@@ -9,7 +9,6 @@ from dace import dtypes
 from dace.sdfg import nodes as dnodes
 from dace.transformation.interstate import StateFusionExtended
 
-# ---------------------------------------------------------------------------
 # Classical data hazards across the two fused states (first state -> second):
 #   RAW (read-after-write, true dep)   : first writes X, second reads X
 #   WAR (write-after-read, anti dep)   : first reads X, second writes X
@@ -18,7 +17,6 @@ from dace.transformation.interstate import StateFusionExtended
 # Whatever StateFusionExtended decides (add a dependency edge, merge nodes, or
 # refuse), the fused SDFG must compute exactly what the un-fused one does. These
 # tests pin that contract numerically against the un-transformed reference.
-# ---------------------------------------------------------------------------
 
 K = 3
 
@@ -797,13 +795,11 @@ def test_war_from_dace_program_matches_reference():
         f'@dace.program WAR diverges after fusion: A={got_a} vs {ref_a}, B={got_b} vs {ref_b}'
 
 
-# ---------------------------------------------------------------------------
 # Structural pins. A numeric-only assertion is NOT sufficient for an ordering
 # hazard: a fusion that forgot its happens-before edge still produces the right
 # answer whenever codegen happens to emit the first state's components first.
 # These tests assert the ordering PATH exists in the fused state (or that the
 # fusion was refused), so an unwired dependency fails loudly.
-# ---------------------------------------------------------------------------
 
 
 def _fuse(sdfg: SDFG):
@@ -1061,12 +1057,10 @@ def test_war_detected_through_single_sided_copy_memlet():
                                        X=np.arange(8, dtype=np.float64) + 7.0)
 
 
-# ---------------------------------------------------------------------------
 # Determinism. The pass reads several decisions out of `set`s -- of AccessNodes, which
 # hash by ``id()``, and of data names, whose hash is salted per process. Both iterate in a
 # different order on a different run, so the same SDFG used to fuse on one run and not on
 # the next (TSVC ``s253``). These tests pin that the answer depends on the SDFG only.
-# ---------------------------------------------------------------------------
 
 
 def _structural_fingerprint(sdfg: SDFG) -> str:

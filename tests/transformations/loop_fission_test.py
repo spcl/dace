@@ -123,7 +123,7 @@ def loop_nested_cycle(A: dace.float64[N, N], B: dace.float64[N, N]):
             B[i, j] = A[i, j] * 2.0
 
 
-# --- TSVC loop-carried-dependence patterns: fission must be refused ---
+# TSVC loop-carried-dependence patterns: fission must be refused
 
 
 @dace.program
@@ -494,9 +494,7 @@ def test_loop_fission_conditional_body_kept():
     assert np.allclose(A0, 9.0) and np.allclose(B0, 9.0)
 
 
-# -----------------------------------------------------------------------------
 # Additional Python-frontend tests covering gaps in the existing coverage.
-# -----------------------------------------------------------------------------
 
 
 @dace.program
@@ -862,9 +860,7 @@ def test_unfissionable_per_iter_bridge_is_value_preserving():
     assert all(np.allclose(got[k], ref[k]) for k in ref), f"ref d={ref['d'][:4]} got d={got['d'][:4]}"
 
 
-# -----------------------------------------------------------------------------
 # Dependence-aware grouping regression tests.
-# -----------------------------------------------------------------------------
 
 
 @dace.program

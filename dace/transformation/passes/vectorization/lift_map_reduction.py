@@ -426,7 +426,7 @@ class LiftMapReductionToReduce(ppl.Pass):
         # fold writes the same element -- captured before the buffer redirect below.
         acc_subset = copy.deepcopy(mx_out_edge.data.subset)
 
-        # --- all preconditions hold; mutate from here on ---
+        # all preconditions hold; mutate from here on
         buf, _ = sdfg.add_transient(f"_red_buf_{acc}", (trip, ), dtype, find_new_name=True)
         # Per-iteration result -> product buffer (drop the WCR carry).
         write_edge.data = dace.Memlet(f"{buf}[{param} - ({lb})]")
@@ -533,7 +533,7 @@ class LiftMapReductionToReduce(ppl.Pass):
         except (TypeError, ValueError):
             return False  # defensive: only +/* reach here, with finite identities 0/1
 
-        # --- validate every precondition BEFORE mutating (atomic lift) ---
+        # validate every precondition BEFORE mutating (atomic lift)
         # Locate the accumulator's map-entry feed and post-map sink. The inout
         # split retargets only the body->map_exit *src* connector, so these lookups
         # (keyed off the unchanged ``write_edge.dst_conn`` / read connector) stay valid.
@@ -564,7 +564,7 @@ class LiftMapReductionToReduce(ppl.Pass):
             if val is None or val != identity_val:
                 return False
 
-        # --- all preconditions hold; mutate from here on ---
+        # all preconditions hold; mutate from here on
         # Split a shared inout accumulator connector so identity (in) and product
         # buffer (out) ride separate ports.
         write_edge = self._split_inout_connector(state, info)

@@ -21,9 +21,7 @@ def _loops(sdfg):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
 
-# -----------------------------------------------------------------------------
 # Case A -- inner is ``range(0, K)`` and body accesses via ``i + ii``.
-# -----------------------------------------------------------------------------
 
 
 def test_case_a_combined_access_K4_collapses_to_single_loop():
@@ -85,9 +83,7 @@ def test_case_a_with_arithmetic_combination_collapses():
     assert np.allclose(a, ref_a)
 
 
-# -----------------------------------------------------------------------------
 # Case B -- inner is ``range(i, i+K)`` and body accesses via ``ii``.
-# -----------------------------------------------------------------------------
 
 
 def test_case_b_absolute_inner_collapses_to_single_loop():
@@ -114,11 +110,9 @@ def test_case_b_absolute_inner_collapses_to_single_loop():
     assert np.allclose(a, ref_a)
 
 
-# -----------------------------------------------------------------------------
 # Cascade stride: original loop had a non-unit stride, so the untiled form
 # preserves that stride (the user's pattern from session 2026-06-02:
 # ``for i in 0:N:32 / for ii in i:i+32:2 / a[ii] = b[ii]*2``).
-# -----------------------------------------------------------------------------
 
 
 def test_case_b_inner_stride_2_collapses_preserving_step():
@@ -198,9 +192,7 @@ def test_case_b_3level_cascade_collapses_via_fixpoint_preserving_stride():
     assert np.allclose(a, ref_a), f'value mismatch: got {a}, expected {ref_a}'
 
 
-# -----------------------------------------------------------------------------
 # Refusal contracts.
-# -----------------------------------------------------------------------------
 
 
 def test_untiles_when_outer_stride_is_bare_symbol():
@@ -419,7 +411,6 @@ def test_refuses_when_outer_body_is_not_a_perfect_two_level_nest():
     assert res is None
 
 
-# ============================================================================
 # Tiled jacobi2d / heat3d -- multi-dim and multi-level tile coverage.
 #
 # These tests pin the contract for the ``UntileLoops`` extensions (multi-dim,
@@ -441,7 +432,6 @@ def test_refuses_when_outer_body_is_not_a_perfect_two_level_nest():
 #     middle level has stride = innermost trip; the outermost level has
 #     stride = middle trip x middle stride. Untile fixpoint must collapse
 #     each axis twice.
-# ============================================================================
 
 M = dace.symbol('M')
 P = dace.symbol('P')
@@ -456,7 +446,7 @@ def _count_maps(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
 
 
-# ---- Tiled jacobi2d --------------------------------------------------------
+# Tiled jacobi2d
 
 
 def test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest():
@@ -563,7 +553,7 @@ def test_jacobi2d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
     assert np.allclose(b, ref)
 
 
-# ---- Tiled heat3d ----------------------------------------------------------
+# Tiled heat3d
 
 
 def test_heat3d_tiled_1lvl_range_collapses_to_3d_nest():
@@ -677,7 +667,7 @@ def test_heat3d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
     assert np.allclose(b, ref)
 
 
-# ---- Symbolic-tile multi-dim coverage --------------------------------------
+# Symbolic-tile multi-dim coverage
 
 
 def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
@@ -793,7 +783,6 @@ def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
     assert np.allclose(a, exp), f'symbolic strided untile diverged: {a} vs {exp}'
 
 
-# ============================================================================
 # The tiled-stencil corpus family, exactly as the perf corpus measures it
 # (:mod:`tests.corpus.tsvc_2_5`): 1-, 2- and 3-level tiles, each in a constant
 # and a symbolic-tile variant, on jacobi2d (2 axes) and heat3d (3 axes).
@@ -802,7 +791,6 @@ def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
 # a kernel whose hand-written tiling survived untouched -- which is the failure
 # these tests exist to catch: the tiled form computes the same numbers, it just
 # keeps the tile loops that block re-parallelization and re-tiling.
-# ============================================================================
 
 #: kernel -> (axes, length symbol, OUTERMOST tile at ``tsvc_2_5.SIZES``). The canonical extent
 #: depends on the outermost tile alone: the inner rungs subdivide that same window.
@@ -969,7 +957,6 @@ def test_map_roundtrip_declined_when_a_map_would_not_come_back():
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 
-# -----------------------------------------------------------------------------
 # The remainder clamp -- ``min(i + K, <parent limit>)``.
 #
 # Every hand-tiled stencil writes its inner bound this way, because the last tile would otherwise
@@ -978,7 +965,6 @@ if __name__ == '__main__':
 # covers the parent range exactly, and rounding up there walks off the end of the array. That is a
 # heap corruption (``free(): invalid size``), not a slow kernel, which is why every case below
 # runs the result and compares it.
-# -----------------------------------------------------------------------------
 
 TSTEPS = dace.symbol('TSTEPS')
 

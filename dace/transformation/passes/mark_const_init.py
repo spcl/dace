@@ -88,8 +88,6 @@ class MarkConstInit(ppl.Pass):
         count = sum(len(v) for v in pass_retval.values())
         return f'MarkConstInit marked {count} descriptor(s) as const-initializable.'
 
-    # ---------------------------------------------------------------------------------------------------------------
-
     def _fill_map_targets(self, sdfg: SDFG, state: SDFGState, map_entry: nd.MapEntry) -> Set[str]:
         """The descriptor names a constant-fill map writes. Never empty for a map
         :meth:`_is_constant_fill_map` accepts -- that predicate requires a data out-edge."""

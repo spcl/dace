@@ -30,7 +30,7 @@ def _has_wcr(sdfg) -> bool:
                for state in nsdfg.states() for edge in state.edges())
 
 
-# ---- reduction programs -------------------------------------------------------------------------
+# reduction programs
 @dace.program
 def reduce_collapsed(A: dace.float64[I, J, K], out: dace.float64[I, K]):
     # out[i, k] = sum_j A[i, j, k]; single collapsed (i, j, k) map -> one WCR edge out[i, k]

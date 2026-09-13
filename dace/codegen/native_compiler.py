@@ -85,9 +85,7 @@ def _is_deferred(token: str) -> bool:
     return '${' in token
 
 
-# ---------------------------------------------------------------------------
 # Toolkit / library resolution
-# ---------------------------------------------------------------------------
 
 #: CUDA library / header files to locate. Runtime is mandatory; the math libraries live in a
 #: separate ``math_libs`` subtree on the HPC SDK and are added when present (cuBLAS/cuSOLVER/... use
@@ -283,9 +281,7 @@ def _resolve_environment(env, spec: _LinkSpec) -> None:
             _classify_library(spec, lib)
 
 
-# ---------------------------------------------------------------------------
 # GPU architecture flags
-# ---------------------------------------------------------------------------
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -454,9 +450,7 @@ def _depfile_headers(depfile: str) -> List[str]:
     return [entry.replace('\0', ' ') for entry in text.split()]
 
 
-# ---------------------------------------------------------------------------
 # Orchestration
-# ---------------------------------------------------------------------------
 
 
 def build_native(program_folder: str,
@@ -511,7 +505,7 @@ def build_native(program_folder: str,
         # product is rebuilt rather than silently reused.
         return all(os.path.isfile(s) and os.path.getmtime(s) < ptime for s in sources)
 
-    # --- classify sources ---------------------------------------------------
+    # classify sources
     host_objs: List[str] = []  # (.cpp -> .o)
     cuda_objs: List[str] = []  # (.cu  -> .o via nvcc)
     compile_jobs: List[tuple] = []  # (kind, src, obj)
@@ -536,7 +530,7 @@ def build_native(program_folder: str,
             'Native build mode supports CUDA GPUs only, not HIP/ROCm. Use compiler.build_mode=cmake '
             'for this program.')
 
-    # --- resolve toolkits + environment libraries ---------------------------
+    # resolve toolkits + environment libraries
     spec = _LinkSpec()
     nvcc = None
     if has_gpu:
@@ -563,7 +557,7 @@ def build_native(program_folder: str,
         if raw:
             target_libs += shlex.split(raw)
 
-    # --- shared flag context ------------------------------------------------
+    # shared flag context
     std = common.cpp_standard()
     cpu_args = shlex.split(Config.get('compiler', 'cpu', 'args'))
     build_type_flags = _BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), [])
@@ -578,7 +572,7 @@ def build_native(program_folder: str,
         defines.append('-DWITH_CUDA')
     includes = ['-I' + runtime_inc, '-I' + generated_inc] + ['-I' + d for d in deduplicate(spec.includes)]
 
-    # --- compile ------------------------------------------------------------
+    # compile
     cuda_arch_flags: List[str] = []
     if has_gpu:
         # The supported-arch list is only consulted to filter the fallback entries, so probing for it
@@ -674,7 +668,7 @@ def build_native(program_folder: str,
         if errors:
             raise errors[0]
 
-    # --- CUDA device link + archive ----------------------------------------
+    # CUDA device link + archive
     cuda_archive = None
     if cuda_objs:
         cuda_archive = os.path.join(build_folder, f'lib{program_name}_cuda.a')
@@ -686,7 +680,7 @@ def build_native(program_folder: str,
                 os.remove(cuda_archive)
             run(['ar', 'rcs', cuda_archive] + cuda_objs + [dlink_obj])
 
-    # --- final shared library ----------------------------------------------
+    # final shared library
     lib_path = os.path.join(build_folder, f'lib{program_name}.{lib_ext}')
     link_cmd = [_cxx(), '-shared', '-fopenmp', '-o', lib_path]
     link_cmd += host_objs
@@ -729,7 +723,7 @@ def build_native(program_folder: str,
         with open(lib_path + '.cmd', 'w') as f:
             f.write(' '.join(link_cmd))
 
-    # --- optional static archive -------------------------------------------
+    # optional static archive
     # Archive the SAME objects the shared library was linked from, so the .a and the .so stay in
     # lockstep. Additive: the .so above is untouched. The device-link members ride in via cuda_archive
     # (already ``ar``-built above), extracted and re-archived so the .a is a single self-contained lib.
@@ -741,7 +735,7 @@ def build_native(program_folder: str,
                 os.remove(archive_path)  # ar r APPENDS; start clean so a rebuild drops stale members
             run(['ar', 'rcs', archive_path] + archive_objs)
 
-    # --- loader stub (rebuilt only when missing; dacestub.cpp never changes) -
+    # loader stub (rebuilt only when missing; dacestub.cpp never changes)
     stub_path = os.path.join(build_folder, f'libdacestub_{program_name}.{lib_ext}')
     stub_src = os.path.join(dace_root, 'codegen', 'tools', 'dacestub.cpp')
     if not up_to_date(stub_path, stub_src):

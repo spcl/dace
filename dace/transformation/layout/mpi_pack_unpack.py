@@ -49,7 +49,7 @@ class MpiPackUnpack(ppl.Pass):
                         count += self._unpack_async(sdfg, state, node, "_buffer")
         return count
 
-    # ---- helpers -------------------------------------------------------------
+    # helpers
     def _guard_shuffle(self, arr: str) -> None:
         if arr.startswith("shuffled_"):
             raise NotImplementedError(

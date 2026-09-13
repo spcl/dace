@@ -602,7 +602,7 @@ def test_dominationless_write_branch(with_raising):
     assert res[0]['A'][(guard, guard_a)] == {(merge, merge_a), (left, left_a)}
 
 
-# ---------------------------------------------------------------------------------------------- #
+# #
 #  Dominating writes found INSIDE a control flow region
 #
 #  A canonicalized kernel's top-level blocks are typically all ``LoopRegion``s. Accepting only an
@@ -610,7 +610,7 @@ def test_dominationless_write_branch(with_raising):
 #  EVERY access of such a container -- the producing write included -- falls into the undominated
 #  (``None``) scope. ``must_write_state`` closes that, but only where a must-def can be PROVEN;
 #  each refusal below is the difference between a missed optimization and a wrong answer.
-# ---------------------------------------------------------------------------------------------- #
+# #
 
 
 def region_scope_fixture(name: str, condition: str, init: str = 'i = 0', guard_body_write: bool = False):

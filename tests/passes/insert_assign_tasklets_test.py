@@ -37,7 +37,7 @@ def _assign_tasklets(sdfg: dace.SDFG):
     ]
 
 
-# --- InsertAssignTaskletsForUnitCopies ---------------------------------------
+# InsertAssignTaskletsForUnitCopies
 
 
 def test_unit_copy_with_other_subset_is_split():
@@ -130,7 +130,7 @@ def test_symbolic_extent_copy_is_left_unchanged():
     assert len(_an_to_an_edges(sdfg)) == 1
 
 
-# --- InsertAssignTaskletsAtMapBoundary ---------------------------------------
+# InsertAssignTaskletsAtMapBoundary
 
 
 def _staging_sdfg() -> dace.SDFG:
@@ -313,7 +313,7 @@ def test_wcr_stage_out_executes_correctly_after_split():
                                          f'expected sum(A)={A.sum()}')
 
 
-# --- View handling: a View's defining edge must never be split ---------------
+# View handling: a View's defining edge must never be split
 
 
 def test_map_boundary_stage_out_view_defining_edge_not_split():

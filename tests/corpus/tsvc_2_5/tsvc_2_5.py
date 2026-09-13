@@ -39,9 +39,7 @@ T2 = dace.symbol("T2")  # symbolic middle tile size (two- and three-level tiling
 T3 = dace.symbol("T3")  # symbolic inner tile size (three-level tiling)
 LEN_R7 = dace.symbol("LEN_R7")  # reroll length; bound to a multiple of the 7x reroll factor
 
-# ==========================================================================
 #  %A  Symbolic-stride load (gather)
-# ==========================================================================
 
 
 @dace.program
@@ -63,9 +61,7 @@ def ext_strided_load_2(src: dace.float64[2 * LEN_1D], dst: dace.float64[LEN_1D],
         dst[i] = src[i * 2] * scale
 
 
-# ==========================================================================
 #  %B  Symbolic-stride store (scatter)
-# ==========================================================================
 
 
 @dace.program
@@ -83,9 +79,7 @@ def ext_strided_store_2(src: dace.float64[LEN_1D], dst: dace.float64[2 * LEN_1D]
         dst[i * 2] = src[i] * scale
 
 
-# ==========================================================================
 #  %C  Indirect gather + indirect scatter
-# ==========================================================================
 
 
 @dace.program
@@ -105,9 +99,7 @@ def ext_scatter_store(src: dace.float64[LEN_1D], idx: dace.int64[LEN_1D], dst: d
         dst[idx[i]] = src[i] * scale
 
 
-# ==========================================================================
 #  %D  Quasi-affine offsets (//, floor-div, modular wraparound)
-# ==========================================================================
 
 
 @dace.program
@@ -136,9 +128,7 @@ def ext_modular_wrap(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         a[(i + K) % LEN_1D] = b[i]
 
 
-# ==========================================================================
 #  %E  Read-ahead WAR (anti-dep with symbolic offset)
-# ==========================================================================
 
 
 @dace.program
@@ -157,9 +147,7 @@ def ext_war_sym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         a[i] = a[i + K] + b[i]
 
 
-# ==========================================================================
 #  %F  Boundary-conflict peeling (multi-front)
-# ==========================================================================
 
 
 @dace.program
@@ -174,9 +162,7 @@ def ext_peel_multi_back(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
             a[LEN_1D - 3] = a[LEN_1D - 3] + 1.0
 
 
-# ==========================================================================
 #  %G  Multi-dim symbolic tile
-# ==========================================================================
 
 
 @dace.program
@@ -191,9 +177,7 @@ def ext_tile_2d_sym(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN
                     b[i, j] = a[i, j] * 2.0
 
 
-# ==========================================================================
 #  %H  TSVC-named symbolic-step variants (parallel-naming with tsvc_2/)
-# ==========================================================================
 #
 # Each mirrors a TSVC-2 kernel's loop shape but takes a symbolic offset/stride.
 # Naming matches ``tsvc_2/``'s ``s<id>`` prefix so a table join maps each to its
@@ -233,9 +217,7 @@ def vas_ssym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int64[LE
         a[ip[i * SSYM]] = b[i]
 
 
-# ==========================================================================
 #  %I  Loop-fission family (sequential `for` with multiple bodies)
-# ==========================================================================
 #
 # Exercise the LoopFission canonicalize pass: a body pairing two independent
 # statements (split only if reuse pressure forces it), or a carried-dep
@@ -288,9 +270,7 @@ def fission_dep_sym_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: 
         b[i] = y[i] * z[i]
 
 
-# ==========================================================================
 #  %J  Already-tiled stencils (constant + symbolic tile size)
-# ==========================================================================
 #
 # Outer tile loops + inner stencil. Constant- and symbolic-tile-size variants
 # both written explicitly as stable anchors for the vectorizer's tile-untile +
@@ -456,9 +436,7 @@ def heat3d_double_tiled_sym(a: dace.float64[LEN_3D, LEN_3D, LEN_3D], b: dace.flo
                                                      a[k, j, i]
 
 
-# ==========================================================================
 #  %K  ECRAD-style clamped reduction
-# ==========================================================================
 
 
 @dace.program
@@ -475,9 +453,7 @@ def ecrad_clamped_reduction(x: dace.float64[LEN_1D], y: dace.float64[LEN_1D], d:
         out[i] = max(0.0, min(e, 1.0))
 
 
-# ==========================================================================
 #  %L  Conditional masked stores
-# ==========================================================================
 
 
 @dace.program
@@ -498,9 +474,7 @@ def masked_store_sym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], threshold
             a[i] = b[i]
 
 
-# ==========================================================================
 #  %M  Quasi-affine subscript ranges (even/odd, pairwise, mod-K, floor-div)
-# ==========================================================================
 #
 # Quasi-affine subscript/iteration patterns polyhedral analysis struggles with:
 # striding subset (even/odd-only), pairwise reads at ``2*i`` / ``2*i+1``, a
@@ -564,9 +538,7 @@ def quasi_affine_floor_div_scatter(a: dace.float64[2 * LEN_1D], b: dace.float64[
         b[i] = b[i] + a[2 * i] + a[2 * i + 1]
 
 
-# ==========================================================================
 #  %N  Wavefront / loop-skew (2D anti-diagonal parallelism)
-# ==========================================================================
 #
 # Perfectly-nested 2D update reading left (``a[i, j-1]``) + top (``a[i-1, j]``)
 # carries dependence vectors ``(0, 1)`` and ``(1, 0)``: neither loop parallel,
@@ -587,9 +559,7 @@ def wavefront2d(a: dace.float64[LEN_2D, LEN_2D]):
             a[i, j] = 0.25 * (a[i, j] + a[i - 1, j] + a[i, j - 1] + a[i - 1, j - 1])
 
 
-# ==========================================================================
 #  %O  Early-exit / find-first (break loops)
-# ==========================================================================
 #
 # ``for i: ... if cond(i): break; ...`` lowers to a sequential scan, and canonicalization
 # leaves it one: the trip count is data-dependent. Base TSVC: ``s481`` (guard before body),
@@ -634,9 +604,7 @@ def ext_break_capture(a: dace.float64[LEN_1D], out_index: dace.int64[1], out_val
             break
 
 
-# ==========================================================================
 #  %P  Conditional reduction (predicated accumulate)
-# ==========================================================================
 #
 # ``if cond(i): acc = acc OP expr`` inside a ConditionalBlock: state-level
 # ``AugAssignToWCR`` can't reach it and the ``acc`` carry blocks ``LoopToMap``.
@@ -665,9 +633,7 @@ def cond_reduce_sym(a: dace.float64[LEN_1D], out: dace.float64[1]):
             out[0] = out[0] + a[i]
 
 
-# ==========================================================================
 #  %Q  Induction-variable closed form (scalar evolution)
-# ==========================================================================
 #
 # ``acc = acc OP const`` over ``N`` iterations is a scalar recurrence with a
 # closed form (Aho/Lam/Sethi/Ullman Ch. 9.6, LLVM ``IndVarSimplify``).
@@ -698,9 +664,7 @@ def iv_multiplicative(out: dace.float64[1]):
     out[0] = s
 
 
-# ==========================================================================
 #  %R  Argmax / argmin value reduction (conditional carry -> Reduce)
-# ==========================================================================
 #
 # ``x = a[0]; for i: if a[i] OP x: x = a[i]`` is a max/min reduction behind a
 # conditional scalar carry. ``ArgMaxLift`` replaces the loop with a ``Reduce``
@@ -731,9 +695,7 @@ def argmin_value(a: dace.float64[LEN_1D], out: dace.float64[1]):
     out[0] = x
 
 
-# ==========================================================================
 #  %S  Negative-stride loop + manually-unrolled lane chain
-# ==========================================================================
 #
 # Two normalization anchors blocking ``LoopToMap`` until rewritten:
 # ``NormalizeNegativeStride`` flips a literal negative-stride loop to positive
@@ -770,9 +732,7 @@ def reroll_saxpy7(a: dace.float64[LEN_R7], b: dace.float64[LEN_R7]):
         a[i + 6] = a[i + 6] + b[i + 6] * 2.0
 
 
-# ==========================================================================
 #  %T  Strided / multiple scans (prefix recurrences -> Scan libnodes)
-# ==========================================================================
 #
 # A prefix recurrence ``a[i] = a[i - stride] OP x[i]`` is the textbook
 # ``LoopToScan`` target. Two extensions force the pipeline to emit *more
@@ -814,9 +774,7 @@ def scan_multi_carry(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.f
         b[i] = b[i - 1] * y[i]
 
 
-# ==========================================================================
 #  %U  Canonicalize unit-test gap kernels
-# ==========================================================================
 #
 # Patterns drawn from the DaCe canonicalize unit tests that the families
 # above do not isolate: a guarded prefix scan, many parallel scan carries
@@ -979,9 +937,7 @@ def fuse_move_ifs(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN_2
                 b[i, j] = src[i, j] + 1.0
 
 
-# ==========================================================================
 #  %V  Transformation-test gap kernels (map fusion / loop-to-map / fission)
-# ==========================================================================
 #
 # Patterns drawn from the DaCe transformation tests: map fusion (vertical
 # producer-consumer + horizontal sibling), loop-to-map write-disjointness
@@ -1093,9 +1049,7 @@ def fission_scatter_2body(b: dace.float64[LEN_1D], e: dace.float64[LEN_1D], a: d
         e[idx[i]] = c[i] + 1.0
 
 
-# ==========================================================================
 #  %W  Generalized 2-D wavefront + disjoint-image challenge kernels
-# ==========================================================================
 #
 # The generalized ``WavefrontSkew`` targets 2-D affine wavefronts whose only
 # legal parallel front is a skewed diagonal, plus disjoint-image self-reads that

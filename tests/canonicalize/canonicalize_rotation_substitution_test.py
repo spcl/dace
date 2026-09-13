@@ -126,7 +126,7 @@ def _apply_rotation_alone(program, label):
     return sdfg, applied, before
 
 
-# -- the rewrite lands: parallel code, identical numbers -----------------------------------
+# the rewrite lands: parallel code, identical numbers
 
 
 def test_one_deep_rotation_parallelizes():
@@ -153,7 +153,7 @@ def test_two_deep_rotation_parallelizes():
     assert np.allclose(got, reference_two_deep(b), rtol=0, atol=0), 'a carried stage was shifted by the wrong amount'
 
 
-# -- the pass itself: fires once, refuses an accumulation, and is a fixed point -------------
+# the pass itself: fires once, refuses an accumulation, and is a fixed point
 
 
 def test_pass_applies_once_per_stage():

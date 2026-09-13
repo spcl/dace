@@ -145,7 +145,7 @@ class BufferExpansion(ppl.Pass):
         arrays = sum(len(v) for v in pass_retval.values())
         return f'BufferExpansion: expanded {arrays} buffer(s) to unblock {len(pass_retval)} loop(s)'
 
-    # -- core ---------------------------------------------------------------------------
+    # core
 
     def _expand_sdfg(self, sdfg: SDFG) -> Dict[str, List[str]]:
         """Expand beneficial buffers for the loops of a single SDFG (speculate, then verify).
@@ -298,7 +298,7 @@ class BufferExpansion(ppl.Pass):
         # one and the final iteration's slice writes/reads out of bounds.)
         return var - start, end - start + 1
 
-    # -- buffer detection ---------------------------------------------------------------
+    # buffer detection
 
     def _privatizable_buffers(self,
                               sdfg: SDFG,
@@ -556,7 +556,7 @@ class BufferExpansion(ppl.Pass):
             return None
         return memlet.get_src_subset(edge, state) if edge.src is node else memlet.get_dst_subset(edge, state)
 
-    # -- expansion ----------------------------------------------------------------------
+    # expansion
 
     def _expand(self, sdfg: SDFG, loop: LoopRegion, name: str, index, size, ambient: str) -> _Expansion:
         """Add the loop-indexed dimension to ``name``'s descriptor and every access in ``loop``."""
@@ -612,7 +612,7 @@ class BufferExpansion(ppl.Pass):
             return [_prod(shape[i + 1:]) for i in range(len(shape))]
         return [_prod(shape[:i]) for i in range(len(shape))]
 
-    # -- layout ------------------------------------------------------------------------
+    # layout
 
     @staticmethod
     def _ambient_order(sdfg: SDFG) -> str:

@@ -134,7 +134,6 @@ def test_inout_array_is_not_const(impl):
     assert not _param(sig, 'd').startswith('const '), _param(sig, 'd')
 
 
-# ---------------------------------------------------------------------------
 # Const propagation through a View chain.
 #
 # C++ rule: ``const T* view = &parent[..]`` is valid whether or not the parent is const, but
@@ -143,7 +142,6 @@ def test_inout_array_is_not_const(impl):
 # parent (a *written* view forces a non-const parent). A read-only view never constrains its parent.
 # This is the spmv regression: ``vals`` is a read-only input aliased by a read view ``_x``; the input
 # must stay const AND the view must be emitted const so the chain compiles.
-# ---------------------------------------------------------------------------
 
 
 def _inner_with_view(name: str, write_through_view: bool) -> dace.SDFG:

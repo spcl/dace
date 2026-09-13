@@ -194,12 +194,10 @@ def test_unrolled_dot_product_becomes_map_or_reduce():
         f'expected a map or reduce, got maps={n_maps}, reduces={n_reduces}, loops={n_loops}')
 
 
-# --------------------------------------------------------------------------
 # Manual-unroll variants with an explicit remainder loop (the unrolled main
 # body covers the largest multiple-of-K prefix; a step-1 remainder handles the
 # up-to-(K-1) trailing elements). ``(N // K) * K`` makes the tiling exact for
 # any N, so the re-rolled result must cover every position exactly once.
-# --------------------------------------------------------------------------
 @dace.program
 def unroll_body_plus_remainder(a: dace.float64[N], b: dace.float64[N]):
     """Elementwise square, unrolled by 4 with a scalar remainder loop."""
@@ -359,7 +357,7 @@ def test_unroll_reduction_11_accs_value_and_reduce():
     assert (_nmaps(sdfg) + _nreduces(sdfg)) >= 1, 'the multi-accumulator unrolled reduction must lift to a map/reduce'
 
 
-# --- rerolled reductions reach an OpenMP reduction clause, and the unsound folds are refused ---
+# rerolled reductions reach an OpenMP reduction clause, and the unsound folds are refused
 #
 # Both hand-unrolled reduction shapes re-roll into the SAME single-accumulator loop:
 #   (a) one dependent chain    -- ``dot = dot + (a[i]*b[i] + a[i+1]*b[i+1] + ...)`` (TSVC s352)
@@ -562,7 +560,6 @@ def test_lanes_writing_different_arrays_are_not_rerolled():
     assert np.allclose(got_e, exp_e), f'the second lane\'s destination was dropped: {got_e} != {exp_e}'
 
 
-# --------------------------------------------------------------------------
 # Read-ahead lane chains (TSVC ``s116``): lane ``k`` STORES at ``i + k`` and
 # READS at ``i + k + 1``, so the lane offsets a per-edge classifier sees are
 # ``{0..m}`` -- one more than the ``m`` lanes there actually are. A lane is a
@@ -573,7 +570,6 @@ def test_lanes_writing_different_arrays_are_not_rerolled():
 # ``k``'s read-ahead must see the value from BEFORE lane ``k+1`` stored), every
 # lane must agree on the relative offsets it touches, and the lanes must cover
 # the step exactly. The three refusal tests below pin one violation each.
-# --------------------------------------------------------------------------
 
 
 @dace.program

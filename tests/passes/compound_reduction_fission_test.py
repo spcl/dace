@@ -36,7 +36,6 @@ def _stats(sdfg: dace.SDFG):
     )
 
 
-# ---------------------------------------------------------------------------
 # TSVC s319 SHAPE: ``a[i]=c+d; s += a[i]; b[i]=c+e; s += b[i]; b[0]=s``
 #
 # Body interleaves two pure-side-write ops (a[i], b[i]) with two accumulator
@@ -45,7 +44,6 @@ def _stats(sdfg: dace.SDFG):
 #   loop B: s += a[i] + b[i]            (reduction)
 # Then LoopToMap parallelizes loop A and LoopToReduce / AugAssignToWCR
 # handles loop B.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -89,9 +87,7 @@ def test_compound_body_parallelizes_end_to_end():
     assert loops < 2  # at least one of the two fissioned loops parallelized
 
 
-# ---------------------------------------------------------------------------
 # Smaller "delta + accumulate" probe -- the minimal s319 family shape.
-# ---------------------------------------------------------------------------
 
 
 @dace.program

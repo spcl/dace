@@ -58,9 +58,7 @@ L = dace.symbol('L')
 M = dace.symbol('M')
 KP1 = dace.symbol('KP1')
 
-# ---------------------------------------------------------------------------
 # Kernel 1: 2D elementwise init of 5 sibling arrays
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -98,9 +96,7 @@ def test_init_loc_tendencies_2d_elementwise_multi_array():
     assert nmaps(sdfg) == 0, f'a constant store needs no Map either; got {nmaps(sdfg)}'
 
 
-# ---------------------------------------------------------------------------
 # Kernel 2: 3D elementwise init with timestep shift
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -136,9 +132,7 @@ def test_init_3d_inner_clv_elementwise_with_offset():
     assert len(params[0]) == 3, f'the three axes did not collapse into one map: {params}'
 
 
-# ---------------------------------------------------------------------------
 # Kernel 3: 2D guarded multi-write (tidy small cloud water)
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -227,9 +221,7 @@ def test_tidy_small_cloud_water_guarded_multi_write():
         assert np.allclose(got, ref), f'{name}: canon diverges from numpy'
 
 
-# ---------------------------------------------------------------------------
 # Kernel 4: 3D phase-dispatched guarded multi-write
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -311,9 +303,7 @@ def test_clv_phase_dispatched_three_branch():
     assert nloops(sdfg) == 1, f'the carried jm axis must stay sequential; got {nloops(sdfg)} loops'
 
 
-# ---------------------------------------------------------------------------
 # Kernel 5: 2D min-clamp + division chain (saturation block shape)
-# ---------------------------------------------------------------------------
 
 
 @dace.program

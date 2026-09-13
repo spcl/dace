@@ -51,9 +51,7 @@ def _make_env(name='FakeEnv', **overrides):
     return type(name, (), attrs)
 
 
-# ---------------------------------------------------------------------------
 # Flag classification / helpers
-# ---------------------------------------------------------------------------
 
 
 def test_classify_library():
@@ -262,9 +260,7 @@ def test_cmake_recomputes_the_cuda_architecture_every_configure():
     assert 'CACHE' not in block, 'a cached architecture ignores a later compiler.cuda.cuda_arch'
 
 
-# ---------------------------------------------------------------------------
 # Per-environment resolution
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize('env', LIBRARY_ENVIRONMENTS, ids=[e.__name__ for e in LIBRARY_ENVIRONMENTS])
@@ -329,9 +325,7 @@ def test_resolve_mpi_missing_wrapper_errors_clearly():
             nc._resolve_environment(mpi_envs.MPI, nc._LinkSpec())
 
 
-# ---------------------------------------------------------------------------
 # End-to-end builds (gated on toolchain / hardware)
-# ---------------------------------------------------------------------------
 
 
 def _blas_buildable():

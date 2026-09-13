@@ -115,9 +115,7 @@ def _run(sdfg, n=32):
     return args['a'], args['b']
 
 
-# ===========================================================================
 # The kernel splits.
-# ===========================================================================
 def test_straight_line_body_splits_by_output():
     """Two independent outputs, one of them an in-place carry -> one clone each."""
     sdfg, body, node = carry_plus_independent('split_carry')
@@ -180,9 +178,7 @@ def test_ordering_edge_split_preserves_values():
     assert np.allclose(got_b, ref_b)
 
 
-# ===========================================================================
 # A scalar temp both statements read is RECOMPUTED, never materialized.
-# ===========================================================================
 def test_shared_scalar_temp_is_recomputed_per_clone():
     """``s1 = x[i]`` feeding BOTH statements does not block the split.
 
@@ -210,9 +206,7 @@ def test_shared_scalar_temp_preserves_values():
     assert np.allclose(got_b, ref_b)
 
 
-# ===========================================================================
 # Read-modify-write refusals.
-# ===========================================================================
 def cross_group_rmw(name):
     """``a[i] = a[i-1] + x[i]; b[i] = a[i-1] * 2`` -- ``b``'s group also READS the carried ``a``."""
     sdfg, body = _outer(name)
@@ -286,9 +280,7 @@ def test_s2710_shaped_guarded_rmw_stays_refused():
     assert sdfg.hash_sdfg() == before
 
 
-# ===========================================================================
 # Pipeline wiring.
-# ===========================================================================
 def test_length_one_scalarization_runs_before_the_split():
     """A ``(1,)`` transient Array is the frontend's spelling of a scalar temporary; normalize it
     to a real ``Scalar`` before anything downstream keys on the descriptor."""

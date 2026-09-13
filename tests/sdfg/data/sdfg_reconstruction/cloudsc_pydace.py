@@ -64,11 +64,7 @@ def foeldcp(ptare):
     return foedelta(ptare) * ydthf_ralvdcp + (1.0 - foedelta(ptare)) * ydthf_ralsdcp
 
 
-#     *****************************************************************
-
 #           CONSIDERATION OF MIXED PHASES
-
-#     *****************************************************************
 
 #     FOEALFA is calculated to distinguish the three cases:
 
@@ -117,9 +113,7 @@ def foetb(ptare):
         1.0 - foealfa(ptare)) * ydthf_r3ies * (ydcst_rtt - ydthf_r4ies) * (1.0 / (ptare - ydthf_r4ies)**2)
 
 
-# ============================================================
 #  DIFFERENT MIXED PHASE FOR CONVECTION
-# ============================================================
 @dace.program
 def foealfcu(
     ptare: dace.float64,
@@ -192,9 +186,7 @@ def foelhmcu(
     return alfa * rlvtt + (1.0 - alfa) * rlstt
 
 
-# ============================================================
 #  WMO / SEPARATE ICE-LIQUID FUNCTIONS
-# ============================================================
 @dace.program
 def foeewmo(
     ptare: dace.float64,
@@ -279,9 +271,7 @@ def foeewmcu_v(
     return r2es * (alfa * exp1 + (1.0 - alfa) * exp2)
 
 
-# ============================================================
 #  KOOP FORMULA (homogeneous nucleation of ice)
-# ============================================================
 
 
 @dace.program
@@ -373,7 +363,7 @@ def cloudsc_py(
     pfplsn: dace.float64[klev + 1, klon],
     pfhpsl: dace.float64[klev + 1, klon],
     pfhpsn: dace.float64[klev + 1, klon],
-    # --- YDCST (flattened) ---
+    # YDCST (flattened)
     ydcst_rg: dace.float64,
     ydcst_rd: dace.float64,
     ydcst_rcpd: dace.float64,
@@ -383,7 +373,7 @@ def cloudsc_py(
     ydcst_rlmlt: dace.float64,
     ydcst_rtt: dace.float64,
     ydcst_rv: dace.float64,
-    # --- YDTHF (flattened) ---
+    # YDTHF (flattened)
     ydthf_r2es: dace.float64,
     ydthf_r3les: dace.float64,
     ydthf_r3ies: dace.float64,
@@ -403,7 +393,7 @@ def cloudsc_py(
     ydthf_rtwat_rticecu_r: dace.float64,
     ydthf_rkoop1: dace.float64,
     ydthf_rkoop2: dace.float64,
-    # --- YRECLDP (flattened) ---
+    # YRECLDP (flattened)
     yrecldp_ramid: dace.float64,
     yrecldp_rcldiff: dace.float64,
     yrecldp_rcldiff_convi: dace.float64,
@@ -439,7 +429,7 @@ def cloudsc_py(
     yrecldp_laerliqautolsp: dace.int32,
     yrecldp_laerliqcoll: dace.int32,
     yrecldp_laericeauto: dace.int32,
-    # --- YRECLDP RCL_* microphysics constants ---
+    # YRECLDP RCL_* microphysics constants
     yrecldp_rcl_kkaau: dace.float64,
     yrecldp_rcl_kkbauq: dace.float64,
     yrecldp_rcl_kkbaun: dace.float64,
@@ -488,11 +478,9 @@ def cloudsc_py(
     # USE FCTTRE_MOD, ONLY: FOEDELTA, FOEALFA, FOEEWM, FOEEICE, FOEELIQ, FOELDCP, FOELDCPM, FOEDEM
     # USE FCCLD_MOD, ONLY : FOKOOP
 
-    #===============================================================================
     #  0.0     Beginning of timestep book-keeping
-    #----------------------------------------------------------------------
-    # --- 2D/3D work arrays ---
-    # --- 1D work arrays (klon) ---
+    # 2D/3D work arrays
+    # 1D work arrays (klon)
     zlcond1 = np.ndarray(shape=(klon, ), dtype=np.float64)
     zlcond2 = np.ndarray(shape=(klon, ), dtype=np.float64)
     zlevapl = np.ndarray(shape=(klon, ), dtype=np.float64)
@@ -560,7 +548,7 @@ def cloudsc_py(
     llflag = np.ndarray(shape=(klon, ), dtype=np.float64)  # used as bool but stored as float
     llrainliq = np.ndarray(shape=(klon, ), dtype=np.int32)
 
-    # --- 1D work arrays (nclv) ---
+    # 1D work arrays (nclv)
     iphase = np.ndarray(shape=(nclv, ), dtype=np.int32)
     imelt = np.ndarray(shape=(nclv, ), dtype=np.int32)
     llfall = np.ndarray(shape=(nclv, ), dtype=np.int32)
@@ -602,9 +590,7 @@ def cloudsc_py(
     zconvsink = np.ndarray(shape=(nclv, klon), dtype=np.float64)
     zpsupsatsrce = np.ndarray(shape=(nclv, klon), dtype=np.float64)
 
-    #######################################################################
-    #             0.  *** SET UP CONSTANTS ***
-    #######################################################################
+    # 0.  *** SET UP CONSTANTS
     # Numerical fit to wet bulb temperature
     ztw1 = 1329.31
     ztw2 = 0.0074615
@@ -615,34 +601,24 @@ def cloudsc_py(
     # ZEPSILON=100._JPRB*EPSILON(ZEPSILON)
     zepsilon = 1.E-14
 
-    # ---------------------------------------------------------------------
     # Set version of warm-rain autoconversion/accretion
     # IWARMRAIN = 1 ! Sundquist
     # IWARMRAIN = 2 ! Khairoutdinov and Kogan (2000)
-    # ---------------------------------------------------------------------
     iwarmrain = 2
-    # ---------------------------------------------------------------------
     # Set version of rain evaporation
     # IEVAPRAIN = 1 ! Sundquist
     # IEVAPRAIN = 2 ! Abel and Boutle (2013)
-    # ---------------------------------------------------------------------
     ievaprain = 2
-    # ---------------------------------------------------------------------
     # Set version of snow evaporation
     # IEVAPSNOW = 1 ! Sundquist
     # IEVAPSNOW = 2 ! New
-    # ---------------------------------------------------------------------
     ievapsnow = 1
-    # ---------------------------------------------------------------------
     # Set version of ice deposition
     # IDEPICE = 1 ! Rotstayn (2001)
     # IDEPICE = 2 ! New
-    # ---------------------------------------------------------------------
     idepice = 1
 
-    # ---------------------
     # Some simple constants
-    # ---------------------
     zqtmst = 1.0 / ptsphy
     zgdcp = ydcst_rg / ydcst_rcpd
     zrdcp = ydcst_rd / ydcst_rcpd
@@ -658,28 +634,22 @@ def cloudsc_py(
     # NCLDQS=4    ! snow
     # NCLDQV=5    ! vapour
 
-    # -----------------------------------------------
     # Define species phase, 0=vapour, 1=liquid, 2=ice
-    # -----------------------------------------------
     iphase[ncldqv - 1] = 0
     iphase[ncldql - 1] = 1
     iphase[ncldqr - 1] = 1
     iphase[ncldqi - 1] = 2
     iphase[ncldqs - 1] = 2
 
-    # ---------------------------------------------------
     # Set up melting/freezing index,
     # if an ice category melts/freezes, where does it go?
-    # ---------------------------------------------------
     imelt[ncldqv - 1] = -99
     imelt[ncldql - 1] = ncldqi
     imelt[ncldqr - 1] = ncldqs
     imelt[ncldqi - 1] = ncldqr
     imelt[ncldqs - 1] = ncldqr
 
-    # -----------------------------------------------
     # INITIALIZATION OF OUTPUT TENDENCIES
-    # -----------------------------------------------
     for jk in range(1, klev + 1):
         for jl in range(kidia, kfdia + 1):
             tendency_loc_t[jk - 1, jl - 1] = 0.0
@@ -696,9 +666,7 @@ def cloudsc_py(
             pcovptot[jk - 1, jl - 1] = 0.0
             tendency_loc_cld[nclv - 1, jk - 1, jl - 1] = 0.0
 
-    # -------------------------
     # set up fall speeds in m/s
-    # -------------------------
     zvqx[ncldqv - 1] = 0.0
     zvqx[ncldql - 1] = 0.0
     zvqx[ncldqi - 1] = yrecldp_rvice
@@ -713,13 +681,9 @@ def cloudsc_py(
     # Need to rationalise this at some point
     llfall[ncldqi - 1] = False
 
-    #######################################################################
-    #             1.  *** INITIAL VALUES FOR VARIABLES ***
-    #######################################################################
+    # 1.  *** INITIAL VALUES FOR VARIABLES
 
-    # ----------------------
     # non CLV initialization
-    # ----------------------
     for jk in range(1, klev + 1):
         for jl in range(kidia, kfdia + 1):
             ztp1[jk - 1, jl - 1] = pt[jk - 1, jl - 1] + ptsphy * tendency_tmp_t[jk - 1, jl - 1]
@@ -728,9 +692,7 @@ def cloudsc_py(
             za[jk - 1, jl - 1] = pa[jk - 1, jl - 1] + ptsphy * tendency_tmp_a[jk - 1, jl - 1]
             zaorig[jk - 1, jl - 1] = pa[jk - 1, jl - 1] + ptsphy * tendency_tmp_a[jk - 1, jl - 1]
 
-    # -------------------------------------
     # initialization for CLV family
-    # -------------------------------------
     for jm in range(1, nclv - 1 + 1):
         for jk in range(1, klev + 1):
             for jl in range(kidia, kfdia + 1):
@@ -739,9 +701,7 @@ def cloudsc_py(
                 zqx0[jm - 1, jk - 1,
                      jl - 1] = pclv[jm - 1, jk - 1, jl - 1] + ptsphy * tendency_tmp_cld[jm - 1, jk - 1, jl - 1]
 
-    #-------------
     # zero arrays
-    #-------------
     for jm in range(1, nclv + 1):
         for jk in range(1, klev + 1 + 1):
             for jl in range(kidia, kfdia + 1):
@@ -757,9 +717,7 @@ def cloudsc_py(
         prainfrac_toprfz[jl - 1] = 0.0  # rain fraction at top of refreezing layer
     llrainliq[:] = True  # Assume all raindrops are liquid initially
 
-    # ----------------------------------------------------
     # Tidy up very small cloud cover or total cloud water
-    # ----------------------------------------------------
     for jk in range(1, klev + 1):
         for jl in range(kidia, kfdia + 1):
             if zqx[ncldql - 1, jk - 1, jl - 1] + zqx[ncldqi - 1, jk - 1,
@@ -784,9 +742,7 @@ def cloudsc_py(
                 # Set cloud cover to zero
                 za[jk - 1, jl - 1] = 0.0
 
-    # ---------------------------------
     # Tidy up small CLV variables
-    # ---------------------------------
     #DIR$ IVDEP
     for jm in range(1, nclv - 1 + 1):
         #DIR$ IVDEP
@@ -804,39 +760,31 @@ def cloudsc_py(
                     zqx[ncldqv - 1, jk - 1, jl - 1] = zqx[ncldqv - 1, jk - 1, jl - 1] + zqx[jm - 1, jk - 1, jl - 1]
                     zqx[jm - 1, jk - 1, jl - 1] = 0.0
 
-    # ------------------------------
     # Define saturation values
-    # ------------------------------
     for jk in range(1, klev + 1):
         for jl in range(kidia, kfdia + 1):
-            #----------------------------------------
             # old *diagnostic* mixed phase saturation
-            #----------------------------------------
             zfoealfa[jk - 1, jl - 1] = foealfa(ztp1[jk - 1, jl - 1])
             zfoeewmt[jk - 1, jl - 1] = min(foeewm(ztp1[jk - 1, jl - 1]) / pap[jk - 1, jl - 1], 0.5)
             zqsmix[jk - 1, jl - 1] = zfoeewmt[jk - 1, jl - 1]
             zqsmix[jk - 1, jl - 1] = zqsmix[jk - 1, jl - 1] / (1.0 - ydcst_retv * zqsmix[jk - 1, jl - 1])
 
-            #---------------------------------------------
             # ice saturation T<273K
             # liquid water saturation for T>273K
-            #---------------------------------------------
             zalfa = foedelta(ztp1[jk - 1, jl - 1])
             zfoeew[jk - 1, jl - 1] = min((zalfa * foeeliq(ztp1[jk - 1, jl - 1]) +
                                           (1.0 - zalfa) * foeeice(ztp1[jk - 1, jl - 1])) / pap[jk - 1, jl - 1], 0.5)
             zfoeew[jk - 1, jl - 1] = min(0.5, zfoeew[jk - 1, jl - 1])
             zqsice[jk - 1, jl - 1] = zfoeew[jk - 1, jl - 1] / (1.0 - ydcst_retv * zfoeew[jk - 1, jl - 1])
 
-            #----------------------------------
             # liquid water saturation
-            #----------------------------------
             zfoeeliqt[jk - 1, jl - 1] = min(foeeliq(ztp1[jk - 1, jl - 1]) / pap[jk - 1, jl - 1], 0.5)
             zqsliq[jk - 1, jl - 1] = zfoeeliqt[jk - 1, jl - 1]
             zqsliq[jk - 1, jl - 1] = zqsliq[jk - 1, jl - 1] / (1.0 - ydcst_retv * zqsliq[jk - 1, jl - 1])
 
-            #   !----------------------------------
+            # !
             #   ! ice water saturation
-            #   !----------------------------------
+            # !
             #   ZFOEEICET(JL,JK)=MIN(FOEEICE(ZTP1(JL,JK))/PAP(JL,JK),0.5_JPRB)
             #   ZQSICE(JL,JK)=ZFOEEICET(JL,JK)
             #   ZQSICE(JL,JK)=ZQSICE(JL,JK)/(1.0_JPRB-RETV*ZQSICE(JL,JK))
@@ -844,14 +792,10 @@ def cloudsc_py(
     for jk in range(1, klev + 1):
         for jl in range(kidia, kfdia + 1):
 
-            #------------------------------------------
             # Ensure cloud fraction is between 0 and 1
-            #------------------------------------------
             za[jk - 1, jl - 1] = max(0.0, min(1.0, za[jk - 1, jl - 1]))
 
-            #-------------------------------------------------------------------
             # Calculate liq/ice fractions (no longer a diagnostic relationship)
-            #-------------------------------------------------------------------
             zli[jk - 1, jl - 1] = zqx[ncldql - 1, jk - 1, jl - 1] + zqx[ncldqi - 1, jk - 1, jl - 1]
             if zli[jk - 1, jl - 1] > yrecldp_rlmin:
                 zliqfrac[jk - 1, jl - 1] = zqx[ncldql - 1, jk - 1, jl - 1] / zli[jk - 1, jl - 1]
@@ -860,17 +804,12 @@ def cloudsc_py(
                 zliqfrac[jk - 1, jl - 1] = 0.0
                 zicefrac[jk - 1, jl - 1] = 0.0
 
-    #######################################################################
-    #        2.       *** CONSTANTS AND PARAMETERS ***
-    #######################################################################
+    # 2.       *** CONSTANTS AND PARAMETERS
     #  Calculate L in updrafts of bl-clouds
     #  Specify QS, P/PS for tropopause (for c2)
     #  And initialize variables
-    #------------------------------------------
 
-    #---------------------------------
     # Find tropopause level (ZTRPAUS)
-    #---------------------------------
     for jl in range(kidia, kfdia + 1):
         ztrpaus[jl - 1] = 0.1
         zpaphd[jl - 1] = 1.0 / paph[klev + 1 - 1, jl - 1]
@@ -880,9 +819,7 @@ def cloudsc_py(
             if zsig0 > 0.1 and zsig0 < 0.4 and ztp1[jk - 1, jl - 1] > ztp1[jk + 1 - 1, jl - 1]:
                 ztrpaus[jl - 1] = zsig0
 
-    #-----------------------------
     # Reset single level variables
-    #-----------------------------
 
     for jl in range(kidia, kfdia + 1):
         zanewm1[jl - 1] = 0.0
@@ -892,30 +829,20 @@ def cloudsc_py(
         zcovptot[jl - 1] = 0.0
         zcldtopdist[jl - 1] = 0.0
 
-    #######################################################################
-    #           3.       *** PHYSICS ***
-    #######################################################################
+    # 3.       *** PHYSICS
 
-    #----------------------------------------------------------------------
     #                       START OF VERTICAL LOOP
-    #----------------------------------------------------------------------
 
     for jk in range(yrecldp_ncldtop, klev + 1):
 
-        #----------------------------------------------------------------------
         # 3.0 INITIALIZE VARIABLES
-        #----------------------------------------------------------------------
 
-        #---------------------------------
         # First guess microphysics
-        #---------------------------------
         for jm in range(1, nclv + 1):
             for jl in range(kidia, kfdia + 1):
                 zqxfg[jm - 1, jl - 1] = zqx[jm - 1, jk - 1, jl - 1]
 
-        #---------------------------------
         # Set KLON arrays to zero
-        #---------------------------------
 
         for jl in range(kidia, kfdia + 1):
             zlicld[jl - 1] = 0.0
@@ -934,26 +861,20 @@ def cloudsc_py(
             zlevapl[jl - 1] = 0.0
             zlevapi[jl - 1] = 0.0
 
-            #-------------------------------------
             # solvers for cloud fraction
-            #-------------------------------------
             zsolab[jl - 1] = 0.0
             zsolac[jl - 1] = 0.0
 
             zicetot[jl - 1] = 0.0
 
-        #------------------------------------------
         # reset matrix so missing pathways are set
-        #------------------------------------------
         for jm in range(1, nclv + 1):
             for jn in range(1, nclv + 1):
                 for jl in range(kidia, kfdia + 1):
                     zsolqb[jm - 1, jn - 1, jl - 1] = 0.0
                     zsolqa[jm - 1, jn - 1, jl - 1] = 0.0
 
-        #----------------------------------
         # reset new microphysics variables
-        #----------------------------------
         for jm in range(1, nclv + 1):
             for jl in range(kidia, kfdia + 1):
                 zfallsrce[jm - 1, jl - 1] = 0.0
@@ -965,9 +886,7 @@ def cloudsc_py(
 
         for jl in range(kidia, kfdia + 1):
 
-            #-------------------------
             # derived variables needed
-            #-------------------------
 
             zdp[jl - 1] = paph[jk + 1 - 1, jl - 1] - paph[jk - 1, jl - 1]  # dp
             zgdp[jl - 1] = ydcst_rg / zdp[jl - 1]  # g/dp
@@ -979,9 +898,7 @@ def cloudsc_py(
             if jk > 1:
                 zdtgdpf[jl - 1] = ptsphy * ydcst_rg / (pap[jk - 1, jl - 1] - pap[jk - 1 - 1, jl - 1])
 
-            #------------------------------------
             # Calculate dqs/dT correction factor
-            #------------------------------------
             # Reminder: RETV=RV/RD-1
 
             # liquid
@@ -1012,17 +929,13 @@ def cloudsc_py(
             zevaplimice[jl - 1] = max((zqsice[jk - 1, jl - 1] - zqx[ncldqv - 1, jk - 1, jl - 1]) / zcorqsice[jl - 1],
                                       0.0)
 
-            #--------------------------------
             # in-cloud consensate amount
-            #--------------------------------
             ztmpa = 1.0 / max(za[jk - 1, jl - 1], zepsec)
             zliqcld[jl - 1] = zqx[ncldql - 1, jk - 1, jl - 1] * ztmpa
             zicecld[jl - 1] = zqx[ncldqi - 1, jk - 1, jl - 1] * ztmpa
             zlicld[jl - 1] = zliqcld[jl - 1] + zicecld[jl - 1]
 
-        #------------------------------------------------
         # Evaporate very small amounts of liquid and ice
-        #------------------------------------------------
         for jl in range(kidia, kfdia + 1):
 
             if zqx[ncldql - 1, jk - 1, jl - 1] < yrecldp_rlmin:
@@ -1033,9 +946,7 @@ def cloudsc_py(
                 zsolqa[ncldqi - 1, ncldqv - 1, jl - 1] = zqx[ncldqi - 1, jk - 1, jl - 1]
                 zsolqa[ncldqv - 1, ncldqi - 1, jl - 1] = -zqx[ncldqi - 1, jk - 1, jl - 1]
 
-        #---------------------------------------------------------------------
         #  3.1  ICE SUPERSATURATION ADJUSTMENT
-        #---------------------------------------------------------------------
         # Note that the supersaturation adjustment is made with respect to
         # liquid saturation:  when T>0C
         # ice saturation:     when T<0C
@@ -1044,14 +955,11 @@ def cloudsc_py(
         # Note also that the KOOP factor automatically clips the supersaturation
         # to a maximum set by the liquid water saturation mixing ratio
         # important for temperatures near to but below 0C
-        #-----------------------------------------------------------------------
 
         #DIR$ NOFUSION
         for jl in range(kidia, kfdia + 1):
 
-            #-----------------------------------
             # 3.1.1 Supersaturation limit (from Koop)
-            #-----------------------------------
             # Needs to be set for all temperatures
             zfokoop[jl - 1] = fokoop(ztp1[jk - 1, jl - 1])
         for jl in range(kidia, kfdia + 1):
@@ -1063,11 +971,9 @@ def cloudsc_py(
                 zfac = za[jk - 1, jl - 1] + zfokoop[jl - 1] * (1.0 - za[jk - 1, jl - 1])
                 zfaci = ptsphy / yrecldp_rkooptau
 
-            #-------------------------------------------------------------------
             # 3.1.2 Calculate supersaturation wrt Koop including dqs/dT
             #       correction factor
             # [#Note: QSICE or QSLIQ]
-            #-------------------------------------------------------------------
 
             # Calculate supersaturation to add to cloud
             if za[jk - 1, jl - 1] > 1.0 - yrecldp_ramin:
@@ -1081,11 +987,9 @@ def cloudsc_py(
                 zsupsat[jl - 1] = max(
                     (1.0 - za[jk - 1, jl - 1]) * (zqp1env - zfac * zqsice[jk - 1, jl - 1]) / zcorqsice[jl - 1], 0.0)
 
-            #-------------------------------------------------------------------
             # Here the supersaturation is turned into liquid water
             # However, if the temperature is below the threshold for homogeneous
             # freezing then the supersaturation is turned instantly to ice.
-            #--------------------------------------------------------------------
 
             if zsupsat[jl - 1] > zepsec:
 
@@ -1105,10 +1009,8 @@ def cloudsc_py(
                 # Increase cloud amount using RKOOPTAU timescale
                 zsolac[jl - 1] = (1.0 - za[jk - 1, jl - 1]) * zfaci
 
-            #-------------------------------------------------------
             # 3.1.3 Include supersaturation from previous timestep
             # (Calculated in sltENDIF semi-lagrangian LDSLPHY=T)
-            #-------------------------------------------------------
             if psupsat[jk - 1, jl - 1] > zepsec:
                 if ztp1[jk - 1, jl - 1] > yrecldp_rthomo:
                     # Turn supersaturation into liquid water
@@ -1133,9 +1035,7 @@ def cloudsc_py(
 
         # on JL
 
-        #---------------------------------------------------------------------
         #  3.2  DETRAINMENT FROM CONVECTION
-        #---------------------------------------------------------------------
         # * Diagnostic T-ice/liq split retained for convection
         #    Note: This link is now flexible and a future convection
         #    scheme can detrain explicit seperate budgets of:
@@ -1143,7 +1043,6 @@ def cloudsc_py(
         # * There is no (1-ZA) multiplier term on the cloud detrainment
         #    term, since is now written in mass-flux terms
         # [#Note: Should use ZFOEALFACU used in convection rather than ZFOEALFA]
-        #---------------------------------------------------------------------
         if jk < klev and jk >= yrecldp_ncldtop:
 
             for jl in range(kidia, kfdia + 1):
@@ -1173,20 +1072,15 @@ def cloudsc_py(
 
         # JK<KLEV
 
-        #---------------------------------------------------------------------
         #  3.3  SUBSIDENCE COMPENSATING CONVECTIVE UPDRAUGHTS
-        #---------------------------------------------------------------------
         # Three terms:
         # * Convective subsidence source of cloud from layer above
         # * Evaporation of cloud within the layer
         # * Subsidence sink of cloud to the layer below (Implicit solution)
-        #---------------------------------------------------------------------
 
-        #-----------------------------------------------
         # Subsidence source from layer above
         #               and
         # Evaporation of cloud within the layer
-        #-----------------------------------------------
         if jk > yrecldp_ncldtop:
 
             for jl in range(kidia, kfdia + 1):
@@ -1233,10 +1127,8 @@ def cloudsc_py(
 
         # on  JK>NCLDTOP
 
-        #---------------------------------------------------------------------
         # Subsidence sink of cloud to the layer below
         # (Implicit - re. CFL limit on convective mass flux)
-        #---------------------------------------------------------------------
 
         for jl in range(kidia, kfdia + 1):
 
@@ -1252,17 +1144,12 @@ def cloudsc_py(
                 zconvsink[ncldql - 1, jl - 1] = zmfdn
                 zconvsink[ncldqi - 1, jl - 1] = zmfdn
 
-        #----------------------------------------------------------------------
         # 3.4  EROSION OF CLOUDS BY TURBULENT MIXING
-        #----------------------------------------------------------------------
         # NOTE: In default tiedtke scheme this process decreases the cloud
         #       area but leaves the specific cloud water content
         #       within clouds unchanged
-        #----------------------------------------------------------------------
 
-        # ------------------------------
         # Define turbulent erosion rate
-        # ------------------------------
         for jl in range(kidia, kfdia + 1):
             zldifdt[jl - 1] = yrecldp_rcldiff * ptsphy  #original version
             #Increase by factor of 5 for convective points
@@ -1296,9 +1183,7 @@ def cloudsc_py(
                 zsolqa[ncldqv - 1, ncldqi - 1,
                        jl - 1] = zsolqa[ncldqv - 1, ncldqi - 1, jl - 1] - zicefrac[jk - 1, jl - 1] * zleros
 
-        #----------------------------------------------------------------------
         # 3.4  CONDENSATION/EVAPORATION DUE TO DQSAT/DT
-        #----------------------------------------------------------------------
         #  calculate dqs/dt
         #  Note: For the separate prognostic Qi and Ql, one would ideally use
         #  Qsat/DT wrt liquid/Koop here, since the physics is that new clouds
@@ -1312,7 +1197,6 @@ def cloudsc_py(
         #  (see Tompkins et al. QJRMS 2007 for details)
         #  Thus for the initial implementation the diagnostic mixed phase is
         #  retained for the moment, and the level of approximation noted.
-        #----------------------------------------------------------------------
 
         for jl in range(kidia, kfdia + 1):
             zdtdp = zrdcp * ztp1[jk - 1, jl - 1] / pap[jk - 1, jl - 1]
@@ -1357,9 +1241,7 @@ def cloudsc_py(
             zqsmix[jk - 1, jl - 1] = zqold[jl - 1]
             ztp1[jk - 1, jl - 1] = ztold[jl - 1]
 
-        #----------------------------------------------------------------------
         # 3.4a  ZDQS(JL) > 0:  EVAPORATION OF CLOUDS
-        # ----------------------------------------------------------------------
         # Erosion term is LINEAR in L
         # Changed to be uniform distribution in cloud region
 
@@ -1388,9 +1270,7 @@ def cloudsc_py(
                 zsolqa[ncldqv - 1, ncldqi - 1,
                        jl - 1] = zsolqa[ncldqv - 1, ncldqi - 1, jl - 1] - zicefrac[jk - 1, jl - 1] * zlevap
 
-        #----------------------------------------------------------------------
         # 3.4b ZDQS(JL) < 0: FORMATION OF CLOUDS
-        #----------------------------------------------------------------------
         # (1) Increase of cloud water in existing clouds
         for jl in range(kidia, kfdia + 1):
             if za[jk - 1, jl - 1] > zepsec and zdqs[jl - 1] <= -yrecldp_rlmin:
@@ -1412,11 +1292,9 @@ def cloudsc_py(
                 if zlcond1[jl - 1] < yrecldp_rlmin:
                     zlcond1[jl - 1] = 0.0
 
-                #-------------------------------------------------------------------------
                 # All increase goes into liquid unless so cold cloud homogeneously freezes
                 # Include new liquid formation in first guess value, otherwise liquid
                 # remains at cold temperatures until next timestep.
-                #-------------------------------------------------------------------------
                 if ztp1[jk - 1, jl - 1] > yrecldp_rthomo:
                     zsolqa[ncldqv - 1, ncldql - 1, jl - 1] = zsolqa[ncldqv - 1, ncldql - 1, jl - 1] + zlcond1[jl - 1]
                     zsolqa[ncldql - 1, ncldqv - 1, jl - 1] = zsolqa[ncldql - 1, ncldqv - 1, jl - 1] - zlcond1[jl - 1]
@@ -1432,9 +1310,7 @@ def cloudsc_py(
 
             if zdqs[jl - 1] <= -yrecldp_rlmin and za[jk - 1, jl - 1] < 1.0 - zepsec:
 
-                #---------------------------
                 # Critical relative humidity
-                #---------------------------
                 zsigk = pap[jk - 1, jl - 1] / paph[klev + 1 - 1, jl - 1]
                 # Increase RHcrit to 1.0 towards the surface (eta>0.8)
                 if zsigk > 0.8:
@@ -1449,9 +1325,7 @@ def cloudsc_py(
                 #        ZRHC=RAMID+(1.0_JPRB-RAMID)*MIN(((ZBOTT-ZSIGK)/0.2_JPRB)**2,1.0_JPRB)
                 #      ENDIF
 
-                #---------------------------
                 # Supersaturation options
-                #---------------------------
                 if yrecldp_nssopt == 0:
                     # No scheme
                     zqe = (zqx[ncldqv - 1, jk - 1, jl - 1] - za[jk - 1, jl - 1] * zqsice[jk - 1, jl - 1]) / max(
@@ -1508,11 +1382,9 @@ def cloudsc_py(
                     # Large-scale generation is LINEAR in A and LINEAR in L
                     zsolac[jl - 1] = zsolac[jl - 1] + zacond  #linear
 
-                    #------------------------------------------------------------------------
                     # All increase goes into liquid unless so cold cloud homogeneously freezes
                     # Include new liquid formation in first guess value, otherwise liquid
                     # remains at cold temperatures until next timestep.
-                    #------------------------------------------------------------------------
                     if ztp1[jk - 1, jl - 1] > yrecldp_rthomo:
                         zsolqa[ncldqv - 1, ncldql - 1,
                                jl - 1] = zsolqa[ncldqv - 1, ncldql - 1, jl - 1] + zlcond2[jl - 1]
@@ -1527,9 +1399,7 @@ def cloudsc_py(
                                jl - 1] = zsolqa[ncldqi - 1, ncldqv - 1, jl - 1] - zlcond2[jl - 1]
                         zqxfg[ncldqi - 1, jl - 1] = zqxfg[ncldqi - 1, jl - 1] + zlcond2[jl - 1]
 
-        #----------------------------------------------------------------------
         # 3.7 Growth of ice by vapour deposition
-        #----------------------------------------------------------------------
         # Following Rotstayn et al. 2001:
         # does not use the ice nuclei number from cloudaer.F90
         # but rather a simple Meyers et al. 1992 form based on the
@@ -1537,34 +1407,27 @@ def cloudsc_py(
         # respect to liquid water (well mixed), (or Koop adjustment)
         # Growth considered as sink of liquid water if present so
         # Bergeron-Findeisen adjustment in autoconversion term no longer needed
-        #----------------------------------------------------------------------
 
-        #--------------------------------------------------------
         #-
         #- Ice deposition following Rotstayn et al. (2001)
         #-  (monodisperse ice particle size distribution)
         #-
-        #--------------------------------------------------------
         if idepice == 1:
 
             for jl in range(kidia, kfdia + 1):
 
-                #--------------------------------------------------------------
                 # Calculate distance from cloud top
                 # defined by cloudy layer below a layer with cloud frac <0.01
                 # ZDZ = ZDP(JL)/(ZRHO(JL)*RG)
-                #--------------------------------------------------------------
 
                 if za[jk - 1 - 1, jl - 1] < yrecldp_rcldtopcf and za[jk - 1, jl - 1] >= yrecldp_rcldtopcf:
                     zcldtopdist[jl - 1] = 0.0
                 else:
                     zcldtopdist[jl - 1] = zcldtopdist[jl - 1] + zdp[jl - 1] / (zrho[jl - 1] * ydcst_rg)
 
-                #--------------------------------------------------------------
                 # only treat depositional growth if liquid present. due to fact
                 # that can not model ice growth from vapour without additional
                 # in-cloud water vapour variable
-                #--------------------------------------------------------------
                 if ztp1[jk - 1, jl - 1] < ydcst_rtt and zqxfg[ncldql - 1, jl - 1] > yrecldp_rlmin:
                     # T<273K
 
@@ -1572,32 +1435,23 @@ def cloudsc_py(
                     zvpliq = zvpice * zfokoop[jl - 1]
                     zicenuclei[jl - 1] = 1000.0 * np.exp(12.96 * (zvpliq - zvpice) / zvpliq - 0.639)
 
-                    #------------------------------------------------
                     #   2.4e-2 is conductivity of air
                     #   8.8 = 700**1/3 = density of ice to the third
-                    #------------------------------------------------
                     zadd = ydcst_rlstt * (ydcst_rlstt /
                                           (ydcst_rv * ztp1[jk - 1, jl - 1]) - 1.0) / (2.4E-2 * ztp1[jk - 1, jl - 1])
                     zbdd = ydcst_rv * ztp1[jk - 1, jl - 1] * pap[jk - 1, jl - 1] / (2.21 * zvpice)
                     zcvds = 7.8 * (zicenuclei[jl - 1] /
                                    zrho[jl - 1])**0.666 * (zvpliq - zvpice) / (8.87 * (zadd + zbdd) * zvpice)
 
-                    #-----------------------------------------------------
                     # RICEINIT=1.E-12_JPRB is initial mass of ice particle
-                    #-----------------------------------------------------
                     zice0 = max(zicecld[jl - 1], zicenuclei[jl - 1] * yrecldp_riceinit / zrho[jl - 1])
 
-                    #------------------
                     # new value of ice:
-                    #------------------
                     zinew = (0.666 * zcvds * ptsphy + zice0**0.666)**1.5
 
-                    #---------------------------
                     # grid-mean deposition rate:
-                    #---------------------------
                     zdepos = max(za[jk - 1, jl - 1] * (zinew - zice0), 0.0)
 
-                    #--------------------------------------------------------------------
                     # Limit deposition to liquid water amount
                     # If liquid is all frozen, ice would use up reservoir of water
                     # vapour in excess of ice saturation mixing ratio - However this
@@ -1605,13 +1459,10 @@ def cloudsc_py(
                     # the grid-mean humidity would imply a large artificial horizontal
                     # flux from the clear sky to the cloudy area. We thus rely on the
                     # supersaturation check to clean up any remaining supersaturation
-                    #--------------------------------------------------------------------
                     zdepos = min(zdepos, zqxfg[ncldql - 1, jl - 1])  # limit to liquid water amount
 
-                    #--------------------------------------------------------------------
                     # At top of cloud, reduce deposition rate near cloud top to account for
                     # small scale turbulent processes, limited ice nucleation and ice fallout
-                    #--------------------------------------------------------------------
                     #      ZDEPOS = ZDEPOS*MIN(RDEPLIQREFRATE+ZCLDTOPDIST(JL)/RDEPLIQREFDEPTH,1.0_JPRB)
                     # Change to include dependence on ice nuclei concentration
                     # to increase deposition rate with decreasing temperatures
@@ -1620,39 +1471,31 @@ def cloudsc_py(
                         zinfactor + (1.0 - zinfactor) *
                         (yrecldp_rdepliqrefrate + zcldtopdist[jl - 1] / yrecldp_rdepliqrefdepth), 1.0)
 
-                    #--------------
                     # add to matrix
-                    #--------------
                     zsolqa[ncldql - 1, ncldqi - 1, jl - 1] = zsolqa[ncldql - 1, ncldqi - 1, jl - 1] + zdepos
                     zsolqa[ncldqi - 1, ncldql - 1, jl - 1] = zsolqa[ncldqi - 1, ncldql - 1, jl - 1] - zdepos
                     zqxfg[ncldqi - 1, jl - 1] = zqxfg[ncldqi - 1, jl - 1] + zdepos
                     zqxfg[ncldql - 1, jl - 1] = zqxfg[ncldql - 1, jl - 1] - zdepos
 
-            #--------------------------------------------------------
             #-
             #- Ice deposition assuming ice PSD
             #-
-            #--------------------------------------------------------
         elif idepice == 2:
 
             for jl in range(kidia, kfdia + 1):
 
-                #--------------------------------------------------------------
                 # Calculate distance from cloud top
                 # defined by cloudy layer below a layer with cloud frac <0.01
                 # ZDZ = ZDP(JL)/(ZRHO(JL)*RG)
-                #--------------------------------------------------------------
 
                 if za[jk - 1 - 1, jl - 1] < yrecldp_rcldtopcf and za[jk - 1, jl - 1] >= yrecldp_rcldtopcf:
                     zcldtopdist[jl - 1] = 0.0
                 else:
                     zcldtopdist[jl - 1] = zcldtopdist[jl - 1] + zdp[jl - 1] / (zrho[jl - 1] * ydcst_rg)
 
-                #--------------------------------------------------------------
                 # only treat depositional growth if liquid present. due to fact
                 # that can not model ice growth from vapour without additional
                 # in-cloud water vapour variable
-                #--------------------------------------------------------------
                 if ztp1[jk - 1, jl - 1] < ydcst_rtt and zqxfg[ncldql - 1, jl - 1] > yrecldp_rlmin:
                     # T<273K
 
@@ -1660,9 +1503,7 @@ def cloudsc_py(
                     zvpliq = zvpice * zfokoop[jl - 1]
                     zicenuclei[jl - 1] = 1000.0 * np.exp(12.96 * (zvpliq - zvpice) / zvpliq - 0.639)
 
-                    #-----------------------------------------------------
                     # RICEINIT=1.E-12_JPRB is initial mass of ice particle
-                    #-----------------------------------------------------
                     zice0 = max(zicecld[jl - 1], zicenuclei[jl - 1] * yrecldp_riceinit / zrho[jl - 1])
 
                     # Particle size distribution
@@ -1685,7 +1526,6 @@ def cloudsc_py(
 
                     zdepos = max(za[jk - 1, jl - 1] * zterm1 * zterm2 * ptsphy, 0.0)
 
-                    #--------------------------------------------------------------------
                     # Limit deposition to liquid water amount
                     # If liquid is all frozen, ice would use up reservoir of water
                     # vapour in excess of ice saturation mixing ratio - However this
@@ -1693,13 +1533,10 @@ def cloudsc_py(
                     # the grid-mean humidity would imply a large artificial horizontal
                     # flux from the clear sky to the cloudy area. We thus rely on the
                     # supersaturation check to clean up any remaining supersaturation
-                    #--------------------------------------------------------------------
                     zdepos = min(zdepos, zqxfg[ncldql - 1, jl - 1])  # limit to liquid water amount
 
-                    #--------------------------------------------------------------------
                     # At top of cloud, reduce deposition rate near cloud top to account for
                     # small scale turbulent processes, limited ice nucleation and ice fallout
-                    #--------------------------------------------------------------------
                     # Change to include dependence on ice nuclei concentration
                     # to increase deposition rate with decreasing temperatures
                     zinfactor = min(zicenuclei[jl - 1] / 15000., 1.0)
@@ -1707,9 +1544,7 @@ def cloudsc_py(
                         zinfactor + (1.0 - zinfactor) *
                         (yrecldp_rdepliqrefrate + zcldtopdist[jl - 1] / yrecldp_rdepliqrefdepth), 1.0)
 
-                    #--------------
                     # add to matrix
-                    #--------------
                     zsolqa[ncldql - 1, ncldqi - 1, jl - 1] = zsolqa[ncldql - 1, ncldqi - 1, jl - 1] + zdepos
                     zsolqa[ncldqi - 1, ncldql - 1, jl - 1] = zsolqa[ncldqi - 1, ncldql - 1, jl - 1] - zdepos
                     zqxfg[ncldqi - 1, jl - 1] = zqxfg[ncldqi - 1, jl - 1] + zdepos
@@ -1717,41 +1552,31 @@ def cloudsc_py(
 
         # on IDEPICE
 
-        #######################################################################
-        #              4  *** PRECIPITATION PROCESSES ***
-        #######################################################################
+        # 4  *** PRECIPITATION PROCESSES
 
-        #----------------------------------
         # revise in-cloud consensate amount
-        #----------------------------------
         for jl in range(kidia, kfdia + 1):
             ztmpa = 1.0 / max(za[jk - 1, jl - 1], zepsec)
             zliqcld[jl - 1] = zqxfg[ncldql - 1, jl - 1] * ztmpa
             zicecld[jl - 1] = zqxfg[ncldqi - 1, jl - 1] * ztmpa
             zlicld[jl - 1] = zliqcld[jl - 1] + zicecld[jl - 1]
 
-        #----------------------------------------------------------------------
         # 4.2 SEDIMENTATION/FALLING OF *ALL* MICROPHYSICAL SPECIES
         #     now that rain, snow, graupel species are prognostic
         #     the precipitation flux can be defined directly level by level
         #     There is no vertical memory required from the flux variable
-        #----------------------------------------------------------------------
 
         for jm in range(1, nclv + 1):
             if llfall[jm - 1] or jm == ncldqi:
                 for jl in range(kidia, kfdia + 1):
-                    #------------------------
                     # source from layer above
-                    #------------------------
                     if jk > yrecldp_ncldtop:
                         zfallsrce[jm - 1, jl - 1] = zpfplsx[jm - 1, jk - 1, jl - 1] * zdtgdp[jl - 1]
                         zsolqa[jm - 1, jm - 1, jl - 1] = zsolqa[jm - 1, jm - 1, jl - 1] + zfallsrce[jm - 1, jl - 1]
                         zqxfg[jm - 1, jl - 1] = zqxfg[jm - 1, jl - 1] + zfallsrce[jm - 1, jl - 1]
                         # use first guess precip----------V
                         zqpretot[jl - 1] = zqpretot[jl - 1] + zqxfg[jm - 1, jl - 1]
-                    #-------------------------------------------------
                     # sink to next layer, constant fall speed
-                    #-------------------------------------------------
                     # if aerosol effect then override
                     #  note that for T>233K this is the same as above.
                     if yrecldp_laericesed and jm == ncldqi:
@@ -1760,9 +1585,7 @@ def cloudsc_py(
                         # Morrison et al. JAS 2005 Appendix
                         zvqx[ncldqi - 1] = 0.002 * zre_ice**1.0
                     zfall = zvqx[jm - 1] * zrho[jl - 1]
-                    #-------------------------------------------------
                     # modified by Heymsfield and Iaquinta JAS 2000
-                    #-------------------------------------------------
                     # ZFALL = ZFALL*((PAP(JL,JK)*RICEHI1)**(-0.178_JPRB)) &
                     #            &*((ZTP1(JL,JK)*RICEHI2)**(-0.394_JPRB))
 
@@ -1772,7 +1595,6 @@ def cloudsc_py(
             # LLFALL
         # jm
 
-        #---------------------------------------------------------------
         # Precip cover overlap using MAX-RAN Overlap
         # Since precipitation is now prognostic we must
         #   1) apply an arbitrary minimum coverage (0.3) if precip>0
@@ -1787,7 +1609,6 @@ def cloudsc_py(
         #   monotonically increases precip fraction and then resets
         #   it to zero in a step function once clear-sky precip reaches
         #   zero.
-        #---------------------------------------------------------------
         for jl in range(kidia, kfdia + 1):
             if zqpretot[jl - 1] > zepsec:
                 zcovptot[jl - 1] = 1.0 - ((1.0 - zcovptot[jl - 1]) *
@@ -1805,15 +1626,11 @@ def cloudsc_py(
                 zcovpclr[jl - 1] = 0.0  # reset clear sky proportion
                 zcovpmax[jl - 1] = 0.0  # reset max cover for ZZRH calc
 
-        #----------------------------------------------------------------------
         # 4.3a AUTOCONVERSION TO SNOW
-        #----------------------------------------------------------------------
         for jl in range(kidia, kfdia + 1):
 
             if ztp1[jk - 1, jl - 1] <= ydcst_rtt:
-                #-----------------------------------------------------
                 #     Snow Autoconversion rate follow Lin et al. 1983
-                #-----------------------------------------------------
                 if zicecld[jl - 1] > zepsec:
 
                     zzco = ptsphy * yrecldp_rsnowlin1 * np.exp(yrecldp_rsnowlin2 * (ztp1[jk - 1, jl - 1] - ydcst_rtt))
@@ -1828,19 +1645,15 @@ def cloudsc_py(
                     zsnowaut[jl - 1] = zzco * (1.0 - np.exp(-(zicecld[jl - 1] / zlcrit)**2))
                     zsolqb[ncldqi - 1, ncldqs - 1, jl - 1] = zsolqb[ncldqi - 1, ncldqs - 1, jl - 1] + zsnowaut[jl - 1]
 
-            #----------------------------------------------------------------------
             # 4.3b AUTOCONVERSION WARM CLOUDS
             #   Collection and accretion will require separate treatment
             #   but for now we keep this simple treatment
-            #----------------------------------------------------------------------
 
             if zliqcld[jl - 1] > zepsec:
 
-                #--------------------------------------------------------
                 #-
                 #- Warm-rain process follow Sundqvist (1989)
                 #-
-                #--------------------------------------------------------
                 if iwarmrain == 1:
 
                     zzco = yrecldp_rkconv * ptsphy
@@ -1858,11 +1671,9 @@ def cloudsc_py(
                         else:
                             zlcrit = yrecldp_rclcrit_sea  # ocean
 
-                    #------------------------------------------------------------------
                     # Parameters for cloud collection by rain and snow.
                     # Note that with new prognostic variable it is now possible
                     # to REPLACE this with an explicit collection parametrization
-                    #------------------------------------------------------------------
                     zprecip = (zpfplsx[ncldqs - 1, jk - 1, jl - 1] + zpfplsx[ncldqr - 1, jk - 1, jl - 1]) / max(
                         zepsec, zcovptot[jl - 1])
                     zcfpr = 1.0 + yrecldp_rprc1 * np.sqrt(max(zprecip, 0.0))
@@ -1890,11 +1701,9 @@ def cloudsc_py(
                         zsolqb[ncldql - 1, ncldqr - 1,
                                jl - 1] = zsolqb[ncldql - 1, ncldqr - 1, jl - 1] + zrainaut[jl - 1]
 
-                    #--------------------------------------------------------
                     #-
                     #- Warm-rain process follow Khairoutdinov and Kogan (2000)
                     #-
-                    #--------------------------------------------------------
                 elif iwarmrain == 2:
 
                     if plsm[jl - 1] > 0.5:
@@ -1951,11 +1760,9 @@ def cloudsc_py(
 
             # on ZLIQCLD > ZEPSEC
 
-        #----------------------------------------------------------------------
         # RIMING - COLLECTION OF CLOUD LIQUID DROPS BY SNOW AND ICE
         #      only active if T<0degC and supercooled liquid water is present
         #      AND if not Sundquist autoconversion (as this includes riming)
-        #----------------------------------------------------------------------
         if iwarmrain > 1:
 
             for jl in range(kidia, kfdia + 1):
@@ -1964,9 +1771,7 @@ def cloudsc_py(
                     # Fallspeed air density correction
                     zfallcorr = (yrecldp_rdensref / zrho[jl - 1])**0.4
 
-                    #------------------------------------------------------------------
                     # Riming of snow by cloud water - implicit in lwc
-                    #------------------------------------------------------------------
                     if zsnowcld[jl - 1] > zepsec and zcovptot[jl - 1] > 0.01:
 
                         # Calculate riming term
@@ -1980,10 +1785,8 @@ def cloudsc_py(
                         zsolqb[ncldql - 1, ncldqs - 1,
                                jl - 1] = zsolqb[ncldql - 1, ncldqs - 1, jl - 1] + zsnowrime[jl - 1]
 
-                    #------------------------------------------------------------------
                     # Riming of ice by cloud water - implicit in lwc
                     # NOT YET ACTIVE
-                    #------------------------------------------------------------------
                     #      IF (ZICECLD(JL)>ZEPSEC .AND. ZA(JL,JK)>0.01_JPRB) THEN
                     #
                     #        ! Calculate riming term
@@ -2000,13 +1803,11 @@ def cloudsc_py(
 
         # on IWARMRAIN > 1
 
-        #----------------------------------------------------------------------
         # 4.4a  MELTING OF SNOW and ICE
         #       with new implicit solver this also has to treat snow or ice
         #       precipitating from the level above... i.e. local ice AND flux.
         #       in situ ice and snow: could arise from LS advection or warming
         #       falling ice and snow: arrives by precipitation process
-        #----------------------------------------------------------------------
         for jl in range(kidia, kfdia + 1):
 
             zicetot[jl - 1] = zqxfg[ncldqi - 1, jl - 1] + zqxfg[ncldqs - 1, jl - 1]
@@ -2048,9 +1849,7 @@ def cloudsc_py(
                         zsolqa[jm - 1, jn - 1, jl - 1] = zsolqa[jm - 1, jn - 1, jl - 1] + zmelt
                         zsolqa[jn - 1, jm - 1, jl - 1] = zsolqa[jn - 1, jm - 1, jl - 1] - zmelt
 
-        #----------------------------------------------------------------------
         # 4.4b  FREEZING of RAIN
-        #----------------------------------------------------------------------
         for jl in range(kidia, kfdia + 1):
 
             # If rain present
@@ -2099,9 +1898,7 @@ def cloudsc_py(
                         zsolqa[ncldqr - 1, ncldqs - 1, jl - 1] = zsolqa[ncldqr - 1, ncldqs - 1, jl - 1] + zfrz
                         zsolqa[ncldqs - 1, ncldqr - 1, jl - 1] = zsolqa[ncldqs - 1, ncldqr - 1, jl - 1] - zfrz
 
-        #----------------------------------------------------------------------
         # 4.4c  FREEZING of LIQUID
-        #----------------------------------------------------------------------
         for jl in range(kidia, kfdia + 1):
             # not implicit yet...
             zfrzmax[jl - 1] = max((yrecldp_rthomo - ztp1[jk - 1, jl - 1]) * zrldcp, 0.0)
@@ -2114,13 +1911,9 @@ def cloudsc_py(
                 zsolqa[jm - 1, jn - 1, jl - 1] = zsolqa[jm - 1, jn - 1, jl - 1] + zfrz
                 zsolqa[jn - 1, jm - 1, jl - 1] = zsolqa[jn - 1, jm - 1, jl - 1] - zfrz
 
-        #----------------------------------------------------------------------
         # 4.5   EVAPORATION OF RAIN/SNOW
-        #----------------------------------------------------------------------
 
-        #----------------------------------------
         # Rain evaporation scheme from Sundquist
-        #----------------------------------------
         if ievaprain == 1:
 
             # Rain
@@ -2133,9 +1926,7 @@ def cloudsc_py(
 
                 zqe = (zqx[ncldqv - 1, jk - 1, jl - 1] - za[jk - 1, jl - 1] * zqsliq[jk - 1, jl - 1]) / max(
                     zepsec, 1.0 - za[jk - 1, jl - 1])
-                #---------------------------------------------
                 # humidity in moistest ZCOVPCLR part of domain
-                #---------------------------------------------
                 zqe = max(0.0, min(zqe, zqsliq[jk - 1, jl - 1]))
                 llo1 = zcovpclr[jl - 1] > zepsec and zqxfg[ncldqr - 1,
                                                            jl - 1] > zepsec and zqe < zzrh * zqsliq[jk - 1, jl - 1]
@@ -2145,9 +1936,7 @@ def cloudsc_py(
                     zpreclr = zqxfg[ncldqr - 1, jl - 1] * zcovpclr[jl - 1] / (max(
                         abs(zcovptot[jl - 1] * zdtgdp[jl - 1]), zepsilon) * np.sign(zcovptot[jl - 1] * zdtgdp[jl - 1]))
 
-                    #--------------------------------------
                     # actual microphysics formula in zbeta
-                    #--------------------------------------
 
                     zbeta1 = np.sqrt(
                         pap[jk - 1, jl - 1] / paph[klev + 1 - 1, jl - 1]) / yrecldp_rvrfactor * zpreclr / max(
@@ -2159,12 +1948,10 @@ def cloudsc_py(
                     zdpr = zcovpclr[jl - 1] * zbeta * (zqsliq[jk - 1, jl - 1] - zqe) / zdenom * zdp[jl - 1] * zrg_r
                     zdpevap = zdpr * zdtgdp[jl - 1]
 
-                    #---------------------------------------------------------
                     # add evaporation term to explicit sink.
                     # this has to be explicit since if treated in the implicit
                     # term evaporation can not reduce rain to zero and model
                     # produces small amounts of rainfall everywhere.
-                    #---------------------------------------------------------
 
                     # Evaporate rain
                     zevap = min(zdpevap, zqxfg[ncldqr - 1, jl - 1])
@@ -2172,11 +1959,9 @@ def cloudsc_py(
                     zsolqa[ncldqr - 1, ncldqv - 1, jl - 1] = zsolqa[ncldqr - 1, ncldqv - 1, jl - 1] + zevap
                     zsolqa[ncldqv - 1, ncldqr - 1, jl - 1] = zsolqa[ncldqv - 1, ncldqr - 1, jl - 1] - zevap
 
-                    #-------------------------------------------------------------
                     # Reduce the total precip coverage proportional to evaporation
                     # to mimic the previous scheme which had a diagnostic
                     # 2-flux treatment, abandoned due to the new prognostic precip
-                    #-------------------------------------------------------------
                     zcovptot[jl - 1] = max(
                         yrecldp_rcovpmin, zcovptot[jl - 1] -
                         max(0.0, (zcovptot[jl - 1] - za[jk - 1, jl - 1]) * zevap / zqxfg[ncldqr - 1, jl - 1]))
@@ -2184,17 +1969,13 @@ def cloudsc_py(
                     # Update fg field
                     zqxfg[ncldqr - 1, jl - 1] = zqxfg[ncldqr - 1, jl - 1] - zevap
 
-            #---------------------------------------------------------
             # Rain evaporation scheme based on Abel and Boutle (2013)
-            #---------------------------------------------------------
         elif ievaprain == 2:
 
             for jl in range(kidia, kfdia + 1):
 
-                #-----------------------------------------------------------------------
                 # Calculate relative humidity limit for rain evaporation
                 # to avoid cloud formation and saturation of the grid box
-                #-----------------------------------------------------------------------
                 # Limit RH for rain evaporation dependent on precipitation fraction
                 zzrh = yrecldp_rprecrhmax + (1.0 - yrecldp_rprecrhmax) * zcovpmax[jl - 1] / max(
                     zepsec, 1.0 - za[jk - 1, jl - 1])
@@ -2219,9 +2000,7 @@ def cloudsc_py(
 
                 if llo1:
 
-                    #-------------------------------------------
                     # Abel and Boutle (2012) evaporation
-                    #-------------------------------------------
                     # Calculate local precipitation (kg/kg)
                     zpreclr = zqxfg[ncldqr - 1, jl - 1] / zcovptot[jl - 1]
 
@@ -2253,12 +2032,10 @@ def cloudsc_py(
                     zdenom = 1.0 + zbeta * ptsphy  #*ZCORQSLIQ(JL)
                     zdpevap = zcovpclr[jl - 1] * zbeta * ptsphy * zsubsat / zdenom
 
-                    #---------------------------------------------------------
                     # Add evaporation term to explicit sink.
                     # this has to be explicit since if treated in the implicit
                     # term evaporation can not reduce rain to zero and model
                     # produces small amounts of rainfall everywhere.
-                    #---------------------------------------------------------
 
                     # Limit rain evaporation
                     zevap = min(zdpevap, zqxfg[ncldqr - 1, jl - 1])
@@ -2266,11 +2043,9 @@ def cloudsc_py(
                     zsolqa[ncldqr - 1, ncldqv - 1, jl - 1] = zsolqa[ncldqr - 1, ncldqv - 1, jl - 1] + zevap
                     zsolqa[ncldqv - 1, ncldqr - 1, jl - 1] = zsolqa[ncldqv - 1, ncldqr - 1, jl - 1] - zevap
 
-                    #-------------------------------------------------------------
                     # Reduce the total precip coverage proportional to evaporation
                     # to mimic the previous scheme which had a diagnostic
                     # 2-flux treatment, abandoned due to the new prognostic precip
-                    #-------------------------------------------------------------
                     zcovptot[jl - 1] = max(
                         yrecldp_rcovpmin, zcovptot[jl - 1] -
                         max(0.0, (zcovptot[jl - 1] - za[jk - 1, jl - 1]) * zevap / zqxfg[ncldqr - 1, jl - 1]))
@@ -2280,9 +2055,7 @@ def cloudsc_py(
 
         # on IEVAPRAIN
 
-        #----------------------------------------------------------------------
         # 4.5   EVAPORATION OF SNOW
-        #----------------------------------------------------------------------
         # Snow
         if ievapsnow == 1:
 
@@ -2293,9 +2066,7 @@ def cloudsc_py(
                 zqe = (zqx[ncldqv - 1, jk - 1, jl - 1] - za[jk - 1, jl - 1] * zqsice[jk - 1, jl - 1]) / max(
                     zepsec, 1.0 - za[jk - 1, jl - 1])
 
-                #---------------------------------------------
                 # humidity in moistest ZCOVPCLR part of domain
-                #---------------------------------------------
                 zqe = max(0.0, min(zqe, zqsice[jk - 1, jl - 1]))
                 llo1 = zcovpclr[jl - 1] > zepsec and zqxfg[ncldqs - 1,
                                                            jl - 1] > zepsec and zqe < zzrh * zqsice[jk - 1, jl - 1]
@@ -2305,9 +2076,7 @@ def cloudsc_py(
                     zpreclr = zqxfg[ncldqs - 1, jl - 1] * zcovpclr[jl - 1] / (max(
                         abs(zcovptot[jl - 1] * zdtgdp[jl - 1]), zepsilon) * np.sign(zcovptot[jl - 1] * zdtgdp[jl - 1]))
 
-                    #--------------------------------------
                     # actual microphysics formula in zbeta
-                    #--------------------------------------
 
                     zbeta1 = np.sqrt(
                         pap[jk - 1, jl - 1] / paph[klev + 1 - 1, jl - 1]) / yrecldp_rvrfactor * zpreclr / max(
@@ -2319,12 +2088,10 @@ def cloudsc_py(
                     zdpr = zcovpclr[jl - 1] * zbeta * (zqsice[jk - 1, jl - 1] - zqe) / zdenom * zdp[jl - 1] * zrg_r
                     zdpevap = zdpr * zdtgdp[jl - 1]
 
-                    #---------------------------------------------------------
                     # add evaporation term to explicit sink.
                     # this has to be explicit since if treated in the implicit
                     # term evaporation can not reduce snow to zero and model
                     # produces small amounts of snowfall everywhere.
-                    #---------------------------------------------------------
 
                     # Evaporate snow
                     zevap = min(zdpevap, zqxfg[ncldqs - 1, jl - 1])
@@ -2332,11 +2099,9 @@ def cloudsc_py(
                     zsolqa[ncldqs - 1, ncldqv - 1, jl - 1] = zsolqa[ncldqs - 1, ncldqv - 1, jl - 1] + zevap
                     zsolqa[ncldqv - 1, ncldqs - 1, jl - 1] = zsolqa[ncldqv - 1, ncldqs - 1, jl - 1] - zevap
 
-                    #-------------------------------------------------------------
                     # Reduce the total precip coverage proportional to evaporation
                     # to mimic the previous scheme which had a diagnostic
                     # 2-flux treatment, abandoned due to the new prognostic precip
-                    #-------------------------------------------------------------
                     zcovptot[jl - 1] = max(
                         yrecldp_rcovpmin, zcovptot[jl - 1] -
                         max(0.0, (zcovptot[jl - 1] - za[jk - 1, jl - 1]) * zevap / zqxfg[ncldqs - 1, jl - 1]))
@@ -2344,23 +2109,18 @@ def cloudsc_py(
                     #Update first guess field
                     zqxfg[ncldqs - 1, jl - 1] = zqxfg[ncldqs - 1, jl - 1] - zevap
 
-            #---------------------------------------------------------
         elif ievapsnow == 2:
 
             for jl in range(kidia, kfdia + 1):
 
-                #-----------------------------------------------------------------------
                 # Calculate relative humidity limit for snow evaporation
-                #-----------------------------------------------------------------------
                 zzrh = yrecldp_rprecrhmax + (1.0 - yrecldp_rprecrhmax) * zcovpmax[jl - 1] / max(
                     zepsec, 1.0 - za[jk - 1, jl - 1])
                 zzrh = min(max(zzrh, yrecldp_rprecrhmax), 1.0)
                 zqe = (zqx[ncldqv - 1, jk - 1, jl - 1] - za[jk - 1, jl - 1] * zqsice[jk - 1, jl - 1]) / max(
                     zepsec, 1.0 - za[jk - 1, jl - 1])
 
-                #---------------------------------------------
                 # humidity in moistest ZCOVPCLR part of domain
-                #---------------------------------------------
                 zqe = max(0.0, min(zqe, zqsice[jk - 1, jl - 1]))
                 llo1 = zcovpclr[jl - 1] > zepsec and zqx[ncldqs - 1, jk - 1,
                                                          jl - 1] > zepsec and zqe < zzrh * zqsice[jk - 1, jl - 1]
@@ -2394,20 +2154,16 @@ def cloudsc_py(
 
                     zdpevap = max(zcovpclr[jl - 1] * zterm1 * zterm2 * ptsphy, 0.0)
 
-                    #--------------------------------------------------------------------
                     # Limit evaporation to snow amount
-                    #--------------------------------------------------------------------
                     zevap = min(zdpevap, zevaplimice[jl - 1])
                     zevap = min(zevap, zqx[ncldqs - 1, jk - 1, jl - 1])
 
                     zsolqa[ncldqs - 1, ncldqv - 1, jl - 1] = zsolqa[ncldqs - 1, ncldqv - 1, jl - 1] + zevap
                     zsolqa[ncldqv - 1, ncldqs - 1, jl - 1] = zsolqa[ncldqv - 1, ncldqs - 1, jl - 1] - zevap
 
-                    #-------------------------------------------------------------
                     # Reduce the total precip coverage proportional to evaporation
                     # to mimic the previous scheme which had a diagnostic
                     # 2-flux treatment, abandoned due to the new prognostic precip
-                    #-------------------------------------------------------------
                     zcovptot[jl - 1] = max(
                         yrecldp_rcovpmin, zcovptot[jl - 1] -
                         max(0.0, (zcovptot[jl - 1] - za[jk - 1, jl - 1]) * zevap / zqx[ncldqs - 1, jk - 1, jl - 1]))
@@ -2417,9 +2173,7 @@ def cloudsc_py(
 
         # on IEVAPSNOW
 
-        #--------------------------------------
         # Evaporate small precipitation amounts
-        #--------------------------------------
         for jm in range(1, nclv + 1):
             if llfall[jm - 1]:
                 for jl in range(kidia, kfdia + 1):
@@ -2427,35 +2181,25 @@ def cloudsc_py(
                         zsolqa[jm - 1, ncldqv - 1, jl - 1] = zsolqa[jm - 1, ncldqv - 1, jl - 1] + zqxfg[jm - 1, jl - 1]
                         zsolqa[ncldqv - 1, jm - 1, jl - 1] = zsolqa[ncldqv - 1, jm - 1, jl - 1] - zqxfg[jm - 1, jl - 1]
 
-        #######################################################################
-        #            5.0  *** SOLVERS FOR A AND L ***
+        # 5.0  *** SOLVERS FOR A AND L
         # now use an implicit solution rather than exact solution
         # solver is forward in time, upstream difference for advection
-        #######################################################################
 
-        #---------------------------
         # 5.1 solver for cloud cover
-        #---------------------------
         for jl in range(kidia, kfdia + 1):
             zanew = (za[jk - 1, jl - 1] + zsolac[jl - 1]) / (1.0 + zsolab[jl - 1])
             zanew = min(zanew, 1.0)
             if zanew < yrecldp_ramin:
                 zanew = 0.0
             zda[jl - 1] = zanew - zaorig[jk - 1, jl - 1]
-            #---------------------------------
             # variables needed for next level
-            #---------------------------------
             zanewm1[jl - 1] = zanew
 
-        #--------------------------------
         # 5.2 solver for the microphysics
-        #--------------------------------
 
-        #--------------------------------------------------------------
         # Truncate explicit sinks to avoid negatives
         # Note: Species are treated in the order in which they run out
         # since the clipping will alter the balance for the other vars
-        #--------------------------------------------------------------
 
         for jm in range(1, nclv + 1):
             for jn in range(1, nclv + 1):
@@ -2464,35 +2208,27 @@ def cloudsc_py(
             for jl in range(kidia, kfdia + 1):
                 zsinksum[jm - 1, jl - 1] = 0.0
 
-        #----------------------------
         # collect sink terms and mark
-        #----------------------------
         for jm in range(1, nclv + 1):
             for jn in range(1, nclv + 1):
                 for jl in range(kidia, kfdia + 1):
                     zsinksum[jm - 1,
                              jl - 1] = zsinksum[jm - 1, jl - 1] - zsolqa[jn - 1, jm - 1, jl - 1]  # +ve total is bad
 
-        #---------------------------------------
         # calculate overshoot and scaling factor
-        #---------------------------------------
         for jm in range(1, nclv + 1):
             for jl in range(kidia, kfdia + 1):
                 zmax = max(zqx[jm - 1, jk - 1, jl - 1], zepsec)
                 zrat = max(zsinksum[jm - 1, jl - 1], zmax)
                 zratio[jm - 1, jl - 1] = zmax / zrat
 
-        #--------------------------------------------
         # scale the sink terms, in the correct order,
         # recalculating the scale factor each time
-        #--------------------------------------------
         for jm in range(1, nclv + 1):
             for jl in range(kidia, kfdia + 1):
                 zsinksum[jm - 1, jl - 1] = 0.0
 
-        #----------------
         # recalculate sum
-        #----------------
         for jm in range(1, nclv + 1):
             psum_solqa[:] = 0.0
             for jn in range(1, nclv + 1):
@@ -2501,16 +2237,12 @@ def cloudsc_py(
             for jl in range(kidia, kfdia + 1):
                 # ZSINKSUM(JL,JM)=ZSINKSUM(JL,JM)-SUM(ZSOLQA(JL,JM,1:NCLV))
                 zsinksum[jm - 1, jl - 1] = zsinksum[jm - 1, jl - 1] - psum_solqa[jl - 1]
-            #---------------------------
             # recalculate scaling factor
-            #---------------------------
             for jl in range(kidia, kfdia + 1):
                 zmm = max(zqx[jm - 1, jk - 1, jl - 1], zepsec)
                 zrr = max(zsinksum[jm - 1, jl - 1], zmm)
                 zratio[jm - 1, jl - 1] = zmm / zrr
-            #------
             # scale
-            #------
             for jl in range(kidia, kfdia + 1):
                 zzratio = zratio[jm - 1, jl - 1]
                 #DIR$ IVDEP
@@ -2520,48 +2252,34 @@ def cloudsc_py(
                         zsolqa[jn - 1, jm - 1, jl - 1] = zsolqa[jn - 1, jm - 1, jl - 1] * zzratio
                         zsolqa[jm - 1, jn - 1, jl - 1] = zsolqa[jm - 1, jn - 1, jl - 1] * zzratio
 
-        #--------------------------------------------------------------
         # 5.2.2 Solver
-        #------------------------
 
-        #------------------------
         # set the LHS of equation
-        #------------------------
         for jm in range(1, nclv + 1):
             for jn in range(1, nclv + 1):
-                #----------------------------------------------
                 # diagonals: microphysical sink terms+transport
-                #----------------------------------------------
                 if jn == jm:
                     for jl in range(kidia, kfdia + 1):
                         zqlhs[jm - 1, jn - 1, jl - 1] = 1.0 + zfallsink[jm - 1, jl - 1]
                         for jo in range(1, nclv + 1):
                             zqlhs[jm - 1, jn - 1,
                                   jl - 1] = zqlhs[jm - 1, jn - 1, jl - 1] + zsolqb[jn - 1, jo - 1, jl - 1]
-                    #------------------------------------------
                     # non-diagonals: microphysical source terms
-                    #------------------------------------------
                 else:
                     for jl in range(kidia, kfdia + 1):
                         zqlhs[jm - 1, jn - 1,
                               jl - 1] = -zsolqb[jm - 1, jn - 1, jl - 1]  # here is the delta T - missing from doc.
 
-        #------------------------
         # set the RHS of equation
-        #------------------------
         for jm in range(1, nclv + 1):
             for jl in range(kidia, kfdia + 1):
-                #---------------------------------
                 # sum the explicit source and sink
-                #---------------------------------
                 zexplicit = 0.0
                 for jn in range(1, nclv + 1):
                     zexplicit = zexplicit + zsolqa[jn - 1, jm - 1, jl - 1]  # sum over middle index
                 zqxn[jm - 1, jl - 1] = zqx[jm - 1, jk - 1, jl - 1] + zexplicit
 
-        #-----------------------------------
-        # *** solve by LU decomposition: ***
-        #-----------------------------------
+        # solve by LU decomposition:
 
         # Note: This fast way of solving NCLVxNCLV system
         #       assumes a good behaviour (i.e. non-zero diagonal
@@ -2609,19 +2327,15 @@ def cloudsc_py(
                     zqxn[ncldqv - 1, jl - 1] = zqxn[ncldqv - 1, jl - 1] + zqxn[jn - 1, jl - 1]
                     zqxn[jn - 1, jl - 1] = 0.0
 
-        #--------------------------------
         # variables needed for next level
-        #--------------------------------
         for jm in range(1, nclv + 1):
             for jl in range(kidia, kfdia + 1):
                 zqxnm1[jm - 1, jl - 1] = zqxn[jm - 1, jl - 1]
                 zqxn2d[jm - 1, jk - 1, jl - 1] = zqxn[jm - 1, jl - 1]
 
-        #------------------------------------------------------------------------
         # 5.3 Precipitation/sedimentation fluxes to next level
         #     diagnostic precipitation fluxes
         #     It is this scaled flux that must be used for source to next layer
-        #------------------------------------------------------------------------
 
         for jm in range(1, nclv + 1):
             for jl in range(kidia, kfdia + 1):
@@ -2634,13 +2348,9 @@ def cloudsc_py(
             if zqpretot[jl - 1] < zepsec:
                 zcovptot[jl - 1] = 0.0
 
-        #######################################################################
-        #              6  *** UPDATE TENDANCIES ***
-        #######################################################################
+        # 6  *** UPDATE TENDANCIES
 
-        #--------------------------------
         # 6.1 Temperature and CLV budgets
-        #--------------------------------
 
         for jm in range(1, nclv - 1 + 1):
             for jl in range(kidia, kfdia + 1):
@@ -2659,56 +2369,40 @@ def cloudsc_py(
                     tendency_loc_t[jk - 1, jl - 1] = tendency_loc_t[jk - 1, jl - 1] + ydthf_ralsdcp * (
                         zqxn[jm - 1, jl - 1] - zqx[jm - 1, jk - 1, jl - 1] - zfluxq[jm - 1, jl - 1]) * zqtmst
 
-            #----------------------------------------------------------------------
             # New prognostic tendencies - ice,liquid rain,snow
             # Note: CLV arrays use PCLV in calculation of tendency while humidity
             #       uses ZQX. This is due to clipping at start of cloudsc which
             #       include the tendency already in TENDENCY_LOC_T and TENDENCY_LOC_q. ZQX was reset
-            #----------------------------------------------------------------------
             for jl in range(kidia, kfdia + 1):
                 tendency_loc_cld[jm - 1, jk - 1, jl -
                                  1] = tendency_loc_cld[jm - 1, jk - 1, jl - 1] + (zqxn[jm - 1, jl - 1] -
                                                                                   zqx0[jm - 1, jk - 1, jl - 1]) * zqtmst
 
         for jl in range(kidia, kfdia + 1):
-            #----------------------
             # 6.2 Humidity budget
-            #----------------------
             tendency_loc_q[jk - 1, jl - 1] = tendency_loc_q[jk - 1, jl - 1] + (zqxn[ncldqv - 1, jl - 1] -
                                                                                zqx[ncldqv - 1, jk - 1, jl - 1]) * zqtmst
 
-            #-------------------
             # 6.3 cloud cover
-            #-----------------------
             tendency_loc_a[jk - 1, jl - 1] = tendency_loc_a[jk - 1, jl - 1] + zda[jl - 1] * zqtmst
 
-        #--------------------------------------------------
         # Copy precipitation fraction into output variable
-        #-------------------------------------------------
         for jl in range(kidia, kfdia + 1):
             pcovptot[jk - 1, jl - 1] = zcovptot[jl - 1]
 
     # on vertical level JK
-    #----------------------------------------------------------------------
     #                       END OF VERTICAL LOOP
-    #----------------------------------------------------------------------
 
-    #######################################################################
-    #              8  *** FLUX/DIAGNOSTICS COMPUTATIONS ***
-    #######################################################################
+    # 8  *** FLUX/DIAGNOSTICS COMPUTATIONS
 
-    #--------------------------------------------------------------------
     # Copy general precip arrays back into PFP arrays for GRIB archiving
     # Add rain and liquid fluxes, ice and snow fluxes
-    #--------------------------------------------------------------------
     for jk in range(1, klev + 1 + 1):
         for jl in range(kidia, kfdia + 1):
             pfplsl[jk - 1, jl - 1] = zpfplsx[ncldqr - 1, jk - 1, jl - 1] + zpfplsx[ncldql - 1, jk - 1, jl - 1]
             pfplsn[jk - 1, jl - 1] = zpfplsx[ncldqs - 1, jk - 1, jl - 1] + zpfplsx[ncldqi - 1, jk - 1, jl - 1]
 
-    #--------
     # Fluxes:
-    #--------
     for jl in range(kidia, kfdia + 1):
         pfsqlf[1 - 1, jl - 1] = 0.0
         pfsqif[1 - 1, jl - 1] = 0.0
@@ -2775,14 +2469,11 @@ def cloudsc_py(
             # snow, negative numbers
             pfcqsng[jk + 1 - 1, jl - 1] = pfcqsng[jk + 1 - 1, jl - 1] + zlneg[ncldqs - 1, jk - 1, jl - 1] * zgdph_r
 
-    #-----------------------------------
     # enthalpy flux due to precipitation
-    #-----------------------------------
     for jk in range(1, klev + 1 + 1):
         for jl in range(kidia, kfdia + 1):
             pfhpsl[jk - 1, jl - 1] = -ydcst_rlvtt * pfplsl[jk - 1, jl - 1]
             pfhpsn[jk - 1, jl - 1] = -ydcst_rlstt * pfplsn[jk - 1, jl - 1]
 
-    #===============================================================================
     #IF (LHOOK) CALL DR_HOOK('CLOUDSC',1,ZHOOK_HANDLE)
     return

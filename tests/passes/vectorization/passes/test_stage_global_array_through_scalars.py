@@ -51,9 +51,7 @@ RTOL = 1e-12
 ATOL = 1e-12
 
 
-# ---------------------------------------------------------------------------
 # Structural helpers
-# ---------------------------------------------------------------------------
 def _transient_scalars(sdfg: dace.SDFG):
     """Collect every transient scalar descriptor name in ``sdfg`` (recursively).
 
@@ -120,9 +118,7 @@ def _has_global_to_tasklet_edge(sdfg: dace.SDFG, array_name: str) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
 # Input SDFG builders (construction API)
-# ---------------------------------------------------------------------------
 def _build_single_global_array_chain(name: str, *, s1: str, s2: str, shape, strides) -> dace.SDFG:
     """Build ``T1 -> A(global) -> T2`` inside a single-iteration Map.
 
@@ -285,9 +281,7 @@ def _build_wcr_chain(name: str) -> dace.SDFG:
     return sdfg
 
 
-# ---------------------------------------------------------------------------
 # Numerical-equivalence runner
-# ---------------------------------------------------------------------------
 def _run_and_compare(build_fn, name: str, arrays, params):
     """Compile + run the original SDFG, then a pass-applied deep copy, compare.
 
@@ -354,9 +348,7 @@ def _run_and_compare_python(build_fn, name: str, arrays, params, python_ref):
         )
 
 
-# ---------------------------------------------------------------------------
 # Case A — provably disjoint subsets
-# ---------------------------------------------------------------------------
 def test_disjoint_constant_dim_is_case_a_structure():
     """A 1-D global array written at ``A[0]`` and read at ``A[1]`` is a Case-A
     occurrence: the pass inserts TWO transient scalars and the global array
@@ -433,9 +425,7 @@ def test_disjoint_multidim_offsets_is_case_a_numerics():
         arrays, {}, _python_ref_single_global_array_chain("1, 0", "3, 0"))
 
 
-# ---------------------------------------------------------------------------
 # Case B — not provably disjoint (RMW)
-# ---------------------------------------------------------------------------
 def test_identical_subset_is_case_b_structure():
     """A global element written and then read at the SAME subset ``A[0]`` is a
     Case-B RMW: the pass inserts ONE transient scalar that serves both producer
@@ -489,9 +479,7 @@ def test_overlapping_multidim_subset_is_case_b_numerics():
         _python_ref_single_global_array_chain("2, 0", "2, 0"))
 
 
-# ---------------------------------------------------------------------------
 # Multi-dim global array (zqx[i, j, 4]-style)
-# ---------------------------------------------------------------------------
 def test_multidim_global_disjoint_species_numerics():
     """A 3-D ``[NSPECIES, NSPECIES, NSPECIES]`` (zqx-style) global array written
     at species 4 and read at species 2 along the last dim is disjoint (Case A)
@@ -520,9 +508,7 @@ def test_multidim_global_disjoint_species_numerics():
         arrays, {}, _python_ref_single_global_array_chain("1, 1, 4", "1, 1, 2"))
 
 
-# ---------------------------------------------------------------------------
 # Refusal / skip cases — SDFG must be unchanged
-# ---------------------------------------------------------------------------
 def test_intervening_global_write_is_refused():
     """A second write to the same global element ``A[0]`` on the chain violates
     the Case-B no-other-write invariant; the pass must refuse (no-op)."""
@@ -574,9 +560,7 @@ def test_no_pattern_is_noop():
     assert sdfg.to_json() == before, "no-op SDFG must be unchanged"
 
 
-# ---------------------------------------------------------------------------
 # Idempotency
-# ---------------------------------------------------------------------------
 def test_pass_is_idempotent_case_a():
     """A second application of the pass on the already-staged Case-A kernel is
     a no-op (the global node no longer bridges two tasklets)."""

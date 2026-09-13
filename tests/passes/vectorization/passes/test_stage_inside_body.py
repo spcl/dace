@@ -79,7 +79,7 @@ def test_pass_refuses_widths_outside_k_range():
         InsertTileLoadStore(widths=(8, 8, 8, 8))
 
 
-# ---- stage_tile_access (G7 step 2) ----------------------------------------
+# stage_tile_access (G7 step 2)
 
 
 def test_tile_helper_mints_tile_transient_and_tileload_node():
@@ -147,7 +147,7 @@ def test_tile_helper_preserves_source_dtype():
     assert sdfg.arrays[name].dtype == dace.int64
 
 
-# ---- stage_gather_access (G7 step 3) -------------------------------------
+# stage_gather_access (G7 step 3)
 
 
 def _add_idx(sdfg, name, shape):
@@ -221,7 +221,7 @@ def test_gather_helper_refuses_idx_sources_mismatch():
                             idx_sources={0: idx_an})
 
 
-# ---- InsertTileLoadStore walker (G7 step 4) ----------------------------------
+# InsertTileLoadStore walker (G7 step 4)
 
 
 def _build_const_only_tile_fixture():
@@ -481,7 +481,7 @@ def test_walker_rewires_consumers_to_bridge_for_constant_branch():
         "expected consumer to read from Scalar bridge transient"
 
 
-# ---- write-side staging (TileStore) ---------------------------------------
+# write-side staging (TileStore)
 
 
 def _build_linear_write_fixture():
@@ -591,7 +591,7 @@ def test_walker_leaves_constant_only_write_as_direct_copy():
     assert out_edges[0].dst.data == "B"
 
 
-# ---- scatter (GATHER on write) ------------------------------------------------
+# scatter (GATHER on write)
 
 
 def test_stage_tile_store_helper_emits_tilestore_with_gather_dims_and_wires_idx_connectors():

@@ -71,9 +71,7 @@ class LoopInvariantCodeMotion(ppl.Pass):
         return total or None
 
 
-# ---------------------------------------------------------------------------
 # Depth helpers (innermost-first ordering)
-# ---------------------------------------------------------------------------
 
 
 def _loop_nesting_depth(loop: LoopRegion) -> int:
@@ -96,9 +94,7 @@ def _map_scope_depth(state: SDFGState, me: nodes.MapEntry) -> int:
     return depth
 
 
-# ---------------------------------------------------------------------------
 # LoopRegion path
-# ---------------------------------------------------------------------------
 
 
 def _hoist_loop_region(loop: LoopRegion) -> int:
@@ -644,9 +640,7 @@ def _hoist_tasklet_to_preheader(
     return True
 
 
-# ---------------------------------------------------------------------------
 # Map scope path
-# ---------------------------------------------------------------------------
 
 
 def _hoist_map_scope(state: SDFGState, me: nodes.MapEntry) -> int:

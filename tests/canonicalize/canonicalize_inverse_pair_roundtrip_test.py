@@ -56,9 +56,7 @@ def conds_inside_loops(sdfg):
         for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
 
 
-# ----------------------------------------------------------------------
 # MoveIfIntoLoop <-> MoveLoopInvariantIfUp
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -154,9 +152,7 @@ def test_moveif_up_then_into_completes_the_roundtrip():
     assert conds_inside_loops(sdfg) == 1
 
 
-# ----------------------------------------------------------------------
 # LoopToMap <-> MapToForLoop
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -195,9 +191,7 @@ def test_looptomap_then_maptoloop_then_looptomap():
     assert np.allclose(got, exp), 'LoopToMap<->MapToForLoop round-trip changed values'
 
 
-# ----------------------------------------------------------------------
 # MapFission <-> MapFusion (vertical)
-# ----------------------------------------------------------------------
 
 
 @dace.program

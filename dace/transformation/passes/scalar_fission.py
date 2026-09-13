@@ -294,9 +294,9 @@ class ScalarFission(ppl.Pass):
             elif isinstance(pe.dst, nd.AccessNode) and pe.dst.data == new:
                 pe.data._is_data_src = False
 
-    # ------------------------------------------------------------------ #
+    # #
     #  Privatization of undominated (None-scope) loop-local scalars
-    # ------------------------------------------------------------------ #
+    # #
 
     def _privatize_loop_local_undominated(self,
                                           sdfg: SDFG,

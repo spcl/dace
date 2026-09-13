@@ -43,9 +43,9 @@ def indirect_phase(a: dace.float64[nphase, ncol], idx: dace.int32[nphase], out: 
             out[j] = out[j] + a[idx[i], j]
 
 
-# ---------------------------------------------------------------------------- #
+# #
 #  Pure helper functions
-# ---------------------------------------------------------------------------- #
+# #
 def test_resolve_aliases_dedup_and_none_passthrough():
     """Aliased symbols (same interstate value) collapse to the first key; None dims survive."""
     exprs = [
@@ -106,9 +106,9 @@ def test_reverse_bfs_assignments_closest_wins():
     assert "m" not in found_b
 
 
-# ---------------------------------------------------------------------------- #
+# #
 #  Splitting behaviour
-# ---------------------------------------------------------------------------- #
+# #
 def test_split_first_dimension_bit_exact():
     """Split the symbol-sized leading dim of a 2-D array into named per-index arrays; bit-exact."""
     sdfg = phase_axpy.to_sdfg()

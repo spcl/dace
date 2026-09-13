@@ -14,7 +14,7 @@ from dace.libraries.tileops import TileLoad, TileStore
 from dace.libraries.tileops._pure_codegen import (_strides_match_packed, validate_packed_layout)
 from dace.memlet import Memlet
 
-# ---- _strides_match_packed -----------------------------------------------
+# _strides_match_packed
 
 
 def test_packed_c_layout_match_returns_true_for_canonical_strides():
@@ -42,7 +42,7 @@ def test_packed_match_returns_false_for_length_mismatch():
     assert not _strides_match_packed(shape=(8, ), strides=(1, 1), order="C")
 
 
-# ---- validate_packed_layout -----------------------------------------------
+# validate_packed_layout
 
 
 def _array_with(shape, strides, dtype=dace.float64):
@@ -96,7 +96,7 @@ def test_validate_accepts_scalar_descriptor_as_noop():
     validate_packed_layout("tl", "_src", sdfg.arrays["S"])
 
 
-# ---- end-to-end through TileLoad / TileStore -----------------------------
+# end-to-end through TileLoad / TileStore
 
 
 def test_tileload_refuses_padded_source_at_validate():

@@ -407,7 +407,7 @@ def test_an_unknown_language_is_refused():
         cpf(sdfg, language='fortran')
 
 
-# -- the index helper, probed directly -----------------------------------------------------------
+# the index helper, probed directly
 #
 # A helper that mis-parses its argument or narrows it is a WRONG ANSWER, not a compile error, so
 # both are probed by building and RUNNING the generated helper rather than by matching its text.
@@ -461,7 +461,7 @@ def test_index_helper_computes_in_int64():
     assert out[0] == 3000000007, 'the index arithmetic wrapped through 32 bits'
 
 
-# -- the typed min/max helpers -------------------------------------------------------------------
+# the typed min/max helpers
 
 _MINMAX_PROBE = """
 #include <stdint.h>
@@ -565,7 +565,7 @@ def test_a_c_minmax_resolution_folds_through_the_typed_helper_and_keeps_the_accu
         assert same, f'element {index}: {operation}({expected[index]!r}) folded to {got!r}, Python gives {want!r}'
 
 
-# -- the C verify() gate -------------------------------------------------------------------------
+# the C verify() gate
 
 #: ``(label, a line of C++ the C dialect must never emit)``. Each one BUILDS inside the DaCe tree,
 #: so only this gate stands between it and a translation unit the C driver rejects.

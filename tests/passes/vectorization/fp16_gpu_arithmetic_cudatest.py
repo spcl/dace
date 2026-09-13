@@ -112,9 +112,7 @@ def _inputs(n: int, seed: int):
     return x, y
 
 
-# ------------------------------------------------------------------------------------------------
 # Structural: the width-2 fp16 path is the one that runs (no GPU device needed)
-# ------------------------------------------------------------------------------------------------
 @pytest.mark.parametrize("program,expected", [
     (_scale_add16, {"tile_load", "tile_store"}),
     (_select16, {"tile_load"}),
@@ -177,9 +175,7 @@ def test_generated_fp16_code_compiles(program):
     _vectorized(program, name=f"fp16_compile_{program.name}").compile()
 
 
-# ------------------------------------------------------------------------------------------------
 # GPU: the numbers, at extents that do and do not divide the vector width
-# ------------------------------------------------------------------------------------------------
 def _body_scale_add():
     csr = _vectorized(_scale_add16, name="fp16_scale_add_numeric").compile()
     for n in EXTENTS:

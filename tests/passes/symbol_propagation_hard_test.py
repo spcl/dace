@@ -29,9 +29,7 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes import SymbolPropagation
 
-# ---------------------------------------------------------------------------
 # Python-frontend kernels (must be module-level: the frontend reads source).
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -183,9 +181,7 @@ def sibling_scopes_reuse(B: dace.float64[64], C: dace.float64[2], idx: dace.int6
         C[1] = B[k]
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _all_assignment_values(sdfg: dace.SDFG) -> list:
@@ -203,9 +199,7 @@ def _all_assignment_values(sdfg: dace.SDFG) -> list:
     return vals
 
 
-# ---------------------------------------------------------------------------
 # Pattern 1: chained inter-dependent index symbols (value-preserving)
-# ---------------------------------------------------------------------------
 
 
 def test_chained_index_range_frontend():
@@ -280,9 +274,7 @@ def test_chained_index_api():
         assert np.allclose(out, expected[base])
 
 
-# ---------------------------------------------------------------------------
 # Pattern 2: conditional (branch-divergent) symbol feeding indirection
-# ---------------------------------------------------------------------------
 
 
 def test_cond_index_diverge_frontend():
@@ -409,9 +401,7 @@ def test_cond_index_diverge_join_api_conditionalblock():
         assert np.allclose(got[key], expected[key]), key
 
 
-# ---------------------------------------------------------------------------
 # Pattern 3: interstate-edge condition that itself reads a propagated symbol
-# ---------------------------------------------------------------------------
 
 
 def test_condition_reads_propagated_symbol():
@@ -516,9 +506,7 @@ def test_condition_reads_chained_symbol_loopregion():
         assert np.allclose(out, expected[b]), b
 
 
-# ---------------------------------------------------------------------------
 # Pattern 4: loop-carried index symbols (LoopRegion loop AND dace.map)
-# ---------------------------------------------------------------------------
 
 
 def test_loop_carried_range_frontend():
@@ -639,9 +627,7 @@ def test_loop_then_map_chained_index_api():
         assert np.allclose(got, expected[b]), b
 
 
-# ---------------------------------------------------------------------------
 # Pattern 5: double indirection / gather (symbol read from array, used as index)
-# ---------------------------------------------------------------------------
 
 
 def test_gather_symbol_from_array_api():
@@ -772,9 +758,7 @@ def test_gather_per_iteration_loopregion():
     assert np.allclose(got, expected)
 
 
-# ---------------------------------------------------------------------------
 # Pattern 6: same symbol reused with different values in sibling scopes
-# ---------------------------------------------------------------------------
 
 
 def test_sibling_scopes_reuse_frontend():
@@ -834,9 +818,7 @@ def test_sibling_scopes_reuse_api():
         assert np.allclose(got, expected), base
 
 
-# ---------------------------------------------------------------------------
 # Pattern: merge of equal vs. unequal values (the join correctness boundary)
-# ---------------------------------------------------------------------------
 
 
 def test_branch_uniform_value_may_propagate_api():
@@ -940,9 +922,7 @@ def test_no_else_branch_implicit_merge_api():
         assert np.allclose(got[0], expected[c]), c
 
 
-# ---------------------------------------------------------------------------
 # Pattern: mutually inter-dependent symbols updated together (loop-carried pair)
-# ---------------------------------------------------------------------------
 
 
 def test_interdependent_pair_loop_api():
@@ -1000,7 +980,6 @@ def test_interdependent_pair_loop_api():
     assert np.array_equal(got, expected)
 
 
-# ===========================================================================
 # APPENDED: same-edge multi-assignment race / ordering hazards.
 #
 # These target the confirmed defect in ``SymbolPropagation._update_syms``:
@@ -1016,11 +995,8 @@ def test_interdependent_pair_loop_api():
 # reference, applies the pass, re-validates, and re-checks values. A genuine bug
 # surfaces as a clean validate-failure or a value mismatch; none are marked xfail
 # here (the parent triages genuine-bug vs test-artifact).
-# ===========================================================================
 
-# ---------------------------------------------------------------------------
 # Module-level frontend kernels for the appended tests (unique names).
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -1041,9 +1017,7 @@ def selfref_counter_range(C: dace.int64[16], start: dace.int64, step: dace.int64
         cnt = cnt + step
 
 
-# ---------------------------------------------------------------------------
 # Pattern A: same-edge multi-assignment race -- swap {x: y, y: expr_using_x}
-# ---------------------------------------------------------------------------
 
 
 def test_swap_pair_with_upstream_temp_api():
@@ -1240,9 +1214,7 @@ def test_swap_via_temps_acyclic_api():
     assert np.allclose(got, expected)
 
 
-# ---------------------------------------------------------------------------
 # Pattern B: substitution into a non-loop multi-assignment edge (ordering)
-# ---------------------------------------------------------------------------
 
 
 def test_multi_assign_temp_substitution_acyclic_api():
@@ -1347,9 +1319,7 @@ def test_chained_simultaneous_feeds_index_api():
         assert np.allclose(got[0], expected[b]), b
 
 
-# ---------------------------------------------------------------------------
 # Pattern C: self-referential propagation across edges
-# ---------------------------------------------------------------------------
 
 
 def test_selfref_counter_range_frontend():
@@ -1413,9 +1383,7 @@ def test_selfref_with_upstream_alias_api():
     assert np.array_equal(got, expected)
 
 
-# ---------------------------------------------------------------------------
 # Pattern D: propagation into a LoopRegion update edge / condition
-# ---------------------------------------------------------------------------
 
 
 def test_loop_update_reads_propagated_symbol_api():
@@ -1512,9 +1480,7 @@ def test_loop_condition_reads_simultaneously_assigned_symbol_api():
         assert np.array_equal(got, expected[b]), b
 
 
-# ---------------------------------------------------------------------------
 # Pattern E: ConditionalBlock branch condition reading a co-assigned symbol
-# ---------------------------------------------------------------------------
 
 
 def test_branch_condition_reads_coassigned_symbol_api():
@@ -1580,9 +1546,7 @@ def test_branch_condition_reads_coassigned_symbol_api():
         assert np.allclose(got[0], expected[b]), b
 
 
-# ---------------------------------------------------------------------------
 # Pattern F: diamond merge where both branches reduce to the same value
-# ---------------------------------------------------------------------------
 
 
 def test_diamond_merge_equal_via_propagation_api():
@@ -1701,9 +1665,7 @@ def test_diamond_merge_unequal_must_not_propagate_api():
         assert np.allclose(got[0], expected[c]), c
 
 
-# ---------------------------------------------------------------------------
 # Pattern G: chained simultaneous assignments feeding an index, then B[idx]
-# ---------------------------------------------------------------------------
 
 
 def test_simultaneous_index_pair_then_use_api():

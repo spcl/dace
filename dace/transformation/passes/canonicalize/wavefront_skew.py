@@ -1350,8 +1350,8 @@ class WavefrontSkew(ppl.Pass):
         if not snapshot_reads_in_window(snap_reads, u, v, domain):
             return False
 
-        # --- Genuine-wavefront guard: refuse if an axis is already a parallel map
-        # IN THE CURRENT LOOP ORDER, so a plain LoopToMap already reaches it. ---
+        # Genuine-wavefront guard: refuse if an axis is already a parallel map
+        # IN THE CURRENT LOOP ORDER, so a plain LoopToMap already reaches it.
         # Inner v parallel (map-in-inner / column-independent stencil) <=> every
         # dependence is carried by u, which is exactly tau=(1,0) legality.
         if schedule_legal((1, 0), deps, u, v, domain, []):
@@ -1361,7 +1361,7 @@ class WavefrontSkew(ppl.Pass):
         if outer_axis_parallel(deps, u, v, domain):
             return False
 
-        # --- Pick a legal diagonal skew, using symbol positivity if declared. ---
+        # Pick a legal diagonal skew, using symbol positivity if declared.
         off_syms = offset_symbols(deps, dims)
         assume_annotated = [s - 1 for s in off_syms if s.is_positive]
         tau = None

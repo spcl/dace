@@ -85,9 +85,7 @@ def _assert_connector_role_matches_edges(sdfg: dace.SDFG):
                 f"Node {n.label!r} in state {state.label!r}: edge leaves unknown connector {e.src_conn!r}")
 
 
-# ---------------------------------------------------------------------------
 # Chained if/elif/else (TSVC s441 / s441_v2 shape).
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -156,13 +154,11 @@ def test_chained_if_else_numerical_matches_python_reference():
     np.testing.assert_allclose(a, expected, err_msg=f"a={a}\nexpected={expected}")
 
 
-# ---------------------------------------------------------------------------
 # Simple two-arm if/else with a shared write target (division_by_zero shape).
 # Pinned because a naive fix to the chained-elif bug ended up creating one
 # NestedSDFG output connector per arm for ``B[i]``, which broke this case
 # while fixing the chained one. Both arms must continue to write through
 # the same write-side access node.
-# ---------------------------------------------------------------------------
 
 N = dace.symbol("N")
 

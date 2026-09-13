@@ -30,9 +30,9 @@ def segfault():
     ctypes.CFUNCTYPE(None)(0)()
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  run_isolated in isolation
-# --------------------------------------------------------------------------- #
+# #
 def test_run_isolated_returns_child_dict():
     assert run_isolated(lambda: {"ok": True, "v": 3}) == {"ok": True, "v": 3}
 
@@ -107,9 +107,9 @@ def test_set_openmp_thread_count_pins_a_runtime_that_already_read_the_environmen
     assert out["env"] == "1", "the environment must also be set, for a runtime dlopened afterwards"
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  sweep(isolate=True): the campaign survives a crash and the OMP pool is torn down
-# --------------------------------------------------------------------------- #
+# #
 def make_scale_sdfg(tag, perm):
 
     def make():

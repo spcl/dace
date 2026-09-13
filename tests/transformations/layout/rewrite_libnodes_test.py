@@ -16,9 +16,9 @@ from dace.libraries.standard.nodes.reduce import Reduce
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  transform_einsum / remap_contracted_axes
-# --------------------------------------------------------------------------- #
+# #
 def test_transform_einsum_permutes_operand_subscripts():
     assert transform_einsum("ij,jk->ik", 0, (1, 0)) == "ji,jk->ik"
     assert transform_einsum("ij,jk->ik", 1, (1, 0)) == "ij,kj->ik"
@@ -45,9 +45,9 @@ def test_remap_contracted_axes():
     assert remap_contracted_axes([1, 2], (0, 2, 1)) == [2, 1]
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  GemmToTensorDot
-# --------------------------------------------------------------------------- #
+# #
 def _gemm_sdfg(name, transA=False, transB=False, alpha=1.0, beta=0.0, cin=False, shapes=None):
     M, K, Nn = shapes or (4, 5, 6)
     sa = [K, M] if transA else [M, K]
@@ -128,9 +128,9 @@ def test_gemm_alpha_scaled_left_in_place():
     assert _has(st, "Gemm")
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Reduce: axis remap under a permuted operand
-# --------------------------------------------------------------------------- #
+# #
 def _reduce_sdfg(name, in_shape, out_shape, axes):
     sdfg = dace.SDFG(name)
     sdfg.add_array("X", in_shape, dace.float64)
@@ -174,9 +174,9 @@ def test_permute_reduce_all_unchanged():
     assert red.axes is None  # reduce-all is order-independent
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Scan: stride under a block-interleaved operand
-# --------------------------------------------------------------------------- #
+# #
 def test_block_scan_stride_matches_per_lane_scan():
     """Interleaving a scan array by V makes it V independent scans (stride V). The stride-V scan on
     the flattened array equals a per-lane inclusive scan of the [N/V, V] blocked view."""

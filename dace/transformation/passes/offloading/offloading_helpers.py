@@ -10,10 +10,8 @@ from dace.transformation.passes.offloading.offloading_ir_node import OffloadingI
 from dace.sdfg.utils import get_last_view_node
 from dace import utils
 
-##################################################
-###                Scope Dict                  ###
-### is expensive to generate, should be cached ###
-##################################################
+# Scope Dict
+# is expensive to generate, should be cached
 
 
 def get_sdfg_scope_dict(sdfg: SDFG) -> Dict[SDFGState, Dict[nodes.Node, Optional[nodes.Node]]]:
@@ -23,9 +21,7 @@ def get_sdfg_scope_dict(sdfg: SDFG) -> Dict[SDFGState, Dict[nodes.Node, Optional
     return scopes
 
 
-###################################
-###  Checking Common Conditions ###
-###################################
+# Checking Common Conditions
 
 
 def has_GPU_schedule(node: nodes.Node) -> bool:
@@ -219,9 +215,7 @@ def is_length1_array(data_name: str, sdfg: SDFG) -> bool:
     return is_array(data_name, sdfg) and len(desc.shape) == 1 and desc.shape[0] == 1
 
 
-#######################
-###  SDFG Traversal ###
-#######################
+# SDFG Traversal
 
 
 def get_children(state: SDFGState, node: nodes.Node) -> OrderedSet:
@@ -266,9 +260,7 @@ def traverse_same_level(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode
             assert False
 
 
-########################################
-###  Get Arrays Used by Access Nodes ###
-########################################
+# Get Arrays Used by Access Nodes
 
 
 def get_data_used_by_incoming_access_nodes(sdfg: SDFG,
@@ -348,9 +340,7 @@ def get_data_used_by_outgoing_access_nodes(sdfg: SDFG,
     return recursion(node, OrderedSet())
 
 
-############################
-###  Map Creation Helper ###
-############################
+# Map Creation Helper
 
 
 def get_new_map_identifiers(state: SDFGState, map_label: str, map_param: str) -> Tuple[str, str]:

@@ -68,9 +68,9 @@ def view_index_body(code):
     return lines[0]
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Codegen shape (no compile)
-# --------------------------------------------------------------------------- #
+# #
 def test_view_idx_uses_view_strides(require_experimental):
     """``V_idx`` linearizes with the VIEW's strides ``[16, 2]`` -- ``16*d0 + 2*d1``
     -- and the access is connector-free (``V[V_idx(...)]`` in the body)."""
@@ -92,9 +92,9 @@ def test_view_no_pure_fallback(require_experimental):
     assert '///////////////////' not in code
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Numerical equivalence (compile + run): CPU (fork) and GPU (in-process)
-# --------------------------------------------------------------------------- #
+# #
 def run_variant(build, name, implementation, target, base):
 
     def work():

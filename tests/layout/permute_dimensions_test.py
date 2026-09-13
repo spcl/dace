@@ -41,9 +41,7 @@ def indirect_stencil(
                          e_bln_c_s[jb, 2, jc] * A[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]])
 
 
-# ---------------------------------------------------------------------------
 # Data generation
-# ---------------------------------------------------------------------------
 
 
 def generate_input(N_blks: int, N_lev: int, N_proma: int, rng=None):
@@ -69,9 +67,7 @@ def generate_safe_indices(N_BLKS, N_LEV, N_PROMA):
     return ieidx, ieblk
 
 
-# ---------------------------------------------------------------------------
 # Reference & validation
-# ---------------------------------------------------------------------------
 
 
 def generate_weights(N_blks: int, N_lev: int, N_proma: int, rng=None):

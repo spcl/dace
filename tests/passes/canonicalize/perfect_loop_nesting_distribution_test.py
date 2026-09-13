@@ -201,9 +201,7 @@ def run_matches_untransformed(program, transformed, size=6, seed=11):
     return all(np.allclose(expected[name], got[name]) for name in names)
 
 
-# --------------------------------------------------------------------------------------------
 # The sibling-nest shape: distribution is the only way to a second parallel level.
-# --------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize('name', SIBLING_NESTS)
@@ -254,9 +252,7 @@ def test_distributed_kernels_preserve_values(name):
     assert run_matches_reference(kernel, sdfg)
 
 
-# --------------------------------------------------------------------------------------------
 # Legality alone decides: a separable pair splits even where it frees no parent level.
-# --------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize('name', SEPARABLE_IMPERFECT)
@@ -318,9 +314,7 @@ def test_pass_is_idempotent(name):
     assert sdfg.to_json() == once
 
 
-# --------------------------------------------------------------------------------------------
 # The refused nests: a pass that refuses changes nothing.
-# --------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize('name', sorted(REFUSED_NESTS))
@@ -414,9 +408,7 @@ def test_induction_variable_decides_the_verdict(name):
     assert run_matches_reference(kernel, sdfg)
 
 
-# --------------------------------------------------------------------------------------------
 # Synthetic nests: a child is a whole footprint per parent iteration, not a point.
-# --------------------------------------------------------------------------------------------
 
 
 @dace.program

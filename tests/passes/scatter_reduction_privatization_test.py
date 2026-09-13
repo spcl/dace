@@ -34,7 +34,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N, bins, npt = (dace.symbol(s, dtype=dace.int64) for s in ('N', 'bins', 'npt'))
 
-# -- Kernels ------------------------------------------------------------------
+# Kernels
 
 
 @dace.program
@@ -74,7 +74,7 @@ def _unique_build(sdfg: dace.SDFG, tag: str) -> None:
     sdfg.build_folder = os.path.join(sdfg.build_folder + f'_{tag}_{os.getpid()}')
 
 
-# -- Detection unit tests -----------------------------------------------------
+# Detection unit tests
 
 
 def test_scatter_wcr_op_recognizes_reducible_ops():
@@ -106,7 +106,7 @@ def test_pass_fires_on_weighted_histogram():
     assert PrivatizeScatterReduction().apply_pass(sdfg, {}) is None
 
 
-# -- Refuse cases -------------------------------------------------------------
+# Refuse cases
 
 
 def _build_scatter_nsdfg(wcr: str, read_accumulator: bool = False) -> dace.SDFG:
@@ -193,7 +193,7 @@ def test_refuse_scalar_reduction():
     assert PrivatizeScatterReduction().apply_pass(sdfg, {}) is None
 
 
-# -- End-to-end: codegen shape + numerical correctness ------------------------
+# End-to-end: codegen shape + numerical correctness
 
 
 def test_weighted_histogram_codegen_and_values():
@@ -266,7 +266,7 @@ def test_knob_off_leaves_scatter_unmangled():
     assert np.array_equal(res, ref)
 
 
-# -- azimint_hist end-to-end --------------------------------------------------
+# azimint_hist end-to-end
 
 
 @dace.program

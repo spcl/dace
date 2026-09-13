@@ -30,9 +30,9 @@ def test_layoutchange_rejects_net_shuffle():
     assert not out_map.shuffles and list(out_shape) == [16]
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Registry unit tests
-# --------------------------------------------------------------------------- #
+# #
 def test_registry_params_and_folding():
     xor = register_shuffle("t_xor3", "i ^ 3", "i ^ 3")
     assert xor.params == ()  # no SDFG symbols
@@ -77,9 +77,9 @@ def test_emit_shuffle_globals_name_collision_raises():
         emit_shuffle_globals(sdfg, ["collide", "inv_collide"])
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  ShuffleElements: transparency oracle
-# --------------------------------------------------------------------------- #
+# #
 @dace.program
 def scale(A: dace.float64[N], C: dace.float64[N]):
     for i in dace.map[0:N] @ dace.ScheduleType.Sequential:
@@ -265,9 +265,9 @@ def test_shuffle_emits_c_functions():
     assert "shuffle_cyc(" in code and "shuffle_inv_cyc(" in code
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Nested SDFG: the shuffled array flows whole into a nested SDFG
-# --------------------------------------------------------------------------- #
+# #
 def _build_nested_scale_sdfg(name):
     """Outer SDFG: A[N] flows WHOLE into a nested SDFG that computes C[i] = A[i]*4 -> C[N]."""
     inner = dace.SDFG("inner_scale")

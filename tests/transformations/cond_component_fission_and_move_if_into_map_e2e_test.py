@@ -28,9 +28,7 @@ from dace.transformation.passes.canonicalize.split_statements import SplitStatem
 N = dace.symbol('N')
 L = dace.symbol('L')
 
-# --------------------------------------------------------------------------
 # Helpers
-# --------------------------------------------------------------------------
 
 
 def _count_conditional_blocks(sdfg: dace.SDFG) -> int:
@@ -68,9 +66,7 @@ def _map_params(sdfg: dace.SDFG):
     return params
 
 
-# --------------------------------------------------------------------------
 # Kernels (file-level @dace.program, symbolic shapes)
-# --------------------------------------------------------------------------
 
 
 @dace.program
@@ -114,9 +110,7 @@ def move_if_index_dependent(w: dace.float64[N, L], cidx: dace.int32[N, 2], out: 
             out[i, k] = 2.0 * w[cidx[i, 0], k] - w[cidx[i, 1], k]
 
 
-# --------------------------------------------------------------------------
 # Oracles (pure numpy)
-# --------------------------------------------------------------------------
 
 
 def _oracle_fission_two(active, w, v, cidx, vidx, n, l):
@@ -161,9 +155,7 @@ def _oracle_index_dependent(w, cidx, n, l):
     return out
 
 
-# --------------------------------------------------------------------------
 # A) SplitStatements
-# --------------------------------------------------------------------------
 
 
 def test_conditional_component_fission_two_outputs():
@@ -254,9 +246,7 @@ def test_conditional_component_fission_three_outputs():
         np.testing.assert_allclose(got_g, exp_g, rtol=1e-12, err_msg=f"g mismatch active={active_val}")
 
 
-# --------------------------------------------------------------------------
 # B) MoveIfIntoMap
-# --------------------------------------------------------------------------
 
 
 def test_move_if_into_map_contract_on_frontend_shape():

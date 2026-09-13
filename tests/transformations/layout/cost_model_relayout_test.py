@@ -143,9 +143,9 @@ def test_relayout_time_takes_traffic_rather_than_assuming_it_streams():
     assert float(relayout_time(2 * array_bytes(a), CPU)) == pytest.approx(streamed)
 
 
-# --------------------------------------------------------------------------------------------- #
+# #
 #  Combining cache efficiency with LogP
-# --------------------------------------------------------------------------------------------- #
+# #
 def test_efficiency_spans_one_sixteenth_to_one():
     """eps = eps_spatial * eps_write. Worst: one fp64 element per 64-byte block AND a partial write
     (so it is fetched before being merged) -> 8 / (2*64) = 1/16. Best: a fully covered block -> 1."""

@@ -269,7 +269,7 @@ class NormalizeWCR(ppl.Pass):
             return False
 
         wcr_str = wcr_edge.data.wcr
-        # --- Rewrite the body: surface the reduction to the boundary edge chain. ---
+        # Rewrite the body: surface the reduction to the boundary edge chain.
         # Two body shapes, chosen by whether the WCR write runs UNCONDITIONALLY exactly
         # once per NestedSDFG invocation (:meth:`_write_runs_unconditionally_once`):
         #
@@ -305,7 +305,7 @@ class NormalizeWCR(ppl.Pass):
             self._copyback_state(inner, priv, oc, oc_desc)
             inner.reset_cfg_list()
 
-        # --- Rewrite the map level: put the reduction on the accumulator edge chain. ---
+        # Rewrite the map level: put the reduction on the accumulator edge chain.
         # The WCR must source from an AccessNode: a WCR left on the NestedSDFG->MapExit
         # edge is a *pointer*-typed connector, which the CPU codegen's WCR path drops
         # (see NormalizeWCRSource). Insert a per-iteration private AccessNode between the
@@ -447,7 +447,7 @@ class NormalizeWCR(ppl.Pass):
                 return False
             plan.append((ie, ext, top_in[ext.data.data]))
 
-        # --- mutate: clone the scatter map to the outer scope ---
+        # mutate: clone the scatter map to the outer scope
         ksym, nksym = symbol(iparam), symbol(self._fresh_symbol(state.sdfg, '_wcr_' + iparam))
         new_me, new_mx = state.add_map('extract_' + oc, {str(nksym): str(ime.map.range)})
         new_t = state.add_tasklet('extract_' + oc, tasklet.in_connectors.keys(), tasklet.out_connectors.keys(),
@@ -567,7 +567,7 @@ class NormalizeWCR(ppl.Pass):
         if {str(s) for s in oc_desc.free_symbols} - set(state.sdfg.symbols.keys()):
             return False
 
-        # --- Rewrite the body: explicit plain read-modify-write. ---
+        # Rewrite the body: explicit plain read-modify-write.
         # Body-local scratch for the per-iteration addend.
         addend_desc = self._seed_desc(oc_desc)
         addend = inner.add_datadesc(f'_nnr_addend_{oc}', addend_desc, find_new_name=True)
@@ -606,7 +606,7 @@ class NormalizeWCR(ppl.Pass):
         if wcr_state.degree(old_sink) == 0:
             wcr_state.remove_node(old_sink)
 
-        # --- Rewrite the boundary: plain copy from the new output connector. ---
+        # Rewrite the boundary: plain copy from the new output connector.
         path = list(state.memlet_path(out_edge))
         for e in path:
             e.data.wcr = None

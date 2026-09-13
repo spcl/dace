@@ -32,9 +32,7 @@ def _nmaps(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
 
 
-# ----------------------------------------------------------------------
 # Indirect 3-neighbor gather (cell <- 3 edges via an index table)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -84,9 +82,7 @@ def test_indirect_gather_3nbr_keeps_parallel_map():
         f'the surviving map must span the jc axis, got {entry.map.params} over {entry.map.range}')
 
 
-# ----------------------------------------------------------------------
 # Twin reduction sharing one neighbour stencil
-# ----------------------------------------------------------------------
 
 
 @dace.program

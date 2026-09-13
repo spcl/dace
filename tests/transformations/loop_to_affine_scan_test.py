@@ -242,11 +242,9 @@ def test_plain_sum_scan_still_takes_the_scalar_path():
     assert ops == [ScanOp.SUM]
 
 
-# --------------------------------------------------------------------------------------------
 # End-to-end through the production recipes. A lift that only holds under a bare ``LoopToScan``
 # is not worth much: what matters is that the shape survives canonicalize, survives the
 # vectorizer running over the build map it leaves behind, and still computes the recurrence.
-# --------------------------------------------------------------------------------------------
 
 
 @dace.program

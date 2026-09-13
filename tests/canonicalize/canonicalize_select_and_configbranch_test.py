@@ -34,9 +34,7 @@ def _ncond_blocks(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock))
 
 
-# ----------------------------------------------------------------------
 # Data-dependent MERGE / upwind select feeding a gather
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -88,9 +86,7 @@ def test_upwind_select_stays_inside_map():
     assert not top_conds, 'data-dependent per-edge select must not be hoisted to SDFG top level'
 
 
-# ----------------------------------------------------------------------
 # Config-flag selecting between two different-array branches
-# ----------------------------------------------------------------------
 
 
 @dace.program

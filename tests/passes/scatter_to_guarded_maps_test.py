@@ -17,7 +17,7 @@ from dace.transformation.passes.scatter_to_guarded_maps import (ScatterToGuarded
 
 N = dace.symbol('N')
 
-# -- TSVC scatter kernels -----------------------------------------------------
+# TSVC scatter kernels
 
 
 @dace.program
@@ -126,7 +126,7 @@ def _build_nested_map_scatter_sdfg():
     return sdfg
 
 
-# -- Helpers ------------------------------------------------------------------
+# Helpers
 
 
 def _count_guard_nodes(sdfg: dace.SDFG) -> int:
@@ -148,7 +148,7 @@ def _make_permutation(n: int, seed: int) -> np.ndarray:
     return np.random.default_rng(seed).permutation(n).astype(np.int32)
 
 
-# -- Detection tests ----------------------------------------------------------
+# Detection tests
 
 
 def test_detect_finds_single_scatter():
@@ -169,7 +169,7 @@ def test_detect_returns_empty_for_elementwise():
     assert detect_scatter_idx_arrays(sdfg) == set()
 
 
-# -- End-to-end tests ---------------------------------------------------------
+# End-to-end tests
 
 
 @pytest.mark.parametrize('kernel,inputs_fn', [
@@ -247,7 +247,7 @@ def test_two_distinct_scatters_get_individual_guards():
     assert np.allclose(c, c_ref)
 
 
-# -- Symbolic-stride scatter forms (TSVC-2.5) ---------------------------------
+# Symbolic-stride scatter forms (TSVC-2.5)
 
 
 def test_detect_inline_subscript_symbolic_stride_scatter():
@@ -426,7 +426,7 @@ def test_idempotent_on_already_guarded_sdfg():
     assert _count_guard_nodes(sdfg) == sort_after_first, ("Re-running the pass must not duplicate the guard.")
 
 
-# -- emit_unparallelized_else_branch=True: runtime dispatcher tests ------------
+# emit_unparallelized_else_branch=True: runtime dispatcher tests
 
 
 def _vas_sequential(b: np.ndarray, ip: np.ndarray, n: int) -> np.ndarray:
@@ -513,7 +513,7 @@ def test_else_branch_dispatcher_emits_both_branches():
                                              f'got loops={len(par_loops)}, maps={par_maps}')
 
 
-# -- assume_no_conflicts=True: skip the guard entirely -----------------------
+# assume_no_conflicts=True: skip the guard entirely
 
 
 def test_assume_no_conflicts_skips_guard_and_lifts_unconditionally():

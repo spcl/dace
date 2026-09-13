@@ -84,7 +84,7 @@ def _run_reduce(widths, op, axis, has_mask, seed, mask_arr=None):
     return SRC, DST, dst_shape
 
 
-# -------------------- K=1 unmasked --------------------
+# K=1 unmasked
 
 
 def test_k1_sum_full():
@@ -101,7 +101,7 @@ def test_k1_max_full():
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
 
-# -------------------- K=2 full reduction --------------------
+# K=2 full reduction
 
 
 def test_k2_sum_full():
@@ -118,7 +118,7 @@ def test_k2_prod_full():
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
 
-# -------------------- K=2 axis reduction --------------------
+# K=2 axis reduction
 
 
 def test_k2_sum_axis0():
@@ -137,7 +137,7 @@ def test_k2_sum_axis1():
     np.testing.assert_allclose(DST, ref, rtol=1e-12, atol=1e-12)
 
 
-# -------------------- masked variants --------------------
+# masked variants
 
 
 def test_k1_sum_full_masked():

@@ -35,9 +35,7 @@ from dace.transformation.passes import canonicalize
 N = dace.symbol('N')
 
 
-# --------------------------------------------------------------------------
 # Kernels: two separate loops guarded by the same condition
-# --------------------------------------------------------------------------
 @dace.program
 def two_guarded_loops(cond: dace.int32, a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
     """Map-invariant guard: after fusion + merge + hoist the ideal form is
@@ -62,9 +60,7 @@ def two_guarded_loops_idx(a: dace.float64[N], b: dace.float64[N], c: dace.float6
             c[i] = a[i] * 2.0
 
 
-# --------------------------------------------------------------------------
 # Helpers
-# --------------------------------------------------------------------------
 def _top_maps(sdfg: dace.SDFG):
     return [
         n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
@@ -97,9 +93,7 @@ def _guard_inside_a_map(sdfg: dace.SDFG) -> bool:
     return False
 
 
-# --------------------------------------------------------------------------
 # (1) MapFusion fuses two if-bodied maps; NormalizeMapBody merges the guards
-# --------------------------------------------------------------------------
 def test_mapfusion_fuses_then_merges_invariant_guard():
     """Map-invariant guard: MapFusion fuses the two if-bodied maps, then
     NormalizeMapBody + ConditionFusion merge the two same-condition guards into

@@ -15,7 +15,7 @@ def matmul_papi(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M,
     C = A @ B
 
 
-##### DaCe + PAPI: Matmul Instrumentation #####
+# DaCe + PAPI: Matmul Instrumentation
 # This sample demonstrates the PAPI instrumentation in DaCe.
 #
 # In order to run the sample, make sure that PAPI is installed on your system and msr access

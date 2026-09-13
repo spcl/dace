@@ -366,7 +366,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '        return static_cast<int>(std::floor(value));\n'
     '    }\n'
     '}',
-    # --- prefix scans -------------------------------------------------------------------------
+    # prefix scans
     # The DaCe runtime provides these in ``dace/scan.hpp``, one function per (op, inclusive) pair
     # because an OpenMP reduction identifier cannot be a template parameter -- the operator has to
     # be spelled into the clause. CPF reproduces them rather than rewriting a scan into a
@@ -476,7 +476,7 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '        acc = cpf_max(acc, static_cast<T>(f[i]));\n'
     '    }\n'
     '}',
-    # --- find-first ---------------------------------------------------------------------------
+    # find-first
     # An early-exit loop lifts to a ``FindFirst`` library node whose expansion calls the runtime's
     # short-circuiting parallel search. CPF emits that search rather than unrolling it back into a
     # sequential scan, for the same reason it emits the inscan form of a prefix sum: the cancelling
@@ -1284,9 +1284,7 @@ def headers_for(names: Set[str], dialect: Optional[Dialect] = None) -> Tuple[str
     return tables.base_headers + tuple(sorted(extra - set(tables.base_headers)))
 
 
-# ======================================================================================
 # The C dialect
-# ======================================================================================
 #
 # C23 has no templates, no function overloading and no ``constexpr`` on functions, and its maths
 # library is not type-generic: ``sqrt(x)`` on a ``float`` promotes to ``double`` and rounds twice,

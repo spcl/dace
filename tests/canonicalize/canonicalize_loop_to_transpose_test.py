@@ -37,9 +37,9 @@ def _num_loops(sdfg) -> int:
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Positive: a pure permutation nest lifts and is value-preserving.
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -145,9 +145,9 @@ def test_strided_transpose_lifts_via_view():
     assert np.allclose(b, ref)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Negative: every non-permutation-copy shape must be refused.
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program

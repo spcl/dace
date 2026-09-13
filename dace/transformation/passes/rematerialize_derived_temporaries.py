@@ -138,7 +138,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                     index = self.access_index(nested)
         return removed or None
 
-    # ------------------------------------------------------------------ matching
+    # matching
 
     def access_index(self, sdfg: SDFG) -> Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]:
         """``{container: [(state, access node)]}`` for the whole SDFG.
@@ -511,7 +511,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                     producer_side = outer.src
         return producer_side is consumer_src
 
-    # ------------------------------------------------------------------- rewrite
+    # rewrite
 
     def rematerialize(self, sdfg: SDFG, name: str, index: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]) -> bool:
         """Apply the rewrite for ``name`` if it matches.

@@ -85,9 +85,9 @@ def tasklet_body_line(code, suffix=''):
     return lines[0]
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Codegen shape (no compile)
-# --------------------------------------------------------------------------- #
+# #
 def test_single_line_no_block(require_experimental):
     """Experimental collapses the connector-free add tasklet onto one brace-free
     line with a ``// <label>`` comment; legacy keeps the ``{ /////// }`` block."""
@@ -120,9 +120,9 @@ def test_wcr_tasklet_keeps_block(require_experimental):
     assert '{' in experimental and '}' in experimental
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Numerical equivalence (compile + run): CPU (fork) and GPU (in-process)
-# --------------------------------------------------------------------------- #
+# #
 def run_variant(build, name, implementation, target, base):
     """Compile + run one variant on a deep copy of ``base``; CPU forks, GPU runs
     in-process (CUDA and ``os.fork`` do not mix)."""

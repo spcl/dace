@@ -44,9 +44,7 @@ def loops_with_var(sdfg: dace.SDFG, var: str):
     ]
 
 
-# ---------------------------------------------------------------------------
 # Accept side: triangular DOALL axes must become Maps.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -138,9 +136,7 @@ def test_outer_doall_inner_recurrence_splits():
     assert np.allclose(a, ref)
 
 
-# ---------------------------------------------------------------------------
 # Reject side: a carried dependency on the axis must keep it sequential.
-# ---------------------------------------------------------------------------
 
 
 @dace.program

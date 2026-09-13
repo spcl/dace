@@ -500,11 +500,9 @@ def test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected():
     assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
 
 
-# ===========================================================================
 # forward_reads: break ONE read-ahead edge of an array whose other reads are true
 # dependences. The loop stays sequential; what it buys is that the read-ahead no
 # longer binds two otherwise-independent statements, so fission can distribute them.
-# ===========================================================================
 K = dace.symbol('K')
 
 
@@ -613,10 +611,8 @@ def test_forward_reads_symbolic_offset_guard_is_strictly_positive():
     assert any(strict in g for g in guards), guards
 
 
-# ===========================================================================
 # Snapshot window: the copy covers the elements the redirected reads touch, not
 # the whole array. Proportional, so it only shows where the loop sweeps a slice.
-# ===========================================================================
 B = dace.symbol('B')
 NB = dace.symbol('NB')
 

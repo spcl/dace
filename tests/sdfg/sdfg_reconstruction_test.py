@@ -72,9 +72,7 @@ def _assert_runs_equivalent(original: SDFG, rebuilt: SDFG, **call_args):
             np.testing.assert_allclose(a, b, err_msg=f"Mismatch on {k!r}")
 
 
-# ---------------------------------------------------------------------
 # Smoke tests
-# ---------------------------------------------------------------------
 
 
 def test_empty_sdfg_with_single_state():
@@ -106,9 +104,7 @@ def test_descriptors_round_trip():
     assert rebuilt.arrays["q"].buffer_size == sdfg.arrays["q"].buffer_size
 
 
-# ---------------------------------------------------------------------
 # Mapped tasklet — covers state, map, tasklet, memlet
-# ---------------------------------------------------------------------
 
 
 def _build_mapped_increment() -> SDFG:
@@ -138,9 +134,7 @@ def test_mapped_tasklet_round_trip():
     )
 
 
-# ---------------------------------------------------------------------
 # LoopRegion — for-loop with state inside, interstate edges before/after
-# ---------------------------------------------------------------------
 
 
 def _build_loop_region() -> SDFG:
@@ -180,9 +174,7 @@ def test_loop_region_round_trip():
     )
 
 
-# ---------------------------------------------------------------------
 # Interstate edge with assignments + condition
-# ---------------------------------------------------------------------
 
 
 def test_interstate_edge_with_assignment_and_condition():
@@ -204,9 +196,7 @@ def test_interstate_edge_with_assignment_and_condition():
     assert "k" in assign_edges[0].data.assignments
 
 
-# ---------------------------------------------------------------------
 # ConditionalBlock — covers branches
-# ---------------------------------------------------------------------
 
 
 def test_conditional_block_round_trip():
@@ -234,9 +224,7 @@ def test_conditional_block_round_trip():
     assert region.label == "if_body"
 
 
-# ---------------------------------------------------------------------
 # NestedSDFG — covers recursive emission
-# ---------------------------------------------------------------------
 
 
 def _build_nested_increment() -> SDFG:
@@ -273,9 +261,7 @@ def test_nested_sdfg_round_trip():
     )
 
 
-# ---------------------------------------------------------------------
 # Reduce (LibraryNode) — covers LibraryNode imperative emission
-# ---------------------------------------------------------------------
 
 
 def _build_reduce_sum() -> SDFG:
@@ -304,9 +290,7 @@ def test_reduce_library_node_round_trip():
     )
 
 
-# ---------------------------------------------------------------------
 # Break/Continue/Return inside a loop region
-# ---------------------------------------------------------------------
 
 
 def test_break_continue_blocks_inside_loop():
@@ -334,9 +318,7 @@ def test_break_continue_blocks_inside_loop():
     assert any(isinstance(b, ContinueBlock) for b in rebuilt_loop.nodes())
 
 
-# ---------------------------------------------------------------------
 # Sanity: emitter never produces from_json / set_properties_from_json
-# ---------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("builder", [
@@ -353,9 +335,7 @@ def test_emitter_uses_imperative_api_only(builder):
                                   textwrap.indent(src, "    "))
 
 
-# ---------------------------------------------------------------------
 # Velocity stage1 SDFGs (real-world ICON dycore artifacts)
-# ---------------------------------------------------------------------
 # Four stage1 SDFGs from the velocity tendencies pipeline. Each is hundreds
 # of arrays / dozens of states / multiple nesting levels — exercises every
 # major surface of the emitter on production-shaped graphs.
@@ -403,9 +383,7 @@ def test_velocity_stage1_round_trip(filename):
     rebuilt.compile()
 
 
-# ---------------------------------------------------------------------
 # CloudSC kernel — full numerical correctness round-trip
-# ---------------------------------------------------------------------
 # Adapted from a real CloudSC ice-nucleation/deposition kernel.
 # This is a real CloudSC ice-nucleation/deposition kernel; build SDFG via
 # @dace.program, emit Python source, exec to rebuild, compile both, run on
@@ -554,9 +532,7 @@ def test_cloudsc_kernel_numerical_round_trip():
         )
 
 
-# ---------------------------------------------------------------------
 # Full CloudSC SDFG (the real one, not the pattern_one loop-nest)
-# ---------------------------------------------------------------------
 # Loads cloudsc_simplified.sdfgz from the SC26 layout artifacts — the
 # full IFS cloud-microphysics scheme as a single DaCe program. This test
 # exercises every emitter codepath at production scale: 2300+ arrays,

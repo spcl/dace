@@ -19,7 +19,7 @@ def _add_mask(sdfg, name, shape, dtype=dace.bool_, storage=dtypes.StorageType.Re
     return name
 
 
-# ---- TileMaskGen ---------------------------------------------------------
+# TileMaskGen
 
 
 def _build_mg(mask_shape, mask_dtype=dace.bool_, mask_storage=dtypes.StorageType.Register, mask_transient=True):
@@ -62,7 +62,7 @@ def test_tilemaskgen_refuses_non_transient_mask():
         node.validate(sdfg, state)
 
 
-# ---- TileLoad._mask -------------------------------------------------------
+# TileLoad._mask
 
 
 def _build_load_with_mask(mask_shape, **mask_kwargs):
@@ -106,7 +106,7 @@ def test_tileload_refuses_non_transient_mask():
         node.validate(sdfg, state)
 
 
-# ---- TileStore._mask ------------------------------------------------------
+# TileStore._mask
 
 
 def _build_store_with_mask(mask_shape, **mask_kwargs):

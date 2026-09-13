@@ -83,7 +83,7 @@ def test_fft_interpolate_real_upsample():
     np.testing.assert_allclose(y, _numpy_reference(x, nout, 'real'), rtol=1e-12, atol=1e-12)
 
 
-# --- Rank > 1 ------------------------------------------------------------
+# Rank > 1
 
 
 def _numpy_reference_nd(x, out_shape, dtype_kind):

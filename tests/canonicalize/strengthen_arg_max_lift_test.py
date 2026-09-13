@@ -290,9 +290,7 @@ def test_2d_index_tie_breaking_matches_sequential(op, strict):
     assert (int(out[1]), int(out[2])) == (xi, yi), f'index: got ({out[1]}, {out[2]}), expected ({xi}, {yi})'
 
 
-# -----------------------------------------------------------------------------
 # The ``tie_break`` knob: BOTH tie rules selectable, 'infer' the default.
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize('op,expected_idx', [('>', 0), ('>=', 2), ('<', 1), ('<=', 3)])
@@ -365,9 +363,7 @@ def test_tie_break_knob_is_a_noop_for_the_value_only_shape(knob):
     assert m.last_wins is False, 'no index tracked -> the tie rule is unobservable, so no reversal'
 
 
-# -----------------------------------------------------------------------------
 # Break / early-exit loops: refused, under EVERY tie rule.
-# -----------------------------------------------------------------------------
 
 NB = dace.symbol('NB')
 
@@ -474,7 +470,6 @@ def test_break_with_index_loop_is_refused_under_every_tie_break(op, knob):
     assert ArgMaxLift(tie_break=knob)._match(loop, sdfg) is None, 'a break-derived loop must never reach a tie rule'
 
 
-# -----------------------------------------------------------------------------
 # The same s318 tie question, but on FRONTEND-built programs.
 #
 # Every tie test above hands the pass a hand-built SDFG carrying the gather in
@@ -484,7 +479,6 @@ def test_break_with_index_loop_is_refused_under_every_tie_break(op, knob):
 # loop with ``@dace.program`` instead: strict ``>`` must keep the FIRST occurrence
 # of the extreme, non-strict ``>=`` the LAST, and the lifted answer must equal the
 # sequential one for BOTH value and index.
-# -----------------------------------------------------------------------------
 
 NA = dace.symbol('NA')
 NI = dace.symbol('NI')

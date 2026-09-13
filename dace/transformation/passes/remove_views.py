@@ -253,14 +253,14 @@ def _reshape_subset(
     """
     sizes = edge_subset.size()
 
-    # --- Case 1: single element (all dims (e+1-b)//s == 1 for all dims) ----
+    # Case 1: single element (all dims (e+1-b)//s == 1 for all dims)
     if all(s == 1 for s in sizes):
         starts = edge_subset.min_element()
         flat = sum(s * vs for s, vs in zip(starts, vstrides))
         indices = _delinearize_flat(flat, astrides, array_shape)
         return subsets.Range([(idx, idx, 1) for idx in indices])
 
-    # --- Case 2: full view range -------------------------------------------
+    # Case 2: full view range
     try:
         is_full = all(
             int(r[0]) == 0 and int(r[1]) == d - 1 and int(r[2]) == 1 for r, d in zip(edge_subset.ranges, view_shape))
@@ -269,7 +269,7 @@ def _reshape_subset(
     if is_full:
         return subsets.Range([(0, d - 1, 1) for d in array_shape])
 
-    # --- Case 3: general -- linearize, check contiguity, delinearize -------
+    # Case 3: general -- linearize, check contiguity, delinearize
     # Requires the subset to be contiguous in the view's flat space, otherwise the
     # delinearization would need to handle multiple distinct step sizes.
     starts = [r[0] for r in edge_subset.ranges]
@@ -666,7 +666,7 @@ class RemoveViews(ppl.Pass):
             vdesc = sdfg.arrays[vnode.data]
             adesc = sdfg.arrays[viewed_node.data]
 
-            # --- Strategy 1: slice / squeeze / unsqueeze --------------------
+            # Strategy 1: slice / squeeze / unsqueeze
             mapping_result = sdutil.map_view_to_array(vdesc, adesc, viewed_subset)
             if mapping_result is not None:
                 mapping, _unsqueezed, _squeezed = mapping_result
@@ -705,7 +705,7 @@ class RemoveViews(ppl.Pass):
                 print(f'[{_PASS}]     strategy 1: map_view_to_array'
                       f' returned None')
 
-            # --- Strategy 1b: derive mapping from view edge subset ----------
+            # Strategy 1b: derive mapping from view edge subset
             mapping_1b = _derive_mapping_from_subset(viewed_subset, vdesc.shape)
             if mapping_1b is not None:
                 if _DEBUGPRINT:
@@ -743,7 +743,7 @@ class RemoveViews(ppl.Pass):
                 print(f'[{_PASS}]     strategy 1b:'
                       f' derive_mapping_from_subset returned None')
 
-            # --- Strategy 2: dense reshape ----------------------------------
+            # Strategy 2: dense reshape
             if self._try_linearize_removal(state,
                                            vnode,
                                            viewed_node,
@@ -755,7 +755,7 @@ class RemoveViews(ppl.Pass):
                 changed = True
                 continue
 
-            # --- Strategy 3: pure linearization (last resort) ---------------
+            # Strategy 3: pure linearization (last resort)
             if self._try_linearize_removal(state,
                                            vnode,
                                            viewed_node,
@@ -1048,7 +1048,7 @@ class RemoveViews(ppl.Pass):
                       f' rewrite infeasible -- aborting')
             return False
 
-        # -- apply: rewrite memlets -----------------------------------------
+        # apply: rewrite memlets
         for edge in non_view_edges:
             for te in state.memlet_tree(edge):
                 m = te.data
@@ -1070,7 +1070,7 @@ class RemoveViews(ppl.Pass):
                               f' other_subset={old_other}'
                               f' -> {m.other_subset}')
 
-        # -- apply: rewrite tasklet Python code -----------------------------
+        # apply: rewrite tasklet Python code
         for edge in non_view_edges:
             for te in state.memlet_tree(edge):
                 leaf = te.dst if is_viewed_src else te.src
@@ -1085,10 +1085,10 @@ class RemoveViews(ppl.Pass):
                               f' connector "{conn}": {old_code!r}'
                               f' -> {leaf.code.as_string!r}')
 
-        # -- apply: rewrite interstate edge assignments & conditions --------
+        # apply: rewrite interstate edge assignments & conditions
         self._rewrite_interstate_edges(sdfg, vnode.data, _rw_lin)
 
-        # -- reconnect and remove -------------------------------------------
+        # reconnect and remove
         self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
         state.remove_node(vnode)
         self._cleanup_isolated_viewed_node(state, viewed_node)

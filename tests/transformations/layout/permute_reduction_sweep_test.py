@@ -27,7 +27,7 @@ I, J, K = (dace.symbol(s) for s in ("I", "J", "K"))
 II, JJ, KK = 8, 5, 6
 
 
-# ---- reduction program builders (typed on the swept dtype) ---------------------------------------
+# reduction program builders (typed on the swept dtype)
 def build_r2d1d(dtype):
 
     @dace.program
@@ -69,7 +69,7 @@ def build_scalar(dtype):
     return prog
 
 
-# ---- fixed logical inputs + numpy oracles --------------------------------------------------------
+# fixed logical inputs + numpy oracles
 RNG = numpy.random.default_rng(20260715)
 BASE_A3 = {
     "f64": RNG.random((II, JJ, KK)),

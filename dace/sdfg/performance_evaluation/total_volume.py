@@ -343,9 +343,7 @@ def analyze_sdfg(sdfg: SDFG):
     return read, write
 
 
-################################################################################
-# Utility functions for running the analysis from the command line #############
-################################################################################
+# Utility functions for running the analysis from the command line
 
 
 def main() -> None:

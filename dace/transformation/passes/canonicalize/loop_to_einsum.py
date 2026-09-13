@@ -515,9 +515,7 @@ def _boundary_axis_order(edges, probe: SDFG, transient_ok: bool):
     return found
 
 
-# ---------------------------------------------------------------------------
 # Tier 1: the direct, loop-native matcher (no copy, no probe pipeline).
-# ---------------------------------------------------------------------------
 
 #: Index letters, in the order ``LiftEinsum`` hands them out (kept identical so a
 #: directly-matched einsum string is spelled the way the post-LoopToMap lift spells it).

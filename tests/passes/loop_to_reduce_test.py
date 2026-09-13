@@ -637,14 +637,12 @@ def test_any_pattern_symbol_bridge_via_tmp_scalar(prefer):
         raise AssertionError("no interstate edge assigning tmp_call_13 from the bridge")
 
 
-# ---------------------------------------------------------------------------
 # Reduction patterns from the TSVC corpus (group B).
 #
 # Each test mirrors a real TSVC kernel body and runs the same prelude
 # (``TrivialTaskletElimination``) before ``LoopToReduce`` so the entry shape matches
 # the pipeline. Patterns the pass can't detect yet are ``xfail`` with a TODO -> flip to
 # passing without test edits when the pass is extended.
-# ---------------------------------------------------------------------------
 
 import pytest
 
@@ -667,7 +665,7 @@ def _prep_and_lift(sdfg: dace.SDFG, prefer: str) -> int:
     return lifted + (RetargetWCRAccumulator().apply_pass(sdfg, {}) or 0)
 
 
-# ---- s311 family: array-slot accumulator (sum) ---------------------------
+# s311 family: array-slot accumulator (sum)
 
 
 @dace.program
@@ -694,7 +692,7 @@ def test_array_slot_sum_reduction_is_lifted(prefer):
     _assert_single_sum_reduce_identity_none(sdfg, prefer)
 
 
-# ---- s313 / vdotr: array-slot dot-product (compute-then-accumulate) ------
+# s313 / vdotr: array-slot dot-product (compute-then-accumulate)
 
 
 @dace.program
@@ -721,7 +719,7 @@ def test_array_slot_dot_product_is_lifted(prefer):
         assert lifted >= 1
 
 
-# ---- s317: array-slot scalar product (no array fold) ---------------------
+# s317: array-slot scalar product (no array fold)
 
 
 @dace.program
@@ -745,7 +743,7 @@ def test_array_slot_const_product_not_lifted_iv(prefer):
     assert lifted == 0
 
 
-# ---- s314 / s316: branched min / max -------------------------------------
+# s314 / s316: branched min / max
 
 
 @dace.program
@@ -834,7 +832,7 @@ def test_strided_branched_min_folds_only_visited_elements():
                                                    f'got {result[0]}, expected {a[1:n:2].min()}')
 
 
-# ---- s4115: gather + sum reduction ---------------------------------------
+# s4115: gather + sum reduction
 
 
 @dace.program
@@ -864,7 +862,7 @@ def test_gather_sum_reduction_is_lifted(prefer):
         assert lifted >= 1
 
 
-# ---- 1D-reduction guard: GEMM-shaped multi-input loops must NOT lift -------
+# 1D-reduction guard: GEMM-shaped multi-input loops must NOT lift
 
 
 def test_gemm_innermost_loop_not_lifted_to_reduce(prefer):
@@ -946,7 +944,7 @@ def test_outer_axis_reduction_per_column_is_lifted(prefer):
                          f'1-D reduction along i; got {lifted}.')
 
 
-# ---- masked compound update with gather (multi-state, wcr-scalar only) ------
+# masked compound update with gather (multi-state, wcr-scalar only)
 
 
 @dace.program
@@ -984,7 +982,7 @@ def test_masked_compound_gather_is_lifted(prefer):
     assert np.isclose(sum_out[0], expected), f'got {sum_out[0]}, expected {expected}'
 
 
-# ---- interleaved two-accumulator single loop --------------------------------
+# interleaved two-accumulator single loop
 
 
 @dace.program
@@ -1094,7 +1092,7 @@ def test_interleaved_dual_strided_lifts_to_two_reduce_nodes():
     assert np.isclose(odds_out[0], float(A_arr[1::2].sum()))
 
 
-# ---- split two strided loops (independent reductions) -----------------------
+# split two strided loops (independent reductions)
 
 
 @dace.program
@@ -1408,14 +1406,12 @@ def test_double_buffer_carry_scan_not_lifted():
     assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], 'no Reduce may be emitted'
 
 
-# ---------------------------------------------------------------------------
 # The loop's OWN SDFG decides the lift.
 #
 # ``all_nodes_recursive`` descends into NestedSDFGs, so the LoopRegions the passes iterate
 # may live one level down. Every matcher resolves descriptors BY NAME, so handing it the
 # top-level SDFG answers from the wrong repository -- silently, because a same-named outer
 # descriptor resolves rather than raising. The fixtures below pin both directions.
-# ---------------------------------------------------------------------------
 
 N_NEST = dace.symbol("N_NEST")
 
@@ -1624,7 +1620,7 @@ if __name__ == "__main__":
     test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient()
     test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_arrays()
 
-# ---- scatter: the accumulator SLOT moves per iteration -------------------
+# scatter: the accumulator SLOT moves per iteration
 
 
 @dace.program
@@ -1704,7 +1700,7 @@ def test_guarded_scatter_histogram_keeps_every_bin():
     assert np.allclose(out, expected)
 
 
-# ---- what the retarget must NOT claim ------------------------------------
+# what the retarget must NOT claim
 #
 # Two shapes, one origin. A short constant-bounded inner reduction, once ``ShortLoopUnroll``
 # flattens it, leaves its accumulate steps sitting directly in the parent body -- one state per
@@ -1905,14 +1901,12 @@ def test_loop_to_reduce_doesnt_lift_break_loop():
         assert sdfg.to_json() == before, f'LoopToReduce({prefer}) refused the loop but still mutated the SDFG'
 
 
-# ---------------------------------------------------------------------------
 # ``AugAssignToWCR`` traversal pinning: ``AccumulatorCopyChainToWCR`` used to drive
 # ``AugAssignToWCR`` through the generic ``PatternMatchAndApplyRepeated`` VF2 sweep, one
 # whole-SDFG match per state per fixpoint round. It now walks the tasklets directly
 # (``augassign_to_wcr_candidates`` / ``augassign_to_wcr_in_state``), enumerating the same five
 # shapes ``AugAssignToWCR.expressions()`` defines by anchor instead of isomorphism. These
 # fixtures pin that the direct walk finds and applies exactly what the generic driver did.
-# ---------------------------------------------------------------------------
 
 
 def build_free_tasklet_rmw():

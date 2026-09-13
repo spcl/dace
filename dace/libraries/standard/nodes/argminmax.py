@@ -152,7 +152,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
 
     one_offset = 1 if node.one_based else 0
 
-    # ---- state 1: reduce __best_val ----
+    # state 1: reduce __best_val
     #
     # A ``Reduce`` node, not a WCR on a map over ``_x``. A WCR into one accumulator emits a global
     # atomic per element on a GPU, every one of them contending for the same address; the node owns
@@ -173,7 +173,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     reduce_val.add_edge(val_red, "_out", reduce_val.add_access("__best_val"), None,
                         dace.Memlet.from_array("__best_val", sdfg.arrays["__best_val"]))
 
-    # ---- state 2: candidate index per element ----
+    # state 2: candidate index per element
     #
     # Elementwise, so it parallelizes anywhere: each element emits its own flat index if it matches
     # the winning value and the sentinel otherwise. Materializing the candidates is what lets the
@@ -197,7 +197,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
         external_edges=True,
     )
 
-    # ---- state 3: pick the first (or last) matching index ----
+    # state 3: pick the first (or last) matching index
     reduce_idx = sdfg.add_state_after(candidates, node.label + "_reduce_idx")
     idx_red = Reduce(name=node.label + "_idx_reduce",
                      wcr=f"lambda a, b: {idx_wcr_op}(a, b)",
@@ -209,7 +209,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     reduce_idx.add_edge(idx_red, "_out", reduce_idx.add_access("__best_idx"), None,
                         dace.Memlet.from_array("__best_idx", sdfg.arrays["__best_idx"]))
 
-    # ---- state 5: extract / decode ----
+    # state 5: extract / decode
     extract = sdfg.add_state_after(reduce_idx, node.label + "_extract")
     if flat:
         # Decode flat -> per-dim subscripts.  One tasklet per dim,

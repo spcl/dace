@@ -164,9 +164,7 @@ def test_ordinary_codegen_carries_no_hint():
     assert 'traded a tiled map for a flat one.' not in ordinary
 
 
-# ---------------------------------------------------------------------------------------------
 # Naming what every loop is: parallel, sequential-and-proven, sequential-and-undecided, wavefront.
-# ---------------------------------------------------------------------------------------------
 
 
 def loops_of(sdfg: dace.SDFG):

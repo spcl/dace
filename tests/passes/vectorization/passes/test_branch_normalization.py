@@ -176,9 +176,7 @@ def test_pass_is_idempotent_after_first_run():
     assert second is None
 
 
-# ---------------------------------------------------------------------------
 # compute_arm_escape_writes (pure analysis)
-# ---------------------------------------------------------------------------
 
 
 def _add_state_writing(sdfg: dace.SDFG, region, label: str, write_target: str, value: str = "1.0"):

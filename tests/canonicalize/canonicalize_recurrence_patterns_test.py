@@ -57,9 +57,7 @@ def _nloops(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
 
 
-# ----------------------------------------------------------------------
 # Tridiagonal Thomas solve (forward elimination + back substitution)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -139,9 +137,7 @@ def test_thomas_solve_keeps_vertical_axis_sequential():
     assert _nmaps(sdfg) == 1, f'only the independent jc axis may map; got {_nmaps(sdfg)} maps'
 
 
-# ----------------------------------------------------------------------
 # Vertical flux prefix-scan / sedimentation
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -191,9 +187,7 @@ def test_vertical_flux_prefix_scan_keeps_level_axis_sequential():
     assert _nmaps(sdfg) == 1, f'only the independent column axis may map; got {_nmaps(sdfg)} maps'
 
 
-# ----------------------------------------------------------------------
 # Loop-carried scratch SLOT across a fully unrolled loop
-# ----------------------------------------------------------------------
 
 SLOT_N, SLOT_T = 8, 4
 

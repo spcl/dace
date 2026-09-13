@@ -87,9 +87,7 @@ def top_level_expressions(sdfg) -> list[tuple[str, set]]:
     return found
 
 
-# ----------------------------------------------------------------------
 # Loop variant (Python ``range``)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -162,9 +160,7 @@ def test_compound_nest_loops_per_i_bounds_not_hoisted():
     assert str(outer.map.range) == '0:N', f'the surviving map must span the i axis, got {outer.map.range}'
 
 
-# ----------------------------------------------------------------------
 # Map variant (``dace.map``)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -232,9 +228,7 @@ def test_compound_nest_maps_outer_map_survives():
     assert not leaked, f'per-i bound leaked to SDFG top level: {leaked}'
 
 
-# ----------------------------------------------------------------------
 # Slimmer reproducer focused on cascade-up + MoveIfIntoLoop interaction
-# ----------------------------------------------------------------------
 
 
 @dace.program

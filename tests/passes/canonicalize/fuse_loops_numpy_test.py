@@ -60,9 +60,7 @@ def _mk(n=48, names=("a", "b", "c", "d"), seed=0):
     return {k: rng.random(n) for k in names}
 
 
-# ---------------------------------------------------------------------------
 # Fuse: consecutive same-range sequential sibling loops.
-# ---------------------------------------------------------------------------
 
 # FuseLoops targets the SEQUENTIAL residual loops LoopToMap refused (recurrences,
 # in-place scans) -- a parallel elementwise loop is left to become a Map, NOT fused
@@ -148,9 +146,7 @@ def test_parallel_elementwise_loops_left_for_loop_to_map():
     assert after == before  # parallel loops are not loop-fused
 
 
-# ---------------------------------------------------------------------------
 # Refuse: fusing would change a value, or ranges mismatch.
-# ---------------------------------------------------------------------------
 
 
 def test_forward_read_ahead_refused():
@@ -184,9 +180,7 @@ def test_mismatched_ranges_refused():
     assert after == 2  # refused
 
 
-# ---------------------------------------------------------------------------
 # Nested loops + map bodies.
-# ---------------------------------------------------------------------------
 
 
 def test_two_2d_row_loops_fuse():

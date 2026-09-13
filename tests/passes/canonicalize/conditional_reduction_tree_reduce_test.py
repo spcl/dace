@@ -47,9 +47,7 @@ def _gpu_code(sdfg) -> str:
     return "\n".join(c.clean_code for c in sdfg.generate_code())
 
 
-# ---------------------------------------------------------------------------
 # Kernels: guarded scalar reductions.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -79,9 +77,7 @@ def condprod(a: dace.float64[N], out: dace.float64[1]):
     out[0] = p
 
 
-# ---------------------------------------------------------------------------
 # CPU: reduction clause present, guarded atomic gone, value preserved.
-# ---------------------------------------------------------------------------
 
 
 def test_condsum_cpu_emits_reduction_clause_and_no_atomic():
@@ -176,9 +172,7 @@ def test_condprod_cpu_uses_multiplicative_identity():
     assert np.allclose(out[0], expected, rtol=1e-9, atol=1e-9)
 
 
-# ---------------------------------------------------------------------------
 # GPU: structural only (no run) -- block reduce present, guarded atomic gone.
-# ---------------------------------------------------------------------------
 
 
 def test_condsum_gpu_emits_block_reduce():

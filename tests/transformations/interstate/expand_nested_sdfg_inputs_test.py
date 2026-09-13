@@ -78,9 +78,7 @@ from dace.transformation.interstate.expand_nested_sdfg_inputs import (
 N = dace.symbol("N")
 
 
-# -------------------------
 # Reference implementation
-# -------------------------
 def numpy_reference(A, B, idx):
     C = np.zeros_like(A)
     for i in range(A.shape[0]):
@@ -89,9 +87,7 @@ def numpy_reference(A, B, idx):
     return C
 
 
-# -------------------------
 # DaCe program (forces Subscript + scalar mix)
-# -------------------------
 @dace.program
 def column_gather_scatter(
     A: dace.float64[N, N],
@@ -109,9 +105,7 @@ def column_gather_scatter(
         C[idx[i], j] = a + b * 2.0
 
 
-# -------------------------
 # Test
-# -------------------------
 def test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e():
     sdfg = column_gather_scatter.to_sdfg()
     sdfg.validate()
@@ -128,9 +122,7 @@ def test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e():
     pre_in_edges = list(parent_state.in_edges(nsdfg))
     pre_out_edges = list(parent_state.out_edges(nsdfg))
 
-    # -------------------------
     # Apply transformation
-    # -------------------------
     ExpandNestedSDFGInputs().apply_to(
         sdfg=parent_state.sdfg,
         nested_sdfg=nsdfg,
@@ -138,9 +130,7 @@ def test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e():
 
     sdfg.validate()
 
-    # -------------------------
     # Run E2E execution
-    # -------------------------
     n = 16
     rng = np.random.default_rng(0)
 
@@ -151,17 +141,13 @@ def test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e():
 
     sdfg(A=A, B=B, C=C, idx=idx, N=n)
 
-    # -------------------------
     # Reference result
-    # -------------------------
     C_ref = numpy_reference(A, B, idx)
 
     assert np.allclose(C, C_ref), ("Numerical mismatch after ExpandNestedSDFGInputs\n"
                                    f"max error = {np.max(np.abs(C - C_ref))}")
 
-    # -------------------------
     # Structural validation
-    # -------------------------
     nsdfgs_after = [(n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
 
     assert len(nsdfgs_after) == 1, (f"Expected exactly one NestedSDFG after transformation, "
@@ -182,9 +168,7 @@ def test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e():
                                               f"Expected: {expected}\n"
                                               f"Actual:   {edge.data.subset}")
 
-    # -------------------------
     # Regression guard: ensure transformation actually changed structure
-    # -------------------------
     post_in_edges = list(parent_state_after.in_edges(nsdfg_after))
 
     assert len(pre_in_edges) == len(post_in_edges), ("Unexpected change in number of input edges after transformation")

@@ -24,9 +24,7 @@ def _n_loops(sdfg: dace.SDFG) -> int:
     return sum(1 for c in sdfg.all_control_flow_regions() if isinstance(c, LoopRegion))
 
 
-# ---------------------------------------------------------------------------
 # Arithmetic IV: ``s[0] += c`` -> ``s[0] += c*N``
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -48,9 +46,7 @@ def test_arithmetic_iv_scalar_slot_collapses_to_closed_form():
     assert np.isclose(s[0], 1.0 + 2.5 * 10)
 
 
-# ---------------------------------------------------------------------------
 # Geometric IV: ``q[0] *= c`` -> ``q[0] *= c**N`` (TSVC s317)
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -70,9 +66,7 @@ def test_geometric_iv_scalar_slot_collapses_to_closed_form():
     assert np.isclose(q[0], expected)
 
 
-# ---------------------------------------------------------------------------
 # Array-slot accumulator on a multi-element array: the IV touches only [0]
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -100,9 +94,7 @@ def test_geometric_iv_array_slot_collapses_to_closed_form():
     assert np.allclose(q[1:], 0.0)
 
 
-# ---------------------------------------------------------------------------
 # Negative cases: the pass MUST refuse these (they are NOT IV recurrences).
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -143,10 +135,8 @@ def test_non_const_operand_is_not_lifted():
     assert _n_loops(sdfg) == 1
 
 
-# ---------------------------------------------------------------------------
 # Symbolic loop-invariant operand: ``s[0] += step`` with ``step`` a SDFG symbol.
 # Closed form ``s[0] = s[0] + step * N`` is computable; the pass should lift it.
-# ---------------------------------------------------------------------------
 
 step = dace.symbol("step")
 
@@ -168,11 +158,9 @@ def test_arithmetic_iv_symbolic_operand_collapses_to_closed_form():
     assert np.isclose(s[0], 3.0 + 2 * 8)
 
 
-# ---------------------------------------------------------------------------
 # Symbolic stride: ``for i in range(0, N, stride): s[0] += c`` over a symbolic
 # step. Trip count uses ``stride`` -- ``s[0] = s[0] + c * trip``. The closed
 # form is identical to the unit-stride case; only the trip count differs.
-# ---------------------------------------------------------------------------
 
 stride_sym = dace.symbol("stride_sym", positive=True)
 
@@ -194,11 +182,9 @@ def test_arithmetic_iv_symbolic_stride_collapses_to_closed_form():
     assert np.isclose(s[0], 1.5 * trip)
 
 
-# ---------------------------------------------------------------------------
 # Iedge-IV substitution: ``k := k + literal_const`` on an interstate edge
 # inside a multi-statement body. Substitute reads of ``k`` with the closed
 # form; surviving loop becomes parallelisable.
-# ---------------------------------------------------------------------------
 
 
 @dace.program
@@ -315,13 +301,11 @@ def test_iedge_iv_refuses_when_iedge_has_other_assignments():
     assert np.allclose(flat, expected), f"got {flat}, expected {expected}"
 
 
-# ---------------------------------------------------------------------------
 # Iedge-IV: symbolic step + update position (TOP vs BOTTOM). Hand-built so the
 # update position and the symbolic step are controlled exactly. The body reads
 # the IV symbol ``k`` through a gather iedge ``g := a[k]``; after substitution
 # that read carries the closed form. TSVC s318's secondary IV is the BOTTOM +
 # symbolic-step case.
-# ---------------------------------------------------------------------------
 
 from dace import symbolic  # noqa: E402
 
@@ -422,12 +406,10 @@ def test_iedge_iv_refuses_loop_variant_step():
     assert _gather_rhs(loop) == 'a[k]', f"loop-variant step must be refused, gather={_gather_rhs(loop)}"
 
 
-# ---------------------------------------------------------------------------
 # Between-blocks IV: the increment sits between content blocks (neither the empty
 # start nor the empty sink). Substitutable with a single offset iff every use is
 # on one consistent side -- pre-increment (before) / post-increment (after);
 # mixed uses are refused. This is the generalization s128 needs.
-# ---------------------------------------------------------------------------
 def _build_between_blocks_iv(label, use_before, use_after, step_rhs='k + 1'):
     sdfg = dace.SDFG(label)
     sdfg.add_array('a', [4 * N], dace.float64)
@@ -488,11 +470,9 @@ def test_between_blocks_iv_mixed_uses_refused():
         symbolic.pystr_to_symbolic('k + 1')) == 0, "IV must be untouched on refusal"
 
 
-# ---------------------------------------------------------------------------
 # Derived symbol: defined purely by a loop-var expression (no self-reference) ->
 # inlined into its uses. This is what a primary-IV substitution frees (s128's
 # ``k := 2*i``), resolved within IV-subst's fixed point.
-# ---------------------------------------------------------------------------
 def _build_derived_symbol_loop(label):
     sdfg = dace.SDFG(label)
     sdfg.add_array('a', [8 * N], dace.float64)
@@ -586,7 +566,6 @@ def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
         "the inner loop must hand the outer one the counter value it would have had"
 
 
-# ---------------------------------------------------------------------------
 # Array-dependent symbol is NOT an induction variable
 #
 # An interstate load ``idx := A[jl, jm]`` (a data gather) must NOT be inlined
@@ -595,7 +574,6 @@ def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
 # ``B[jl, A[jl, jm]]`` into the memlet subset -- a ``Subscript`` the codegen
 # lowers to an invalid ``A[std::make_tuple(...)]``. Regression for the cloudsc
 # ``LLINDEX1(JL, IORDER(JL, JM)) = .FALSE.`` indirect scatter.
-# ---------------------------------------------------------------------------
 
 
 def _subset_reads_array(sdfg: dace.SDFG) -> bool:

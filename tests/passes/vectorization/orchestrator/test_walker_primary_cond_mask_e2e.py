@@ -99,7 +99,7 @@ def test_k2_cond_invariant_symbol_matches_reference(M, N):
     np.testing.assert_allclose(b_vec, b_ref, rtol=1e-12, atol=1e-12)
 
 
-# ---- structural tests -----------------------------------------------------
+# structural tests
 
 
 def test_k2_cond_subset_loads_with_replicate_factor():

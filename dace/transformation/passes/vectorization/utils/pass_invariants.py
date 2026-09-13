@@ -52,9 +52,7 @@ def assert_invariant(violation: str | None, pass_name: str, description: str) ->
     raise AssertionError(f"{pass_name}: invariant violated -- {description}: {violation}")
 
 
-# ---------------------------------------------------------------------------
 # Generic structural invariants (work at SDFG or per-state level).
-# ---------------------------------------------------------------------------
 
 
 def no_memlet_dim_mismatch(scope: SDFG | SDFGState) -> str | None:
@@ -461,9 +459,7 @@ def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState) -> str | None:
     return None
 
 
-# ---------------------------------------------------------------------------
 # K-dim pipeline invariants (require widths / K context).
-# ---------------------------------------------------------------------------
 
 
 def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> str | None:
@@ -664,9 +660,7 @@ def no_conditional_interstate_assign_on_widened_data(sdfg: SDFG, widths: tuple[i
     return None
 
 
-# ---------------------------------------------------------------------------
 # Helpers (private).
-# ---------------------------------------------------------------------------
 
 
 def _iter_states(scope: SDFG | SDFGState) -> Iterator[tuple[SDFG, SDFGState]]:

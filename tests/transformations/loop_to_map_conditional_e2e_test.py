@@ -46,9 +46,9 @@ def _neighbours(n, seed):
     return rng.integers(0, n, size=(n, 2)).astype(np.int32)
 
 
-# --------------------------------------------------------------------------- #
+# #
 # 1. Loop-invariant ``if`` over a neighbour-gather nest                        #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -94,9 +94,9 @@ def test_loop_to_map_invariant_if_over_gather_parallelizes_and_e2e():
         assert np.allclose(out, exp), f"vs numpy oracle mismatch active={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # 2. ``if-else`` writing to DIFFERENT output subsets per branch                #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -142,10 +142,10 @@ def test_loop_to_map_if_else_disjoint_outputs_parallelizes_and_e2e():
         assert np.allclose(oa, ea) and np.allclose(ob, eb), f"vs numpy oracle mismatch active={av}"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # 3. ``if-else`` writing DIFFERENT VALUES to the SAME subset                   #
 #    (cloudsc threshold branch: condition reads gathered, per-cell data)       #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program
@@ -190,9 +190,9 @@ def test_loop_to_map_if_else_same_output_threshold_parallelizes_and_e2e():
     assert np.allclose(out, exp), "vs numpy oracle mismatch"
 
 
-# --------------------------------------------------------------------------- #
+# #
 # 4. Condition depends on the loop variable / per-iteration data               #
-# --------------------------------------------------------------------------- #
+# #
 
 
 @dace.program

@@ -916,10 +916,8 @@ class SplitStatements(ppl.Pass):
             count += self._split_loop_bodies(sdfg)
         return count or None
 
-    # ------------------------------------------------------------------
     # (1) Per-output replication of a MapFission-blocking NestedSDFG
     #     (conditional / indirection-symbol). Formerly ConditionalComponentFission.
-    # ------------------------------------------------------------------
 
     def _replicate_components(self, sdfg: SDFG) -> int:
         from dace.transformation.passes.simplify import SimplifyPass
@@ -1046,9 +1044,7 @@ class SplitStatements(ppl.Pass):
             state.remove_edge(e)
         state.remove_node(node)
 
-    # ------------------------------------------------------------------
     # (1b) Straight-line map statement fission (opt-in via split_maps).
-    # ------------------------------------------------------------------
 
     def _split_map_bodies(self, sdfg: SDFG) -> int:
         """Map analogue of the loop statement split: fission a STRAIGHT-LINE map writing >=2 global
@@ -1149,9 +1145,7 @@ class SplitStatements(ppl.Pass):
             inline_cls.apply_to(cfg, nested_sdfg=clone, save=False, verify=False)
         return True
 
-    # ------------------------------------------------------------------
     # (1c) Straight-line LOOP statement fission: one loop per output.
-    # ------------------------------------------------------------------
 
     def _split_loop_bodies(self, sdfg: SDFG) -> int:
         """Loop analogue of :meth:`_split_map_bodies`: fission a STRAIGHT-LINE loop writing >=2

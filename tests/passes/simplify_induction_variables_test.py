@@ -253,7 +253,6 @@ def test_end_to_end_numerical_preservation():
     assert np.allclose(out_ref, expected)
 
 
-# ---------------------------------------------------------------------------
 # LLVM-inspired test patterns
 #
 # The following tests port semantic patterns from LLVM's IndVarSimplify and
@@ -262,7 +261,6 @@ def test_end_to_end_numerical_preservation():
 # We only port patterns that fit this pass's scope (basic + affine-derived
 # interstate-edge IVs); SSA-only concepts (phi-merge, LCSSA, type widening)
 # are either adapted or deliberately left for future work.
-# ---------------------------------------------------------------------------
 
 
 def _simple_loop_with_derived(sdfg_name: str, derived_assignments):

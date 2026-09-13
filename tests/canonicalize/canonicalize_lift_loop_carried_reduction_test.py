@@ -106,7 +106,7 @@ def test_refuses_loop_indexed_write():
     assert _num_wcr(sdfg) == 0
 
 
-# --------------------------------------------------------------------------- #
+# #
 # contour_integral pattern: an OUTER reduction loop whose body computes a
 # per-iteration array increment (an inner element map) and accumulates it into a
 # whole-array output whose index is INVARIANT over the loop variable. After the
@@ -115,7 +115,7 @@ def test_refuses_loop_indexed_write():
 # both full parallelization (0 residual loops) and numerical correctness -- the
 # WCR nesting (inner element map WCR under a parallel outer map) must reduce
 # correctly, including under real multithreading.
-# --------------------------------------------------------------------------- #
+# #
 
 KK = dace.symbol('KK')
 NR = dace.symbol('NR')

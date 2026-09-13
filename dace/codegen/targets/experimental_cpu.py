@@ -439,7 +439,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             obj.code = deduplicate_includes(obj.code)
         return objects
 
-    # -- map scope ------------------------------------------------------------
+    # map scope
 
     def map_scope_needs_brace(self, sdfg, state_dfg, node: nodes.MapEntry) -> bool:
         """Drop the map's encapsulating C scope when it would bound nothing.
@@ -471,7 +471,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return True
         return False
 
-    # -- ptr_increment: walking base pointers for a sequential map -------------
+    # ptr_increment: walking base pointers for a sequential map
 
     def emit_provenance(self, node, cfg, state_id, callsite_stream) -> None:
         """Write the ``// <what this used to be>`` line for code a library node's expansion produced.
@@ -701,7 +701,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         used.add(name)
         return name
 
-    # -- tasklet lowering hooks ------------------------------------------------
+    # tasklet lowering hooks
 
     def make_keyword_remover(self, sdfg, memlets):
         return ReadableKeywordRemover(sdfg, memlets, sdfg.constants, self)
@@ -752,7 +752,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Flush any index / size helpers registered while lowering this tasklet body.
         self._flush_generated_functions(function_stream, cfg, state_id, node)
 
-    # -- readable tasklet body: single line, no separator noise ----------------
+    # readable tasklet body: single line, no separator noise
 
     def tasklet_body_comment(self, node) -> str:
         # No ``// Tasklet code (label)`` banner: each emitted tasklet line already
@@ -886,7 +886,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             stmts = ast.parse(stmts).body
         return len(stmts) == 1 and isinstance(stmts[0], (ast.Assign, ast.AugAssign))
 
-    # -- native (C++/library) tasklet connector inlining -----------------------
+    # native (C++/library) tasklet connector inlining
 
     def rewrite_cpp_tasklet_body(self, node, sdfg, state_dfg) -> str:
         """
@@ -1282,9 +1282,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 function_stream.write(defn + '\n', cfg, state_id, node)
                 emitted.add(name)
 
-    # -- readable array indexing ----------------------------------------------
+    # readable array indexing
 
-    # -- late scalar declarations (decl_placement = late) ----------------
+    # late scalar declarations (decl_placement = late)
 
     def defer_scalar_declaration(self, sdfg, dfg, node, desc) -> bool:
         """Register a mutable scope scalar as a deferred (late) declaration and return True, or return
@@ -1713,7 +1713,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                                                             sym2cpp(flatexpr))
         return fnname, extra_names
 
-    # -- readable array size --------------------------------------------------
+    # readable array size
 
     def _register_size_function(self, data_name: str, desc) -> Optional[Tuple[str, List[str]]]:
         """Registers (once per distinct name + size expression) the ``<array>_size`` helper for

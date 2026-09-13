@@ -403,7 +403,7 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
             else:
                 return dace.memlet.Memlet.from_array(data_access, datadesc)
 
-        # --- Add input connection path ---
+        # Add input connection path
 
         state = {
             'cur_in_conn_name': f"IN_{data_access}_p",
@@ -487,7 +487,7 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
         else:
             dst.add_in_connector(_get_in_conn_name(dst), force=True)
 
-        # --- Optionally add output connection path ---
+        # Optionally add output connection path
         if add_to_output_too:
             an = parent_graph.add_access(data_access)
             dst = an

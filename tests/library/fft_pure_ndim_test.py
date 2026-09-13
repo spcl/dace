@@ -16,9 +16,7 @@ import dace
 from dace.libraries.fft.nodes import FFT, IFFT
 
 
-# ---------------------------------------------------------------------------
 # Full N-D (axis=None) via the numpy frontend (fftn / ifftn)
-# ---------------------------------------------------------------------------
 @pytest.mark.parametrize('shape', [(8, 12), (4, 6, 5)])
 def test_pure_fftn(shape):
 
@@ -46,9 +44,7 @@ def test_pure_ifftn_2d(norm):
     np.testing.assert_allclose(y, np.fft.ifftn(x, norm=norm), rtol=1e-10, atol=1e-10)
 
 
-# ---------------------------------------------------------------------------
 # Batched 1-D (axis=k) via the numpy frontend (fft(x, axis=k))
-# ---------------------------------------------------------------------------
 @pytest.mark.parametrize('shape,axis', [
     ((8, 12), 0),
     ((8, 12), -1),
@@ -80,12 +76,10 @@ def test_pure_ifft_axis_inverse():
     np.testing.assert_allclose(y, np.fft.ifft(x, axis=axis), rtol=1e-10, atol=1e-10)
 
 
-# ---------------------------------------------------------------------------
 # In-place (input array IS the output array) -- the Quantum ESPRESSO pattern
 # where ``invfft(f, dfft)`` transforms ``f`` in place.  The frontend always
 # allocates a fresh output, so drive the lib node directly to exercise the
 # alias-decoupling copy in the builder.
-# ---------------------------------------------------------------------------
 def test_pure_fftn_inplace():
     shape = (6, 5)
     sdfg = dace.SDFG('inplace_fftn')
@@ -106,9 +100,7 @@ def test_pure_fftn_inplace():
     np.testing.assert_allclose(buf, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
-# ---------------------------------------------------------------------------
 # Symbolic dimensions -- the shape is only known at call time.
-# ---------------------------------------------------------------------------
 def test_pure_fftn_symbolic():
     M, N = dace.symbol('M'), dace.symbol('N')
 
@@ -156,9 +148,7 @@ def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
     assert not any('1/(M*N)' in code.replace(' ', '') for code in scaled), scaled
 
 
-# ---------------------------------------------------------------------------
 # The rank-1 path must stay byte-identical (still routes to dft_explicit).
-# ---------------------------------------------------------------------------
 def test_pure_rank1_unchanged():
 
     @dace.program
@@ -171,9 +161,7 @@ def test_pure_rank1_unchanged():
     np.testing.assert_allclose(y, np.fft.fft(x), rtol=1e-10, atol=1e-10)
 
 
-# ---------------------------------------------------------------------------
 # A subset of the axes (np.fft.fftn(x, axes=...)): unlisted axes are batch dimensions.
-# ---------------------------------------------------------------------------
 PARTIAL_AXES = [
     ((3, 4, 5, 2), (1, 2, 3)),
     ((4, 5, 6), (0, 2)),

@@ -265,7 +265,6 @@ PRE_EXPANSION = {
     'canon': lambda s: canonicalize(s, validate=True, **CPU),
 }
 
-# ---------------------------------------------------------------------------
 # The comparison ARMS.
 #
 # An "arm" is a (SDFG pipeline, C++ compiler, extra flags) triple. The harness keys the per-kernel
@@ -276,7 +275,6 @@ PRE_EXPANSION = {
 # There is exactly ONE job shape: the eight arms the figure compares, plus ``seq-cpp`` because it is
 # the tsvc/tsvc25 denominator. Only the two g++ DaCe arms are timed by default; the full table is
 # opt-in because four of its arms credit an external pass whose probe must be allowed to fail loudly.
-# ---------------------------------------------------------------------------
 
 
 class Arm(NamedTuple):
@@ -1358,9 +1356,7 @@ def has_current_arms(path: str, suite: str = '', name: str = '') -> bool:
     return True
 
 
-# ---------------------------------------------------------------------------
 # pytest harness: one (resumable) speedup test per kernel.
-# ---------------------------------------------------------------------------
 #: Every pragma that would introduce a *second* level of parallelism under an auto-parallelizer.
 #: ``omp simd`` and ``omp atomic`` are deliberately absent: they are vectorization and a reduction
 #: guard, not a thread team.
@@ -1419,9 +1415,7 @@ def test_speedup(suite, name):
     assert not problems, f"perf regression on {suite}:{name}: " + "; ".join(problems)
 
 
-# ---------------------------------------------------------------------------
 # CSV export: flat per-(suite, kernel, preset, pipeline) summary from result files.
-# ---------------------------------------------------------------------------
 def export_csv(csv_path, results_dir=None):
     """Aggregate every result JSON in ``results_dir`` into one summary CSV. Returns row count."""
     results_dir = results_dir or RESULTS_DIR
@@ -1466,9 +1460,7 @@ def export_csv(csv_path, results_dir=None):
     return len(rows)
 
 
-# ---------------------------------------------------------------------------
 # Markdown table: the headline "speedup numbers in a table" deliverable.
-# ---------------------------------------------------------------------------
 def _md_correct(entry):
     """Correctness glyph for a pipeline entry: numerically verified / wrong / not run."""
     if entry.get('correct') is True:
@@ -1621,9 +1613,7 @@ def export_markdown(md_path, results_dir=None):
     return md_path
 
 
-# ---------------------------------------------------------------------------
 # Script entry point: run the (resumable) sweep, print a table, optional CSV.
-# ---------------------------------------------------------------------------
 def print_summary() -> None:
     """Per-preset, per-corpus, per-arm geomean to stdout.
 

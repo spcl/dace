@@ -67,8 +67,8 @@ def base(name: str) -> dace.SDFG:
     return sdfg
 
 
-# --------------------------------------------------------------------------- shapes that only
-# --------------------------------------------------------------------------- match permissively
+# shapes that only
+# match permissively
 def make_join() -> dace.SDFG:
     """A diamond: the join block has two incoming edges, which only permissive matching allows."""
     sdfg = base('permissive_join')
@@ -163,7 +163,7 @@ def test_accepted_match_is_not_declined_by_apply(xform, factory):
         assert block_count(sdfg) < before
 
 
-# --------------------------------------------------------------------------- driver-level sweep
+# driver-level sweep
 @pytest.mark.parametrize('xform', XFORMS, ids=XFORM_IDS)
 @pytest.mark.parametrize('permissive', [False, True], ids=['strict', 'permissive'])
 def test_repeated_driver_terminates_and_validates(xform, permissive):

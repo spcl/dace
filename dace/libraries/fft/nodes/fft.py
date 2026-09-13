@@ -257,9 +257,7 @@ def _generate_cufft_code(indesc: data.Data,
                          code_exit=exit_code)
 
 
-##################################################################################################
 # FFTW3 expansions
-##################################################################################################
 
 
 @library.register_expansion(FFT, 'FFTW3')
@@ -380,9 +378,7 @@ def _generate_fftw3_code(indesc: data.Data,
     return nodes.Tasklet(name, {'_inp'}, {'_out'}, code, language=dtypes.Language.CPP)
 
 
-##################################################################################################
 # MKL backend (uses FFTW-compat layer of MKL via the same FFTW3 C ABI)
-##################################################################################################
 
 
 @library.register_expansion(FFT, 'MKL')

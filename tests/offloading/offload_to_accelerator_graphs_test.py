@@ -12,9 +12,7 @@ from dace.transformation.passes.offloading import offloading_helpers as helpers
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator as OtA
 from copy import deepcopy
 
-# ============================================================================
 # SDFGs for Tests
-# ============================================================================
 
 
 def scalar_to_gpu_sdfg():
@@ -375,9 +373,7 @@ def single_element_copy_sdfg():
     return sdfg
 
 
-# ============================================================================
 # OFFLOADING TESTS
-# ============================================================================
 
 
 # helper

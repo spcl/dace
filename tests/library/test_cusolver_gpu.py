@@ -67,10 +67,8 @@ def _worst_diff(reference, candidate):
     return worst
 
 
-###############################################################################
 # Direct library-node coverage: exercises the pinned ``_info`` storage fix and
 # the cuSOLVER expansion selected explicitly on the node.
-###############################################################################
 
 
 def _spd_matrix(size, dtype):
@@ -149,12 +147,10 @@ def test_solve_libnode_gpu(dtype):
     assert np.linalg.norm(reference - out) / np.linalg.norm(reference) < rtol
 
 
-###############################################################################
 # Corpus coverage: the frontend lowers ``np.linalg.cholesky`` to the Cholesky
 # library node with ``implementation=None``. Verifies both the selection and the
 # storage fix end-to-end, and that legacy/experimental host codegen agree with
 # the CPU legacy result on identical inputs.
-###############################################################################
 
 
 @pytest.mark.parametrize("codegen", CODEGENS)
@@ -196,8 +192,6 @@ def test_npbench_cholesky2_gpu(codegen):
 
     assert _worst_diff(cpu_out, gpu_out) < 1e-9
 
-
-###############################################################################
 
 if __name__ == "__main__":
     test_cholesky_libnode_gpu(dace.float64)

@@ -66,7 +66,7 @@ def mk(n=48, names=("a", "b", "c", "d"), seed=0):
     return {k: rng.random(n) for k in names}
 
 
-# --- fuses a legal pair, value-preserving ------------------------------------------------------------
+# fuses a legal pair, value-preserving
 
 
 def test_fuse_loops_fuses_two_sequential_recurrences():
@@ -120,7 +120,7 @@ def test_apply_to_a_named_pair_fuses_it():
     assert all(np.allclose(got[k], ref[k]) for k in bufs)
 
 
-# --- refuses illegal / unsafe pairs ------------------------------------------------------------------
+# refuses illegal / unsafe pairs
 
 
 def test_refuses_mismatched_iteration_range():
@@ -151,7 +151,7 @@ def test_refuses_doall_parallel_loops():
         assert not LoopFusion.can_be_applied_to(sd, first=first, second=second)
 
 
-# --- never crashes -----------------------------------------------------------------------------------
+# never crashes
 
 
 def test_never_crashes_on_single_or_no_loop():
@@ -166,7 +166,6 @@ def test_never_crashes_on_single_or_no_loop():
     assert (sd.apply_transformations_repeated(LoopFusion) or 0) == 0  # nothing to fuse, no crash
 
 
-# =====================================================================================================
 # Arbitrary loop / map nesting patterns.
 #
 # LoopFusion fuses two adjacent loops only when each body is a SINGLE compute state -- a map body
@@ -176,7 +175,6 @@ def test_never_crashes_on_single_or_no_loop():
 # value-preservation: `exact` (fused result == un-fused reference, bit-for-bit). A wrongly-fused real
 # dependence would fail `exact`, so that assertion alone is the correctness net; `applied == 0` pins the
 # cases we additionally expect to be refused.
-# =====================================================================================================
 
 f64 = dace.float64
 
@@ -186,7 +184,7 @@ def mk2d(n=32, names=("a", "b", "c", "d"), seed=0):
     return {k: rng.random((n, n)) for k in names}
 
 
-# --- fusable: outer SEQUENTIAL recurrence loop carrying a nested MAP over the free dimension ----------
+# fusable: outer SEQUENTIAL recurrence loop carrying a nested MAP over the free dimension
 
 
 @dace.program
@@ -228,7 +226,7 @@ def test_fusable_outer_seq_loop_with_reduction_body():
     assert exact  # value-preserving whether or not the reduction-bodied pair fuses
 
 
-# --- refused for structure: DOALL outer loop (element-wise) must NOT be serialized -------------------
+# refused for structure: DOALL outer loop (element-wise) must NOT be serialized
 
 
 @dace.program
@@ -271,7 +269,7 @@ def test_doall_map_bodied_pair_is_refused_and_fuses_only_on_opt_in():
     assert all(np.allclose(forced_bufs[k], ref_bufs[k]) for k in inputs)
 
 
-# --- refused for structure: nested for-loops (outer body is multiple blocks, not one compute state) --
+# refused for structure: nested for-loops (outer body is multiple blocks, not one compute state)
 
 
 @dace.program
@@ -292,7 +290,7 @@ def test_nested_for_loops_are_refused_but_value_preserving():
     assert applied == 0
 
 
-# --- refused for a REAL cross-loop data dependence (both non-DOALL, same range, single state) --------
+# refused for a REAL cross-loop data dependence (both non-DOALL, same range, single state)
 
 
 @dace.program
@@ -342,7 +340,7 @@ def test_real_dependence_blocks_fusion(prog, names, n, d1):
     assert applied == 0  # LoopFusion recognizes the hazard and refuses
 
 
-# --- mixed and deeper nests: LoopFusion must never crash, always value-preserving ---------------------
+# mixed and deeper nests: LoopFusion must never crash, always value-preserving
 
 
 @dace.program
@@ -373,7 +371,7 @@ def test_arbitrary_nesting_never_crashes_and_preserves_value(prog, names, n):
     assert exact  # whatever LoopFusion does (or refuses to do) on the nest, the result is unchanged
 
 
-# --- composition: chains of fusable + interleaved unfusable loops -------------------------------------
+# composition: chains of fusable + interleaved unfusable loops
 
 
 @dace.program
@@ -410,7 +408,7 @@ def test_long_chain_of_fusable_recurrences_collapses():
     assert after < before and applied >= 1
 
 
-# --- gather (indirect) body shape (value-preservation across access shapes) --------------------------
+# gather (indirect) body shape (value-preservation across access shapes)
 
 
 @dace.program
@@ -433,7 +431,7 @@ def test_gather_indexed_read_is_value_preserving():
     assert exact  # gather in the body must not break value-preservation whichever way it is classified
 
 
-# --- more scalar recurrence shapes that DO fuse (shared-read / multi-statement / same-cell output) ----
+# more scalar recurrence shapes that DO fuse (shared-read / multi-statement / same-cell output)
 
 
 @dace.program
@@ -494,7 +492,7 @@ def test_scalar_recurrence_fuses_at_a_small_trip_count():
     assert applied == 1 and after == before - 1
 
 
-# --- a read AHEAD of the other loop's write is a legal WAR, not a blocker ----------------------------
+# a read AHEAD of the other loop's write is a legal WAR, not a blocker
 
 
 @dace.program
@@ -513,7 +511,7 @@ def test_read_ahead_anti_dependence_is_a_legal_fusion():
     assert applied >= 1
 
 
-# --- branch bodies, reverse iteration, loop-invariant locations --------------------------------------
+# branch bodies, reverse iteration, loop-invariant locations
 
 
 @dace.program
@@ -581,7 +579,6 @@ def test_fusion_across_an_invariant_scalar_overwritten_later_is_refused():
     assert applied == 0
 
 
-# =====================================================================================================
 # Intermediate contraction (buffer localization).
 #
 # Fusing two sequential loops that share an intermediate ``tmp`` is only half the win: the ``[N]`` buffer
@@ -594,7 +591,6 @@ def test_fusion_across_an_invariant_scalar_overwritten_later_is_refused():
 # buffer measurement (`big_before`/`big_after` = transient arrays whose element count is not statically 1).
 # Contraction must NEVER change a value and must NEVER fire when a cross-iteration/offset/outside access
 # makes a single slot unsound -- those cases fuse (or refuse) but keep the full buffer.
-# =====================================================================================================
 
 
 def big_transients(sdfg):
@@ -631,7 +627,7 @@ def fuse_and_measure(prog, inputs, n, simplify=True):
     return applied, exact, big_before, big_after
 
 
-# --- contraction FIRES: transient written & read only at point i, both loops non-DOALL ---------------
+# contraction FIRES: transient written & read only at point i, both loops non-DOALL
 #
 # Neither loop is DOALL (each carries a recurrence on an OUTPUT array), so LoopToMap left them for
 # LoopFusion; ``tmp`` is a pure per-iteration value -> contractible to a scalar.
@@ -730,7 +726,7 @@ def test_long_chain_localizes_every_intermediate():
     assert big_after == []  # t1 and t2 both contracted to scalars
 
 
-# --- contraction REFUSED (unsound to use one slot) but fusion still happens, value preserved ----------
+# contraction REFUSED (unsound to use one slot) but fusion still happens, value preserved
 
 
 @dace.program
@@ -783,7 +779,7 @@ def test_two_d_intermediate_not_contracted_v1():
     assert big_before == big_after  # 2-D intermediate left at full size in v1
 
 
-# --- flow hazard THROUGH a produced intermediate --------------------------------------------------------
+# flow hazard THROUGH a produced intermediate
 #
 # A flow (RAW) hazard carried by a compiler temp: body1 PRODUCES tmp[i], body2 reads tmp[i+1] ahead of
 # that production. Because tmp is genuinely written in body1 (not a foldable constant), the read-ahead

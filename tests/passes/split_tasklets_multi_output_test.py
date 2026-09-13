@@ -56,12 +56,10 @@ def _reads_array(sdfg, out_conn, array):
     return False
 
 
-# ------------------------------------------------------------------------------------------
 # Covariance-shape WAW (two outputs write the same array), driven by nested loops over i < j.
 # The input is a separate array A (no in-place read/write of the output array), so the split
 # is allowed; the destination is an access node (a loop-body state), so the mirror routes
 # through a direct same-array copy and exactly two single-output tasklets remain.
-# ------------------------------------------------------------------------------------------
 def _build_covariance_loops():
     sdfg = dace.SDFG('mo_cov_loops')
     sdfg.add_symbol('N', dace.int64)
@@ -113,9 +111,7 @@ def test_covariance_two_output_split_and_bitexact():
         assert np.array_equal(X, ref), f'covariance split not bit-exact for m={m}'
 
 
-# ------------------------------------------------------------------------------------------
 # Distinct output arrays with a RAW: b[i] = a[i] * 2; c[i] = b[i] + 1.
-# ------------------------------------------------------------------------------------------
 def _build_distinct_loop():
     sdfg = dace.SDFG('mo_distinct_loop')
     for nm in ('a', 'b', 'c'):
@@ -155,9 +151,7 @@ def test_distinct_outputs_raw_routes_through_b():
     assert np.array_equal(c, a * 2.0 + 1.0)
 
 
-# ------------------------------------------------------------------------------------------
 # A three-statement transitive chain over distinct arrays.
-# ------------------------------------------------------------------------------------------
 def _build_three_output_chain_loop():
     sdfg = dace.SDFG('mo_chain3_loop')
     for nm in ('a', 'b', 'c', 'd'):
@@ -197,10 +191,8 @@ def test_three_output_chain_split_and_bitexact():
     assert np.array_equal(d, (a * 2.0 + 1.0) * 3.0)
 
 
-# ------------------------------------------------------------------------------------------
 # Map scope: the mirror must exit through the map exit, so the produced value is copied out
 # by a scalar store tasklet (a same-array ``-> MapExit`` copy is not expressible directly).
-# ------------------------------------------------------------------------------------------
 def _build_covariance_maps():
     sdfg = dace.SDFG('mo_cov_maps')
     sdfg.add_array('A', [M, M], dace.float64)
@@ -245,10 +237,8 @@ def test_map_scope_split_uses_store_tasklet_and_bitexact():
     assert np.array_equal(X, ref)
 
 
-# ------------------------------------------------------------------------------------------
 # In-place read-modify-write (the covariance finalize shape): the input reads the same array
 # the outputs write. The split is refused and the tasklet is left intact.
-# ------------------------------------------------------------------------------------------
 def _build_inplace_rmw():
     sdfg = dace.SDFG('mo_inplace_rmw')
     sdfg.add_array('X', [M, M], dace.float64)
@@ -288,10 +278,8 @@ def test_inplace_read_modify_write_refused():
     assert np.array_equal(x_inout, ref)
 
 
-# ------------------------------------------------------------------------------------------
 # Regression: the real polybench covariance kernel (in-place finalize fed by a WCR reduction)
 # must be value-correct after canonicalize -- no NaN.
-# ------------------------------------------------------------------------------------------
 @dace.program
 def _covariance_kernel(data: dace.float64[N, M], cov: dace.float64[M, M], mean: dace.float64[M]):
     mean[:] = 0.0
@@ -373,9 +361,7 @@ def test_real_covariance_canonicalize_no_nan():
     assert np.max(np.abs(cov - _covariance_reference(data, n, m))) < 1e-12
 
 
-# ------------------------------------------------------------------------------------------
 # Unsafe WAR (a later statement writes an array an earlier statement reads in place).
-# ------------------------------------------------------------------------------------------
 def _build_war_unsafe():
     sdfg = dace.SDFG('mo_war_unsafe')
     for nm in ('X', 'A', 'Y'):
@@ -413,9 +399,7 @@ def test_war_unsafe_split_refused():
     assert np.array_equal(x_inout, A), 'X must be overwritten by A'
 
 
-# ------------------------------------------------------------------------------------------
 # Independent outputs in a top-level state must not be left as disconnected components.
-# ------------------------------------------------------------------------------------------
 def _build_independent_outputs():
     sdfg = dace.SDFG('mo_independent')
     for nm in ('a', 'b', 'c', 'd'):
@@ -458,9 +442,7 @@ def test_independent_outputs_connected_and_correct():
     assert np.array_equal(d, b)
 
 
-# ------------------------------------------------------------------------------------------
 # A statement targeting a non-output-connector local temp is refused.
-# ------------------------------------------------------------------------------------------
 def _build_shared_temp():
     sdfg = dace.SDFG('mo_shared_temp')
     for nm in ('a', 'b', 'c'):

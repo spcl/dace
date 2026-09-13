@@ -59,7 +59,7 @@ def _join_code(programs):
     return '\n'.join(p.clean_code for p in programs)
 
 
-# -- SDFG builders ------------------------------------------------------------
+# SDFG builders
 
 
 def _build_ternary(name):
@@ -221,7 +221,7 @@ def _gemm_equiv(blas_impl, gpu=False):
     return cl
 
 
-# -- tests --------------------------------------------------------------------
+# tests
 
 
 def test_cpp_ternary_scalar_inline():

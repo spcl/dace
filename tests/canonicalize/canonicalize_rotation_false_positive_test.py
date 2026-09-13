@@ -32,7 +32,7 @@ def _run(program, **arrays):
     return sdfg
 
 
-# -- the carried value depends on itself: a REDUCTION, not a delay line -------------------
+# the carried value depends on itself: a REDUCTION, not a delay line
 
 
 @dace.program
@@ -56,7 +56,7 @@ def test_accumulation_is_not_a_rotation():
     assert np.allclose(got, want, rtol=0, atol=0), 'an accumulation was rewritten as a rotation'
 
 
-# -- read AFTER the write: x is b[i], not b[i-1] ------------------------------------------
+# read AFTER the write: x is b[i], not b[i-1]
 
 
 @dace.program
@@ -76,7 +76,7 @@ def test_read_after_write_is_not_shifted():
     assert np.allclose(got, want, rtol=0, atol=0), 'a post-update read was shifted by one iteration'
 
 
-# -- the update is CONDITIONAL: the carried value is the last taken write, not b[i-1] -----
+# the update is CONDITIONAL: the carried value is the last taken write, not b[i-1]
 
 
 @dace.program
@@ -101,7 +101,7 @@ def test_conditional_update_is_not_a_rotation():
     assert np.allclose(got, want, rtol=0, atol=0), 'a conditionally-updated carry was rewritten'
 
 
-# -- the rotated source IS the written array: substitution changes which version is read ---
+# the rotated source IS the written array: substitution changes which version is read
 
 
 @dace.program
@@ -127,7 +127,7 @@ def test_in_place_rotation_reads_the_pre_write_version():
     assert np.allclose(got, want, rtol=0, atol=0), 'in-place carry read the post-write version'
 
 
-# -- the carry escapes the loop: deleting the update must still leave its final value ------
+# the carry escapes the loop: deleting the update must still leave its final value
 
 
 @dace.program
@@ -146,7 +146,7 @@ def test_carry_live_after_loop_is_materialised():
     assert out[0] == b[_LEN - 1], 'the carried value was not materialised after the loop'
 
 
-# -- a genuine rotation must NOT be lifted to an accumulation (WCR) ------------------------
+# a genuine rotation must NOT be lifted to an accumulation (WCR)
 
 
 @dace.program

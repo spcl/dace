@@ -61,9 +61,7 @@ def _build_merge_sdfg(name_tag: str, t_shape, f_shape, m_shape, out_shape, strid
     return sdfg
 
 
-# ---------------------------------------------------------------------------
 # V1 — all scalar
-# ---------------------------------------------------------------------------
 
 
 def test_v1_all_scalar():
@@ -79,9 +77,7 @@ def test_v1_all_scalar():
         assert float(out[0]) == expected
 
 
-# ---------------------------------------------------------------------------
 # V2 — all-array
-# ---------------------------------------------------------------------------
 
 
 def test_v2_all_array_pointwise():
@@ -136,9 +132,7 @@ def test_v2_all_array_2d():
     assert np.array_equal(out, expected), _provenance_report(out, expected, t=t, f=f)
 
 
-# ---------------------------------------------------------------------------
 # V3 — both sources scalar, mask array (scalar-broadcast)
-# ---------------------------------------------------------------------------
 
 
 def test_v3_both_scalars_array_mask():
@@ -157,9 +151,7 @@ def test_v3_both_scalars_array_mask():
     np.testing.assert_array_equal(out, expected)
 
 
-# ---------------------------------------------------------------------------
 # V4 — t scalar, f array, mask array
-# ---------------------------------------------------------------------------
 
 
 def test_v4_t_scalar_f_array():
@@ -178,9 +170,7 @@ def test_v4_t_scalar_f_array():
     np.testing.assert_array_equal(out, expected)
 
 
-# ---------------------------------------------------------------------------
 # V5 — t array, f scalar, mask array
-# ---------------------------------------------------------------------------
 
 
 def test_v5_t_array_f_scalar():
@@ -199,9 +189,7 @@ def test_v5_t_array_f_scalar():
     np.testing.assert_array_equal(out, expected)
 
 
-# ---------------------------------------------------------------------------
 # Operand layout — descriptors that are not packed C
-# ---------------------------------------------------------------------------
 
 
 def test_fortran_layout_operands():

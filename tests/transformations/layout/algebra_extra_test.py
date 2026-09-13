@@ -36,7 +36,7 @@ def packed_offset(m: LayoutMap, index_by_dim: dict) -> int:
     return off
 
 
-# --------------------------- Digit / LayoutMap --------------------------- #
+# Digit / LayoutMap ---------------------------
 def test_digit_coerces_fields_to_sympy():
     d = Digit(0, 16, 8)
     assert isinstance(d.stride, sympy.Basic) and isinstance(d.extent, sympy.Basic)
@@ -60,7 +60,7 @@ def test_block_integer_extent_is_exact():
     assert isinstance(outer.extent, sympy.Integer)
 
 
-# --------------------------- inverse() methods --------------------------- #
+# inverse() methods ---------------------------
 def test_inverse_methods_return_expected_ops():
     assert Permute((2, 0, 1)).inverse() == Permute((1, 2, 0))
     assert Block(3, 8).inverse() == Unblock(3, 8)
@@ -77,7 +77,7 @@ def test_permute_inverse_roundtrips_layout():
     assert compose_ops([p, p.inverse()], base=base) == base
 
 
-# --------------------------- finest / coarsest selection --------------------------- #
+# finest / coarsest selection ---------------------------
 def test_block_splits_finest_digit_of_dim():
     # After Block(0,16) the finest digit is (0,1,16); Block(0,4) must split THAT one.
     m = compose_ops([Block(0, 16), Block(0, 4)], shape=[N])
@@ -100,7 +100,7 @@ def test_pad_grows_coarsest_digit_and_dim_size():
     assert Digit(0, 1, 16) in m.digits
 
 
-# --------------------------- error paths --------------------------- #
+# error paths ---------------------------
 def test_compose_ops_without_base_or_shape_raises():
     with pytest.raises(ValueError):
         compose_ops([Pad(0, 1)])
@@ -140,7 +140,7 @@ def test_unzip_field_mismatch_raises():
         compose_ops([Zip(('re', 'im')), Unzip(('a', 'b'))], shape=[N])
 
 
-# --------------------------- element / shuffle semantics --------------------------- #
+# element / shuffle semantics ---------------------------
 def test_zip_then_unzip_element_roundtrip():
     zipped = compose_ops([Zip(('re', 'im'))], shape=[N])
     assert zipped.element == ('re', 'im')
@@ -154,7 +154,7 @@ def test_shuffle_chain_accumulates_and_sorts_by_dim():
     assert m.shuffles == ((0, (('b', False), ('c', False))), (2, (('a', False), )))
 
 
-# --------------------------- simplify_ops peephole identities --------------------------- #
+# simplify_ops peephole identities ---------------------------
 def test_block_then_unblock_is_id_but_pads_when_indivisible():
     # simplify cancels the pair structurally...
     assert is_identity([Block(0, 16), Unblock(0, 16)])
@@ -203,7 +203,7 @@ def test_nested_cancellation_reaches_outer_pair():
     assert is_identity([Pad(0, 4), Block(0, 8), Unblock(0, 8), Pad(0, -4)])
 
 
-# --------------------------- is_identity exactness --------------------------- #
+# is_identity exactness ---------------------------
 def test_is_identity_exactness():
     assert is_identity([])
     assert simplify_ops([]) == []
@@ -217,7 +217,7 @@ def test_is_identity_exactness():
     assert not is_identity([Block(0, 16), Block(0, 4)])
 
 
-# --------------------------- JSON serialization round-trips --------------------------- #
+# JSON serialization round-trips ---------------------------
 def test_ops_json_roundtrip_all_op_kinds():
     ops = [
         Permute((2, 0, 1)),
@@ -251,7 +251,7 @@ def test_op_from_dict_unknown_kind_raises():
         op_from_dict({'op': 'Nope'})
 
 
-# --------------------------- digit index expression lowering (numpy oracle) --------------------------- #
+# digit index expression lowering (numpy oracle) ---------------------------
 def test_physical_index_exprs_identity_matches_ravel():
     shape = [4, 5, 3]
     m = identity_map(shape)

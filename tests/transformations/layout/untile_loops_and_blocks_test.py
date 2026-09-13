@@ -58,10 +58,8 @@ def loop_vars(sdfg):
     return [r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
 
-# -----------------------------------------------------------------------------
 # The blocked+tiled kernel: A is physically [N/K, K], accessed A[i//K, ii] while
 # the loop is for i in range(0, N, K): for ii in range(0, K).
-# -----------------------------------------------------------------------------
 
 
 @dace.program
@@ -160,9 +158,7 @@ def test_prepare_for_layout_untiles_and_unblocks():
     assert numpy.allclose(A, B * 2.0)
 
 
-# -----------------------------------------------------------------------------
 # 2-D array blocked on the last logical dimension: [M, N/K, K] accessed A[m, i//K, ii].
-# -----------------------------------------------------------------------------
 
 
 @dace.program
@@ -194,9 +190,7 @@ def test_2d_blocked_last_dim_untiles_and_unblocks():
     assert numpy.allclose(A, B + 3.0)
 
 
-# -----------------------------------------------------------------------------
 # Integer kernel -- exact equality (array_equal) rather than allclose.
-# -----------------------------------------------------------------------------
 
 
 @dace.program
@@ -223,9 +217,7 @@ def test_int_kernel_untile_unblock_array_equal():
     assert numpy.array_equal(A, B + 7), f'int mismatch: {A} vs {B + 7}'
 
 
-# -----------------------------------------------------------------------------
 # No-op / superset contracts.
-# -----------------------------------------------------------------------------
 
 
 def test_noop_on_plain_untiled_kernel():

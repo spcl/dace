@@ -37,9 +37,9 @@ N, L, A, B, C, D, E = (dace.symbol('N'), dace.symbol('L'), dace.symbol('A'), dac
                        dace.symbol('D'), dace.symbol('E'))
 
 
-# --------------------------------------------------------------------------- #
+# #
 # Structural helpers                                                           #
-# --------------------------------------------------------------------------- #
+# #
 def _map_entries(sdfg: dace.SDFG):
     return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
 
@@ -78,9 +78,9 @@ def _apply_map_to_for(sdfg: dace.SDFG, min_dims: int):
     return applied
 
 
-# --------------------------------------------------------------------------- #
+# #
 # PART A -- MapToForLoop                                                        #
-# --------------------------------------------------------------------------- #
+# #
 @dace.program
 def simple_1d(a: dace.float64[N], b: dace.float64[N]):
     for i in dace.map[0:N]:
@@ -258,7 +258,7 @@ def test_a5_start_block_edge_cases():
     n = 10
     a = rng.random(n)
 
-    # --- Variant 1: map IS the parent's start block ---------------------- #
+    # Variant 1: map IS the parent's start block ----------------------
     s1 = map_is_start.to_sdfg(simplify=True)
     start_before = s1.start_block
     oracle1 = a * 2.0 + 1.0
@@ -271,7 +271,7 @@ def test_a5_start_block_edge_cases():
     s1(a=a.copy(), b=b1, N=n)
     assert np.allclose(b1, oracle1)
 
-    # --- Variant 2: the map is NOT the parent's start block ------------- #
+    # Variant 2: the map is NOT the parent's start block -------------
     s2, pred, mapst = _map_not_start_sdfg(n)
     assert s2.start_block is pred and any(isinstance(x, nodes.MapEntry) for x in mapst.nodes())
     oracle2 = a * 2.0 + (a[0] + 100.0)
@@ -396,9 +396,9 @@ def test_a6_multi_successor_reparent_on_inline():
                     f'ConditionalBlock {cfg.label!r} has else at index {i}/{len(cfg.branches)}'
 
 
-# --------------------------------------------------------------------------- #
+# #
 # PART B -- EmptyStateElimination                                              #
-# --------------------------------------------------------------------------- #
+# #
 def _add_double_tasklet(state: dace.SDFGState, in_name: str, out_name: str, n: int):
     """Wire ``out[0:n] = in[0:n] * 2`` into ``state`` via an elementwise map."""
     r = state.add_read(in_name)

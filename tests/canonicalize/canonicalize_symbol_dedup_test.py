@@ -39,9 +39,7 @@ def _run_dedup(sdfg):
     return Pipeline([SymbolDedup()]).apply_pass(sdfg, {})
 
 
-# ----------------------------------------------------------------------
 # Positive: hand-built duplicate-gather SDFG (direct, runnable)
-# ----------------------------------------------------------------------
 
 
 def _make_duplicate_gather_sdfg(name='dedup_positive'):
@@ -111,9 +109,7 @@ def test_symbol_dedup_positive_handbuilt():
     assert out_new[1] == e[idx[0]]
 
 
-# ----------------------------------------------------------------------
 # Positive: the real gather-stencil through canonicalize (motivating case)
-# ----------------------------------------------------------------------
 
 
 @dace.program
@@ -165,9 +161,7 @@ def test_symbol_dedup_gather_stencil_bit_exact():
     assert np.allclose(d_new, e[idx] + f)
 
 
-# ----------------------------------------------------------------------
 # Negative: different RHS must NOT merge
-# ----------------------------------------------------------------------
 
 
 def test_symbol_dedup_different_rhs_not_merged():
@@ -201,9 +195,7 @@ def test_symbol_dedup_different_rhs_not_merged():
     sdfg.validate()
 
 
-# ----------------------------------------------------------------------
 # Negative: partial (mismatched def-site sets) must NOT merge
-# ----------------------------------------------------------------------
 
 
 def test_symbol_dedup_partial_def_sites_not_merged():

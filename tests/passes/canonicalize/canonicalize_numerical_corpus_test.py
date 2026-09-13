@@ -80,9 +80,7 @@ def test_canon_preserves_semantics(suite, name):
     assert _preserves(suite, name, _canon, 'canon'), f"canon changed {suite}:{name} output vs reference"
 
 
-# ---------------------------------------------------------------------------
 # Script entry point: print the canon / auto-opt comparison tables.
-# ---------------------------------------------------------------------------
 def _generate_tables():
     from dace.transformation.auto.auto_optimize import auto_optimize
     pipelines = {

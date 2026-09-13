@@ -47,10 +47,8 @@ def _split_evaluates_to(points, n_val, expected):
     return False
 
 
-# ---------------------------------------------------------------------------
 #  TSVC s1113: a[i] = a[N//2] + b[i]. The broadcast read a[N//2] collides with
 #  the write a[i] only at i == N//2.
-# ---------------------------------------------------------------------------
 @dace.program
 def s1113(a: dace.float64[N], b: dace.float64[N]):
     for i in range(N):
@@ -86,10 +84,8 @@ def test_s1113_value_preserving_and_parallelizes():
     assert _nmaps(sdfg) >= 1, "the range segments around the conflict must parallelize"
 
 
-# ---------------------------------------------------------------------------
 #  Boundary conflict: a[i] = a[0] + b[i]. The conflict is at i == 0 (a boundary),
 #  so the split drops the empty [start, x-1] side -> {0} + [1, N-1].
-# ---------------------------------------------------------------------------
 @dace.program
 def broadcast_at_zero(a: dace.float64[N], b: dace.float64[N]):
     for i in range(N):
@@ -115,10 +111,8 @@ def test_boundary_broadcast_value_preserving():
     assert np.allclose(got, ref)
 
 
-# ---------------------------------------------------------------------------
 #  No conflict: the broadcast read is on a DIFFERENT array (c[N//2]), so writing
 #  a[i] never collides -> no split point, and the loop maps directly.
-# ---------------------------------------------------------------------------
 @dace.program
 def broadcast_other_array(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
     for i in range(N):

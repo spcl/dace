@@ -92,9 +92,9 @@ def _tts(sdfg):
     return [n for n in sdfg.all_nodes_recursive() if isinstance(n[0], TensorTranspose)]
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Passes leave lowering unset
-# --------------------------------------------------------------------------- #
+# #
 def test_gemm_to_tensordot_leaves_lowering_unset():
     """The transform is device-agnostic: the inserted TensorDot has no implementation."""
     sdfg, _ = _gemm_sdfg()
@@ -116,9 +116,9 @@ def test_permute_leaves_its_transpose_unset_then_select_sets_it():
     assert tt.implementation == "pure"
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  CPU selection: TensorDot prefers TBLIS when linkable, else pure
-# --------------------------------------------------------------------------- #
+# #
 def test_select_cpu_sets_pure(monkeypatch):
     """No linkable TBLIS -> the pure CPU map (the always-available fallback)."""
     monkeypatch.setattr(select_lowering, "tblis_is_linkable", lambda: False)
@@ -162,9 +162,9 @@ def test_select_over_layout_change_node(monkeypatch):
     assert lc.implementation == "pure"
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  GPU selection gates: storage, cuTENSOR availability, dtype
-# --------------------------------------------------------------------------- #
+# #
 def test_select_gpu_gpu_storage_supported_dtype_gets_cutensor(monkeypatch):
     monkeypatch.setattr(select_lowering, "cutensor_is_linkable", lambda: True)
     sdfg, tt = _transpose_sdfg(dace.StorageType.GPU_Global, dace.float64)
@@ -203,9 +203,9 @@ def test_select_gpu_unsupported_dtype_falls_back_to_pure(monkeypatch):
     assert tt.implementation == "pure"  # dtype gate
 
 
-# --------------------------------------------------------------------------- #
+# #
 #  Explicit choice preserved; bad device rejected; CPU end-to-end
-# --------------------------------------------------------------------------- #
+# #
 def test_select_preserves_explicit_choice():
     """A lowering the caller pinned is never overwritten (only ``None`` nodes are touched)."""
     sdfg, tt = _transpose_sdfg(dace.StorageType.Default)
