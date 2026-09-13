@@ -2637,10 +2637,10 @@ class CPUCodeGen(TargetCodeGenerator):
         cpp.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
                             toplevel_schedule, self)
 
-    def make_keyword_remover(self, sdfg, memlets):
+    def make_keyword_remover(self, sdfg, memlets, defined_symbols):
         """AST transformer used to lower a Python tasklet body to C++. A hook so ``cpp.unparse_tasklet``
         does not hard-code the class; the readable generator overrides it to also inline array accesses."""
-        return cpp.DaCeKeywordRemover(sdfg, memlets, sdfg.constants, self)
+        return cpp.DaCeKeywordRemover(sdfg, memlets, sdfg.constants, self, defined_symbols)
 
     def _connector_needs_copy(self, node, conn):
         """Whether a tasklet connector needs a copy-in/out temporary. Always True here; the readable

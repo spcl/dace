@@ -39,6 +39,12 @@ def clamp(x: dace.float64[N], y: dace.float64[N]):
 
 
 @dace.program
+def clamp_int64(x: dace.int64[N], y: dace.int64[N]):
+    for i in dace.map[0:N]:
+        y[i] = min(max(x[i], 0), 9)
+
+
+@dace.program
 def floored(x: dace.int64[N], q: dace.int64[N], r: dace.int64[N]):
     for i in dace.map[0:N]:
         q[i] = x[i] // 3
@@ -130,6 +136,19 @@ def minmax_case() -> Case:
         'N': x.size
     }, {
         'y': np.minimum(np.maximum(x, 0.0), 1.0)
+    })
+
+
+def minmax_through_a_symbol_case() -> Case:
+    """Simplification hoists ``max(x[i], 0)`` into an interstate symbol, so ``min`` reads a symbol the
+    tasklet has no connector for; its type has to come from the scope."""
+    x = np.arange(-5, 15, dtype=np.int64)
+    return (clamp_int64.to_sdfg(simplify=True), ('cpf_max_int64(', 'cpf_min_int64('), {
+        'x': x,
+        'y': np.zeros_like(x),
+        'N': x.size
+    }, {
+        'y': np.minimum(np.maximum(x, 0), 9)
     })
 
 
@@ -260,6 +279,7 @@ def duplicate_check_case(repeat: bool) -> Case:
 
 CASES: Dict[str, Callable[[], Case]] = {
     'minmax_float64': minmax_case,
+    'minmax_int64_through_a_symbol': minmax_through_a_symbol_case,
     'floored_int64': floored_case,
     'maths_float32': maths_case,
     'int_ceil': int_ceil_case,

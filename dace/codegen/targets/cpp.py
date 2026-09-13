@@ -1168,7 +1168,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # The visitors rewrite in place; the tasklet keeps its own AST.
         stmt = astutils.copy_tree(stmt)
         struct_initializer.visit(stmt)
-        remover = codegen.make_keyword_remover(sdfg, memlets)
+        remover = codegen.make_keyword_remover(sdfg, memlets, defined_symbols)
         if isinstance(stmt, ast.Expr):
             rk = remover.visit_TopLevelExpr(stmt)
         else:
@@ -1283,12 +1283,19 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                Python frontend).
     """
 
-    def __init__(self, sdfg, memlets, constants, codegen):
+    def __init__(self,
+                 sdfg,
+                 memlets,
+                 constants,
+                 codegen,
+                 defined_symbols: Optional[Dict[str, dtypes.typeclass]] = None):
         self.sdfg = sdfg
         self.memlets = memlets
         self.constants = constants
         self.codegen = codegen
         self.allow_casts = True
+        #: Name -> dtype of the symbols and connectors in scope, for a statement a subclass prints itself.
+        self.defined_symbols: Dict[str, dtypes.typeclass] = dict(defined_symbols or {})
         #: Operand text -> dtype for each access this remover inlines; empty unless a subclass inlines.
         self.operand_dtypes: Dict[str, dtypes.typeclass] = {}
 

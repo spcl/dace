@@ -703,8 +703,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     # tasklet lowering hooks
 
-    def make_keyword_remover(self, sdfg, memlets):
-        return ReadableKeywordRemover(sdfg, memlets, sdfg.constants, self)
+    def make_keyword_remover(self, sdfg, memlets, defined_symbols):
+        return ReadableKeywordRemover(sdfg, memlets, sdfg.constants, self, defined_symbols)
 
     def _connector_needs_copy(self, node, conn) -> bool:
         # Only tasklets are rewritten. NestedSDFGs and other code nodes always
@@ -1789,8 +1789,8 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
     produced by InlineTaskletConnectors) to ``A[A_idx(i, j, ...)]``.
     """
 
-    def __init__(self, sdfg, memlets, constants, codegen):
-        super().__init__(sdfg, memlets, constants, codegen)
+    def __init__(self, sdfg, memlets, constants, codegen, defined_symbols=None):
+        super().__init__(sdfg, memlets, constants, codegen, defined_symbols)
         #: Operand text -> its dtype, for the statements this class renders itself (below) instead of
         #: leaving to ``unparse_tasklet``'s unparser, which is handed the same thing as
         #: ``defined_symbols``. A surviving connector keeps its name and its declared dtype; an
@@ -1855,7 +1855,10 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
             return self.generic_visit(node)
         rhs = cppunparse.cppunparse(value,
                                     expr_semicolon=False,
-                                    defined_symbols=self.operand_dtypes,
+                                    defined_symbols={
+                                        **self.defined_symbols,
+                                        **self.operand_dtypes
+                                    },
                                     data_names=self.operand_dtypes)
         desc = self.sdfg.arrays[target]
         plain = '%s = %s;' % (lhs, rhs)
