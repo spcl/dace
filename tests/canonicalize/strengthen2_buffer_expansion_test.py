@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Soundness strengthening for :class:`~dace.transformation.passes.buffer_expansion.BufferExpansion`.
 
-``_defined_before_read`` credits a buffer as loop-private only when the writes that provably precede
+``defined_before_read`` credits a buffer as loop-private only when the writes that provably precede
 a read TOGETHER cover the read region. The coverage test must be *precise*: a write that merely
 shares a bounding box with the read (a STRIDED write ``buf[0:2*H:2]`` touches only the even slots but
 its bounding box spans all of ``buf[0:2*H]``) leaves the untouched slots carrying whatever a previous
@@ -103,7 +103,7 @@ def test_strided_partial_fill_is_not_loop_private():
 
     # The sharp statement: the guard must not credit a strided write as a full fill.
     fresh, floop = _carried_strided_sdfg()
-    assert BufferExpansion._defined_before_read(floop, 'buf') is False
+    assert BufferExpansion.defined_before_read(floop, 'buf') is False
     assert 'buf' not in BufferExpansion()._privatizable_buffers(fresh, floop)
 
 

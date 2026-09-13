@@ -30,6 +30,7 @@ import contextlib
 import functools
 import io
 import operator
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
@@ -44,6 +45,19 @@ _F_ORDER = 'F'
 #: Array lifetimes we may re-shape (allocated per scope / per SDFG call, so a private
 #: copy per iteration is sound). Persistent/Global arrays outlive the call and are left alone.
 _REINDEXABLE_LIFETIMES = (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.SDFG)
+
+
+@dataclass(slots=True)
+class LoopDominators:
+    """``all_dominators(loop)``, computed on first need and shared by every buffer asked about one unmutated loop."""
+    loop: LoopRegion
+    computed: Optional[Dict[Any, Set[Any]]] = None
+
+    def get(self) -> Dict[Any, Set[Any]]:
+        if self.computed is None:
+            from dace.sdfg.analysis import cfg as cfg_analysis  # avoid an import cycle
+            self.computed = cfg_analysis.all_dominators(self.loop)
+        return self.computed
 
 
 def _prod(values) -> Any:
@@ -195,7 +209,7 @@ class BufferExpansion(ppl.Pass):
         descriptor-level filters :meth:`_privatizable_buffers` applies -- with at least one
         AccessNode fed by an incoming edge (a write). Read-only and never-accessed transients are
         omitted so the candidate gate iterates a small key set. The plain "has an incoming edge"
-        test is a broad, sound stand-in for ``_defined_before_read``'s per-edge write check (it can
+        test is a broad, sound stand-in for ``defined_before_read``'s per-edge write check (it can
         only over-include), keeping the gate a necessary precondition for privatizability.
         """
         reindexable = {
@@ -307,6 +321,8 @@ class BufferExpansion(ppl.Pass):
             interstate_syms = self._interstate_symbols(sdfg)
         if loop_states is None:
             loop_states = set(loop.all_states())
+        # The loop is not mutated while its buffers are judged, so one dominator table serves all of them.
+        dominators = LoopDominators(loop)
         candidates: List[str] = []
         for name, desc in sdfg.arrays.items():
             if not isinstance(desc, data.Array) or not desc.transient:
@@ -319,6 +335,13 @@ class BufferExpansion(ppl.Pass):
             # then rejects. Never expand a view; expand only real buffers.
             if isinstance(desc, data.View):
                 continue
+            # Descriptor tests and index lookups before the walks over the loop's states.
+            if desc.lifetime not in _REINDEXABLE_LIFETIMES:
+                continue
+            if len(desc.shape) < 1:
+                continue
+            if not self._is_loop_local(loop_states, name, access_states, interstate_syms):
+                continue
             # Do not expand a buffer that feeds (or is produced by) a library node. It
             # is a fixed-shape operand (e.g. a GEMM's 2D ``Norb x Norb`` slice), so
             # expanding it widens the operand shape the library node's expansion
@@ -329,12 +352,7 @@ class BufferExpansion(ppl.Pass):
             # the loop should stay sequential rather than become a Map of library calls.
             if self._is_library_node_operand(loop_states, name):
                 continue
-            if desc.lifetime not in _REINDEXABLE_LIFETIMES:
-                continue
-            if len(desc.shape) < 1:
-                continue
-            if self._is_loop_local(loop_states, name, access_states, interstate_syms) \
-                    and self._defined_before_read(loop, name):
+            if self.defined_before_read(loop, name, dominators):
                 candidates.append(name)
         return candidates
 
@@ -369,7 +387,7 @@ class BufferExpansion(ppl.Pass):
         return name not in interstate_syms
 
     @staticmethod
-    def _defined_before_read(loop: LoopRegion, name: str) -> bool:
+    def defined_before_read(loop: LoopRegion, name: str, dominators: Optional[LoopDominators] = None) -> bool:
         """True if every read of ``name`` in the loop body observes a value written in the
         *same* iteration -- i.e. ``name`` is never loop-carried, so a private copy per
         iteration preserves semantics.
@@ -381,9 +399,11 @@ class BufferExpansion(ppl.Pass):
         write covers, marks the buffer as carried (e.g. an accumulator, or ``q`` at level
         ``n-1``) and is refused. Conditional writes are not credited (they may not run), and a
         write/read split across two unconditional states is handled via dominance.
-        """
-        from dace.sdfg.analysis import cfg as cfg_analysis  # avoid an import cycle
 
+        :param dominators: The loop's shared dominator table; ``None`` builds one for this call.
+        """
+        if dominators is None:
+            dominators = LoopDominators(loop)
         saw_read = saw_write = False
         # (reading_block, read_subset, node_local_write_subsets) triples needing a dominator.
         exposed_reads: List[Tuple[Any, Any, List[Any]]] = []
@@ -421,7 +441,7 @@ class BufferExpansion(ppl.Pass):
         if not exposed_reads:
             return True
 
-        doms = cfg_analysis.all_dominators(loop)
+        doms = dominators.get()
         for block, read, node_writes in exposed_reads:
             dominators = doms.get(block, set())
             # A read is defined-this-iteration when the writes that provably precede it -- the ones

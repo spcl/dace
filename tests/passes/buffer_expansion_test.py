@@ -7,7 +7,7 @@ loop-indexed dimension. The tests cover:
 
 * ``_loop_index`` sizing (the new dimension must hold one slot *per iteration*, an off-by-one here
   under-sizes the axis and the last iteration accesses out of bounds);
-* the soundness guard ``_defined_before_read`` -- it must credit a buffer defined before it is read
+* the soundness guard ``defined_before_read`` -- it must credit a buffer defined before it is read
   each iteration (including a fill spread across several statements) and REFUSE a genuinely
   loop-carried buffer (accumulator / recurrence / reduction / partially-written);
 * the ``_expand`` primitive -- expanding a scratch buffer that ``LoopToMap`` refuses turns the loop
@@ -247,7 +247,7 @@ def test_expand_offset_base_subset_bit_exact():
 
 
 # ----------------------------------------------------------------------------------------------
-# _defined_before_read / _privatizable_buffers -- the soundness guard
+# defined_before_read / _privatizable_buffers -- the soundness guard
 # ----------------------------------------------------------------------------------------------
 def _fill(state, lo, hi, name='buf'):
     w = state.add_access(name)
@@ -291,13 +291,13 @@ def _fill_read_loop(fills, read_hi):
 def test_guard_accepts_multi_statement_union_fill():
     """``buf[0:M] = ...; buf[M:2*M] = ...`` read back as ``buf[0:2*M]``: the two writes TOGETHER
     cover the read, so the buffer is defined-before-read and privatisable. This is the pass's
-    ``_defined_before_read`` extension for multi-statement fills.
+    ``defined_before_read`` extension for multi-statement fills.
 
     Detection is widened, but the ``LoopToMap`` oracle still gates *expansion*: this buffer is a
     loop-local transient that ``LoopToMap`` already privatises, so the loop is already a Map
     candidate and the pass must NOT grow it (no needless expansion)."""
     sdfg, loop = _fill_read_loop([(0, 'M'), ('M', '2*M')], '2*M')
-    assert BufferExpansion._defined_before_read(loop, 'buf') is True
+    assert BufferExpansion.defined_before_read(loop, 'buf') is True
     assert 'buf' in BufferExpansion()._privatizable_buffers(sdfg, loop)
     shape_before = list(sdfg.arrays['buf'].shape)
     assert BufferExpansion().apply_pass(sdfg, {}) is None, 'already-mappable loop must not be grown'
@@ -308,7 +308,7 @@ def test_guard_refuses_partial_fill_uninitialized_read():
     """Only ``buf[0:M]`` is written but ``buf[0:2*M]`` is read -- the upper half is uninitialised
     (carried across iterations). The guard must refuse."""
     sdfg, loop = _fill_read_loop([(0, 'M')], '2*M')
-    assert BufferExpansion._defined_before_read(loop, 'buf') is False
+    assert BufferExpansion.defined_before_read(loop, 'buf') is False
     assert 'buf' not in BufferExpansion()._privatizable_buffers(sdfg, loop)
 
 
@@ -316,7 +316,7 @@ def test_guard_refuses_gap_tiling():
     """``buf[0:M]`` and ``buf[M+1:2*M]`` leave a hole at index ``M``; the union does not cover
     ``buf[0:2*M]`` so the guard refuses (no inequality is allowed to paper over the gap)."""
     sdfg, loop = _fill_read_loop([(0, 'M'), ('M + 1', '2*M')], '2*M')
-    assert BufferExpansion._defined_before_read(loop, 'buf') is False
+    assert BufferExpansion.defined_before_read(loop, 'buf') is False
 
 
 def _rmw_accumulator_sdfg():
@@ -354,8 +354,8 @@ def test_guard_refuses_read_before_write_accumulator():
     each iteration) as privatisable. Expanding ``t`` cannot make the ``s``-carried loop mappable, so
     the pass's oracle keeps no expansion and ``apply_pass`` returns ``None``."""
     sdfg, loop = _rmw_accumulator_sdfg()
-    assert BufferExpansion._defined_before_read(loop, 's') is False, 'carried accumulator must be refused'
-    assert BufferExpansion._defined_before_read(loop, 't') is True, 'written-then-read scratch is fine'
+    assert BufferExpansion.defined_before_read(loop, 's') is False, 'carried accumulator must be refused'
+    assert BufferExpansion.defined_before_read(loop, 't') is True, 'written-then-read scratch is fine'
     assert BufferExpansion()._privatizable_buffers(sdfg, loop) == ['t']
     # The loop is not parallelisable (``s`` is carried); expanding ``t`` does not change that, so the
     # speculative expansion is reverted and nothing is kept.
@@ -383,7 +383,7 @@ def test_guard_refuses_wcr_reduction_edge():
     body.add_edge(aw, None, t2, 'x', dace.Memlet('acc[0]'))
     body.add_edge(t2, 'y', ow, None, dace.Memlet('out[i]'))
     sdfg.validate()
-    assert BufferExpansion._defined_before_read(loop, 'acc') is False
+    assert BufferExpansion.defined_before_read(loop, 'acc') is False
 
 
 def test_recurrence_a_i_from_a_i_minus_one_not_expanded_and_preserved():
