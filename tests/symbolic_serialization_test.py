@@ -881,5 +881,43 @@ def test_stored_ceiling_in_map_bound_lowers_to_an_integer_expression():
     assert all('ceil' not in line for line in loops), loops
 
 
+def unevaluated_execution_count() -> sympy.Sum:
+    # The shape StatePropagation leaves on a skewed inner loop: ``doit`` cannot sum over a Min bound.
+    n = symbolic.symbol('N', dtype=dace.int64)
+    it = symbolic.symbol('it', dtype=dace.int64)
+    return sympy.Sum(sympy.Min(n - 1, it + 64) - it, (it, 0, n - 1))
+
+
+def filled_sdfg_counting_executions_as_a_sum(name: str) -> dace.SDFG:
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [dace.symbol('N', dace.int64)], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet('fill', {'i': '0:N'}, {}, 'o = i', {'o': dace.Memlet('A[i]')}, external_edges=True)
+    state.executions = unevaluated_execution_count()
+    return sdfg
+
+
+def test_a_state_counting_its_executions_as_an_unevaluated_sum_survives_json():
+    sdfg = filled_sdfg_counting_executions_as_a_sum('sum_executions_json')
+    expected = unevaluated_execution_count()
+
+    restored = dace.SDFG.from_json(sdfg.to_json()).start_block.executions
+
+    assert isinstance(restored, sympy.Sum)
+    assert restored == expected
+    assert restored.limits == expected.limits
+    assert symbolic.serialize_symbolic(restored) == symbolic.serialize_symbolic(expected)
+
+
+def test_an_sdfg_whose_state_executions_is_an_unevaluated_sum_compiles_under_the_serialization_check():
+    sdfg = filled_sdfg_counting_executions_as_a_sum('sum_executions_compile')
+    values = np.zeros(8)
+
+    with dace.config.set_temporary('testing', 'serialization', value=True):
+        sdfg(A=values, N=8)
+
+    assert np.array_equal(values, np.arange(8, dtype=np.float64))
+
+
 if __name__ == '__main__':
     pytest.main([__file__])

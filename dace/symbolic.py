@@ -3039,6 +3039,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'ceil': sympy.ceiling,
         'ceiling': sympy.ceiling,
         'sqrt': sympy.sqrt,
+        'Sum': sympy.Sum,
         'round': ROUND,
         'And': AND,
         'Or': OR,
@@ -3207,6 +3208,10 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             except AttributeError as ex:
                 raise TypeError(f'Unknown DaCe dtype "{node.attr}"') from ex
         return _construct_function_uncached(Attr, self.visit(node.value), symbol(node.attr))
+
+    def visit_Tuple(self, node: ast.Tuple) -> sympy.Tuple:
+        # The ``(var, lo, hi)`` limits sympy prints for a ``Sum`` a propagated execution count can hold.
+        return sympy.Tuple(*[self.visit(element) for element in node.elts])
 
     def generic_visit(self, node):
         raise TypeError(f'Unsupported node in symbolic deserialization: {type(node).__name__}')
