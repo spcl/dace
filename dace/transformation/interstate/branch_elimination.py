@@ -10,7 +10,7 @@ from dace import InterstateEdge
 from dace.dtypes import typeclass
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, enclosing_region_symbols
 import dace.sdfg.utils as sdutil
 import dace.sdfg.construction_utils as cutil
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
@@ -371,8 +371,10 @@ class BranchElimination(transformation.MultiStateTransformation):
         # Collect inputs we need
         arr_inputs = sorted(var for var in free_vars if var in state.sdfg.arrays)
         sym_inputs = {var for var in free_vars if var not in state.sdfg.arrays}
+        # An enclosing loop's iterator is bound by its scope and must never be registered as an SDFG symbol.
+        scoped = enclosing_region_symbols(state, dict(state.sdfg.symbols))
         for sym_name in sym_inputs:
-            if sym_name not in state.sdfg.symbols:
+            if sym_name not in scoped:
                 # Infer dtype from any interstate edge that assigns to
                 # ``sym_name`` from a single array read (e.g.,
                 # ``d_index_0 = d[i]``).  Falling back to int32 silently
@@ -395,7 +397,8 @@ class BranchElimination(transformation.MultiStateTransformation):
                     if inferred_dtype is not dace.int32:
                         break
                 state.sdfg.add_symbol(sym_name, inferred_dtype, False)
-            assert sym_name in state.sdfg.symbols, f"{sym_name} not in {state.sdfg.symbols}: assignment is {rhs}"
+            assert sym_name in scoped or sym_name in state.sdfg.symbols, \
+                f"{sym_name} not in {state.sdfg.symbols}: assignment is {rhs}"
 
         # Generate the scalar for the float constant
         float_lhs_name, float_lhs = state.sdfg.add_scalar(

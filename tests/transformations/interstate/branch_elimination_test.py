@@ -2550,6 +2550,15 @@ def test_a_guard_on_an_enclosing_loop_iterator_is_reported_as_iterator_dependent
     assert sut.condition_has_map_param()
 
 
+def test_lowering_a_guard_assignment_never_registers_the_enclosing_iterator():
+    sdfg, _, body = loop_guarded_by_its_unregistered_iterator()
+    sut = branch_elimination.BranchElimination()
+
+    sut._move_interstate_assignment_to_state(body, 'i + 1', 'c', None, None)
+
+    assert 'i' not in sdfg.symbols
+
+
 if __name__ == "__main__":
     test_s1161()
     test_top_level_if()
