@@ -3789,12 +3789,16 @@ class LoopRegion(ControlFlowRegion):
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.init_statement and self.loop_variable:
-            # Inference parses the loop header; reuse the answer while the header and its names' types are unchanged
+            # Reuse the inferred type while the header text and the types of the names it reads are unchanged
             texts = (self.loop_variable, self.init_statement.as_string, self.loop_condition.as_string,
                      self.update_statement.as_string if self.update_statement else '')
-            names = sorted(set(re.findall(r'[A-Za-z_]\w*', ' '.join(texts))))
-            key = (texts, tuple((n, symbols.get(n)) for n in names),
-                   tuple((n, self.sdfg.arrays[n].dtype) for n in names if n in self.sdfg.arrays))
+            if self._new_symbols_key is not None and self._new_symbols_key[0] == texts:
+                names = self._new_symbols_key[1]
+            else:
+                names = tuple(sorted(set(re.findall(r'[A-Za-z_]\w*', ' '.join(texts)))))
+            arrays = self.sdfg.arrays
+            key = (texts, names, tuple(symbols.get(n)
+                                       for n in names), tuple(arrays[n].dtype if n in arrays else None for n in names))
             if key == self._new_symbols_key:
                 return dict(self._new_symbols_value)
             self._new_symbols_key = key
