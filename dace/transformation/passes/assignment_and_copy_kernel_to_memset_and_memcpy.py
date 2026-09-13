@@ -1000,7 +1000,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         :param pipeline_res: Unused; provided by the pass-pipeline contract.
         :returns: Total number of memcpy + memset paths lifted across the SDFG.
         """
-        map_entries = set()
+        # Graph order, not address order: a lift decides whether a later map still has another writer.
+        map_entries = OrderedSet()
 
         for n, g in sdfg.all_nodes_recursive():
             if isinstance(n, dace.nodes.MapEntry):

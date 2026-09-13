@@ -1158,5 +1158,38 @@ def test_the_same_body_without_the_ordering_edge_still_lifts():
     assert numpy.allclose(B_OUT, 2.0 * B_IN)
 
 
+def sdfg_with_independent_memset_maps(map_count: int) -> dace.SDFG:
+    sdfg = dace.SDFG("independent_memsets")
+    state = sdfg.add_state("body", is_start_block=True)
+    for k in range(map_count):
+        name = f"A{k}"
+        sdfg.add_array(name=name, shape=(DIM_SIZE, ), dtype=dace.float64, transient=False)
+        map_entry, map_exit = state.add_map(name=f"zero_{name}",
+                                            ndrange={"i": dace.subsets.Range([(0, DIM_SIZE - 1, 1)])})
+        fill = state.add_tasklet(name=f"fill_{name}", inputs={}, outputs={"out": None}, code="out = 0.0")
+        state.add_edge(map_entry, None, fill, None, dace.memlet.Memlet(None))
+        map_exit.add_in_connector(f"IN_{name}")
+        map_exit.add_out_connector(f"OUT_{name}")
+        state.add_edge(fill, "out", map_exit, f"IN_{name}", dace.memlet.Memlet(f"{name}[i]"))
+        state.add_edge(map_exit, f"OUT_{name}", state.add_access(name), None,
+                       dace.memlet.Memlet(f"{name}[0:{DIM_SIZE}]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_lifted_memsets_follow_map_order_not_memory_addresses():
+    """The pass visits maps in graph order, so every rebuild lifts them in the order they were built."""
+    keep_alive = []
+    orders = []
+    for rebuild in range(12):
+        keep_alive.append([object() for attempt in range(rebuild * 1543)])
+        sdfg = sdfg_with_independent_memset_maps(8)
+        state = sdfg.states()[0]
+        AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+        orders.append(
+            [state.out_edges(node)[0].dst.data for node in state.nodes() if isinstance(node, FillLibraryNode)])
+    assert orders == [[f"A{k}" for k in range(8)]] * 12, orders
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
