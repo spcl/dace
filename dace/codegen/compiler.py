@@ -529,10 +529,7 @@ def configure_and_compile(
     if cmake_link_flags:
         cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
 
-    # Stated on every build, empty included: a configure cache seeded by an earlier build carries
-    # its own value for this, and a precompiled header that lived in shared memory is gone after a
-    # reboot while the path it was cached under is not. The build would then be told to include a
-    # header that is not there, which is a hard error rather than the fallback it should be.
+    # Always set (even if empty), so a CMake cache cannot keep pointing at a header that no longer exists
     pch_dir = prepare_precompiled_header(targets) or ''
     cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
     # What the configure DISCOVERS: the command minus the flags naming this program. ``DACE_FILES``
