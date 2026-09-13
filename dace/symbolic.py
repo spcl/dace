@@ -3951,9 +3951,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 return 'int64'
             return inner if inner in cpf_lowering.C_FLOATING_RANKS else 'float64'
         if name in cpf_lowering.C_TYPED_HELPER_SPECS:
-            types = tuple(self.c_type(argument) for argument in expr.args)
-            picked = types[:1] if cpf_lowering.C_TYPED_HELPER_SPECS[name][0] == 'first' else types
-            return None if any(dtype is None for dtype in picked) else cpf_lowering.c_helper_dispatch(name, types)
+            return cpf_lowering.c_helper_result_type(name, tuple(self.c_type(argument) for argument in expr.args))
         if name in cpf_lowering.C_TYPED_MATH:
             types = tuple(self.c_type(argument) for argument in expr.args)
             if any(dtype is None for dtype in types):

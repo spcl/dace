@@ -947,3 +947,32 @@ def test_a_complex_exponential_keeps_its_imaginary_part(language: str):
     call_standalone(build_standalone(rendering.code, name, language=language), rendering.sdfg, {'x': x, 'y': y, 'N': n})
     k, m = np.meshgrid(np.arange(n), np.arange(n), indexing='ij')
     assert_matches({'y': (x[m] * np.exp(-2j * np.pi * k * m / n)).sum(axis=1)}, {'y': y}, name)
+
+
+@dace.program
+def c_modf_frexp(x: dace.float64[N], i: dace.float64[N], f: dace.float64[N], m: dace.float64[N], e: dace.int32[N]):
+    f[:], i[:] = np.modf(x)
+    m[:], e[:] = np.frexp(x)
+
+
+def test_out_parameter_ufuncs_call_the_typed_helper_and_compute_what_the_sdfg_does():
+    """``np.modf`` / ``np.frexp`` are expression statements over inlined array accesses, typed only by the
+    keyword remover; the C call must name the helper for their element type and pass each output's
+    address, since C has no references and the unit carries no dispatch macro. The compiled SDFG is the
+    oracle for which output receives which part."""
+    sdfg, code = render_c(c_modf_frexp, 'mprc_modf_frexp')
+    assert re.search(r'\bcpf_np_modf_float64\(', code) and re.search(r'\bcpf_np_frexp_float64\(', code), code
+    assert '#define' not in code, f'the out-parameter helpers must not reach the unit as macros:\n{code}'
+
+    n = 33
+    x = np.random.default_rng(0).uniform(-8.0, 8.0, n)
+    rendered = {'i': np.zeros(n), 'f': np.zeros(n), 'm': np.zeros(n), 'e': np.zeros(n, dtype=np.int32)}
+    run_c(sdfg, code, {'x': x.copy(), 'N': n, **rendered}, 'mprc_modf_frexp')
+
+    runtime_sdfg = c_modf_frexp.to_sdfg(simplify=True)
+    runtime_sdfg.name = 'mprc_modf_frexp_runtime'
+    runtime = {'i': np.zeros(n), 'f': np.zeros(n), 'm': np.zeros(n), 'e': np.zeros(n, dtype=np.int32)}
+    runtime_sdfg(x=x.copy(), N=n, **runtime)
+    for name in ('i', 'f', 'm', 'e'):
+        assert np.array_equal(rendered[name],
+                              runtime[name]), f'{name}: CPF gives {rendered[name]}, the SDFG {runtime[name]}'

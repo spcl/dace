@@ -1144,20 +1144,21 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # The visitors rewrite in place; the tasklet keeps its own AST.
         stmt = astutils.copy_tree(stmt)
         struct_initializer.visit(stmt)
+        remover = codegen.make_keyword_remover(sdfg, memlets)
         if isinstance(stmt, ast.Expr):
-            rk = codegen.make_keyword_remover(sdfg, memlets).visit_TopLevelExpr(stmt)
+            rk = remover.visit_TopLevelExpr(stmt)
         else:
-            rk = codegen.make_keyword_remover(sdfg, memlets).visit(stmt)
+            rk = remover.visit(stmt)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
             result = StringIO()
-            cppunparse.CPPUnparser(rk,
-                                   ldepth + 1,
-                                   locals,
-                                   result,
-                                   defined_symbols=defined_symbols,
-                                   data_names=set(memlets) | set(sdfg.constants))
+            symbols, data_names = defined_symbols, set(memlets) | set(sdfg.constants)
+            if cpf_lowering.standalone_c():
+                # An access the remover inlined reaches the unparser as its own text, typed only there.
+                symbols = {**defined_symbols, **remover.operand_dtypes}
+                data_names |= set(remover.operand_dtypes)
+            cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=symbols, data_names=data_names)
             callsite_stream.write(result.getvalue(), cfg, state_id, node)
 
 
@@ -1264,6 +1265,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         self.constants = constants
         self.codegen = codegen
         self.allow_casts = True
+        #: Operand text -> dtype for each access this remover inlines; empty unless a subclass inlines.
+        self.operand_dtypes: Dict[str, dtypes.typeclass] = {}
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it

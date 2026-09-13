@@ -489,9 +489,7 @@ class CPPUnparser:
             if node.func.id in cpf_lowering.C_TYPED_HELPER_RESULTS:
                 return cpf_lowering.C_TYPED_HELPER_RESULTS[node.func.id]
             if bare in cpf_lowering.C_TYPED_HELPER_SPECS:
-                types = tuple(self.c_type(argument) for argument in node.args)
-                picked = types[:1] if cpf_lowering.C_TYPED_HELPER_SPECS[bare][0] == 'first' else types
-                return None if any(dtype is None for dtype in picked) else cpf_lowering.c_helper_dispatch(bare, types)
+                return cpf_lowering.c_helper_result_type(bare, tuple(self.c_type(argument) for argument in node.args))
             # Instantiated at the type their arguments convert to, which is also what they return.
             if node.func.id in ('min', 'max', 'Min', 'Max', 'int_floor', 'Mod'):
                 operands = list(node.args)

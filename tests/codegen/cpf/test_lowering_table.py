@@ -94,13 +94,19 @@ CASES = [
 
 #: ``(name, statement template, expected)`` for the out-parameter helpers. These return ``void``
 #: and write through references, so they cannot be probed as an expression.
+#: The C dialect names each call's typed helper by its argument types, which follow the statement.
+DIVMOD_TYPES = ('int64', 'int64', 'int64', 'int64')
 STATEMENT_CASES = [
-    ('cpp_divmod', 'long q = 0, r = 0; cpp_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(q);', -2.0),
-    ('cpp_divmod', 'long q = 0, r = 0; cpp_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(r);', -1.0),
-    ('py_divmod', 'long q = 0, r = 0; py_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(q);', -3.0),
-    ('py_divmod', 'long q = 0, r = 0; py_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(r);', 2.0),
-    ('np_modf', 'double i = 0, f = 0; np_modf(2.5, i, f); out[0] = i + f * 10;', 7.0),
-    ('np_frexp', 'double m = 0; int e = 0; np_frexp(8.0, m, e); out[0] = m * 100 + e;', 54.0),
+    ('cpp_divmod', 'long q = 0, r = 0; cpp_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(q);', -2.0,
+     DIVMOD_TYPES),
+    ('cpp_divmod', 'long q = 0, r = 0; cpp_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(r);', -1.0,
+     DIVMOD_TYPES),
+    ('py_divmod', 'long q = 0, r = 0; py_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(q);', -3.0, DIVMOD_TYPES),
+    ('py_divmod', 'long q = 0, r = 0; py_divmod(-7L, 3L, q, r); out[0] = static_cast<double>(r);', 2.0, DIVMOD_TYPES),
+    ('np_modf', 'double i = 0, f = 0; np_modf(2.5, i, f); out[0] = i + f * 10;', 7.0, ('float64', 'float64',
+                                                                                       'float64')),
+    ('np_frexp', 'double m = 0; int e = 0; np_frexp(8.0, m, e); out[0] = m * 100 + e;', 54.0, ('float64', 'float64',
+                                                                                               'int32')),
 ]
 
 
@@ -222,16 +228,21 @@ def test_no_unqualified_runtime_function_is_unhandled(dialect):
 
 
 @pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
-@pytest.mark.parametrize('name,statement,expected',
+@pytest.mark.parametrize('name,statement,expected,types',
                          STATEMENT_CASES,
-                         ids=['%s-%d' % (name, index) for index, (name, _, _) in enumerate(STATEMENT_CASES)])
-def test_out_parameter_helpers_compute_the_runtime_value(name, statement, expected, dialect):
+                         ids=['%s-%d' % (name, index) for index, (name, _, _, _) in enumerate(STATEMENT_CASES)])
+def test_out_parameter_helpers_compute_the_runtime_value(name, statement, expected, types, dialect):
     """The ``void`` helpers write through their out-parameters and match the runtime.
 
-    C has no references, so its macros take the same LVALUES the printers already pass and apply
-    ``&`` themselves -- which is why one statement serves both dialects unchanged.
+    C has no references, so the C call is lowered from the same statement to the helper for its
+    argument types, which takes the address of each out-parameter lvalue the printers pass.
     """
-    code = '%s\n\n%s\n{\n    %s\n}\n' % (preamble({name}, dialect), entry(dialect), spell(statement, dialect))
+    if dialect is Dialect.STANDALONE_C:
+        call = re.search(r'\b%s\((.*?)\);' % name, statement)
+        lowered = cpf_lowering.lowering_for(name, cpf_lowering.c_call_arguments(call.group(1)), dialect, types)
+        statement = statement.replace(call.group(0), lowered + ';')
+    used = {name} | cpf_lowering.helpers_used(statement, dialect)
+    code = '%s\n\n%s\n{\n    %s\n}\n' % (preamble(used, dialect), entry(dialect), spell(statement, dialect))
     assert_standalone(code, label=name, language=LANGUAGE[dialect])
     value = run_probe(code, 'cpf_stmt_%s_%s' % (name, dialect.value), dialect)
     assert value == pytest.approx(expected, rel=1e-12,
@@ -499,7 +510,7 @@ def test_every_c_definition_is_reachable():
     # A printed helper call names the typed helper for the type its operands convert to.
     for name, dtypes in cpf_lowering.C_TYPED_HELPER_TYPES.items():
         for dtype in dtypes:
-            arguments = tuple('a%d' % index for index in range(len(cpf_lowering.C_TYPED_HELPER_SPECS[name][1])))
+            arguments = tuple('a%d' % index for index in range(len(cpf_lowering.C_TYPED_HELPER_SPECS[name][0])))
             lowered = cpf_lowering.lowering_for(name, arguments, Dialect.STANDALONE_C, (dtype, ) * len(arguments))
             reachable |= cpf_lowering.helpers_used(lowered, Dialect.STANDALONE_C)
     for name in cpf_lowering.C_VARIADIC_MINMAX:
