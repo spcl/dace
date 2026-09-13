@@ -23,6 +23,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.canonicalize.pipeline import PropagateAndPrune
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -97,6 +98,42 @@ def guarded_two_stencils(a: dace.float64[N], b: dace.float64[N], cc: dace.float6
         for i in dace.map[1:N - 1]:
             b[i] = a[i - 1] + a[i] + a[i + 1]
             d[i] = cc[i - 1] + cc[i] + cc[i + 1]
+
+
+def copy_through_tasklet(state, read_subset):
+    tasklet = state.add_tasklet('copy', {'x': None}, {'y': None}, 'y = x')
+    state.add_edge(state.add_read('a'), None, tasklet, 'x', Memlet(f'a[{read_subset}]'))
+    state.add_edge(tasklet, 'y', state.add_write('b'), None, Memlet('b[0]'))
+
+
+def test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_every_round():
+    sdfg = dace.SDFG('nothing_to_fold')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('b', [8], dace.float64)
+    state = sdfg.add_state('copy', is_start_block=True)
+    copy_through_tasklet(state, '1')
+    before = sdfg.to_json()
+
+    reported = PropagateAndPrune().apply_pass(sdfg, {})
+
+    assert reported == PropagateAndPrune.ROUNDS
+    assert sdfg.to_json() == before, 'a round with nothing to fold mutated the SDFG'
+
+
+def test_propagate_and_prune_folds_a_constant_bound_symbol_into_the_memlet():
+    sdfg = dace.SDFG('fold_symbol')
+    sdfg.add_array('a', [8], dace.float64)
+    sdfg.add_array('b', [8], dace.float64)
+    init = sdfg.add_state('init', is_start_block=True)
+    use = sdfg.add_state('use')
+    sdfg.add_edge(init, use, dace.InterstateEdge(assignments={'k': '3'}))
+    copy_through_tasklet(use, 'k')
+
+    PropagateAndPrune().apply_pass(sdfg, {})
+
+    sdfg.validate()
+    reads = [e for s in sdfg.states() for e in s.edges() if e.data.data == 'a']
+    assert [str(e.data.subset) for e in reads] == ['3']
 
 
 def test_canonicalize_accumulator_reduction():
