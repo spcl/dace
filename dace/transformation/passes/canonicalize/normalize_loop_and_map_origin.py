@@ -76,6 +76,23 @@ def rebinds_params(node_list: Iterable[nodes.Node], params: Dict[str, None]) -> 
     return False
 
 
+def shift_map_ranges(node_list: Iterable[nodes.Node], repldict: Dict[str, str]) -> None:
+    """Substitute ``repldict`` into the range of every Map under ``node_list``, nested SDFGs included.
+
+    An inner range reads a shifted parameter as often as a memlet does (``for j in i:N``, a tiled
+    ``outer : min(outer + C - 1, hi)``); left stale, the inner sweep starts ``b`` elements early.
+
+    :param node_list: Nodes of one scope / state.
+    :param repldict: Parameter name -> replacement expression, as source strings.
+    """
+    symrepl = {pystr_to_symbolic(name): pystr_to_symbolic(value) for name, value in repldict.items()}
+    for node in node_list:
+        if isinstance(node, nodes.MapEntry):
+            node.map.range.replace(symrepl)
+        elif isinstance(node, nodes.NestedSDFG):
+            shift_map_ranges([n for state in node.sdfg.all_states() for n in state.nodes()], repldict)
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NormalizeLoopAndMapOrigin(ppl.Pass):
@@ -196,6 +213,7 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
         entry.map.range = subsets.Range(new_ranges)
         process_memlets_in_edges(state, list(state.all_edges(*scope_nodes)), repldict)
         repl_tasklets_on_node_list(scope_nodes, repldict)
+        shift_map_ranges(scope_nodes, repldict)
         for node in scope_nodes:
             if isinstance(node, nodes.NestedSDFG):
                 repl_recursive(node.sdfg, repldict)
@@ -234,7 +252,8 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
         loop.loop_condition = CodeBlock(new_condition)
         # ``repl_recursive`` skips the region it is rooted at, so the header just set stands.
         repl_recursive(loop, repldict)
+        shift_map_ranges(body_nodes, repldict)
         return 1
 
 
-__all__ = ['NormalizeLoopAndMapOrigin', 'rebinds_params']
+__all__ = ['NormalizeLoopAndMapOrigin', 'rebinds_params', 'shift_map_ranges']

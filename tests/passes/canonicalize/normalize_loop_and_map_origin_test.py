@@ -3,6 +3,10 @@
     counter is rebased to a 0-based begin while KEEPING its stride (unlike
     ``NormalizeLoopsAndMaps``, which folds the stride into the index).
 """
+import copy
+
+from typing import Optional, Tuple
+
 import numpy as np
 import pytest
 
@@ -263,6 +267,90 @@ def test_nested_sdfg_map_is_rebased_after_its_enclosing_map():
     # inner ``j`` from the map in the nested SDFG (+3).
     write, = [e for e in istate.edges() if e.dst is imx]
     assert str(write.data.subset) == "i + 2, j + 3", write.data.subset
+
+
+def mark_cells_under(state: dace.SDFGState, outer: Optional[Tuple[nodes.MapEntry, nodes.MapExit]],
+                     row_param_range: str) -> nodes.MapEntry:
+    """``for j in <row_param_range>: A[i, j] = 1`` nested under ``outer`` (a map entry, or None)."""
+    entry, exit_node = state.add_map("cols", {"j": row_param_range})
+    tasklet = state.add_tasklet("mark", set(), {"y"}, "y = 1.0")
+    state.add_nedge(entry, tasklet, dace.Memlet())
+    if outer is None:
+        state.add_memlet_path(tasklet, exit_node, state.add_write("A"), src_conn="y", memlet=dace.Memlet("A[i, j]"))
+    else:
+        outer_entry, outer_exit = outer
+        state.add_nedge(outer_entry, entry, dace.Memlet())
+        state.add_memlet_path(tasklet,
+                              exit_node,
+                              outer_exit,
+                              state.add_write("A"),
+                              src_conn="y",
+                              memlet=dace.Memlet("A[i, j]"))
+    return entry
+
+
+def written_cells(sdfg: dace.SDFG) -> np.ndarray:
+    cells = np.zeros((12, 12))
+    copy.deepcopy(sdfg)(A=cells)
+    return cells
+
+
+def test_inner_map_range_reading_the_rebased_param_follows_the_shift():
+    """``for i in 2:10: for j in i:10`` (TSVC s212 shape): the inner RANGE reads ``i`` like a memlet does, so
+    rebasing ``i`` has to shift it too, or the inner sweep starts two columns early."""
+    sdfg = dace.SDFG("inner_range_reads_outer_param")
+    sdfg.add_array("A", [12, 12], dace.float64)
+    state = sdfg.add_state("body", is_start_block=True)
+    outer, outer_exit = state.add_map("rows", {"i": "2:10"})
+    inner = mark_cells_under(state, (outer, outer_exit), "i:10")
+    sdfg.validate()
+    oracle = written_cells(sdfg)
+
+    assert NormalizeLoopAndMapOrigin().apply_pass(sdfg, {}) == 2
+
+    assert str(outer.map.range) == "0:8", outer.map.range
+    assert str(inner.map.range) == "0:8 - i", inner.map.range
+    assert np.array_equal(written_cells(sdfg), oracle)
+
+
+def test_map_range_reading_a_rebased_loop_counter_follows_the_shift():
+    sdfg = dace.SDFG("map_range_reads_loop_counter")
+    sdfg.add_array("A", [12, 12], dace.float64)
+    loop = LoopRegion("rows", condition_expr="i < 10", loop_var="i", initialize_expr="i = 2", update_expr="i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("row", is_start_block=True)
+    inner = mark_cells_under(state, None, "i:10")
+    sdfg.validate()
+    oracle = written_cells(sdfg)
+
+    assert NormalizeLoopAndMapOrigin().apply_pass(sdfg, {}) == 2
+
+    assert str(loop_analysis.get_init_assignment(loop)) == "0"
+    assert str(inner.map.range) == "0:8 - i", inner.map.range
+    assert np.array_equal(written_cells(sdfg), oracle)
+
+
+def test_nested_sdfg_map_range_reading_the_rebased_param_follows_the_shift():
+    inner_sdfg = dace.SDFG("inner_rows")
+    inner_sdfg.add_array("A", [12, 12], dace.float64)
+    inner_sdfg.add_symbol("i", dace.int64)
+    istate = inner_sdfg.add_state("ibody", is_start_block=True)
+    inner = mark_cells_under(istate, None, "i:10")
+
+    sdfg = dace.SDFG("nested_range_reads_outer_param")
+    sdfg.add_array("A", [12, 12], dace.float64)
+    state = sdfg.add_state("body", is_start_block=True)
+    outer, outer_exit = state.add_map("rows", {"i": "2:10"})
+    nsdfg = state.add_nested_sdfg(inner_sdfg, {}, {"A": None}, {"i": "i"})
+    state.add_nedge(outer, nsdfg, dace.Memlet())
+    state.add_memlet_path(nsdfg, outer_exit, state.add_write("A"), src_conn="A", memlet=dace.Memlet("A[0:12, 0:12]"))
+    sdfg.validate()
+    oracle = written_cells(sdfg)
+
+    assert NormalizeLoopAndMapOrigin().apply_pass(sdfg, {}) == 2
+
+    assert str(inner.map.range) == "0:8 - i", inner.map.range
+    assert np.array_equal(written_cells(sdfg), oracle)
 
 
 if __name__ == "__main__":
