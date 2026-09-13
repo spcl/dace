@@ -343,5 +343,14 @@ value3=5000000000"""
         self.assertEqual(dtypes.result_type_of(b, b), b)
 
 
+def test_the_sympy_spellings_of_abs_min_and_max_are_typed():
+    """An interstate assignment printed from a symbolic expression spells these as sympy does
+    (``Abs(A[i])``), and a symbol whose type is left unknown stops code generation."""
+    symbols = {'a': dtypes.float64, 'i': dtypes.int64}
+    assert type_inference.infer_expr_type('Abs(a[i])', symbols) == dtypes.float64
+    assert type_inference.infer_expr_type('Max(i, 3)', symbols) == dtypes.int64
+    assert type_inference.infer_expr_type('Min(a[i], 2.0)', symbols) == dtypes.float64
+
+
 if __name__ == "__main__":
     unittest.main()
