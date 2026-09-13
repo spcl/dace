@@ -48,14 +48,14 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, properties, symbolic
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: Python literal names an expression may mention besides SDFG symbols. Modern ``ast`` renders
 #: these as ``Constant`` rather than ``Name``, so this is a belt-and-braces allowance.
 LITERAL_NAMES = dict.fromkeys(['True', 'False', 'None'])
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, scopes
 
 #: Prefix for the materialised post-loop symbol; self-identifying in dumps and
 #: collision-free against frontend or user-chosen names.
@@ -214,6 +214,17 @@ def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> Dict[Contr
     return visited
 
 
+def reiterated_names(post_blocks: Dict[ControlFlowBlock, None]) -> Dict[str, None]:
+    """Iterators of the loops in the post-loop region. Such a loop binds its iterator afresh, so a read inside it is
+    not a read of the exit value; renaming it to the exit symbol reads the wrong element (TSVC s1244 after fission)."""
+    names: Dict[str, None] = {}
+    for block in post_blocks:
+        if isinstance(block, AbstractControlFlowRegion):
+            names.update((region.loop_variable, None) for region in block.all_control_flow_regions()
+                         if isinstance(region, LoopRegion) and region.loop_variable)
+    return names
+
+
 def _rewrite_post_loop_readers(parent: ControlFlowRegion, post_blocks: Dict[ControlFlowBlock, None], old_name: str,
                                new_name: str, sdfg: SDFG):
     """Replace every reference to ``old_name`` with ``new_name`` in the
@@ -278,6 +289,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         """Materialise every eligible IV symbol's exit value. Returns the count
         or ``None`` if nothing matched."""
         materialised = 0
+        resolver = scopes.ScopedSymbolResolver()
         for sd in sdfg.all_sdfgs_recursive():
             # ``sd.free_symbols`` walks the entire SDFG on every access. It is
             # invariant across the per-loop scan below -- only our own
@@ -287,13 +299,31 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             for cfg in list(sd.all_control_flow_regions()):
                 if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
                     continue
-                count = self._try_materialise(cfg, sd, sd_free_symbols)
+                count = self._try_materialise(cfg, sd, sd_free_symbols, resolver)
                 if count:
                     materialised += count
                     sd_free_symbols = sd.free_symbols
+                    resolver.invalidate_sdfg(sd)  # new symbols, states and interstate edges
         return materialised or None
 
-    def _try_materialise(self, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> int:
+    def exit_value_dtype(self, loop: LoopRegion, sdfg: SDFG, sym_name: str,
+                         resolver: scopes.ScopedSymbolResolver) -> dace.dtypes.typeclass | scopes.UndeterminedDType:
+        """The dtype ``sym_name`` carries inside ``loop``, which its post-loop copy stands in for.
+
+        The loop iterator is bound by the loop scope and declared in no symbol table, so the scoped
+        table of a body state answers first; a body IV symbol is declared by the SDFG or bound by its
+        update edge.
+        """
+        body = next(iter(loop.all_states()), None)
+        if body is not None:
+            scoped = resolver.tabulate(body)[None].get(sym_name)
+            if scoped is not None:
+                return scoped
+        update = next((e.data for e in loop.edges() if sym_name in e.data.assignments), None)
+        return resolver.resolve_dtype_or_undetermined(sym_name, sdfg, interstate_edge=update)
+
+    def _try_materialise(self, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str],
+                         resolver: scopes.ScopedSymbolResolver) -> int:
         parent = loop.parent_graph
         if parent is None:
             return 0
@@ -305,7 +335,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         # same affine recurrence, just emitted by ``loop.update_statement`` rather
         # than a body interstate edge. Treat it identically.
         loop_var = loop.loop_variable
-        if (loop_var and (loop_var in sdfg.symbols or loop_var in sdfg_free_symbols) and loop_var not in iv_symbols):
+        if loop_var and loop_var not in iv_symbols:  # the loop binds it: no symbol table is asked
             stride = loop_analysis.get_loop_stride(loop)
             if stride is not None:
                 iv_symbols[loop_var] = (ast.Add, str(symbolic.symstr(stride)))
@@ -319,6 +349,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         post_blocks = _post_loop_blocks(parent, loop)
         if not post_blocks:
             return 0
+        reiterated = reiterated_names(post_blocks)
 
         count = 0
         next_id = _next_post_id(sdfg, sdfg_free_symbols)
@@ -326,6 +357,8 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         # Rebuilt after each materialisation, which rewrites these very blocks.
         post_used, post_text = self._read_names_in(post_blocks, parent)
         for sym_name, (op_type, c_expr) in iv_symbols.items():
+            if sym_name in reiterated:
+                continue  # a later loop rebinds it: its readers there never see this exit value
             # Check this symbol is actually READ in the post-loop region.
             if sym_name not in post_used and sym_name not in post_text:
                 continue
@@ -343,9 +376,12 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             closed = _closed_form(op_type, seed, c_expr, trip)
             if closed is None:
                 continue
+            dtype = self.exit_value_dtype(loop, sdfg, sym_name, resolver)
+            if dtype is scopes.UNDETERMINED:
+                continue  # nothing declares the width: refuse rather than guess one
             new_name = f"{POST_PREFIX}{sym_name}_{next_id}"
             next_id += 1
-            sdfg.add_symbol(new_name, sdfg.symbols.get(sym_name, dace.int64))
+            sdfg.add_symbol(new_name, dtype)
             # Splice a post-loop state right after ``loop`` that assigns
             # ``new_name = closed_form`` on its in-edge. Existing out-edges
             # from ``loop`` cascade through the new state unchanged.

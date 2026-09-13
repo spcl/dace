@@ -27,7 +27,8 @@ import sympy
 from dace import properties, symbolic
 from dace.config import Config
 from dace.sdfg import SDFG
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState,
+                             enclosing_region_symbols)
 from dace.transformation import pass_pipeline as ppl
 
 #: Default trip-count threshold below which a constant-trip loop is unrolled
@@ -71,7 +72,7 @@ def _as_symbolic(expr):
     return symbolic.pystr_to_symbolic(str(expr))
 
 
-def _retyped(expr, sdfg):
+def _retyped(expr, sdfg, scoped: Optional[Dict[str, Any]] = None):
     """``expr`` with every free symbol re-bound to the dtype ``sdfg`` declares for it.
 
     A loop bound lives in a STRING-backed property, so recovering one re-parses it, and
@@ -95,7 +96,8 @@ def _retyped(expr, sdfg):
     for sym in expr.free_symbols:
         if not isinstance(sym, symbolic.symbol):
             continue
-        declared = sdfg.symbols.get(sym.name)
+        # ``scoped`` first: a loop iterator is typed by its loop, which no symbol table declares.
+        declared = scoped[sym.name] if scoped is not None and sym.name in scoped else sdfg.symbols.get(sym.name)
         if declared is None or declared == sym.dtype:
             continue
         kept = {k: v for k, v in sym.assumptions0.items() if k in ('nonnegative', 'positive', 'integer')}
@@ -1344,8 +1346,11 @@ class BestEffortLoopPeeling(ppl.Pass):
                 end = loop_analysis.get_loop_end(graph)
                 if start is not None and end is not None:
                     owner = graph.sdfg
-                    ranges[_retyped(symbolic.pystr_to_symbolic(graph.loop_variable),
-                                    owner)] = (_retyped(_as_symbolic(start), owner), _retyped(_as_symbolic(end), owner))
+                    scoped = enclosing_region_symbols(graph, owner.symbols)
+                    scoped.update(graph.new_symbols(scoped))
+                    ranges[_retyped(symbolic.pystr_to_symbolic(graph.loop_variable), owner,
+                                    scoped)] = (_retyped(_as_symbolic(start), owner,
+                                                         scoped), _retyped(_as_symbolic(end), owner, scoped))
             graph = getattr(graph, 'parent_graph', None)
         return ranges
 
@@ -1452,9 +1457,11 @@ class BestEffortLoopPeeling(ppl.Pass):
         if start is None or end is None or not loop.loop_variable:
             return {}
         owner = loop.sdfg
+        scoped = enclosing_region_symbols(loop, owner.symbols)
+        scoped.update(loop.new_symbols(scoped))
         return {
-            _retyped(symbolic.pystr_to_symbolic(loop.loop_variable), owner):
-            (_retyped(_as_symbolic(start), owner), _retyped(_as_symbolic(end), owner))
+            _retyped(symbolic.pystr_to_symbolic(loop.loop_variable), owner, scoped):
+            (_retyped(_as_symbolic(start), owner, scoped), _retyped(_as_symbolic(end), owner, scoped))
         }
 
     def _affine_body_modulos(self, loop: LoopRegion, ranges: Optional[Dict[Any, Any]] = None):

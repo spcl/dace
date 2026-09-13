@@ -30,6 +30,7 @@ from dace.sdfg import SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import transformation
+from dace.transformation.passes.analysis import scopes
 from dace.subsets import Range
 from dace.memlet import Memlet
 import sympy
@@ -95,27 +96,6 @@ def _rewrite_scalar_reads_in_tasklets(inner_sdfg: SDFG, inner_name: str, outer_n
             _RenameLoadName(inner_name, cin).visit(tree)
             ast.fix_missing_locations(tree)
             tnode.code = CodeBlock(astutils.unparse(tree))
-
-
-def _resolve_outer_symbol_type(sym_name: str, sdfg: SDFG, default=None):
-    """Walk up the SDFG nesting + the parent CFR tree to locate the
-    type ``sym_name`` was declared with. Falls back to ``default`` (or
-    ``dace.int64`` if ``default`` is ``None``)."""
-    if default is None:
-        default = dtypes.int64
-    cur = sdfg
-    while cur is not None:
-        if sym_name in cur.symbols:
-            return cur.symbols[sym_name]
-        cur = getattr(cur, 'parent_sdfg', None)
-    # Try LoopRegion loop-variables in the original SDFG (the loop var
-    # carries the type via its enclosing SDFG's symbol table).
-    for cfg in sdfg.all_control_flow_regions():
-        if isinstance(cfg, LoopRegion) and cfg.loop_variable == sym_name:
-            owner = getattr(cfg, 'sdfg', None)
-            if owner is not None and sym_name in owner.symbols:
-                return owner.symbols[sym_name]
-    return default
 
 
 def _full_subset(sdfg: SDFG, arr_name: str) -> subsets.Range:
@@ -737,10 +717,10 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                     introduced_symbols.add(sym_name)
 
         # Propagate offset symbols not already in symbol_mapping. Identity binding is the default
-        # (outer ``ii`` → inner ``ii``); validation surfaces a truly-undefined symbol on the next
-        # pass (a real caller bug). Resolve each symbol's type by walking the outer SDFG ancestry
-        # + LoopRegion loop variables -- silently defaulting to ``int64`` would mismatch a caller
-        # that declared another integer width.
+        # (outer ``ii`` → inner ``ii``). Each type is resolved at the NSDFG node's scope in the outer
+        # SDFG, the only table that sees an enclosing loop iterator or map parameter; a name nothing
+        # declares raises instead of defaulting to ``int64`` against another integer width.
+        resolver = scopes.ScopedSymbolResolver()
         for sym_name in introduced_symbols:
             if sym_name in nsdfg_node.symbol_mapping:
                 continue
@@ -751,6 +731,6 @@ class ExpandNestedSDFGInputs(transformation.SingleStateTransformation):
                 nsdfg_node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
                 continue
             # New to both inner and the mapping: resolve type from outer scope and copy through.
-            outer_type = _resolve_outer_symbol_type(sym_name, sdfg)
+            outer_type = resolver.resolve_dtype(sym_name, sdfg, state=state, node=nsdfg_node)
             inner.add_symbol(sym_name, outer_type)
             nsdfg_node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)

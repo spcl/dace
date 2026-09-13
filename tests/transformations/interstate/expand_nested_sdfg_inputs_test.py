@@ -1,6 +1,7 @@
 import numpy as np
 import dace
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+from dace.sdfg.state import LoopRegion
 
 N = dace.symbol("N")
 
@@ -216,6 +217,53 @@ def test_expand_terminates_on_wcr_reduction_out_edge():
     out_edge = next(iter(st.out_edges(nsdfg)))
     assert out_edge.data.wcr is not None and str(out_edge.data.subset) == "i", \
         "the WCR reduction out-edge must be left untouched"
+
+
+def per_iteration_nsdfg_in_an_int32_loop() -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
+    """``for it = M32; it <= N32; it += S32: B[it] = 2 * A[it]`` through a one-element nested SDFG.
+
+    Symbolic bounds and stride with no integer literal, so the loop types ``it`` as int32; ``it`` is
+    bound by the loop and registered in no symbol table.
+    """
+    inner = dace.SDFG('body')
+    inner.add_array('x', [1], dace.float64)
+    inner.add_array('y', [1], dace.float64)
+    inner_state = inner.add_state('compute', is_start_block=True)
+    tasklet = inner_state.add_tasklet('twice', {'a'}, {'b'}, 'b = 2 * a')
+    inner_state.add_edge(inner_state.add_read('x'), None, tasklet, 'a', dace.Memlet('x[0]'))
+    inner_state.add_edge(tasklet, 'b', inner_state.add_write('y'), None, dace.Memlet('y[0]'))
+
+    sdfg = dace.SDFG('outer')
+    for name in ('M32', 'N32', 'S32'):
+        sdfg.add_symbol(name, dace.int32)
+    sdfg.add_array('A', ['N32 + 1'], dace.float64)
+    sdfg.add_array('B', ['N32 + 1'], dace.float64)
+    loop = LoopRegion('L', 'it <= N32', 'it', 'it = M32', 'it = it + S32')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    nsdfg = body.add_nested_sdfg(inner, {'x': None}, {'y': None})
+    body.add_edge(body.add_read('A'), None, nsdfg, 'x', dace.Memlet('A[it]'))
+    body.add_edge(nsdfg, 'y', body.add_write('B'), None, dace.Memlet('B[it]'))
+    sdfg.reset_cfg_list()
+    return sdfg, body, nsdfg
+
+
+def test_an_introduced_loop_iterator_is_declared_inside_at_the_width_its_loop_gives_it():
+    sdfg, body, nsdfg = per_iteration_nsdfg_in_an_int32_loop()
+    sut = ExpandNestedSDFGInputs()
+    sut.setup_match(sdfg,
+                    body.parent_graph.cfg_id,
+                    body.block_id, {ExpandNestedSDFGInputs.nested_sdfg: nsdfg},
+                    0,
+                    override=True)
+    assert sut.can_be_applied(body, 0, sdfg)
+
+    sut.apply(body, sdfg)
+
+    sdfg.validate()
+    assert 'it' not in sdfg.symbols
+    assert nsdfg.sdfg.symbols['it'] == dace.int32
+    assert str(nsdfg.symbol_mapping['it']) == 'it'
 
 
 if __name__ == "__main__":

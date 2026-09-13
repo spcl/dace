@@ -253,5 +253,26 @@ def test_always_true_gate():
                                     dace.symbolic.pystr_to_symbolic('N - 2'))
 
 
+def test_the_cut_symbol_takes_the_width_the_loop_scope_gives_its_iterator():
+    """``for j = 0 ..: for i = j; i <= N32; i += S32``: the int64 enclosing ``j`` widens ``i``.
+
+    Neither iterator is in ``sdfg.symbols``; a lookup that cannot see ``j`` types ``i`` from the
+    int32 bounds alone and declares the cut point one width short of the iterator it splits.
+    """
+    sdfg = dace.SDFG('cut_width')
+    for name in ('N32', 'S32'):
+        sdfg.add_symbol(name, dace.int32)
+    outer = LoopRegion('outer', 'j < 4', 'j', 'j = 0', 'j = j + 1')
+    sdfg.add_node(outer, is_start_block=True)
+    inner = LoopRegion('inner', 'i <= N32', 'i', 'i = j', 'i = i + S32')
+    outer.add_node(inner, is_start_block=True)
+    inner.add_state('body', is_start_block=True)
+
+    cut = PartitionGuardedLoop().fresh_cut_symbol(sdfg, inner)
+
+    assert sdfg.symbols[cut] == dace.int64
+    assert 'i' not in sdfg.symbols and 'j' not in sdfg.symbols
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

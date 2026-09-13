@@ -7,9 +7,11 @@ the closed-form exit value under a fresh unique name and rewrites every
 post-loop reader to use it, so the original symbol is no longer "used after the
 loop" and the body can parallelise.
 """
+import numpy as np
 import pytest
 
 import dace
+from dace import symbolic
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import (MaterializeLoopExitSymbols,
                                                                                    POST_PREFIX)
@@ -75,6 +77,97 @@ def test_no_post_loop_use_is_noop():
     res = MaterializeLoopExitSymbols().apply_pass(sdfg, {})
     assert res is None
     assert not _has_loop_exit_sym(sdfg, 'k')
+
+
+def int32_iterator_read_after_its_loop() -> dace.SDFG:
+    """``for i = M32; i <= N32; i += S32`` then ``out[0] = a[i - S32]``, the last element visited.
+
+    Symbolic bounds and stride with no integer literal, so the loop scope types ``i`` as int32;
+    ``i`` itself is registered in no symbol table, since the loop binds it.
+    """
+    sdfg = dace.SDFG('mat_iter_post_int32')
+    for name in ('M32', 'N32', 'S32'):
+        sdfg.add_symbol(name, dace.int32)
+    sdfg.add_array('a', ['N32 + 1'], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion('loop', 'i <= N32', 'i', 'i = M32', 'i = i + S32')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+    loop.add_state('body', is_start_block=True)
+    post = sdfg.add_state('post')
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    tasklet = post.add_tasklet('read_last', {'__a'}, {'__o'}, '__o = __a')
+    post.add_edge(post.add_read('a'), None, tasklet, '__a', dace.Memlet('a[i - S32]'))
+    post.add_edge(tasklet, '__o', post.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+def post_loop_read_subset(sdfg: dace.SDFG) -> symbolic.SymbolicType:
+    (edge, ) = [e for s in sdfg.states() if s.label == 'post' for e in s.edges() if e.data.data == 'a']
+    return edge.data.subset[0][0]
+
+
+def test_an_int32_iterator_exit_value_is_declared_at_the_width_its_loop_gives_it():
+    sdfg = int32_iterator_read_after_its_loop()
+
+    assert MaterializeLoopExitSymbols().apply_pass(sdfg, {}) == 1
+
+    sdfg.validate()
+    (exit_name, ) = [s for s in sdfg.symbols if s.startswith(f"{POST_PREFIX}i_")]
+    assert sdfg.symbols[exit_name] == dace.int32
+    assert 'i' not in sdfg.symbols
+    # Declared at any other width, the reader's re-parsed exit symbol is a second symbol of the same
+    # name and the difference below does not cancel.
+    declared = symbolic.symbol(exit_name, sdfg.symbols[exit_name]) - symbolic.symbol('S32', dace.int32)
+    assert symbolic.simplify(post_loop_read_subset(sdfg) - declared) == 0
+
+
+def test_an_int32_iterator_exit_value_reads_the_last_visited_element():
+    sdfg = int32_iterator_read_after_its_loop()
+    a = np.arange(11, dtype=np.float64) * 1.5
+    out = np.zeros(1, dtype=np.float64)
+    assert MaterializeLoopExitSymbols().apply_pass(sdfg, {}) == 1
+
+    sdfg(a=a, out=out, M32=1, N32=10, S32=3)
+
+    assert out[0] == a[10]  # i visits 1, 4, 7, 10 and exits at 13
+
+
+def two_loops_sharing_an_unregistered_iterator() -> tuple[dace.SDFG, LoopRegion]:
+    """``for i < N - 1: a[i] = 1; for i < N - 1: d[i] = a[i + 1]``, the fission shape of TSVC ``s1244``.
+
+    The second loop binds ``i`` afresh, and neither loop registers it in ``sdfg.symbols``.
+    """
+    sdfg = dace.SDFG('mat_shared_iterator')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('a', ['N'], dace.float64)
+    sdfg.add_array('d', ['N'], dace.float64)
+    first = LoopRegion('first', 'i < N - 1', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(first, is_start_block=True)
+    store = first.add_state('store', is_start_block=True)
+    one = store.add_tasklet('one', {}, {'__o'}, '__o = 1.0')
+    store.add_edge(one, '__o', store.add_write('a'), None, dace.Memlet('a[i]'))
+    second = LoopRegion('second', 'i < N - 1', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(second)
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    read = second.add_state('read_ahead', is_start_block=True)
+    copy = read.add_tasklet('copy', {'__x'}, {'__o'}, '__o = __x')
+    read.add_edge(read.add_read('a'), None, copy, '__x', dace.Memlet('a[i + 1]'))
+    read.add_edge(copy, '__o', read.add_write('d'), None, dace.Memlet('d[i]'))
+    return sdfg, second
+
+
+def test_a_later_loop_rebinding_the_iterator_is_not_a_read_of_its_exit_value():
+    """Rewriting the second loop's own ``i`` to the first loop's exit value made it read ``a[N]`` (s1244)."""
+    sdfg, second = two_loops_sharing_an_unregistered_iterator()
+
+    assert MaterializeLoopExitSymbols().apply_pass(sdfg, {}) is None
+
+    sdfg.validate()
+    assert not _has_loop_exit_sym(sdfg, 'i')
+    (edge, ) = [e for state in second.all_states() for e in state.edges() if e.data.data == 'a']
+    assert str(edge.data.subset) == 'i + 1'
 
 
 if __name__ == '__main__':

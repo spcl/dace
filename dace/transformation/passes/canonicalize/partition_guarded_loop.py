@@ -52,7 +52,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, scopes
 
 #: Prefix of the symbol the scan loop leaves the partition point in.
 SPLIT_PREFIX = '_mpr_split_'
@@ -234,8 +234,13 @@ class PartitionGuardedLoop(ppl.Pass):
         return set()
 
     def fresh_cut_symbol(self, sdfg: SDFG, loop: LoopRegion) -> Optional[str]:
-        """A new SDFG symbol to hold the partition point, typed like the loop variable."""
-        dtype = loop.new_symbols(sdfg.symbols).get(loop.loop_variable) or sdfg.symbols.get(loop.loop_variable)
+        """A new SDFG symbol to hold the partition point, typed like the loop variable.
+
+        The loop scope types its iterator, and no symbol table is consulted for it: the scoped table of
+        a body state also sees enclosing iterators the bounds may name.
+        """
+        body = next(iter(loop.all_states()), None)
+        dtype = None if body is None else scopes.ScopedSymbolResolver().tabulate(body)[None].get(loop.loop_variable)
         if dtype is None:
             return None
         index = 0
