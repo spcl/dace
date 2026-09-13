@@ -94,6 +94,33 @@ def test_parse_leaves_the_shared_namespace_unchanged() -> None:
     assert symbolic.SYMPY_PARSER_GLOBALS == before
 
 
+def dace_renaming(expr: sympy.Basic) -> dict:
+    return {atom: symbol(atom.name, dace.int64) for atom in expr.atoms(sympy.Symbol)}
+
+
+@pytest.mark.parametrize('text', ['i + 1 < N', 'Min(i, N - 1) + 2*j**2', 'int_floor(N, 2) >= j'])
+def test_renaming_plain_symbols_matches_subs(text: str) -> None:
+    raw = symbolic.sympify_text(text, None)
+    repl = dace_renaming(raw)
+    renamed = symbolic.rename_symbols(raw, repl)
+    assert sympy.srepr(renamed) == sympy.srepr(raw.subs(repl))
+    assert {s.dtype for s in renamed.free_symbols} == {dace.int64}
+
+
+def test_renaming_under_a_piecewise_matches_subs() -> None:
+    x = sympy.Symbol('x')
+    raw = sympy.Piecewise((x, x < 0), (x + 1, True))
+    repl = dace_renaming(raw)
+    assert sympy.srepr(symbolic.rename_symbols(raw, repl)) == sympy.srepr(raw.subs(repl))
+
+
+def test_renaming_two_symbols_of_one_name_matches_subs() -> None:
+    plain, typed = sympy.Symbol('N'), symbol('N', dace.int32)
+    raw = plain + 2 * typed
+    repl = {plain: symbol('N', dace.int64), typed: symbol('N', dace.uint8)}
+    assert sympy.srepr(symbolic.rename_symbols(raw, repl)) == sympy.srepr(raw.subs(repl))
+
+
 if __name__ == "__main__":
     test_simplify_ext_min()
     test_shapes_equal_compares_by_name()

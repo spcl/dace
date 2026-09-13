@@ -1260,10 +1260,39 @@ def sympy_to_dace(exprs, symbol_map=None):
                         # unchanged.
                         declared = _SERIALIZATION_SYMBOL_DTYPES.get().get(atom.name)
                         repl[atom] = sympy_symbol(atom.name, declared, **atom.assumptions0)
-            exprs[i] = expr.subs(repl)
+            exprs[i] = rename_symbols(expr, repl)
     if oneelem:
         return exprs[0]
     return exprs
+
+
+#: ``_eval_subs`` hooks that decline a Symbol ``old`` and leave ``subs`` to rebuild the arguments, which is all
+#: ``xreplace`` does. Any other hook (``Piecewise``, ``Derivative``, ``Infinity``, ...) keeps ``subs``.
+ARGUMENT_REBUILDING_EVAL_SUBS = frozenset({
+    sympy.Basic._eval_subs, sympy.Add._eval_subs, sympy.Mul._eval_subs, sympy.Pow._eval_subs, sympy.Number._eval_subs,
+    sympy.Symbol._eval_subs, sympy.core.function.Application._eval_subs, symbol._eval_subs, UndefinedSymbol._eval_subs
+})
+
+
+def renames_in_one_rebuild(expr: sympy.Basic, repl: Dict[sympy.Symbol, Any]) -> bool:
+    """Whether ``expr.subs(repl)`` equals ``expr.xreplace(repl)``.
+
+    ``subs`` substitutes key by key. With distinct key names (``symbol._eval_subs`` matches by name), same-named
+    Symbol values and only argument-rebuilding hooks in the tree, no substitution can see another's result."""
+    names = dict.fromkeys(key.name for key in repl)
+    if len(names) != len(repl):
+        return False
+    if any(not isinstance(value, sympy.Symbol) or value.name != key.name for key, value in repl.items()):
+        return False
+    return all(type(node)._eval_subs in ARGUMENT_REBUILDING_EVAL_SUBS for node in sympy.preorder_traversal(expr))
+
+
+def rename_symbols(expr: sympy.Basic, repl: Dict[sympy.Symbol, Any]) -> sympy.Basic:
+    """``expr.subs(repl)``, as one ``xreplace`` rebuild instead of one walk per key where the two agree."""
+    if not renames_in_one_rebuild(expr, repl):
+        return expr.subs(repl)
+    # ``subs`` skips a pair whose value is identical to its key; rebuilding around it could re-evaluate the tree.
+    return expr.xreplace({key: value for key, value in repl.items() if not (type(key) is type(value) and key == value)})
 
 
 def is_sympy_userfunction(expr):
