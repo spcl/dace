@@ -600,6 +600,45 @@ def test_dde_loop_condition():
     assert count_f_nodes == 2
 
 
+def dead_chain_in_a_loop_body() -> Tuple[dace.SDFG, dace.SDFGState]:
+    sdfg = dace.SDFG('dead_chain_in_a_loop_body')
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_scalar('first', dace.float64, transient=True)
+    sdfg.add_scalar('second', dace.float64, transient=True)
+    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    value_type = sdfg.arrays['A'].dtype
+    make_first = body.add_tasklet('make_first', {'a': value_type}, {'out': sdfg.arrays['first'].dtype}, 'out = a + 1.0')
+    make_second = body.add_tasklet('make_second', {'x': sdfg.arrays['first'].dtype},
+                                   {'out': sdfg.arrays['second'].dtype}, 'out = x * 2.0')
+    first = body.add_access('first')
+    body.add_edge(body.add_read('A'), None, make_first, 'a', dace.Memlet('A[i]'))
+    body.add_edge(make_first, 'out', first, None, dace.Memlet('first'))
+    body.add_edge(first, None, make_second, 'x', dace.Memlet('first'))
+    body.add_edge(make_second, 'out', body.add_write('second'), None, dace.Memlet('second'))
+    return sdfg, body
+
+
+def test_dde_by_default_keeps_a_loop_body_value_its_own_state_reads():
+    sdfg, body = dead_chain_in_a_loop_body()
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+
+    assert {n.data for n in body.data_nodes()} == {'A', 'first'}
+    assert [n.label for n in body.nodes() if isinstance(n, nodes.Tasklet)] == ['make_first']
+
+
+def test_dde_converging_loop_body_states_removes_the_whole_dead_chain():
+    sdfg, body = dead_chain_in_a_loop_body()
+    sut = DeadDataflowElimination()
+    sut.converge_self_reaching_states = True
+
+    Pipeline([sut]).apply_pass(sdfg, {})
+
+    assert body.number_of_nodes() == 0
+
+
 def _two_writes_to_one_transient(second_write_range: str) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode]:
     """``B[:] = 0`` then ``B[:, <range>] = A``, read back through a second access node.
 

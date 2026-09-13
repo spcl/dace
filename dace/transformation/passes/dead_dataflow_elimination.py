@@ -19,6 +19,20 @@ from dace.ordered import OrderedSet
 PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be erased
 
 
+def refresh_enclosing_reads(sdfg: SDFG, state: SDFGState,
+                            access_sets: Dict[ControlFlowBlock, Tuple[OrderedSet[str], OrderedSet[str]]]) -> None:
+    """Replace the read sets of ``state`` and of every region enclosing it in ``sdfg`` with fresh ``AccessSets`` ones.
+
+    A loop body's descendants include its enclosing regions, whose read sets still name what the body just stopped
+    reading. Write sets and every other block's entry stay as the pass left them.
+    """
+    fresh = ap.AccessSets().apply_pass(sdfg, {})
+    block = state
+    while block is not None and block is not sdfg and block in fresh:
+        access_sets[block] = (fresh[block][0], access_sets[block][1])
+        block = block.parent_graph
+
+
 @dataclass(unsafe_hash=True)
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -38,6 +52,11 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                              'Otherwise removes library nodes without side effects.')
     remove_persistent_memory = properties.Property(
         dtype=bool, default=False, desc='If True, marks code with Persistent allocation lifetime as dead')
+    converge_self_reaching_states = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='If True, a state that reaches itself (a loop body) is re-examined against its refreshed read set '
+        'until no node dies, instead of leaving each exposed dead link to the next pipeline round.')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
@@ -75,137 +94,143 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         except KeyError:
             return None
         for state in reversed(state_order):
-            #############################################
-            # Analysis
-            #############################################
+            while True:
+                # Analysis
 
-            # Compute states where memory will no longer be read
-            writes = access_sets[state][1]
-            descendants = reachable[state]
-            descendant_reads = set().union(*(access_sets[succ][0] for succ in descendants))
-            no_longer_used: Set[str] = set(data for data in writes if data not in descendant_reads)
+                # Compute states where memory will no longer be read
+                writes = access_sets[state][1]
+                descendants = reachable[state]
+                descendant_reads = set().union(*(access_sets[succ][0] for succ in descendants))
+                no_longer_used: Set[str] = set(data for data in writes if data not in descendant_reads)
 
-            # Compute dead nodes
-            dead_nodes: List[nodes.Node] = []
+                # Compute dead nodes
+                dead_nodes: List[nodes.Node] = []
 
-            # Propagate deadness backwards within a state
-            for node in sdutil.dfs_topological_sort(state, reverse=True):
-                if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used, access_sets[state]):
-                    dead_nodes.append(node)
+                # Propagate deadness backwards within a state
+                for node in sdutil.dfs_topological_sort(state, reverse=True):
+                    if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used, access_sets[state]):
+                        dead_nodes.append(node)
 
-            # Scope exit nodes are only dead if their corresponding entry nodes are
-            live_nodes = set()
-            for node in dead_nodes:
-                if isinstance(node, nodes.ExitNode) and state.entry_node(node) not in dead_nodes:
-                    live_nodes.add(node)
-            dead_nodes = dtypes.deduplicate([n for n in dead_nodes if n not in live_nodes])
+                # Scope exit nodes are only dead if their corresponding entry nodes are
+                live_nodes = set()
+                for node in dead_nodes:
+                    if isinstance(node, nodes.ExitNode) and state.entry_node(node) not in dead_nodes:
+                        live_nodes.add(node)
+                dead_nodes = dtypes.deduplicate([n for n in dead_nodes if n not in live_nodes])
 
-            if not dead_nodes:
-                continue
+                if not dead_nodes:
+                    break
+                nodes_before = state.number_of_nodes()
 
-            # Remove nodes while preserving scopes
-            scopes_to_reconnect: OrderedSet[nodes.Node] = OrderedSet()
-            for node in state.nodes():
-                # Look for scope exits that will be disconnected
-                if isinstance(node, nodes.ExitNode) and node not in dead_nodes:
-                    if any(n in dead_nodes for n in state.predecessors(node)):
-                        scopes_to_reconnect.add(node)
+                # Remove nodes while preserving scopes
+                scopes_to_reconnect: OrderedSet[nodes.Node] = OrderedSet()
+                for node in state.nodes():
+                    # Look for scope exits that will be disconnected
+                    if isinstance(node, nodes.ExitNode) and node not in dead_nodes:
+                        if any(n in dead_nodes for n in state.predecessors(node)):
+                            scopes_to_reconnect.add(node)
 
-            # Two types of scope disconnections may occur:
-            # 1. Two scope exits will no longer be connected
-            # 2. A predecessor of dead nodes is in a scope and not connected to its exit
-            # Case (1) is taken care of by ``remove_memlet_path``
-            # Case (2) is handled below
-            # Reconnect scopes
-            if scopes_to_reconnect:
-                schildren = state.scope_children()
-                for exit_node in scopes_to_reconnect:
-                    entry_node = state.entry_node(exit_node)
-                    for node in schildren[entry_node]:
-                        if node is exit_node:
-                            continue
-                        if isinstance(node, nodes.EntryNode):
-                            node = state.exit_node(node)
-                        # If node will be disconnected from exit node, add an empty memlet
-                        if all(succ in dead_nodes for succ in state.successors(node)):
-                            state.add_nedge(node, exit_node, Memlet())
+                # Two types of scope disconnections may occur:
+                # 1. Two scope exits will no longer be connected
+                # 2. A predecessor of dead nodes is in a scope and not connected to its exit
+                # Case (1) is taken care of by ``remove_memlet_path``
+                # Case (2) is handled below
+                # Reconnect scopes
+                if scopes_to_reconnect:
+                    schildren = state.scope_children()
+                    for exit_node in scopes_to_reconnect:
+                        entry_node = state.entry_node(exit_node)
+                        for node in schildren[entry_node]:
+                            if node is exit_node:
+                                continue
+                            if isinstance(node, nodes.EntryNode):
+                                node = state.exit_node(node)
+                            # If node will be disconnected from exit node, add an empty memlet
+                            if all(succ in dead_nodes for succ in state.successors(node)):
+                                state.add_nedge(node, exit_node, Memlet())
 
-            #############################################
-            # Removal
-            #############################################
-            predecessor_nsdfgs: Dict[nodes.NestedSDFG, Set[str]] = defaultdict(set)
-            for node in dead_nodes:
-                # Remove memlet paths and connectors pertaining to dead nodes
-                try:
-                    for e in state.in_edges(node):
-                        mtree = state.memlet_tree(e)
-                        for leaf in mtree.leaves():
-                            # Keep track of predecessors of removed nodes for connector pruning
-                            if isinstance(leaf.src, nodes.NestedSDFG):
-                                if not leaf.data.is_empty():
-                                    predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
+                # Removal
+                predecessor_nsdfgs: Dict[nodes.NestedSDFG, Set[str]] = defaultdict(set)
+                for node in dead_nodes:
+                    # Remove memlet paths and connectors pertaining to dead nodes
+                    try:
+                        for e in state.in_edges(node):
+                            mtree = state.memlet_tree(e)
+                            for leaf in mtree.leaves():
+                                # Keep track of predecessors of removed nodes for connector pruning
+                                if isinstance(leaf.src, nodes.NestedSDFG):
+                                    if not leaf.data.is_empty():
+                                        predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
 
-                            # Pruning connectors on tasklets sometimes needs to change their code.
-                            # A ``None`` src_conn is a dependency/empty edge with no connector to
-                            # prune, so skip the type-inference hint (which cannot infer a type for a
-                            # missing connector and would raise) and just drop the memlet path below.
-                            elif isinstance(leaf.src, nodes.Tasklet) and leaf.src_conn is not None:
-                                ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
-                                # Add definition
-                                if leaf.src.code.language == dtypes.Language.CPP:
-                                    if ctype is None:
+                                # Pruning connectors on tasklets sometimes needs to change their code.
+                                # A ``None`` src_conn is a dependency/empty edge with no connector to
+                                # prune, so skip the type-inference hint (which cannot infer a type for a
+                                # missing connector and would raise) and just drop the memlet path below.
+                                elif isinstance(leaf.src, nodes.Tasklet) and leaf.src_conn is not None:
+                                    ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
+                                    # Add definition
+                                    if leaf.src.code.language == dtypes.Language.CPP:
+                                        if ctype is None:
+                                            raise NotImplementedError(
+                                                f'Cannot eliminate dead connector "{leaf.src_conn}" on '
+                                                'tasklet due to connector type inference failure.')
+                                        leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
+                                    elif leaf.src.code.language == dtypes.Language.Python:
+                                        if ctype is not None:
+                                            # ASTFindReplace won't do any replacement (note that repldict is empty), it is
+                                            # used only to check if leaf.src_conn is used in tasklet's code.
+                                            ast_find = astutils.ASTFindReplace(repldict={},
+                                                                               trigger_names={leaf.src_conn})
+                                            # if leaf.src_conn is found in leaf.src.code.code
+                                            try:
+                                                for code in leaf.src.code.code:
+                                                    ast_find.generic_visit(code)
+                                            except astutils.NameFound:
+                                                # then add the hint expression
+                                                leaf.src.code.code = ast.parse(
+                                                    f'{leaf.src_conn}: dace.{ctype.to_string()}\n'
+                                                ).body + leaf.src.code.code
+                                    else:
                                         raise NotImplementedError(
                                             f'Cannot eliminate dead connector "{leaf.src_conn}" on '
-                                            'tasklet due to connector type inference failure.')
-                                    leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
-                                elif leaf.src.code.language == dtypes.Language.Python:
-                                    if ctype is not None:
-                                        # ASTFindReplace won't do any replacement (note that repldict is empty), it is
-                                        # used only to check if leaf.src_conn is used in tasklet's code.
-                                        ast_find = astutils.ASTFindReplace(repldict={}, trigger_names={leaf.src_conn})
-                                        # if leaf.src_conn is found in leaf.src.code.code
-                                        try:
-                                            for code in leaf.src.code.code:
-                                                ast_find.generic_visit(code)
-                                        except astutils.NameFound:
-                                            # then add the hint expression
-                                            leaf.src.code.code = ast.parse(
-                                                f'{leaf.src_conn}: dace.{ctype.to_string()}\n'
-                                            ).body + leaf.src.code.code
-                                else:
-                                    raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
-                                                              'tasklet due to its code language.')
-                            state.remove_memlet_path(leaf)
+                                            'tasklet due to its code language.')
+                                state.remove_memlet_path(leaf)
 
-                    # Remove the node itself as necessary
-                    state.remove_node(node)
-                except KeyError:  # Node already removed
-                    continue
+                        # Remove the node itself as necessary
+                        state.remove_node(node)
+                    except KeyError:  # Node already removed
+                        continue
 
-            result[state].update(dead_nodes)
+                result[state].update(dead_nodes)
 
-            # Remove isolated access nodes after elimination
-            access_nodes = set(state.data_nodes())
-            for node in access_nodes:
-                if state.degree(node) == 0:
-                    state.remove_node(node)
-                    result[state].add(node)
+                # Remove isolated access nodes after elimination
+                access_nodes = set(state.data_nodes())
+                for node in access_nodes:
+                    if state.degree(node) == 0:
+                        state.remove_node(node)
+                        result[state].add(node)
 
-            # Prune now-dead connectors
-            for node, dead_conns in predecessor_nsdfgs.items():
-                for conn in dead_conns:
-                    # If removed connector belonged to a nested SDFG, and no other input connector shares name,
-                    # make nested data transient (dead dataflow elimination would remove internally as necessary)
-                    if conn not in node.in_connectors:
-                        node.sdfg.arrays[conn].transient = True
+                # Prune now-dead connectors
+                for node, dead_conns in predecessor_nsdfgs.items():
+                    for conn in dead_conns:
+                        # If removed connector belonged to a nested SDFG, and no other input connector shares name,
+                        # make nested data transient (dead dataflow elimination would remove internally as necessary)
+                        if conn not in node.in_connectors:
+                            node.sdfg.arrays[conn].transient = True
 
-            # Update read sets for the predecessor states to reuse
-            remaining_access_nodes = set(n for n in (access_nodes - result[state]) if state.out_degree(n) > 0)
-            remaining_data_containers = set(node.data for node in remaining_access_nodes)
-            removed_data_containers = set(n.data for n in result[state]
-                                          if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes
-                                          and n.data not in remaining_data_containers)
-            access_sets[state] = (access_sets[state][0] - removed_data_containers, access_sets[state][1])
+                # Update read sets for the predecessor states to reuse
+                remaining_access_nodes = set(n for n in (access_nodes - result[state]) if state.out_degree(n) > 0)
+                remaining_data_containers = set(node.data for node in remaining_access_nodes)
+                removed_data_containers = set(n.data for n in result[state]
+                                              if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes
+                                              and n.data not in remaining_data_containers)
+                access_sets[state] = (access_sets[state][0] - removed_data_containers, access_sets[state][1])
+                # A loop body is its own descendant: its refreshed reads can expose the next dead link now. Only a
+                # state that lost nodes goes again, so the loop ends.
+                if (not self.converge_self_reaching_states or state not in reachable[state]
+                        or state.number_of_nodes() == nodes_before):
+                    break
+                refresh_enclosing_reads(sdfg, state, access_sets)
 
         return result or None
 

@@ -108,6 +108,8 @@ class SimplifyPass(ppl.FixedPointPipeline):
         pass_opts = {
             'InlineControlFlowRegions.no_inline_function_call_regions': self.no_inline_function_call_regions,
             'InlineControlFlowRegions.no_inline_named_regions': self.no_inline_named_regions,
+            # The fixed point would peel a loop body's dead chain one link per round of every pass.
+            'DeadDataflowElimination.converge_self_reaching_states': True,
         }
         if pass_options:
             pass_opts.update(pass_options)
