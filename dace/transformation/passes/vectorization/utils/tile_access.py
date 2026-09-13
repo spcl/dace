@@ -162,9 +162,9 @@ class TileAccess:
 
 #: Everything :func:`build_symbol_definition_map` derives from ``inner_sdfg`` alone, in the order it
 #: unpacks them: interstate RHS strings, scalar-write defs, unreadable writes, unique interstate
-#: defs, the sympify memo, and the recurrence symbols.
+#: defs, the sympify memo, the recurrence symbols, and the free-symbol names of each definition.
 ScanCache: TypeAlias = tuple[dict[str, set[str]], dict[str, set[sympy.Expr]], set[str], dict[str, sympy.Expr],
-                             dict[str, sympy.Expr | None], set[str]]
+                             dict[str, sympy.Expr | None], set[str], dict[sympy.Expr, frozenset[str]]]
 
 # ----- internal helpers --------------------------------------------------
 
@@ -323,7 +323,7 @@ def build_symbol_definition_map(inner_sdfg: SDFG | None,
     cache_key = id(inner_sdfg)
     cached = scan_cache.get(cache_key) if scan_cache is not None else None
     if cached is not None:
-        ise_rhs, scalar_defs, unreadable_writes, unique_ise_defs, sympify_memo, recurrence_syms = cached
+        ise_rhs, scalar_defs, unreadable_writes, unique_ise_defs, sympify_memo, recurrence_syms, free_names = cached
     else:
         # --- source 1: interstate-edge symbol assignments ---
         ise_rhs: dict[str, set[str]] = {}
@@ -411,9 +411,12 @@ def build_symbol_definition_map(inner_sdfg: SDFG | None,
             if any(name in {str(s) for s in rhs.free_symbols} for rhs in rhs_set):
                 recurrence_syms.add(name)
 
+        # Printing a symbol is the costly part of naming it, and the taint walk below names every
+        # definition once per state: equal expressions print alike, so one entry per expression.
+        free_names: dict[sympy.Expr, frozenset[str]] = {}
         if scan_cache is not None:
             scan_cache[cache_key] = (ise_rhs, scalar_defs, unreadable_writes, unique_ise_defs, sympify_memo,
-                                     recurrence_syms)
+                                     recurrence_syms, free_names)
 
     defs: dict[str, sympy.Expr] = {}
     for k, rhs_set in ise_rhs.items():
@@ -451,8 +454,11 @@ def build_symbol_definition_map(inner_sdfg: SDFG | None,
         for k, v in defs.items():
             if k in tainted:
                 continue
-            v_syms = {str(s) for s in v.free_symbols}
-            if k in v_syms or (v_syms & tainted):  # self-ref, or reaches a tainted symbol
+            v_syms = free_names.get(v)
+            if v_syms is None:
+                v_syms = frozenset(str(s) for s in v.free_symbols)
+                free_names[v] = v_syms
+            if k in v_syms or not v_syms.isdisjoint(tainted):  # self-ref, or reaches a tainted symbol
                 tainted.add(k)
                 changed = True
     filtered = {k: v for k, v in defs.items() if k not in tainted}

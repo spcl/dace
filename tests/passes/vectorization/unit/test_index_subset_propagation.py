@@ -19,7 +19,9 @@ from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.pass_pipeline import Pipeline
+from dace import subsets
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets, may_rewrite
 from dace.transformation.passes.vectorization.utils.tile_access import propagate_subset
 
 N = dace.symbol('N')
@@ -69,7 +71,7 @@ def _build(gather: bool) -> dace.SDFG:
     symmap = {'i': 'i', 'N': 'N'}
     if not gather:
         symmap['offset'] = 'offset'
-    nsdfg = st.add_nested_sdfg(inner, inputs, {'out'}, symmap)
+    nsdfg = st.add_nested_sdfg(inner, dict.fromkeys(sorted(inputs)), {'out': None}, symmap)
     for arr in inputs:
         st.add_edge(st.add_access(arr), None, me, f'IN_{arr}', dace.Memlet(f'{arr}[0:N]'))
         st.add_edge(me, f'OUT_{arr}', nsdfg, arr, dace.Memlet(f'{arr}[0:N]'))
@@ -121,6 +123,31 @@ def test_gather_index_not_inlined():
     subs = _a_subsets(sdfg)
     # Data-dependent index must be left as a gather (NOT inlined to an array read in the subset).
     assert not any('idx[' in s for s in subs), f"gather index wrongly inlined into subset: {subs}"
+
+
+def test_pass_rewrites_exactly_the_promoted_index_subset():
+    sdfg = _build(gather=False)
+    Pipeline([ScalarToSymbolPromotion(), SymbolPropagation(), RemoveUnusedSymbols()]).apply_pass(sdfg, {})
+    rewritten = PropagateIndexSubsets().apply_pass(sdfg, {})
+    subs = _a_subsets(sdfg)
+    assert rewritten == 1, subs
+    assert any('i + offset' in s or 'offset + i' in s for s in subs), subs
+    assert not any('__sym' in s or 'idxval' in s for s in subs), subs
+
+
+def test_pass_leaves_a_gather_index_and_reports_no_rewrite():
+    sdfg = _build(gather=True)
+    Pipeline([ScalarToSymbolPromotion(), SymbolPropagation(), RemoveUnusedSymbols()]).apply_pass(sdfg, {})
+    assert PropagateIndexSubsets().apply_pass(sdfg, {}) is None
+    assert not any('idx[' in s for s in _a_subsets(sdfg))
+
+
+def test_subset_naming_no_defined_symbol_is_refused_before_resolution():
+    defs = {'__sym': dace.symbolic.pystr_to_symbolic('i + offset')}
+    assert may_rewrite(subsets.Range.from_string('__sym'), defs, {})
+    assert may_rewrite(subsets.Range.from_string('0:__sym'), defs, {})
+    assert not may_rewrite(subsets.Range.from_string('i, 0:N'), defs, {})
+    assert not may_rewrite(subsets.Indices.from_string('0'), defs, {})
 
 
 def test_iplusoffset_kernel_emits_no_gather():
