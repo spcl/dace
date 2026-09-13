@@ -1116,8 +1116,9 @@ def render(sdfg: SDFG,
     # self-containment check rather than at anything a caller could act on.
     with cpf_lowering.dialect_scope(dialect):
         # ``prepare`` expands library nodes into loops and tasklets on this throwaway copy; nothing
-        # CPF emits reads node.debuginfo, so the inspect.stack() walk behind it is pure overhead.
-        with set_temporary('compiler', 'lineinfo', value='none'):
+        # CPF emits reads node.debuginfo, so the inspect.stack() walk behind it is pure overhead. No
+        # history either: the first recorded expansion deep-copies the whole copy into ``orig_sdfg``.
+        with set_temporary('compiler', 'lineinfo', value='none'), set_temporary('store_history', value=False):
             prepare(prepared, provenance)
     # DACE_* environment variables outrank set_temporary, so a shell that pins the CPU generator to
     # ``legacy`` would silently render through the wrong one -- and the legacy generator emits
