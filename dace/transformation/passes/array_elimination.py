@@ -140,13 +140,20 @@ class ArrayElimination(ppl.Pass):
             state_order = list(cfg.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=True))
         except KeyError:
             return None
+        # The containers each state accesses, in ``access_sets`` order: a state scans only its own instead of
+        # every container. Membership only shrinks, and only for the state being processed.
+        containers_by_state: Dict[SDFGState, List[str]] = defaultdict(list)
+        for s, accesses in access_sets.items():
+            for accessing_state in accesses:
+                containers_by_state[accessing_state].append(s)
         for state in reversed(state_order):
             # Find all data descriptors that will no longer be used after this state
             # ``(accesses & reach) - {state}`` is non-empty exactly when another accessing state is
             # reachable; scanning for one skips building a set of all of ``reach`` per container.
             removable_data: OrderedSet[str] = OrderedSet()
             reach = None
-            for s, accesses in access_sets.items():
+            for s in containers_by_state.get(state, ()):
+                accesses = access_sets[s]
                 if state not in accesses:
                     continue
                 if reach is None:
@@ -318,6 +325,8 @@ class ArrayElimination(ppl.Pass):
         removed_nodes: Set[nodes.AccessNode] = set()
         xforms = [RemoveSliceView()]
         state_id = state.block_id
+        # A linear scan per read; no transformation applied below adds or removes a region.
+        cfg_id = state.parent_graph.cfg_id
 
         for nodeset in access_nodes.values():
             for anode in list(nodeset):
@@ -326,7 +335,7 @@ class ArrayElimination(ppl.Pass):
                 for xform in xforms:
                     # Quick path to setup match
                     candidate = {type(xform).view: anode}
-                    xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0, override=True)
+                    xform.setup_match(sdfg, cfg_id, state_id, candidate, 0, override=True)
 
                     # Try to apply
                     if xform.can_be_applied(state, 0, sdfg):
@@ -342,6 +351,8 @@ class ArrayElimination(ppl.Pass):
         """
         removed_nodes: Set[nodes.AccessNode] = set()
         state_id = state.block_id
+        # A linear scan per read; no transformation applied below adds or removes a region.
+        cfg_id = state.parent_graph.cfg_id
 
         # Transformations that remove the first access node
         xforms_first: List[SingleStateTransformation] = [RedundantWriteSlice(), UnsqueezeViewRemove(), RedundantArray()]
@@ -373,12 +384,7 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_first:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
-                                xform.setup_match(sdfg,
-                                                  state.parent_graph.cfg_id,
-                                                  state_id,
-                                                  candidate,
-                                                  0,
-                                                  override=True)
+                                xform.setup_match(sdfg, cfg_id, state_id, candidate, 0, override=True)
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):
@@ -400,12 +406,7 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_second:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
-                                xform.setup_match(sdfg,
-                                                  state.parent_graph.cfg_id,
-                                                  state_id,
-                                                  candidate,
-                                                  0,
-                                                  override=True)
+                                xform.setup_match(sdfg, cfg_id, state_id, candidate, 0, override=True)
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):
