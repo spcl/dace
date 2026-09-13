@@ -1098,8 +1098,9 @@ def lowering_for(name: str,
             return '%s(%s)' % (c_math_function(name, types), ', '.join(arguments))
         if name == 'iround':
             return '((int)%s(%s))' % (c_math_function('round', types), ', '.join(arguments))
-        if name in C_TYPED_HELPER_SPECS:
-            return c_helper_call(name, arguments, types)
+        spec = c_helper_spec(name, len(arguments))
+        if spec is not None:
+            return c_helper_call(spec, arguments, types)
     variadic = variadic_minmax(name, arguments, dialect, types)
     if variadic is not None:
         return variadic
@@ -1298,18 +1299,6 @@ def headers_for(names: Set[str], dialect: Optional[Dialect] = None) -> Tuple[str
 # dispatch macro over a closed set of typed ``static inline`` functions. The controlling expression of
 # ``_Generic`` is UNEVALUATED, so each argument is still evaluated exactly once, in the selected call.
 
-#: Arithmetic types a ``_Generic`` dispatch enumerates, paired with the suffix its typed helper is
-#: named after. SIGNED integers only: an unsigned instantiation of a sign-sensitive body ("comparison
-#: of unsigned expression < 0 is always false") warns under ``-Wextra``, and CPF output must build
-#: warning-free. A helper reached with an unsigned value fails to select, which is the loud direction.
-#:
-#: The types are the FUNDAMENTAL spellings, not the ``<stdint.h>`` typedefs: ``int32_t`` IS ``int``
-#: on every platform DaCe targets, so listing both would give one ``_Generic`` two associations for
-#: the same type, which does not compile.
-C_SIGNED_INTS: Tuple[Tuple[str, str], ...] = (('int', 'i'), ('long', 'l'), ('long long', 'll'))
-C_FLOATS: Tuple[Tuple[str, str], ...] = (('float', 'f'), ('double', 'd'), ('long double', 'ld'))
-C_ARITHMETIC: Tuple[Tuple[str, str], ...] = C_SIGNED_INTS + C_FLOATS
-
 #: Every type surviving the usual arithmetic conversions of ``(a) + (b)``, which is what
 #: ``cpf_max`` / ``cpf_min`` dispatch on. Unsigned types belong HERE (the bodies compare two values
 #: of one type and cannot warn), and the list is closed on purpose: no ``default:`` association, so
@@ -1434,10 +1423,6 @@ def c_minmax_call(stem: str, arguments: Tuple[str, ...], types: Optional[Tuple[O
     return nested
 
 
-#: The ``<math.h>`` / ``<complex.h>`` suffix of each floating C type, for a typed body's ``{f}``.
-C_LIBM_SUFFIXES: Dict[str, str] = {'float': 'f', 'long double': 'l', 'float _Complex': 'f', 'long double _Complex': 'l'}
-
-
 def c_generic_macro(name: str,
                     parameters: Tuple[str, ...],
                     control: str,
@@ -1471,8 +1456,7 @@ def c_typed_family(name: str,
     width the index arithmetic or the element type settled on.
 
     :param name: the helper's name, as the printers emit it. Becomes the macro's name.
-    :param parameters: ``(type template, name)`` per parameter. ``{T}`` is the group's type, and
-                       ``{f}`` in a body its ``<math.h>`` suffix: ``floor{f}`` is ``floorf`` for a float.
+    :param parameters: ``(type template, name)`` per parameter. ``{T}`` is the group's type.
     :param groups: ``(types, return type template, body)``. Several groups exist where C++ used
                    ``if constexpr`` to branch on integral-vs-floating: the branch becomes two
                    groups, and ``_Generic`` picks between them.
@@ -1488,7 +1472,7 @@ def c_typed_family(name: str,
         for ctype, suffix in types:
             target = 'cpf_%s_%s' % (stem, suffix)
             declared = ', '.join(ptype.replace('{T}', ctype) + ' ' + pname for ptype, pname in parameters)
-            typed = body.replace('{T}', ctype).replace('{f}', C_LIBM_SUFFIXES.get(ctype, ''))
+            typed = body.replace('{T}', ctype)
             statements = '\n'.join('    ' + line if line.strip() else line for line in typed.split('\n'))
             blocks.append('static inline %s %s(%s) {\n%s\n}' %
                           (returns.replace('{T}', ctype), target, declared, statements))
@@ -1740,21 +1724,6 @@ C_INLINE_DEFINITIONS.update({
               '{.parts = {re, im}}; return z.value; }' % ((real, builder) + (real, ) * 4))
     for real, builder in (('float', 'cpf_complex64'), ('double', 'cpf_complex128'))
 })
-C_INLINE_DEFINITIONS.update({
-    # Two arities, which no single C macro can have. The three-argument pick chooses between the
-    # unary and binary dispatch macros by counting what the caller wrote.
-    'heaviside':
-    '\n'.join((
-        '#define cpf_pick3(a0, a1, a2, ...) a2',
-        c_typed_family('cpf_heaviside_1', (('{T}', 'value'), ),
-                       ((C_ARITHMETIC, '{T}', 'return (value > ({T})0) ? ({T})1 : ({T})0;'), ), '+(value)'),
-        c_typed_family(
-            'cpf_heaviside_2', (('{T}', 'value'), ('{T}', 'at_zero')),
-            ((C_ARITHMETIC, '{T}', 'return (value < ({T})0) ? ({T})0 : ((value > ({T})0) ? ({T})1 : at_zero);'), ),
-            '(value) + (at_zero)'),
-        '#define heaviside(...) cpf_pick3(__VA_ARGS__, cpf_heaviside_2, cpf_heaviside_1)(__VA_ARGS__)',
-    )),
-})
 
 #: The dace types a typed helper is instantiated at, grouped the way a helper's bodies differ.
 C_SIGNED_DTYPES: Tuple[str, ...] = ('int32', 'int64')
@@ -1853,6 +1822,19 @@ C_TYPED_HELPER_SPECS: Dict[str, Tuple[Tuple[Tuple[str, str], ...], Tuple[Tuple[T
                  ((C_FLOATING_DTYPES, 'void', '*mantissa = frexp{f}(value, exponent);'), )),
 }
 
+# ``heaviside`` has two arities, which one C function cannot have: each is its own helper, and the
+# call's argument count picks between them at print time.
+C_TYPED_HELPER_SPECS.update({
+    'heaviside_1':
+    ((('{T}', 'value'), ), ((C_ARITHMETIC_DTYPES, '{T}', 'return (value > ({T})0) ? ({T})1 : ({T})0;'), )),
+    'heaviside_2':
+    ((('{T}', 'value'), ('{T}', 'at_zero')),
+     ((C_ARITHMETIC_DTYPES, '{T}', 'return (value < ({T})0) ? ({T})0 : ((value > ({T})0) ? ({T})1 : at_zero);'), )),
+})
+
+#: Runtime helper -> argument count -> the :data:`C_TYPED_HELPER_SPECS` entry for that arity.
+C_HELPER_ARITIES: Dict[str, Dict[int, str]] = {'heaviside': {1: 'heaviside_1', 2: 'heaviside_2'}}
+
 
 def c_typed_helpers() -> Tuple[Dict[str, str], Dict[str, Tuple[str, ...]], Dict[str, Tuple[str, ...]], Dict[str, str]]:
     """``(definitions, dependencies, types per helper, result types)`` for :data:`C_TYPED_HELPER_SPECS`.
@@ -1894,6 +1876,19 @@ C_TYPED_HELPER_RESULTS: Dict[str, str] = {
     },
     **C_TYPED_HELPER_RETURNS
 }
+
+
+def c_helper_spec(name: str, count: int) -> Optional[str]:
+    """The :data:`C_TYPED_HELPER_SPECS` entry a call to ``name`` with ``count`` arguments names, or ``None``.
+
+    :raises NotImplementedError: for an arity a split helper has no entry for.
+    """
+    if name in C_HELPER_ARITIES:
+        if count not in C_HELPER_ARITIES[name]:
+            raise NotImplementedError(f'CPF has no C {name} taking {count} arguments; it takes '
+                                      f'{sorted(C_HELPER_ARITIES[name])}')
+        return C_HELPER_ARITIES[name][count]
+    return name if name in C_TYPED_HELPER_SPECS else None
 
 
 def c_helper_operand_types(name: str, types: Optional[Tuple[Optional[str],
@@ -2490,7 +2485,7 @@ TABLES: Dict[Dialect, Tables] = {
     Dialect.STANDALONE_C:
     _tables(C_STD_RENAMES, C_REWRITES, C_INLINE_DEFINITIONS, C_VARIADIC_MINMAX, C_UNSUPPORTED, C_CTYPE_RENAMES,
             C_BASE_HEADERS, C_DEFINITION_DEPENDENCIES, {},
-            frozenset(C_TYPED_MATH) | frozenset(C_TYPED_HELPER_SPECS) | {'iround'}),
+            frozenset(C_TYPED_MATH) | frozenset(C_TYPED_HELPER_SPECS) | {'iround', 'heaviside'}),
     # The HIP unit is C++, so it takes the C++ vocabulary and adds to it: the ROCm toolkit's own
     # headers, which ship with the compiler that builds the unit, and the device counterparts of
     # the runtime functions a DEVICE library expansion calls (:data:`HIP_INLINE_DEFINITIONS`).

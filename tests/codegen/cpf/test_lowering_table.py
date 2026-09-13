@@ -478,7 +478,7 @@ def test_every_cpp_definition_has_a_c_form_or_a_refusal():
     """No C++ helper escapes the choice: it is either spelled in C or listed as unspellable."""
     unclassified = sorted(
         set(cpf_lowering.INLINE_DEFINITIONS) - set(cpf_lowering.C_INLINE_DEFINITIONS) -
-        set(cpf_lowering.C_TYPED_HELPER_SPECS) - set(cpf_lowering.C_UNSUPPORTED) -
+        set(cpf_lowering.C_TYPED_HELPER_SPECS) - set(cpf_lowering.C_HELPER_ARITIES) - set(cpf_lowering.C_UNSUPPORTED) -
         cpf_lowering.C_REWRITTEN_IN_NATIVE_CODE)
     assert not unclassified, (f'{unclassified} have a C++ inline definition but no C form, no rewrite and no entry '
                               'in C_UNSUPPORTED, so a kernel calling one would render C that does not build')
@@ -535,8 +535,7 @@ def test_every_c_definition_is_reachable():
     for statement in DETECT_COLLISION_STATEMENTS.values():
         reachable |= cpf_lowering.helpers_used(cpf_lowering.rewrite_native_code(statement, Dialect.STANDALONE_C),
                                                Dialect.STANDALONE_C)
-    # The two arity-specific halves of ``heaviside`` are defined inside its own entry, not called
-    # from anywhere else; every other name must be reached from outside.
+    # Every name must be reached from outside its own definition.
     unreachable = sorted(set(cpf_lowering.C_INLINE_DEFINITIONS) - reachable)
     assert not unreachable, f'{unreachable} are emitted by no lowering, so nothing ever exercises them'
 
@@ -1163,3 +1162,25 @@ def test_a_mixed_integer_float_maths_call_keeps_the_float_function(name, types, 
     """A call picks by the type C's conversions give its arguments together, as the dispatch it replaces
     did; picking ``double`` here would compute a ``float`` expression at a different precision."""
     assert cpf_lowering.c_math_function(name, types) == function
+
+
+#: ``(argument types, the call a C heaviside prints as)``: the argument count picks the helper.
+C_HEAVISIDE_CALLS = [
+    (('float32', ), 'cpf_heaviside_1_float32(a)'),
+    (('float64', 'float64'), 'cpf_heaviside_2_float64(a, b)'),
+    (('int32', 'float32'), 'cpf_heaviside_2_float32(a, b)'),
+]
+
+
+@pytest.mark.parametrize('types,expected', C_HEAVISIDE_CALLS, ids=['-'.join(t) for t, _ in C_HEAVISIDE_CALLS])
+def test_a_c_heaviside_picks_its_helper_by_argument_count(types, expected):
+    """One C function cannot take one argument and two, and no counting macro is left to choose, so
+    the printer names the helper for the arity the call was written with."""
+    arguments = ('a', 'b')[:len(types)]
+    assert cpf_lowering.lowering_for('heaviside', arguments, Dialect.STANDALONE_C, types) == expected
+
+
+def test_a_c_heaviside_of_another_arity_is_refused():
+    """A third argument has no helper to reach, so the printer refuses rather than dropping it."""
+    with pytest.raises(NotImplementedError, match='heaviside taking 3'):
+        cpf_lowering.lowering_for('heaviside', ('a', 'b', 'c'), Dialect.STANDALONE_C, ('float64', ) * 3)

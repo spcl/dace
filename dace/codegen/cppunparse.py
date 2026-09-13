@@ -488,8 +488,9 @@ class CPPUnparser:
                 return 'int32'
             if node.func.id in cpf_lowering.C_TYPED_HELPER_RESULTS:
                 return cpf_lowering.C_TYPED_HELPER_RESULTS[node.func.id]
-            if bare in cpf_lowering.C_TYPED_HELPER_SPECS:
-                return cpf_lowering.c_helper_result_type(bare, tuple(self.c_type(argument) for argument in node.args))
+            spec = cpf_lowering.c_helper_spec(bare, len(node.args))
+            if spec is not None:
+                return cpf_lowering.c_helper_result_type(spec, tuple(self.c_type(argument) for argument in node.args))
             # Instantiated at the type their arguments convert to, which is also what they return.
             if node.func.id in ('min', 'max', 'Min', 'Max', 'int_floor', 'Mod'):
                 operands = list(node.args)

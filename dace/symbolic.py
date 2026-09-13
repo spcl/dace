@@ -3950,8 +3950,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             if integral_index_expression(expr.args[0]):
                 return 'int64'
             return inner if inner in cpf_lowering.C_FLOATING_RANKS else 'float64'
-        if name in cpf_lowering.C_TYPED_HELPER_SPECS:
-            return cpf_lowering.c_helper_result_type(name, tuple(self.c_type(argument) for argument in expr.args))
+        spec = cpf_lowering.c_helper_spec(name, len(expr.args))
+        if spec is not None:
+            return cpf_lowering.c_helper_result_type(spec, tuple(self.c_type(argument) for argument in expr.args))
         if name in cpf_lowering.C_TYPED_MATH:
             types = tuple(self.c_type(argument) for argument in expr.args)
             if any(dtype is None for dtype in types):
