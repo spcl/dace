@@ -411,8 +411,7 @@ namespace dace
             ptr, 1, src_ystride, src_xstride, smem);
     }
 
-    // Wavefront width, used only to group lanes for coalescing: a wrong value costs bandwidth,
-    // never correctness. CDNA3 (gfx942, the measured target) is 64 lanes; NVIDIA warps are 32.
+    // Coalescing lane width: CDNA3 (gfx942) wavefront is 64 lanes, NVIDIA warp is 32.
 #if defined(__HIPCC__) || defined(__HIP_DEVICE_COMPILE__)
     static constexpr int COLLECTIVE_LANE_WIDTH = 64;
 #else
@@ -420,17 +419,9 @@ namespace dace
 #endif
 
     // Block-collective staging copy of a 1-D to 3-D region between global and shared memory.
-    // Wavefront groups take rows of the middle axis, the slowest axis is iterated, and LANES keeps
-    // a wavefront on one contiguous run of the fastest axis.
-    //
-    // Measured MI300A gfx942, 256-thread block, 1 GiB footprint, GB/s, against the per-thread
-    // dace::CopyND loop this replaces: 2d 64x64 fp64 1592 vs 120, 2d 128x128 fp32 1413 vs 50,
-    // 2d 8x256 fp64 3010 vs 139, 3d 8x16x32 fp64 1383 vs 112. A 16-byte (dwordx4) vectorized
-    // variant lost on every shape (128x128 fp32: 482), so there is none here.
-    //
-    // Extents and strides are plain arguments, not template parameters: the emitter passes literals
-    // for a static shape and this is force-inlined, so they fold. 128x128 fp32 measured 1413 GB/s
-    // folded against 454 with genuinely runtime extents.
+    // Wavefront groups take rows of the middle axis, the slowest axis is iterated, and lanes
+    // keep a wavefront on one contiguous run of the fastest axis. Extents and strides are plain
+    // arguments (not template parameters) so the emitter's static-shape literals still fold.
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH, bool ASYNC>
     struct BlockCollective3D {
       static constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
@@ -452,9 +443,8 @@ namespace dace
         // lanes need not divide BLOCK_SIZE (a 53-wide row leaves 44 threads over). Parking the
         // remainder keeps two groups from writing the same row.
         if (y0 < rows_at_once) {
-          // Middle-axis distribution only: recovering (y, z) from a flat row index costs a
-          // runtime div, measured 2263 GB/s vs 3010 on 2d 8x256 fp64. The price is that a
-          // region with ylen < rows_at_once leaves the surplus wavefront groups idle.
+          // Middle-axis distribution only: a region with ylen < rows_at_once leaves the
+          // surplus wavefront groups idle.
           for (int z = 0; z < zlen; ++z) {
             const T* szp = src + z * src_zstride;
             T* dzp = dst + z * dst_zstride;

@@ -1,34 +1,10 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// AVX2 backend of the K=1 tile-op intrinsics. Mirrors the SAME function
-// signatures as the portable scalar reference
-// (``dace/runtime/include/dace/tile_ops/scalar.h``); the tile-op node's
-// chosen-backend expansion pulls in exactly one of the sibling headers, so this
-// header must NOT be included together with ``scalar.h`` (both define the same
-// functions). Ops are selected by a one-char ``Op`` template parameter (see
-// the scalar.h legend); operand broadcast is a ``bool`` parameter -- no enums.
-//
-// AVX2 specifics versus the AVX-512 sibling:
-//   * No opmask registers and no masked-arithmetic forms. The masking idiom is
-//     "compute the full vector, then BLEND-with-zero (producers) or VPMASKMOV
-//     (array writers) to commit only active lanes". A lane mask is a vector
-//     (``__m256``/``__m256d``/``__m256i``) whose per-lane HIGH BIT selects the
-//     lane (all-ones = active, zero = inactive).
-//   * Several integer ops have no AVX2 intrinsic (int64 mul/min/max, integer
-//     div, scatter, strided store) -- those fall back to a correct per-lane
-//     scalar loop, exactly like the AVX-512 sibling falls back for unsupported
-//     dtypes. Correctness first, SIMD where the intrinsic exists.
-//
-// Masked semantics (load-bearing, two flavours, identical to scalar.h):
-//   * tile PRODUCERS (binop / merge / load / gather) -- ZERO-FILL inactive lanes
-//     and GUARD the read, so an inactive (e.g. out-of-bounds tail) lane never
-//     dereferences ``src`` / ``src[idx]``. Implemented with maskload / mask-
-//     gather (which do not touch inactive lanes) or a blend-with-zero of an
-//     in-tile computation.
-//   * array WRITERS (store / scatter) -- RMW skip-inactive: an inactive lane is
-//     not written, so the destination array (and its OOB tail) is never touched.
-//     Implemented with maskstore (load / store) or a guarded scalar loop
-//     (scatter, strided store -- no AVX2 instruction).
+// AVX2 backend of the K=1 tile-op intrinsics; same dace::tileops signatures as scalar.h,
+// selected by a one-char Op template parameter (see scalar.h for the legend). AVX2 has no
+// opmask registers, so masking blends-with-zero (producers) or maskstores (writers) instead;
+// ops with no AVX2 intrinsic (int64 mul/min/max, integer div, scatter, strided store) fall
+// back to a scalar loop.
 #pragma once
 
 #include <immintrin.h>
@@ -45,10 +21,8 @@
 namespace dace {
 namespace tileops {
 
-// ===================================================================
 // Scalar per-lane op (reference semantics; used by every scalar tail /
 // fallback path so the AVX2 results are bit-for-bit the scalar contract).
-// ===================================================================
 template <typename T, char Op>
 inline T tile_apply(T a, T b) {
   if constexpr (Op == '+')
@@ -85,11 +59,8 @@ inline T tile_apply(T a, T b) {
 
 namespace detail {
 
-// ---- lane-mask builders -------------------------------------------------
-// AVX2 masks are vectors whose per-lane HIGH BIT selects the lane. Build from
-// the ``const bool*`` tile mask: active lane -> all-ones (-1), inactive -> 0.
-// The mask lane width must match the element width (32-bit for ps/epi32,
-// 64-bit for pd/epi64).
+// lane-mask builders: AVX2 masks are vectors whose per-lane high bit selects the lane.
+// Build from the bool* tile mask: active -> all-ones (-1), inactive -> 0.
 inline __m256i mask32_from_bools(const bool* __restrict__ mask, int base, int n) {
   int32_t mbuf[8];
   for (int j = 0; j < 8; ++j) mbuf[j] = (j < n && mask[base + j]) ? -1 : 0;
@@ -101,7 +72,7 @@ inline __m256i mask64_from_bools(const bool* __restrict__ mask, int base, int n)
   return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(mbuf));
 }
 
-// ---- FP arithmetic / compare on a full vector ---------------------------
+// FP arithmetic / compare on a full vector
 // Returns the full (unmasked) op result; comparisons yield a 1.0/0.0 value
 // tile (all-ones compare mask AND-ed with a splat of 1).
 template <char Op>
@@ -192,7 +163,7 @@ inline __m256d binop_pd(__m256d a, __m256d b) {
   }
 }
 
-// ---- int32 op on a full vector ------------------------------------------
+// int32 op on a full vector
 // ``handled32<Op>()`` is false for the ops with no AVX2 int32 intrinsic
 // (Div); the caller routes those to the scalar fallback instead.
 template <char Op>
@@ -238,11 +209,9 @@ inline __m256i binop_epi32(__m256i a, __m256i b) {
 
 }  // namespace detail
 
-// ===================================================================
 // tile_binop : out[i] = a-operand <op> b-operand ; ZERO-FILL inactive.
 // Operand reads are in-tile (always safe to evaluate), so masking only
 // affects which lanes survive into ``out`` (inactive -> T(0)).
-// ===================================================================
 template <typename T, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                        const bool* __restrict__ mask, int vlen) {
@@ -329,13 +298,9 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
   tile_binop<T, Op, BroadcastA, BroadcastB, Masked>(out, a, b, mask, VLEN);
 }
 
-// ===================================================================
-// tile_fma : out[i] = fma(a, b, c) = a*b + c (single rounding). ZERO-FILL
-// inactive (operand reads are in-tile, always safe to evaluate). fp32/fp64 use
-// the AVX2 fused multiply-add ``_mm256_fmadd_p{s,d}`` (available under -mfma,
-// hence the ``#if defined(__FMA__)`` guard); integer types / a non-FMA build use
-// scalar ``std::fma`` so the pure and ISA lowerings agree bit-for-bit.
-// ===================================================================
+// tile_fma: out[i] = fma(a, b, c) = a*b + c, single rounding. Zero-fill inactive.
+// fp32/fp64 use the AVX2 FMA under -mfma; integers and a non-FMA build use scalar
+// std::fma instead, to agree bit-for-bit with the scalar fallback path.
 template <typename T, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
 inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
                      const bool* __restrict__ mask, int vlen) {
@@ -397,11 +362,9 @@ inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __re
   tile_fma<T, BroadcastA, BroadcastB, BroadcastC, Masked>(out, a, b, c, mask, VLEN);
 }
 
-// ===================================================================
 // tile_ite : out[i] = cond[i] ? t : e ; ZERO-FILL inactive.
 // The select is via blendv (per-lane high-bit), with cond built as an
 // all-ones/zero vector mask from the cond tile.
-// ===================================================================
 template <typename T, typename CondT, bool BroadcastThen, bool BroadcastElse, bool Masked>
 inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                      const T* __restrict__ e, const bool* __restrict__ mask, int vlen) {
@@ -540,11 +503,9 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
   tile_ite<T, CondT, BroadcastThen, BroadcastElse, Masked>(out, cond, t, e, mask, VLEN);
 }
 
-// ===================================================================
 // tile_load : dst[i] = src[i * stride] ; ZERO-FILL inactive + GUARDED read.
 // Contiguous (stride == 1): vector loadu (unmasked) / maskload (masked,
 // inactive lanes are NOT read -> OOB tail safe). Strided: scalar guarded loop.
-// ===================================================================
 template <typename T, bool Masked>
 inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
                       std::int64_t stride = 1) {
@@ -625,12 +586,10 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
   tile_load<T, Masked>(dst, src, mask, VLEN, stride);
 }
 
-// ===================================================================
 // tile_store : dst[i * stride] = src[i] ; RMW skip-inactive.
 // Contiguous unmasked: vector storeu. Masked: maskstore (only active lanes
 // touch memory -> OOB tail never written). Strided: scalar guarded loop
 // (no native strided/scatter store in AVX2).
-// ===================================================================
 template <typename T, bool Masked>
 inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
                        std::int64_t stride = 1) {
@@ -707,14 +666,8 @@ inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const boo
   tile_store<T, Masked>(dst, src, mask, VLEN, stride);
 }
 
-// ===================================================================
-// tile_gather : dst[i] = src[idx[i]] ; ZERO-FILL inactive + GUARDED read.
-// Uses the AVX2 vgather family with an index vector whose lane width matches
-// the element lane count (8 lanes for fp32/int32, 4 lanes for fp64/int64).
-// The tile-op IdxT may be a different width than the element, so the index
-// is copied into the matching-width buffer first. Masked: mask-gather, whose
-// inactive lanes are NOT dereferenced (garbage / OOB index is safe).
-// ===================================================================
+// tile_gather: dst[i] = src[idx[i]], zero-fill inactive + guarded read, via the AVX2
+// vgather family. IdxT is copied into a lane-width-matching index buffer first.
 template <typename T, typename IdxT, bool Masked>
 inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                         const bool* __restrict__ mask, int vlen) {
@@ -810,11 +763,8 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   tile_gather<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
 }
 
-// ===================================================================
-// tile_scatter : dst[idx[i]] = src[i] ; RMW skip-inactive.
-// AVX2 has NO scatter instruction -> per-lane scalar loop, with the mask
-// guard so an inactive lane (e.g. garbage / OOB index) is never written.
-// ===================================================================
+// tile_scatter: dst[idx[i]] = src[i], RMW skip-inactive. AVX2 has no scatter
+// instruction, so this is always a scalar loop.
 template <typename T, typename IdxT, bool Masked>
 inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                          const bool* __restrict__ mask, int vlen) {
@@ -832,9 +782,7 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   tile_scatter<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
 }
 
-// ---------------------------- tile_mask_gen ----------------------------
-// out[l] = (base + l) < ub. AVX2: 64-bit-lane compare (``_mm256_cmpgt_epi64``,
-// W=4; ``ub > base+l`` => active) extracted to bool bytes; scalar tail.
+// tile_mask_gen: out[l] = (base + l) < ub, via a 64-bit-lane compare (W=4).
 template <typename IdxT, int VLEN>
 inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
   constexpr int W = 4;
@@ -851,19 +799,9 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
   for (; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
 }
 
-// ----------------------------- tile_reduce ----------------------------
-// Horizontal reduction of a VLEN-lane tile to ONE scalar (an in-map / per-tile
-// reduction: ``acc = sum/prod/min/max over the tile``). ``Op`` is the reduction
-// op ('+' sum, '*' prod, 'm' min, 'M' max); returns the reduced element, not a
-// vector. Full reduction only -- a masked / single-axis / K>=2 reduce keeps the
-// ``pure`` per-lane expansion (the selector never routes those here).
-//
-// Balanced log-depth pairwise fold (consecutive pairs (0,1)(2,3)...; an odd
-// trailing lane forwards unchanged). Over a compile-time-constant ``VLEN`` the
-// loops unroll, so the compiler re-vectorises the partials; it reduces in the
-// same order as the vectorized ``Reduce`` node's ``_dace_horizontal_tree`` so
-// both paths agree. The per-lane combine reuses this header's own ``tile_apply``
-// (self-contained; no cross-ISA dispatch header).
+// tile_reduce: horizontal reduction of a VLEN-lane tile to one scalar (Op: '+' sum, '*' prod,
+// 'm' min, 'M' max). Balanced log-depth pairwise fold, matching the order the vectorized
+// Reduce node's _dace_horizontal_tree uses so both paths agree numerically.
 template <typename T, int VLEN, char Op>
 inline T tile_reduce(const T* __restrict__ src) {
   T buf[VLEN];

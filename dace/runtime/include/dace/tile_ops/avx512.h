@@ -1,24 +1,7 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// AVX-512 backend of the K=1 tile-op intrinsics. Same signatures as the scalar
-// reference (dace/tile_ops/scalar.h); the tile-op node's AVX512 expansion pulls
-// THIS header in via its environment. NEVER include together with another
-// backend header (the env picks exactly one).
-//
-// Each op is a function template parameterised by element type ``T``, the
-// constexpr tile width ``VLEN``, a one-char op code ``Op`` (binop only; see the
-// scalar header for the legend), per-operand broadcast booleans, and a
-// ``Masked`` boolean -- no enums / structs / functors. ``VLEN`` may exceed the
-// 512-bit register width (e.g. 64) or not divide it (e.g. 50); every op runs a
-// W-wide SIMD chunk loop (W=16 fp32, W=8 fp64) plus a scalar tail.
-//
-// Coverage: fp32 / fp64 arithmetic ``tile_binop`` (``+ - * / m M``) lowers to
-// ``_mm512`` intrinsics with an ``__mmask`` built from the bool tile (zero-fill
-// producer; RMW-safe writer). Comparisons / logical ops / integer types and the
-// other ops (merge/load/store/gather/scatter) use the correct per-lane loop
-// (matching scalar.h) and are SIMD-ized incrementally. Masked semantics match
-// scalar.h exactly: producers ZERO-FILL inactive lanes with guarded reads;
-// writers (store/scatter) RMW skip-inactive.
+// AVX-512 backend of the tile-op intrinsics, same signatures as dace/tile_ops/scalar.h. Include exactly one
+// backend header. Every op runs a W-wide SIMD chunk loop plus a scalar tail.
 #pragma once
 
 #include <immintrin.h>
@@ -120,7 +103,7 @@ inline void avx512_arith_pd(double* __restrict__ out, __m512d va, __m512d vb, __
 }
 }  // namespace detail
 
-// ----------------------------- tile_binop -----------------------------
+// tile_binop
 // fp32/fp64 arithmetic -> AVX-512 W-chunk loop + scalar tail; else scalar loop.
 template <typename T, int VLEN, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
@@ -186,7 +169,7 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
   }
 }
 
-// ----------------------------- tile_fma -------------------------------
+// tile_fma
 // out[i] = fma(a, b, c) = a*b + c (single rounding). fp32/fp64 -> AVX-512 W-chunk
 // fused multiply-add (``_mm512_fmadd_p{s,d}``) + a scalar ``std::fma`` tail;
 // integer types / a no-AVX512 build take the scalar ``std::fma`` loop. ``std::fma``
@@ -264,7 +247,7 @@ inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __re
   }
 }
 
-// ----- merge / load / store / gather / scatter -----
+// merge / load / store / gather / scatter
 // Correct per-lane forms (matching scalar.h); SIMD-ized incrementally. Producers
 // ZERO-FILL inactive + guard the read; writers RMW skip-inactive.
 // Per-lane unary op (op codes: n neg, ! not, a abs, e exp, l log, s sqrt,
@@ -458,7 +441,7 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   }
 }
 
-// ---------------------------- tile_mask_gen ----------------------------
+// tile_mask_gen
 // out[l] = (base + l) < ub. AVX-512: 64-bit-lane threshold compare
 // (``_mm512_cmplt_epi64_mask``, W=8) -> ``__mmask8`` expanded to bool bytes;
 // scalar tail. int64 compare keeps array-sized bounds exact.
@@ -476,21 +459,8 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
   for (; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
 }
 
-// ----------------------------- tile_reduce ----------------------------
-// Horizontal reduction of a VLEN-lane tile to ONE scalar (an in-map / per-tile
-// reduction: ``acc = sum/prod/min/max over the tile``). ``Op`` is the reduction
-// op ('+' sum, '*' prod, 'm' min, 'M' max); returns the reduced element, not a
-// vector. Full reduction only -- a masked / single-axis / K>=2 reduce keeps the
-// ``pure`` per-lane expansion (the selector never routes those here).
-//
-// Balanced log-depth pairwise fold (consecutive pairs (0,1)(2,3)...; an odd
-// trailing lane forwards unchanged), the SAME association as every sibling
-// backend and as the vectorized ``Reduce`` node's ``_dace_horizontal_tree``.
-// The AVX-512 one-shot ``_mm512_reduce_<op>_p{s,d}`` folds halves instead of
-// adjacent pairs; for ``+`` / ``*`` that is a different rounding order, so a
-// tile reduced on this backend stopped matching the scalar oracle bit-for-bit.
-// Over a compile-time-constant ``VLEN`` the loops unroll and the compiler
-// re-vectorises the partials, so the tree costs nothing here.
+// tile_reduce: reduce a VLEN-lane tile to one scalar ('+', '*', 'm', 'M'); full reductions only. Uses the
+// balanced pairwise fold of the other backends, not ``_mm512_reduce_*``, to stay bit-identical.
 template <typename T, int VLEN, char Op>
 inline T tile_reduce(const T* __restrict__ src) {
   T buf[VLEN];

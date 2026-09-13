@@ -1,32 +1,8 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// Arch-independent per-op escape-hatch siblings (Option F overlay).
-//
-// Every arch file (scalar / avx2 / avx512 / arm_neon / arm_sve) includes
-// this header. The unsuffixed names ``vector_<op>`` are owned by the
-// arch file (best implementation for that backend); the suffixed names
-// here are the per-op overrides the emitter can pick via the
-// ``intrin_ops_disabled`` / ``prefer_intrin`` knobs.
-//
-//   vector_<op>_pscalar    pure scalar loop, NO _dace_vectorize hint.
-//                          Deterministic; for debugging / when SIMD
-//                          autovec has precision or correctness issues
-//                          on a specific op.
-//   vector_<op>_av         scalar loop + _dace_vectorize hint. Lets the
-//                          compiler decide whether/how to vectorize.
-//
-// For binary / unary ops, both have ``_masked`` siblings: lanes where
-// ``mask[i] == false`` leave ``out[i]`` unchanged (read-modify-write per
-// lane). Mask is ``bool[W]``. The ``vector_select`` op is already a
-// conditional and only has ``_pscalar`` / ``_av`` (no _masked).
-//
-// Suffix ``_pscalar`` (not ``_scalar``) is used to avoid collision with
-// the ``_w_scalar`` operand-type suffix (``vector_add_w_scalar`` = a
-// vector plus a scalar constant).
-//
-// Critical invariant: ``_pscalar`` must NEVER carry ``_dace_vectorize``.
-// That is the entire point of the variant. Verified by code structure
-// below: only the ``_AV`` macros expand to bodies with ``_dace_vectorize``.
+// Per-op overrides of each arch file's vector_<op>: ``_pscalar`` is a plain scalar loop and must never
+// carry ``_dace_vectorize``; ``_av`` adds that hint. Binary and unary ops also have ``_masked`` variants
+// that leave lanes with ``mask[i] == false`` unchanged.
 
 #pragma once
 
@@ -46,9 +22,7 @@
 #endif
 #endif
 
-// ----------------------------------------------------------------------------
 // Generator macros
-// ----------------------------------------------------------------------------
 // Each macro family defines four functions per op:
 //   vector_<name>_pscalar          (pure scalar, no hint)
 //   vector_<name>_av               (autovec hint)
@@ -157,9 +131,7 @@
     _DACE_VEC_BODY_AV_MASKED(EXPR)                                                                                     \
   }
 
-// ============================================================================
 // Op definitions
-// ============================================================================
 
 // Arithmetic (binary vec+vec)
 DACE_VEC_DEFINE_BINOP(add, a[i] + b[i])
@@ -231,21 +203,8 @@ DACE_VEC_DEFINE_UNOP(neg, -a[i])
 // Pow (binary vec, scalar exponent)
 DACE_VEC_DEFINE_BINOP_W_SCALAR(pow_w_scalar, std::pow(a[i], constant))
 
-// ============================================================================
-// vector_select: 3-input conditional ``out = cond ? t : e``.
-//
-// The masked variant is load-bearing for a masked remainder: an active
-// lane performs the select; an INACTIVE lane is left *untouched* — the
-// same gated-store form the ``*_av_masked`` binops use
-// (``if (mask[i]) out[i] = EXPR``). It must NOT write inactive lanes,
-// not even with ``e``: a masked remainder over ``R < W`` lanes binds
-// ``out = arr + tile_i`` so the trailing ``W - R`` lanes index past the
-// array end; storing there (any value) corrupts the heap (TSVC s2710
-// masked-merge-65 segfault). Skipping the store leaves that memory
-// alone and, for the in-place RMW merge target where ``e`` aliases the
-// destination, preserves ``arr``'s old value on inactive valid lanes
-// exactly as ``out[i] = e`` would have — minus the OOB.
-// ============================================================================
+// vector_select: ``out = cond ? t : e``. The masked variant never writes inactive lanes, which may lie past
+// the array end in a masked remainder.
 template <typename T, int vector_width, typename CondT = bool>
 static inline void vector_select_pscalar(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                                          const T* __restrict__ e) {
@@ -266,14 +225,12 @@ static inline void vector_select_av_masked(T* __restrict__ out, const CondT* __r
   }
 }
 
-// ============================================================================
 // Integer floor/ceil division (``dace::math::int_floor`` / ``int_ceil``).
-// Arch-independent — integer division is not a single SIMD instruction, so
+// Arch-independent -- integer division is not a single SIMD instruction, so
 // these lower to the same per-lane division on every backend. Bodies match
 // the scalar definitions in ``dace/math.h`` (``a / b`` and
 // ``(a + b - 1) / b``) so the vectorized path stays bit-identical to the
 // non-vectorized one (TSVC s276: ``int_floor(LEN_1D, 2)`` lane condition).
-// ============================================================================
 template <typename T, int vector_width>
 static inline void vector_int_floor(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
   _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] = a[i] / b[i];
@@ -304,23 +261,8 @@ static inline void vector_int_ceil_w_scalar_c(T* __restrict__ out, const T const
   _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) out[i] = (constant + b[i] - 1) / b[i];
 }
 
-// ============================================================================
-// Horizontal reduction — fold a ``vector_width``-wide buffer to one scalar.
-//
-// ``_dace_horizontal_tree_<op>`` is the portable, arch-independent
-// baseline: a balanced log-depth pairwise tree (critical path
-// ``O(log W)`` so the compiler can re-vectorize the partials), matching
-// ``utils.reductions.emit_tree_reduction`` (consecutive pairs
-// ``(0,1)(2,3)…``; an odd trailing element forwards unchanged). The
-// scalar backend's ``horizontal_reduce_<op>`` delegates straight here;
-// the SIMD backends call their single-instruction reduce intrinsic for
-// the floating-point types and fall back to this tree for the integer
-// / bitwise ops that have no one-shot intrinsic. ``vector_width`` is a
-// compile-time constant, so the fixed-size scratch buffer and the loop
-// bounds unroll. Bitwise ops are only ever instantiated for integer
-// ``T`` (the emitter never emits ``&|^`` on a float accumulator), so
-// the templates stay lazily well-formed for ``T = double``.
-// ============================================================================
+// Horizontal reduction to one scalar: ``_dace_horizontal_tree_<op>`` is a balanced pairwise tree, pairs
+// (0,1)(2,3)... with an odd last element forwarded, matching ``emit_tree_reduction``.
 #define _DACE_HREDUCE_TREE(NAME, OP)                                          \
   template <typename T, int vector_width>                                     \
   static inline T _dace_horizontal_tree_##NAME(const T* __restrict__ a) {     \
@@ -361,9 +303,7 @@ _DACE_HREDUCE_TREE(bxor, _DACE_HREDUCE_XOR)
 #undef _DACE_HREDUCE_OR
 #undef _DACE_HREDUCE_XOR
 
-// ----------------------------------------------------------------------------
-// Cleanup macros — keep namespace tight; downstream files do not need them.
-// ----------------------------------------------------------------------------
+// Cleanup macros -- keep namespace tight; downstream files do not need them.
 #undef DACE_VEC_DEFINE_BINOP
 #undef DACE_VEC_DEFINE_BINOP_W_SCALAR
 #undef DACE_VEC_DEFINE_UNOP

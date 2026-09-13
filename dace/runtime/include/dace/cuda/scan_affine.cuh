@@ -1,19 +1,7 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// CUDA first-order linear recurrence: ``out[k] = c[k]*out[k-1] + d[k]``, entered at
-// ``out[-1] = seed``. The device counterpart of ``dace::scan::inclusive_affine`` in
-// :file:`dace/runtime/include/dace/scan.hpp`, and the same monoid: the carry is the affine MAP
-// ``x -> a*x + b`` rather than a value, and map composition is associative, so a plain prefix scan
-// over the maps computes the recurrence.
-//
-// The seed is folded into element 0 rather than passed to cub as an init value, and that choice is
-// numerically load-bearing rather than a convenience. Element 0's map comes out as the CONSTANT
-// map ``{0, c[0]*seed + d[0]}``, and composition multiplies the accumulated ``a`` by the left
-// operand's ``a``, so every prefix that includes element 0 carries ``a == 0``. The coefficient
-// product therefore never spans more than the segment cub composes before it applies a block
-// prefix -- the same bound ``fold_affine`` gives the host lowering, and the reason neither forms
-// the whole-prefix product that the closed form ``out[k] = P[k]*(seed + sum_j d[j]/P[j])`` loses to
-// overflow.
+// CUDA recurrence ``out[k] = c[k]*out[k-1] + d[k]`` from ``out[-1] = seed``, as a prefix scan over affine maps.
+// The seed folds into element 0, so no coefficient product spans the whole prefix and overflows.
 
 #ifndef __DACE_CUDA_SCAN_AFFINE_CUH
 #define __DACE_CUDA_SCAN_AFFINE_CUH

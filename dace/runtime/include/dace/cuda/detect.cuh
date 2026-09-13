@@ -2,24 +2,8 @@
 #ifndef __DACE_DETECT_CUH
 #define __DACE_DETECT_CUH
 
-// Device counterparts of the host detection primitives in ``dace/detect.h``: duplicate
-// detection for a scatter index, an all-positive sign check, and a short-circuiting
-// find-first over a predicate. Same contracts, same return values; only the machine
-// differs, so a libnode picks an expansion and nothing else changes.
-//
-// All three end in a block-wide reduction folded by ``gpucub::BlockReduce`` and ONE atomic
-// per block, which is the shape DaCe's own GPU WCR lowering emits (see
-// ``drain_gpu_block_reduction`` in ``dace/codegen/targets/cpu.py``, down to naming
-// ``BLOCK_REDUCE_WARP_REDUCTIONS``): a per-thread atomic on a single word is correct but
-// serializes the whole grid on one cache line.
-//
-// CUB is spelled ``::gpucub::`` throughout: this code lives in namespace ``dace``, where a bare
-// ``gpucub::`` resolves to ``dace::cub`` -- the scratch-pool namespace from ``cub_scratch.cuh``, not
-// the library.
-//
-// This header belongs in the ``.cu`` translation unit. A libnode reaches it the way the
-// CUB libnodes do: a ``DACE_EXPORTED`` wrapper appended to the device global code, declared
-// in the host global code and called from the tasklet.
+// Device versions of dace/detect.h: duplicate detection, all-positive check, find-first. Include from the .cu
+// translation unit. Spell CUB ``::gpucub::``: inside ``dace`` a bare ``gpucub::`` resolves to ``dace::cub``.
 
 #include "gpucub.cuh"  // ::gpucub -- cub on CUDA, hipCUB on HIP
 
@@ -117,19 +101,8 @@ __global__ void detect_all_positive_kernel(const T* a, long long n, unsigned lon
 }
 
 /**
- * The find-first search: a cancelling block-per-tile argmin over the firing indices.
- *
- * One tile is one block-wide sweep. Before each tile the block reads the current answer once
- * and stops if its tile starts past it, so cancellation costs one shared load per tile rather
- * than a per-thread atomic; the tile's own minimum folds through ``gpucub::BlockReduce`` and thread
- * 0 alone does the ``atomicMin`` -- so a tile that fires publishes in one atomic, and a tile
- * that does not fire issues none at all.
- *
- * The published answer only ever decreases and every value it takes is a real firing index, so
- * a block reading a stale one skips less than it could have and never skips the true minimum.
- *
- * ``result`` is unsigned because that is the width ``atomicMin`` covers; indices are
- * non-negative, so unsigned and signed order agree.
+ * Find-first as a cancelling block-per-tile argmin. The published answer only decreases and is always a real
+ * firing index, so a stale read never skips the true minimum.
  */
 template <typename Pred>
 __global__ void find_first_kernel(long long begin, long long end, Pred pred, unsigned long long* result) {

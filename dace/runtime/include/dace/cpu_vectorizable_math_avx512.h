@@ -27,7 +27,7 @@
 #error Included the AVX512 header without support AVX512
 #endif
 
-// --------------------------- vector_mult ---------------------------
+// vector_mult
 
 template <typename T, int vector_width>
 static inline void vector_mult(T* __restrict__ c, const T* __restrict__ a, const T* __restrict__ b) {
@@ -67,7 +67,7 @@ static inline void vector_mult(T* __restrict__ c, const T* __restrict__ a, const
 #endif
 }
 
-// --------------------------- vector_mult_w_scalar ---------------------------
+// vector_mult_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_mult_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -107,7 +107,7 @@ static inline void vector_mult_w_scalar(T* __restrict__ out, const T* __restrict
 #endif
 }
 
-// --------------------------- vector_add ---------------------------
+// vector_add
 
 template <typename T, int vector_width>
 static inline void vector_add(T* __restrict__ c, const T* __restrict__ a, const T* __restrict__ b) {
@@ -147,7 +147,7 @@ static inline void vector_add(T* __restrict__ c, const T* __restrict__ a, const 
 #endif
 }
 
-// --------------------------- vector_add_w_scalar ---------------------------
+// vector_add_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_add_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -187,7 +187,7 @@ static inline void vector_add_w_scalar(T* __restrict__ out, const T* __restrict_
 #endif
 }
 
-// --------------------------- vector_add_masked ---------------------------
+// vector_add_masked
 // Masked add: lanes where mask[i] == false leave out[i] unchanged in memory
 // (RMW). Built on _mm512_mask_storeu_{ps,pd} which writes only active lanes.
 
@@ -234,8 +234,7 @@ static inline void vector_add_masked(T* __restrict__ out, const T* __restrict__ 
   }
 }
 
-// --------------------------- vector_add_w_scalar_masked
-// ---------------------------
+// vector_add_w_scalar_masked
 
 template <typename T, int vector_width>
 static inline void vector_add_w_scalar_masked(T* __restrict__ out, const T* __restrict__ a, const T constant,
@@ -280,7 +279,7 @@ static inline void vector_add_w_scalar_masked(T* __restrict__ out, const T* __re
   }
 }
 
-// --------------------------- vector_sub ---------------------------
+// vector_sub
 
 template <typename T, int vector_width>
 static inline void vector_sub(T* __restrict__ c, const T* __restrict__ a, const T* __restrict__ b) {
@@ -320,7 +319,7 @@ static inline void vector_sub(T* __restrict__ c, const T* __restrict__ a, const 
 #endif
 }
 
-// --------------------------- vector_sub_w_scalar ---------------------------
+// vector_sub_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_sub_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -360,7 +359,7 @@ static inline void vector_sub_w_scalar(T* __restrict__ out, const T* __restrict_
 #endif
 }
 
-// --------------------------- vector_sub_w_scalar_c ---------------------------
+// vector_sub_w_scalar_c
 
 template <typename T, int vector_width>
 static inline void vector_sub_w_scalar_c(T* __restrict__ out, const T constant, const T* __restrict__ a) {
@@ -400,7 +399,7 @@ static inline void vector_sub_w_scalar_c(T* __restrict__ out, const T constant, 
 #endif
 }
 
-// --------------------------- vector_div ---------------------------
+// vector_div
 
 template <typename T, int vector_width>
 static inline void vector_div(T* __restrict__ c, const T* __restrict__ a, const T* __restrict__ b) {
@@ -440,7 +439,7 @@ static inline void vector_div(T* __restrict__ c, const T* __restrict__ a, const 
 #endif
 }
 
-// --------------------------- vector_div_w_scalar ---------------------------
+// vector_div_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_div_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -480,7 +479,7 @@ static inline void vector_div_w_scalar(T* __restrict__ out, const T* __restrict_
 #endif
 }
 
-// --------------------------- vector_div_w_scalar_c ---------------------------
+// vector_div_w_scalar_c
 
 template <typename T, int vector_width>
 static inline void vector_div_w_scalar_c(T* __restrict__ out, const T constant, const T* __restrict__ a) {
@@ -520,7 +519,7 @@ static inline void vector_div_w_scalar_c(T* __restrict__ out, const T constant, 
 #endif
 }
 
-// --------------------------- vector_copy ---------------------------
+// vector_copy
 
 template <typename T, int vector_width>
 static inline void vector_copy(T* __restrict__ dst, const T* __restrict__ src) {
@@ -556,7 +555,7 @@ static inline void vector_copy(T* __restrict__ dst, const T* __restrict__ src) {
 #endif
 }
 
-// --------------------------- vector_copy_w_scalar ---------------------------
+// vector_copy_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_copy_w_scalar(T* __restrict__ dst, const T a) {
@@ -592,7 +591,7 @@ static inline void vector_copy_w_scalar(T* __restrict__ dst, const T a) {
 #endif
 }
 
-// --------------------------- vector_min ---------------------------
+// vector_min
 
 template <typename T, int vector_width>
 static inline void vector_min(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
@@ -632,7 +631,7 @@ static inline void vector_min(T* __restrict__ out, const T* __restrict__ a, cons
 #endif
 }
 
-// --------------------------- vector_min_w_scalar ---------------------------
+// vector_min_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_min_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -672,7 +671,7 @@ static inline void vector_min_w_scalar(T* __restrict__ out, const T* __restrict_
 #endif
 }
 
-// --------------------------- vector_max ---------------------------
+// vector_max
 
 template <typename T, int vector_width>
 static inline void vector_max(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
@@ -712,7 +711,7 @@ static inline void vector_max(T* __restrict__ out, const T* __restrict__ a, cons
 #endif
 }
 
-// --------------------------- vector_max_w_scalar ---------------------------
+// vector_max_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_max_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -752,7 +751,7 @@ static inline void vector_max_w_scalar(T* __restrict__ out, const T* __restrict_
 #endif
 }
 
-// --------------------------- vector_gt ---------------------------
+// vector_gt
 
 template <typename T, int vector_width>
 static inline void vector_gt(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
@@ -798,7 +797,7 @@ static inline void vector_gt(T* __restrict__ out, const T* __restrict__ a, const
 #endif
 }
 
-// --------------------------- vector_gt_w_scalar ---------------------------
+// vector_gt_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_gt_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -844,7 +843,7 @@ static inline void vector_gt_w_scalar(T* __restrict__ out, const T* __restrict__
 #endif
 }
 
-// --------------------------- vector_gt_w_scalar_c ---------------------------
+// vector_gt_w_scalar_c
 
 template <typename T, int vector_width>
 static inline void vector_gt_w_scalar_c(T* __restrict__ out, const T constant, const T* __restrict__ a) {
@@ -890,7 +889,7 @@ static inline void vector_gt_w_scalar_c(T* __restrict__ out, const T constant, c
 #endif
 }
 
-// --------------------------- vector_lt ---------------------------
+// vector_lt
 
 template <typename T, int vector_width>
 static inline void vector_lt(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
@@ -936,7 +935,7 @@ static inline void vector_lt(T* __restrict__ out, const T* __restrict__ a, const
 #endif
 }
 
-// --------------------------- vector_lt_w_scalar ---------------------------
+// vector_lt_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_lt_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -982,7 +981,7 @@ static inline void vector_lt_w_scalar(T* __restrict__ out, const T* __restrict__
 #endif
 }
 
-// --------------------------- vector_lt_w_scalar_c ---------------------------
+// vector_lt_w_scalar_c
 
 template <typename T, int vector_width>
 static inline void vector_lt_w_scalar_c(T* __restrict__ out, const T constant, const T* __restrict__ a) {
@@ -1028,7 +1027,7 @@ static inline void vector_lt_w_scalar_c(T* __restrict__ out, const T constant, c
 #endif
 }
 
-// --------------------------- vector_ge ---------------------------
+// vector_ge
 
 template <typename T, int vector_width>
 static inline void vector_ge(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
@@ -1074,7 +1073,7 @@ static inline void vector_ge(T* __restrict__ out, const T* __restrict__ a, const
 #endif
 }
 
-// --------------------------- vector_ge_w_scalar ---------------------------
+// vector_ge_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_ge_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -1120,7 +1119,7 @@ static inline void vector_ge_w_scalar(T* __restrict__ out, const T* __restrict__
 #endif
 }
 
-// --------------------------- vector_ge_w_scalar_c ---------------------------
+// vector_ge_w_scalar_c
 
 template <typename T, int vector_width>
 static inline void vector_ge_w_scalar_c(T* __restrict__ out, const T constant, const T* __restrict__ a) {
@@ -1166,7 +1165,7 @@ static inline void vector_ge_w_scalar_c(T* __restrict__ out, const T constant, c
 #endif
 }
 
-// --------------------------- vector_le ---------------------------
+// vector_le
 
 template <typename T, int vector_width>
 static inline void vector_le(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
@@ -1212,7 +1211,7 @@ static inline void vector_le(T* __restrict__ out, const T* __restrict__ a, const
 #endif
 }
 
-// --------------------------- vector_le_w_scalar ---------------------------
+// vector_le_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_le_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -1258,7 +1257,7 @@ static inline void vector_le_w_scalar(T* __restrict__ out, const T* __restrict__
 #endif
 }
 
-// --------------------------- vector_le_w_scalar_c ---------------------------
+// vector_le_w_scalar_c
 
 template <typename T, int vector_width>
 static inline void vector_le_w_scalar_c(T* __restrict__ out, const T constant, const T* __restrict__ a) {
@@ -1304,7 +1303,7 @@ static inline void vector_le_w_scalar_c(T* __restrict__ out, const T constant, c
 #endif
 }
 
-// --------------------------- vector_eq ---------------------------
+// vector_eq
 
 template <typename T, int vector_width>
 static inline void vector_eq(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
@@ -1350,7 +1349,7 @@ static inline void vector_eq(T* __restrict__ out, const T* __restrict__ a, const
 #endif
 }
 
-// --------------------------- vector_eq_w_scalar ---------------------------
+// vector_eq_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_eq_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -1396,7 +1395,7 @@ static inline void vector_eq_w_scalar(T* __restrict__ out, const T* __restrict__
 #endif
 }
 
-// --------------------------- vector_ne ---------------------------
+// vector_ne
 
 template <typename T, int vector_width>
 static inline void vector_ne(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
@@ -1442,7 +1441,7 @@ static inline void vector_ne(T* __restrict__ out, const T* __restrict__ a, const
 #endif
 }
 
-// --------------------------- vector_ne_w_scalar ---------------------------
+// vector_ne_w_scalar
 
 template <typename T, int vector_width>
 static inline void vector_ne_w_scalar(T* __restrict__ out, const T* __restrict__ a, const T constant) {
@@ -1504,12 +1503,10 @@ static inline void vector_select(T* __restrict__ out, const CondT* __restrict__ 
   _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) { out[i] = cond[i] ? t[i] : e[i]; }
 }
 
-// ============================================================================
 // Runtime-length scatter / gather / strided load+store (moved from
 // vector_intrinsics/{gather,scatter,strided_load,strided_store}.h).
 // AVX-512 specializations using native gather/scatter intrinsics. Scalar
 // tail handling for length not divisible by 8.
-// ============================================================================
 
 // The lane count is a compile-time ``vector_width`` template argument (runtime
 // ``length`` removed): the ``>= 8`` SIMD gate becomes ``if constexpr`` so the
@@ -1599,7 +1596,7 @@ static inline void strided_store(const T* __restrict__ A, T* __restrict__ B, con
   for (int i = 0; i < vector_width; ++i) B[i * stride] = A[i];
 }
 
-// --------------------------- masked variants (RMW) ---------------------------
+// masked variants (RMW)
 // Inactive lanes leave the destination memory unchanged. Built on
 // _mm512_mask_i64{gather,scatter}_pd and _mm512_mask_storeu_pd which honour
 // the lane mask. Matches the vector_<op>_masked convention.
@@ -1702,15 +1699,9 @@ static inline void strided_store_masked(const T* __restrict__ A, T* __restrict__
     if (mask[i]) B[i * stride] = A[i];
 }
 
-// ---------------------- horizontal reductions ----------------------
-// AVX-512 one-shot reduce for the floating-point accumulator types
-// (double: 8-wide _pd, float: 16-wide _ps); every other type and the
-// bitwise ops fall back to the portable log-depth tree in the common
-// header (SFINAE-selected, so the tree is the correctness safety net
-// even if a SIMD path were imperfect). The accumulator register is
-// seeded from the first full lane-group and the loop starts past it,
-// so no identity constant is needed; a scalar tail folds the
-// remainder when ``vector_width`` is not a multiple of the lane count.
+// horizontal reductions
+// One-shot AVX-512 reduce for floating-point accumulators; other types and bitwise ops use the common
+// header's tree (SFINAE-selected).
 #define _DACE_AVX512_HRED(NAME, MM_PD, RED_PD, MM_PS, RED_PS, SCALAR)                                               \
   template <typename T, int vector_width>                                                                           \
   static inline typename std::enable_if<std::is_same<T, double>::value, T>::type horizontal_reduce_##NAME(          \

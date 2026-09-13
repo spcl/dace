@@ -35,11 +35,8 @@ using std::abs;
 //     return (a > b) ? a : b;
 // }
 
-// A later argument wins only by comparing STRICTLY better, so a tie -- and a
-// comparison that is false because an operand is NaN -- keeps the earlier one.
-// That is what Python's ``max``/``min`` do, and what ``std::max``/``std::min``
-// do; picking the later operand instead would disagree with the program these
-// are compiled from on every NaN and on ``max(0.0, -0.0)``.
+// A later argument wins only by comparing strictly better, so a tie (or a NaN operand)
+// keeps the earlier one, matching Python's and std::max/min's behavior.
 template <typename T>
 DACE_CONSTEXPR DACE_HDFI T min(const T& val) {
   return val;
@@ -72,13 +69,8 @@ static DACE_CONSTEXPR DACE_HDFI T Mod_float(const T& value, const T& modulus) {
 // Fortran implementation of MODULO
 template <typename T>
 static DACE_CONSTEXPR DACE_HDFI T Modulo(const T& value, const T& modulus) {
-  // Fortran implementation for integers - find R such that value = Q * modulus
-  // + R However, R must be in [0, modulus) To achieve that, we need to cast the
-  // division to floats. Example: -17, 3 must produce 1 and not -2. If we don't
-  // use cast, the floor is called on -5, producing wrong value. Instead, we
-  // need to have floor(-5.6... ) to ensure it produces -6. Similarly, 17, -3
-  // must produce -1 and not 2. This means that the default solution works if
-  // value and modulus have the same sign.
+  // R must be in [0, modulus): the division is cast to float so floor rounds toward
+  // -infinity (e.g. -17 % 3 -> 1, not -2), matching Fortran's MODULO.
   return value - floor(static_cast<float>(value) / modulus) * modulus;
 }
 
@@ -95,19 +87,13 @@ static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
   return exponent;
 }
 
-// Fortran ``SCALE(x, n)`` -- return ``x * 2^n``.  Matches C's
-// ``std::ldexp`` exactly.  Templated so the same name covers
-// f32 / f64 operands without the frontend having to specialise.
+// Fortran SCALE(x, n) -- return x * 2^n.
 template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
   return std::ldexp(x, n);
 }
 
-// Fortran ``EXPONENT(x)`` -- return the integer exponent ``e`` such
-// that ``x = mantissa * 2^e`` with ``0.5 <= |mantissa| < 1``.
-// Equivalent to ``std::frexp``'s second result; ``ilogb(x) + 1`` for
-// finite ``x``.  Provide as ``ilogb`` so the bridge's runtime-call
-// recognition can map ``_FortranAExponent*`` to a single short name.
+// Fortran EXPONENT(x), named ilogb so the bridge maps _FortranAExponent* to one name.
 template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int ilogb(const T& x) {
   int e = 0;
@@ -174,12 +160,8 @@ static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand, const T2& ri
   return left_operand << right_operand;
 }
 
-// Logical (zero-fill) shifts.  Unlike ``left_shift`` / ``right_shift`` (which
-// map to ``<<`` / ``>>`` and thus sign-extend a signed operand on the right
-// shift), these operate on the UNSIGNED representation so the bit pattern
-// shifts without sign extension.  This matches Fortran ``ISHFT`` semantics,
-// which is what the Fortran frontend lowers a logical shift to: e.g.
-// ``ishft(-182, -2)`` must zero-fill, not propagate the sign bit.
+// Logical (zero-fill) shifts: operate on the unsigned representation so a signed right
+// shift does not sign-extend, matching Fortran ISHFT semantics.
 template <typename T, typename T2>
 static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& left_operand, const T2& right_operand) {
   return static_cast<T>(static_cast<typename std::make_unsigned<T>::type>(left_operand) << right_operand);
@@ -238,11 +220,8 @@ DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const T& a, const da
 // https://stackoverflow.com/a/39304947
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
-  // ``/`` and ``%``, not ``std::div``: that one is HOST-ONLY, and nvcc answers a call to it from
-  // device code with a warning rather than an error. The guarded region holding the call is then
-  // deleted outright -- tsvc s315's ``a[i] = (7*i) % LEN`` compiled to an EMPTY kernel and the
-  // program read whatever the buffer already held. C++11 pins ``/`` to truncation toward zero, so
-  // the correction below is exact, and this form is ``constexpr`` where ``std::div`` is not.
+  // / and %, not std::div: that one is host-only, and nvcc silently drops the whole device
+  // region calling it (a warning, not an error) instead of failing the build.
   const T quotient = numerator / denominator;
   const T remainder = numerator % denominator;
   const T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
@@ -305,12 +284,9 @@ static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominato
   return (T)(numerator - quotient * denominator);
 }
 
-// Mixed-operand-type overload (e.g. ``i % 64`` where ``i`` is ``int64_t`` and the
-// literal ``64`` is ``int``): promote both operands to their common arithmetic
-// type and delegate. C's ``%`` applies the usual arithmetic conversions
-// implicitly, but the single-type template above cannot deduce ``T`` from two
-// different types. Guarded so the same-type call still binds the (more
-// specialized) overload above -- no ambiguity.
+// Mixed-operand-type overload (e.g. i % 64 with i int64_t): promote both operands to
+// their common type and delegate, since the single-type template above cannot deduce T
+// from two different types. Guarded so a same-type call still binds that overload.
 template <typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI auto py_mod(const T1& numerator, const T2& denominator)
     -> decltype(numerator + denominator) {
@@ -328,14 +304,8 @@ static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominat
   return (T)std::fmod(numerator, denominator);
 }
 
-// ``floor_mod(a, b)`` -- Fortran ``MODULO``: floored-quotient remainder
-// (same sign as the divisor).  Matches Python's ``%`` on both ints and
-// floats -- distinct from C++ ``%``, which truncates on signed ints.
-// Templated so a single ``floor_mod(a, b)`` call covers ``int32`` /
-// ``int64`` / ``float`` / ``double`` operands without the frontend
-// having to hint the operand type.  Fortran ``MOD`` (truncated) lowers
-// directly to ``arith.remsi`` for ints / ``std::fmod`` for floats and
-// doesn't need a helper.
+// floor_mod(a, b) -- Fortran MODULO: floored-quotient remainder (same sign as the
+// divisor), matching Python's % and distinct from C++'s truncating %.
 template <typename T>
 static DACE_CONSTEXPR DACE_HDFI T floor_mod(const T& numerator, const T& denominator) {
   return py_mod(numerator, denominator);
@@ -578,13 +548,8 @@ static DACE_CONSTEXPR_HOSTDEV typeless_pi pi{};
 static DACE_CONSTEXPR typeless_nan nan{};
 //////////////////////////////////////////////////////
 
-// Complex-component accessors.  ``re(z)`` / ``im(z)`` extract the real
-// / imaginary part of a complex value.  ``cppunparse`` maps the
-// tasklet-body spellings ``re(_in)`` / ``im(_in)`` here so a complex
-// connector's component is read directly.  Generic over
-// ``std::complex`` / ``thrust::complex`` (both expose ``.real()`` /
-// ``.imag()``); the trailing ``decltype`` constrains it to complex
-// types.
+// Complex-component accessors: re(z)/im(z), which cppunparse maps tasklet-body re(_in)/im(_in)
+// to. Generic over std::complex / thrust::complex via .real()/.imag().
 template <typename T>
 DACE_CONSTEXPR DACE_HDFI auto re(const T& z) -> decltype(z.real()) {
   return z.real();
@@ -611,13 +576,9 @@ DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b) {
   return std::pow(a, b);
 }
 
-// An integer base raised to an integer exponent STAYS an integer. This used to hold for ``int``
-// and ``unsigned int`` only, through two hand-written overloads; every other width -- ``int64_t``
-// above all, which is what a dace size symbol is -- fell through to ``std::pow`` and came back
-// ``double``. A symbolic ``R ** (K - 1)`` then reached C++ as a floating value in two places that
-// cannot take one: an OpenMP loop bound (gcc: "invalid controlling predicate") and a pointer
-// offset (``complex128* + double``), which is what stopped stockham_fft from building at all.
-// Negative exponents answer 0, the convention the ``int`` overload already set.
+// An integer base raised to an integer exponent stays an integer for every integral width
+// (not just int/unsigned int), since falling through to std::pow returns double where an
+// OpenMP loop bound or pointer offset cannot take one. Negative exponents answer 0.
 template <typename T, typename U,
           typename std::enable_if<std::is_integral<T>::value && std::is_integral<U>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const U& b) {
@@ -627,12 +588,8 @@ DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const U& b) {
   return result;
 }
 
-// Scalar types seed at ``T(1)`` so ``ipow(a, 0) == 1``. ``DACE_CONSTEXPR`` (the loop body is
-// constant-expression-legal since C++14, as the ``pow`` overloads above show) lets the readable
-// codegen's ``constexpr``/``consteval`` ``<arr>_idx`` / ``<arr>_size`` helpers call ``ipow`` directly
-// (RelaxIntegerPowers lowers integer powers in shapes/strides to ``ipow``); a non-constexpr callee
-// there is -Winvalid-constexpr and not a constant expression. Additive: runtime call sites are
-// unchanged.
+// Seeds at T(1) so ipow(a, 0) == 1. Must stay DACE_CONSTEXPR: RelaxIntegerPowers lowers
+// integer powers in shapes/strides to ipow, called from the codegen's constexpr helpers.
 template <typename T, typename std::enable_if<std::is_constructible<T, int>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI T ipow(const T a, const unsigned int b) {
   T result = T(1);
@@ -791,11 +748,8 @@ DACE_CONSTEXPR DACE_HDFI auto fma(const T& a, const U& b, const V& c) {
   return std::fma(a, b, c);
 }
 
-// A 16-bit float reaches ``float`` through one user-defined conversion, making
-// all three ``std::fma`` overloads equally good -- ambiguous, not a call.  Go
-// through ``float``, as ``tileops::tile_fma`` does for lanes it cannot pack
-// into ``__hfma2``.  Not ``DACE_CONSTEXPR``: ``__half(float)`` never folds, and
-// a non-template ``constexpr`` that cannot is -Winvalid-constexpr.
+// A 16-bit float makes all three std::fma overloads equally good (ambiguous), so this
+// routes through float explicitly. Not DACE_CONSTEXPR: __half(float) never folds.
 #define DACE_MATH_FMA_LP(TYPE)                                             \
   static DACE_HDFI TYPE fma(const TYPE& a, const TYPE& b, const TYPE& c) { \
     return TYPE(std::fma(float(a), float(b), float(c)));                   \

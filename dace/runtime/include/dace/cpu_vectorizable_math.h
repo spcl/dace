@@ -28,23 +28,8 @@
 #include "dace/cpu_vectorizable_math_scalar.h"
 #endif
 
-// ============================================================================
-// Constant-stride overloads (ISA-independent).
-//
-// When the stride is known at code-generation time the generator emits
-// ``strided_load<T, vector_width, stride>(A, B)`` so that *every* compile-time
-// constant -- both the lane count and the stride -- is a template (non-type)
-// argument rather than a runtime function parameter. These thin overloads
-// forward to the runtime-stride form selected above for the active ISA;
-// because that form is ``static inline`` and width-templated, the constexpr
-// ``stride`` is fully constant-folded -- the generated code is identical to a
-// hand-written constant-stride loop. The runtime-stride form is retained for
-// genuinely symbolic strides (e.g. a multi-dim ``N`` that is an SDFG symbol),
-// which the generator emits as ``strided_load<T, vector_width>(A, B, stride)``.
-//
-// Defined here, after the single ISA header include, so the runtime-stride
-// declarations they forward to are already in scope for every configuration.
-// ============================================================================
+// Constant-stride overloads: ``strided_load<T, vector_width, stride>`` forwards to the runtime-stride form, so
+// a constexpr stride folds away. Symbolic strides use ``strided_load<T, vector_width>(A, B, stride)``.
 template <typename T, int vector_width, int64_t stride>
 static inline void strided_load(const T* __restrict__ A, T* __restrict__ B) {
   strided_load<T, vector_width>(A, B, stride);

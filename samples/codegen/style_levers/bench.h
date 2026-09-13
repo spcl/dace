@@ -1,11 +1,5 @@
-// Shared timing harness for the codegen-pessimization reproducers.
-//
-// Rules it enforces:
-//   * median of >= 15 reps, never a single shot
-//   * every reproducer carries a TWIN: a byte-identical copy of the FAST form under a
-//     different symbol name. twin-vs-fast is the intra-binary noise+layout floor. Any
-//     delta not comfortably above it is an ordinary draw, not a finding.
-//   * results must be bit-identical across forms or the "lever" is a bug.
+// Timing harness for the codegen reproducers: median of >= 15 reps, a byte-identical twin as the noise
+// floor, and bit-identical results across forms.
 #pragma once
 #include <algorithm>
 #include <cmath>

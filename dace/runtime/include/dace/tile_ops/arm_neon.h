@@ -1,38 +1,9 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// ARM NEON (AArch64 Advanced SIMD, 128-bit ``q`` registers) backend of the
-// K=1 tile-op intrinsics. Exposes the SAME ``dace::tileops`` function
-// signatures as ``scalar.h`` (the portable reference) but lowers the
-// vectorisable paths to ``<arm_neon.h>`` intrinsics; the chosen-backend
-// expansion pulls in exactly one backend header.
-//
-// Lane widths: float -> float32x4_t (W=4), double -> float64x2_t (W=2),
-// int32_t -> int32x4_t (W=4), int64_t -> int64x2_t (W=2).
-//
-// Masked semantics (carried over unchanged from the reference):
-//   * tile PRODUCERS (binop / merge / load / gather) ZERO-FILL inactive lanes
-//     and GUARD the read. Vector producers compute the full register then blend
-//     against zero with ``vbslq`` using a lane bitmask; tile_load / tile_gather
-//     stay scalar-guarded because an inactive lane could index past the user
-//     array (vector-loading it would dereference OOB).
-//   * array WRITERS (store / scatter) RMW skip-inactive. NEON has NO masked or
-//     partial store -- every ``vst1q`` writes the full 128-bit register / W
-//     addresses -- so a full-width store at a masked tail writes past the array
-//     end (the TSVC s2710 OOB segfault). The ONLY OOB-safe masked writer is a
-//     scalar gated loop; the compiler still autovectorises the active in-bounds
-//     run.
-//
-// Native gaps (-> correct scalar loop, see the per-function notes):
-//   * integer divide (no ``vdivq_s32`` / ``vdivq_s64``; NEON has no integer
-//     division at all),
-//   * int64 multiply (no ``vmulq_s64``; SIMD integer multiply tops out at
-//     32-bit element width),
-//   * int64 min / max (no ``vminq_s64`` / ``vmaxq_s64``; integer min/max only
-//     8/16/32-bit),
-//   * ALL gather / scatter (no index-vector load/store intrinsics),
-//   * ALL masked stores / scatters and arbitrary strided stores (no masked /
-//     partial store -- OOB-unsafe otherwise),
-//   * ``!=`` has no ``vcneq_*`` intrinsic; built from NOT / XOR of ``vceqq_*``.
+// ARM NEON (AArch64, 128-bit q registers) backend of the K=1 tile-op intrinsics; same
+// dace::tileops signatures as scalar.h. Lane widths: float/int32_t W=4, double/int64_t W=2.
+// NEON has no masked or partial store, so a full-width store at a masked tail writes past
+// the array end; masked/strided writers therefore fall back to a scalar gated loop instead.
 #pragma once
 
 #include <arm_neon.h>
@@ -49,9 +20,7 @@
 namespace dace {
 namespace tileops {
 
-// ===========================================================================
 // Scalar reference body (shared correctness path + gap fallback)
-// ===========================================================================
 
 // Per-lane binary op. Comparisons / logicals yield ``T(1)`` / ``T(0)`` (the
 // tile stores the condition as the element type, matching the reference).
@@ -89,15 +58,10 @@ inline T tile_apply(T a, T b) {
     return (a || b) ? T(1) : T(0);
 }
 
-// ===========================================================================
 // NEON lane-mask helpers
-// ===========================================================================
 
-// Build a per-lane bitmask (all-ones / all-zeros) from a ``const bool*`` mask
-// (1 byte per lane). Each active lane becomes the all-ones value; the vbslq
-// blend below then selects computed-vs-zero per lane. Scalar-built (NEON has
-// no byte->lane widen-to-mask of arbitrary width); the surrounding op already
-// strides W lanes, so this is W scalar reads per tile chunk.
+// Build a per-lane bitmask (all-ones / all-zeros) from a bool* mask, for the vbslq blend
+// below. Scalar-built: NEON has no byte-mask-to-lane widen intrinsic.
 inline uint32x4_t neon_mask4_u32(const bool* __restrict__ mask) {
   uint32x4_t m = vdupq_n_u32(0);
   m = vsetq_lane_u32(mask[0] ? ~0u : 0u, m, 0);
@@ -123,10 +87,8 @@ inline float64x2_t neon_select_0_1_f64(uint64x2_t mask) { return vbslq_f64(mask,
 inline int32x4_t neon_select_0_1_s32(uint32x4_t mask) { return vandq_s32(vreinterpretq_s32_u32(mask), vdupq_n_s32(1)); }
 inline int64x2_t neon_select_0_1_s64(uint64x2_t mask) { return vandq_s64(vreinterpretq_s64_u64(mask), vdupq_n_s64(1)); }
 
-// ===========================================================================
 // Vector op kernels (one register's worth of lanes); op selected at compile
 // time. Returns the result register; producers blend against zero afterwards.
-// ===========================================================================
 
 // Floating point: every op except the logical And / Or (which are C++
 // truthiness producing ``T(1)`` / ``T(0)`` and have no NEON intrinsic) maps to
@@ -259,7 +221,7 @@ inline int64x2_t neon_binop_s64(int64x2_t a, int64x2_t b) {
     return neon_select_0_1_s64(veorq_u64(vceqq_s64(a, b), vdupq_n_u64(~0ull)));
 }
 
-// ----------------------------- tile_binop -----------------------------
+// tile_binop
 // out[i] = a-operand <op> b-operand ; ZERO-FILL inactive (operand reads are
 // in-tile, always safe to evaluate). Vector body where a native intrinsic
 // exists for (T, Op); scalar tail + all gap (T, Op) pairs via tile_apply.
@@ -336,13 +298,9 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
   tile_binop<T, Op, BroadcastA, BroadcastB, Masked>(out, a, b, mask, VLEN);
 }
 
-// ----------------------------- tile_fma -------------------------------
-// out[i] = fma(a, b, c) = a*b + c (single rounding). ZERO-FILL inactive (operand
-// reads are in-tile, always safe to evaluate). float / double lower to the NEON
-// fused multiply-add ``vfmaq_f{32,64}(vc, va, vb)`` -- OPERAND ORDER: this
-// computes ``vc + va*vb`` = a*b + c. Integers use scalar ``std::fma`` (so the
-// pure and ISA lowerings agree bit-for-bit -- an integer ``vmla`` would differ
-// from the double-based ``std::fma`` the pure path uses).
+// tile_fma: out[i] = fma(a, b, c) = a*b + c, single rounding. Zero-fill inactive.
+// Integers use scalar std::fma rather than an integer vmla, to agree bit-for-bit
+// with the scalar fallback path.
 template <typename T, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
 inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
                      const bool* __restrict__ mask, int vlen) {
@@ -391,11 +349,8 @@ inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __re
   tile_fma<T, BroadcastA, BroadcastB, BroadcastC, Masked>(out, a, b, c, mask, VLEN);
 }
 
-// ----------------------------- tile_ite -----------------------------
-// out[i] = cond[i] ? t : e ; ZERO-FILL inactive. Vector blend when CondT == T
-// and T is a NEON type AND both operands are full tiles (matching lane widths);
-// every other shape (broadcast operands, mismatched cond width, non-NEON T)
-// falls to the scalar ternary.
+// tile_ite: out[i] = cond[i] ? t : e, zero-fill inactive. Vector blend only when CondT == T
+// and both operands are full tiles; every other shape falls to the scalar ternary.
 template <typename T, typename CondT, bool BroadcastThen, bool BroadcastElse, bool Masked>
 inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                      const T* __restrict__ e, const bool* __restrict__ mask, int vlen) {
@@ -493,13 +448,9 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
   tile_ite<T, CondT, BroadcastThen, BroadcastElse, Masked>(out, cond, t, e, mask, VLEN);
 }
 
-// ----------------------------- tile_load ------------------------------
-// dst[i] = src[i * stride] ; ZERO-FILL inactive + GUARDED read.
-//
-// Unmasked, stride == 1: contiguous vld1q -> vst1q (in-tile, full vectors).
-// Masked OR strided: scalar guarded loop. The masked form MUST be scalar
-// (an inactive tail lane could index past the user array; a vector vld1q
-// would dereference OOB). Arbitrary runtime stride has no NEON gather-load.
+// tile_load: dst[i] = src[i * stride], zero-fill inactive + guarded read. Unmasked
+// stride-1 is vectorized; masked (an inactive tail lane could index OOB) or strided
+// falls back to a scalar guarded loop.
 template <typename T, bool Masked>
 inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
                       std::int64_t stride = 1) {
@@ -533,13 +484,9 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
   tile_load<T, Masked>(dst, src, mask, VLEN, stride);
 }
 
-// ----------------------------- tile_store -----------------------------
-// dst[i * stride] = src[i] ; RMW skip-inactive.
-//
-// Unmasked, stride == 1: contiguous vld1q -> vst1q. Masked OR strided: scalar
-// gated loop. The masked / strided store MUST be scalar -- NEON has no masked
-// or partial store, so a full-width vst1q at a masked tail writes past the
-// array end (the s2710 OOB segfault).
+// tile_store: dst[i * stride] = src[i], RMW skip-inactive. Unmasked stride-1 is
+// vectorized; masked or strided falls back to a scalar gated loop, since NEON has no
+// masked or partial store (a full-width vst1q at a masked tail would write past the array).
 template <typename T, bool Masked>
 inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
                        std::int64_t stride = 1) {
@@ -573,11 +520,8 @@ inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const boo
   tile_store<T, Masked>(dst, src, mask, VLEN, stride);
 }
 
-// ---------------------------- tile_gather -----------------------------
-// dst[i] = src[idx[i]] ; ZERO-FILL inactive + GUARDED read.
-//
-// NEON has no index-vector load (gather) intrinsic -> scalar (guarded when
-// masked, so a garbage / OOB index on an inactive lane is never dereferenced).
+// tile_gather: dst[i] = src[idx[i]], zero-fill inactive + guarded read. NEON has no
+// gather intrinsic, so this is always scalar.
 template <typename T, typename IdxT, bool Masked>
 inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                         const bool* __restrict__ mask, int vlen) {
@@ -594,11 +538,8 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   tile_gather<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
 }
 
-// ---------------------------- tile_scatter ----------------------------
-// dst[idx[i]] = src[i] ; RMW skip-inactive.
-//
-// NEON has no index-vector store (scatter) intrinsic -> scalar (gated when
-// masked; an inactive lane never writes, so a garbage / OOB index is safe).
+// tile_scatter: dst[idx[i]] = src[i], RMW skip-inactive. NEON has no scatter
+// intrinsic, so this is always scalar.
 template <typename T, typename IdxT, bool Masked>
 inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                          const bool* __restrict__ mask, int vlen) {
@@ -615,7 +556,7 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   tile_scatter<T, IdxT, Masked>(dst, src, idx, mask, VLEN);
 }
 
-// ---------------------------- tile_mask_gen ----------------------------
+// tile_mask_gen
 // out[l] = (base + l) < ub. NEON (AArch64): 64-bit-lane compare (vcltq_s64,
 // W=2) extracted to bool bytes; scalar tail.
 template <typename IdxT, int VLEN>
@@ -634,19 +575,9 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
   for (; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
 }
 
-// ----------------------------- tile_reduce ----------------------------
-// Horizontal reduction of a VLEN-lane tile to ONE scalar (an in-map / per-tile
-// reduction: ``acc = sum/prod/min/max over the tile``). ``Op`` is the reduction
-// op ('+' sum, '*' prod, 'm' min, 'M' max); returns the reduced element, not a
-// vector. Full reduction only -- a masked / single-axis / K>=2 reduce keeps the
-// ``pure`` per-lane expansion (the selector never routes those here).
-//
-// Balanced log-depth pairwise fold (consecutive pairs (0,1)(2,3)...; an odd
-// trailing lane forwards unchanged). Over a compile-time-constant ``VLEN`` the
-// loops unroll, so the compiler re-vectorises the partials; it reduces in the
-// same order as the vectorized ``Reduce`` node's ``_dace_horizontal_tree`` so
-// both paths agree. The per-lane combine reuses this header's own ``tile_apply``
-// (self-contained; no cross-ISA dispatch header).
+// tile_reduce: horizontal reduction of a VLEN-lane tile to one scalar (Op: '+' sum, '*' prod,
+// 'm' min, 'M' max). Balanced log-depth pairwise fold, matching the order the vectorized
+// Reduce node's _dace_horizontal_tree uses so both paths agree numerically.
 template <typename T, int VLEN, char Op>
 inline T tile_reduce(const T* __restrict__ src) {
   T buf[VLEN];

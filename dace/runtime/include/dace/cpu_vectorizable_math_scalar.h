@@ -126,7 +126,7 @@ static inline void vector_max_w_scalar(T* __restrict__ out, const T* __restrict_
   _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) { out[i] = std::max(a[i], constant); }
 }
 
-// ---- Comparison operators ----
+// Comparison operators
 
 template <typename T, int vector_width>
 static inline void vector_gt(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
@@ -214,13 +214,11 @@ static inline void vector_select(T* __restrict__ out, const CondT* __restrict__ 
   _dace_vectorize(vector_width) for (int i = 0; i < vector_width; i++) { out[i] = cond[i] ? t[i] : e[i]; }
 }
 
-// ============================================================================
 // Runtime-length scatter / gather / strided load+store (moved from
 // vector_intrinsics/{gather,scatter,strided_load,strided_store}.h).
 // Inlined to keep ODR safe under multi-TU inclusion.
 // Scalar fallback semantics; arch-specific specializations live in the
 // avx512/neon/sve arch files alongside their own vector_<op>s.
-// ============================================================================
 
 // The lane count is a compile-time ``vector_width`` template argument (the
 // runtime ``length`` was removed so the loop bound is constexpr and the body
@@ -258,7 +256,7 @@ static inline void strided_store(const T* __restrict__ A, T* __restrict__ B, con
   }
 }
 
-// --------------------------- masked variants (RMW) ---------------------------
+// masked variants (RMW)
 // Inactive lanes leave the destination memory unchanged; matches the
 // vector_<op>_masked convention used elsewhere in the runtime.
 
@@ -298,7 +296,7 @@ static inline void strided_store_masked(const T* __restrict__ A, T* __restrict__
   }
 }
 
-// ---------------------- horizontal reductions ----------------------
+// horizontal reductions
 // Scalar backend: delegate straight to the portable log-depth tree in
 // the common header (no SIMD intrinsic available / needed here).
 template <typename T, int vector_width>

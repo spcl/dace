@@ -7,9 +7,7 @@
 #include <math.h>
 #include <stdint.h>
 
-// ============================================================================
 // HELPER FUNCTIONS FOR MANTISSA/EXPONENT EXTRACTION
-// ============================================================================
 const double PX1log = 1.01875663804580931796E-4;
 const double PX2log = 4.97494994976747001425E-1;
 const double PX3log = 4.70579119878881725854E0;
@@ -76,9 +74,7 @@ static inline float get_mant_exponent_f(float x, float* __restrict__ fe) {
   return u.f;
 }
 
-// ============================================================================
 // DOUBLE PRECISION LOG
-// ============================================================================
 
 /* Polynomial P(x) for log */
 static inline double get_log_px(double x) {
@@ -195,9 +191,7 @@ static inline double dace_log_d_safe(double x) {
   return res;
 }
 
-// ============================================================================
 // SINGLE PRECISION LOG
-// ============================================================================
 
 #define SQRTHF 0.707106781186547524f
 

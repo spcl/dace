@@ -1,20 +1,7 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// CUDA strided inclusive scan: ``s`` independent inclusive scans, one per
-// residue class mod ``s`` over a flat input/output buffer of length ``n``.
-// Mirrors the OpenMP ``dace::scan::strided_inclusive_<op>`` family from
-// :file:`dace/runtime/include/dace/scan.hpp` but uses the GPU device side.
-//
-// One thread per residue class: thread ``k`` (``0 <= k < s``) walks
-// ``in[k], in[k+s], in[k+2s], ...`` sequentially and writes the running
-// accumulator into ``out[k], out[k+s], ...``. The cross-thread memory
-// pattern is coalesced when ``s`` is a multiple of the warp size and the
-// underlying 2D buffer is C row-major with the scan axis as the slow
-// axis (the LoopToScan composite-body rewrite emits buffers in exactly
-// that shape, so this is the common case).
-//
-// Falls back to ``gpucub::DeviceScan::InclusiveScan`` whenever ``s == 1``; the
-// libnode expansion picks the right path.
+// CUDA strided inclusive scan: ``s`` independent inclusive scans over the residue classes mod ``s``, the
+// device side of ``dace::scan::strided_inclusive_<op>``. ``s == 1`` uses ``gpucub::DeviceScan``.
 
 #ifndef __DACE_CUDA_SCAN_CUH
 #define __DACE_CUDA_SCAN_CUH
@@ -75,24 +62,7 @@ __global__ void strided_inclusive_max_kernel(const T* __restrict__ in, T* __rest
   }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Small ``s``: one BLOCK per residue class, Blelloch scan across chunks.
-//
-// The kernels above give each class ONE THREAD, which walks it sequentially. That is the right
-// shape when ``s`` is large -- the classes themselves are the parallelism and the stride makes the
-// cross-thread access coalesced. It collapses when ``s`` is small: at ``s = 8`` and
-// ``n = 186,943,663`` it is 8 threads each walking 23 million elements, measured 617 ms -> 28.6 s
-// against auto_optimize.
-//
-// Stride is only address arithmetic, so a strided scan has the same O(log n) depth as a contiguous
-// one. This path takes it: a block walks its class in chunks, Blelloch-scans each chunk in shared
-// memory (up-sweep then down-sweep, 2N-2 adds, log depth), and carries a running total across
-// chunks. Parallel within a chunk, sequential across chunks, a barrier between -- the same shape
-// the tiled wavefront uses one level up. Depth falls from ``m`` to ``(m / CHUNK) * log(CHUNK)``.
-//
-// Blelloch, "Prefix Sums and Their Applications" (CMU-CS-90-190); the shared-memory form and the
-// bank-conflict padding follow GPU Gems 3 ch. 39.
-// ---------------------------------------------------------------------------------------------
+// Small ``s``: one block per residue class, Blelloch scan within chunks and a running total across chunks.
 
 //: One block per class, and CUB does the in-block scan. Hand-rolling a Blelloch tree in shared
 //: memory works (and did, at 48/48 on a host simulation) but CUB's ``BlockScan`` is the tuned
@@ -131,15 +101,8 @@ struct ScanMax {
   __device__ __forceinline__ T operator()(const T& a, const T& b) const { return a > b ? a : b; }
 };
 
-//: The block-wide collective every blocked scan is built from: BLOCK threads scan ``m`` elements
-//: spaced ``s`` apart, starting at ``in``. Written as a ``__device__`` function rather than inlined
-//: into the kernel below because a ``Scan`` node that lands INSIDE a GPU kernel needs exactly this
-//: and nothing else -- there is no launch to configure, the block is already running. Both callers
-//: therefore scan through one implementation instead of two copies that can drift apart.
-//:
-//: EVERY thread of the block must call this: the chunk loop and the trailing barrier are
-//: collective. On return the whole block has passed a ``__syncthreads()``, so ``out`` is visible to
-//: all of them and the shared storage is free for the next call.
+//: Block-wide collective scan of ``m`` elements spaced ``s`` apart. Every thread of the block must call it;
+//: it returns after ``__syncthreads()``.
 template <typename T, typename Op, int BLOCK>
 __device__ void block_inclusive_scan_strided(const T* __restrict__ in, T* __restrict__ out, long m, long s, Op op,
                                              T identity) {

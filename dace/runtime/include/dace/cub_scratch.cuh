@@ -7,26 +7,8 @@
 namespace dace {
 namespace cub {
 
-/// Per-libnode-class, per-CUDA-stream persistent scratch pool for CUB device primitives.
-///
-/// CUB ``DeviceRadixSort`` / ``DeviceScan`` / ``DeviceReduce`` all require a
-/// temporary device buffer whose size depends on the input length and op. The
-/// per-call ``gpuMalloc`` + ``gpuFree`` pattern is fine for one-shot kernels
-/// but is prohibitively expensive on the hot path of repeated SDFG invocations
-/// (each ``gpuMalloc`` issues a device-wide synchronisation).
-///
-/// Each *class* of CUB libnode (e.g. ``IntegerSort``, ``Scan``) gets its own
-/// pool, tagged by a tag struct -- so an ``IntegerSort`` call and a ``Scan``
-/// call never clobber each other's scratch. Within a class, the pool is
-/// *further* keyed by ``gpuStream_t``: two libnode instances of the same
-/// class running on *different* streams have independent scratch buffers, so
-/// concurrent kernel launches on multiple streams cannot race on the pool.
-/// Instances on the same stream share that stream's buffer; CUDA serialises
-/// kernel execution within a stream, so the sharing is race-free.
-///
-/// The maps live in C++17 inline-static function-locals, so each compiled SDFG
-/// shared library has its own pool table (pool state does not leak between
-/// SDFGs). Stream entries are allocated lazily on first use.
+/// Persistent CUB scratch buffer per libnode class and CUDA stream, allocated lazily. Different streams never
+/// share a buffer; calls on one stream do, which CUDA serializes.
 
 namespace _detail {
 struct ScratchEntry {
@@ -90,7 +72,7 @@ inline void release_scratch() {
   m.clear();
 }
 
-// -- Tag structs for the CUB-backed libnodes ---------------------------------
+// Tag structs for the CUB-backed libnodes
 
 /// Tag for the ``IntegerSort`` libnode's CUB scratch pool.
 struct SortTag {};

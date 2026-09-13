@@ -1,56 +1,9 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// ARM SVE backend of the K=1 tile-op intrinsics. A sibling of
-// ``dace/tile_ops/scalar.h`` exposing the SAME ``dace::tileops`` signatures
-// (``tile_binop`` / ``tile_ite`` / ``tile_load`` / ``tile_store`` /
-// ``tile_gather`` / ``tile_scatter``, each with a constexpr-VLEN and a
-// runtime-VLEN form), lowered to ARM Scalable Vector Extension intrinsics.
-// Element types: ``float`` (f32), ``double`` (f64), ``int32_t`` (s32),
-// ``int64_t`` (s64). Anything else falls through to a portable scalar loop.
-//
-// SVE is vector-length-agnostic: the hardware vector width is known only at
-// runtime via ``svcntw()`` / ``svcntd()``, so every op (BOTH the runtime-vlen
-// and the constexpr-VLEN form) is the same ``svwhilelt`` chunk loop --
-// ``for (i = 0; i < n; i += svcnt*()) { pg = svwhilelt_b**(i, n); ... }``. The
-// trailing lanes of the final chunk are inactive in ``pg`` and a predicated
-// ``svld1`` does not fault / a predicated ``svst1`` does not write them, which
-// is exactly the tile-op OOB-safe contract.
-//
-// Masked semantics (mirrors the scalar header, two flavours):
-//   * tile PRODUCERS (binop / merge / load / gather) -- ZERO-FILL inactive
-//     lanes. We compute under the active mask ``m`` (a subset of ``pg``) and
-//     ``svsel`` against a zero splat so the in-tile-but-masked-off lanes become
-//     ``T(0)``, then store under ``pg``.
-//   * array WRITERS (store / scatter) -- RMW skip-inactive: we store under the
-//     active mask ``m`` so an inactive lane is never written and the
-//     destination array (and its OOB tail) is never touched.
-//
-// The lane mask arrives as a portable ``const bool*`` (one byte per lane). It
-// is loaded byte-wise zero-extended under ``pg`` (``svld1ub_u32`` / ``_u64``)
-// and compared ``!= 0`` (``svcmpne_n_u32`` / ``_u64``) to build ``m``; because
-// the compare ANDs in ``pg``, ``m`` is always a subset of ``pg`` so its active
-// lanes are guaranteed in-bounds (the exact pattern from
-// ``dace/cpu_vectorizable_math_arm_sve.h``).
-//
-// CAUTIONS (see the SVE reference note):
-//   * And / Or are LOGICAL truthiness (``(a && b) ? 1 : 0``), NOT bitwise: we
-//     compare each operand ``!= 0`` to a predicate, combine with the PREDICATE
-//     logicals ``svand_b_z`` / ``svorr_b_z`` (NOT the bitwise lane ops
-//     ``svand_s32`` / ``svorr_s32``), then ``svsel`` to ``T(1)`` / ``T(0)``.
-//   * Min / Max are a compare-select (``svcmplt`` + ``svsel``), NOT ``svmin`` /
-//     ``svmax``: FMIN / FMAX follow IEEE-754 NaN propagation and pick -0 over
-//     +0, whereas the scalar header's ``std::min`` / ``std::max`` are a
-//     ``<``-based pick that keeps the FIRST argument on an unordered or equal
-//     comparison. Integer SMIN / SMAX already match (total order).
-//   * Integer divide uses ``svdiv_s32`` / ``svdiv_s64`` (base-SVE SDIV). On
-//     AArch64 integer divide-by-zero yields 0 (no trap), vs. C's UB.
-//   * Gather / scatter use the element-scaled ``*index*`` forms (NOT the byte
-//     ``*offset*`` forms). The index-vector element width matches the data lane
-//     width: 32-bit data pairs with ``s32index`` (svcntw loop), 64-bit data
-//     with ``s64index`` (svcntd loop). An ``int32_t`` index array for 64-bit
-//     data is sign-extended to s64 with ``svld1sw_s64``; an ``int64_t`` index
-//     array for 32-bit data is narrowed to s32 with ``svld1_s64`` + ``svcvt``-
-//     free ``svqxtnt``-free explicit narrowing via a temporary (handled below).
+// ARM SVE backend of the K=1 tile-op intrinsics (sibling of dace/tile_ops/scalar.h, same
+// dace::tileops signatures). Element types: float, double, int32_t, int64_t; other types
+// fall through to a portable scalar loop. Producers zero-fill inactive lanes, array writers
+// skip them (RMW); see the per-function comments below for the per-op detail.
 #pragma once
 
 #include <arm_sve.h>
@@ -104,29 +57,27 @@ inline T tile_apply(T a, T b) {
     return (a || b) ? T(1) : T(0);
 }
 
-// ===========================================================================
 // 32-bit-lane (f32 / s32) primitives
-// ===========================================================================
 
-// ---- predicated contiguous load ----
+// predicated contiguous load
 inline svfloat32_t sve_ld1(svbool_t pg, const float* __restrict__ p) { return svld1_f32(pg, p); }
 inline svint32_t sve_ld1(svbool_t pg, const std::int32_t* __restrict__ p) { return svld1_s32(pg, p); }
 inline svfloat64_t sve_ld1(svbool_t pg, const double* __restrict__ p) { return svld1_f64(pg, p); }
 inline svint64_t sve_ld1(svbool_t pg, const std::int64_t* __restrict__ p) { return svld1_s64(pg, p); }
 
-// ---- predicated contiguous store ----
+// predicated contiguous store
 inline void sve_st1(svbool_t pg, float* __restrict__ p, svfloat32_t v) { svst1_f32(pg, p, v); }
 inline void sve_st1(svbool_t pg, std::int32_t* __restrict__ p, svint32_t v) { svst1_s32(pg, p, v); }
 inline void sve_st1(svbool_t pg, double* __restrict__ p, svfloat64_t v) { svst1_f64(pg, p, v); }
 inline void sve_st1(svbool_t pg, std::int64_t* __restrict__ p, svint64_t v) { svst1_s64(pg, p, v); }
 
-// ---- splat ----
+// splat
 inline svfloat32_t sve_dup(float v) { return svdup_f32(v); }
 inline svint32_t sve_dup(std::int32_t v) { return svdup_s32(v); }
 inline svfloat64_t sve_dup(double v) { return svdup_f64(v); }
 inline svint64_t sve_dup(std::int64_t v) { return svdup_s64(v); }
 
-// ---- arithmetic / min / max (don't-care inactive lanes, ``_x``) ----
+// arithmetic / min / max (don't-care inactive lanes, ``_x``)
 inline svfloat32_t sve_add(svbool_t pg, svfloat32_t a, svfloat32_t b) { return svadd_f32_x(pg, a, b); }
 inline svint32_t sve_add(svbool_t pg, svint32_t a, svint32_t b) { return svadd_s32_x(pg, a, b); }
 inline svfloat64_t sve_add(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svadd_f64_x(pg, a, b); }
@@ -161,7 +112,7 @@ inline svint32_t sve_max(svbool_t pg, svint32_t a, svint32_t b) { return svmax_s
 inline svfloat64_t sve_max(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svsel_f64(svcmplt_f64(pg, a, b), b, a); }
 inline svint64_t sve_max(svbool_t pg, svint64_t a, svint64_t b) { return svmax_s64_x(pg, a, b); }
 
-// ---- fused multiply-add: svmla_x(pg, c, a, b) == c + a*b (single rounding) ----
+// fused multiply-add: svmla_x(pg, c, a, b) == c + a*b (single rounding)
 // fp only -- the integer tile_fma path uses scalar ``std::fma`` (see tile_fma).
 inline svfloat32_t sve_mla(svbool_t pg, svfloat32_t c, svfloat32_t a, svfloat32_t b) {
   return svmla_f32_x(pg, c, a, b);
@@ -170,7 +121,7 @@ inline svfloat64_t sve_mla(svbool_t pg, svfloat64_t c, svfloat64_t a, svfloat64_
   return svmla_f64_x(pg, c, a, b);
 }
 
-// ---- comparisons -> svbool_t (active set = ``pg`` AND (a OP b)) ----
+// comparisons -> svbool_t (active set = ``pg`` AND (a OP b))
 inline svbool_t sve_cmplt(svbool_t pg, svfloat32_t a, svfloat32_t b) { return svcmplt_f32(pg, a, b); }
 inline svbool_t sve_cmplt(svbool_t pg, svint32_t a, svint32_t b) { return svcmplt_s32(pg, a, b); }
 inline svbool_t sve_cmplt(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svcmplt_f64(pg, a, b); }
@@ -201,13 +152,13 @@ inline svbool_t sve_cmpne(svbool_t pg, svint32_t a, svint32_t b) { return svcmpn
 inline svbool_t sve_cmpne(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svcmpne_f64(pg, a, b); }
 inline svbool_t sve_cmpne(svbool_t pg, svint64_t a, svint64_t b) { return svcmpne_s64(pg, a, b); }
 
-// ---- ``v != 0`` predicate (for And / Or logical truthiness + tile_ite cond) ----
+// ``v != 0`` predicate (for And / Or logical truthiness + tile_ite cond)
 inline svbool_t sve_cmpne0(svbool_t pg, svfloat32_t v) { return svcmpne_n_f32(pg, v, 0.0f); }
 inline svbool_t sve_cmpne0(svbool_t pg, svint32_t v) { return svcmpne_n_s32(pg, v, 0); }
 inline svbool_t sve_cmpne0(svbool_t pg, svfloat64_t v) { return svcmpne_n_f64(pg, v, 0.0); }
 inline svbool_t sve_cmpne0(svbool_t pg, svint64_t v) { return svcmpne_n_s64(pg, v, 0); }
 
-// ---- select (cond ? a : b) ----
+// select (cond ? a : b)
 inline svfloat32_t sve_sel(svbool_t c, svfloat32_t a, svfloat32_t b) { return svsel_f32(c, a, b); }
 inline svint32_t sve_sel(svbool_t c, svint32_t a, svint32_t b) { return svsel_s32(c, a, b); }
 inline svfloat64_t sve_sel(svbool_t c, svfloat64_t a, svfloat64_t b) { return svsel_f64(c, a, b); }
@@ -288,10 +239,8 @@ inline VecT sve_tile_apply(svbool_t pg, VecT a, VecT b) {
   }
 }
 
-// ===========================================================================
 // tile_binop : out[i] = a-operand <op> b-operand
 // PRODUCER -> ZERO-FILL inactive (operand reads are in-tile, always safe).
-// ===========================================================================
 template <typename T, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                        const bool* __restrict__ mask, int vlen) {
@@ -353,13 +302,9 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
   }
 }
 
-// ===========================================================================
-// tile_fma : out[i] = fma(a, b, c) = a*b + c (single rounding).
-// PRODUCER -> ZERO-FILL inactive (operand reads are in-tile, always safe).
-// float / double lower to the SVE fused multiply-add ``sve_mla(pg, c, a, b)``
-// (= c + a*b); integers use scalar ``std::fma`` so the pure and ISA lowerings
-// agree bit-for-bit (an integer SVE MLA would differ from the pure std::fma).
-// ===========================================================================
+// tile_fma: out[i] = fma(a, b, c) = a*b + c (single rounding). Producer, zero-fill inactive.
+// Integers use scalar std::fma rather than an SVE MLA, to agree bit-for-bit with the scalar
+// fallback path.
 template <typename T, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
 inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
                      const bool* __restrict__ mask, int vlen) {
@@ -397,11 +342,9 @@ inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __re
   tile_fma<T, BroadcastA, BroadcastB, BroadcastC, Masked>(out, a, b, c, mask, VLEN);
 }
 
-// ===========================================================================
 // tile_ite : out[i] = cond[i] ? t : e
 // PRODUCER -> ZERO-FILL inactive. ``cond`` is a ``CondT`` truthiness array
 // (stored 1/0); the select predicate is ``cond != 0``.
-// ===========================================================================
 template <typename T, typename CondT, bool BroadcastThen, bool BroadcastElse, bool Masked>
 inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                      const T* __restrict__ e, const bool* __restrict__ mask, int vlen) {
@@ -482,12 +425,10 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
   }
 }
 
-// ===========================================================================
 // tile_load : dst[i] = src[i * stride]
 // PRODUCER -> ZERO-FILL inactive + GUARDED read (predicated load never
 // dereferences an inactive lane, so an OOB tail lane is safe). A stride != 1
 // becomes an index gather over the ``i + lane`` ramp scaled by ``stride``.
-// ===========================================================================
 template <typename T, bool Masked>
 inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
                       std::int64_t stride = 1) {
@@ -555,12 +496,10 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
   }
 }
 
-// ===========================================================================
 // tile_store : dst[i * stride] = src[i]
 // WRITER -> RMW skip-inactive (inactive / masked-off lane never written, so the
 // destination array / OOB tail is never touched). A stride != 1 becomes an
 // index scatter over the ``i + lane`` ramp scaled by ``stride``.
-// ===========================================================================
 template <typename T, bool Masked>
 inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask, int vlen,
                        std::int64_t stride = 1) {
@@ -620,26 +559,18 @@ inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const boo
   }
 }
 
-// Load an index tile (``IdxT`` element indices) into the s32 / s64 lane vector
-// matching the DATA lane width. When ``IdxT`` already matches the lane width
-// this is a plain predicated load; otherwise it widens (s32 -> s64 via
-// ``svld1sw_s64``) or narrows (s64 -> s32 via a widened load + truncating
-// move) so the gather / scatter index width pairs with the data width.
+// Load an index tile (IdxT element indices) into the s32 / s64 lane vector matching the
+// data lane width, widening or narrowing as needed.
 template <typename IdxT>
 inline svint32_t sve_load_idx32(svbool_t pg, const IdxT* __restrict__ idx, int i) {
   if constexpr (std::is_same<IdxT, std::int32_t>::value) {
     return svld1_s32(pg, idx + i);
   } else {  // int64_t index for 32-bit data: load s64 then narrow to s32 lanes
-    // BUG (tracked, ARM-only, mixed IdxT=int64 + 32-bit data gather/scatter only):
-    // ``pg`` here is a b32 predicate (the 32-bit-data loop uses svwhilelt_b32 /
-    // svcntw), but ``svld1_s64`` reads at 64-bit granularity -> wrong lane subset +
-    // only svcntd (half) of the needed svcntw indices. ``svreinterpret_s32_s64`` is a
-    // BITCAST, not a lane-wise narrow, so the resulting s32 indices are garbage ->
-    // wrong (possibly OOB) addresses on ACTIVE lanes (mask prevention is fine; this is
-    // an index-value defect). FIX: load two svcntd int64 chunks and pack with
-    // svuzp1_s32(svreinterpret_s32_s64(lo), svreinterpret_s32_s64(hi)), or route this
-    // mixed-width case to a scalar index loop. Unverifiable here (no ARM host); the
-    // corpus uses SCALAR/AVX512, so this path is never exercised on x86.
+    // BUG (tracked, ARM-only, IdxT=int64 + 32-bit data gather/scatter): pg is a b32
+    // predicate but svld1_s64 reads 64-bit granularity, and svreinterpret_s32_s64 is a
+    // bitcast, not a lane-wise narrow, so the resulting indices are garbage. Fix: load
+    // two svcntd int64 chunks and pack with svuzp1_s32(svreinterpret_s32_s64(...)), or
+    // route to a scalar index loop. Unverified (no ARM host); unexercised on x86.
     svint64_t wide = svld1_s64(pg, idx + i);
     return svreinterpret_s32_s64(wide);  // low 32 bits of each lane (indices fit)
   }
@@ -653,11 +584,9 @@ inline svint64_t sve_load_idx64(svbool_t pg, const IdxT* __restrict__ idx, int i
   }
 }
 
-// ===========================================================================
 // tile_gather : dst[i] = src[idx[i]]
 // PRODUCER -> ZERO-FILL inactive + GUARDED read (predicated gather never
 // dereferences an inactive lane, so a garbage / OOB index is safe).
-// ===========================================================================
 template <typename T, typename IdxT, bool Masked>
 inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                         const bool* __restrict__ mask, int vlen) {
@@ -713,11 +642,9 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   }
 }
 
-// ===========================================================================
 // tile_scatter : dst[idx[i]] = src[i]
 // WRITER -> RMW skip-inactive (inactive / masked-off lane never written, so a
 // garbage / OOB index is safe).
-// ===========================================================================
 template <typename T, typename IdxT, bool Masked>
 inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                          const bool* __restrict__ mask, int vlen) {
@@ -765,7 +692,7 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   }
 }
 
-// ---------------------------- tile_mask_gen ----------------------------
+// tile_mask_gen
 // out[l] = (base + l) < ub. SVE: per 64-bit-lane chunk, svindex + svcmplt give
 // the active predicate; narrowing svst1b writes 1/0 bytes. (Written on an x86
 // dev box -- SVE path not hardware-exercised; semantics mirror scalar.h.)
@@ -782,19 +709,9 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
   }
 }
 
-// ----------------------------- tile_reduce ----------------------------
-// Horizontal reduction of a VLEN-lane tile to ONE scalar (an in-map / per-tile
-// reduction: ``acc = sum/prod/min/max over the tile``). ``Op`` is the reduction
-// op ('+' sum, '*' prod, 'm' min, 'M' max); returns the reduced element, not a
-// vector. Full reduction only -- a masked / single-axis / K>=2 reduce keeps the
-// ``pure`` per-lane expansion (the selector never routes those here).
-//
-// Balanced log-depth pairwise fold (consecutive pairs (0,1)(2,3)...; an odd
-// trailing lane forwards unchanged). Over a compile-time-constant ``VLEN`` the
-// loops unroll, so the compiler re-vectorises the partials; it reduces in the
-// same order as the vectorized ``Reduce`` node's ``_dace_horizontal_tree`` so
-// both paths agree. The per-lane combine reuses this header's own ``tile_apply``
-// (self-contained; no cross-ISA dispatch header).
+// tile_reduce: horizontal reduction of a VLEN-lane tile to one scalar (Op: '+' sum, '*' prod,
+// 'm' min, 'M' max). Balanced log-depth pairwise fold, matching the order the vectorized
+// Reduce node's _dace_horizontal_tree uses so both paths agree numerically.
 template <typename T, int VLEN, char Op>
 inline T tile_reduce(const T* __restrict__ src) {
   T buf[VLEN];

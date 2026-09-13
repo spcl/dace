@@ -179,18 +179,8 @@ static inline void vector_add_w_scalar(T* __restrict__ out, const T* __restrict_
 #endif
 }
 
-// vector_add_masked: store ONLY lanes where mask[i] == true; inactive
-// lanes are left untouched.
-//
-// ARMv8-A AdvSIMD (NEON) has no predicated / per-lane masked store —
-// every ``vst1q`` writes the full 128-bit register. The previous
-// load-blend-store (``vld1q(out); vbslq; vst1q``) wrote the old value
-// back on inactive lanes, but that store still touches all W addresses:
-// at a masked remainder the writeback target is ``arr + tile_i`` and the
-// trailing inactive lanes index past the array end -> OOB heap write
-// (the TSVC s2710 masked-merge-65 segfault). NEON cannot express a
-// masked store, so the only OOB-safe form is a scalar gated store; the
-// compiler still autovectorises the active in-bounds lanes.
+// vector_add_masked: writes only lanes where mask[i] is true. NEON has no masked store, so this is a scalar
+// gated store; a full-register store would write past the array end in a masked remainder.
 template <typename T, int vector_width>
 static inline void vector_add_masked(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                                      const bool* __restrict__ mask) {
@@ -500,9 +490,7 @@ static inline void vector_copy_w_scalar(T* __restrict__ dst, const T a) {
 #endif
 }
 
-// ============================================================================
 // Min / Max
-// ============================================================================
 
 // vector_min
 template <typename T, int vector_width>
@@ -656,9 +644,7 @@ static inline void vector_max_w_scalar(T* __restrict__ out, const T* __restrict_
 #endif
 }
 
-// ============================================================================
 // Comparisons (result in 0.0 / 1.0)
-// ============================================================================
 
 // Helper: build 0/1 vectors for float32x4 / float64x2 masks
 #if defined(__ARM_NEON)
@@ -1239,9 +1225,7 @@ template <typename T, int vector_width>
 static inline void vector_ne(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b) {
 #if defined(__ARM_NEON)
 
-  // ---------------------------------------------------------
   // FLOAT32 version (W = 4)
-  // ---------------------------------------------------------
   if constexpr (std::is_same<T, float>::value) {
     constexpr int W = 4;
     int i = 0;
@@ -1284,9 +1268,7 @@ static inline void vector_ne(T* __restrict__ out, const T* __restrict__ a, const
   for (int i = 0; i < vector_width; ++i) out[i] = (a[i] != b[i]) ? T(1.0) : T(0.0);
 }
 
-// ============================================================================
 // Elementwise non-linear (always scalar)
-// ============================================================================
 
 template <typename T, int vector_width>
 static inline void vector_exp(T* __restrict__ out, const T* __restrict__ a) {
@@ -1304,12 +1286,10 @@ static inline void vector_select(T* __restrict__ out, const CondT* __restrict__ 
   for (int i = 0; i < vector_width; ++i) out[i] = cond[i] ? t[i] : e[i];
 }
 
-// ============================================================================
 // Runtime-length scatter / gather / strided load+store (moved from
 // vector_intrinsics/{gather,scatter,strided_load,strided_store}.h).
 // NEON has no native gather/scatter; we pack 2-lane chunks where possible
 // and fall back to scalar.
-// ============================================================================
 
 #include <stdint.h>
 
@@ -1376,7 +1356,7 @@ static inline void strided_store(const T* __restrict__ A, T* __restrict__ B, con
   for (int i = 0; i < vector_width; ++i) B[i * stride] = A[i];
 }
 
-// --------------------------- masked variants (RMW) ---------------------------
+// masked variants (RMW)
 // NEON has no native masked gather/scatter; scalar fallback gates each lane
 // via mask[i]. Inactive lanes leave destination memory unchanged.
 
@@ -1412,15 +1392,8 @@ static inline void strided_store_masked(const T* __restrict__ A, T* __restrict__
     if (mask[i]) B[i * stride] = A[i];
 }
 
-// ---------------------- horizontal reductions ----------------------
-// NEON one-shot reduce for the sum (the dominant reduction); ``vaddvq``
-// is the only cleanly-documented cross-type horizontal NEON intrinsic
-// we rely on (double: 2-wide, float: 4-wide). Product / max / min /
-// bitwise and every non-floating type delegate to the portable
-// log-depth tree in the common header. SFINAE-selected so the tree is
-// always the correctness safety net. (Numeric behaviour validated on
-// ARM hardware; types/intrinsic names validated via aarch64
-// ``-fsyntax-only``.)
+// horizontal reductions
+// ``vaddvq`` for floating-point sums; other ops and types use the common header's tree (SFINAE-selected).
 #if defined(__ARM_NEON)
 template <typename T, int vector_width>
 static inline

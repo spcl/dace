@@ -1,14 +1,7 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// Backend and toolkit portability layer for the binary-operator functors the
-// ``gpucub::DeviceScan`` and ``gpucub::DeviceReduce`` libnode expansions pass into
-// their host-side launchers. CCCL 13 dropped the ``gpucub::Sum`` / ``gpucub::Min``
-// / ``gpucub::Max`` structs in favour of standard-library aliases. To compile
-// against both toolkits, route through these macros instead of naming the
-// functor directly in the libnode tasklet code.
-//
-// The selection is at preprocessor time so neither path costs extra at
-// runtime, and there is no namespace pollution beyond the macro names.
+// Portability macros for the CUB/hipCUB binary-operator functors (CCCL 13 dropped ``gpucub::Sum``/``Min``/
+// ``Max``). Use these macros instead of naming a functor in libnode tasklet code.
 
 #ifndef __DACE_CUB_COMPAT_CUH
 #define __DACE_CUB_COMPAT_CUH
@@ -44,7 +37,6 @@
 // ``product`` was never a CUB-provided functor in any version; use a lambda.
 #define DACE_CUB_MUL_OP [] __device__(auto _a, auto _b) { return _a * _b; }
 
-// ---------------------------------------------------------------------------------------------
 // ArgMax / ArgMin, for the one libnode that emits them (``ArgReduce``'s CUDA expansion).
 //
 // CUB answered an arg-reduction with a single ``KeyValuePair`` output until CCCL 2.8.0 / hipCUB
@@ -103,17 +95,8 @@ struct StridedGather {
   __host__ __device__ __forceinline__ T operator()(long long j) const { return xf(base[j * stride]); }
 };
 
-/// A random-access iterator over :struct:`StridedGather`, with its category DECLARED.
-///
-/// Neither library's transform iterator can be used here, and that is not a preference.
-/// ``DeviceReduce::ArgMax`` wraps its input in rocPRIM's ``arg_index_iterator``, which
-/// static_asserts that ``std::iterator_traits<I>::iterator_category`` IS
-/// ``std::random_access_iterator_tag``. rocPRIM's own iterators report
-/// ``thrust::detail::iterator_category_with_system_and_traversal`` instead the moment thrust is in
-/// the translation unit -- and DaCe puts it there unconditionally, through ``thrust::complex`` in
-/// ``types.h`` / ``math.h`` / ``complex.h``. So on HIP the assert fired for every strided or
-/// transformed ArgReduce (TSVC ``s318``, gfx942) whichever backend's iterator was selected.
-/// Declaring the tag here is immune to what else the unit includes, on both backends.
+/// Random-access iterator over :struct:`StridedGather` with an explicit iterator category; rocPRIM's ArgMax
+/// requires ``random_access_iterator_tag``, which thrust-backed iterators do not report.
 template <typename T, typename Xf>
 struct GatherIterator {
   using iterator_category = ::std::random_access_iterator_tag;
@@ -221,16 +204,8 @@ struct ArgMinOp {
   }
 };
 
-/// One arg-reduction over a device sequence, answered on the HOST.
-///
-/// ``in`` is any CUB-acceptable input iterator: a raw ``const T *`` for a contiguous operand, or a
-/// :func:`gather_iterator` for a strided and/or transformed one. ``T`` is deduced from ``val_out``,
-/// not from ``in``, so both spellings reach the same routine.
-///
-/// The result block sits at the front of the same ``ReduceTag`` scratch allocation as CUB's
-/// workspace, pushed to the allocator's 256-byte granularity so the workspace stays aligned.
-/// ``val_out`` may be null when only the index is wanted. Ties break toward the LOWER index,
-/// which is the first-occurrence rule the sequential source has.
+/// Arg-reduction over a device sequence, answered on the host. ``val_out`` may be null; ties break toward
+/// the lower index.
 template <typename Op, typename InIt, typename T>
 inline gpuError_t arg_reduce(InIt in, T* val_out, long long* idx_out, long long items, gpuStream_t stream) {
   size_t needed = 0;

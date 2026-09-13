@@ -17,13 +17,9 @@
 // <cub/cub.cuh> here instead selected the vendored NVIDIA copy on every HIP build, where the header
 // is not visible -- and that copy needs cuda.h.
 #include "cuda/gpucub.cuh"
-// The cub iterators are deprecated in favour of thrust's, and warn from CCCL 2.8 on (CUDA 12.8).
-// ON CUDA ONLY. rocThrust ships the same two, but shipping them is not the test: hipCUB's
-// DeviceReduce wraps its input in rocPRIM's arg_index_iterator, which static_asserts that
-// std::iterator_traits<I>::iterator_category IS std::random_access_iterator_tag. A
-// thrust::transform_iterator reports thrust's own category tag, so the assert fires and the unit
-// does not compile (tsvc_2_s318's strided argmax, gfx942). hipCUB's iterators carry the std tag
-// and are not deprecated, so the reason to avoid them does not apply on this backend.
+// CUDA only: cub's iterators are deprecated in favor of thrust's (CCCL 2.8+ warns). On HIP,
+// hipCUB's DeviceReduce requires an iterator with the std::random_access_iterator_tag category,
+// which thrust::transform_iterator does not report, so it fails to compile there instead.
 #if !defined(__HIPCC__) && !defined(__HIP__) && !defined(WITH_HIP)
 #if __has_include(<thrust/iterator/counting_iterator.h>)
 #include <thrust/iterator/counting_iterator.h>
@@ -315,9 +311,9 @@ struct _wcr_fixed<ReductionType::Max, double> {
   DACE_HDFI double operator()(const double& a, const double& b) const { return ::max(a, b); }
 };
 
-// half has no CUDA atomicMin/Max overload → 16-bit CAS (smallest atomic word, sm_70+),
+// half has no CUDA atomicMin/Max overload -> 16-bit CAS (smallest atomic word, sm_70+),
 // mirroring the float/double CAS specializations. Host + pre-sm_70: promote to float
-// (half min/max exact through float → bit-identical either way).
+// (half min/max exact through float -> bit-identical either way).
 template <>
 struct _wcr_fixed<ReductionType::Min, half> {
   static DACE_HDFI half reduce_atomic(half* ptr, const half& value) {
@@ -584,43 +580,21 @@ struct wcr_fixed<REDTYPE, T, EnableIfScalar<T> > {
 };
 
 //////////////////////////////////////////////////////////////////////////
-// dace::reduce -- the CPU lowering of the ``Reduce`` library node.
+// dace::reduce -- the CPU lowering of the Reduce library node. Two shapes: dace::reduce::<op>
+// is parallel (an OpenMP reduction clause), dace::reduce::seq::<op> is sequential (naked loop).
+// Every entry folds n elements from in, s apart, into seed and returns the result; seed carries
+// the identity, so n <= 0 returns it untouched.
 //
-// Two shapes, mirroring ``dace/scan.hpp``'s blocked three-phase scan: ``dace::reduce::<op>`` is
-// the PARALLEL one (an OpenMP ``reduction`` clause), ``dace::reduce::seq::<op>`` the SEQUENTIAL
-// one (naked loop, no pragma).
-// CONTRACT: the parallel entries carry no runtime nesting check -- ``ExpandReduceOpenMP`` picks the
-// shape statically from the node's SCOPE. An external caller already inside its own ``omp`` region
-// gets OpenMP's nested default, a one-thread team: correct, slower.
-//
-// Every entry point folds ``n`` elements from ``in``, ``s`` apart, into ``seed`` and RETURNS the
-// result. ``seed`` carries the identity (or the output element's previous contents), so ``n <= 0``
-// returns it untouched and no op needs an identity of its own -- which is what makes ``min``/``max``
-// expressible. The accumulator type is ``seed``'s, i.e. the OUTPUT dtype, so an integer array reduced
-// into a real accumulates in the real type. The index space is walked directly; ``s == 1`` branches
-// only to keep the contiguous case unit-stride for the vectorizer.
-//
-// SEMANTICS GUARANTEED. FP association: the parallel form reassociates (the team splits the range,
-// the runtime combines partials), so a floating-point result MOVES WITH ``OMP_NUM_THREADS``, while
-// the sequential form associates the same way at every thread count and is bit-reproducible. That
-// fixed association is PAIRWISE for ``sum`` and ``product`` over a rounding accumulator -- a binary
-// tree over blocks of ``detail::PAIRWISE_BLOCK``, the shape numpy's own reduction uses -- because a
-// left-to-right fold stops moving once the accumulator outgrows the addend, and a long single
-// precision sum then answers with a visibly wrong number. Reproducible, not left-to-right: code
-// that needs a specific summation order has to spell it out itself. min/max and NaN: both
-// forms compare with ``std::min``/``std::max``, ``(b < a) ? b : a`` with the accumulator on the left,
-// so a NaN in the DATA never wins and the result is the min/max over the non-NaN elements at every
-// thread count; a NaN ``seed`` propagates through the SEQUENTIAL form but goes through the runtime's
-// own combiner in the parallel one and is unspecified there. That differs from ``_wcr_fixed<Min>``
-// above, whose ``::min`` lets a NaN through. Integer/bitwise/logical ops are exact and thread-count
-// independent.
+// FP association: the parallel form reassociates, so a floating-point result moves with
+// OMP_NUM_THREADS; the sequential form is bit-reproducible (sum/product fold pairwise, matching
+// numpy). min/max: a NaN in the data never wins in either form; a NaN seed propagates through
+// the sequential form but is unspecified in the parallel one. Integer/bitwise/logical ops are
+// exact and thread-count independent.
 
 namespace reduce {
 
-// THE SUPPORTED ELEMENT TYPES, in one place. Each has an OpenMP reduction: built in, declared below
-// (complex), or declared in ``types.h`` (the low-precision structs, whose combiner promotes to
-// ``float`` and rounds back on store). No other class type: no operator detection, no fallback, just
-// the rejection in ``detail::checked_seed``.
+// The supported element types, in one place. Each has an OpenMP reduction: built in, declared
+// below (complex), or declared in types.h (the low-precision structs).
 template <typename T>
 struct is_reducible : std::integral_constant<bool, std::is_arithmetic<T>::value> {};
 template <>
@@ -787,7 +761,7 @@ inline T associative_fold(const U* in, long n, long s, T seed, Op op, Merge merg
 
 }  // namespace detail
 
-// --- PARALLEL SHAPE ------------------------------------------------------------
+// Parallel shape.
 
 template <typename T, typename U>
 inline T sum(const U* in, long n, long s, T seed) {
@@ -932,7 +906,7 @@ inline T logical_or(const U* in, long n, long s, T seed) {
   return acc;
 }
 
-// --- SEQUENTIAL SHAPE ----------------------------------------------------------
+// Sequential shape.
 
 namespace seq {
 

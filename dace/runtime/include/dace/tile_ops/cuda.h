@@ -1,26 +1,12 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// NVIDIA CUDA (device) backend of the K=1 tile-op intrinsics. Exposes the SAME
-// ``dace::tileops::tile_<op>`` signatures as the scalar / avx512 / ... sibling
-// headers, but every function is ``__device__`` (the tile ops run inside a GPU
-// kernel) and the fp16 elementwise ops use the native ``half2`` (FP16x2) SIMD
-// intrinsics from <cuda_fp16.h> / <hip/hip_fp16.h> -- ``__hadd2`` / ``__hsub2`` / ``__hmul2`` /
-// ``__h2div`` / ``__hmin2`` / ``__hmax2`` / ``__hneg2``. The GPU vectorizer only
-// targets fp16 (and fp8) -- see the design note in vectorize_cpu_multi_dim.
-//
-// FP8 (``__nv_fp8_e4m3`` / ``__nv_fp8_e5m2``) has **no native arithmetic**
-// (cuda_fp8.h is conversion + data-movement only): the fp8 path converts each
-// element to ``float``, computes, and converts back. fp8x4 packing rides on the
-// same per-lane loop -- the storage type is 1 byte so a contiguous tile is a
-// byte vector; the compiler coalesces the float<->fp8 conversions.
-//
-// Op-code legend and masked semantics are identical to scalar.h (the reference).
+// CUDA/HIP device backend of the K=1 tile-op intrinsics; same dace::tileops::tile_<op>
+// signatures as scalar.h, but every function is __device__. fp16 uses native half2 SIMD
+// intrinsics; fp8 has no native arithmetic, so it round-trips through float.
 #pragma once
 
-// The device paths below are guarded on the DEVICE COMPILER, not on the vendor: guarding on
-// __CUDACC__ alone made every tile op vanish under HIP and fall back to the scalar path, which is
-// a silent performance loss rather than an error. The two spots where the vendors genuinely differ
-// -- the fp16/fp8 header names and the missing FP16x2 min/max -- are handled where they occur.
+// Guarded on the device compiler, not the vendor: __CUDACC__ alone would make every tile op
+// vanish (fall back to scalar) under HIP.
 
 #include <cmath>
 #include <cstdint>
@@ -47,14 +33,10 @@
 namespace dace {
 namespace tileops {
 
-// ----------------------------- compute-type apply ----------------------------
-// The type a scalar tile op COMPUTES in. Anything with native device arithmetic computes in
-// ITSELF: routing every element type through ``float`` narrowed a ``double`` tile to 24 bits of
-// mantissa (vadv's Thomas sweep came back 1e-4 off, and the wrong values were float-exact) and
-// dropped every 64-bit integer past 2^24. Only the types with no arithmetic operators convert --
-// fp8 (cuda_fp8.h is conversion and data movement only) and ``__half``, which keeps the float
-// round-trip the ``half2`` fast path below is checked against and which rounds identically to a
-// native half op for a single operation.
+// compute-type apply: the type a scalar tile op computes in. Anything with native device
+// arithmetic computes in itself; only fp8 and __half (no arithmetic operators of their own)
+// convert through float. Routing everything through float would silently narrow double and
+// drop 64-bit integers past 2^24.
 template <typename T>
 using tile_compute_t = std::conditional_t<std::is_arithmetic_v<T>, T, float>;
 
@@ -175,11 +157,7 @@ DACE_DFI T tile_unop_apply(T a) {
 // mask, not a 1.0/0.0 element). ``Op`` is restricted at the call site below.
 template <char Op>
 DACE_DFI constexpr bool _is_half2_binop() {
-  // Arithmetic + min/max + the six comparisons. The half2 comparison intrinsics
-  // (``__hlt2`` / ...) set each lane to 1.0 (true) / 0.0 (false), matching the
-  // scalar path's ``(af < bf) ? 1.0f : 0.0f`` element semantics exactly (1.0 / 0.0
-  // are representable in fp16). Only the logical ``&`` / ``|`` stay scalar (no
-  // half2 boolean-combine intrinsic).
+  // Arithmetic, min/max and the six comparisons; & / | stay scalar (no half2 boolean-combine).
   return Op == '+' || Op == '-' || Op == '*' || Op == '/' || Op == 'm' || Op == 'M' || Op == '<' || Op == 'l' ||
          Op == '>' || Op == 'g' || Op == '=' || Op == '!';
 }
@@ -280,16 +258,13 @@ DACE_DFI constexpr bool _is_half2_reduce() {
   return Op == '+' || Op == '*' || Op == 'm' || Op == 'M';
 }
 
-// Aligned 32-bit pair load/store for the FP16x2 fast paths. The tile buffers the
-// vectorizer stages are DACE_ALIGN(64) and every non-broadcast half2 access starts
-// at an even lane, so ``&p[i]`` is 4-byte aligned. A single LD.U32 / ST.U32 then
-// replaces the two-element ``__halves2half2`` pack (two 16-bit loads + a pack) and
-// the ``__low2half`` / ``__high2half`` unpack (two extracts + two 16-bit stores).
+// Aligned 32-bit pair load/store for the FP16x2 fast paths. Tile buffers are DACE_ALIGN(64)
+// and every non-broadcast half2 access starts at an even lane, so &p[i] is 4-byte aligned.
 DACE_DFI __half2 _load_half2(const __half* __restrict__ p) { return *reinterpret_cast<const __half2*>(p); }
 DACE_DFI void _store_half2(__half* __restrict__ p, __half2 v) { *reinterpret_cast<__half2*>(p) = v; }
 
-// One CHUNK of a contiguous ``__half`` copy: 16 B (LDG/STG.E.128), 8 B (.64) or 4 B (half2).
-// Both pointers must already be BYTES-aligned -- the ladder below is what guarantees that.
+// One chunk of a contiguous __half copy: 16 B, 8 B or 4 B (half2). Both pointers must
+// already be BYTES-aligned -- the ladder below is what guarantees that.
 template <int BYTES>
 DACE_DFI void _half_copy_chunk(__half* __restrict__ dst, const __half* __restrict__ src) {
   if constexpr (BYTES == 16)
@@ -300,28 +275,13 @@ DACE_DFI void _half_copy_chunk(__half* __restrict__ dst, const __half* __restric
     _store_half2(dst, _load_half2(src));
 }
 
-// Contiguous ``__half`` block copy between a tile and an array, widened to the largest chunk
-// both ends are known to support: 16 B (LDG/STG.E.128), 8 B (.64), 4 B (half2), else per element.
-//
-// ALIGN is the byte alignment of the ARRAY-side pointer, which only the CALLER can know -- the
-// codegen passes what it can prove from the memlet (dace/libraries/tileops/_isa_codegen.py). The
-// tile side needs no test: ``tile_alignment_bytes`` declares every tile at min(16, its own size
-// rounded down to a power of two), and a chunk C is a power of two with C <= 2*VLEN and C <= 16,
-// hence C <= that alignment -- and chunk k starts at byte k*C, so the tile address is C-aligned.
-//
-// The ladder DESCENDS instead of picking one width for the whole copy: a width the chunk does not
-// divide (VLEN=10 -- legal, ``widths[-1]`` need only be even) used to demote the ENTIRE copy to
-// the next rung down, so a 16 B promise bought 5x LDG.E instead of one .128 plus one .E. The tail
-// is shorter than a chunk and begins a whole number of chunks in, so it is still C-aligned:
-// recurse with C as the new promise and let the same rule pick the next width down.
-//
-// The choice is entirely ``if constexpr``: exactly ONE chunk width is emitted per rung, with no
-// runtime address test and no scalar fallback left behind. Testing alignment at runtime instead
-// would keep every branch alive in the SASS -- measured at 3.5x the instruction count of the
-// scalar loop, with the 16-bit loads still there -- which is the opposite of the point.
-//
-// Callers must have already excluded a mask and a non-unit stride: this copies VLEN CONTIGUOUS
-// elements unconditionally.
+// Contiguous __half block copy between a tile and an array, widened to the largest chunk both
+// ends support (16 B, 8 B, 4 B half2, else per element). ALIGN is the byte alignment of the
+// array-side pointer, proven by the caller from the memlet; the tile side is always at least
+// as aligned as the chunk. The ladder descends one rung at a time (all if constexpr, no
+// runtime test) rather than picking one width for the whole copy, so a width the chunk does
+// not evenly divide demotes only the tail, not the whole copy. Caller must have already
+// excluded a mask and a non-unit stride: this copies VLEN contiguous elements unconditionally.
 template <int VLEN, int ALIGN>
 DACE_DFI void half_copy_aligned(__half* __restrict__ dst, const __half* __restrict__ src) {
   // Widest chunk BOTH the alignment promise and the remaining length allow; 0 = per element.
@@ -338,26 +298,12 @@ DACE_DFI void half_copy_aligned(__half* __restrict__ dst, const __half* __restri
   }
 }
 
-// Contiguous ``__half`` block read whose FIRST element sits SHIFT elements above an aligned
-// 32-bit word -- a +-1 stencil neighbour is the whole motivation. A 32-bit load must start on a
-// 4-byte boundary (an unaligned LDG.E is invalid on NVIDIA, not merely slow), so the aligned
-// window BELOW the access is read instead and the wanted elements are cut out of the register
-// pair with PRMT. Two aligned words cover any SHIFT < 4/sizeof(__half) plus two elements.
-//
-// PRMT here is not the cost -- the per-element LDG.E.U16 swarm it replaces is. Neighbouring
-// accesses in the same row round DOWN to the same words, so the loads CSE away and a 3-point
-// stencil ends up reading each word once.
-//
-// The per-word reads stay 32-bit ON PURPOSE. Staging the window through a widened
-// ``half_copy_aligned`` does cut a LONE shifted read (VLEN=32: 17x LDG.E -> 4x LDG.E.128 + 1x
-// LDG.E), but the copy breaks the CSE above: the 3-point stencil this exists for went 4 loads /
-// 56 instructions to 5 / 64, because each read then stages its own private window instead of
-// sharing words with its neighbours. Sharing beats widening here -- the neighbours overlap by
-// construction, a private window does not.
-//
-// Read-only: the window covers elements the caller does not own, which a store would clobber.
-// The caller has proven the window stays inside the allocation; below element 0 is impossible
-// because the base is ``src - SHIFT`` with the access offset >= SHIFT by construction.
+// Contiguous __half block read whose first element sits SHIFT elements above an aligned 32-bit
+// word (a +-1 stencil neighbour). A 32-bit load must start on a 4-byte boundary, so the aligned
+// window below the access is read instead and cut out with PRMT. Kept per-word (not widened via
+// half_copy_aligned) on purpose: neighbouring stencil accesses round down to the same words and
+// CSE away, which a widened per-access window would break. Read-only: the window covers elements
+// the caller does not own, which a store would clobber; the caller has proven it stays in bounds.
 template <int VLEN, int SHIFT>
 DACE_DFI void half_read_shifted(__half* __restrict__ dst, const __half* __restrict__ src) {
   static_assert(VLEN % 2 == 0 && SHIFT > 0 && SHIFT * sizeof(__half) < 4, "shifted half read needs 0 < SHIFT < 2");
@@ -370,7 +316,7 @@ DACE_DFI void half_read_shifted(__half* __restrict__ dst, const __half* __restri
 }
 #endif
 
-// ----------------------------- tile_binop -----------------------------
+// tile_binop
 template <typename T, int VLEN, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 DACE_DFI void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                          const bool* __restrict__ mask) {
@@ -402,14 +348,8 @@ DACE_DFI void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* 
   }
 }
 
-// ----------------------------- tile_fma -------------------------------
-// out[i] = fma(a, b, c) = a*b + c (single rounding). A ``__half`` tile at even
-// width uses the native FP16x2 fused multiply-add ``__hfma2(av, bv, cv)`` (=
-// av*bv + cv, single-rounded per lane); every other element type computes
-// through ``float`` with ``fmaf`` (matching the sibling ``tile_binop`` compute
-// path -- a double tile degrades through float exactly as tile_binop does).
-// ``fmaf`` / ``__hfma2`` are fused single-rounded, so the GPU and the CPU pure
-// lowerings agree.
+// tile_fma: out[i] = fma(a, b, c) = a*b + c, single rounding. A __half tile at even width
+// uses the native FP16x2 __hfma2; everything else computes through tile_compute_t.
 template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
 DACE_DFI void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
                        const bool* __restrict__ mask) {
@@ -443,7 +383,7 @@ DACE_DFI void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __
   }
 }
 
-// ----------------------------- tile_unop ------------------------------
+// tile_unop
 template <typename T, int VLEN, char Op, bool Broadcast, bool Masked>
 DACE_DFI void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* __restrict__ mask) {
 #if defined(__CUDACC__) || defined(__HIPCC__)
@@ -471,7 +411,7 @@ DACE_DFI void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool
   }
 }
 
-// ----------------------------- tile_ite -----------------------------
+// tile_ite
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked>
 DACE_DFI void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
                        const T* __restrict__ e, const bool* __restrict__ mask) {
@@ -487,12 +427,9 @@ DACE_DFI void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, cons
   }
 }
 
-// ----------------------------- tile_load ------------------------------
-// ``Align`` is the byte alignment of the ARRAY side that the caller can prove; it defaults to the
-// element alignment, which selects the per-element loop below -- so a caller that does not supply
-// it gets exactly the code this template emitted before the parameter existed. ``Shift`` is how
-// many elements ``src`` sits ABOVE that aligned address: 0 means ``src`` itself is aligned,
-// nonzero routes to the aligned-window read (``half_read_shifted``).
+// tile_load: Align is the byte alignment of the array side the caller can prove (defaults to
+// the element alignment, i.e. the per-element loop). Shift is how many elements src sits above
+// that aligned address; nonzero routes to half_read_shifted.
 template <typename T, int VLEN, bool Masked, int Align = alignof(T), int Shift = 0>
 DACE_DFI void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
                         std::int64_t stride = 1) {
@@ -517,7 +454,7 @@ DACE_DFI void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bo
   }
 }
 
-// ----------------------------- tile_store -----------------------------
+// tile_store
 // Mirror of ``tile_load``: here the ARRAY side ``Align`` describes is ``dst``.
 template <typename T, int VLEN, bool Masked, int Align = alignof(T)>
 DACE_DFI void tile_store(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
@@ -540,7 +477,7 @@ DACE_DFI void tile_store(T* __restrict__ dst, const T* __restrict__ src, const b
   }
 }
 
-// ---------------------------- tile_gather -----------------------------
+// tile_gather
 template <typename T, typename IdxT, int VLEN, bool Masked>
 DACE_DFI void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                           const bool* __restrict__ mask) {
@@ -553,7 +490,7 @@ DACE_DFI void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const 
   }
 }
 
-// ---------------------------- tile_scatter ----------------------------
+// tile_scatter
 template <typename T, typename IdxT, int VLEN, bool Masked>
 DACE_DFI void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const IdxT* __restrict__ idx,
                            const bool* __restrict__ mask) {
@@ -566,7 +503,7 @@ DACE_DFI void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const
   }
 }
 
-// ---------------------------- tile_mask_gen ----------------------------
+// tile_mask_gen
 // ``stride`` mirrors tile_load's: 1 per thread, the lane count under CUDA_WARP.
 template <typename IdxT, int VLEN>
 DACE_DFI void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub, IdxT stride = 1) {
@@ -574,21 +511,10 @@ DACE_DFI void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub, IdxT str
   for (int i = 0; i < VLEN; ++i) out[i] = (base + IdxT(i) * stride) < ub;
 }
 
-// ----------------------------- tile_reduce ----------------------------
-// Horizontal reduction of a VLEN-lane tile to a SINGLE scalar (an in-map / per-tile
-// reduction: ``acc = sum/max/min/prod over the tile``). ``Op`` is the reduction op
-// ('+' sum, '*' prod, 'm' min, 'M' max). Returns the reduced ELEMENT (a ``__half`` for
-// an fp16 tile), not a vector.
-//
-// An fp16 tile folds as a balanced tree of half2 ops (consecutive pairs (0,1)(2,3)...;
-// an odd trailing element forwards unchanged). CUDA has NO single "reduce half2 -> half"
-// intrinsic, so we compose one: pack the VLEN lanes into VLEN/2 ``half2`` values and fold
-// that array as a balanced tree of the half2 intrinsic (``__hadd2`` / ..., two lanes per op
-// -- a sequence of half2 trees), then combine the surviving half2's two lanes into one
-// ``__half`` with the scalar combine (``__hadd`` / ...). The O(log VLEN) critical path lets
-// the compiler re-vectorise the partials. Every other element type (fp32 / fp64) folds
-// through the plain per-lane scalar accumulate. Over a compile-time-constant ``VLEN`` every
-// loop unrolls.
+// tile_reduce: horizontal reduction of a VLEN-lane tile to one scalar (Op: '+' sum, '*' prod,
+// 'm' min, 'M' max). An fp16 tile folds as a balanced tree of half2 ops (CUDA has no single
+// "reduce half2 -> half" intrinsic), then combines the surviving pair with a scalar combine;
+// every other element type folds through a plain per-lane scalar accumulate.
 template <typename T, int VLEN, char Op>
 DACE_DFI T tile_reduce(const T* __restrict__ src) {
 #if defined(__CUDACC__) || defined(__HIPCC__)
@@ -616,7 +542,7 @@ DACE_DFI T tile_reduce(const T* __restrict__ src) {
   return acc;
 }
 
-// =========================== VLEN=1 overloads ============================
+// VLEN=1 overloads
 // Mirror scalar.h: DaCe collapses a Register Array(shape=(1,)) transient to a
 // plain ``T``, so the VLEN=1 call site can mix ``T`` / ``T*`` / ``T[1]``
 // operands. ``tile_load_value`` / ``tile_store_value`` normalise them.

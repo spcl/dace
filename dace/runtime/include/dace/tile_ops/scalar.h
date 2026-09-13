@@ -1,42 +1,11 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// Scalar (portable) backend of the K=1 tile-op intrinsics. This is the
-// reference implementation + the always-available fallback; the avx512 / avx2 /
-// arm_neon / arm_sve sibling headers expose the SAME function signatures with
-// per-ISA intrinsics. The tile-op library node's chosen-backend expansion pulls
-// in exactly one of these headers via its DaCe environment (there is no joint
-// dispatch header).
+// Scalar (portable) backend of the K=1 tile-op intrinsics: the reference implementation and
+// always-available fallback; avx512/avx2/arm_neon/arm_sve mirror the same signatures.
 //
-// Every op is a function template parameterised by element type ``T``, the
-// compile-time tile width ``VLEN`` (always a constexpr -- the K=1 emitter knows
-// it at expansion time), a one-char op code ``Op`` (binop only), per-operand
-// broadcast booleans (``Broadcast`` splats lane 0 -- the scalar / symbol operand
-// case; otherwise per-lane ``a[i]``), and a ``Masked`` boolean. No enums / tag
-// structs / functors -- just template parameters on free functions.
-//
-// ``VLEN`` may exceed the hardware vector width (e.g. 64) or not divide it
-// (e.g. 50); each op is written as a lane loop so the SIMD backends can chunk it
-// into vector-width steps plus a scalar tail. Here in the scalar reference the
-// loop is just a (vectorizer-hinted) per-lane loop.
-//
-// Op codes (single char, binop only):
-//   ``+`` add  ``-`` sub  ``*`` mul  ``/`` div  ``%`` mod  ``m`` min  ``M`` max
-//   ``<`` lt   ``l`` le    ``>`` gt   ``g`` ge   ``=`` eq   ``!`` ne
-//   ``&`` and  ``|`` or
-// ``%`` is Python/NumPy modulo (``py_mod``: result follows the
-// divisor's sign), NOT C's truncated ``%`` (follows the dividend's) -- so the
-// tiled body matches the unvectorised reference bit-for-bit on negative
-// operands, and works for floating-point operands too (where C ``%`` is
-// ill-formed).
-// Comparisons / logicals yield ``T(1)`` / ``T(0)`` (the tile stores a condition
-// as the element type, matching the legacy vector_<op>).
-//
-// Masked semantics (load-bearing, two flavours):
-//   * tile PRODUCERS (binop / merge / load / gather) -- ZERO-FILL inactive
-//     lanes and GUARD the read, so an inactive (e.g. out-of-bounds tail) lane
-//     never dereferences ``src`` / ``src[idx]``.
-//   * array WRITERS (store / scatter) -- RMW skip-inactive: an inactive lane is
-//     not written, so the destination array (and its OOB tail) is never touched.
+// Op codes (binop only): + - * / % (Python/NumPy modulo, not C's) m/M min/max, < l > g = !
+// comparisons (yield T(1)/T(0)), & | logical. Producers zero-fill inactive lanes and guard
+// the read; array writers (store/scatter) skip inactive lanes instead (RMW).
 #pragma once
 
 #include <algorithm>
@@ -44,15 +13,9 @@
 #include <cstdint>
 #include <type_traits>
 
-// ``std::is_pointer`` does NOT recognise a ``__restrict__``-qualified pointer
-// (a GCC/Clang extension) as a pointer: ``std::is_pointer_v<T* __restrict__>``
-// is ``false``. DaCe emits tasklet tile-load source connectors as
-// ``T* __restrict__ _src = &arr[...];``, so a raw ``!std::is_pointer_v<Src>``
-// SFINAE guard fails to exclude those pointers from the by-value broadcast
-// ``tile_load`` overload below -- silently splatting ``src[0]`` across every
-// lane instead of doing the strided per-lane load. Strip the ``restrict``
-// qualifier before the pointer test so a restrict-qualified pointer is
-// classified as a pointer (its natural category).
+// std::is_pointer does not recognize a __restrict__-qualified pointer as a pointer, which
+// would let a restrict-qualified tile-load source silently fall into the by-value broadcast
+// overload below instead of the strided per-lane load. Strip restrict before the test.
 namespace dace_tileops_detail {
 template <typename T>
 struct _strip_restrict {
@@ -113,7 +76,7 @@ inline T tile_apply(T a, T b) {
     return (a || b) ? T(1) : T(0);
 }
 
-// ----------------------------- tile_binop -----------------------------
+// tile_binop
 // out[i] = a-operand <op> b-operand ; ZERO-FILL inactive (operand reads are
 // in-tile, always safe to evaluate).
 template <typename T, int VLEN, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
@@ -129,12 +92,7 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
   }
 }
 
-// ----------------------------- tile_fma -------------------------------
-// out[i] = fma(a-operand, b-operand, c-operand) = a*b + c with a SINGLE
-// rounding (``std::fma``). ZERO-FILL inactive (operand reads are in-tile, always
-// safe to evaluate). ``std::fma`` is used on EVERY backend (the SIMD siblings use
-// the native fused FMA) so the pure and ISA lowerings agree bit-for-bit; the
-// caller opts into FMA's single-rounded result over a separate ``*`` then ``+``.
+// tile_fma: out[i] = fma(a, b, c) = a*b + c, single rounding. Zero-fill inactive.
 template <typename T, int VLEN, bool BroadcastA, bool BroadcastB, bool BroadcastC, bool Masked>
 inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b, const T* __restrict__ c,
                      const bool* __restrict__ mask) {
@@ -149,12 +107,8 @@ inline void tile_fma(T* __restrict__ out, const T* __restrict__ a, const T* __re
   }
 }
 
-// Per-lane unary op. Op codes (single char):
-//   ``n`` neg(-a)  ``!`` not(!a)  ``a`` abs  ``e`` exp  ``l`` log  ``s`` sqrt
-//   ``S`` sin      ``C`` cos  ``f`` floor ``c`` ceil ``t`` tanh
-// Transcendentals have no portable SIMD intrinsic, so every backend shares this
-// vectorize-hinted lane loop (the compiler auto-vectorises neg/abs/sqrt and
-// calls a vector libm for exp/log where available).
+// Per-lane unary op. Op codes: n neg, ! not, a abs, e exp, l log, s sqrt, S sin, C cos,
+// f floor, c ceil, t tanh.
 template <typename T, char Op>
 inline T tile_unop_apply(T a) {
   if constexpr (Op == 'n')
@@ -181,7 +135,7 @@ inline T tile_unop_apply(T a) {
     return std::tanh(a);
 }
 
-// ----------------------------- tile_unop ------------------------------
+// tile_unop
 // out[i] = <op> a-operand ; ZERO-FILL inactive (operand read is in-tile, safe
 // to evaluate even on an inactive lane).
 template <typename T, int VLEN, char Op, bool Broadcast, bool Masked>
@@ -195,7 +149,7 @@ inline void tile_unop(T* __restrict__ out, const T* __restrict__ a, const bool* 
   }
 }
 
-// ----------------------------- tile_ite -----------------------------
+// tile_ite
 // out[i] = cond[i] ? t : e ; ZERO-FILL inactive.
 template <typename T, typename CondT, int VLEN, bool BroadcastThen, bool BroadcastElse, bool Masked>
 inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const T* __restrict__ t,
@@ -210,7 +164,7 @@ inline void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, const 
   }
 }
 
-// ----------------------------- tile_load ------------------------------
+// tile_load
 // dst[i] = src[i * stride] ; ZERO-FILL inactive + GUARDED read (inactive lane
 // never dereferences src, so an OOB tail lane is safe).
 template <typename T, int VLEN, bool Masked>
@@ -224,9 +178,7 @@ inline void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool
   }
 }
 
-// Forward-declare ``tile_load_value`` (defined further down with the
-// VLEN==1 polymorphism block) so the by-value ``Src`` overload below can
-// reference it. Definitions are visible at instantiation time.
+// Forward-declared: defined below with the VLEN==1 polymorphism block.
 template <typename T>
 inline T tile_load_value(const T& x) noexcept;
 template <typename T>
@@ -234,14 +186,8 @@ inline T tile_load_value(const T* __restrict__ x) noexcept;
 template <typename T, std::size_t N>
 inline T tile_load_value(const T (&x)[N]) noexcept;
 
-// VLEN>1 ``tile_load`` with a by-value ``src`` (Scalar / Symbol operand
-// codegen materialises as ``T _src = expr;``). SFINAE keeps this binding
-// off the contiguous ``T* src`` overload above; ``Src&&`` accepts any of
-// ``T``, ``T&``, ``T[N]``. ``stride`` is unused for a broadcast but kept
-// in the signature for call-site uniformity with the pointer form -- the
-// caller emits one ``tile_load<T, VLEN, Masked>(_dst, _src, mask, stride)``
-// for every tile load and the runtime picks pointer-strided vs by-value
-// broadcast through overload resolution.
+// VLEN>1 tile_load with a by-value src (Scalar/Symbol operand codegen materializes as
+// `T _src = expr;`). SFINAE keeps this off the pointer overload above.
 template <typename T, int VLEN, bool Masked, typename Src>
 inline std::enable_if_t<(VLEN > 1) && !dace_tileops_detail::_is_pointer_like<Src>, void> tile_load(
     T* __restrict__ dst, Src&& src, const bool* __restrict__ mask, std::int64_t /*stride*/ = 1) {
@@ -254,7 +200,7 @@ inline std::enable_if_t<(VLEN > 1) && !dace_tileops_detail::_is_pointer_like<Src
   }
 }
 
-// ----------------------------- tile_store -----------------------------
+// tile_store
 // dst[i * stride] = src[i] ; RMW skip-inactive (inactive lane not written, so
 // the destination array / OOB tail is never touched).
 template <typename T, int VLEN, bool Masked>
@@ -268,7 +214,7 @@ inline void tile_store(T* __restrict__ dst, const T* __restrict__ src, const boo
   }
 }
 
-// ---------------------------- tile_gather -----------------------------
+// tile_gather
 // dst[i] = src[idx[i]] ; ZERO-FILL inactive + GUARDED read (inactive lane never
 // dereferences src[idx], so a garbage / OOB index is safe).
 template <typename T, typename IdxT, int VLEN, bool Masked>
@@ -282,7 +228,7 @@ inline void tile_gather(T* __restrict__ dst, const T* __restrict__ src, const Id
   }
 }
 
-// ---------------------------- tile_scatter ----------------------------
+// tile_scatter
 // dst[idx[i]] = src[i] ; RMW skip-inactive (inactive lane never written, so a
 // garbage / OOB index is safe).
 template <typename T, typename IdxT, int VLEN, bool Masked>
@@ -296,31 +242,15 @@ inline void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const I
   }
 }
 
-// ---------------------------- tile_mask_gen ----------------------------
-// Iteration mask: out[l] = (base + l) < ub for l in 0..VLEN-1. The K=1 form of
-// the per-dim conjunction TileMaskGen lowers (K>=2 stays 'pure'); ``base`` is the
-// surrounding map iter-var and ``ub`` the dim's exclusive upper bound. The
-// predicate is a monotonic whilelt-style prefix; consumers rebuild their own
-// hardware mask from this bool tile.
+// tile_mask_gen: iteration mask, out[l] = (base + l) < ub for l in 0..VLEN-1.
 template <typename IdxT, int VLEN>
 inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
   for (int i = 0; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
 }
 
-// ----------------------------- tile_reduce ----------------------------
-// Horizontal reduction of a VLEN-lane tile to ONE scalar (an in-map / per-tile
-// reduction: ``acc = sum/prod/min/max over the tile``). ``Op`` is the reduction
-// op ('+' sum, '*' prod, 'm' min, 'M' max); returns the reduced element, not a
-// vector. Full reduction only -- a masked / single-axis / K>=2 reduce keeps the
-// ``pure`` per-lane expansion (the selector never routes those here).
-//
-// Balanced log-depth pairwise fold (consecutive pairs (0,1)(2,3)...; an odd
-// trailing lane forwards unchanged). The O(log VLEN) critical path -- over a
-// compile-time-constant ``VLEN`` the loops unroll -- lets the compiler
-// re-vectorise the partials, and it reduces in the same order as the vectorized
-// ``Reduce`` node's ``_dace_horizontal_tree`` so both paths agree. The per-lane
-// combine reuses this header's own ``tile_apply`` (self-contained; no cross-ISA
-// dispatch header).
+// tile_reduce: horizontal reduction of a VLEN-lane tile to one scalar (Op: '+' sum, '*' prod,
+// 'm' min, 'M' max). Balanced log-depth pairwise fold, matching the order the vectorized
+// Reduce node's _dace_horizontal_tree uses so both paths agree numerically.
 template <typename T, int VLEN, char Op>
 inline T tile_reduce(const T* __restrict__ src) {
   T buf[VLEN];
@@ -335,26 +265,11 @@ inline T tile_reduce(const T* __restrict__ src) {
   return buf[0];
 }
 
-// =========================== VLEN=1 overloads ============================
-// DaCe codegen collapses a ``Register Array(shape=(1,))`` transient to a
-// plain ``T`` variable for the K=0 / W=1 postamble — but other operands
-// at the SAME call site may stay as ``T[1]`` arrays (which decay to
-// ``T*``). The reference-only overloads above don't bind to that mix.
-// Each VLEN=1 wrapper below uses ``tile_addr`` to accept any combination
-// of ``T``, ``T&``, ``T*``, or ``T[N]`` arguments and normalise them to
-// ``T*`` before forwarding to the canonical pointer-shape body. Mask
-// always stays ``const bool*`` (DaCe routes the mask through a tile
-// transient even at VLEN=1).
+// VLEN=1 overloads. DaCe codegen may collapse a shape=(1,) transient to a plain T while
+// other operands at the same call site stay T[1] (decays to T*); tile_addr below normalizes
+// any of T, T&, T*, T[N] to T* before forwarding to the canonical pointer-shape body.
 
-// ``tile_load_value`` extracts the single element from any kind of
-// VLEN=1 tile operand:
-//   * ``T``       — scalar value: return as-is.
-//   * ``T&``      — reference: return the referenced value.
-//   * ``T*``      — pointer to a 1-element buffer: return ``*p``.
-//   * ``T[N]``    — array of N (always 1 here): return ``arr[0]``.
-// Const-correctness is handled by the by-value return type. The output
-// (``dst``) side uses ``tile_store_value`` which writes back through
-// either a scalar reference or a pointer.
+// tile_load_value extracts the single element from any kind of VLEN=1 tile operand.
 
 template <typename T>
 inline T tile_load_value(const T& x) noexcept {

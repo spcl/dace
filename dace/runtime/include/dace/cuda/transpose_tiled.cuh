@@ -1,14 +1,7 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 //
-// Tiled transpose and in-place symmetrize.
-//
-// A transpose reads along rows and writes along columns, so one of the two accesses is strided
-// whichever way it is written: the naive kernel issues a separate memory transaction per element on
-// the strided side. Staging a square tile through shared memory makes BOTH sides run along rows.
-//
-// The tile is declared ``[TILE][TILE + 1]``. That padding column is what removes the shared-memory
-// bank conflict: with a plain ``[TILE][TILE]`` the transposed read walks a column, whose entries are
-// TILE apart and therefore all in the same bank, serializing the warp 32 ways.
+// Tiled transpose and in-place symmetrize: a square tile staged through shared memory makes both accesses
+// run along rows. The tile is ``[TILE][TILE + 1]``; the padding column avoids a shared-memory bank conflict.
 
 #pragma once
 
