@@ -336,13 +336,19 @@ class ShortLoopUnroll(ppl.Pass):
         # ``unrolled`` so they feed the return value (the graph may be half-rewritten) without
         # triggering the completed-unroll propagation below.
         partial = 0
+        # Trip count per loop OBJECT, for this call. It reads only the loop header and
+        # ``sdfg.constants``; no step here rewrites a live loop's header (an unroll substitutes
+        # into fresh copies), and the keys stay referenced, so no id is reused.
+        trips: Dict[LoopRegion, Optional[int]] = {}
         changed = True
         while changed:
             changed = False
             # Bottom-up: unroll the deepest loops first, so an enclosing loop is only unrolled once its
             # inner loops are already unrolled + locally fused into a compact body.
             for loop in sorted(_loops(sdfg), key=_loop_depth, reverse=True):
-                trip = _constant_trip_count(loop, sdfg)
+                if loop not in trips:
+                    trips[loop] = _constant_trip_count(loop, sdfg)
+                trip = trips[loop]
                 if trip is None or trip > self.unroll_limit:
                     continue
                 if _unfusable_branchy_body(loop):
