@@ -31,6 +31,8 @@ from dace import properties
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
+from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import SameWriteSetIfElseToITECFG
 
 
 @properties.make_properties
@@ -58,8 +60,7 @@ class FlattenBranches(ppl.Pass):
             progress = False
             for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
                 for block in list(cfg.nodes()):
-                    if isinstance(block, ConditionalBlock) and self._should_flatten(block):
-                        self._flatten(block)
+                    if isinstance(block, ConditionalBlock) and self._should_flatten(block) and self._flatten(block):
                         flattened += 1
                         progress = True
         return flattened or None
@@ -76,12 +77,19 @@ class FlattenBranches(ppl.Pass):
             return branches[0][0] is not None and branches[1][0] is not None
         return False
 
-    @staticmethod
-    def _cond_text(cond: CodeBlock | str | None) -> str:
-        return cond.as_string if isinstance(cond, CodeBlock) else str(cond)
+    def _flatten(self, cb: ConditionalBlock) -> bool:
+        """Replace ``cb`` with a sequential chain of single-arm blocks.
 
-    def _flatten(self, cb: ConditionalBlock) -> None:
-        """Replace ``cb`` with a sequential chain of single-arm blocks."""
+        Arm ``k`` re-tests guards ``0..k`` after arms ``0..k-1`` ran, so a guard whose data an arm writes is
+        snapshotted before ``cb`` first (:meth:`BranchNormalization.freeze_guards`).
+
+        :returns: ``False``, with nothing changed, when such a guard cannot be snapshotted.
+        """
+        normalizer = BranchNormalization()
+        lifter = SameWriteSetIfElseToITECFG()
+        guards = normalizer.freeze_guards(cb, lifter)
+        if guards is None:
+            return False
         parent = cb.parent_graph
         # Snapshot the arms in order, then detach every body from ``cb`` so each
         # can be re-parented onto its own single-arm block.
@@ -94,10 +102,12 @@ class FlattenBranches(ppl.Pass):
 
         prior_neg: list[str] = []  # negations of earlier arms' conditions
         new_blocks: list[ConditionalBlock] = []
+        guard_texts = iter(guards)
         for i, (cond, body) in enumerate(arms):
+            guard = None if cond is None else next(guard_texts)
             terms = list(prior_neg)
-            if cond is not None:
-                terms.append(f"({self._cond_text(cond)})")
+            if guard is not None:
+                terms.append(f"({guard})")
             # Empty term list = unconditional arm (a leading bare ``else`` as the sole
             # branch); guard as ``True`` so the block stays a well-formed single-arm cond.
             eff = " and ".join(terms) if terms else "True"
@@ -105,8 +115,8 @@ class FlattenBranches(ppl.Pass):
             blk.add_branch(CodeBlock(eff), body)
             parent.add_node(blk)
             new_blocks.append(blk)
-            if cond is not None:
-                prior_neg.append(f"(not ({self._cond_text(cond)}))")
+            if guard is not None:
+                prior_neg.append(f"(not ({guard}))")
 
         # Stitch: in-edges -> first block, chain the blocks, last -> cb's out.
         for ie in in_edges:
@@ -118,3 +128,5 @@ class FlattenBranches(ppl.Pass):
 
         parent.remove_node(cb)  # drops cb and its now-dangling in/out edges
         parent.reset_cfg_list()
+        normalizer.release_guard_symbols(lifter)
+        return True

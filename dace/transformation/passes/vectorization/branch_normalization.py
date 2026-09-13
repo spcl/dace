@@ -24,7 +24,7 @@ from dace.sdfg.construction_utils import (
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
-    arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
+    SameWriteSetIfElseToITECFG, arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
 from dace.ordered import OrderedSet
 
@@ -409,39 +409,92 @@ class BranchNormalization(ppl.Pass):
             guard-read data), or ``None`` when the guard cannot be snapshotted and
             serializing would therefore be unsound.
         """
-        from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
-            SameWriteSetIfElseToITECFG, )  # local import: avoids an import cycle at module load
-
-        local_sdfg: dace.SDFG = cb.sdfg
         lifter = SameWriteSetIfElseToITECFG()
+        verdict = self.guard_snapshot_verdict(cb, cond_text, lifter)
+        if verdict is None:
+            return None
+        return self.snapshot_guard(cb, cond_text, lifter) if verdict else cond_text
+
+    def guard_snapshot_verdict(self, cb: ConditionalBlock, cond_text: str,
+                               lifter: SameWriteSetIfElseToITECFG) -> bool | None:
+        """Whether one guard of ``cb`` needs a snapshot before the arms run; mutates nothing.
+
+        :param cb: conditional block about to be serialized.
+        :param cond_text: one of its guards, as written.
+        :param lifter: the instance whose lifts would snapshot the guard.
+        :returns: ``False`` when no arm writes data the guard reads, ``True`` when one does and the
+            guard can be snapshotted, ``None`` when one does and it cannot.
+        """
+        local_sdfg: dace.SDFG = cb.sdfg
         # The guard usually names interstate symbols staging element reads (``a_index = a[i]``);
         # expand them so the array dependence is visible. Read-only — nothing is pruned here.
-        expanded, _ = lifter._inline_interstate_scalar_symbols(local_sdfg, cond_text, exclude=set())
+        expanded = lifter._inline_interstate_scalar_symbols(local_sdfg, cond_text, exclude=set())[0]
         try:
             names = set(symbolic.arrays(expanded)) | set(symbolic.free_symbols_and_functions(expanded))
         except Exception:  # noqa: BLE001 -- unparsable guard: no provable dependence, leave as-is
-            return cond_text
-        guard_arrays = {n for n in names if n in local_sdfg.arrays}
-        if not (guard_arrays & self.arm_written_arrays(cb)):
-            return cond_text
+            return False
+        if not ({n for n in names if n in local_sdfg.arrays} & self.arm_written_arrays(cb)):
+            return False
         # A gather guard (``w[idx[i]] > 0``) has no memlet form, so it cannot be snapshotted;
         # refuse the serialization rather than emit the re-read that miscompiles.
-        if lifter._has_nested_subscript(local_sdfg, expanded):
+        if lifter._has_nested_subscript(local_sdfg, expanded) or self.representative_write_subset(cb) is None:
             return None
-        subset_str = self.representative_write_subset(cb)
-        if subset_str is None:
-            return None
+        return True
 
+    def snapshot_guard(self, cb: ConditionalBlock, cond_text: str, lifter: SameWriteSetIfElseToITECFG) -> str:
+        """Evaluate a guard once into a per-lane bool transient, in a new state before ``cb``.
+
+        :param cb: conditional block about to be serialized.
+        :param cond_text: the guard, as written.
+        :param lifter: the instance that lifts the guard (and may defer its symbol deletions).
+        :returns: a read of the snapshot, to test instead of ``cond_text``.
+        :raises NotImplementedError: the guard has no array form to snapshot into.
+        """
+        local_sdfg: dace.SDFG = cb.sdfg
+        subset_str = self.representative_write_subset(cb)
         parent = cb.parent_graph
         guard_state = parent.add_state_before(cb, label=f"{cb.label}_guard", is_start_block=parent.start_block is cb)
-        cond_name, _producer = self._resolve_arm_cond(local_sdfg, guard_state, cond_text, subset_str, skip_cb=cb)
-        if cond_name is None:
+        resolved = lifter._resolve_cond_to_array(local_sdfg, guard_state, cond_text, subset_str, skip_cb=cb)
+        if resolved is None:
             raise NotImplementedError(f"BranchNormalization: cannot snapshot the guard of {cb.label!r} "
-                                      f"({cond_text!r}) although its arms write {sorted(guard_arrays)}; "
+                                      f"({cond_text!r}) although its arms write data it reads; "
                                       f"serializing the arms would re-test a mutated guard")
         parent.reset_cfg_list()
+        cond_name = resolved[0]
         snapshot_subset = "0" if local_sdfg.arrays[cond_name].total_size == 1 else subset_str
         return f"{cond_name}[{snapshot_subset}]"
+
+    def freeze_guards(self, cb: ConditionalBlock, lifter: SameWriteSetIfElseToITECFG) -> list[str] | None:
+        """Guard texts for running ``cb``'s arms as a chain of single-arm blocks, one per conditioned arm.
+
+        Arm ``k`` of the chain re-tests guards ``0..k``, so every guard whose data an arm writes is
+        snapshotted before ``cb``. The symbol definitions a snapshot consumes may still feed another guard:
+        ``lifter`` defers their deletion until :meth:`release_guard_symbols`, called once the chain has
+        replaced ``cb``.
+
+        :param cb: the multi-arm conditional block.
+        :param lifter: snapshots the guards and holds the deferred deletions.
+        :returns: one guard text per conditioned arm, or ``None`` with nothing mutated when a guard cannot be
+            snapshotted, or when a later guard (evaluated only after an earlier one failed) would be
+            evaluated unconditionally beside a guard that keeps an iteration symbol in range.
+        """
+        texts = [
+            cond.as_string if isinstance(cond, CodeBlock) else str(cond) for cond, body in cb.branches
+            if cond is not None
+        ]
+        verdicts = [self.guard_snapshot_verdict(cb, text, lifter) for text in texts]
+        if None in verdicts or (any(verdicts[1:]) and condition_guards_iteration_symbol(cb)):
+            return None
+        lifter._deferred_drops = []
+        return [self.snapshot_guard(cb, text, lifter) if verdict else text for text, verdict in zip(texts, verdicts)]
+
+    @staticmethod
+    def release_guard_symbols(lifter: SameWriteSetIfElseToITECFG) -> None:
+        """Apply the symbol deletions :meth:`freeze_guards` deferred, each re-checked against the current graph."""
+        drops = lifter._deferred_drops
+        lifter._deferred_drops = None
+        for drop in drops:
+            lifter._drop_interstate_symbol(drop[0], drop[1], drop[2])
 
     def _serialize_two_arm(self, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
                            body1: ControlFlowRegion) -> bool:
