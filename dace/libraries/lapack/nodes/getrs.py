@@ -106,8 +106,13 @@ class ExpandGetrsGPUSolver(ExpandTransformation):
         # cuSOLVER still expects ldb to be the "number of rows"
         if len(desc_rhs.shape) == 1:
             stride_rhs = rows_rhs
+            rhs_count = 1
+        else:
+            # Callers stage column-major data (``Solve`` transposes B into ``[nrhs, n]``), so the
+            # right-hand sides are the descriptor's ROWS; its columns are the solve's ``n``.
+            rhs_count = rows_rhs
 
-        code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, rows_a, cols_rhs, stride_a,
+        code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, rows_a, rhs_count, stride_a,
                                                                       stride_rhs)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

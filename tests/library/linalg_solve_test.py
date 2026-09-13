@@ -4,6 +4,8 @@ from dace import Memlet
 from dace.libraries.lapack import Getrf, Getrs
 from dace.libraries.linalg import Solve
 from dace.libraries.linalg.nodes.transpose import Transpose
+import re
+
 import numpy as np
 import pytest
 
@@ -226,6 +228,16 @@ def test_multi_rhs_gpu_keeps_the_rhs_transposes():
     assert transposes == 3
 
 
+def test_multi_rhs_gpu_hands_getrs_the_rhs_count():
+    """The staged B is ``[nrhs, n]`` column-major data, so getrs must read nrhs off its rows."""
+    sdfg = make_rhs_sdfg('cuSolverDn', np.float64, [n, 3], 106)
+    sdfg.apply_gpu_transformations()
+    code = ''.join(c.clean_code for c in sdfg.generate_code())
+    call = re.search(r'cusolverDnDgetrs\(\s*__dace_cusolverDn_handle,\s*CUBLAS_OP_N,\s*(\w+),\s*(\w+),', code)
+    assert call is not None, 'no cusolverDnDgetrs call emitted'
+    assert call.groups() == ('n', '3'), f'getrs got (n, nrhs) = {call.groups()}'
+
+
 @pytest.mark.parametrize("spelling", sorted(SINGLE_RHS_SHAPES))
 def test_single_rhs_pure_stays_pure(spelling):
     sdfg = make_rhs_sdfg('pure', np.float64, SINGLE_RHS_SHAPES[spelling], 104)
@@ -236,20 +248,25 @@ def test_single_rhs_pure_stays_pure(spelling):
     assert transposes == 0
 
 
-@pytest.mark.parametrize("implementation, rhs_shape", [
-    pytest.param('pure', [n]),
-    pytest.param('pure', [n, 1]),
-    pytest.param('pure', [n, 3]),
-    pytest.param('OpenBLAS', [n], marks=pytest.mark.lapack),
-    pytest.param('OpenBLAS', [n, 1], marks=pytest.mark.lapack),
-    pytest.param('OpenBLAS', [n, 3], marks=pytest.mark.lapack),
-    pytest.param('MKL', [n], marks=pytest.mark.mkl),
-    pytest.param('MKL', [n, 1], marks=pytest.mark.mkl),
-    pytest.param('MKL', [n, 3], marks=pytest.mark.mkl),
-    pytest.param('cuSolverDn', [n], marks=pytest.mark.gpu),
-    pytest.param('cuSolverDn', [n, 1], marks=pytest.mark.gpu),
-    pytest.param('cuSolverDn', [n, 3], marks=pytest.mark.gpu),
-])
+@pytest.mark.parametrize(
+    "implementation, rhs_shape",
+    [
+        pytest.param('pure', [n]),
+        pytest.param('pure', [n, 1]),
+        pytest.param('pure', [n, 3]),
+        pytest.param('OpenBLAS', [n], marks=pytest.mark.lapack),
+        pytest.param('OpenBLAS', [n, 1], marks=pytest.mark.lapack),
+        pytest.param('OpenBLAS', [n, 3], marks=pytest.mark.lapack),
+        pytest.param('MKL', [n], marks=pytest.mark.mkl),
+        pytest.param('MKL', [n, 1], marks=pytest.mark.mkl),
+        pytest.param('MKL', [n, 3], marks=pytest.mark.mkl),
+        pytest.param('cuSolverDn', [n], marks=pytest.mark.gpu),
+        pytest.param('cuSolverDn', [n, 1], marks=pytest.mark.gpu),
+        pytest.param('cuSolverDn', [n, 3], marks=pytest.mark.gpu),
+        # More right-hand sides than rows: npbench contour_integral's NR x NM solve.
+        pytest.param('pure', [n, 9]),
+        pytest.param('cuSolverDn', [n, 9], marks=pytest.mark.gpu),
+    ])
 def test_rhs_shape_values(implementation, rhs_shape):
     global id
     id += 1
