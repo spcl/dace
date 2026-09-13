@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-from typing import List
+from typing import Iterator, List, Tuple
 
 import dace
 from dace import dtypes
@@ -14,7 +14,7 @@ from dace.config import Config
 from dace.sdfg import infer_types
 
 from dace.codegen.instrumentation import InstrumentationProvider
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.mark_simd_maps import MarkSIMDMaps
 from dace.transformation.passes.region_boundary_states import RegionBoundaryStates
@@ -167,11 +167,50 @@ def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
     for node in pinned:
         node.no_inline = True
     try:
-        sdfg.apply_transformations_repeated(InlineSDFG, validate=validate)
-        sdfg.apply_transformations_repeated(InlineMultistateSDFG, validate=validate)
+        for inliner in (InlineSDFG(), InlineMultistateSDFG()):
+            apply_node_pattern_repeated(sdfg, inliner)
+            if validate:
+                sdfg.validate()
     finally:
         for node in pinned:
             node.no_inline = False
+
+
+def apply_node_pattern_repeated(sdfg: SDFG, xform: 'dace.transformation.transformation.PatternTransformation') -> None:
+    """``sdfg.apply_transformations_repeated(xform)`` for a single-node pattern, without validation.
+
+    Probes and applies in the matcher's own order -- regions, then states, then nodes, restarting
+    after every application -- but finds candidates by walking instead of collapsing every state into
+    a networkx graph once per sweep.
+    """
+    from dace.transformation.passes import pattern_matching  # Avoid import loop
+
+    single_state = pattern_matching.get_transformation_metadata([xform])[1]
+    expr_index, pattern, options = single_state[0][1], single_state[0][2], single_state[0][4]
+    pattern_node_id = next(iter(pattern))
+    node_type = pattern.nodes[pattern_node_id]['node'].node
+    applied = True
+    while applied:
+        applied = False
+        for region, state_id, state, node_id in node_pattern_candidates(sdfg, node_type):
+            match = pattern_matching._try_to_match_transformation(state, None, {node_id: pattern_node_id}, region.sdfg,
+                                                                  xform, expr_index, pattern, state_id, False, options,
+                                                                  {})
+            if match is not None:
+                match.apply(state, region.sdfg)
+                applied = True
+                break
+
+
+def node_pattern_candidates(sdfg: SDFG,
+                            node_type: type) -> Iterator[Tuple[AbstractControlFlowRegion, int, SDFGState, int]]:
+    """``(region, state index, state, node index)`` for every ``node_type`` node, in matcher order."""
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        for state_id, state in enumerate(region.nodes()):
+            if isinstance(state, SDFGState):
+                for node_id, node in enumerate(state.nodes()):
+                    if isinstance(node, node_type):
+                        yield region, state_id, state, node_id
 
 
 def sdfg_uses_gpu(sdfg: SDFG) -> bool:
