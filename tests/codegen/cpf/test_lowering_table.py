@@ -39,6 +39,8 @@ DIALECT_IDS = [LANGUAGE[dialect] for dialect in DIALECTS]
 #: the runtime header's documented behaviour, not from re-running the lowering.
 CASES = [
     ('Abs', ('-3.5', ), '3.5'),
+    # numpy's conjugate of a real is the real; C++'s std::conj of one is a std::complex.
+    ('conj', ('-2.5', ), '-2.5'),
     ('ceiling', ('2.25', ), '3.0'),
     ('floor', ('2.75', ), '2.0'),
     ('ROUND', ('2.5', ), '3.0'),

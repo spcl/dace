@@ -1138,6 +1138,10 @@ def lowering_for(name: str,
     :raises NotImplementedError: if ``name`` is a runtime function CPF cannot express (see
                                  :data:`UNSUPPORTED`).
     """
+    # numpy's conjugate of a real is that real; ``std::conj`` of one is a ``std::complex``.
+    if (name in ('conj', 'conjugate') and types is not None and len(types) == 1 and types[0] is not None
+            and not types[0].startswith('complex')):
+        return '(%s)' % arguments[0]
     tables = tables_for(dialect)
     if name in tables.unsupported:
         raise NotImplementedError(f'CPF cannot lower {name!r}: {tables.unsupported[name]}.')
@@ -2866,7 +2870,13 @@ def c_native_array_dtype(argument: str, site: Optional[NativeSite], call: str) -
 
     :raises NotImplementedError: if the argument is not a typed array in scope at the site.
     """
-    entry = site.names.get(argument.strip()) if site is not None else None
+    # An offset into an array, ``(A + (N * i))``, points at the same element type as ``A`` itself.
+    text = argument.strip()
+    while text.startswith('(') and c_encloses(text, 0):
+        text = text[1:-1].strip()
+    offset = re.match(r'([A-Za-z_]\w*)\s*\+', text)
+    name = offset.group(1) if offset is not None else text
+    entry = site.names.get(name) if site is not None else None
     if entry is None or not entry[1] or entry[0] not in C_SCALAR_SPELLINGS:
         where = 'no names are typed at this site' if site is None else 'it is not a typed array in scope'
         raise NotImplementedError(f'CPF cannot type the array {argument!r} that {call} takes in C: {where}')

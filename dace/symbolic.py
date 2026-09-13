@@ -2165,6 +2165,10 @@ _builtin_userfunctions.update(_CAST_CLASSES)
 
 class bitwise_and(DaceFunction):
 
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
+
     @classmethod
     def eval(cls, x, y):
         """
@@ -2183,6 +2187,10 @@ class bitwise_and(DaceFunction):
 
 class bitwise_or(DaceFunction):
 
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
+
     @classmethod
     def eval(cls, x, y):
         """
@@ -2197,6 +2205,10 @@ class bitwise_or(DaceFunction):
 
 
 class bitwise_xor(DaceFunction):
+
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
 
     @classmethod
     def eval(cls, x, y):
@@ -2213,6 +2225,10 @@ class bitwise_xor(DaceFunction):
 
 class bitwise_invert(DaceFunction):
 
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
+
     @classmethod
     def eval(cls, x):
         """
@@ -2226,6 +2242,10 @@ class bitwise_invert(DaceFunction):
 
 
 class left_shift(DaceFunction):
+
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
 
     @classmethod
     def eval(cls, x, y):
@@ -2243,6 +2263,10 @@ class left_shift(DaceFunction):
 
 
 class right_shift(DaceFunction):
+
+    def _eval_is_integer(self):
+        # Python's bitwise operators take and return integers only, so printers may keep index type.
+        return True
 
     @classmethod
     def eval(cls, x, y):
@@ -3859,7 +3883,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return '%s(%s)' % (target, self._print(expr.args[0]))
         # Complex conjugate: ``conj(x)`` -> ``dace::math::conj(x)`` in C++
         if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):
-            lowered = self._mpr_call('conj', [self._print(expr.args[0])], self.c_argument_types(expr.args))
+            # Typed in every standalone dialect: a real argument makes the conjugate the identity.
+            types = (tuple(self.c_type(argument)
+                           for argument in expr.args) if self.dialect in cpf_lowering.STANDALONE_DIALECTS else None)
+            lowered = self._mpr_call('conj', [self._print(expr.args[0])], types)
             if lowered is not None:
                 return lowered
             return 'dace::math::conj(%s)' % self._print(expr.args[0])

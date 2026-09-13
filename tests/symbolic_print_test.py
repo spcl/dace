@@ -249,3 +249,11 @@ def test_plain_division_lowering_is_unchanged():
     N = sympy.Symbol('N', nonnegative=True, integer=True)
     assert symstr(sympy.floor(N / 8), cpp_mode=True) == symstr(pystr_to_symbolic('int_floor(N, 8)'), cpp_mode=True)
     assert 'int_ceil' in symstr(sympy.ceiling(N / 32), cpp_mode=True)
+
+
+@pytest.mark.parametrize('expression', ('N >> i', 'N << i', 'bitwise_and(N, i)'))
+def test_rounding_up_a_bitwise_integer_prints_no_floating_call(expression):
+    """A shift or mask of integers is an integer, so its ceiling is itself. Printed as ``ceil`` it reached
+    CPF's C dialect as a floating call on an argument nothing could type (dwt2d's range end)."""
+    printed = symstr(sympy.ceiling(pystr_to_symbolic(expression)), cpp_mode=True)
+    assert 'ceil' not in printed, printed
