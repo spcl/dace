@@ -2188,13 +2188,12 @@ class BranchElimination(transformation.MultiStateTransformation):
                         src_edge.data.assignments.pop(k, None)
                         assert k not in graph.sdfg.symbols
                     RemoveUnusedSymbols().apply_pass(graph.sdfg, {})
-                    # Lazy import: ``interstate`` is a lower layer than ``vectorization``; importing a
-                    # vectorization pass at module load makes ``interstate.__init__`` pull in the whole
-                    # vectorization package, which imports back into the partially-initialised
-                    # ``interstate`` -> circular import. Deferring it here keeps every other import
-                    # (incl. vectorize_multi_dim's interstate block) top-level.
-                    from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
-                    RemoveEmptyStates().apply_pass(graph.sdfg, {})
+                    # Lazy import: ``interstate`` is a lower layer than ``canonicalize``; importing a
+                    # canonicalize pass at module load makes ``interstate.__init__`` pull in the whole
+                    # canonicalize package, which imports back into the partially-initialised
+                    # ``interstate`` -> circular import.
+                    from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+                    EmptyStateElimination().apply_pass(graph.sdfg, {})
                     src_nodes = {e.src for e in graph.in_edges(new_state)}
                     src_edges = {e for e in graph.in_edges(new_state)}
                     graph.sdfg.validate()
@@ -2206,9 +2205,9 @@ class BranchElimination(transformation.MultiStateTransformation):
                         if src_edge.data.assignments == dict():
                             if not isinstance(src_node, ConditionalBlock):
                                 self._force_fuse(src_node, new_state)
-                                from dace.transformation.passes.vectorization.remove_empty_states import (
-                                    RemoveEmptyStates, )  # lazy: break interstate<->vectorization cycle (see above)
-                                RemoveEmptyStates().apply_pass(graph.sdfg, {})
+                                from dace.transformation.passes.canonicalize.empty_state_elimination import (
+                                    EmptyStateElimination, )  # lazy: break interstate<->canonicalize cycle (see above)
+                                EmptyStateElimination().apply_pass(graph.sdfg, {})
 
                     graph.sdfg.validate()
                     # WE do not the scalar to be promoted again

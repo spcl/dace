@@ -82,7 +82,7 @@ from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (SetSymbolNonnegativeAssumptions,
                                                                                 insert_assumption_guards)
-from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
+from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
@@ -863,7 +863,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # under both branch modes).
         passes.append(_RunInlineBranchLoweredNSDFGs())
         # Full prep before tiling (so the tile path handles every kernel the frontend emits):
-        #   * RemoveEmptyStates — tidy the CFG after branch lowering.
+        #   * EmptyStateElimination — tidy the CFG after branch lowering.
         #   * PowerOperatorExpansion — ``x**2`` → ``x*x`` for a LITERAL integer exponent only;
         #     every other exponent stays ``**``.
         #   * SplitTasklets — one op per tasklet (also splits expanded power / fp_factor
@@ -914,7 +914,7 @@ class VectorizeMultiDim(ppl.Pipeline):
             # Clean empty states from branch lowering + body rewrites so the tiling passes
             # see a tidy CFG. (``ppl.Pipeline`` forbids duplicate pass types, so this single
             # end-of-prep cleanup covers both the branch-front and AST-rewrite output.)
-            RemoveEmptyStates(),
+            EmptyStateElimination(),
         ]
         # ``assume_even`` (GPU half2): the caller guarantees every tiled map extent is an
         # exact multiple of its width, so NO remainder. Mark every eligible map ``__tile_main``
