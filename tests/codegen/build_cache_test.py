@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.codegen import command_db, compiler
+from dace.codegen import build_cache, command_db, compiler
 
 N = dace.symbol('N')
 
@@ -178,6 +178,43 @@ def test_precompiled_header_separates_source_trees(tmp_path, monkeypatch):
 
     assert theirs, 'no precompiled header was produced for the second tree'
     assert mine != theirs, 'both trees were handed the same precompiled header'
+
+
+def test_runtime_digest_sees_an_edit_that_keeps_the_mtime(tmp_path):
+    """A whole-second filesystem leaves the mtime of an edit made in the same second unchanged, so
+    only the content tells the two headers apart."""
+    header = tmp_path / 'include' / 'dace' / 'math.h'
+    header.parent.mkdir(parents=True)
+    header.write_text('int a;\n')
+    stat = header.stat()
+    before = build_cache.runtime_digest(str(tmp_path / 'include'))
+
+    header.write_text('int b;\n')
+    os.utime(header, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    assert build_cache.runtime_digest(str(tmp_path / 'include')) != before
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+def test_a_runtime_edit_that_keeps_the_mtime_rebuilds_the_precompiled_header(tmp_path, monkeypatch):
+    """The cache sits in /dev/shm with nanosecond mtimes and the runtime on capstor with whole-second
+    ones, so a header edited in the second its .gch was built compared as older than the .gch."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    clone = tmp_path / 'clone' / 'dace'
+    real = os.path.dirname(os.path.dirname(os.path.abspath(compiler.__file__)))
+    shutil.copytree(os.path.join(real, 'runtime', 'include'), clone / 'runtime' / 'include')
+    shutil.copytree(os.path.join(real, 'external'), clone / 'external')  # stream.h reaches into it
+    monkeypatch.setattr(compiler, '__file__', str(clone / 'codegen' / 'compiler.py'))
+    before = compiler.prepare_precompiled_header({'cpu'})
+    assert before, 'no precompiled header was produced'
+
+    header = clone / 'runtime' / 'include' / 'dace' / 'math.h'
+    stat = header.stat()
+    header.write_text(header.read_text() + '\n// edited in the second the header was precompiled\n')
+    os.utime(header, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    after = compiler.prepare_precompiled_header({'cpu'})
+
+    assert after and after != before, 'the edited runtime was handed the pre-edit precompiled header'
 
 
 def test_caches_disabled_still_builds(tmp_path):

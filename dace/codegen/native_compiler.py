@@ -482,10 +482,10 @@ def build_native(program_folder: str,
     generated_inc = os.path.join(program_folder, 'include')
     src_folder = os.path.join(program_folder, 'src')
     lib_ext = Config.get('compiler', 'library_extension')
-    # Walked once per build (not cached across builds): the runtime headers are stable within a build,
+    # Hashed once per build (not cached across builds): the runtime headers are stable within a build,
     # but a developer editing them between builds in one long-lived process must still invalidate
     # objects/PCH -- a process-lifetime cache here would wrongly reuse stale objects.
-    runtime_mtime = build_cache.newest_mtime(runtime_inc)
+    runtime_version = build_cache.runtime_digest(runtime_inc)
 
     def run(cmd: List[str], stream=output_stream) -> None:
         line = ' '.join(shlex.quote(c) for c in cmd)
@@ -593,7 +593,11 @@ def build_native(program_folder: str,
         pch_flags = list(host_base_flags)
         if has_gpu:
             pch_flags += ['-DWITH_CUDA']
-        host_pch = build_cache.ensure_dace_pch(_cxx(), pch_flags, runtime_inc, runtime_mtime, run) or []
+        host_pch = build_cache.ensure_dace_pch(_cxx(), pch_flags, runtime_inc, runtime_version, run) or []
+
+    def build_record(cmd: List[str]) -> str:
+        # The runtime headers' digest is recorded with the command; see obj_current.
+        return runtime_version + '\n' + ' '.join(cmd)
 
     def obj_current(obj: str, cmd: List[str]) -> bool:
         """An object is current if every file it was built from is older than it and the command that
@@ -606,12 +610,6 @@ def build_native(program_folder: str,
         if not os.path.isfile(obj):
             return False
         otime = os.path.getmtime(obj)
-        # The PCH already satisfies the generated framecode's <dace/dace.h>, so the compiler never
-        # parses the runtime headers behind it and -MMD cannot list them -- the depfile records
-        # dace.h alone. The runtime tree therefore needs its own comparison, or editing a header it
-        # includes would leave this object stale. ``runtime_mtime`` is already computed for the PCH.
-        if runtime_mtime >= otime:
-            return False
         dependencies = _depfile_headers(obj + '.d')
         if not dependencies:
             return False
@@ -620,12 +618,14 @@ def build_native(program_folder: str,
         for dependency in dependencies:
             if not os.path.isfile(dependency) or os.path.getmtime(dependency) >= otime:
                 return False
-        return identical_file_exists(obj + '.cmd', ' '.join(cmd))
+        # The PCH satisfies <dace/dace.h>, so the depfile cannot list the runtime headers behind it;
+        # the runtime digest recorded with the command stands in for them.
+        return identical_file_exists(obj + '.cmd', build_record(cmd))
 
     def compile_one(obj: str, cmd: List[str], stream=output_stream) -> None:
         run(cmd, stream)
         with open(obj + '.cmd', 'w') as f:  # record the exact command for the staleness check above
-            f.write(' '.join(cmd))
+            f.write(build_record(cmd))
 
     # Assemble one command per translation unit; they are independent (each writes its own object),
     # so the host .cpp and device .cu compiles run concurrently.

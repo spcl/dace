@@ -476,8 +476,9 @@ def prepare_precompiled_header(targets) -> Optional[str]:
 
     The include path is part of the key, not just the flags: the cache is machine-global, so two
     DaCe checkouts sharing a compiler would otherwise share one ``.gch`` and the second would compile
-    against the first one's headers. The mtime guard below cannot catch that -- it walks THIS tree's
-    runtime and compares against a header built from another's, so it passes while being wrong.
+    against the first one's headers. The headers' content is part of the key as well, rather than an
+    mtime comparison: the runtime's filesystem may keep whole-second mtimes while the cache keeps
+    nanosecond ones, so an edit in the second a header was built compared as older than it.
     """
     if not (CACHES_SUPPORTED and Config.get_bool('compiler', 'precompiled_header')):
         return None
@@ -487,12 +488,10 @@ def prepare_precompiled_header(targets) -> Optional[str]:
              build_type_flags())
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
-    pch = os.path.join(build_cache_root(), 'pch', cache_key(runtime, cxx, *flags))
+    pch = os.path.join(build_cache_root(), 'pch', cache_key(runtime, build_cache.runtime_digest(runtime), cxx, *flags))
     header = os.path.join(pch, 'dace_prewarm.h')
-    newest = max((os.path.getmtime(os.path.join(r, f)) for r, _, fs in os.walk(runtime) for f in fs), default=0.0)
     try:
-        # Strictly newer, so a header edit in the same second still invalidates the cached result.
-        if not (os.path.exists(header + '.gch') and os.path.getmtime(header + '.gch') > newest):
+        if not os.path.exists(header + '.gch'):
             os.makedirs(pch, exist_ok=True)
             with open(header, 'w') as fp:
                 fp.write('#include <dace/dace.h>\n')

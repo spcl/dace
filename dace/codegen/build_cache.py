@@ -150,19 +150,29 @@ def touch(path: str) -> None:
         pass
 
 
-def newest_mtime(directory: str) -> float:
-    """Modification time of the most recently touched file under ``directory``."""
-    newest = 0.0
-    for root, _, filenames in os.walk(directory):
-        for name in filenames:
+def runtime_digest(directory: str) -> str:
+    """Digest of the relative path and bytes of every file under ``directory``.
+
+    Content rather than mtimes: the runtime usually sits on a filesystem with whole-second mtimes
+    (capstor) while products sit in ``/dev/shm`` with nanosecond ones, so a header edited in the
+    second a product was built compares as older than that product.
+    """
+    digest = hashlib.blake2b(digest_size=16)
+    for root, dirs, filenames in os.walk(directory):
+        dirs.sort()
+        for name in sorted(filenames):
+            path = os.path.join(root, name)
+            digest.update(os.path.relpath(path, directory).encode() + b'\0')
             try:
-                newest = max(newest, os.path.getmtime(os.path.join(root, name)))
+                with open(path, 'rb') as f:
+                    digest.update(f.read())
             except OSError:
                 pass
-    return newest
+            digest.update(b'\0')
+    return digest.hexdigest()
 
 
-def ensure_dace_pch(cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtime_mtime: float,
+def ensure_dace_pch(cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtime_version: str,
                     run: Callable[[List[str]], None]) -> Optional[List[str]]:
     """Precompile ``<dace/dace.h>`` once per (compiler, flags) and cache it.
 
@@ -175,12 +185,12 @@ def ensure_dace_pch(cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtim
     the produced object; the only failure mode is the one-off PCH build itself, which is swallowed.
     """
     try:
-        pch_dir = os.path.join(cache_root('pch'), signature(cxx, runtime_inc, *pch_flags))
+        # ``runtime_version`` is :func:`runtime_digest` of ``runtime_inc``, so an entry that exists was
+        # built from exactly these headers.
+        pch_dir = os.path.join(cache_root('pch'), signature(cxx, runtime_inc, runtime_version, *pch_flags))
         header = os.path.join(pch_dir, PREWARM_HEADER)
         gch = header + '.gch'
-        # Strictly newer: a .gch sharing the newest runtime header's mtime counts as stale, since the
-        # compiler would otherwise keep silently using a PCH built from the pre-edit headers.
-        if not (os.path.isfile(gch) and os.path.getmtime(gch) > runtime_mtime):
+        if not os.path.isfile(gch):
             os.makedirs(pch_dir, exist_ok=True)
             if not os.path.isfile(header):
                 with open(header, 'w') as f:
