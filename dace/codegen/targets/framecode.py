@@ -3,7 +3,7 @@ import collections
 import copy
 import pathlib
 import re
-from typing import Any, DefaultDict, Dict, FrozenSet, List, Optional, Set, Tuple, Union
+from typing import AbstractSet, Any, DefaultDict, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 import dace
 from dace import config, data, dtypes, cpf_lowering, symbolic
@@ -38,7 +38,7 @@ NUM_THREADS_INCLUDE = """#ifdef _OPENMP
 #endif"""
 
 
-def num_threads_is_used(sdfg: SDFG) -> bool:
+def num_threads_is_used(sdfg: SDFG, used_symbols: Optional[AbstractSet] = None) -> bool:
     """Whether anything in ``sdfg`` or its nested SDFGs reads the reserved thread-count symbol.
 
     ``all_symbols=False`` is the load-bearing argument: ``free_symbols`` counts every name in
@@ -46,8 +46,11 @@ def num_threads_is_used(sdfg: SDFG) -> bool:
     for a definition it never names. The narrower set covers descriptor sizes, which is the use that
     has no other spelling -- a per-thread buffer is read by the ALLOCATION, not by an edge, a memlet
     or a tasklet.
+
+    :param used_symbols: ``sdfg.used_symbols(all_symbols=False)`` when the caller already holds it.
     """
-    return symbolic.NUM_THREADS_SYMBOL in {str(sym) for sym in sdfg.used_symbols(all_symbols=False)}
+    used = sdfg.used_symbols(all_symbols=False) if used_symbols is None else used_symbols
+    return symbolic.NUM_THREADS_SYMBOL in {str(sym) for sym in used}
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -1231,7 +1234,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # ORDER IS THE POINT: a per-thread buffer's size names this symbol and allocations are
         # emitted at program entry, ahead of every state, so nothing the graph runs can define it in
         # time. Only the top level declares it -- nested SDFGs inline into this same function.
-        if is_top_level and num_threads_is_used(sdfg):
+        # One walk answers both the thread-count check and the argument list below.
+        top_used_symbols = sdfg.used_symbols(all_symbols=False) if is_top_level else None
+        if is_top_level and num_threads_is_used(sdfg, top_used_symbols):
             global_stream.write(NUM_THREADS_INCLUDE, sdfg)
             callsite_stream.write(
                 NUM_THREADS_DECL.format(ctype=supply_num_threads.symbol_dtype(sdfg).ctype,
@@ -1240,7 +1245,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
-        outside_symbols = sdfg.arglist() if is_top_level else set()
+        outside_symbols = sdfg.arglist(free_symbols=top_used_symbols) if is_top_level else set()
 
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
