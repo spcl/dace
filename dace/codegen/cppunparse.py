@@ -436,6 +436,30 @@ class CPPUnparser:
         """Whether ``name`` is data, which the unit declares at exactly its dtype, rather than a symbol."""
         return name in self.data_names
 
+    def refuse_deduced_declaration(self, construct: str) -> None:
+        """Refuse ``construct`` in a standalone unit, whose declarations spell their type: C++ spells it ``auto``."""
+        if cpf_lowering.standalone():
+            raise NotImplementedError(f'CPF cannot render {construct} in a tasklet: it declares a variable whose '
+                                      'type the printer cannot name')
+
+    def standalone_local_ctype(self, name: str, value: ast.AST) -> str:
+        """The type a standalone unit declares tasklet local ``name`` with: the type of the value it is bound to.
+
+        C++ gives a comparison ``bool`` where C gives ``int``; every other value converts alike in both.
+
+        :raises NotImplementedError: if the printer cannot tell the value's type.
+        """
+        dtype = self.c_type(value)
+        if dtype is None:
+            raise NotImplementedError(f'CPF cannot declare the tasklet local {name!r}: the printer resolved no type '
+                                      f'for {cppunparse(value, expr_semicolon=False)}')
+        comparison = isinstance(value, (ast.Compare, ast.BoolOp)) or (isinstance(value, ast.UnaryOp)
+                                                                      and isinstance(value.op, ast.Not))
+        if comparison and not cpf_lowering.standalone_c():
+            dtype = 'bool'
+        self.c_local_types[name] = dtype
+        return cpf_lowering.ctype_for(dtypes.dtype_to_typeclass(np.dtype(dtype).type).ctype)
+
     def c_type(self, node: ast.AST) -> Optional[str]:
         """The dace type name of the C value ``node`` prints as, or ``None`` when it cannot be told.
 
@@ -577,6 +601,7 @@ class CPPUnparser:
             defined = False
 
         if not defined:  # C++17 syntax: auto [a,b,...,z] = ...
+            self.refuse_deduced_declaration('a tuple-unpacking assignment')
             self.write("auto [")
         else:  # C++14 syntax: std::tie(a,b,...,z) = ...
             self.write("std::tie(")
@@ -649,10 +674,10 @@ class CPPUnparser:
                         self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                     else:
                         self.locals.define(target.id, t.lineno, self._indent)
-                        self.write("auto ")
-                        if cpf_lowering.standalone_c():
-                            # ``auto`` takes the value's own C type, which a later helper call is picked by.
-                            self.c_local_types[target.id] = self.c_type(t.value)
+                        if cpf_lowering.standalone():
+                            self.write(self.standalone_local_ctype(target.id, t.value) + ' ')
+                        else:
+                            self.write("auto ")
 
             # dispatch target
             if target:
@@ -937,6 +962,7 @@ class CPPUnparser:
 
             self.fill(" " + t.name + "(")
         else:
+            self.refuse_deduced_declaration(f'function {t.name!r} without a return annotation')
             self.fill("auto " + t.name + "(")
 
         self.dispatch(t.args)
@@ -953,6 +979,7 @@ class CPPUnparser:
         self._generic_FunctionDef(t, is_async=True)
 
     def _generic_For(self, t, is_async=False):
+        self.refuse_deduced_declaration('a for loop over an iterable')
         if is_async:
             self.fill("/* async */ for (")
         else:
@@ -1616,6 +1643,7 @@ class CPPUnparser:
             self.dispatch(t.annotation)
             self.write(' ')
         else:
+            self.refuse_deduced_declaration(f'parameter {t.arg!r} without an annotation')
             self.write("auto ")
         self.write(t.arg)
         if self.type_inference:

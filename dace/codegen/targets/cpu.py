@@ -25,6 +25,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
+from dace.transformation.passes.analysis import scopes as scope_analysis
 from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop, symbol_use_sites
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
@@ -85,6 +86,14 @@ LOOP_INDEX_CTYPES = {'auto': 'auto', 'int64': 'int64_t', 'int32': 'int32_t'}
 def loop_index_ctype() -> str:
     """Declared type of a map loop's induction variable, per ``codegen_params.loop_index_type``."""
     return LOOP_INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'loop_index_type')]
+
+
+def standalone_integer_dtype(dtype: dtypes.typeclass) -> dtypes.typeclass:
+    """``dtype`` as CPF declares a symbol or induction variable of it: a signed integer widens to ``int64``,
+    the width of every index and ``_size`` helper beside it, so no call or comparison narrows."""
+    if cpf_lowering.standalone() and dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64):
+        return dtypes.int64
+    return dtype
 
 
 def loop_region_index_ctype() -> Optional[str]:
@@ -2722,9 +2731,27 @@ class CPUCodeGen(TargetCodeGenerator):
         2^31. Only the standalone dialect is widened: main's signatures are not this generator's to
         change.
         """
-        if cpf_lowering.standalone() and symbol in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64):
-            return dtypes.int64.as_arg(name)
-        return symbol.as_arg(name)
+        return standalone_integer_dtype(symbol).as_arg(name)
+
+    def map_loop_ctypes(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry) -> List[str]:
+        """The declared type of each induction variable of ``node``, per ``codegen_params.loop_index_type``.
+
+        CPF writes no ``auto``: there each parameter's resolved type is spelled, widened as a symbol is.
+
+        :raises NotImplementedError: if a parameter's range resolves to no integer type.
+        """
+        configured = loop_index_ctype()
+        if configured != 'auto' or not cpf_lowering.standalone():
+            return [configured] * len(node.map.params)
+        resolved = node.new_symbols(sdfg, state, scope_analysis.defined_at(self._frame.symbol_scopes, state, node))
+        ctypes = []
+        for param in node.map.params:
+            dtype = resolved.get(param)
+            if dtype not in dtypes.INTEGER_TYPES:
+                raise NotImplementedError(f'CPF cannot declare the induction variable {param!r} of map '
+                                          f'{node.map.label!r}: its range resolves to {dtype}, not an integer type')
+            ctypes.append(standalone_integer_dtype(dtype).ctype)
+        return ctypes
 
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         arguments = []
@@ -3645,11 +3672,11 @@ class CPUCodeGen(TargetCodeGenerator):
             if tid_is_used or ntid_is_used:
                 function_stream.write('#include <omp.h>', cfg, state_id, node)
             if tid_is_used:
-                result.write(f'auto {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
+                result.write(f'int {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
             if ntid_is_used:
-                result.write(f'auto __omp_num_threads = omp_get_num_threads();', cfg, state_id, node)
+                result.write('int __omp_num_threads = omp_get_num_threads();', cfg, state_id, node)
         else:
-            # Emit nested loops
+            loop_ctypes = self.map_loop_ctypes(sdfg, state_dfg, node)
             for i, r in enumerate(node.map.range):
                 var = map_params[i]
                 begin, end, skip = r
@@ -3675,7 +3702,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     will_have_openmp = True
 
                 comparison, bound = loop_exit_test(begin, end, skip, node, will_have_openmp)
-                init = '%s %s = %s' % (loop_index_ctype(), var, cpp.sym2cpp(begin))
+                init = '%s %s = %s' % (loop_ctypes[i], var, cpp.sym2cpp(begin))
                 if hoist_loop_decls(node, will_have_openmp):
                     # Declared ahead of the loop, so it outlives it -- the map's encapsulating scope is
                     # what bounds it (experimental keeps that brace when hoisting).

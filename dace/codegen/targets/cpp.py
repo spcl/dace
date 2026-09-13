@@ -1154,7 +1154,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             # Unparse to C++ and add 'auto' declarations if locals not declared
             result = StringIO()
             symbols, data_names = defined_symbols, set(memlets) | set(sdfg.constants)
-            if cpf_lowering.standalone_c():
+            if cpf_lowering.standalone():
                 # An access the remover inlined reaches the unparser as its own text, typed only there.
                 symbols = {**defined_symbols, **remover.operand_dtypes}
                 data_names |= set(remover.operand_dtypes)

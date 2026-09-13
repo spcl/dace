@@ -36,7 +36,7 @@ Implementations:
 - ``pure`` -- portable single-loop fallback (used when neither CPU nor CUDA
   expansion applies, e.g. for FPGA backends in v1).
 
-For supported binary ops, see :data:`_OP_TO_STD_CPP` and :data:`_OP_TO_CUB`. The
+For supported binary ops, see :func:`_combine_expr` and :data:`_OP_TO_CUB`. The
 op must be associative -- ``+``, ``*``, ``min``, ``max`` -- so the order of the
 partial reductions does not change the result.
 """
@@ -108,15 +108,6 @@ class ScanOp(enum.Enum):
     #: proves linearity symbolically before it ever builds these buffers.
     AFFINE = 'affine'
 
-
-#: Map op enum to the C++ binary-op functor for ``std::inclusive_scan`` / ``std::exclusive_scan``
-#: (used by the ``pure`` expansion). These are functor *values* (constructed via ``Op{}``).
-_OP_TO_STD_CPP = {
-    ScanOp.SUM: 'std::plus<>{}',
-    ScanOp.PRODUCT: 'std::multiplies<>{}',
-    ScanOp.MIN: '[](auto a, auto b){ return std::min(a, b); }',
-    ScanOp.MAX: '[](auto a, auto b){ return std::max(a, b); }',
-}
 
 #: Map op enum to the suffix of the OpenMP-scan function in ``dace/scan.hpp``.
 #: The ``CPU`` expansion emits ``dace::scan::inclusive_<suffix>`` / ``exclusive_<suffix>``.
@@ -821,9 +812,9 @@ class ExpandPure(ExpandTransformation):
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
-        op_cpp = _OP_TO_STD_CPP[node.op]
         # The ACCUMULATOR's type, which is the output's: a widening scan reads a narrower input.
         ctype = out_desc.dtype.ctype
+        combined = _combine_expr(node.op, ctype, '_acc', f'{INPUT_CONNECTOR_NAME}[_j]')
         stride_expr = sym2cpp(node.stride)
         is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
 
@@ -841,10 +832,10 @@ class ExpandPure(ExpandTransformation):
                     f"  if (_s <= 0) std::abort();\n"
                     f"  for (long _k = 0; _k < _s; ++_k) {{\n"
                     f"      if (_k >= _n) continue;\n"
-                    f"      auto _acc = {INPUT_CONNECTOR_NAME}[_k];\n"
+                    f"      {ctype} _acc = {INPUT_CONNECTOR_NAME}[_k];\n"
                     f"      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n"
                     f"      for (long _j = _k + _s; _j < _n; _j += _s) {{\n"
-                    f"          _acc = ({op_cpp})(_acc, {INPUT_CONNECTOR_NAME}[_j]);\n"
+                    f"          _acc = {combined};\n"
                     f"          {OUTPUT_CONNECTOR_NAME}[_j] = _acc;\n"
                     f"      }}\n"
                     f"  }}\n"
