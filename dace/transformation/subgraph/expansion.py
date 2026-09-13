@@ -222,10 +222,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
                     # change all inner parameters to avoid naming conflicts
                     if secondp in inner_params:
                         replace(map_scope, secondp, secondp + '_inner')
-                        for other_entry in inner_params[secondp]:
-                            for (i, p) in enumerate(other_entry.map.params):
-                                if p == secondp:
-                                    other_entry.map.params[i] = secondp + '_inner'
                     # replace in outer maps as well if not coincidental
                     if firstp != secondp:
                         replace(map_scope, firstp, '__' + firstp + '_fused')
@@ -234,10 +230,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
                 for firstp, secondp in params_dict_map.items():
                     if firstp != secondp:
                         replace(map_scope, '__' + firstp + '_fused', secondp)
-
-                # now also replace the map variables inside maps
-                for i in range(len(map.params)):
-                    map.params[i] = params_dict_map[map.params[i]]
 
             if self.debug:
                 print("MultiExpansion::Params replaced")
