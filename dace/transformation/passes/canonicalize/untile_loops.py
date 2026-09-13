@@ -468,6 +468,15 @@ def _diff_is_zero(a, b) -> bool:
     return False
 
 
+def memlet_subset_exprs(memlet: dace.Memlet) -> List[symbolic.SymbolicType]:
+    """Every axis bound (lo/hi/stride) of ``memlet``'s subset, then of its other subset."""
+    exprs: List[symbolic.SymbolicType] = []
+    for subset in (memlet.subset, memlet.other_subset):
+        if subset is not None:
+            exprs.extend(symbolic.pystr_to_symbolic(str(bound)) for rng in subset.ranges for bound in rng)
+    return exprs
+
+
 def _collect_body_subset_exprs(inner: LoopRegion) -> List[symbolic.SymbolicType]:
     """All symbolic expressions used in memlet subsets inside ``inner``'s body
     (across every state) -- one entry per axis bound (lo/hi/stride) per memlet.
@@ -477,16 +486,7 @@ def _collect_body_subset_exprs(inner: LoopRegion) -> List[symbolic.SymbolicType]
         for e in st.edges():
             if e.data is None or e.data.is_empty():
                 continue
-            if e.data.subset is not None:
-                for lo, hi, stp in e.data.subset.ranges:
-                    exprs.append(symbolic.pystr_to_symbolic(str(lo)))
-                    exprs.append(symbolic.pystr_to_symbolic(str(hi)))
-                    exprs.append(symbolic.pystr_to_symbolic(str(stp)))
-            if e.data.other_subset is not None:
-                for lo, hi, stp in e.data.other_subset.ranges:
-                    exprs.append(symbolic.pystr_to_symbolic(str(lo)))
-                    exprs.append(symbolic.pystr_to_symbolic(str(hi)))
-                    exprs.append(symbolic.pystr_to_symbolic(str(stp)))
+            exprs.extend(memlet_subset_exprs(e.data))
     return exprs
 
 
@@ -525,6 +525,108 @@ def _audit_combined_access(inner: LoopRegion, outer_var: str, inner_var: str, ca
                 return False
         return True
     return all(depends_only_on_sum(ex, i_sym, ii_sym) for ex in _collect_body_subset_exprs(inner))
+
+
+#: ``{array: (masks, factors)}`` for :class:`~dace.transformation.layout.unblock_dimensions.UnblockDimensions`.
+BlockedArrays = Dict[str, Tuple[List[bool], List[int]]]
+
+
+def is_unit_point(rng: Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType],
+                  target: symbolic.SymbolicType) -> bool:
+    """``True`` iff ``rng`` is the unit-stride single point ``target``."""
+    lo, hi, stp = rng
+    return _diff_is_zero(lo, hi) and _diff_is_zero(stp, 1) and _diff_is_zero(lo, target)
+
+
+def match_block_memlet(sdfg: SDFG, memlet: dace.Memlet, outer_var: str, inner_var: str, K_expr: symbolic.SymbolicType,
+                       K_const: int) -> Optional[Tuple[List[bool], List[int]]]:
+    """``(masks, factors)`` unblocking ``memlet``'s array if it reads ``A[..., int_floor(i, K), ii]`` with the last
+    extent ``K`` and no leading axis naming ``i`` or ``ii``; else ``None``."""
+    arr = sdfg.arrays.get(memlet.data)
+    ranges = memlet.subset.ranges
+    rank = len(ranges)
+    if arr is None or rank < 2 or len(arr.shape) != rank:
+        return None
+    ii_sym = symbolic.pystr_to_symbolic(inner_var)
+    if not is_unit_point(ranges[rank - 1], ii_sym) or not _diff_is_zero(arr.shape[rank - 1], K_const):
+        return None
+    block_index = symbolic.pystr_to_symbolic(f"int_floor({outer_var}, {symbolic.symstr(K_expr)})")
+    if not is_unit_point(ranges[rank - 2], block_index):
+        return None
+    i_sym = symbolic.pystr_to_symbolic(outer_var)
+    for rng in ranges[:rank - 2]:
+        for bound in rng:
+            free = symbolic.pystr_to_symbolic(str(bound)).free_symbols
+            if i_sym in free or ii_sym in free:
+                return None
+    return [False] * (rank - 2) + [True], [1] * (rank - 2) + [K_const]
+
+
+def blocked_arrays_of(inner: LoopRegion, outer_var: str, inner_var: str, case: str, K_expr: symbolic.SymbolicType,
+                      K_const: Optional[int], sdfg: SDFG) -> Optional[BlockedArrays]:
+    """:func:`_audit_combined_access` that also admits a case-A read of an array blocked to match the tile.
+
+    :returns: ``None`` to refuse, else the arrays to unblock before the substitution.
+    """
+    if case == 'B':
+        return {} if _audit_combined_access(inner, outer_var, inner_var, case) else None
+    i_sym = symbolic.pystr_to_symbolic(outer_var)
+    ii_sym = symbolic.pystr_to_symbolic(inner_var)
+    blocked: BlockedArrays = {}
+    for st in inner.all_states():
+        for e in st.edges():
+            if e.data is None or e.data.is_empty():
+                continue
+            if all(
+                    depends_only_on_sum(ex, i_sym, ii_sym) for ex in memlet_subset_exprs(e.data)
+                    if i_sym in ex.free_symbols or ii_sym in ex.free_symbols):
+                continue
+            if K_const is None or e.data.subset is None or e.data.other_subset is not None:
+                return None
+            spec = match_block_memlet(sdfg, e.data, outer_var, inner_var, K_expr, K_const)
+            if spec is None or blocked.setdefault(e.data.data, spec) != spec:
+                return None
+    return blocked
+
+
+def unblock_is_safe(sdfg: SDFG, blocked_arrays: BlockedArrays) -> bool:
+    """``True`` iff every access to every array in ``blocked_arrays`` is one ``UnblockDimensions`` can rewrite: none
+    crosses a NestedSDFG boundary, carries an ``other_subset``, or has another rank."""
+    for arr_name, spec in blocked_arrays.items():
+        masks = spec[0]
+        arr = sdfg.arrays.get(arr_name)
+        expected = len(masks) + sum(1 for m in masks if m)
+        if arr is None or len(arr.shape) != expected:
+            return False
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG) and any(e.data is not None and e.data.data == arr_name
+                                                              for e in state.in_edges(node) + state.out_edges(node)):
+                    return False
+            for edge in state.edges():
+                if edge.data is None or edge.data.data != arr_name:
+                    continue
+                if edge.data.other_subset is not None or edge.data.subset is None or len(
+                        edge.data.subset.ranges) != expected:
+                    return False
+    return True
+
+
+def unblock_before_untile(sdfg: SDFG, outer_start: symbolic.SymbolicType, K_expr: symbolic.SymbolicType,
+                          blocked_arrays: BlockedArrays) -> bool:
+    """Unblock ``blocked_arrays`` so the case-A substitution folds ``int_floor(i, K)*K + ii`` to ``k``.
+
+    :returns: ``False``, with the SDFG untouched, when that fold would move elements.
+    """
+    if not blocked_arrays:
+        return True
+    # Every tile origin must be a multiple of K, else each element shifts by ``start mod K``.
+    if symbolic.simplify(sympy.Mod(outer_start, K_expr)) != 0 or not unblock_is_safe(sdfg, blocked_arrays):
+        return False
+    # Avoid import loop: the layout package imports the canonicalize pipeline.
+    from dace.transformation.layout.unblock_dimensions import UnblockDimensions
+    UnblockDimensions(unblock_map=blocked_arrays).apply_pass(sdfg, {})
+    return True
 
 
 @properties.make_properties
@@ -568,6 +670,10 @@ class UntileLoops(ppl.Pass):
     without the auto-trigger the matcher never sees it and the hand-written
     tiling survives into codegen.
 
+    **Blocked arrays** (``unblock_arrays=True``, the layout preparation): a case-A body may also read an
+    array blocked to match the tile, ``A[..., int_floor(i, K), ii]`` of extent ``K``; that array is unblocked
+    with :class:`~dace.transformation.layout.unblock_dimensions.UnblockDimensions` before the substitution.
+
     Runs BEFORE :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll`
     so the small fixed-trip inner loop doesn't get straight-line-unrolled.
     """
@@ -581,14 +687,22 @@ class UntileLoops(ppl.Pass):
                                         'trip is taken only for SDFGs that hold a Map tile nest and only when '
                                         'a probe on a copy shows it pays off; forcing it lowers and re-lifts '
                                         'every Map unconditionally.')
+    unblock_arrays = properties.Property(dtype=bool,
+                                         default=False,
+                                         desc='Also untile a case-A nest whose body reads an array blocked to match '
+                                         'the tile (``A[..., int_floor(i, K), ii]`` with extent K), unblocking that '
+                                         'array in the same rewrite. Needs a concrete K; refuses clamped nests.')
 
-    def __init__(self, map_roundtrip: bool = False):
+    def __init__(self, map_roundtrip: bool = False, unblock_arrays: bool = False):
         super().__init__()
         self.map_roundtrip = map_roundtrip
+        self.unblock_arrays = unblock_arrays
 
     def modifies(self) -> ppl.Modifies:
         # Nodes: the Map round trip creates and removes Map scopes (and the NSDFGs around them).
-        return ppl.Modifies.CFG | ppl.Modifies.Symbols | ppl.Modifies.Memlets | ppl.Modifies.Nodes
+        modified = ppl.Modifies.CFG | ppl.Modifies.Symbols | ppl.Modifies.Memlets | ppl.Modifies.Nodes
+        # Descriptors: an unblocked array changes rank.
+        return modified | ppl.Modifies.Descriptors if self.unblock_arrays else modified
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
@@ -718,6 +832,16 @@ class UntileLoops(ppl.Pass):
             return total
         return 0 if roundtrip else None
 
+    def audit_candidate(self, candidate: LoopRegion, outer_var: str, case: str, clamped: bool,
+                        K_expr: symbolic.SymbolicType, K_const: Optional[int], sdfg: SDFG) -> Optional[BlockedArrays]:
+        """Arrays to unblock before collapsing ``candidate`` with its outer tile loop, or ``None`` to refuse."""
+        if not self.unblock_arrays:
+            return {} if _audit_combined_access(candidate, outer_var, candidate.loop_variable, case) else None
+        # The unblock rewrite has no remainder-tile form; canonicalize collapses a clamped nest later.
+        if clamped:
+            return None
+        return blocked_arrays_of(candidate, outer_var, candidate.loop_variable, case, K_expr, K_const, sdfg)
+
     def _try_untile(self, outer: LoopRegion, sdfg: SDFG) -> bool:
         # The outer must be ``for i in range(0, N, K)`` with a positive tile
         # ``K`` -- a concrete literal ``> 1`` or a positive symbol.
@@ -751,6 +875,7 @@ class UntileLoops(ppl.Pass):
         needs_div_assumption = False
         clamped = False
         inner: Optional[LoopRegion] = None
+        blocked_arrays: BlockedArrays = {}
         for candidate in _iter_candidate_inners(outer):
             if not candidate.loop_variable:
                 continue
@@ -762,7 +887,8 @@ class UntileLoops(ppl.Pass):
             if match is None:
                 continue
             cand_case, cand_stride, cand_needs_div, cand_clamped = match
-            if not _audit_combined_access(candidate, outer.loop_variable, candidate.loop_variable, cand_case):
+            audit = self.audit_candidate(candidate, outer.loop_variable, cand_case, cand_clamped, K_expr, K_const, sdfg)
+            if audit is None:
                 continue
             # Multi-dim sanity: any intermediate LoopRegion between outer
             # and candidate must not reference outer's iteration variable
@@ -776,8 +902,9 @@ class UntileLoops(ppl.Pass):
             inner_stride = cand_stride
             needs_div_assumption = cand_needs_div
             clamped = cand_clamped
+            blocked_arrays = audit
             break
-        if inner is None:
+        if inner is None or not unblock_before_untile(sdfg, outer_start_sym, K_expr, blocked_arrays):
             return False
 
         # A cascade rung whose stride divides the tile only under an unprovable

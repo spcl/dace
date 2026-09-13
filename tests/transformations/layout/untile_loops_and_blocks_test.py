@@ -1,16 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`~dace.transformation.layout.untile_loops_and_blocks.UntileLoopsAndBlocks`.
+"""Tests for :class:`~dace.transformation.passes.canonicalize.untile_loops.UntileLoops` with ``unblock_arrays``.
 
 The kernels here GENUINELY arrive blocked+tiled: a manually-tiled two-level nest
 ``for i in range(0, N, K): for ii in range(0, K)`` whose body reaches an array through its
 matching block dimension -- an array of physical shape ``[N/K, K]`` (or ``[M, N/K, K]``) accessed
-as ``A[..., i // K, ii]``. These prove the gap the pass fills:
+as ``A[..., i // K, ii]``. These prove the gap the option fills:
 
   * plain ``UntileLoops`` REFUSES such a nest (its combined-access audit rejects the split
     ``A[int_floor(i, K), ii]`` subset) -- the array stays blocked AND the loop stays tiled;
-  * ``UntileLoopsAndBlocks`` (and ``prepare_for_layout``, which runs it first) untiles the loop
-    AND unblocks the array in one coordinated rewrite, returning both to packed-C, bit-exact vs
-    a plain numpy reference.
+  * ``UntileLoops(unblock_arrays=True)`` (and ``prepare_for_layout``, which runs it first) untiles
+    the loop AND unblocks the array in one coordinated rewrite, returning both to packed-C,
+    bit-exact vs a plain numpy reference.
 
 Compiled kernels run in an isolated build folder (unique cache under a temp dir) so the shared
 repo ``.dacecache`` is never touched.
@@ -32,7 +32,6 @@ import pytest
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
-from dace.transformation.layout.untile_loops_and_blocks import UntileLoopsAndBlocks
 from dace.transformation.layout.prepare import prepare_for_layout
 
 N = dace.symbol('N')
@@ -88,7 +87,7 @@ def test_blocked_untile_refuses_a_start_that_is_not_a_multiple_of_the_tile():
     assert len(sdfg.arrays['A'].shape) == 2  # blocked
     assert len(loop_vars(sdfg)) == 2  # tiled
 
-    UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})
 
     # refused: nothing untiled, nothing unblocked, no half-applied rewrite
     assert len(sdfg.arrays['A'].shape) == 2, 'A must stay blocked -- the fold is invalid for this start'
@@ -99,7 +98,7 @@ def test_blocked_untile_refuses_a_start_that_is_not_a_multiple_of_the_tile():
 def test_blocked_untile_still_applies_for_a_multiple_start():
     """The guard must not over-refuse: the ordinary start=0 blocked nest still untiles+unblocks."""
     sdfg = tiled_blocked.to_sdfg(simplify=True)
-    UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})
     assert len(sdfg.arrays['A'].shape) == 1, 'A should have been unblocked for a start of 0'
     assert len(loop_vars(sdfg)) == 1, 'loop should have been untiled for a start of 0'
 
@@ -115,7 +114,7 @@ def test_a_tile_read_that_is_not_a_function_of_the_sum_stays_tiled():
     """``b[2*i + ii]`` names both tile variables but is not a function of ``i + ii``: collapsing it reads ``b[k]``."""
     sdfg = tiled_skewed_read.to_sdfg(simplify=True)
 
-    res = UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    res = UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})
     sdfg.validate()
 
     assert res is None, 'the skewed read must refuse the untile'
@@ -147,7 +146,7 @@ def test_a_symbolic_three_level_cascade_collapses_to_one_loop():
     sdfg = triple_tiled_symbolic.to_sdfg(simplify=True)
     assert len(loop_vars(sdfg)) == 4  # three tile rungs over one point loop
 
-    res = UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    res = UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})
     sdfg.validate()
 
     assert res == 3, 'every rung must collapse'
@@ -176,15 +175,15 @@ def test_untile_loops_alone_leaves_array_blocked_gap():
 
 
 def test_untile_loops_and_blocks_untiles_and_unblocks():
-    """(b) ``UntileLoopsAndBlocks`` untiles the loop AND unblocks the array: A returns to a flat
+    """(b) ``UntileLoops(unblock_arrays=True)`` untiles the loop AND unblocks the array: A returns to a flat
     1-D descriptor and a single unit-stride loop remains. (c) The compiled result is bit-exact
     vs a plain numpy reference."""
     sdfg = tiled_blocked.to_sdfg(simplify=True)
 
-    res = UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    res = UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})
     sdfg.validate()
 
-    assert res == 1, 'UntileLoopsAndBlocks must collapse the tile pair'
+    assert res == 1, 'UntileLoops(unblock_arrays=True) must collapse the tile pair'
     assert len(sdfg.arrays['A'].shape) == 1, f'A must be unblocked to 1-D, got {sdfg.arrays["A"].shape}'
     lv = loop_vars(sdfg)
     assert len(lv) == 1 and lv[0].startswith('_untile_k_'), f'expected one collapsed loop, got {lv}'
@@ -198,7 +197,7 @@ def test_untile_loops_and_blocks_untiles_and_unblocks():
 
 
 def test_prepare_for_layout_untiles_and_unblocks():
-    """``prepare_for_layout`` (which runs ``UntileLoopsAndBlocks`` first, before canonicalize)
+    """``prepare_for_layout`` (which runs ``UntileLoops(unblock_arrays=True)`` first, before canonicalize)
     also lands the array + schedule in packed-C, bit-exact."""
     sdfg = tiled_blocked.to_sdfg(simplify=True)
 
@@ -232,7 +231,7 @@ def test_2d_blocked_last_dim_untiles_and_unblocks():
     sdfg = tiled_blocked_2d.to_sdfg(simplify=True)
     assert len(sdfg.arrays['A'].shape) == 3  # [M, N/K, K]
 
-    res = UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    res = UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})
     sdfg.validate()
 
     assert res == 1
@@ -260,7 +259,7 @@ def test_int_kernel_untile_unblock_array_equal():
     """Integer blocked+tiled kernel: untile+unblock and assert exact integer equality."""
     sdfg = tiled_blocked_int.to_sdfg(simplify=True)
 
-    res = UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    res = UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
     assert len(sdfg.arrays['A'].shape) == 1
@@ -288,7 +287,7 @@ def test_noop_on_plain_untiled_kernel():
     sdfg = plain.to_sdfg(simplify=True)
     shape_before = tuple(str(s) for s in sdfg.arrays['A'].shape)
 
-    res = UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    res = UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})
 
     assert res is None, 'plain kernel must be a no-op'
     assert tuple(str(s) for s in sdfg.arrays['A'].shape) == shape_before
@@ -306,7 +305,7 @@ def test_superset_plain_combined_tile_untiles_without_unblock():
                 a[i + ii] = b[i + ii]
 
     sdfg = plain_tile.to_sdfg(simplify=True)
-    res = UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    res = UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})
     sdfg.validate()
 
     assert res == 1
