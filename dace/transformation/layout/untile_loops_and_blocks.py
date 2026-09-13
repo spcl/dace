@@ -18,7 +18,8 @@ from dace.transformation.passes.canonicalize.tracked_assumptions import record_a
 from dace.transformation.passes.canonicalize.untile_loops import (_audit_combined_access, _diff_is_zero,
                                                                   _intermediate_chain_clean, _iter_candidate_inners,
                                                                   _match_inner_case, _next_id, _tile_size,
-                                                                  UNTILE_PREFIX, count_applied, depends_only_on_sum)
+                                                                  UNTILE_PREFIX, count_applied, depends_only_on_sum,
+                                                                  tiles_a_parent_window)
 
 
 @properties.make_properties
@@ -271,7 +272,15 @@ class UntileLoopsAndBlocks(ppl.Pass):
         sdfg.add_symbol(k_var, sdfg.symbols.get(outer.loop_variable, dace.int64))
         stop_excl = symbolic.simplify(outer_end + 1)
         span = symbolic.simplify(stop_excl - outer_start_sym)
-        N_excl = symbolic.simplify(outer_start_sym + symbolic.int_ceil(span, K_expr) * K_expr)
+        tiles_end = symbolic.simplify(symbolic.int_ceil(span, K_expr) * K_expr)
+        if _diff_is_zero(tiles_end,
+                         span) or tiles_end.is_number or not tiles_a_parent_window(outer, outer_start_sym, span):
+            N_excl = symbolic.simplify(outer_start_sym + tiles_end)
+        else:
+            # A rung inside its parent's window: the window is the union, so keep it (under K | span) rather
+            # than round it up to a bound the next sweep cannot pair.
+            record_assumption(sdfg, sympy.Eq(sympy.Mod(span, K_expr), 0))
+            N_excl = stop_excl
 
         i_sym = outer.loop_variable
         ii_sym = inner.loop_variable

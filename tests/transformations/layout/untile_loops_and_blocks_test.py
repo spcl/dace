@@ -128,6 +128,38 @@ def test_a_tile_read_that_is_not_a_function_of_the_sum_stays_tiled():
     assert numpy.array_equal(a, b[element + element // K * K]), 'element i + ii must read b[2*i + ii]'
 
 
+T1 = dace.symbol('T1')
+T2 = dace.symbol('T2')
+T3 = dace.symbol('T3')
+
+
+@dace.program
+def triple_tiled_symbolic(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(0, N, T1):
+        for ii in range(i, i + T1, T2):
+            for iii in range(ii, ii + T2, T3):
+                for iv in range(iii, iii + T3):
+                    a[iv] = b[iv] * 2.0
+
+
+def test_a_symbolic_three_level_cascade_collapses_to_one_loop():
+    """A rung walks the window its parent opened; rounding it up to ``T3*int_ceil(T2, T3)`` stalls the cascade."""
+    sdfg = triple_tiled_symbolic.to_sdfg(simplify=True)
+    assert len(loop_vars(sdfg)) == 4  # three tile rungs over one point loop
+
+    res = UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert res == 3, 'every rung must collapse'
+    lv = loop_vars(sdfg)
+    assert len(lv) == 1 and lv[0].startswith('_untile_k_'), f'expected one collapsed loop, got {lv}'
+    n = 64
+    b = numpy.random.default_rng(6).standard_normal(n)
+    a = numpy.zeros(n)
+    run_isolated(sdfg, a=a, b=b, N=n, T1=16, T2=4, T3=2)
+    assert numpy.array_equal(a, b * 2.0)
+
+
 def test_untile_loops_alone_leaves_array_blocked_gap():
     """(a) Plain ``UntileLoops`` alone does NOT unblock the array -- it refuses the whole nest
     because the split ``A[int_floor(i, K), ii]`` subset fails its combined-access audit. The
