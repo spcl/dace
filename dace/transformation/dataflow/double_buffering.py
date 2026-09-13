@@ -157,9 +157,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         for e in dup_nstate.edges():
             final_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
 
-        # This state runs after the loop, on what the loop's last iteration read ahead. The loop
-        # variable belongs to the loop and means nothing out here, so the memlets that were written
-        # in it take the value it would have been left with: one step past the last iteration.
+        # The loop variable is not defined after the loop: use the last iteration of the original range
         last_iteration = map_rstart + (symbolic.int_floor(map_rend - map_rstart, map_rstride) + 1) * map_rstride
         sd.replace(final_state, map_param, last_iteration)
 
