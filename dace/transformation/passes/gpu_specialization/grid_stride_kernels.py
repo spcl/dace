@@ -38,13 +38,13 @@ rewrite that pays it.
 Runs after ``AddThreadBlockMaps``, which is what creates the ``(GPU_Device, GPU_ThreadBlock)`` pair
 the tiling matches, and which supplies the block extent this pass keeps rather than re-chooses.
 """
+from dace.transformation.passes.iteration_domain import loop_trip_count
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis
 
 #: Blocks a grid-strided kernel keeps. MI300A holds 304 CUs x 8 blocks of 256 threads resident, so
 #: 2432 is one full device with no tail. MEASURED on ``tsvc_2_s311`` at XL, which is the shape this
@@ -98,21 +98,6 @@ def enclosing_loops(sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> List
     """The sequential loops that re-enter ``entry``, outermost last."""
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
     return [s for s in get_parent_map_and_loop_scopes(sdfg, entry, state) if isinstance(s, LoopRegion)]
-
-
-def trip_count(loop: LoopRegion) -> Optional[Any]:
-    """``loop``'s iteration count, or ``None`` when its bounds do not give one."""
-    start = loop_analysis.get_init_assignment(loop)
-    end = loop_analysis.get_loop_end(loop)
-    stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None:
-        return None
-    try:
-        if int(str(symbolic.simplify(stride))) == 0:
-            return None
-    except (TypeError, ValueError):
-        pass  # a symbolic stride cannot be zero-checked, and is not the degenerate case
-    return symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
 
 
 def as_int(expr: Any) -> Optional[int]:
@@ -266,7 +251,7 @@ class GridStrideKernels(ppl.Pass):
             return 0
         launches: Any = 1
         for loop in loops:
-            count = trip_count(loop)
+            count = loop_trip_count(loop)
             if count is None:
                 return 0  # nothing to say about a launch count that cannot be written down
             launches = symbolic.simplify(launches * count)

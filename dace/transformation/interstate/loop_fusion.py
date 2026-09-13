@@ -48,6 +48,7 @@ from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symbolically_equal
+from dace.transformation.passes.iteration_domain import loop_trip_count, same_trip_count
 from dace.transformation.passes.loop_fission import _linear_blocks, _single_compute_state
 
 
@@ -155,11 +156,13 @@ class LoopFusion(transformation.MultiStateTransformation):
             return False
         i1 = loop_analysis.get_init_assignment(first)
         i2 = loop_analysis.get_init_assignment(second)
-        e1 = loop_analysis.get_loop_end(first)
-        e2 = loop_analysis.get_loop_end(second)
-        if None in (i1, i2, e1, e2):
+        t1 = loop_trip_count(first)
+        t2 = loop_trip_count(second)
+        if None in (i1, i2, t1, t2):
             return False
-        return _symbolically_equal(i1, i2) and _symbolically_equal(e1, e2)
+        # Same start and stride: equal trip counts mean the iterators take the same values, however the
+        #  last value is spelled (``i < 2*N`` and ``i <= 2*N - 1`` under stride 2).
+        return _symbolically_equal(i1, i2) and same_trip_count(t1, t2)
 
     @staticmethod
     def _accesses(block: ControlFlowBlock) -> Tuple[Dict[str, List], Dict[str, List]]:

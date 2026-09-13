@@ -11,6 +11,7 @@ from dace.sdfg.validation import validate_state
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
 from dace.transformation import transformation as xf
 from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.iteration_domain import align_maps_to_unit_step
 
 #: Rounds of (vertical -> horizontal) fusion. Two, not a fixpoint: the second round is what the
 #: first enables, and a fixpoint pays a third round that only confirms convergence.
@@ -79,6 +80,42 @@ def _induced_matches(state: SDFGState, pnodes: List[xf.PatternNode],
                 images.pop()
 
     yield from extend(0, [])
+
+
+def align_step_equivalent_candidates(state: SDFGState) -> int:
+    """Align every same-scope map pair that shares data and differs only in step; returns the pairs aligned.
+
+    A pair shares data when one map's output access node feeds the other map (vertical fusion) or both
+    maps read one access node (horizontal fusion).
+    """
+    entries = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]
+    if len(entries) < 2:
+        return 0
+    # Identical ranges need no alignment, and nearly every state has only those: refuse before any walk.
+    first_ranges = entries[0].map.range.ranges
+    if all(entry.map.range.ranges == first_ranges for entry in entries[1:]):
+        return 0
+    scopes = state.scope_dict()
+    inputs = {
+        entry: dict.fromkeys(e.src for e in state.in_edges(entry) if isinstance(e.src, nodes.AccessNode))
+        for entry in entries
+    }
+    outputs = {
+        entry: dict.fromkeys(e.dst for e in state.out_edges(state.exit_node(entry))
+                             if isinstance(e.dst, nodes.AccessNode))
+        for entry in entries
+    }
+    aligned = 0
+    for index, first in enumerate(entries):
+        for second in entries[index + 1:]:
+            if first.map.range.ranges == second.map.range.ranges or scopes[first] is not scopes[second]:
+                continue
+            shares_data = (any(node in inputs[second] for node in outputs[first])
+                           or any(node in inputs[first] for node in outputs[second])
+                           or any(node in inputs[second] for node in inputs[first]))
+            if shares_data and align_maps_to_unit_step(state, first, second):
+                aligned += 1
+    return aligned
 
 
 @properties.make_properties
@@ -158,6 +195,12 @@ class FuseMaps(ppl.Pass):
         desc="Only consolidate if this does not lead to an extension of the subset.",
     )
 
+    align_step_equivalent_maps = properties.Property(
+        dtype=bool,
+        default=True,
+        desc='Treat maps whose ranges differ only in step (e.g. 0:2N:2 and 0:N:1) as fusable by rewriting both '
+        'onto one unit-step range before fusing.',
+    )
     validate = properties.Property(
         dtype=bool,
         default=True,
@@ -308,6 +351,8 @@ class FuseMaps(ppl.Pass):
                 for state_id, state in enumerate(cfg.nodes()):
                     if not isinstance(state, SDFGState):
                         continue
+                    if self.align_step_equivalent_maps:
+                        align_step_equivalent_candidates(state)
                     for xform, shapes in units:
                         self._drain(xform, shapes, cfg, state, state_id, pipeline_results, applied)
 
