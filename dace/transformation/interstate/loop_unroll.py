@@ -187,15 +187,10 @@ class LoopUnroll(xf.MultiStateTransformation):
             # rather than trying to enumerate every character ``str(value)`` could ever
             # produce.
             it_label = loop.label + '_' + loop.loop_variable + str(index)
-        iteration_region = ControlFlowRegion(it_label, graph.sdfg, graph)
-
-        # ``ensure_unique_name``: the label is derived from the loop label + iterate value, which is
-        # NOT unique when several sibling loops share a label (e.g. many deepcopies of one inner loop
-        # left by unrolling an enclosing loop). Without this, every such loop emits the same
-        # ``<label>_<var><value>`` iteration regions into one parent -- a "multiple blocks with the
-        # same name" validation failure. On inline the unique region label prefixes its promoted
-        # children too, so the fix carries through both the inline and no-inline paths.
-        graph.add_node(iteration_region, ensure_unique_name=True)
+        # Assembled DETACHED and attached to ``graph`` once, at the end: adding a region to an attached
+        # region rebuilds the whole tree's ``cfg_list``, once per region-typed body block. A detached
+        # region rebuilds only its own subtree, and the final attach rebuilds the tree once.
+        iteration_region = ControlFlowRegion(it_label, graph.sdfg)
 
         block_map = {}
 
@@ -267,5 +262,11 @@ class LoopUnroll(xf.MultiStateTransformation):
                 if loop.loop_variable in node.symbol_mapping:
                     del node.symbol_mapping[loop.loop_variable]
 
-        graph.reset_cfg_list()
+        # ``ensure_unique_name``: the label is derived from the loop label + iterate value, which is
+        # NOT unique when several sibling loops share a label (e.g. many deepcopies of one inner loop
+        # left by unrolling an enclosing loop). Without this, every such loop emits the same
+        # ``<label>_<var><value>`` iteration regions into one parent -- a "multiple blocks with the
+        # same name" validation failure. On inline the unique region label prefixes its promoted
+        # children too, so the fix carries through both the inline and no-inline paths.
+        graph.add_node(iteration_region, ensure_unique_name=True)
         return iteration_region

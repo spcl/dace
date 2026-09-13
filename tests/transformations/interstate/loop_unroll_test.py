@@ -68,6 +68,22 @@ def test_if_block_inside_for():
     assert len(loops) == 0
 
 
+def test_unrolled_iteration_regions_share_the_root_cfg_list_in_tree_order() -> None:
+    sdfg = _get_sdfg(add_state_before=True, l=5)
+    loop = next(n for n in sdfg.nodes() if isinstance(n, LoopRegion))
+
+    LoopUnroll.apply_to(sdfg, options={'inline_iterations': False}, loop=loop)
+
+    sdfg.validate()
+    regions = list(sdfg.all_control_flow_regions(recursive=True))
+    assert sum(isinstance(r, ConditionalBlock) for r in regions) == 5
+    assert all(r.cfg_list is sdfg.cfg_list for r in regions)
+    # The removed loop's own regions may linger in the list; every live region is listed, in tree order.
+    listed_live = [listed for listed in sdfg.cfg_list if any(listed is walked for walked in regions)]
+    assert len(listed_live) == len(regions)
+    assert all(listed is walked for listed, walked in zip(listed_live, regions))
+
+
 def test_top_level_for():
     sdfg = _get_sdfg(add_state_before=False, l=5)
 
