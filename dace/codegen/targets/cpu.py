@@ -27,7 +27,7 @@ from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
 from dace.transformation.passes.analysis import scopes as scope_analysis
 from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop, symbol_use_sites
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 import re
 
@@ -660,6 +660,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
+        # Nested SDFG -> the symbols its header and call pass; see nsdfg_argument_symbols.
+        self.nsdfg_argument_symbol_cache: Dict[SDFG, FrozenSet[str]] = {}
 
         # Buffered translation units for the per-nest split
         # (``compiler.cpu.codegen_params.split_nsdfg_translation_units``):
@@ -2753,6 +2755,15 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypes.append(standalone_integer_dtype(dtype).ctype)
         return ctypes
 
+    def nsdfg_argument_symbols(self, nsdfg: SDFG) -> FrozenSet[str]:
+        """The symbols a nested SDFG's function takes, walked once per nest: its header and its call
+        both ask, and emission does not change the SDFG (see ``lower_and_generate_code``)."""
+        cached = self.nsdfg_argument_symbol_cache.get(nsdfg)
+        if cached is None:
+            cached = frozenset(nsdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True))
+            self.nsdfg_argument_symbol_cache[nsdfg] = cached
+        return cached
+
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         arguments = []
 
@@ -2786,7 +2797,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
-        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms = self.nsdfg_argument_symbols(node.sdfg)
         arguments += [
             f'{self.nsdfg_symbol_argument(node.sdfg.symbols[aname], aname)}'
             for aname in sorted(node.symbol_mapping.keys()) if aname in fsyms and aname not in sdfg.constants
@@ -2800,7 +2811,7 @@ class CPUCodeGen(TargetCodeGenerator):
             state_struct = False  # matches generate_nsdfg_header, which drops the parameter
         if state_struct:
             prepend = ['__state']
-        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms = self.nsdfg_argument_symbols(node.sdfg)
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
             cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
             if symname in fsyms and symname not in sdfg.constants
