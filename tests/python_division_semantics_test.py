@@ -22,6 +22,7 @@ import itertools
 
 import numpy as np
 import pytest
+import sympy
 
 import dace
 
@@ -87,3 +88,68 @@ def test_neither_operator_is_emitted_infix(op, call):
     """
     code = division_program(op, dace.int64).to_sdfg().generate_code()[0].clean_code
     assert call in code, f'{op} lowered without {call}, so it lowered infix'
+
+
+@dace.program
+def shifted_start(A: dace.int64[N], B: dace.int64[N, N]):
+    for i in range(N):
+        for j in range((i - 2) % N, N):
+            B[i, j] = A[j] + i
+
+
+@dace.program
+def wrapped_read(A: dace.int64[N], B: dace.int64[N]):
+    for i in dace.map[0:N]:
+        B[i] = A[(i - 3) % N]
+
+
+@pytest.mark.parametrize('n', (1, 2, 5, 7))
+def test_a_negative_modulo_in_a_loop_bound_is_floored(n):
+    """``% N`` in a range reaches C as sympy's ``Mod``, not as a tasklet ``%``. Truncated, ``(0 - 2) % 7``
+    starts the loop at -2 and writes before the row."""
+    A = np.arange(1, n + 1, dtype=np.int64)
+    expected = np.zeros((n, n), dtype=np.int64)
+    for i in range(n):
+        for j in range((i - 2) % n, n):
+            expected[i, j] = A[j] + i
+
+    out = np.zeros((n, n), dtype=np.int64)
+    shifted_start(A, out, N=n)
+
+    assert np.array_equal(out, expected), (out, expected)
+
+
+@pytest.mark.parametrize('target', TARGETS)
+@pytest.mark.parametrize('n', (1, 2, 5, 7))
+def test_a_negative_modulo_in_a_subscript_is_floored(n, target):
+    """A subscript ``(i - 3) % N`` is printed from the memlet's symbolic ``Mod``; truncated, it reads
+    ``A[-3]``."""
+    A = np.arange(1, n + 1, dtype=np.int64)
+    expected = np.array([A[(i - 3) % n] for i in range(n)], dtype=np.int64)
+
+    sdfg = wrapped_read.to_sdfg()
+    if target == 'device':
+        sdfg.apply_gpu_transformations()
+    out = np.zeros(n, dtype=np.int64)
+    sdfg(A=A, B=out, N=n)
+
+    assert np.array_equal(out, expected), (out, expected)
+
+
+I = dace.symbol('I')
+K = dace.symbol('K', nonnegative=True)
+M = dace.symbol('M', positive=True)
+
+
+@pytest.mark.parametrize('dividend,divisor,infix', (
+    (I - 2, N, False),
+    (K, N, False),
+    (I, M, False),
+    (K, M, True),
+))
+def test_sympy_mod_prints_the_c_operator_only_where_no_sign_can_differ(dividend, divisor, infix):
+    """Floored and truncated remainders agree exactly on a nonnegative dividend and a positive
+    divisor; anywhere else the infix ``%`` is a different operation."""
+    printed = dace.symbolic.symstr(sympy.Mod(dividend, divisor, evaluate=False), cpp_mode=True)
+    assert ('%' in printed and 'py_mod' not in printed) == infix, printed
+    assert ('py_mod(' in printed) == (not infix), printed

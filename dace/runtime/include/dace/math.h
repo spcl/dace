@@ -56,11 +56,6 @@ DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& 
   return (a < max(ts...)) ? max(ts...) : a;
 }
 
-template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
-  return value % modulus;
-}
-
 // Fortran implements MOD for floating-point values as well
 template <typename T>
 static DACE_CONSTEXPR DACE_HDFI T Mod_float(const T& value, const T& modulus) {
@@ -347,6 +342,13 @@ static DACE_CONSTEXPR DACE_HDFI auto py_mod(const T1& numerator, const T2& denom
     -> decltype(numerator + denominator) {
   using T = decltype(numerator + denominator);
   return py_mod<T>((T)numerator, (T)denominator);
+}
+
+// sympy's ``Mod`` printed as a call, e.g. a loop bound ``Mod(i - 2, N)``. sympy's ``Mod`` is floored,
+// so this is ``py_mod`` and not C's truncating ``%``.
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
+  return static_cast<T>(py_mod(value, modulus));
 }
 
 // Computes C/C++ modulus (operator % and fmod)

@@ -270,7 +270,8 @@ REWRITES: Dict[str, Tuple[int, str]] = {
     'bitwise_xor': (2, '(({0}) ^ ({1}))'),
     'bitwise_invert': (1, '(~({0}))'),
     'int_floor': (2, '(({0}) / ({1}))'),
-    'Mod': (2, '(({0}) % ({1}))'),
+    # sympy's ``Mod`` is floored, so it is ``py_mod`` and never C's truncating ``%``.
+    'Mod': (2, 'py_mod({0}, {1})'),
     'np_float_pow': (2, '(std::pow(static_cast<double>({0}), static_cast<double>({1})))'),
 }
 
@@ -283,9 +284,9 @@ REWRITES: Dict[str, Tuple[int, str]] = {
 #: argument's type, uses an argument more than once, dispatches on integral-vs-floating, or writes
 #: through out-parameters.
 #:
-#: The modulo family is three DIFFERENT operations and the names do not say which is which:
-#: ``mod``/``py_mod``/``floor_mod``/``Modulo`` are FLOORED (result takes the sign of the divisor,
-#: ``mod(-1, 5) == 4``), while ``cpp_mod``/``Mod``/``Mod_float`` TRUNCATE toward zero
+#: The modulo family is two DIFFERENT operations and the names do not say which is which:
+#: ``Mod``/``mod``/``py_mod``/``floor_mod``/``Modulo`` are FLOORED (result takes the sign of the
+#: divisor, ``mod(-1, 5) == 4``), while ``cpp_mod``/``Mod_float`` TRUNCATE toward zero
 #: (``cpp_mod(-1, 5) == -1``). Collapsing them onto one spelling would be a silent wrong answer for
 #: half of them.
 #:
@@ -1139,7 +1140,8 @@ def lowering_for(name: str,
             return '%s(%s)' % (c_math_function(name, types), ', '.join(arguments))
         if name == 'iround':
             return '((int)%s(%s))' % (c_math_function('round', types), ', '.join(arguments))
-        spec = c_helper_spec(name, len(arguments))
+        # ``Mod`` is sympy's floored modulus: the same typed helper as ``py_mod``.
+        spec = c_helper_spec('py_mod' if name == 'Mod' else name, len(arguments))
         if spec is not None:
             return c_helper_call(spec, arguments, types)
     variadic = variadic_minmax(name, arguments, dialect, types)

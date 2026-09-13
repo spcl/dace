@@ -4082,7 +4082,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return cpf_lowering.c_common_type(types)
 
     def _print_Mod(self, expr):
-        return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        # sympy's ``Mod`` is floored and C's ``%`` truncates; they agree only on a nonnegative
+        # dividend and a positive divisor (``Mod(i - 2, N)`` at ``i = 0`` is ``N - 2``, not ``-2``).
+        dividend, divisor = expr.args
+        if self.cpp_mode and not (dividend.is_nonnegative and divisor.is_positive):
+            return self._print(sympy.Function('py_mod')(dividend, divisor))
+        return '((%s) %% (%s))' % (self._print(dividend), self._print(divisor))
 
     def _print_floor(self, expr):
         """sympy ``floor(...)`` printer.

@@ -87,7 +87,8 @@ CASES = [
     ('floor_mod', ('-1', '5'), '4'),
     ('cpp_mod', ('-1', '5'), '-1'),
     ('cpp_mod', ('-1.0', '5.0'), '-1.0'),
-    ('Mod', ('-1', '5'), '-1'),
+    # sympy's ``Mod`` is floored; ``cpp_mod`` above is the truncating remainder.
+    ('Mod', ('-1', '5'), '4'),
     ('Mod_float', ('-1.0', '5.0'), '-1.0'),
     ('Modulo', ('-17', '3'), '1'),
     ('Modulo_float', ('-17.0', '3.0'), '1.0'),
