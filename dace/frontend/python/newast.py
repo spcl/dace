@@ -1639,6 +1639,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if arg_names:
                 result = f"{func_name}_{'_'.join(arg_names)}"
+            elif isinstance(current_ast_node.func, ast.Attribute):
+                # A bare method name (``x.max()`` -> ``max``) names the C++ function a tasklet calls.
+                result = f"{self._get_name_from_node(current_ast_node.func.value)}_{func_name}"
             else:
                 result = func_name
 

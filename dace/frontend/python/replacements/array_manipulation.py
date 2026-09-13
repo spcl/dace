@@ -534,7 +534,7 @@ def diagonal(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, offset:
     length = symbolic.pystr_to_symbolic(f'min({rows}, {cols} - {off})' if off >= 0 else f'min({rows} + {off}, {cols})')
     row0, col0 = (0, off) if off >= 0 else (-off, 0)
     out, out_desc = sdfg.add_transient(pv.get_target_name(), [length], desc.dtype, desc.storage, find_new_name=True)
-    state.add_mapped_tasklet(f'diagonal_{off}', {'__d': f'0:{length}'},
+    state.add_mapped_tasklet('diagonal', {'__d': f'0:{length}'},
                              {'__inp': Memlet(f'{arr}[__d + {row0}, __d + {col0}]')},
                              '__out = __inp', {'__out': Memlet(f'{out}[__d]')},
                              external_edges=True)
@@ -559,7 +559,7 @@ def diag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k: int = 0)
     # The zero fill and the diagonal write are two statements on one array: the fill has to be
     # complete before the diagonal lands, which the state boundary is what guarantees.
     state = pv.last_block
-    state.add_mapped_tasklet(f'diag_{k}', {'__d': f'0:{desc.shape[0]}'}, {'__inp': Memlet(f'{arr}[__d]')},
+    state.add_mapped_tasklet('diag', {'__d': f'0:{desc.shape[0]}'}, {'__inp': Memlet(f'{arr}[__d]')},
                              '__out = __inp', {'__out': Memlet(f'{out}[__d + {row0}, __d + {col0}]')},
                              external_edges=True)
     return out

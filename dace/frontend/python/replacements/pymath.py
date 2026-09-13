@@ -83,7 +83,7 @@ def _conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.real')
 def _real(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
-    return simple_call(pv, sdfg, state, input, 'real', complex_to_scalar(inptype))
+    return simple_call(pv, sdfg, state, input, 're', complex_to_scalar(inptype))
 
 
 @oprepo.replaces('imag')
@@ -91,7 +91,7 @@ def _real(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.imag')
 def _imag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
-    return simple_call(pv, sdfg, state, input, 'imag', complex_to_scalar(inptype))
+    return simple_call(pv, sdfg, state, input, 'im', complex_to_scalar(inptype))
 
 
 @oprepo.replaces_attribute('Array', 'real')

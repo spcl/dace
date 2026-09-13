@@ -161,6 +161,28 @@ def test_diagonal_with_a_positive_offset():
     check(prog, np.diagonal(a, 1), a=a, out=np.zeros(3))
 
 
+def test_diagonal_with_a_negative_offset():
+    """The offset used to spell the map label, and ``diagonal_-1_map`` is not a valid name."""
+
+    @dace.program
+    def prog(a: dace.float64[4, 4], out: dace.float64[3]):
+        out[:] = np.diagonal(a, -1)
+
+    a = np.random.rand(4, 4)
+    check(prog, np.diagonal(a, -1), a=a, out=np.zeros(3))
+
+
+def test_diag_builds_a_matrix_below_the_diagonal():
+    """A tridiagonal assembled as ``np.diag(off, -1)`` failed validation on its map label."""
+
+    @dace.program
+    def prog(a: dace.float64[3], out: dace.float64[4, 4]):
+        out[:] = np.diag(a, -1)
+
+    a = np.random.rand(3)
+    check(prog, np.diag(a, -1), a=a, out=np.zeros((4, 4)))
+
+
 def test_diag_builds_a_matrix_from_a_vector():
 
     @dace.program
@@ -169,6 +191,42 @@ def test_diag_builds_a_matrix_from_a_vector():
 
     a = np.random.rand(4)
     check(prog, np.diag(a), a=a, out=np.zeros((4, 4)))
+
+
+def test_real_and_imag_of_a_real_array_compile():
+    """``np.real`` / ``np.imag`` of a float array are the array and zero; the tasklet called ``real(x)``,
+    which C++ has no overload for on a double."""
+
+    @dace.program
+    def prog(a: dace.float64[4], out: dace.float64[4]):
+        out[:] = np.real(a) + 2.0 * np.imag(a)
+
+    a = np.random.rand(4)
+    check(prog, np.real(a) + 2.0 * np.imag(a), a=a, out=np.zeros(4))
+
+
+def test_real_of_a_complex_array_compiles():
+    """The complex spelling reads the component through the runtime accessor, not an unqualified ``real``."""
+
+    @dace.program
+    def prog(a: dace.complex128[4], out: dace.float64[4]):
+        out[:] = np.real(a) - np.imag(a)
+
+    a = np.random.rand(4) + 1j * np.random.rand(4)
+    check(prog, np.real(a) - np.imag(a), a=a, out=np.zeros(4))
+
+
+def test_a_method_reduction_does_not_shadow_the_function_a_tasklet_calls():
+    """``float(a.max())`` named its result ``max``; the ``np.maximum`` tasklet beside it then called a
+    ``double``."""
+
+    @dace.program
+    def prog(a: dace.float64[5], out: dace.float64[5]):
+        s = float(a.max()) + 1.0
+        out[:] = np.maximum(a - 0.5, 0.0) + s
+
+    a = np.random.rand(5)
+    check(prog, np.maximum(a - 0.5, 0.0) + a.max() + 1.0, a=a, out=np.zeros(5))
 
 
 def test_tile_repeats_the_whole_array():

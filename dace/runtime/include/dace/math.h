@@ -558,6 +558,15 @@ template <typename T>
 DACE_CONSTEXPR DACE_HDFI auto im(const T& z) -> decltype(z.imag()) {
   return z.imag();
 }
+// ``np.real`` / ``np.imag`` of a REAL value: the value itself, and zero.
+template <typename T, typename std::enable_if<std::is_arithmetic<T>::value>::type* = nullptr>
+DACE_CONSTEXPR DACE_HDFI T re(const T& x) {
+  return x;
+}
+template <typename T, typename std::enable_if<std::is_arithmetic<T>::value>::type* = nullptr>
+DACE_CONSTEXPR DACE_HDFI T im(const T&) {
+  return T(0);
+}
 
 template <typename T>
 DACE_CONSTEXPR DACE_HDFI T exp(const T& a) {
