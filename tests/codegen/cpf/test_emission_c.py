@@ -982,3 +982,39 @@ def test_out_parameter_ufuncs_call_the_typed_helper_and_compute_what_numpy_does(
     mantissa, exponent = np.frexp(x)
     for name, want in (('i', integral), ('f', fractional), ('m', mantissa), ('e', exponent)):
         assert np.array_equal(rendered[name], want), f'{name}: CPF gives {rendered[name]}, numpy {want}'
+
+
+def test_an_interstate_read_of_an_array_element_is_typed_in_c():
+    """An interstate assignment that reads an array element (amg_setup's compaction loop hoists
+    ``abs_x = Abs(cur[i])``) gives the C dialect no argument type unless the container supplies it."""
+    sdfg = dace.SDFG('cpf_c_interstate_element_abs')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    first = sdfg.add_state('first', is_start_block=True)
+    second = sdfg.add_state('second')
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'magnitude': 'Abs(A[2])'}))
+    tasklet = second.add_tasklet('store', {}, {'o'}, 'o = magnitude')
+    second.add_edge(tasklet, 'o', second.add_write('out'), None, dace.Memlet('out[0]'))
+
+    code = render_sdfg(sdfg, language='c').code
+
+    assert 'fabs(' in code, code
+
+
+def test_a_tasklet_call_on_a_symbol_an_interstate_edge_binds_is_typed_in_c():
+    """gromacs clamps with ``max(rsq_0, b)`` where ``rsq_0`` is bound on an interstate edge ahead of the
+    tasklet: it sits in no scoped table, so C could not pick the typed ``max`` without framecode's declaration."""
+    sdfg = dace.SDFG('cpf_c_interstate_symbol_max')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    first = sdfg.add_state('first', is_start_block=True)
+    middle = sdfg.add_state('middle')
+    last = sdfg.add_state('last')
+    sdfg.add_edge(first, middle, dace.InterstateEdge())
+    sdfg.add_edge(middle, last, dace.InterstateEdge(assignments={'nearest': 'A[1]'}))
+    tasklet = last.add_tasklet('clamp', {}, {'o'}, 'o = max(nearest, 1.5)')
+    last.add_edge(tasklet, 'o', last.add_write('out'), None, dace.Memlet('out[0]'))
+
+    code = render_sdfg(sdfg, language='c').code
+
+    assert 'cpf_max_float64(' in code, code

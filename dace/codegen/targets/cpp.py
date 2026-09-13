@@ -1162,6 +1162,15 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         if connector is not None:
             defined_symbols.update({connector: conntype})
 
+    if cpf_lowering.standalone():
+        # A symbol an interstate edge binds ahead of this tasklet is in no scoped table, but framecode
+        # declared it with its type (gromacs' ``rsq_0``), and the C dialect types every call it feeds.
+        defined_vars = codegen._frame.dispatcher.defined_vars
+        read = sorted({name.id for stmt in body for name in ast.walk(stmt) if isinstance(name, ast.Name)})
+        for name in read:
+            if name not in defined_symbols and defined_vars.has(name):
+                defined_symbols[name] = defined_vars.get(name)[1]
+
     callsite_stream.write(codegen.tasklet_body_comment(node), cfg, state_id, node)
     struct_initializer = StructInitializer(sdfg, struct_names)
     for stmt in body:
@@ -1218,6 +1227,9 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         desc = self.sdfg.arrays.get(name)
         if isinstance(desc, data.Scalar):
             return desc.dtype
+        # An element read ``A[i]`` is typed through its container, as a connector pointer is.
+        if isinstance(desc, data.Array):
+            return dtypes.pointer(desc.dtype)
         # An enclosing loop's variable: its header declares it, the SDFG does not record it.
         if self.framecode is not None and self.framecode.dispatcher.defined_vars.has(name):
             return self.framecode.dispatcher.defined_vars.get(name)[1]
