@@ -3,10 +3,10 @@
 
 from collections import defaultdict
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import islice
 import sympy as sp
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
@@ -282,7 +282,16 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
     return sp.Integer(diff) % g != 0
 
 
-def _smt_proves_injective_write(dst_subset, itersym, start, end, step) -> bool:
+#: ``(lo, hi, is_point, itervar, start, end, step)`` as text: everything the injective-write oracle parses.
+SmtWriteKey = Tuple[str, str, bool, str, str, str, str]
+
+
+def smt_proves_injective_write(dst_subset: Optional[subsets.Subset],
+                               itersym: symbolic.SymbolicType,
+                               start: Any,
+                               end: Any,
+                               step: Any,
+                               verdicts: Optional[Dict[SmtWriteKey, bool]] = None) -> bool:
     """Ask the SMT oracle whether a non-affine write touches a distinct location on
     every iteration.
 
@@ -290,6 +299,9 @@ def _smt_proves_injective_write(dst_subset, itersym, start, end, step) -> bool:
     intervals that never intersect across iterations. Conservative: returns ``False`` whenever z3
     is unavailable, there is no write subset to reason about, the subset is multi-dimensional, or
     the solver returns ``unknown``.
+
+    :param verdicts: Optional memo keyed by the exact texts the oracle parses (see
+                     :attr:`LiftInvariants.smt_injective`).
     """
     if dst_subset is None:
         # ``get_dst_subset`` yields ``None`` for an edge that names no data -- an empty memlet,
@@ -305,11 +317,27 @@ def _smt_proves_injective_write(dst_subset, itersym, start, end, step) -> bool:
         return False  # nothing to write, or a multi-dimensional non-affine write: out of scope
     itervar = str(itersym)
     rb, re_, _ = nd[0]
+    point = rb == re_
+    # Everything the oracle reads, as text: every input below is parsed from exactly these strings.
+    key = (str(rb), str(re_), point, itervar, str(start), str(end), str(step))
+    if verdicts is not None:
+        cached = verdicts.get(key)
+        if cached is not None:
+            return cached
+    verdict = smt_injective_verdict(key)
+    if verdicts is not None:
+        verdicts[key] = verdict
+    return verdict
+
+
+def smt_injective_verdict(key: SmtWriteKey) -> bool:
+    """The uncached body of :func:`smt_proves_injective_write`, over its text key."""
+    rb, re_, point, itervar, start, end, step = key
     try:
-        args = (itervar, symbolic.pystr_to_symbolic(str(start)), symbolic.pystr_to_symbolic(str(end)))
-        kwargs = dict(step=symbolic.pystr_to_symbolic(str(step)))
-        if rb == re_:
-            r = smt_dependence.prove_injective_write(symbolic.pystr_to_symbolic(str(rb)), *args, **kwargs)
+        args = (itervar, symbolic.pystr_to_symbolic(start), symbolic.pystr_to_symbolic(end))
+        kwargs = dict(step=symbolic.pystr_to_symbolic(step))
+        if point:
+            r = smt_dependence.prove_injective_write(symbolic.pystr_to_symbolic(rb), *args, **kwargs)
         else:
             # A RANGE write: the iteration owns the whole interval, so the property that makes the
             # loop parallel is that two iterations' intervals never intersect. Chunked rewrites land
@@ -317,8 +345,8 @@ def _smt_proves_injective_write(dst_subset, itersym, start, end, step) -> bool:
             # disjoint by construction but not of the ``a*i+b`` form the affine matcher accepts. An
             # inner stride only thins the interval, so proving the intervals disjoint proves the
             # written sets disjoint whatever that stride is.
-            r = smt_dependence.prove_disjoint_write_ranges(symbolic.pystr_to_symbolic(str(rb)),
-                                                           symbolic.pystr_to_symbolic(str(re_)), *args, **kwargs)
+            r = smt_dependence.prove_disjoint_write_ranges(symbolic.pystr_to_symbolic(rb),
+                                                           symbolic.pystr_to_symbolic(re_), *args, **kwargs)
     except Exception:
         return False
     return r is True
@@ -721,6 +749,11 @@ class LiftInvariants:
     #: "used after the loop" walk -- each trigger a full recursive symbol collection per block per
     #: candidate loop. Blocks a lift creates are new objects and simply miss.
     block_free_symbols: Dict[Any, Set[str]]
+    #: SMT injective-write verdicts, keyed by every text the oracle parses. A pure function of the
+    #: key: the parse is cached on (text, dtype authority) and the authority is fixed for the pass,
+    #: and no graph state enters the query. Every sweep restart re-probes each refused loop, and
+    #: re-asking z3 the same question per lift was 21% of the pass on CloudSC.
+    smt_injective: Dict[SmtWriteKey, bool] = field(default_factory=dict)
 
 
 def build_lift_invariants(sdfg: SDFG) -> LiftInvariants:
@@ -784,7 +817,9 @@ class LiftContext:
     A pass probing many loops of one SDFG builds this ONCE and hands it to each probe through
     ``xform.lift_context``; a standalone match leaves the attribute unset and every probe derives
     what it needs by itself, exactly as before. Every field here is invalidated by ANY change to
-    the SDFG's blocks or access nodes, so a holder must rebuild it after each applied lift.
+    the SDFG's blocks or access nodes, so a holder must rebuild it after each lift IN this SDFG. A
+    lift elsewhere only renumbers ``cfg_ids``, and moves ``sdfg_free_symbols`` only when it
+    changed the mapping of a node nesting a child of this SDFG.
     """
 
     #: the facts a lift cannot invalidate, built once by the caller
@@ -1158,7 +1193,8 @@ class LoopToMap(xf.MultiStateTransformation):
                                 if ok and not _nested_reads_match_writes(e.src, e.src_conn, itersym, a, b, step):
                                     ok = False
                             if not ok and not permissive:
-                                if not _smt_proves_injective_write(dst_subset, itersym, start, end, step):
+                                verdicts = None if ctx is None else ctx.invariants.smt_injective
+                                if not smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts):
                                     return refuse(
                                         f"write to {dn.data} is not uniquely indexed by the iteration variable "
                                         f"(needs an a*i+b subset) - dst_subset={dst_subset}")
@@ -1867,9 +1903,13 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Also remove arrays that are unique to the loop body
         internalized = set()
+        # With a context, no state outside the loop held these names (the access-state index said so),
+        # and the loop's states just left the SDFG, so ``body`` is the only state that can still name
+        # one. Scan it, and let ``remove_data`` rescan the whole SDFG only when it would raise anyway.
+        body_data = None if lift_ctx is None else {n.data for n in body.data_nodes()}
         for name in unique_set:
             if name in sdfg.arrays:
-                sdfg.remove_data(name)
+                sdfg.remove_data(name, validate=body_data is None or name in body_data)
                 internalized.add(name)
         if lift_ctx is not None:
             lift_ctx.internalized_data = internalized

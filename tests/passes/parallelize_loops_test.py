@@ -11,15 +11,19 @@ that let the pass reuse analysis across probes:
   too and lost one here, because a lift can make a loop liftable that is nowhere near it.
 """
 import copy
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pytest
+import sympy
 
 import dace
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import (LiftContext, LoopToMap, block_free_symbols, build_lift_context,
                                                         build_lift_invariants)
+from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops, candidate_loops, loop_order_key
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
@@ -382,3 +386,96 @@ def test_a_proven_lift_is_taken_where_the_probe_refuses():
     a_ref[idx] = b
     sdfg(a=a, b=b, idx=idx)
     np.testing.assert_array_equal(a, a_ref)
+
+
+def context_facts(sd: dace.SDFG) -> Tuple[Dict[str, List[dace.SDFGState]], List[Any], OrderedSet[str]]:
+    ctx = build_lift_context(sd, build_lift_invariants(sd))
+    access = {name: list(states) for name, states in ctx.access_states.items()}
+    return access, list(ctx.block_order), OrderedSet(sd.free_symbols)
+
+
+def test_a_lift_leaves_every_other_sdfgs_context_exact() -> None:
+    """The invariant that lets a lift drop only its OWN SDFG's context.
+
+    A lift rewrites its own SDFG, and outside it touches only the mapping of the node nesting it,
+    which only the parent's free symbols read. So every other SDFG's access-node index, block order
+    and free symbols are unchanged. A kept context that went stale would hand the next probe a wrong
+    index or a wrong "used after the loop" answer, which is a miscompile, so it is asserted.
+    """
+    sdfg = three_independent_sweeps.to_sdfg(simplify=True)
+    real_apply = LoopToMap.apply
+    stale: List[str] = []
+    comparisons = 0
+    nested_lifts = 0
+
+    def checking_apply(self: LoopToMap, graph: ControlFlowRegion, inner_sdfg: dace.SDFG) -> Any:
+        root = inner_sdfg
+        while root.parent_sdfg is not None:
+            root = root.parent_sdfg
+        pnode = inner_sdfg.parent_nsdfg_node
+        keys = None if pnode is None else tuple(pnode.symbol_mapping.keys())
+        before = {sd: context_facts(sd) for sd in root.all_sdfgs_recursive() if sd is not inner_sdfg}
+        out = real_apply(self, graph, inner_sdfg)
+        nonlocal comparisons, nested_lifts
+        nested_lifts += pnode is not None
+        mapping_moved = pnode is not None and keys != tuple(pnode.symbol_mapping.keys())
+        for sd, was in before.items():
+            if mapping_moved and sd is inner_sdfg.parent_sdfg:
+                continue  # the one context the pass drops besides the lifted SDFG's own
+            comparisons += 1
+            if context_facts(sd) != was:
+                stale.append(sd.label)
+        return out
+
+    LoopToMap.apply = checking_apply
+    try:
+        ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    finally:
+        LoopToMap.apply = real_apply
+
+    assert nested_lifts > 0 and comparisons > 0, 'no lift ran beside another SDFG, so nothing was exercised'
+    assert not stale, f'a lift changed the context of an SDFG it did not lift in: {stale}'
+
+
+@dace.program
+def colliding_scatter_then_independent(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for i in range(N):
+        a[min(i, N - 1 - i)] = b[i]
+    for i in range(N):
+        c[i] = b[i] + 1.0
+
+
+def test_a_refused_smt_write_reaches_z3_once_however_often_its_loop_is_reprobed() -> None:
+    """Every lift restarts the sweep, so a loop the oracle refused is probed again after each one.
+    The question it asks is the same text every time; z3 must answer it once per pass."""
+    sdfg = colliding_scatter_then_independent.to_sdfg(simplify=True)
+    real_prove = smt_dependence.prove_injective_write
+    real_can = LoopToMap.can_be_applied
+    questions: List[Tuple[str, str, str, str]] = []
+    probes: List[LoopRegion] = []
+
+    def spy_prove(write_expr: sympy.Basic, itervar: str, start: Any, end: Any, *args: Any,
+                  **kwargs: Any) -> Optional[bool]:
+        questions.append((str(write_expr), itervar, str(start), str(end)))
+        return real_prove(write_expr, itervar, start, end, *args, **kwargs)
+
+    def spy_can(self: LoopToMap,
+                graph: ControlFlowRegion,
+                expr_index: int,
+                inner_sdfg: dace.SDFG,
+                permissive: bool = False) -> bool:
+        probes.append(self.loop)
+        return real_can(self, graph, expr_index, inner_sdfg, permissive)
+
+    smt_dependence.prove_injective_write = spy_prove
+    LoopToMap.can_be_applied = spy_can
+    try:
+        ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    finally:
+        smt_dependence.prove_injective_write = real_prove
+        LoopToMap.can_be_applied = real_can
+
+    refused = candidate_loops(sdfg)
+    assert len(refused) == 1 and map_count(sdfg) == 1, 'the colliding scatter must stay a loop, the other lift'
+    assert probes.count(refused[0]) >= 3, 'the refused loop was not re-probed, so nothing was exercised'
+    assert questions == [(f'Min(i, {N - 1} - i)', 'i', '0', str(N - 1))], f'z3 was asked again: {questions}'

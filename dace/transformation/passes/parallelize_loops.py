@@ -170,15 +170,14 @@ class ParallelizeLoops(ppl.Pass):
         """Lift until no loop in ``sdfg`` is accepted any more, visiting loops in ``order``.
 
         :param order: sort key over the candidate loops, or ``None`` to keep graph order.
-        :param contexts: per-SDFG :class:`LiftContext` cache; cleared after every lift.
+        :param contexts: per-SDFG :class:`LiftContext` cache; a lift drops the lifted SDFG's entry.
         :param invariants: per-SDFG facts a lift cannot change; built on first use, never rebuilt.
         :param loop_facts: per-loop body facts; dropped for the ancestors of each lift.
         :returns: the number of loops lifted.
         """
         applied = 0
         # SDFG -> its free symbols as of the end of the last lift IN it, handed over by ``apply``
-        # rather than walked again by the next ``build_lift_context``. Holds at most one entry:
-        # every other SDFG's set is stale the moment a lift lands anywhere below it.
+        # rather than walked again by the next ``build_lift_context``. Same lifetime as a context.
         fresh_free_symbols: Dict[SDFG, Any] = {}
         # One instance, reused: ``setup_match`` overwrites every field a probe reads, and building a
         # ``make_properties`` object per candidate is pure overhead on a graph with hundreds of them.
@@ -197,15 +196,32 @@ class ParallelizeLoops(ppl.Pass):
                     ctx = contexts[sd] = build_lift_context(sd, inv, loop_facts, fresh_free_symbols.pop(sd, None))
 
                 xform.lift_context = ctx
+                # Read before ``lift``, which applies: a lift that edits this mapping moves the parent's free symbols.
+                pnode = sd.parent_nsdfg_node
+                mapping_keys = None if pnode is None else tuple(pnode.symbol_mapping.keys())
                 if not self.lift(xform, loop, pipeline_results):
                     continue
                 applied += 1
                 lifted_one = True
-                fresh_free_symbols = {} if ctx.post_lift_free_symbols is None else {sd: ctx.post_lift_free_symbols}
-                # The graph changed, so every context is stale. The invariants are not: they are
-                # exactly the analysis a lift cannot invalidate. The per-loop body facts sit in
-                # between -- only a loop whose body now contains this lift has different ones.
-                contexts.clear()
+                if ctx.post_lift_free_symbols is None:
+                    fresh_free_symbols.pop(sd, None)
+                else:
+                    fresh_free_symbols[sd] = ctx.post_lift_free_symbols
+                # Only ``sd``'s context is stale. A lift rewrites ``sd``'s own graph and builds a new
+                # nested SDFG; the one thing it touches outside is the ``symbol_mapping`` of the node
+                # nesting ``sd`` (``remove_symbol`` and the newly-free entries), which only the parent's
+                # free symbols read. Every other SDFG keeps its states, access nodes, blocks and
+                # nested-node mappings, so its context stays exact -- except the cfg ids, which
+                # ``reset_cfg_list`` renumbers tree-wide. The invariants are never stale. The per-loop
+                # body facts sit in between -- only a loop whose body now contains this lift changes.
+                del contexts[sd]
+                if mapping_keys is not None and mapping_keys != tuple(pnode.symbol_mapping.keys()):
+                    contexts.pop(sd.parent_sdfg, None)
+                    fresh_free_symbols.pop(sd.parent_sdfg, None)
+                if contexts:
+                    cfg_ids = {cfg: i for i, cfg in enumerate(sdfg.cfg_list)}
+                    for kept in contexts.values():
+                        kept.cfg_ids = cfg_ids
                 loop_facts.pop(loop, None)
                 # An enclosing region's read/write sets are PATCHED, not dropped. A lift adds no
                 # access -- it re-homes the ones it finds behind a nested node that re-exposes them
