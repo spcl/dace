@@ -5,6 +5,7 @@ import types
 from typing import Set, List
 import contextlib
 from dace import graphlib as nx
+from dace.ordered import OrderedSet
 import types
 
 import dace.properties
@@ -173,12 +174,13 @@ def get_environments_and_dependencies(names: Set[str]) -> List:
     """
 
     # get all environments: add dependencies until no new dependencies are found
-    environments = {get_environment(name) for name in names}
+    # Insertion order is the topological sort's tie-break, and so the emitted header order: keep the request order.
+    environments = OrderedSet(get_environment(name) for name in names)
     while True:
-        added = {dep for env in environments for dep in env.dependencies if dep not in environments}
+        added = OrderedSet(dep for env in environments for dep in env.dependencies if dep not in environments)
         if len(added) == 0:
             break
-        environments = environments.union(added)
+        environments.update(added)
 
     # construct dependency graph
     dep_graph = nx.DiGraph()
