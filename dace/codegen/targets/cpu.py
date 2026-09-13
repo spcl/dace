@@ -556,6 +556,22 @@ def _complex_declare_reduction(op_str: str, ctype: str):
     return None
 
 
+def nested_sdfg_fingerprint(nsdfg: SDFG) -> Tuple:
+    """Block labels and state sizes in region order.
+
+    Two nests ``hash_sdfg`` calls equal have equal fingerprints: labels and the node and edge lists
+    are serialized under keys its keyword remover keeps.
+    """
+    parts = []
+    for region in nsdfg.all_control_flow_regions(recursive=True):
+        for block in region.nodes():
+            if isinstance(block, SDFGState):
+                parts.append((block.label, block.number_of_nodes(), block.number_of_edges()))
+            else:
+                parts.append((block.label, ))
+    return tuple(parts)
+
+
 @registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):
     """ SDFG CPU code generator. """
@@ -662,6 +678,9 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generated_nested_sdfg = dict()
         # Nested SDFG -> the symbols its header and call pass; see nsdfg_argument_symbols.
         self.nsdfg_argument_symbol_cache: Dict[SDFG, FrozenSet[str]] = {}
+        # Fingerprint -> how many nests of the emitted tree carry it; see nested_sdfg_may_repeat.
+        self.nested_sdfg_fingerprint_counts: Dict[Tuple, int] = {}
+        self.nested_sdfg_fingerprints_counted = False
 
         # Buffered translation units for the per-nest split
         # (``compiler.cpu.codegen_params.split_nsdfg_translation_units``):
@@ -2755,6 +2774,22 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypes.append(standalone_integer_dtype(dtype).ctype)
         return ctypes
 
+    def nested_sdfg_may_repeat(self, sdfg: SDFG, nsdfg: SDFG) -> bool:
+        """Whether another nest of the emitted tree could hash equal to ``nsdfg``.
+
+        Only a nest sharing its fingerprint can, so a nest alone with its fingerprint skips the whole
+        serialization ``hash_sdfg`` is. Counted when the first nest is emitted, after the last lowering
+        step; a fingerprint the count never saw answers True, which hashes as before.
+        """
+        if not self.nested_sdfg_fingerprints_counted:
+            for node, parent in sdfg.root_sdfg.all_nodes_recursive():
+                if isinstance(node, nodes.NestedSDFG):
+                    fingerprint = nested_sdfg_fingerprint(node.sdfg)
+                    self.nested_sdfg_fingerprint_counts[fingerprint] = (
+                        self.nested_sdfg_fingerprint_counts.get(fingerprint, 0) + 1)
+            self.nested_sdfg_fingerprints_counted = True
+        return self.nested_sdfg_fingerprint_counts.get(nested_sdfg_fingerprint(nsdfg), 0) != 1
+
     def nsdfg_argument_symbols(self, nsdfg: SDFG) -> FrozenSet[str]:
         """The symbols a nested SDFG's function takes, walked once per nest: its header and its call
         both ask, and emission does not change the SDFG (see ``lower_and_generate_code``)."""
@@ -2991,7 +3026,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         code_already_generated = False
         if unique_functions and not inline:
-            hash = node.sdfg.hash_sdfg()
             # Dedup is per OUTPUT FILE, not per whole build: _current_tu_key names the TU being emitted
             # right now (id(self) -- the frame .cpp -- unless split_nsdfg_translation_units re-points it
             # at a nest's own .cpp). Keying on it means an inner nest shared by two split top-level nests
@@ -3001,13 +3035,17 @@ class CPUCodeGen(TargetCodeGenerator):
             # id(self), so this reduces to the old single-key behaviour and the output stays byte-identical.
             if unique_functions_hash:
                 # Use hashing to check whether this Nested SDFG has been already generated. If that is the case,
-                # use the saved name to call it, otherwise save the hash and the associated name
-                if (self._current_tu_key, hash) in self._generated_nested_sdfg:
-                    code_already_generated = True
-                    sdfg_label = self._generated_nested_sdfg[(self._current_tu_key, hash)]
-                else:
-                    self._generated_nested_sdfg[(self._current_tu_key, hash)] = sdfg_label
+                # use the saved name to call it, otherwise save the hash and the associated name. A nest no
+                # other nest can equal is neither found nor ever looked up, so it is not hashed.
+                if self.nested_sdfg_may_repeat(sdfg, node.sdfg):
+                    hash = node.sdfg.hash_sdfg()
+                    if (self._current_tu_key, hash) in self._generated_nested_sdfg:
+                        code_already_generated = True
+                        sdfg_label = self._generated_nested_sdfg[(self._current_tu_key, hash)]
+                    else:
+                        self._generated_nested_sdfg[(self._current_tu_key, hash)] = sdfg_label
             else:
+                hash = node.sdfg.hash_sdfg()
                 # Use the SDFG label to check if this has been already code generated.
                 # Check the hash of the formerly generated SDFG to check that we are not
                 # generating different SDFGs with the same name
