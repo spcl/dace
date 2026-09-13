@@ -70,7 +70,8 @@ still be referenced by interstate-edge assignments that the cascade-up pass
 hoisted; those are left alone.)
 """
 import copy
-from typing import Dict, List, Optional, Tuple
+import functools
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import sympy
 
@@ -174,7 +175,6 @@ def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: s
     ``outer.var`` in their bounds) must be handled level-by-level by
     fixpoint instead, not by descending past them in one rewrite.
     """
-    outer_sym = symbolic.pystr_to_symbolic(outer_var)
     current = inner.parent_graph
     while current is not outer and current is not None:
         if isinstance(current, LoopRegion):
@@ -182,10 +182,10 @@ def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: s
                 if code is None:
                     continue
                 try:
-                    free = symbolic.pystr_to_symbolic(code.as_string).free_symbols
+                    names = free_symbol_names(code.as_string)
                 except Exception:
-                    free = {}
-                if outer_sym in free:
+                    names = frozenset()
+                if outer_var in names:
                     return False
         current = current.parent_graph
     return True
@@ -468,26 +468,26 @@ def _diff_is_zero(a, b) -> bool:
     return False
 
 
-def memlet_subset_exprs(memlet: dace.Memlet) -> List[symbolic.SymbolicType]:
-    """Every axis bound (lo/hi/stride) of ``memlet``'s subset, then of its other subset."""
-    exprs: List[symbolic.SymbolicType] = []
-    for subset in (memlet.subset, memlet.other_subset):
-        if subset is not None:
-            exprs.extend(symbolic.pystr_to_symbolic(str(bound)) for rng in subset.ranges for bound in rng)
-    return exprs
+@functools.lru_cache(maxsize=4096, typed=True)
+def free_symbol_names(text: str) -> FrozenSet[str]:
+    """Names of the free symbols of the expression ``text``."""
+    return frozenset(str(s) for s in symbolic.pystr_to_symbolic(text).free_symbols)
 
 
-def _collect_body_subset_exprs(inner: LoopRegion) -> List[symbolic.SymbolicType]:
-    """All symbolic expressions used in memlet subsets inside ``inner``'s body
-    (across every state) -- one entry per axis bound (lo/hi/stride) per memlet.
-    Used to audit which references to ``i`` / ``ii`` show up in the body."""
-    exprs: List[symbolic.SymbolicType] = []
-    for st in inner.all_states():
-        for e in st.edges():
-            if e.data is None or e.data.is_empty():
-                continue
-            exprs.extend(memlet_subset_exprs(e.data))
-    return exprs
+def memlet_bound_texts(memlet: dace.Memlet) -> List[str]:
+    """Every axis bound (lo/hi/stride) of ``memlet``'s subset, then of its other subset, as text."""
+    return [
+        str(bound) for subset in (memlet.subset, memlet.other_subset) if subset is not None for rng in subset.ranges
+        for bound in rng
+    ]
+
+
+def body_bound_texts(inner: LoopRegion) -> List[str]:
+    """Every memlet bound in ``inner``'s body, as text: where the audit looks for references to ``i`` / ``ii``."""
+    return [
+        text for st in inner.all_states() for e in st.edges() if e.data is not None and not e.data.is_empty()
+        for text in memlet_bound_texts(e.data)
+    ]
 
 
 def depends_only_on_sum(ex: sympy.Basic, i_sym: sympy.Symbol, ii_sym: sympy.Symbol) -> bool:
@@ -517,14 +517,17 @@ def _audit_combined_access(inner: LoopRegion, outer_var: str, inner_var: str, ca
     Case B (``ii in range(i, i + K)``): ``i`` must NEVER appear in a memlet
     (only ``ii``). The new iterator ``k`` becomes ``ii`` directly.
     """
-    i_sym = symbolic.pystr_to_symbolic(outer_var)
-    ii_sym = symbolic.pystr_to_symbolic(inner_var)
+    texts = body_bound_texts(inner)
     if case == 'B':
-        for ex in _collect_body_subset_exprs(inner):
-            if i_sym in ex.free_symbols:
-                return False
-        return True
-    return all(depends_only_on_sum(ex, i_sym, ii_sym) for ex in _collect_body_subset_exprs(inner))
+        return all(outer_var not in free_symbol_names(text) for text in texts)
+    return all(reads_only_through_sum(text, outer_var, inner_var) for text in texts)
+
+
+@functools.lru_cache(maxsize=4096, typed=True)
+def reads_only_through_sum(text: str, outer_var: str, inner_var: str) -> bool:
+    """:func:`depends_only_on_sum` of the bound ``text``, for the loop variables named ``outer_var`` and ``inner_var``."""
+    return depends_only_on_sum(symbolic.pystr_to_symbolic(text), symbolic.pystr_to_symbolic(outer_var),
+                               symbolic.pystr_to_symbolic(inner_var))
 
 
 #: ``{array: (masks, factors)}`` for :class:`~dace.transformation.layout.unblock_dimensions.UnblockDimensions`.
@@ -553,11 +556,10 @@ def match_block_memlet(sdfg: SDFG, memlet: dace.Memlet, outer_var: str, inner_va
     block_index = symbolic.pystr_to_symbolic(f"int_floor({outer_var}, {symbolic.symstr(K_expr)})")
     if not is_unit_point(ranges[rank - 2], block_index):
         return None
-    i_sym = symbolic.pystr_to_symbolic(outer_var)
     for rng in ranges[:rank - 2]:
         for bound in rng:
-            free = symbolic.pystr_to_symbolic(str(bound)).free_symbols
-            if i_sym in free or ii_sym in free:
+            names = free_symbol_names(str(bound))
+            if outer_var in names or inner_var in names:
                 return None
     return [False] * (rank - 2) + [True], [1] * (rank - 2) + [K_const]
 
@@ -570,16 +572,13 @@ def blocked_arrays_of(inner: LoopRegion, outer_var: str, inner_var: str, case: s
     """
     if case == 'B':
         return {} if _audit_combined_access(inner, outer_var, inner_var, case) else None
-    i_sym = symbolic.pystr_to_symbolic(outer_var)
-    ii_sym = symbolic.pystr_to_symbolic(inner_var)
     blocked: BlockedArrays = {}
     for st in inner.all_states():
         for e in st.edges():
             if e.data is None or e.data.is_empty():
                 continue
-            if all(
-                    depends_only_on_sum(ex, i_sym, ii_sym) for ex in memlet_subset_exprs(e.data)
-                    if i_sym in ex.free_symbols or ii_sym in ex.free_symbols):
+            # Naming both tile variables is not enough: ``2*i + ii`` collapses to ``k`` as well.
+            if all(reads_only_through_sum(text, outer_var, inner_var) for text in memlet_bound_texts(e.data)):
                 continue
             if K_const is None or e.data.subset is None or e.data.other_subset is not None:
                 return None
@@ -760,33 +759,37 @@ class UntileLoops(ppl.Pass):
         applied += count_applied(PatternMatchAndApplyRepeated([MapCollapse()]).apply_pass(sdfg, {}))
         return applied
 
+    def untile_sweep(self, sdfg: SDFG) -> int:
+        """One pass over every loop of ``sdfg``, collapsing each loop with its tile partner; returns the count."""
+        rewritten = 0
+        for sd in sdfg.all_sdfgs_recursive():
+            # INNERMOST FIRST. A cascade is collapsed one rung at a time, and the rung nearest
+            # the body is the one whose partner is unambiguous: an outer tile loop in a
+            # multi-level nest has every deeper loop as a candidate, and matching it against
+            # the wrong rung fixes a pairing the levels below then cannot undo. Working up
+            # from the body, each level meets a nest that has already been flattened beneath
+            # it, so the next pair to collapse is the only pair left.
+            for cfg in reversed(list(sd.all_control_flow_regions())):
+                if isinstance(cfg, LoopRegion) and cfg.loop_variable and self._try_untile(cfg, sd):
+                    rewritten += 1
+        return rewritten
+
     def untile_fixpoint(self, sdfg: SDFG) -> int:
         """Collapse tile pairs until none is left, and return how many were collapsed.
 
         Each sweep collapses one (outer, inner) tile pair per nest; multi-level cascade and
         multi-dim tiles (where successive sweeps expose the pair that became outermost after the
-        prior collapse) unwind progressively. Iteration cap = 1 + (loop count); once a sweep
-        rewrites nothing we stop.
+        prior collapse) unwind progressively. Once a sweep rewrites nothing we stop.
         """
-        total = 0
-        max_iters = 1 + count_loops(sdfg)
-        for _ in range(max_iters):
-            rewritten_this_pass = 0
-            for sd in sdfg.all_sdfgs_recursive():
-                # INNERMOST FIRST. A cascade is collapsed one rung at a time, and the rung nearest
-                # the body is the one whose partner is unambiguous: an outer tile loop in a
-                # multi-level nest has every deeper loop as a candidate, and matching it against
-                # the wrong rung fixes a pairing the levels below then cannot undo. Working up
-                # from the body, each level meets a nest that has already been flattened beneath
-                # it, so the next pair to collapse is the only pair left.
-                for cfg in reversed(list(sd.all_control_flow_regions())):
-                    if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
-                        continue
-                    if self._try_untile(cfg, sd):
-                        rewritten_this_pass += 1
-            if rewritten_this_pass == 0:
-                break
-            total += rewritten_this_pass
+        total = self.untile_sweep(sdfg)
+        # Every collapse removes a loop, so 1 + the loops left bounds the sweeps still to come. Counted only after
+        # a productive sweep: most SDFGs hold no tile pair and never pay for the count.
+        sweeps_left = 1 + count_loops(sdfg) if total else 0
+        rewritten = total
+        while rewritten and sweeps_left:
+            rewritten = self.untile_sweep(sdfg)
+            total += rewritten
+            sweeps_left -= 1
         return total
 
     def roundtrip_recovers_maps(self, sdfg: SDFG) -> bool:
@@ -813,7 +816,10 @@ class UntileLoops(ppl.Pass):
         # be reported too -- returning None after lowering and re-lifting every map would tell the
         # caller nothing changed and let it reuse stale analyses.
         roundtrip = 0
-        take_roundtrip = self.map_roundtrip or (map_tile_pattern_present(sdfg) and self.roundtrip_recovers_maps(sdfg))
+        # Under unblock_arrays the trip is taken only when forced: the layout preparation canonicalizes right after,
+        # and canonicalize takes the trip there, so scanning for a Map tile nest here would pay for it twice.
+        take_roundtrip = self.map_roundtrip or (not self.unblock_arrays and map_tile_pattern_present(sdfg)
+                                                and self.roundtrip_recovers_maps(sdfg))
         if take_roundtrip:
             roundtrip += self._maps_to_loops(sdfg)
 
