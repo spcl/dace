@@ -28,7 +28,9 @@ import sympy
 
 import dace
 from dace import properties, symbolic
+from dace.config import Config
 from dace.dtypes import DeviceType
+from dace.ordered import OrderedSet
 import dataclasses
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, coerce_remainder_strategy
@@ -99,7 +101,7 @@ from dace.transformation.dataflow.lift_einsum import LiftEinsum
 from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusionExtended
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated, collapse_multigraph_to_nx
 from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import (NormalizeMaskedWriteTasklets,
                                                                                       NormalizeTernaryTasklets)
@@ -310,6 +312,148 @@ _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 _MAX_REFINE_ITERS = 8
 
 
+def expand_nested_sdfg_inputs_to_fixpoint(sdfg: dace.SDFG) -> int:
+    """Apply :class:`ExpandNestedSDFGInputs` until no NestedSDFG matches, exactly as
+    ``sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs)`` does.
+
+    The matcher restarts its enumeration after every application, so it re-probes every settled
+    NestedSDFG once per apply. The probe reads only the node's ``no_inline`` flag, its boundary
+    edges and the owning SDFG's descriptors; an apply writes only its own state (boundary edges,
+    connectors, threaded index reads) and its nested subtree. A refusal anywhere else still holds,
+    so only those two places are probed again, in the matcher's order (regions parent-first, states
+    and nodes in graph order).
+
+    :param sdfg: The SDFG to transform in place.
+    :returns: The number of applications.
+    """
+    xform = ExpandNestedSDFGInputs()
+    if sdfg.root_sdfg.using_explicit_control_flow and not xform.__explicit_cf_compatible__:
+        return sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
+    refused: OrderedSet[dace.nodes.NestedSDFG] = OrderedSet()
+    applied = 0
+    resume = 0
+    while True:
+        regions = list(sdfg.all_control_flow_regions(recursive=True))
+        match = None
+        for region_index in range(resume, len(regions)):
+            region = regions[region_index]
+            cfg_id = region.cfg_id
+            for state_id, block in enumerate(region.nodes()):
+                if not isinstance(block, dace.SDFGState):
+                    continue
+                for node in block.nodes():
+                    if not isinstance(node, dace.nodes.NestedSDFG) or node in refused:
+                        continue
+                    try:
+                        xform.setup_match(region.sdfg,
+                                          cfg_id,
+                                          state_id, {ExpandNestedSDFGInputs.nested_sdfg: node},
+                                          0,
+                                          override=True)
+                        accepted = xform.can_be_applied(block, 0, region.sdfg, permissive=False)
+                    except Exception as ex:  # The matcher downgrades a raising probe to a refusal
+                        if Config.get_bool('optimizer', 'match_exception'):
+                            raise
+                        print(f'WARNING: ExpandNestedSDFGInputs::can_be_applied triggered a '
+                              f'{ex.__class__.__name__} exception: {ex}')
+                        accepted = False
+                    if accepted:
+                        match = (region_index, block, node)
+                        break
+                    refused.add(node)
+                if match is not None:
+                    break
+            if match is not None:
+                break
+        if match is None:
+            return applied
+        resume, block, node = match
+        xform.apply(block, block.sdfg)
+        applied += 1
+        for stale in block.nodes():
+            refused.discard(stale)
+        for stale, stale_parent in node.sdfg.all_nodes_recursive():
+            refused.discard(stale)
+
+
+def state_fusion_extended_to_fixpoint(sdfg: dace.SDFG) -> int:
+    """Apply :class:`StateFusionExtended` until no state pair matches, exactly as
+    ``sdfg.apply_transformations_repeated(StateFusionExtended)`` does.
+
+    The matcher restarts after every fusion and so re-probes every settled pair. A probe reads the
+    pair's own states (nested SDFGs included), the interstate edges around the first state and the
+    owning SDFG's descriptors; a fusion rewrites the pair, the surviving state's neighborhood and,
+    through the moved nodes, the states enclosing this SDFG. Refusals outside those are kept, and
+    pairs are probed in the matcher's order (regions parent-first, edges of the collapsed region).
+
+    :param sdfg: The SDFG to transform in place.
+    :returns: The number of fusions.
+    """
+    xform = StateFusionExtended()
+    if sdfg.root_sdfg.using_explicit_control_flow and not xform.__explicit_cf_compatible__:
+        return sdfg.apply_transformations_repeated(StateFusionExtended, permissive=False, validate=False)
+    refused: dict[dace.SDFGState, OrderedSet[tuple[dace.SDFGState, dace.SDFGState]]] = {}
+    applied = 0
+    resume = 0
+    while True:
+        regions = list(sdfg.all_control_flow_regions(recursive=True))
+        match = None
+        for region_index in range(resume, len(regions)):
+            region = regions[region_index]
+            digraph = collapse_multigraph_to_nx(region)
+            cfg_id = -1
+            for u, v in digraph.edges:
+                first, second = digraph.nodes[u]['node'], digraph.nodes[v]['node']
+                if not isinstance(first, dace.SDFGState) or not isinstance(second, dace.SDFGState) or u is v:
+                    continue
+                pair = (first, second)
+                if first in refused and pair in refused[first]:
+                    continue
+                if cfg_id < 0:
+                    cfg_id = region.cfg_id
+                try:
+                    xform.setup_match(region.sdfg,
+                                      cfg_id,
+                                      -1, {
+                                          StateFusionExtended.first_state: first,
+                                          StateFusionExtended.second_state: second
+                                      },
+                                      0,
+                                      override=True)
+                    accepted = xform.can_be_applied(region, 0, region.sdfg, permissive=False)
+                except Exception as ex:  # The matcher downgrades a raising probe to a refusal
+                    if Config.get_bool('optimizer', 'match_exception'):
+                        raise
+                    print(f'WARNING: StateFusionExtended::can_be_applied triggered a '
+                          f'{ex.__class__.__name__} exception: {ex}')
+                    accepted = False
+                if accepted:
+                    match = (region_index, region, first, second)
+                    break
+                refused.setdefault(first, OrderedSet()).add(pair)
+                refused.setdefault(second, OrderedSet()).add(pair)
+            if match is not None:
+                break
+        if match is None:
+            return applied
+        resume, region, first, second = match
+        xform.apply(region, region.sdfg)
+        applied += 1
+        survivor = first if first in region.nodes() else second
+        touched = [first, second, survivor, *region.predecessors(survivor), *region.successors(survivor)]
+        enclosing = region.sdfg
+        while enclosing.parent_nsdfg_node is not None and isinstance(enclosing.parent, dace.SDFGState):
+            state = enclosing.parent
+            touched.append(state)
+            resume = min(resume, regions.index(state.parent_graph))
+            enclosing = state.sdfg
+        for state in touched:
+            for pair in refused.pop(state, OrderedSet()):
+                for endpoint in pair:
+                    if endpoint in refused:
+                        refused[endpoint].discard(pair)
+
+
 class _RunExpandNestedSDFGInputs(ppl.Pass):
     """Pipeline-embedded wrapper running :class:`ExpandNestedSDFGInputs` to fixed point.
 
@@ -340,7 +484,7 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
                   ``self._modified`` alone (stale analyses, early ``FixedPointPipeline``
                   exit) -- and both repairs run unconditionally.
         """
-        applied = sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
+        applied = expand_nested_sdfg_inputs_to_fixpoint(sdfg)
         # ``ExpandNestedSDFGInputs`` re-derives each widened connector descriptor by deep-copying
         # the outer array inward (``_replace_desc_and_uncollapse_dims``) and only clearing
         # ``transient`` -- so a frontend reshape/flatten ``View`` parent (e.g. ``C_0`` viewing
@@ -600,7 +744,7 @@ class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
                   ``FixedPointPipeline`` exit) -- and both preprocess steps run
                   unconditionally.
         """
-        fused = sdfg.apply_transformations_repeated(StateFusionExtended, permissive=False, validate=False)
+        fused = state_fusion_extended_to_fixpoint(sdfg)
         promoted = _promote_read_output_connectors_to_inout(sdfg)
         applied = sdfg.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG],
                                                       permissive=False,
