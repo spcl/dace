@@ -69,7 +69,7 @@ def _specialize_conditional(sdfg):
 def _single_state_stride_loop(read_subset):
     """One-state ``for i`` loop writing ``a[S*i]`` and (when ``read_subset`` given)
     reading ``a[read_subset]`` -- minimal fixture for
-    :meth:`ParallelizeUnderConstraint._symbolic_stride_condition`.
+    :meth:`ParallelizeUnderConstraint.symbolic_stride_condition`.
 
     ``read_subset=None`` = plain store, ``'S*i'`` = in-place RMW, ``'S*i - 1'`` =
     loop-carried recurrence.
@@ -129,15 +129,15 @@ def test_symbolic_stride_condition_matches_store_and_rmw_excludes_recurrence():
     inst = ParallelizeUnderConstraint()
 
     store_sdfg, store_loop = _single_state_stride_loop(read_subset=None)
-    assert inst._symbolic_stride_condition(store_loop, store_sdfg) == '(S) != 0', \
+    assert inst.symbolic_stride_condition(store_loop, store_sdfg) == '(S) != 0', \
         'a plain symbolic-stride store is parallel iff S != 0'
 
     rmw_sdfg, rmw_loop = _single_state_stride_loop(read_subset='S*i')
-    assert inst._symbolic_stride_condition(rmw_loop, rmw_sdfg) == '(S) != 0', \
+    assert inst.symbolic_stride_condition(rmw_loop, rmw_sdfg) == '(S) != 0', \
         'a same-subset read-modify-write (s171) is parallel iff S != 0'
 
     rec_sdfg, rec_loop = _single_state_stride_loop(read_subset='S*i - 1')
-    assert inst._symbolic_stride_condition(rec_loop, rec_sdfg) is None, \
+    assert inst.symbolic_stride_condition(rec_loop, rec_sdfg) is None, \
         'a loop-carried recurrence (read at a different subset) must be excluded'
 
 
