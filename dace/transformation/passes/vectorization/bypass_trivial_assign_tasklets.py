@@ -12,10 +12,10 @@ multi-dim K=1 / K=2 paths can call it directly.
 
 Two rewrites, in order:
 
-1. **Dedup** — when several trivial assign tasklets carry the same
-   ``(src.data, dst.data)`` pair (e.g. ``fp_factor`` branch lowering
-   emitting one cond-to-merge chain per arm side-by-side), collapse
-   them to ONE. Without this step the source's ``out_degree`` would
+1. **Dedup** — when several trivial assign tasklets copy the same
+   source element into the same destination element (e.g. ``fp_factor``
+   branch lowering emitting one cond-to-merge chain per arm side-by-side),
+   collapse them to ONE. Without this step the source's ``out_degree`` would
    exceed 1 and the bypass below would refuse it.
 2. **Bypass** — when at least one side is a transient AND
    ``out_degree(src) == 1`` AND ``in_degree(dst) == 1``, drop the
@@ -171,10 +171,11 @@ class BypassTrivialAssignTasklets(ppl.Pass):
         duplicate out-edges from ``src`` push its out-degree above 1,
         which would trip :meth:`_bypass_transient_assigns`'s safety
         guard (intended to keep SSA-like reassignment chains intact).
-        Keep ONE assign per unique ``(src.data, dst.data)`` pair so the
-        bypass can proceed; the other copies route into the same
-        canonical ``dst`` AccessNode (or are removed when both endpoints
-        are the same node) and the cond tile no longer fans out per arm.
+        Keep ONE assign per unique copy -- the same source element into the
+        same destination element -- so the bypass can proceed; the other
+        copies route into the same canonical ``dst`` AccessNode (or are
+        removed when both endpoints are the same node) and the cond tile no
+        longer fans out per arm.
 
         :param istate: Inner state being rewritten.
         :returns: Number of duplicate tasklets removed.
@@ -186,7 +187,8 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             if triple is None:
                 continue
             in_e, out_e = triple
-            key = (in_e.src.data, out_e.dst.data)
+            # Copies into different elements are separate writes: ``c[0] = z; c[1] = z`` keeps both.
+            key = (in_e.src.data, str(in_e.data.subset), out_e.dst.data, str(out_e.data.subset))
             keep = seen.setdefault(key, (t, in_e.src, out_e.dst))
             if keep[0] is t:
                 continue
