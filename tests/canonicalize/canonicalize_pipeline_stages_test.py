@@ -13,6 +13,7 @@
     is the same program, so numbers alone cannot tell the two apart.
 """
 import copy
+from typing import List
 
 import numpy as np
 import pytest
@@ -23,7 +24,11 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.canonicalize import CANONICALIZE_STAGES
 from dace.transformation.passes.canonicalize.pipeline import PropagateAndPrune
+from dace.transformation.passes.fuse_maps import FuseMaps
+from dace.transformation.passes.pattern_matching import PatternMatchAndApply
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -254,6 +259,22 @@ def test_canonicalize_guarded_two_stencils(av):
         assert np.allclose(out_b, exp_b) and np.allclose(out_d, exp_d)
     else:
         assert np.allclose(out_b, 5.0) and np.allclose(out_d, 5.0)
+
+
+def collect_validating_units(unit: ppl.Pass) -> List[ppl.Pass]:
+    found = [unit] if isinstance(unit, (PatternMatchAndApply, FuseMaps)) else []
+    if isinstance(unit, ppl.Pipeline):
+        for member in unit.passes:
+            found.extend(collect_validating_units(member))
+    return found
+
+
+def test_canonicalize_stage_units_leave_validation_to_the_pipeline():
+    units = [
+        found for _, factory in CANONICALIZE_STAGES for unit in factory() for found in collect_validating_units(unit)
+    ]
+    assert any(isinstance(unit, FuseMaps) for unit in units)
+    assert all(not unit.validate and not unit.validate_all for unit in units)
 
 
 if __name__ == "__main__":

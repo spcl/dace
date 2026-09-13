@@ -40,7 +40,8 @@ from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.propagate_memlets import PropagateMemlets
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
-from dace.transformation.passes.pattern_matching import (PatternApplyOnceEverywhere, PatternMatchAndApplyRepeated)
+from dace.transformation.passes.pattern_matching import (PatternApplyOnceEverywhere, PatternMatchAndApply,
+                                                         PatternMatchAndApplyRepeated)
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.canonicalize.prune_unreferenced_transients import (PruneUnreferencedTransients)
 from dace.transformation.passes.canonicalize.redundant_ordering_edge_elimination import (
@@ -2022,13 +2023,25 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('end', ppl.Pipeline([ArrayElimination()]))]
 
     # Pipeline does not propagate `progress` to subpasses, so sweep once here instead of at each call site.
-    # ``validate`` too: 49 pattern units each validate the whole SDFG, which this pipeline's own
-    # ``validate`` / ``validate_all`` already covers.
     for _, unit in s:
+        disable_unit_validation(unit)
         if isinstance(unit, PatternMatchAndApplyRepeated):
             unit.progress = False
-            unit.validate = False
     return s
+
+
+def disable_unit_validation(unit: ppl.Pass) -> None:
+    """Turn off a stage unit's own validation, nested pipeline members included.
+
+    This pipeline's ``validate`` / ``validate_all`` own validation: a unit validating the whole SDFG itself
+    repeats that walk, and validation is not read-only (``Fill.validate`` drops an unconnected input).
+    """
+    if isinstance(unit, (PatternMatchAndApply, FuseMaps)):
+        unit.validate = False
+        unit.validate_all = False
+    if isinstance(unit, ppl.Pipeline):
+        for member in unit.passes:
+            disable_unit_validation(member)
 
 
 #: A stage factory returns that stage's fresh passes, in order.
