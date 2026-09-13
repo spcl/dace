@@ -3,10 +3,67 @@
 import pytest
 import dace
 import numpy as np
-from dace.sdfg.state import ConditionalBlock, UnstructuredControlFlow
+from dace.sdfg.state import ConditionalBlock, LoopRegion, UnstructuredControlFlow
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising, region_has_cycle
+
+
+def test_a_chain_with_a_diamond_is_acyclic():
+    sdfg = dace.SDFG('diamond')
+    top = sdfg.add_state('top', is_start_block=True)
+    left = sdfg.add_state('left')
+    right = sdfg.add_state('right')
+    bottom = sdfg.add_state('bottom')
+    sdfg.add_edge(top, left, dace.InterstateEdge(condition='N > 0'))
+    sdfg.add_edge(top, right, dace.InterstateEdge(condition='N <= 0'))
+    sdfg.add_edge(left, bottom, dace.InterstateEdge())
+    sdfg.add_edge(right, bottom, dace.InterstateEdge())
+
+    assert not region_has_cycle(sdfg)
+
+
+def test_a_self_edge_is_a_cycle():
+    sdfg = dace.SDFG('self_edge')
+    entry = sdfg.add_state('entry', is_start_block=True)
+    body = sdfg.add_state('body')
+    sdfg.add_edge(entry, body, dace.InterstateEdge())
+    sdfg.add_edge(body, body, dace.InterstateEdge(condition='i < N', assignments={'i': 'i + 1'}))
+
+    assert region_has_cycle(sdfg)
+
+
+def test_a_cycle_unreachable_from_the_source_is_a_cycle():
+    sdfg = dace.SDFG('detached_cycle')
+    sdfg.add_state('entry', is_start_block=True)
+    first = sdfg.add_state('first')
+    second = sdfg.add_state('second')
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    sdfg.add_edge(second, first, dace.InterstateEdge())
+
+    assert region_has_cycle(sdfg)
+
+
+def test_raising_lifts_a_back_edge_loop_into_a_loop_region():
+    sdfg = dace.SDFG('back_edge_loop')
+    sdfg.add_array('A', [10], dace.int64)
+    start = sdfg.add_state('start', is_start_block=True)
+    guard = sdfg.add_state('guard')
+    body = sdfg.add_state('body')
+    after = sdfg.add_state('after')
+    sdfg.add_edge(start, guard, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard, body, dace.InterstateEdge(condition='i < N'))
+    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard, after, dace.InterstateEdge(condition='i >= N'))
+    writer = body.add_tasklet('write', {}, {'out': sdfg.arrays['A'].dtype}, 'out = i')
+    body.add_edge(writer, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+
+    FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+
+    loops = [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
+    assert len(loops) == 1
+    assert loops[0].loop_variable == 'i'
+    assert not region_has_cycle(sdfg)
 
 
 @pytest.mark.parametrize('lowered_returns', [False, True])

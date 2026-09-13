@@ -12,11 +12,29 @@ from dace import properties
 from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock, UnstructuredControlFlow
+from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion,
+                             ReturnBlock, UnstructuredControlFlow)
 from dace.sdfg.utils import dfs_conditional
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_lifting import LoopLifting
+
+
+def region_has_cycle(region: AbstractControlFlowRegion) -> bool:
+    """Whether the blocks of ``region`` form a cycle, self-edges included (Kahn's algorithm over the whole graph)."""
+    in_degree: Dict[ControlFlowBlock, int] = {block: 0 for block in region.nodes()}
+    for edge in region.edges():
+        in_degree[edge.dst] += 1
+    ready: List[ControlFlowBlock] = [block for block, degree in in_degree.items() if degree == 0]
+    removed = 0
+    while ready:
+        block = ready.pop()
+        removed += 1
+        for edge in region.out_edges(block):
+            in_degree[edge.dst] -= 1
+            if in_degree[edge.dst] == 0:
+                ready.append(edge.dst)
+    return removed != len(in_degree)
 
 
 @properties.make_properties
@@ -301,7 +319,9 @@ class ControlFlowRaising(ppl.Pass):
         lifted_branches = 0
         for sdfg in top_sdfg.all_sdfgs_recursive():
             lifted_returns += self._lift_returns(sdfg)
-            lifted_loops += sdfg.apply_transformations_repeated([LoopLifting], validate_all=False, validate=False)
+            # Every loop LoopLifting accepts closes a back edge, so the VF2 sweep can only match in a cyclic region.
+            if any(region_has_cycle(region) for region in sdfg.all_control_flow_regions(recursive=True)):
+                lifted_loops += sdfg.apply_transformations_repeated([LoopLifting], validate_all=False, validate=False)
             lifted_unstructured += self._lift_unstructured(sdfg)
             lifted_branches += self._lift_conditionals(sdfg)
         if lifted_branches == 0 and lifted_loops == 0 and lifted_unstructured == 0 and lifted_returns == 0:
