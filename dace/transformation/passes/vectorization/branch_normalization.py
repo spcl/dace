@@ -29,6 +29,29 @@ from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import
 from dace.ordered import OrderedSet
 
 
+def upward_exposed_reads(state: dace.SDFGState) -> OrderedSet[str]:
+    """Containers ``state`` reads at a value it did not produce itself.
+
+    A read through an access node that the same state writes whole first (one element, no WCR) sees that
+    write, never a value from before the state, so it is not counted.
+
+    :param state: the state to inspect.
+    :returns: the names of the containers read before any covering write in ``state``.
+    """
+    read_set, _ = state.read_and_write_sets()
+    exposed: OrderedSet[str] = OrderedSet()
+    for node in state.data_nodes():
+        if node.data not in read_set or node.data in exposed:
+            continue
+        if all(edge.data.is_empty() for edge in state.out_edges(node)):
+            continue
+        writes = [edge for edge in state.in_edges(node) if not edge.data.is_empty()]
+        if writes and all(edge.data.wcr is None for edge in writes) and node.desc(state.sdfg).total_size == 1:
+            continue
+        exposed.add(node.data)
+    return exposed
+
+
 def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int, set[str]]:
     """Per-arm array writes that must be rerouted to a private transient.
 
@@ -58,13 +81,13 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int
     for s in arm_states.values():
         inside_states |= s
 
-    # Outside-read set (rule 2).
+    # Outside-read set (rule 2). Only a read that can see a value from before its own state counts: a copy of an
+    # arm elsewhere that recomputes a temporary before reading it cannot observe this arm's write.
     outside_reads: set[str] = set()
     for state in local_sdfg.all_states():
         if state in inside_states:
             continue
-        read_set, _ = state.read_and_write_sets()
-        outside_reads |= read_set
+        outside_reads.update(upward_exposed_reads(state))
 
     # Interstate edges (>=1 endpoint outside cb): read_and_write_sets misses
     # conditions / assignment RHS, so tokenise them against array names.
@@ -99,8 +122,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int
         reads: set[str] = set()
         if isinstance(body, ControlFlowRegion):
             for state in arm_states[i]:
-                r, _ = state.read_and_write_sets()
-                reads |= r
+                reads.update(upward_exposed_reads(state))
         arm_reads[i] = reads
 
     # Classify per-arm writes.

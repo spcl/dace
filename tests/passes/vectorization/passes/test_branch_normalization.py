@@ -298,6 +298,58 @@ def test_escape_writes_cross_arm_read_escapes_writer():
     assert plan[1] == set(), plan  # arm 1 has no writes that escape
 
 
+def recompute_then_read(region: ControlFlowRegion, label: str, temporary: str, write_target: str) -> dace.SDFGState:
+    """A state writing ``temporary`` and reading it back through the same access node."""
+    s = region.add_state(label)
+    tmp = s.add_access(temporary)
+    wr = s.add_access(write_target)
+    produce = s.add_tasklet(f"produce_{label}", set(), {"_o"}, "_o = 2.0")
+    consume = s.add_tasklet(f"consume_{label}", {"_i"}, {"_o"}, "_o = -_i")
+    s.add_edge(produce, "_o", tmp, None, dace.Memlet(f"{temporary}[0]"))
+    s.add_edge(tmp, None, consume, "_i", dace.Memlet(f"{temporary}[0]"))
+    s.add_edge(consume, "_o", wr, None, dace.Memlet(f"{write_target}[0]"))
+    return s
+
+
+def test_escape_writes_transient_recomputed_before_every_outside_read_stays_private():
+    """A later copy of the arm writes ``T`` before reading it, so no read outside ``cb`` can see this arm's ``T``."""
+    sdfg = dace.SDFG("escape_recomputed_outside")
+    sdfg.add_array("T", shape=(1, ), dtype=dace.float64, transient=True)
+    sdfg.add_array("OUT", shape=(1, ), dtype=dace.float64)
+    sdfg.add_symbol("c", dace.bool_)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    cb = ConditionalBlock("cb")
+    sdfg.add_node(cb)
+    sdfg.add_edge(entry, cb, dace.InterstateEdge())
+    cb.add_branch(CodeBlock("c"), _build_arm_with_writes(sdfg, "arm0", ["T"]))
+    sdfg.add_edge(cb, recompute_then_read(sdfg, "after_cb", "T", "OUT"), dace.InterstateEdge())
+
+    plan = compute_arm_escape_writes(sdfg, cb)
+
+    assert plan[0] == set(), plan
+
+
+def test_escape_writes_other_arm_recomputing_the_transient_does_not_escape_the_writer():
+    """The else arm recomputes ``T`` before reading it, so the if arm's write of ``T`` never reaches it."""
+    sdfg = dace.SDFG("escape_recomputed_other_arm")
+    sdfg.add_array("T", shape=(1, ), dtype=dace.float64, transient=True)
+    sdfg.add_array("OUT", shape=(1, ), dtype=dace.float64)
+    sdfg.add_symbol("c", dace.bool_)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    cb = ConditionalBlock("cb")
+    sdfg.add_node(cb)
+    sdfg.add_edge(entry, cb, dace.InterstateEdge())
+    cb.add_branch(CodeBlock("c"), _build_arm_with_writes(sdfg, "arm0", ["T"]))
+    else_cfr = ControlFlowRegion("arm1", sdfg=sdfg)
+    recompute_then_read(else_cfr, "arm1_s", "T", "OUT")
+    cb.add_branch(None, else_cfr)
+
+    plan = compute_arm_escape_writes(sdfg, cb)
+
+    assert "T" not in plan[0], plan
+    assert plan[1] == {"OUT"}, plan
+
+
 def test_escape_writes_interstate_edge_cond_outside_cb_is_a_read():
     """Rule 2 extension: an interstate-edge condition outside ``cb`` that
     references a transient counts as a read for escape purposes."""
