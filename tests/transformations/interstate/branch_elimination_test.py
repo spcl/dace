@@ -5,7 +5,7 @@ import dace
 import pytest
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import branch_elimination
 from dace.transformation.passes import ConstantPropagation, EliminateBranches
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
@@ -2517,6 +2517,37 @@ def test_can_be_applied_on_top_level_and_nested_conditional():
         outer.apply_transformations_repeated(branch_elimination.BranchElimination)
     output = buf.getvalue()
     assert "AssertionError" not in output, output
+
+
+def loop_guarded_by_its_unregistered_iterator() -> tuple[dace.SDFG, ConditionalBlock, dace.SDFGState]:
+    """``for i in [0, 8): if i < 5: a[i] = 1.0``, with ``i`` bound by the loop and absent from ``sdfg.symbols``."""
+    sdfg = dace.SDFG('iterator_guard')
+    sdfg.add_array('a', [8], dace.float64)
+    loop = LoopRegion('L', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    guard = ConditionalBlock('guard', sdfg=sdfg)
+    loop.add_node(guard, is_start_block=True)
+    branch = ControlFlowRegion('then', sdfg=sdfg)
+    guard.add_branch(CodeBlock('i < 5'), branch)
+    body = branch.add_state('write', is_start_block=True)
+    tasklet = body.add_tasklet('one', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_write('a'), None, dace.Memlet('a[i]'))
+    sdfg.reset_cfg_list()
+    return sdfg, guard, body
+
+
+def test_a_guard_on_an_enclosing_loop_iterator_is_reported_as_iterator_dependent():
+    """The refusal ``can_be_applied`` bases on this: a missed iterator lets a guarded write run out of bounds."""
+    sdfg, guard, _ = loop_guarded_by_its_unregistered_iterator()
+    sut = branch_elimination.BranchElimination()
+    sut.setup_match(sdfg,
+                    guard.parent_graph.cfg_id,
+                    -1, {branch_elimination.BranchElimination.conditional: guard},
+                    0,
+                    override=True)
+
+    assert 'i' not in sdfg.symbols
+    assert sut.condition_has_map_param()
 
 
 if __name__ == "__main__":

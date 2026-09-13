@@ -1830,7 +1830,9 @@ class BranchElimination(transformation.MultiStateTransformation):
         # Ignore free symbols appearing in functionc alls.
         # e.g. _for_it_32 < klev is a real free symbol and is a problem
         # A[_for_it_32] (which becomes A(_for_it_32)) like a function call si not a problem
-        free_syms = self.get_free_syms_outside_calls(cond_code_symexpr, self.conditional.sdfg.symbols)
+        # An enclosing iterator is declared by its scope, never by ``sdfg.symbols``: filter against both.
+        known_symbols = OrderedSet(self.conditional.sdfg.symbols) | all_params
+        free_syms = self.get_free_syms_outside_calls(cond_code_symexpr, known_symbols)
 
         nodes_to_check = {self.conditional}
         while nodes_to_check:
@@ -1841,8 +1843,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                     if k in free_syms:
                         # in case if Eq((x + 1 > b), 1) sympy will have a problem
                         expr = pystr_to_symbolic(v, simplify=False)
-                        free_syms = free_syms.union(
-                            self.get_free_syms_outside_calls(expr, self.conditional.sdfg.symbols))
+                        free_syms = free_syms.union(self.get_free_syms_outside_calls(expr, known_symbols))
             nodes_to_check = nodes_to_check.union({ie.src for ie in ies})
 
         return all_params.intersection(free_syms) != set()
