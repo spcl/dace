@@ -13,6 +13,7 @@ from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, make_properties, DataProperty, SubsetProperty, SymbolicProperty,
                              DebugInfoProperty, LambdaProperty)
+from dace.sdfg.memlet_schedule import CopyOnAccess, MemletSchedule
 
 if TYPE_CHECKING:
     import dace.sdfg.graph
@@ -53,6 +54,15 @@ class Memlet(object):
                              desc='If True, always generates non-conflicting '
                              '(non-atomic) writes in resulting code')
     allow_oob = Property(dtype=bool, default=False, desc='Bypass out-of-bounds validation')
+    schedule = Property(dtype=MemletSchedule,
+                        default=CopyOnAccess(),
+                        from_json=lambda obj, context=None: MemletSchedule.from_json(obj, context),
+                        serialize_if=lambda memlet: not memlet.schedule.is_default,
+                        desc='How this (leaf) memlet\'s addressing is realized in generated code (see '
+                        'dace.sdfg.memlet_schedule). The default, CopyOnAccess, evaluates the full offset at every '
+                        'access; a LoopCursor schedule advances a loop-carried cursor once per iteration of an '
+                        'enclosing loop instead. Descriptive only: schedules are lowered to ordinary SDFG '
+                        'constructs in the code-generation window.')
 
     guid = Property(dtype=str, allow_none=False)
 
@@ -140,6 +150,7 @@ class Memlet(object):
         self.wcr_nonatomic = wcr_nonatomic
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
+        self.schedule = CopyOnAccess()
 
         self.guid = generate_element_id(self)
 
@@ -157,6 +168,7 @@ class Memlet(object):
                         wcr_nonatomic=memlet.wcr_nonatomic,
                         allow_oob=memlet.allow_oob)
         result._is_data_src = memlet._is_data_src
+        result.schedule = memlet.schedule.copy()
         return result
 
     def to_json(self):
@@ -216,6 +228,7 @@ class Memlet(object):
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
+        node._schedule = dcpy(self._schedule, memo=memo)
         node._guid = generate_element_id(node)
 
         # TODO: Since we set the `.sdfg` and friends to `None` we should probably also set this to `None`.

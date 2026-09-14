@@ -781,8 +781,11 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(dst_nodedesc, data.Reference) and orig_vconn == 'set':
                 srcptr = self.ptr(src_node.data, src_nodedesc, sdfg)
                 defined_type, _ = self._dispatcher.defined_vars.get(srcptr)
+                # A reference is a plain pointer, but it may be set from a read-only (const-qualified) argument,
+                # e.g. an input array of a nested SDFG; cast to the reference's own pointer type.
                 stream.write(
-                    "%s = %s;" % (vconn, cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)),
+                    "%s = (%s)(%s);" % (vconn, dtypes.pointer(dst_nodedesc.dtype).ctype,
+                                        cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)),
                     cfg,
                     state_id,
                     [src_node, dst_node],
