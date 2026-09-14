@@ -224,10 +224,12 @@ def get_gpu_chiplet_count() -> Optional[int]:
         finally:
             amdsmi.amdsmi_shut_down()
     except Exception as e:
-        warnings.warn(f'Could not determine the number of GPU chiplets through `amdsmi`: {e}. The '
-                      'distribution of thread-blocks over chiplets is disabled. Set the '
-                      '`compiler.cuda.chiplet_number` configuration entry to the number of chiplets of '
-                      'the GPU (6 on MI300A) to enable it.')
+        warnings.warn(
+            f'Could not determine the number of GPU chiplets through `amdsmi`: {e}. The '
+            'distribution of thread-blocks over chiplets is disabled. Set the '
+            '`compiler.cuda.chiplet_number` configuration entry to the number of chiplets of '
+            'the GPU (6 on MI300A) to enable it.'
+        )
         return None
 
 

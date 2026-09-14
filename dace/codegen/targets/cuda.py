@@ -2436,8 +2436,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         Config.set('compiler', 'cuda', 'chiplet_number', value=chiplets)
         return chiplets
 
-    def chiplet_count(self, kernelmap_entry: nodes.MapEntry, is_persistent: bool, has_dtbmap: bool,
-                      extra_grid_dims: List[symbolic.SymbolicType]) -> int:
+    def chiplet_count(
+        self,
+        kernelmap_entry: nodes.MapEntry,
+        is_persistent: bool,
+        has_dtbmap: bool,
+        extra_grid_dims: List[symbolic.SymbolicType],
+    ) -> int:
         """
         Returns the number of chiplets (XCDs on AMD GPUs) the grid of the given kernel is distributed over,
         or 1 if the distribution does not apply to it.
@@ -2458,9 +2463,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         """
         chiplets = int(Config.get('compiler', 'cuda', 'chiplet_number'))
         if chiplets < 0:
-            raise ValueError(f'Invalid number of chiplets ({chiplets}) configured. Modify the '
-                             '`compiler.cuda.chiplet_number` configuration entry to a positive number, or to 0 '
-                             'to detect the number of chiplets of the GPU automatically.')
+            raise ValueError(
+                f'Invalid number of chiplets ({chiplets}) configured. Modify the '
+                '`compiler.cuda.chiplet_number` configuration entry to a positive number, or to 0 '
+                'to detect the number of chiplets of the GPU automatically.'
+            )
 
         # A kernel that opts out of the distribution is left alone without any diagnostics, and without
         # querying the GPU for the number of its chiplets
@@ -2474,9 +2481,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             return 1
 
         if self.backend != 'hip':
-            warnings.warn(f'`compiler.cuda.chiplet_number` is set to {chiplets}, but the "{self.backend}" backend '
-                          'targets GPUs without chiplets. Distributing the grid over chiplets relies on the '
-                          'round-robin thread-block scheduling of multi-chiplet AMD GPUs.')
+            warnings.warn(
+                f'`compiler.cuda.chiplet_number` is set to {chiplets}, but the "{self.backend}" backend '
+                'targets GPUs without chiplets. Distributing the grid over chiplets relies on the '
+                'round-robin thread-block scheduling of multi-chiplet AMD GPUs.'
+            )
 
         skip_reason = None
         if is_persistent:
@@ -2487,8 +2496,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             skip_reason = 'it contains nested device maps'
 
         if skip_reason is not None:
-            warnings.warn(f'Not distributing the grid of kernel "{kernelmap_entry.map.label}" over {chiplets} '
-                          f'chiplets because {skip_reason}.')
+            warnings.warn(
+                f'Not distributing the grid of kernel "{kernelmap_entry.map.label}" over {chiplets} '
+                f'chiplets because {skip_reason}.'
+            )
             return 1
 
         return chiplets
@@ -2733,9 +2744,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             original_grid_size = grid_size
             grid_size = [self._kernel_chiplet_chunk * self._kernel_chiplet_count] + grid_size[1:]
             if Config.get_bool('debugprint'):
-                print(f'Distributing the grid of kernel "{kernelmap_entry.map.label}" over '
-                      f'{self._kernel_chiplet_count} chiplets, adjusting its size from {original_grid_size} to '
-                      f'{grid_size}.')
+                print(
+                    f'Distributing the grid of kernel "{kernelmap_entry.map.label}" over '
+                    f'{self._kernel_chiplet_count} chiplets, adjusting its size from {original_grid_size} to '
+                    f'{grid_size}.'
+                )
 
         return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
 
@@ -2820,8 +2833,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     # Contiguous partitioning: the chiplet of a block is ``blockIdx.x % chiplets`` and its
                     # slot within that chiplet is ``blockIdx.x / chiplets``, so chiplet k owns the blocks
                     # [k * chunk .. (k + 1) * chunk - 1] of this dimension (see ``get_kernel_dimensions``)
-                    block_expr = '((blockIdx.x %% %d) * %s + blockIdx.x / %d)' % (chiplet_count, _topy(chiplet_chunk),
-                                                                                  chiplet_count)
+                    block_expr = '((blockIdx.x %% %d) * %s + blockIdx.x / %d)' % (
+                        chiplet_count,
+                        _topy(chiplet_chunk),
+                        chiplet_count,
+                    )
                 else:
                     # If we defaulted to a fixed number of threads per block, offset by thread ID
                     block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))
@@ -2885,9 +2901,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     condition += '%s >= %s' % (v, _topy(minel))
                 # The grid of the distributed dimension is padded to a multiple of the number of
                 # chiplets, so its trailing blocks always have to be masked out
-                if (i >= 3 or (chiplet_count > 1 and i == 0)
-                        or ((dsym_end[i] < maxel) != False and ((dsym_end[i] % self._block_dims[i]) != 0) == True)
-                        or (self._block_dims[i] > maxel) == True):
+                if (
+                    i >= 3
+                    or (chiplet_count > 1 and i == 0)
+                    or ((dsym_end[i] < maxel) != False and ((dsym_end[i] % self._block_dims[i]) != 0) == True)
+                    or (self._block_dims[i] > maxel) == True
+                ):
                     if len(condition) > 0:
                         condition += ' && '
                     condition += '%s < %s' % (v, _topy(maxel + 1))
@@ -2904,24 +2923,28 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # of the distributed dimension is introduced at grid level, so its condition is needed either way.
         # It is not added to ``_kernel_grid_conditions`` because those are only re-emitted around grid
         # synchronization, which requires nested device maps, and those disable the distribution.
-        emit_chiplet_condition = (chiplet_count > 1 and has_tbmap and not has_dtbmap
-                                  and node.map.schedule != dtypes.ScheduleType.GPU_Persistent)
+        emit_chiplet_condition = (
+            chiplet_count > 1
+            and has_tbmap
+            and not has_dtbmap
+            and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
+        )
         if emit_chiplet_condition:
-            kernel_stream.write('if (%s < %s) {' % (kernel_map.params[-1], _topy(krange.max_element()[0] + 1)), cfg,
-                                state_id, scope_entry)
+            kernel_stream.write(
+                'if (%s < %s) {' % (kernel_map.params[-1], _topy(krange.max_element()[0] + 1)),
+                cfg,
+                state_id,
+                scope_entry,
+            )
 
-        self._dispatcher.dispatch_subgraph(sdfg,
-                                           cfg,
-                                           dfg_scope,
-                                           state_id,
-                                           function_stream,
-                                           kernel_stream,
-                                           skip_entry_node=True)
+        self._dispatcher.dispatch_subgraph(
+            sdfg, cfg, dfg_scope, state_id, function_stream, kernel_stream, skip_entry_node=True
+        )
 
         if emit_chiplet_condition:
             kernel_stream.write('}', cfg, state_id, node)
 
-        if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
+        if not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
             for _ in kernel_map.params:
                 kernel_stream.write('}', cfg, state_id, node)
 
