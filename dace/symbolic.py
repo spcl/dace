@@ -1784,10 +1784,7 @@ operator_int_floor = __int_floor
 
 
 class CMod(DaceFunction):
-    """ C's modulo, which ``%`` means everywhere in an SDFG: the quotient truncates toward zero, so the remainder
-        takes the dividend's sign (``CMod(-7, 3) == -1``). SymPy's ``Mod`` is the floored modulo
-        (``Mod(-7, 3) == 2``); the two agree on a nonnegative dividend and a positive divisor, where ``CMod`` becomes
-        ``Mod``. See :ref:`division-modulo`. """
+    """ C's truncating modulo, the meaning of ``%`` in an SDFG. """
 
     @classmethod
     def eval(cls, x, y):
@@ -1800,8 +1797,6 @@ class CMod(DaceFunction):
         return self.args[0].is_integer and self.args[1].is_integer
 
 
-#: Frontend modulo spellings (see :ref:`division-modulo`): Fortran ``MOD`` truncates like C, Python's ``%`` and
-#: Fortran ``MODULO`` floor like SymPy's ``Mod``.
 MODULO_FUNCTIONS = {'CMod': CMod, 'FtnMod': CMod, 'Mod': sympy.Mod, 'PyMod': sympy.Mod, 'FtnModulo': sympy.Mod}
 
 
@@ -4103,8 +4098,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return cpf_lowering.c_common_type(types)
 
     def _print_Mod(self, expr):
-        # SymPy's floored Mod. ``%`` is C's (CMod) and agrees with it only on a nonnegative dividend and a positive
-        # divisor; printed as ``%`` anywhere else it would read back, and run, with the other rounding.
+        # Floored; ``%`` is C's and agrees only on a nonnegative dividend and a positive divisor.
         dividend, divisor = expr.args
         if dividend.is_nonnegative and divisor.is_positive:
             return '((%s) %% (%s))' % (self._print(dividend), self._print(divisor))

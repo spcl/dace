@@ -1677,9 +1677,7 @@ class MPIResolver(ast.NodeTransformer):
 
 
 class ModuloConverter(ast.NodeTransformer):
-    """ Spells Python's ``a % b`` as ``PyMod(a, b)``. A bare ``%`` in an SDFG is C's modulo, which truncates, while
-        Python's floors (see :ref:`division-modulo`), so every tasklet, memlet and condition built from the program
-        keeps Python's semantics. String formatting (``'%d' % x``) is left alone. """
+    """ Rewrites Python's ``a % b`` to ``PyMod(a, b)``, since a bare ``%`` in an SDFG is C's. """
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
         node = self.generic_visit(node)
@@ -1796,7 +1794,6 @@ def preprocess_dace_program(f: Callable[..., Any],
                 print(astutils.unparse(src_ast))
             raise
 
-    # After constant folding, which evaluates a constant ``%`` with Python's own semantics.
     src_ast = ModuloConverter().visit(src_ast)
 
     try:

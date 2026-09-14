@@ -1277,10 +1277,6 @@ class CPPUnparser:
         "BitAnd": "&",
         "Mod": "%"
     }
-    # ``//`` is Python's floor division, which C cannot write infix: C's ``/`` truncates toward zero
-    # (``-32 // 7`` is ``-5``, C gives ``-4``), and ``ifloor(a / b)`` floors a quotient that has already
-    # truncated on integers. ``py_floor`` dispatches on the operand type. A tasklet's ``%`` is C's and
-    # stays infix; a frontend that means another modulo calls it by name (see :ref:`division-modulo`).
     funcops = {
         "FloorDiv": (",", "py_floor"),
         "MatMult": (",", "dace::gemm"),
@@ -1524,8 +1520,6 @@ class CPPUnparser:
         'im': 'dace::math::im',
         **cpf_lowering.RUNTIME_QUALIFIED_MATH,
     }
-    # The modulo functions a frontend spells by name, and their runtime helpers (see :ref:`division-modulo`).
-    # ``Mod`` is SymPy's floored modulo, printed by name when it does not agree with C's ``%``.
     modulo_calls = {
         "CMod": "c_mod",
         "FtnMod": "ftn_mod",
