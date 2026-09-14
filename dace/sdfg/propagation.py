@@ -1296,6 +1296,23 @@ def _propagate_state_border_memlets(state: 'SDFGState', border_memlets, arrays) 
                                                                         propagated, arrays[array_name])
 
 
+def reshaped_across_boundary(inner: data.Data, outer_subset: subsets.Subset,
+                             symbol_mapping: 'dict[str, symbolic.SymbolicType]') -> bool:
+    """
+    True when a connector's inner extents provably differ from the outer subset it binds, at the same rank.
+
+    The nested SDFG then reads the memory through other strides (the batched einsum lowering sees an
+    (N, 4, 8) array as (B, 8, 4)), so its indices are not outer indices and cannot be written back.
+    """
+    outer = outer_subset.size()
+    if len(inner.shape) != len(outer):
+        return False
+    mapping = {pystr_to_symbolic(name): pystr_to_symbolic(value) for name, value in symbol_mapping.items()}
+    return any(
+        symbolic.equal(sympy.sympify(pystr_to_symbolic(extent)).subs(mapping, simultaneous=True), size) is False
+        for extent, size in zip(inner.shape, outer))
+
+
 def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState', nsdfg_node: nodes.NestedSDFG):
     """
     Propagate memlets out of a nested sdfg.
@@ -1360,6 +1377,10 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
+            if reshaped_across_boundary(sdfg.arrays[iedge.dst_conn], iedge.data.subset, nsdfg_node.symbol_mapping):
+                iedge.data.volume = 0
+                iedge.data.dynamic = True
+                continue
             try:
                 iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
                 # If no appropriate memlet found, use array dimension
@@ -1379,6 +1400,10 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
         if oedge.src_conn in border_memlets['out']:
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
+                continue
+            if reshaped_across_boundary(sdfg.arrays[oedge.src_conn], oedge.data.subset, nsdfg_node.symbol_mapping):
+                oedge.data.volume = 0
+                oedge.data.dynamic = True
                 continue
             try:
                 oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
