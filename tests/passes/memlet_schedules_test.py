@@ -541,8 +541,10 @@ def test_access_node_inside_map_is_a_leaf():
     sdfg.validate()
     state = next(iter(sdfg.all_states()))
     # The map-entry -> tmp edge now reads the flat reference; the outer edge was re-propagated over the map.
-    inner = [e for e in state.edges() if isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == 'tmp'
-             and not isinstance(e.src, dace.nodes.AccessNode)][0]
+    inner = [
+        e for e in state.edges() if isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == 'tmp'
+        and not isinstance(e.src, dace.nodes.AccessNode)
+    ][0]
     cur, init, step = _cursor_of(_loops(sdfg)[0], 'A')
     assert inner.data.data == '__dace_flat_A' and str(inner.data.subset) == f'{cur} + j'
     outer = state.memlet_path(inner)[0]

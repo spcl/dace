@@ -784,8 +784,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 # A reference is a plain pointer, but it may be set from a read-only (const-qualified) argument,
                 # e.g. an input array of a nested SDFG; cast to the reference's own pointer type.
                 stream.write(
-                    "%s = (%s)(%s);" % (vconn, dtypes.pointer(dst_nodedesc.dtype).ctype,
-                                        cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)),
+                    "%s = (%s)(%s);" % (vconn, dtypes.pointer(
+                        dst_nodedesc.dtype).ctype, cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)),
                     cfg,
                     state_id,
                     [src_node, dst_node],

@@ -255,7 +255,11 @@ def schedulable_array(desc: Optional[dt.Data]) -> bool:
     return isinstance(desc, dt.Array) and not isinstance(desc, dt.View)
 
 
-def decompose(desc: dt.Data, memlet: Memlet, loop: LoopRegion, inner: Set[str], lanes: Set[str],
+def decompose(desc: dt.Data,
+              memlet: Memlet,
+              loop: LoopRegion,
+              inner: Set[str],
+              lanes: Set[str],
               outer: Optional[Set[str]] = None) -> Optional[OffsetDecomposition]:
     """Decompose ``memlet``'s base offset w.r.t. ``loop`` (see module docstring). ``None`` if the memlet is
     not schedulable against this loop: dynamic, offset not affine in the loop variable, step depending on
@@ -514,8 +518,8 @@ class _CursorTable:
         base_wo_v = sp.expand(class_base - (v * delta if v is not None else 0))
         return (loop.label, array, dtype, share_key, str(step), str(base_wo_v))
 
-    def cursor_for(self, loop: LoopRegion, array: str, dtype: dtypes.typeclass, class_base: sp.Basic,
-                   anchor: sp.Basic, share_key: Optional[str]) -> Tuple[str, sp.Basic]:
+    def cursor_for(self, loop: LoopRegion, array: str, dtype: dtypes.typeclass, class_base: sp.Basic, anchor: sp.Basic,
+                   share_key: Optional[str]) -> Tuple[str, sp.Basic]:
         """Return (creating if needed) the cursor symbol of ``loop`` that tracks ``class_base`` -- an expression
         affine in the loop variable and free of symbols defined inside the loop body -- together with the
         nest-invariant ``anchor`` the cursor additionally holds (the anchor requested here if the cursor is
@@ -657,8 +661,11 @@ def _reroute(state: SDFGState, edge: MultiConnectorEdge[Memlet], new_root: nodes
         state.remove_node(old_root)
 
 
-def lower_loop_cursors(sdfg: SDFG, entries: List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]],
-                       assume_int32: bool = False, chain_outer_loops: bool = True, **_) -> Dict[str, int]:
+def lower_loop_cursors(sdfg: SDFG,
+                       entries: List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]],
+                       assume_int32: bool = False,
+                       chain_outer_loops: bool = True,
+                       **_) -> Dict[str, int]:
     """Lower the :class:`~dace.sdfg.memlet_schedule.LoopCursor` schedules of one SDFG (see module docstring).
 
     :param sdfg: The SDFG owning the loops and memlets.
