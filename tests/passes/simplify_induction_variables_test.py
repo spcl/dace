@@ -98,6 +98,19 @@ def test_keeps_assignment_when_iv_live_outside_loop():
     assert any('j' in e.data.assignments for e in loop.all_interstate_edges())
 
 
+def test_a_derived_iv_live_after_the_loop_folds_once_and_a_rerun_reports_no_change():
+    """The kept assignment is all a rerun finds. Counting its no-op substitution as a change kept simplify's
+    fixed-point pipeline from ever converging (quantum espresso's cegterg looped for hours)."""
+    sdfg, loop = _build_derived_iv_sdfg()
+    post = sdfg.add_state('post')
+    sdfg.add_edge(loop, post, dace.InterstateEdge(assignments={'out': 'j'}))
+
+    p = SimplifyInductionVariables()
+    assert p.apply_pass(sdfg, {}) == 1
+    assert p.apply_pass(sdfg, {}) is None
+    assert any('j' in e.data.assignments for e in loop.all_interstate_edges())
+
+
 def test_chained_derived_ivs():
     sdfg = dace.SDFG('chain')
     sdfg.add_symbol('N', dace.int64)

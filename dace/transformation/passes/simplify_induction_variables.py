@@ -19,12 +19,13 @@ Scope is limited to:
   * The defining assignment must be loop-invariant in its scale and offset;
     guaranteed by the detection pass.
 """
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import sympy
 
 from dace import SDFG, properties, symbolic
 from dace.ordered import OrderedSet
+from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -281,6 +282,9 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
         basis = iv.basis
         if basis is None:
             continue
+        dead = _symbol_is_dead_outside_loop(loop, name)
+        if not dead and not loop_reads_symbol(loop, name):
+            continue  # already folded: only the kept assignment is left, so a rerun must not report a change
         # Build the replacement: scale * basis + offset, parenthesized so later
         # string-based substitutions don't capture adjacent operators.
         replacement = f'({iv.scale} * ({basis.name}) + ({iv.offset}))'
@@ -291,7 +295,7 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
         loop.replace_dict({name: replacement}, replace_keys=False)
 
         # Decide whether the defining assignment is dead.
-        if _symbol_is_dead_outside_loop(loop, name):
+        if dead:
             for edge in iv_edge_sites[name]:
                 edge.data.assignments.pop(name, None)
             # If a data descriptor with the same name exists and is now
@@ -414,6 +418,30 @@ def _state_reads_symbol(state, name: str) -> bool:
             if code_str and _name_in_expr_string(name, code_str):
                 return True
     return False
+
+
+def header_code(block: Any) -> List[CodeBlock]:
+    """The code a loop or a conditional block evaluates outside its body."""
+    if isinstance(block, LoopRegion):
+        codes = [block.init_statement, block.update_statement, block.loop_condition]
+    else:
+        codes = [condition for condition, _ in block.branches]
+    return [code for code in codes if code is not None]
+
+
+def loop_reads_symbol(loop: LoopRegion, name: str) -> bool:
+    """Whether ``name`` is read inside ``loop``, nested SDFGs aside: by dataflow, by a loop or branch header, or
+    by an interstate edge's condition or assigned value. An assignment target is a write, not a read."""
+    if any(name in edge.data.read_symbols() for edge in loop.all_interstate_edges()):
+        return True
+    headers = [loop]
+    for block in loop.all_control_flow_blocks():
+        if isinstance(block, SDFGState):
+            if name in block.used_symbols(all_symbols=True):
+                return True
+        elif isinstance(block, (LoopRegion, ConditionalBlock)):
+            headers.append(block)
+    return any(name in code.get_free_symbols() for block in headers for code in header_code(block))
 
 
 def _symbol_is_dead_outside_loop(loop: LoopRegion, name: str) -> bool:
