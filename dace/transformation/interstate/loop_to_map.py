@@ -216,7 +216,7 @@ def _same_injective_index(idx1, idx2, itersym) -> bool:
     e1 = symbolic.pystr_to_symbolic(str(idx1))
     e2 = symbolic.pystr_to_symbolic(str(idx2))
     coeffs = _affine_coeffs(e1, sym)
-    return coeffs is not None and coeffs[0] != 0 and sp.simplify(e1 - e2) == 0
+    return coeffs is not None and coeffs[0] != 0 and symbolic.simplify(e1 - e2) == 0
 
 
 def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:

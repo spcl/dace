@@ -227,7 +227,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         """
         trip = symbolic.simplify(ub - lb + 1)
         try:
-            return bool((trip % W).simplify() == 0)
+            return bool(symbolic.simplify(trip % W) == 0)
         except Exception:  # noqa: BLE001 - non-decidable symbolic trip -> split
             return False
 
@@ -251,7 +251,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             # Symbolic, not provably divisible: a remainder that reduces to a nonzero CONSTANT is a
             # provable violation; an undecidable remainder falls through to a runtime guard.
             try:
-                if int((trip % W).simplify()) != 0:
+                if int(symbolic.simplify(trip % W)) != 0:
                     return 'nondivisible'
             except (TypeError, ValueError):
                 pass

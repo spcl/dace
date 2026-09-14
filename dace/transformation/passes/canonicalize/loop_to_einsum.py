@@ -84,7 +84,7 @@ from typing import Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import sympy
 
-from dace import SDFG, data, dtypes, subsets
+from dace import SDFG, data, dtypes, subsets, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python import astutils
 from dace.memlet import Memlet
@@ -701,7 +701,7 @@ def _product_scale(tasklet: nodes.Tasklet):
     for conn in tasklet.in_connectors:
         expected *= pystr_to_symbolic(conn)
     try:
-        ratio = sympy.simplify(expr / expected)
+        ratio = symbolic.simplify(expr / expected)
     except (TypeError, ValueError, ZeroDivisionError):
         return None
     return ratio if ratio.is_Number else None
@@ -717,7 +717,7 @@ def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
     if expr is None:
         return False
     try:
-        return sympy.simplify(expr - pystr_to_symbolic(conns[0]) - pystr_to_symbolic(conns[1])) == 0
+        return symbolic.simplify(expr - pystr_to_symbolic(conns[0]) - pystr_to_symbolic(conns[1])) == 0
     except (TypeError, ValueError):
         return False
 

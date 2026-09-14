@@ -3663,6 +3663,34 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
 
 @lru_cache(maxsize=2048, typed=True)
 def simplify(expr: SymbolicType) -> SymbolicType:
+    # Exact fast paths: sympy.simplify returns numbers, plain symbols, integer linear forms and integer monomials
+    # unchanged, and a Python int as its Integer. A zero or infinite symbol folds (1/oo -> 0) and unevaluated
+    # input can be rewritten, so both still reach sympy.
+
+    def is_plain_symbol(leaf: object) -> bool:
+        return (isinstance(leaf, sympy.Symbol) and leaf.is_commutative is True and leaf.is_zero is not True
+                and leaf.is_infinite is not True)
+
+    def is_integer_multiple(number: sympy.Basic, leaf: sympy.Basic) -> bool:
+        return isinstance(number, sympy.Integer) and (isinstance(leaf, sympy.Integer) or is_plain_symbol(leaf))
+
+    def is_fixed_point(node: object) -> bool:
+        kind = type(node)
+        if kind is sympy.Add:
+            pairs = [term.as_coeff_Mul() for term in node.args]
+        elif kind is sympy.Mul:
+            pairs = [(factor.exp, factor.base) if factor.is_Pow else (sympy.S.One, factor) for factor in node.args]
+        elif kind is sympy.Pow:
+            pairs = [(node.exp, node.base)]
+        else:
+            return False
+        return (all(is_integer_multiple(*pair) for pair in pairs) and sympy.core.parameters.global_parameters.evaluate
+                and kind(*node.args) == node)
+
+    if type(expr) is int:
+        return sympy.Integer(expr)
+    if isinstance(expr, sympy.Number) or is_plain_symbol(expr) or is_fixed_point(expr):
+        return expr
     return sympy.simplify(expr)
 
 

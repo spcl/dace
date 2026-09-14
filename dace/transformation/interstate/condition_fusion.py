@@ -316,7 +316,7 @@ class ConditionFusion(xf.MultiStateTransformation):
         try:
             a = symbolic.pystr_to_symbolic(first.as_string)
             b = symbolic.pystr_to_symbolic(second.as_string)
-            return sympy.simplify(sympy.Equivalent(sympy.Not(a), b)) == sympy.true
+            return symbolic.simplify(sympy.Equivalent(sympy.Not(a), b)) == sympy.true
         except Exception:  # noqa: BLE001 -- an unparsable guard is simply not mergeable
             return False
 

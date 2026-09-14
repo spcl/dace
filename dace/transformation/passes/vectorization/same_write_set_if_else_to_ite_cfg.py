@@ -197,7 +197,7 @@ def provably_nonnegative(expr: sympy.Basic) -> bool:
     if expr.is_number:
         return bool(expr >= 0)
     positive = {s: sympy.Symbol(s.name, positive=True, integer=True) for s in expr.free_symbols}
-    return sympy.simplify(expr.subs(positive)).is_nonnegative is True
+    return symbolic.simplify(expr.subs(positive)).is_nonnegative is True
 
 
 def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
