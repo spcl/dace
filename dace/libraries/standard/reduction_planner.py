@@ -41,28 +41,27 @@ def combine(shape, strides, dims):
     return combined_shape, combined_strides
 
 
+def contiguous_runs(dims: List[int], shape: List[Size], strides: List[Size]) -> List[List[int]]:
+    """Maximal runs of two or more consecutive ``dims`` in which each neighbor pair is one run of memory."""
+    runs = []
+    run = dims[:1]
+    for outer, inner in zip(dims, dims[1:]):
+        if inner == outer + 1 and symbolic.equal(strides[outer], strides[inner] * shape[inner]) is True:
+            run.append(inner)
+            continue
+        if len(run) > 1:
+            runs.append(run)
+        run = [inner]
+    if len(run) > 1:
+        runs.append(run)
+    return runs
+
+
 def simplify_input(shape, strides, axes):
     # simplifies the input tensor by combining neighboring reduced axes and neighboring non-reduced axes
     # returns new shape, new strides, new axes and also output shape and output strides
-    dimensions_to_combine = []
-    prev = axes[0]
-    prev_combined = False
-    curr_dimensions = []
-    for curr in axes[1:]:
-        if prev == curr - 1:
-            # found contiguous axes
-            if not prev_combined:
-                curr_dimensions.append(prev)
-            curr_dimensions.append(curr)
-            prev_combined = True
-        else:
-            prev_combined = False
-            if curr_dimensions != []:
-                dimensions_to_combine.append(curr_dimensions)
-                curr_dimensions = []
-        prev = curr
-    if curr_dimensions != []:
-        dimensions_to_combine.append(curr_dimensions)
+    # Only neighbors that are one run of memory fuse: a pooling window spans rows of its source.
+    dimensions_to_combine = contiguous_runs(axes, shape, strides)
 
     num_axes_combined = 0
     for dims in dimensions_to_combine:
@@ -77,17 +76,7 @@ def simplify_input(shape, strides, axes):
         axes = new_axes
 
     # now combine the non-reduced axes
-    dimensions_to_combine = []
-    prev_axis = axes[0]
-    if axes[0] >= 2:
-        dimensions_to_combine.append(list(range(axes[0])))
-    for ax in axes[1:]:
-        if ax - prev_axis > 2:
-            dimensions_to_combine.append(list(range(prev_axis + 1, ax)))
-        prev_axis = ax
-
-    if len(shape) - axes[-1] > 2:
-        dimensions_to_combine.append(list(range(axes[-1] + 1, len(shape))))
+    dimensions_to_combine = contiguous_runs([i for i in range(len(shape)) if i not in axes], shape, strides)
 
     num_axes_combined = 0
     for dims in dimensions_to_combine:

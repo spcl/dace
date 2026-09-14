@@ -5,12 +5,10 @@
 whose maps carry the default schedule. Schedule inference has already run by the time a library node
 expands, so those maps reach codegen as host loops over ``GPU_Global`` memory (npbench nbody).
 """
-import pytest
-
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
-from dace.libraries.standard.nodes.reduce import Reduce, fused_dimensions_are_contiguous
+from dace.libraries.standard.nodes.reduce import Reduce
 
 
 def gpu_reduce_without_identity() -> dace.SDFG:
@@ -45,16 +43,6 @@ def test_the_pure_fallback_is_scheduled_as_a_kernel():
         expected = dtypes.ScheduleType.GPU_Device if top else dtypes.ScheduleType.Sequential
         assert schedule is expected, f'map {label} is {schedule.name}, not {expected.name}'
     sdfg.validate()
-
-
-@pytest.mark.parametrize('shape,strides,axes,fusable', [
-    pytest.param([2, 2, 2, 3], [192, 24, 3, 1], [1, 2], False, id='2x2_pooling_window_of_8x8x3'),
-    pytest.param([8, 8], [16, 2], [0, 1], True, id='every_other_column_reduced_whole'),
-    pytest.param([2, 3, 4, 5], [60, 20, 5, 1], [1, 2], True, id='contiguous_array'),
-    pytest.param([4, 3, 5], [45, 5, 1], [2], False, id='kept_dimensions_one_row_apart'),
-])
-def test_only_contiguous_dimensions_are_fused_by_the_gpu_reduce_schedule(shape, strides, axes, fusable):
-    assert fused_dimensions_are_contiguous(shape, strides, axes) is fusable
 
 
 if __name__ == '__main__':

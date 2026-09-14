@@ -1265,22 +1265,6 @@ def storage_behind_views(state: SDFGState, node, declared: dtypes.StorageType) -
     return state.sdfg.arrays[viewed.data].storage
 
 
-def fused_dimensions_are_contiguous(shape: list, strides: list, axes: list) -> bool:
-    """Whether every pair of dimensions the GPU reduction planner fuses is one run of memory.
-
-    The planner drops size-1 dimensions, then fuses each run of neighboring reduced or neighboring
-    kept dimensions into one, read at the smallest stride. That reads the right elements only when
-    the outer stride is the inner stride times the inner extent.
-    """
-    kept = [i for i, extent in enumerate(shape) if extent != 1]
-    for outer, inner in zip(kept, kept[1:]):
-        if (outer in axes) != (inner in axes):
-            continue
-        if dace.symbolic.equal(strides[outer], strides[inner] * shape[inner]) is not True:
-            return False
-    return True
-
-
 @dace.library.expansion
 class ExpandReduceGPUAuto(pm.ExpandTransformation):
     """
@@ -1373,12 +1357,6 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 in_subset.size(),
                 storage=raw_input_data.storage,
                 strides=[raw_input_data.strides[i] * in_subset[i][2] for i in range(len(in_subset))])
-            # A window such as ``x[:, 2*i:2*i+2, 2*j:2*j+2, :]`` is not one run of memory across its reduced
-            # axes, and the planner would read those axes as one.
-            if not fused_dimensions_are_contiguous(list(planner_input.shape), list(planner_input.strides), axes):
-                warnings.warn('Cannot use GPUAuto expansion: the View is not contiguous across the dimensions the '
-                              'reduction schedule fuses. Falling back to Pure expansion')
-                return ExpandReducePure.expansion(node, state, sdfg)
         else:
             planner_input = raw_input_data
 
