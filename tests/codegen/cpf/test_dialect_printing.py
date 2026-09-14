@@ -316,3 +316,15 @@ def test_python_printing_of_logical_operators_ignores_an_ambient_c_dialect():
         text = symbolic.symstr(expression)
     assert '&&' not in text and '!' not in text, text
     assert symbolic.symstr(symbolic.pystr_to_symbolic(text)) == text
+
+
+@pytest.mark.parametrize('dialect', [Dialect.STANDALONE, Dialect.STANDALONE_C], ids=['c++', 'c'])
+@pytest.mark.parametrize('source,expected', [('Abs(A[2])', '(Abs(A[2]))'), ('Max(n, 2)', '(Max(2, n))')],
+                         ids=['abs', 'max'])
+def test_python_printing_of_a_math_call_ignores_an_ambient_standalone_dialect(dialect: Dialect, source: str,
+                                                                              expected: str):
+    """An interstate assignment serialized during a render must read back as the Python call it was."""
+    expression = symbolic.pystr_to_symbolic(source)
+    with cpf_lowering.dialect_scope(dialect):
+        text = symbolic.symstr(expression)
+    assert text == expected

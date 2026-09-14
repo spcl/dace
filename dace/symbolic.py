@@ -4389,7 +4389,8 @@ def symstr(sym,
     :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
                      returns a Python expression.
     :param dialect: Which C++ vocabulary may be emitted. ``None`` takes the ambient dialect
-                    (:func:`~dace.cpf_lowering.active_dialect`). Resolved HERE, in front of the
+                    (:func:`~dace.cpf_lowering.active_dialect`) in C++ mode and ``RUNTIME`` in
+                    Python mode, whose text DaCe parses again. Resolved HERE, in front of the
                     memoized body, because the cache key is the ARGUMENTS: an omitted dialect
                     resolved inside would give every ambient-dialect caller one shared entry, and
                     a standalone render would then serve ``std::exp`` back to the runtime printer.
@@ -4406,7 +4407,7 @@ def symstr(sym,
     :return: Expression in string format depending on the value of ``cpp_mode``.
     """
     if dialect is None:
-        dialect = cpf_lowering.active_dialect()
+        dialect = cpf_lowering.active_dialect() if cpp_mode else cpf_lowering.Dialect.RUNTIME
     return _symstr(sym, arrayexprs, cpp_mode, dialect, fp_ctype, reparsed)
 
 
