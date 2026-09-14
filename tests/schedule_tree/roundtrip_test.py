@@ -21,6 +21,33 @@ def _roundtrip(sdfg: dace.SDFG, expected_node_type: type, simplify: bool) -> dac
     return stree.as_sdfg(simplify=simplify)
 
 
+def _roundtrip_and_compare(sdfg: dace.SDFG, expected_node_type: type, simplify: bool, **args) -> dace.SDFG:
+    """
+    Converts an SDFG to a schedule tree and back, ensuring the tree contains a node of the given type, and that both
+    SDFGs compute the same outputs and return values on copies of the given arguments.
+    """
+    new_sdfg = _roundtrip(sdfg, expected_node_type, simplify)
+
+    expected_args = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in args.items()}
+    actual_args = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in args.items()}
+    expected_result = sdfg(**expected_args)
+    actual_result = new_sdfg(**actual_args)
+
+    for name, expected in expected_args.items():
+        if isinstance(expected, np.ndarray):
+            assert np.allclose(actual_args[name], expected), f'Argument "{name}" differs after roundtrip'
+    if expected_result is None:
+        assert actual_result is None
+    else:
+        expected_result = expected_result if isinstance(expected_result, tuple) else (expected_result, )
+        actual_result = actual_result if isinstance(actual_result, tuple) else (actual_result, )
+        assert len(actual_result) == len(expected_result)
+        for expected, actual in zip(expected_result, actual_result):
+            assert np.allclose(actual, expected), 'Return value differs after roundtrip'
+
+    return new_sdfg
+
+
 def test_implicit_inline_and_constants():
     """
     Tests implicit inlining upon roundtrip conversion, as well as constants with conflicting names.
@@ -297,13 +324,7 @@ def test_do_for_loop(update_before_condition: bool, simplify: bool):
                       inverted=True,
                       update_before_condition=update_before_condition)
     sdfg = _inverted_loop_sdfg('tester', loop)
-    new_sdfg = _roundtrip(sdfg, tn.LoopScope, simplify)
-
-    a = np.zeros(10)
-    expected = np.zeros(10)
-    sdfg(A=expected)
-    new_sdfg(A=a)
-    assert np.allclose(a, expected)
+    _roundtrip_and_compare(sdfg, tn.LoopScope, simplify, A=np.zeros(10))
 
 
 def test_transients_and_nested_sdfg() -> None:
