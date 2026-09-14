@@ -36,10 +36,12 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 """
 import ast
 import itertools
+import re
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import Memlet, dtypes, properties, subsets
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -216,6 +218,26 @@ def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename
             isinstance(n, nodes.AccessNode) and n.data in rename.values() and n.data != mem.data
             for n in (edge.src, edge.dst)):
         mem.other_subset = subsets.Range.from_string('0')
+
+
+#: A bare identifier, not preceded by a word character or ``.``: every name a code slot can reference.
+IDENTIFIER_RE = re.compile(r'(?<![\w.])([A-Za-z_]\w*)')
+
+
+def control_flow_reads(sdfg: SDFG) -> OrderedSet[str]:
+    """Names ``sdfg`` reads from control flow: gate conditions, loop bounds, assignment right-hand sides.
+
+    Staging repoints those references at the staged descriptor, so they count as reads for the copy-in
+    decision although no AccessNode exists; without them a gate scalar is declared, read and never written.
+    """
+    names: OrderedSet[str] = OrderedSet()
+
+    def collect(src: str) -> str:
+        names.update(IDENTIFIER_RE.findall(src))
+        return src
+
+    rewrite_code_slots(sdfg, collect)
+    return names
 
 
 def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
@@ -429,6 +451,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         # Hoisted: the loop below only calls ``remove_data`` / ``add_scalar``; the state rewrite is
         # after it, so no access node moves and these name sets cannot go stale.
         is_read_set, is_written_set, gpu_written_set = descriptor_access_summary(sdfg)
+        cf_reads = control_flow_reads(sdfg) if stage_nontransients else OrderedSet()
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
@@ -449,7 +472,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                                 find_new_name=False)
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = arr_name in is_read_set
+                is_read = arr_name in is_read_set or arr_name in cf_reads
                 is_written = arr_name in is_written_set
                 # The staged scalar is what the BODY accesses, and the copy edges below are the
                 # transfer; inheriting device storage makes every host reference to it invalid.
@@ -574,6 +597,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         staged: List[Tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
         # Hoisted for the same reason as in the forward pass.
         is_read_set, is_written_set, _ = descriptor_access_summary(sdfg)
+        cf_reads = control_flow_reads(sdfg) if stage_nontransients else OrderedSet()
 
         for name, desc in list(sdfg.arrays.items()):
             if not isinstance(desc, dace.data.Scalar) or isinstance(desc.dtype, dace.dtypes.opaque):
@@ -592,7 +616,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                                find_new_name=False)
                 rename[name] = name
             elif stage_nontransients:
-                is_read = name in is_read_set
+                is_read = name in is_read_set or name in cf_reads
                 is_written = name in is_written_set
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
