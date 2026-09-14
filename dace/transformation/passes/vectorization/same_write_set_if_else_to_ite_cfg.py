@@ -341,9 +341,7 @@ def _wcr_apply_code(wcr_str: str, base_conn: str, acc_conn: str) -> str:
     ITE, ``_then`` = ``dest <op> contribution`` (base ``dest`` the WCR would have read);
     ``identity <op> contribution`` silently drops base.
 
-    Emitted Python (``a`` -> ``base_conn``, ``b`` -> ``acc_conn``), consumed by Python
-    tasklet so unparser keeps Python operator semantics — ``%`` -> ``dace::math::py_mod``
-    not C truncated ``%`` (differ in sign for negatives). Never hand-write operator in C.
+    Emitted Python (``a`` -> ``base_conn``, ``b`` -> ``acc_conn``), consumed by a Python tasklet.
 
     :param wcr_str: memlet ``wcr`` string (2-arg lambda).
     :param base_conn: connector for the destination operand.

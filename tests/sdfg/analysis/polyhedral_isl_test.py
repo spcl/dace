@@ -46,11 +46,17 @@ def test_to_isl_int_ceil_maps_to_ceil_and_parses():
 
 
 def test_to_isl_mod_maps_to_mod_and_parses():
-    """``N % 8`` renders to a native ISL ``mod``."""
-    rendered = poly.render_affine(p('N % 8'), poly.build_name_map([], ['N']))
+    """The floored ``PyMod(N, 8)`` renders to a native ISL ``mod``."""
+    rendered = poly.render_affine(p('PyMod(N, 8)'), poly.build_name_map([], ['N']))
     assert 'mod' in rendered
-    s, _ = poly.make_set(['i'], ['N'], [p('(N % 8) - i')])
+    s, _ = poly.make_set(['i'], ['N'], [p('PyMod(N, 8) - i')])
     assert isinstance(s, isl.Set)
+
+
+def test_to_isl_refuses_c_modulo_of_a_possibly_negative_dividend():
+    """C's ``N % 8`` truncates, so it must not become ISL's floored ``mod``."""
+    with pytest.raises(ValueError):
+        poly.render_affine(p('N % 8'), poly.build_name_map([], ['N']))
 
 
 def test_to_isl_nonlinear_raises():

@@ -327,50 +327,33 @@ def _strip_power_exponent_cast(src: str) -> str:
     return ast.unparse(tree)
 
 
+#: Floored modulo spellings renamed to ``py_mod``; a bare ``%`` is C's and stays.
+FLOORED_MODULO_NAMES = frozenset({'Mod', 'PyMod', 'FtnModulo', 'ftn_modulo', 'floor_mod'})
+
+
 class ModuloToPyModExpander(ast.NodeTransformer):
-    """Rewrite every ``a % b`` (``ast.Mod`` binop) into a ``py_mod(a, b)`` call.
+    """Rename every floored modulo call (``PyMod(a, b)``, ``FtnModulo(a, b)``, ...) to ``py_mod(a, b)``."""
 
-    Python/NumPy modulo follows the divisor's sign; C's ``%`` follows the
-    dividend's. cppunparse lowers a bare ``%`` to C's ``%`` (and is ill-formed
-    for floats), so a tasklet ``a % b`` silently miscompiles negative operands.
-    ``py_mod`` resolves to ``dace::math::py_mod`` in generated code (the same
-    helper the ``np.mod`` ufunc emits), giving Python semantics everywhere. An
-    existing ``py_mod(...)`` call is a plain :class:`ast.Call` and is left
-    untouched, so the rewrite is idempotent.
-    """
+    def __init__(self) -> None:
+        super().__init__()
+        self.renamed = False
 
-    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
-        self.generic_visit(node)  # rewrite nested ``%`` first
-        if isinstance(node.op, ast.Mod):
-            return ast.copy_location(
-                ast.Call(func=ast.Name(id="py_mod", ctx=ast.Load()), args=[node.left, node.right], keywords=[]), node)
-        return node
-
-    def visit_AugAssign(self, node: ast.AugAssign) -> ast.AST:
-        self.generic_visit(node)  # rewrite ``%`` in the value expression first
-        if isinstance(node.op, ast.Mod):
-            # ``t %= b`` -> ``t = py_mod(t, b)`` (the target is also a read here).
-            read_target = ast.copy_location(ast.Name(id=node.target.id, ctx=ast.Load()), node.target) \
-                if isinstance(node.target, ast.Name) else node.target
-            call = ast.Call(func=ast.Name(id="py_mod", ctx=ast.Load()), args=[read_target, node.value], keywords=[])
-            return ast.copy_location(ast.Assign(targets=[node.target], value=call), node)
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        if isinstance(node.func, ast.Name) and node.func.id in FLOORED_MODULO_NAMES:
+            node.func = ast.copy_location(ast.Name(id="py_mod", ctx=ast.Load()), node.func)
+            self.renamed = True
         return node
 
 
 def _rewrite_modulo(src: str) -> str:
-    """Rewrite ``%`` modulo to ``py_mod(...)`` in a Python source string.
-
-    Covers tasklet bodies, control-flow codeblocks (loop bounds, branch
-    conditions), and interstate-edge condition / assignment expressions -- any
-    place the operator appears as Python ``%``.
-
-    :param src: the Python source.
-    :returns: the rewritten source (unchanged when it carries no ``%``).
-    """
-    if "%" not in src:  # fast path: no modulo to rewrite
+    """Rename floored modulo calls to ``py_mod`` in a Python source string; ``src`` itself when none."""
+    if not any(name in src for name in FLOORED_MODULO_NAMES):
         return src
-    tree = ast.parse(src)
-    tree = ModuloToPyModExpander().visit(tree)
+    expander = ModuloToPyModExpander()
+    tree = expander.visit(ast.parse(src))
+    if not expander.renamed:
+        return src
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
@@ -379,17 +362,7 @@ _PY_MOD = sympy.Function("py_mod")
 
 
 def _subs_py_mod_symbolic(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
-    """Rewrite every sympy ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``.
-
-    Used for the symbolic sites a tasklet rewrite cannot reach: memlet subsets
-    and map ranges (and any other :class:`sympy.Basic`). ``symstr(cpp_mode)``
-    lowers a bare ``Mod`` to C's ``%`` just like cppunparse, so an index such as
-    ``A[(i - k) % n]`` would miscompile a negative offset; ``py_mod`` renders to
-    ``dace::math::py_mod``.
-
-    :param expr: a symbolic expression (or any value; non-symbolic is returned as-is).
-    :returns: the rewritten expression, or ``expr`` unchanged when it has no ``Mod``.
-    """
+    """Rewrite every floored sympy ``Mod(a, b)`` in ``expr`` to ``py_mod(a, b)``."""
     if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Mod):
         return expr
     return expr.replace(sympy.Mod, _PY_MOD)
@@ -476,25 +449,8 @@ class PowerOperatorExpansion(_BodyRewritePass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RewriteModuloToPyMod(_BodyRewritePass):
-    """Rewrite every ``%`` modulo to ``py_mod`` everywhere it can appear in an SDFG.
-
-    Run early ("cleaning") in the canonicalize and vectorize pipelines so the
-    canonicalized reference, the vectorized body, and the base codegen all agree
-    on Python/NumPy modulo semantics (``dace::math::py_mod``) without changing
-    core ``cppunparse`` (whose bare ``%`` follows C's dividend-sign rule and
-    miscompiles negative operands; ``symstr(cpp_mode)`` lowers a sympy ``Mod`` the
-    same way). The operator can appear in five places, all covered here:
-
-    * **tasklet bodies** (Python) -- ``c = a % b``;
-    * **loop-range codeblocks** -- a ``LoopRegion`` condition / init / update,
-      e.g. ``range(0, x % 7)`` lowered to ``i < x % 7``;
-    * **branch conditions** -- a ``ConditionalBlock`` arm, e.g. ``if a % 2 == 0``;
-    * **memlet subsets** and **map ranges** -- symbolic, e.g. ``A[(i + k) % n]``;
-    * **interstate edges** -- the condition codeblock and every assignment RHS.
-
-    Idempotent: an existing ``py_mod(...)`` call (or a ``Function('py_mod')``) is
-    left as-is.
-    """
+    """Spell every floored modulo in an SDFG as ``py_mod``: tasklets, loop and branch conditions, subsets, map
+    ranges and interstate edges. C's ``%`` is left alone."""
 
     def modifies(self) -> ppl.Modifies:
         return (ppl.Modifies.Tasklets | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges | ppl.Modifies.Scopes)
@@ -505,7 +461,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
 
     @staticmethod
     def _rewritten_codeblock(cb: CodeBlock | None) -> CodeBlock | None:
-        """Return a CodeBlock with ``%`` -> ``py_mod``; the original if unchanged.
+        """Return a CodeBlock with floored modulo calls renamed to ``py_mod``; the original if unchanged.
 
         :param cb: a :class:`CodeBlock` or ``None``.
         :returns: a new Python CodeBlock when a ``%`` was rewritten, else ``cb``.
@@ -513,13 +469,13 @@ class RewriteModuloToPyMod(_BodyRewritePass):
         if cb is None or cb.language != dace.dtypes.Language.Python:
             return cb
         src = cb.as_string
-        if not src or "%" not in src:
+        if not src:
             return cb
         new = _rewrite_modulo(src)
         return CodeBlock(new, language=dace.Language.Python) if new != src else cb
 
     def _rewrite_control_flow(self, g: SDFG) -> int:
-        """Rewrite ``%`` in loop-bound codeblocks and branch conditions of ``g``."""
+        """Rename floored modulo calls in loop-bound codeblocks and branch conditions of ``g``."""
         rewritten = 0
         for cfg in g.all_control_flow_regions(recursive=True):
             if isinstance(cfg, LoopRegion):
@@ -544,7 +500,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
         return rewritten
 
     def _rewrite_interstate_edges(self, g: SDFG) -> int:
-        """Rewrite ``%`` in interstate-edge conditions and assignment RHS of ``g``."""
+        """Rename floored modulo calls in interstate-edge conditions and assignment RHS of ``g``."""
         rewritten = 0
         for e in g.all_interstate_edges(recursive=True):
             ise = e.data
@@ -553,11 +509,10 @@ class RewriteModuloToPyMod(_BodyRewritePass):
                 ise.condition = new_cond
                 rewritten += 1
             for var, rhs in list(ise.assignments.items()):
-                if "%" in rhs:
-                    new_rhs = _rewrite_modulo(rhs)
-                    if new_rhs != rhs:
-                        ise.assignments[var] = new_rhs
-                        rewritten += 1
+                new_rhs = _rewrite_modulo(rhs)
+                if new_rhs != rhs:
+                    ise.assignments[var] = new_rhs
+                    rewritten += 1
         return rewritten
 
     def _rewrite_memlets_and_ranges(self, g: SDFG) -> int:
@@ -581,7 +536,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
         return rewritten
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Rewrite ``%`` -> ``py_mod`` across every location of ``sdfg``.
+        """Spell every floored modulo of ``sdfg`` as ``py_mod``.
 
         :param sdfg: the SDFG rewritten in place.
         :param pipeline_results: unused pipeline results.

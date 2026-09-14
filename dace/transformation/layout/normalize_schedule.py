@@ -38,7 +38,7 @@ class NormalizeScheduleForLayout(ppl.Pass):
                 # Only a POINT access (begin==end) is a genuine block offset; excludes propagated ranges for idempotence.
                 if not isinstance(begin, sympy.Basic) or str(dace.symbolic.simplify(end - begin)) != '0':
                     continue
-                for mod in begin.atoms(sympy.Mod):
+                for mod in begin.atoms(sympy.Mod, dace.symbolic.CMod):
                     base, modulus = mod.args
                     if not modulus.is_Integer:
                         continue

@@ -37,11 +37,8 @@ DEFAULT_UNROLL_LIMIT = Config.get('optimizer', 'canonicalization', 'unroll_limit
 #: Default maximum number of iterations peeled (per side) when searching for a
 #: peel that unblocks parallelization (``optimizer.canonicalization.peel_limit``).
 DEFAULT_PEEL_LIMIT = Config.get('optimizer', 'canonicalization', 'peel_limit')
-#: Names under which a (floor) modulo may be defined in a subset expression. The
-#: peel modulo-rewrite recognises all of these -- ``sympy.Mod`` (the ``%`` operator)
-#: and the equivalent helper-function spellings -- so it folds a wrap-around access
-#: regardless of which representation introduced it.
-_MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'Modulo', 'mod', 'floor_mod'})
+#: Modulo spellings the peel rewrite folds; ``CMod`` only over a nonnegative band.
+_MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'floor_mod', 'ftn_modulo', 'CMod'})
 #: "not built yet", distinct from a built-but-absent value.
 _UNBUILT = object()
 
@@ -1436,7 +1433,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         # whole range. Peeling/splitting shifts the argument by a bounded number of
         # strides, so the band index is within +/-(peel_limit + 1).
         import sympy
-        for t in range(-(self.peel_limit + 1), self.peel_limit + 2):
+        # C's ``%`` agrees with the floored band only where the argument is nonnegative.
+        first_band = 0 if isinstance(mod, symbolic.CMod) else -(self.peel_limit + 1)
+        for t in range(first_band, self.peel_limit + 2):
             lo_relied = self._nonneg_assuming_large_modulus(lo - t * m, m, offsets)
             if lo_relied is None:
                 continue

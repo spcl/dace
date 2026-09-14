@@ -854,9 +854,7 @@ def _detect_modular_factor(expr: sympy.Expr, var_name: str) -> int | None:
     if expr is None:
         return None
     fname = type(expr).__name__
-    # SymPy modulo is ``Mod`` (also from ``a % b``); DaCe's ``__mod__`` overload may yield ``mod``
-    # or ``Mod`` depending on construction.
-    if fname not in ("Mod", "mod", "__mod__"):
+    if fname not in ("Mod", "__mod__"):
         return None
     if len(expr.args) != 2:
         return None

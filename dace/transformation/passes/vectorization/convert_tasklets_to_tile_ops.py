@@ -38,9 +38,7 @@ _SUPPORTED_BINOPS = {
     ">=", "==", "!=", "&&", "||", "&", "|", "^"
 }
 
-#: Binops in function-call form ``op(a, b)``, not infix. ``py_mod`` = Python/NumPy modulo
-#: → ``dace::math::py_mod`` (``RewriteModuloToPyMod`` rewrites every ``%`` to it for
-#: divisor-sign semantics). ``pow`` / ``ipow`` are the canonical power spellings; ``**``
+#: Binops in function-call form ``op(a, b)``, not infix. ``pow`` / ``ipow`` are the canonical power spellings; ``**``
 #: keeps its own infix case below.
 _FUNCTION_FORM_BINOPS = ("min", "max", "py_mod", "atan2", "hypot", "fmod", "pow", "ipow")
 

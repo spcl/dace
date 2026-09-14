@@ -818,10 +818,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # condition before the structural transforms, the same way the break lift is
     # applied early). A no-op on kernels without a ``continue`` (e.g. the current
     # TSVC corpus emits none); it hardens the pipeline for kernels that do.
-    # RewriteModuloToPyMod runs first: normalise ``a % b`` -> ``py_mod(a, b)`` up
-    # front so the canonicalized reference, every downstream tasklet split, and the
-    # base codegen all carry Python/NumPy modulo semantics (cppunparse lowers a bare
-    # ``%`` to C's dividend-sign ``%``, which miscompiles negative operands).
+    # RewriteModuloToPyMod runs first: every floored modulo spelling becomes ``py_mod`` up front.
     # SimplifyPass's own FuseStates does this: it drives StateFusionExtended (and BlockFusion)
     # to a fixpoint, so no second fusion follows it. Merging adjacent states up front collapses
     # multi-state loop/branch bodies into the single-state shape the main

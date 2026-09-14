@@ -930,9 +930,6 @@ class VectorizeMultiDim(ppl.Pipeline):
         #   * BypassTrivialAssignTasklets — design 3.6: every staged copy is a direct AN → AN edge,
         #     no ``_out = _in`` tasklet. Early so the classifier / staging see clean edges.
         passes = [
-            # Normalise every ``%`` (tasklet bodies, ranges, conditions, subsets, edges) to
-            # ``py_mod`` for Python/NumPy modulo semantics (C ``%`` miscompiles negative
-            # operands and is ill-formed for floats).
             RewriteModuloToPyMod(),
             # An interstate edge that assigns a symbol FROM array data (``b_index = b[i]``) hides a
             # per-lane read behind a name no map parameter appears in. Give it back its data flow
