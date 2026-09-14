@@ -92,14 +92,6 @@ jobs:
         uv run  --group testing pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
 
-    - name: Upload general test artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: general-results-py${{ matrix.python-version }}-${{ matrix.simplify }}-${{ github.run_id }}
-        path: pytest-general-${{ matrix.python-version }}-${{ matrix.simplify }}.xml
-        if-no-files-found: ignore
-
     - name: Test OpenBLAS LAPACK
       run: |
         export NOSTATUSBAR=1
