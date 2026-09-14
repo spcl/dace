@@ -48,6 +48,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, properties, symbolic
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: Python literal names an expression may mention besides SDFG symbols. Modern ``ast`` renders
@@ -268,6 +269,38 @@ def _replace_in_expr(s: str, mapping: Dict[str, str]) -> str:
     return ast.unparse(_RenameNames(mapping).visit(tree))
 
 
+def _interstate_text(edge: InterstateEdge) -> str:
+    """The assignments and condition of ``edge`` as text, for the substring test in :func:`_is_read_in`."""
+    text = [str(v) for v in edge.assignments.values()] if edge.assignments else []
+    if edge.condition is not None:
+        text.extend(ast.unparse(c) if isinstance(c, ast.AST) else str(c) for c in (edge.condition.code or []))
+    return '\n'.join(text)
+
+
+def _is_read_in(name: str, blocks: Dict[ControlFlowBlock, None], parent: ControlFlowRegion,
+                state_reads: Dict[SDFGState, Set[str]], edge_texts: Dict[int, str]) -> bool:
+    """Whether ``name`` is read in ``blocks``: among a state's used symbols, or in the text of an
+    interstate edge that stays within ``blocks``. The edge half stays TEXT because the test is a
+    substring one, not an identifier one. Both lookups are memoised in the caller's dicts.
+    """
+    for block in blocks:
+        for s in (block.all_states() if isinstance(block, ControlFlowRegion) else [block]):
+            if not isinstance(s, SDFGState):
+                continue
+            if s not in state_reads:
+                state_reads[s] = s.used_symbols(all_symbols=True)
+            if name in state_reads[s]:
+                return True
+        for e in parent.out_edges(block):
+            if e.dst not in blocks:
+                continue
+            if id(e.data) not in edge_texts:
+                edge_texts[id(e.data)] = _interstate_text(e.data)
+            if name in edge_texts[id(e.data)]:
+                return True
+    return False
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class MaterializeLoopExitSymbols(ppl.Pass):
@@ -297,10 +330,14 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             # materialisations mutate ``sd`` -- so compute it once here and refresh
             # it only after a loop is actually materialised (which is rare).
             sd_free_symbols = sd.free_symbols
+            # What a state or an interstate edge reads does not depend on which loop asks, so each is
+            # read once per SDFG instead of once per loop before it; a materialisation clears both.
+            state_reads: Dict[SDFGState, Set[str]] = {}
+            edge_texts: Dict[int, str] = {}
             for cfg in list(sd.all_control_flow_regions()):
                 if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
                     continue
-                count = self._try_materialise(cfg, sd, sd_free_symbols, resolver)
+                count = self._try_materialise(cfg, sd, sd_free_symbols, resolver, state_reads, edge_texts)
                 if count:
                     materialised += count
                     sd_free_symbols = sd.free_symbols
@@ -324,7 +361,8 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         return resolver.resolve_dtype_or_undetermined(sym_name, sdfg, interstate_edge=update)
 
     def _try_materialise(self, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str],
-                         resolver: scopes.ScopedSymbolResolver) -> int:
+                         resolver: scopes.ScopedSymbolResolver, state_reads: Dict[SDFGState, Set[str]],
+                         edge_texts: Dict[int, str]) -> int:
         parent = loop.parent_graph
         if parent is None:
             return 0
@@ -354,14 +392,11 @@ class MaterializeLoopExitSymbols(ppl.Pass):
 
         count = 0
         next_id = _next_post_id(sdfg, sdfg_free_symbols)
-        # Hoisted: was walked once per IV symbol, over most of the SDFG for an early loop.
-        # Rebuilt after each materialisation, which rewrites these very blocks.
-        post_used, post_text = self._read_names_in(post_blocks, parent)
         for sym_name, (op_type, c_expr) in iv_symbols.items():
             if sym_name in reiterated:
                 continue  # a later loop rebinds it: its readers there never see this exit value
             # Check this symbol is actually READ in the post-loop region.
-            if sym_name not in post_used and sym_name not in post_text:
+            if not _is_read_in(sym_name, post_blocks, parent, state_reads, edge_texts):
                 continue
             # The closed form's seed is the symbol's *pre-loop* value, which is
             # always the symbol's own name here (``k`` for body-symbol pattern,
@@ -394,29 +429,9 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             _rewrite_post_loop_readers(parent, dict.fromkeys(b for b in post_blocks if b is not anchor), sym_name,
                                        new_name, sdfg)
             count += 1
-            post_used, post_text = self._read_names_in(post_blocks, parent)
+            state_reads.clear()  # the rewrite changed what these very blocks read
+            edge_texts.clear()
         return count
-
-    def _read_names_in(self, blocks: Dict[ControlFlowBlock, None], parent: ControlFlowRegion) -> Tuple[Set[str], str]:
-        """What "is this symbol read after the loop?" is answered from: the symbols the blocks'
-        states use, plus the text of the interstate edges that stay within ``blocks``. The edge
-        half stays TEXT because the test is a substring one, not an identifier one.
-        """
-        used: Set[str] = set()
-        text: List[str] = []
-        for block in blocks:
-            for s in (block.all_states() if isinstance(block, ControlFlowRegion) else [block]):
-                if isinstance(s, SDFGState):
-                    used.update(s.used_symbols(all_symbols=True))
-            for e in parent.out_edges(block):
-                if e.dst not in blocks:
-                    continue
-                if e.data.assignments:
-                    text.extend(str(v) for v in e.data.assignments.values())
-                if e.data.condition is not None:
-                    text.extend(
-                        ast.unparse(c) if isinstance(c, ast.AST) else str(c) for c in (e.data.condition.code or []))
-        return used, '\n'.join(text)
 
 
 __all__ = ['MaterializeLoopExitSymbols']
