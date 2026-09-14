@@ -20,7 +20,7 @@ from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, UnstructuredControlFlow)
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion)
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 from dace.transformation.passes.canonicalize import supply_num_threads
 
@@ -646,22 +646,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         cached = self._structured_cfg.get(key)
         if cached is not None:
             return cached
-        result = True
-        for region in sdfg.all_control_flow_regions():
-            if isinstance(region, UnstructuredControlFlow):
-                result = False
-                break
-            # Only real ControlFlowRegions carry a block graph (a ConditionalBlock holds branch
-            # regions, each itself visited and checked). A block is safe only with <=1 out-edge AND,
-            # if it has one, an unconditional edge (a conditional edge emits a crossing goto -- above).
-            if isinstance(region, ControlFlowRegion):
-                for node in region.nodes():
-                    out_edges = region.out_edges(node)
-                    if len(out_edges) > 1 or (out_edges and not out_edges[0].data.is_unconditional()):
-                        result = False
-                        break
-                if not result:
-                    break
+        result = next(utils.unstructured_control_flow(sdfg), None) is None
         self._structured_cfg[key] = result
         return result
 
