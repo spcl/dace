@@ -17,11 +17,18 @@ import sys
 import dace.frontend.python.astutils
 from typing import Callable, Union
 
+
+def magnitude_type(arg_types: list[dtypes.typeclass]) -> dtypes.typeclass:
+    """``abs`` of a complex operand is its real magnitude; any other operand keeps its type."""
+    from dace.frontend.python.replacements.utils import complex_to_scalar  # Avoid import loop
+    return complex_to_scalar(arg_types[0])
+
+
 # Additional function names that can be used to infer types
 KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {
-    'abs': lambda arg_types: arg_types[0],
+    'abs': magnitude_type,
     # sympy's spellings, which an interstate assignment printed from a symbolic expression carries
-    'Abs': lambda arg_types: arg_types[0],
+    'Abs': magnitude_type,
     'Min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'Max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'log': lambda arg_types: arg_types[0],

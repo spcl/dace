@@ -352,5 +352,14 @@ def test_the_sympy_spellings_of_abs_min_and_max_are_typed():
     assert type_inference.infer_expr_type('Min(a[i], 2.0)', symbols) == dtypes.float64
 
 
+def test_abs_of_a_complex_operand_is_its_real_magnitude():
+    """cegterg's lifted ``__inl9_av = Abs(z)`` was declared ``double _Complex``, and C refused ``av > max_val``."""
+    cases = [(dtypes.complex128, dtypes.float64), (dtypes.complex64, dtypes.float32), (dtypes.float64, dtypes.float64),
+             (dtypes.int32, dtypes.int32)]
+    for spelling in ('abs(z)', 'Abs(z)'):
+        for operand, magnitude in cases:
+            assert type_inference.infer_expr_type(spelling, {'z': operand}) == magnitude, (spelling, operand)
+
+
 if __name__ == "__main__":
     unittest.main()
