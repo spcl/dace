@@ -124,6 +124,7 @@ class ScatterToGuardedMaps(ppl.Pass):
         """Run the full pipeline. Returns the number of distinct ``idx`` arrays guarded,
         or ``None`` if no scatter loop was found.
         """
+        from dace.sdfg.propagation import propagate_memlets_sdfg
         from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 
         scatter_loops, idx_arrays, sliced_guards, joint_writes = detect_scatter_loops_and_idx_arrays(
@@ -138,9 +139,11 @@ class ScatterToGuardedMaps(ppl.Pass):
                 if parent is None or loop not in parent.nodes():
                     continue
                 try:
-                    ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
+                    ParallelizeLoops(propagate=False).parallelize_loop(sdfg, loop, proven=True)
                 except Exception:
                     pass
+            if scatter_loops:
+                propagate_memlets_sdfg(sdfg)
             return (len(idx_arrays) + len(sliced_guards) + len(joint_writes)) or None
 
         # A multi-dimensional indirect write is keyed across ALL of its dimensions and guarded on
@@ -227,9 +230,12 @@ class ScatterToGuardedMaps(ppl.Pass):
                     continue
 
             try:
-                ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
+                ParallelizeLoops(propagate=False).parallelize_loop(sdfg, loop, proven=True)
             except Exception:
                 pass
+        # One propagation for the whole pass: every lift above skips its own (45 whole-SDFG runs on ls3df_scf).
+        if scatter_loops:
+            propagate_memlets_sdfg(sdfg)
         return (len(idx_arrays) + len(sliced_guards) + len(joint_writes)) or None
 
 
@@ -1211,7 +1217,8 @@ def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str) -> N
     while root.parent_sdfg is not None:
         root = root.parent_sdfg
     try:
-        ParallelizeLoops().parallelize_loop(root, loop, proven=True)
+        ParallelizeLoops(propagate=False).parallelize_loop(root, loop,
+                                                           proven=True)  # ScatterToGuardedMaps propagates once
     except Exception:
         # If the lift fails on the parallel branch the sequential clone in the
         # other branch still produces the right result; codegen will compile
