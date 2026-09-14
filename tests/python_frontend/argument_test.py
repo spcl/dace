@@ -81,9 +81,43 @@ def test_nested_call_with_reshaped_argument():
     assert np.allclose(A, expected)
 
 
+def test_nested_call_with_reshaped_too_large_argument():
+
+    @dace.program
+    def callee(a: dace.float64[10]):
+        a += 1
+
+    @dace.program
+    def caller(a: dace.float64[5, 4]):
+        callee(a.reshape((20, )))
+
+    A = np.random.rand(5, 4)
+    expected = A.copy()
+    expected.reshape((20, ))[:10] += 1
+    caller(A)
+    assert np.allclose(A, expected)
+
+
+def test_nested_call_with_reshaped_too_small_argument():
+
+    @dace.program
+    def callee(a: dace.float64[30]):
+        a += 1
+
+    @dace.program
+    def caller(a: dace.float64[5, 4]):
+        callee(a.reshape((20, )))
+
+    A = np.random.rand(5, 4)
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='declared with 30 elements'):
+        caller(A)
+
+
 if __name__ == '__main__':
     test_extra_args()
     test_missing_arguments_regression()
     test_missing_arguments_2_regression()
     test_nested_call_with_too_small_argument()
     test_nested_call_with_reshaped_argument()
+    test_nested_call_with_reshaped_too_large_argument()
+    test_nested_call_with_reshaped_too_small_argument()
