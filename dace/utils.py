@@ -5,7 +5,7 @@ Utility functions for DaCe.
 This module provides general utility functions that are used across various parts of DaCe.
 """
 
-from typing import Iterable, Sequence, Union
+from typing import Container, Iterable, Union
 
 import sympy
 
@@ -31,15 +31,18 @@ def prod(sequence: Iterable[NumericType], start: NumericType = 1) -> NumericType
     return result
 
 
-def find_new_name(name: str, existing_names: Sequence[str]) -> str:
+def find_new_name(name: str, existing_names: Container[str]) -> str:
     """
     Returns a name that matches the given ``name`` as a prefix, but does not
     already exist in the given existing name set. The behavior is typically
     to append an underscore followed by a unique (increasing) number. If the
     name does not already exist in the set, it is returned as-is.
 
+    Only membership is ever tested, so ``existing_names`` may be any container --
+    including a view that answers ``in`` without materializing the names.
+
     :param name: The given name to find.
-    :param existing_names: The set of existing names.
+    :param existing_names: The existing names, as anything supporting ``in``.
     :return: A new name that is not in existing_names.
     """
     if name not in existing_names:

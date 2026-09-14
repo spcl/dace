@@ -67,6 +67,42 @@ class LIKWID:
         return len(LIKWID.cmake_libraries()) > 0
 
 
+class LIKWIDMarkers:
+    """Base for the marker-API environments. ``likwid.h`` compiles its ``LIKWID_MARKER_*`` macros to
+    no-ops unless the right define is set -- ``LIKWID_PERFMON`` for CPU, ``LIKWID_NVMON`` for GPU.
+    Each provider needs one, never both, hence two environments rather than a field on :class:`LIKWID`.
+    Declared as environments, not appended to ``compiler.cpu.args``: the append mutated global config
+    once per SDFG and grew without bound.
+    """
+
+    cmake_minimum_version = None
+    cmake_packages = []
+    cmake_variables = {}
+    cmake_includes = []
+    cmake_libraries = []
+    cmake_compile_flags = []
+    cmake_link_flags = []
+    cmake_files = []
+
+    headers = []
+    state_fields = []
+    init_code = ""
+    finalize_code = ""
+    dependencies = [LIKWID]
+
+
+@library.environment
+class LIKWIDPerfmon(LIKWIDMarkers):
+    """LIKWID with its CPU marker API active."""
+    cmake_compile_flags = ['-DLIKWID_PERFMON']
+
+
+@library.environment
+class LIKWIDNvmon(LIKWIDMarkers):
+    """LIKWID with its NVIDIA marker API active."""
+    cmake_compile_flags = ['-DLIKWID_NVMON']
+
+
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_CPU)
 class LIKWIDInstrumentationCPU(InstrumentationProvider):
     """ Instrumentation provider that reports CPU performance counters using
@@ -86,6 +122,9 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
         except KeyError:
             self._default_events = "CLOCK"
 
+    def writes_to_report(self) -> bool:
+        return True
+
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if sdfg.parent is not None:
             return
@@ -95,8 +134,8 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
         if not self._likwid_used:
             return
 
-        codegen.dispatcher.used_environments.add(LIKWID.full_class_path())
-        Config.append('compiler', 'cpu', 'args', value=' -DLIKWID_PERFMON -fopenmp ')
+        # Scopes -DLIKWID_PERFMON to this SDFG instead of the process-wide compiler args.
+        codegen.dispatcher.used_environments.add(LIKWIDPerfmon.full_class_path())
 
         self.codegen = codegen
 
@@ -335,6 +374,9 @@ class LIKWIDInstrumentationGPU(InstrumentationProvider):
         except KeyError:
             self._default_events = "FLOPS_SP"
 
+    def writes_to_report(self) -> bool:
+        return True
+
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if sdfg.parent is not None:
             return
@@ -344,8 +386,7 @@ class LIKWIDInstrumentationGPU(InstrumentationProvider):
         if not self._likwid_used:
             return
 
-        codegen.dispatcher.used_environments.add(LIKWID.full_class_path())
-        Config.append('compiler', 'cpu', 'args', value=' -DLIKWID_NVMON ')
+        codegen.dispatcher.used_environments.add(LIKWIDNvmon.full_class_path())
 
         self.codegen = codegen
 

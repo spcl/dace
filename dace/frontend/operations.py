@@ -116,12 +116,13 @@ class CompiledSDFGProfiler:
         # Ensure internal SDFG will not be called
         old_dne = compiled_sdfg.do_not_execute
         compiled_sdfg.do_not_execute = True
+        try:
+            yield
 
-        yield
-
-        #####################################
-        # Restore state after skipping contents
-        compiled_sdfg.do_not_execute = old_dne
+        finally:
+            #####################################
+            # Restore state after skipping contents
+            compiled_sdfg.do_not_execute = old_dne
 
         return None
 

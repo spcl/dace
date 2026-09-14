@@ -132,8 +132,9 @@ class DefaultEinsumBackward(BackwardImplementation):
 
         result_node = context.backward_state.add_nested_sdfg(
             nsdfg,
-            set(result.given_grad_names.values()).union(required_forward_inputs),
-            set(result.required_grad_names.values()))
+            sorted(set(result.given_grad_names.values()).union(required_forward_inputs)),
+            sorted(result.required_grad_names.values()),
+            symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state))
 
         return result_node, result
 
@@ -335,9 +336,10 @@ class DefaultSoftmaxBackward(BackwardImplementation):
         result_node = context.backward_state.add_nested_sdfg(
             nsdfg,
             # Inputs to nested SDFG
-            {"output", "output_grad"},
+            ["output", "output_grad"],
             # Outputs from nested SDFG
-            {"input_grad"})
+            ["input_grad"],
+            symbol_mapping=butils.backward_symbol_mapping(nsdfg, context.backward_state))
 
         butils.connect_output_from_forward(forward_node, result_node, context, "output")
 
@@ -892,8 +894,11 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         if "B" in required_gradients:
             inputs.add("B")
 
-        outputs = set(result.required_grad_names.values())
-        bwd_node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
+        bwd_node = context.backward_state.add_nested_sdfg(nsdfg,
+                                                          sorted(inputs),
+                                                          sorted(result.required_grad_names.values()),
+                                                          symbol_mapping=butils.backward_symbol_mapping(
+                                                              nsdfg, context.backward_state))
         return bwd_node, result
 
 
@@ -1039,6 +1044,9 @@ class DefaultReduceSumBackward(BackwardImplementation):
         if not keepdims and 'axes' in forward_node.in_connectors:
             inputs.add("axes")
 
-        result_node = context.backward_state.add_nested_sdfg(nsdfg, inputs, {"data_grad"})
+        result_node = context.backward_state.add_nested_sdfg(nsdfg,
+                                                             sorted(inputs), ["data_grad"],
+                                                             symbol_mapping=butils.backward_symbol_mapping(
+                                                                 nsdfg, context.backward_state))
 
         return result_node, result

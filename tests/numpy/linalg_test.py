@@ -210,6 +210,31 @@ def test_tensordot_22():
         assert (np.allclose(tensordot_2b(A.copy(), B.copy()), ref))
 
 
+def test_tensordot_cutensor_extent_buffer_covers_every_mode():
+    """The extents are looked up by mode, so the buffer must be indexable by the largest mode and
+    hold a written entry for each. Codegen only: no GPU, and no cuTENSOR needed to emit the call."""
+    import re
+
+    @dace.program(device=dace.dtypes.DeviceType.GPU)
+    def tensordot_extents(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
+        return np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[3, 2, 7, 1, 6, 0, 5, 4])
+
+    A = np.zeros((3, 3, 3, 3, 3, 3), dtype=np.float32)
+    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='cuTENSOR'):
+        code = '\n'.join(o.clean_code for o in tensordot_extents.to_sdfg(A, A).generate_code())
+
+    size = int(re.search(r'std::vector<int64_t> extent\((\d+)\)', code).group(1))
+    written = {int(m) for m in re.findall(r'extent\[(\d+)\] =', code)}
+    read = {
+        int(m)
+        for group in re.findall(r'std::vector<int32_t> mode[ABC]\{([\d,]+)\}', code)
+        for m in group.split(',')
+    }
+
+    assert max(written) < size, 'the extents are written out of bounds'
+    assert read <= written, f'modes {sorted(read - written)} have no extent, so they read a zero'
+
+
 if __name__ == "__main__":
     test_linalg_inv()
     test_linalg_solve()
@@ -223,3 +248,4 @@ if __name__ == "__main__":
     test_tensordot_2()
     test_tensordot_21()
     test_tensordot_22()
+    test_tensordot_cutensor_extent_buffer_covers_every_mode()

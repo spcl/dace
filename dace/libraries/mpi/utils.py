@@ -29,34 +29,13 @@ def MPI_DDT(dtype):
 
 
 def is_access_contiguous(memlet, data):
+    """Whether ``memlet`` accesses a single contiguous run of ``data``'s memory. Thin MPI-side adapter
+    over :meth:`dace.subsets.Subset.is_contiguous_subset` (the shared, stride-aware contiguity check --
+    correct for C, Fortran, and packed permutations), plus the MPI restriction that a reshaping send
+    (``other_subset``) is unsupported."""
     if memlet.other_subset is not None:
         raise ValueError("Other subset must be None, reshape in send not supported")
-    # to be contiguous, in every dimension the memlet range must have the same size
-    # than the data, except in the last dim, iff all other dims are only one element
-
-    matching = []
-    single = []
-    for m, d in zip(memlet.subset.size_exact(), data.sizes()):
-        if (str(m) == str(d)):
-            matching.append(True)
-        else:
-            matching.append(False)
-        if (m == 1):
-            single.append(True)
-        else:
-            single.append(False)
-
-    # if all dims are matching we are contiguous
-    if all(x is True for x in matching):
-        return True
-
-    # remove last dim, check if all remaining access a single dim
-    matching = matching[:-1]
-    single = single[:-1]
-    if all(x is True for x in single):
-        return True
-
-    return False
+    return memlet.subset.is_contiguous_subset(data)
 
 
 def create_vector_ddt(memlet, data):

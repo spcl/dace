@@ -6,6 +6,7 @@ import warnings
 
 import networkx as nx
 import sympy
+from ordered_set import OrderedSet
 
 from dace import properties
 from dace.frontend.python import astutils
@@ -183,7 +184,7 @@ class ControlFlowRaising(ppl.Pass):
                             graph.remove_edge(oe)
                             continue
 
-                        branch_nodes = set(dfs_conditional(graph, [oe.dst], lambda _, x: x is not merge_block))
+                        branch_nodes = OrderedSet(dfs_conditional(graph, [oe.dst], lambda _, x: x is not merge_block))
                         branch_start = branch.add_state(branch_name + '_start', is_start_block=True)
                         branch.add_nodes_from(branch_nodes)
                         branch.add_edge(branch_start, oe.dst, InterstateEdge(assignments=oe.data.assignments))
@@ -243,17 +244,12 @@ class ControlFlowRaising(ppl.Pass):
             structured_edges = dfs_tree_edges | back_edges
 
             # Unstructured edges: all edges not in structured set
-            unstructured_edges = set(cfg.nx.edges) - structured_edges
+            unstructured_edges = [e for e in cfg.nx.edges if e not in structured_edges]
 
             # Find the single entry / single exit region around the unstructured edges and turn it into a region
             # of unstructured control flow.
             if len(unstructured_edges) > 0:
-                tgt_nodes = set()
-                for u, v in unstructured_edges:
-                    if u not in tgt_nodes:
-                        tgt_nodes.add(u)
-                    if v not in tgt_nodes:
-                        tgt_nodes.add(v)
+                tgt_nodes = OrderedSet.union(*unstructured_edges)
                 unstructured_nodes, region_entry, region_exit = cfg_analysis.find_sese_region(cfg, tgt_nodes)
 
                 unstructured_region = UnstructuredControlFlow('unstructured_' + str(cfg.name) + '_' + str(lifted))
