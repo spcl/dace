@@ -84,7 +84,7 @@ class DFTExpansion(xf.ExpandTransformation):
         if len(indesc.shape) > 1 or node.axes is not None:
             return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=False, axes=node.axes)
 
-        return dft.dft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
+        return dft.dft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=dft.floating_factor(node.factor))
 
 
 @library.register_expansion(IFFT, 'pure')
@@ -100,7 +100,7 @@ class IDFTExpansion(xf.ExpandTransformation):
         if len(indesc.shape) > 1 or node.axes is not None:
             return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=True, axes=node.axes)
 
-        return dft.idft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
+        return dft.idft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=dft.floating_factor(node.factor))
 
 
 ##################################################################################################

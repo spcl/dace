@@ -75,6 +75,18 @@ class FloatingPrinter(sympy.printing.str.StrPrinter):
         return f'({expr.p}.0 / {expr.q}.0)'
 
 
+def floating_factor(factor: dace.symbolic.SymbolicType) -> dace.symbolic.SymbolicType:
+    """``factor`` with every symbol cast to ``float64``, for the 1-D programs that splice it into a tasklet.
+
+    ``1/N`` and ``sqrt(1/N)`` over an integer extent print as ``reciprocal(N)``, an integer division in C.
+    A constant factor is returned unchanged.
+    """
+    expr = dace.symbolic.pystr_to_symbolic(factor)
+    if not expr.free_symbols:
+        return factor
+    return expr.xreplace({sym: dace.symbolic.float64(sym) for sym in expr.free_symbols})
+
+
 def _add_dft_axis_state(sdfg, after, src, dst, shape, ax, inverse, factor):
     """Append a state doing a batched 1-D DFT of ``src`` along ``ax`` into ``dst``.
 
