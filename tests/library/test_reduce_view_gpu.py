@@ -58,6 +58,13 @@ def reduce_strided_view_full(x: dace.float64[8, 16], s: dace.float64[1]):
     s[0] = np.sum(x[:, ::2])
 
 
+@dace.program
+def reduce_pooling_windows(x: dace.float64[2, 8, 8, 3], y: dace.float64[2, 4, 4, 3]):
+    for i in range(4):
+        for j in range(4):
+            y[:, i, j, :] = np.max(x[:, 2 * i:2 * i + 2, 2 * j:2 * j + 2, :], axis=(1, 2))
+
+
 def test_reduce_strided_view_cpu():
     x = np.random.rand(8, 16)
     y = np.zeros(8)
@@ -93,6 +100,14 @@ def test_reduce_strided_view_full_gpu():
     out, caught = run_on_gpu(reduce_strided_view_full, dict(x=x, s=np.zeros(1)))
     assert not view_pure_fallback(caught)
     assert np.allclose(out['s'][0], np.sum(x[:, ::2]))
+
+
+@pytest.mark.gpu
+def test_reduce_over_pooling_windows_gpu():
+    """A 2x2 window spans two rows of its source, so its two reduced axes are not one run of memory."""
+    x = np.random.rand(2, 8, 8, 3)
+    out, _ = run_on_gpu(reduce_pooling_windows, dict(x=x, y=np.zeros((2, 4, 4, 3))))
+    assert np.allclose(out['y'], x.reshape(2, 4, 2, 4, 2, 3).max(axis=(2, 4)))
 
 
 if __name__ == '__main__':
