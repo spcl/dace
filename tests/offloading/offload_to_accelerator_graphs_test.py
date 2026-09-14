@@ -5,7 +5,7 @@ import networkx as nx
 import numpy as np
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, ReturnBlock
 from dace.transformation.dataflow import GPUTransformMap
 from dace.transformation.optimizer import Optimizer
 from dace.transformation.passes.offloading import offloading_helpers as helpers
@@ -908,13 +908,13 @@ def test_a_view_of_a_staged_container_is_staged_with_it():
                 f"{origin} ({sdfg.arrays[origin].storage}) does")
 
 
-def two_arm_branch_sdfg(arms_meet: bool) -> dace.SDFG:
+def two_arm_branch_sdfg(arms_meet: bool, big_arm_padding: int = 0) -> dace.SDFG:
     """A device map doubles ``A`` into ``t``, and a condition on ``t[0]`` picks one of two device maps writing ``A``.
 
     With ``arms_meet`` both arms flow into an empty ``end`` state; without it each arm is a sink of
-    the control flow, so the program has two exits.
+    the control flow, so the program has two exits. ``big_arm_padding`` empty states follow ``big``.
     """
-    sdfg = dace.SDFG("two_arm_branch_" + ("meeting" if arms_meet else "sinks"))
+    sdfg = dace.SDFG("two_arm_branch_" + ("meeting" if arms_meet else "sinks") + f"_{big_arm_padding}")
     sdfg.add_array("A", [8], dace.float64)
     sdfg.add_array("t", [8], dace.float64, transient=True)
     fill = sdfg.add_state("fill", is_start_block=True)
@@ -931,6 +931,10 @@ def two_arm_branch_sdfg(arms_meet: bool) -> dace.SDFG:
                                external_edges=True)
         sdfg.add_edge(fill, arm, dace.InterstateEdge(condition=condition))
         arms.append(arm)
+    for index in range(big_arm_padding):
+        padding = sdfg.add_state(f"big_padding_{index}")
+        sdfg.add_edge(arms[0], padding, dace.InterstateEdge())
+        arms[0] = padding
     if arms_meet:
         end = sdfg.add_state("end")
         for arm in arms:
@@ -986,6 +990,19 @@ def test_the_exit_joining_two_sink_arms_does_not_outlive_the_pass() -> None:
     assert not empty, f"the pass left empty states behind: {empty}"
 
 
+@pytest.mark.parametrize("arms_meet", [False, True], ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
+def test_the_short_arm_of_an_uneven_device_branch_copies_the_written_array_back(arms_meet: bool) -> None:
+    """BFS reaches the exit through ``small`` before the end of the long ``big`` arm; both ways out still restore ``A``."""
+    sdfg = two_arm_branch_sdfg(arms_meet, big_arm_padding=2)
+    OtA().apply_pass(sdfg, {})
+
+    paths = [path for sink in sdfg.sink_nodes() for path in nx.all_simple_paths(sdfg.nx, sdfg.start_block, sink)]
+    assert len(paths) == 2, f"expected one way out per arm, got {[[s.label for s in p] for p in paths]}"
+    stale_exits = [[state.label for state in path] for path in paths
+                   if not any(writes_container(state, "A") for state in path)]
+    assert not stale_exits, f"these exits never copy A back to the host: {stale_exits}"
+
+
 def host_only_two_arm_branch_sdfg() -> dace.SDFG:
     """A condition on ``A[0]`` picks one of two host tasklets writing ``A[0]``; each arm is a sink."""
     sdfg = dace.SDFG("host_only_two_arm_branch")
@@ -1007,6 +1024,86 @@ def test_a_host_only_branch_keeps_its_arms_as_the_exits() -> None:
 
     assert sorted(state.label for state in sdfg.sink_nodes()) == ["big", "small"]
     assert sorted(state.label for state in sdfg.states()) == ["big", "fill", "small"]
+
+
+def early_return_sdfg(return_after_arm: bool) -> dace.SDFG:
+    """A device map doubles ``A`` into ``A`` and ``t``; if ``t[0] > 5`` the program returns early, else ``small`` runs.
+
+    With ``return_after_arm`` a device map ``big`` adds 1 to ``A`` before the return; without it the
+    condition jumps straight to the return. ``small`` subtracts 1 from ``A`` and falls through to the end.
+    """
+    sdfg = dace.SDFG("early_return_" + ("after_arm" if return_after_arm else "direct"))
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("t", [8], dace.float64, transient=True)
+    fill = sdfg.add_state("fill", is_start_block=True)
+    fill.add_mapped_tasklet("double",
+                            dict(i="0:8"), {"inp": dace.Memlet("A[i]")},
+                            "out_a = inp * 2.0\nout_t = inp * 2.0", {
+                                "out_a": dace.Memlet("A[i]"),
+                                "out_t": dace.Memlet("t[i]")
+                            },
+                            external_edges=True)
+    early = sdfg.add_return("early")
+    big_condition = dace.InterstateEdge(condition="t[0] > 5.0")
+    if return_after_arm:
+        big = sdfg.add_state("big")
+        big.add_mapped_tasklet("big",
+                               dict(i="0:8"), {"inp": dace.Memlet("t[i]")},
+                               "out = inp + 1.0", {"out": dace.Memlet("A[i]")},
+                               external_edges=True)
+        sdfg.add_edge(fill, big, big_condition)
+        sdfg.add_edge(big, early, dace.InterstateEdge())
+    else:
+        sdfg.add_edge(fill, early, big_condition)
+    small = sdfg.add_state("small")
+    small.add_mapped_tasklet("small",
+                             dict(i="0:8"), {"inp": dace.Memlet("t[i]")},
+                             "out = inp - 1.0", {"out": dace.Memlet("A[i]")},
+                             external_edges=True)
+    sdfg.add_edge(fill, small, dace.InterstateEdge(condition="not (t[0] > 5.0)"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("return_after_arm", [True, False], ids=["return_after_a_device_arm", "return_on_the_branch"])
+def test_an_early_return_copies_the_written_array_back_first(return_after_arm: bool) -> None:
+    """The return leaves the program, so ``A`` must reach the host on the way to it, not only at the end."""
+    sdfg = early_return_sdfg(return_after_arm)
+    OtA().apply_pass(sdfg, {})
+
+    early = next(block for block in sdfg.nodes() if isinstance(block, ReturnBlock))
+    paths = list(nx.all_simple_paths(sdfg.nx, sdfg.start_block, early))
+    assert paths, "the return is no longer reachable"
+    stale = [[block.label for block in path] for path in paths
+             if not any(writes_container(block, "A") for block in path if isinstance(block, dace.SDFGState))]
+    assert not stale, f"these paths return without copying A back to the host: {stale}"
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("return_after_arm", [True, False], ids=["return_after_a_device_arm", "return_on_the_branch"])
+def test_an_early_return_hands_back_the_device_result(return_after_arm: bool) -> None:
+    """3.0 doubles to 6.0 and returns (+1 -> 7.0 after ``big``); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""
+    sdfg = early_return_sdfg(return_after_arm)
+    OtA().apply_pass(sdfg, {})
+    sdfg.validate()
+    compiled = sdfg.compile()
+
+    returned = np.full(8, 3.0)
+    compiled(A=returned)
+    fell_through = np.full(8, 0.5)
+    compiled(A=fell_through)
+
+    np.testing.assert_array_equal(returned, np.full(8, 7.0 if return_after_arm else 6.0))
+    np.testing.assert_array_equal(fell_through, np.full(8, 0.0))
+
+
+def test_the_state_before_an_early_return_does_not_outlive_the_pass() -> None:
+    """The copy-back follows the state the pass puts before the return; nothing empty is left behind."""
+    sdfg = early_return_sdfg(return_after_arm=True)
+    OtA().apply_pass(sdfg, {})
+
+    empty = [state.label for state in sdfg.states() if state.number_of_nodes() == 0]
+    assert not empty, f"the pass left empty states behind: {empty}"
 
 
 if __name__ == "__main__":
