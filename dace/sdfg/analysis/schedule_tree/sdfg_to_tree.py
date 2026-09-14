@@ -5,8 +5,8 @@ from typing import Dict, List, Set
 import dace
 from dace import data, subsets, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
-                             UnstructuredControlFlow)
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
+                             LoopRegion, ReturnBlock, SDFGState, UnstructuredControlFlow)
 from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.replace import replace_datadesc_names
 from dace.frontend.python.astutils import negate_expr
@@ -605,6 +605,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
 
             # Insert the nested SDFG flattened
             nested_stree = as_schedule_tree(node.sdfg, in_place=True, toplevel=False)
+            _bind_exits_to_label(nested_stree, state, node)
             result.extend(nested_stree.children)
 
             if generated_nviews:
@@ -646,6 +647,39 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     return result
 
 
+def _nested_sdfg_return_label(state: SDFGState, node: nd.NestedSDFG) -> str:
+    """
+    Returns a unique label name for the end of a flattened nested SDFG.
+
+    :param state: The state containing the nested SDFG node.
+    :param node: The nested SDFG node.
+    :return: A label name that does not clash with any control flow block label in the SDFG tree.
+    """
+    existing = {block.label for block in state.sdfg.root_sdfg.all_control_flow_blocks(recursive=True)}
+    return data.find_new_name(f'__return_{state.label}_{state.node_id(node)}', existing)
+
+
+def _bind_exits_to_label(scope: tn.ScheduleTreeScope, state: SDFGState, node: nd.NestedSDFG) -> None:
+    """
+    Rewrites the exit gotos of a flattened nested SDFG to jump to a label at its end instead.
+
+    Exiting a nested SDFG (e.g., through a return block) only exits the nested SDFG, not the SDFG it is contained in.
+    Since exit gotos of nested SDFGs within this one were already bound to their own labels, all remaining exit gotos
+    belong to this nested SDFG.
+
+    :param scope: The schedule tree of the nested SDFG, which is modified in-place.
+    :param state: The state containing the nested SDFG node.
+    :param node: The nested SDFG node.
+    """
+    exits = [n for n in scope.preorder_traversal() if isinstance(n, tn.GotoNode) and n.target is None]
+    if not exits:
+        return
+    label = _nested_sdfg_return_label(state, node)
+    for goto in exits:
+        goto.target = label
+    scope.add_child(tn.StateLabel(state=label))
+
+
 def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge],
                           emit_goto_for_successors: bool = False) -> List[tn.ScheduleTreeNode]:
     result: List[tn.ScheduleTreeNode] = []
@@ -671,7 +705,8 @@ def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge],
             # rather than hiding any successors behind a condition, we create a return / exit goto node that is executed
             # if the inverse of the condition holds, i.e., the successor is NOT executed.
             exit_goto = tn.GotoNode(target=None)
-            state_if_node = tn.StateIfScope(condition=CodeBlock(negate_expr(edge.data.condition)), children=[exit_goto])
+            state_if_node = tn.StateIfScope(condition=CodeBlock([negate_expr(edge.data.condition)]),
+                                            children=[exit_goto])
         result.append(state_if_node)
 
     return result
@@ -741,6 +776,12 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
 
     if isinstance(block, SDFGState):
         return _state_schedule_tree(block)
+
+    if isinstance(block, BreakBlock):
+        return [tn.BreakNode()]
+
+    if isinstance(block, ContinueBlock):
+        return [tn.ContinueNode()]
 
     if isinstance(block, ReturnBlock):
         # For return blocks, add a goto node to the end of the schedule tree.

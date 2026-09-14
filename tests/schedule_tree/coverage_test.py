@@ -25,11 +25,7 @@ ABSTRACT_NODE_TYPES = {tn.ScheduleTreeNode, tn.ScheduleTreeScope, tn.ControlFlow
 UNSUPPORTED_NODE_TYPES = {
     tn.GBlock: 'Unstructured control flow is not yet converted to SDFGs',
     tn.StateLabel: 'Labels of unstructured control flow are not emitted by the SDFG-to-tree conversion',
-    tn.GotoNode: 'Exit gotos are not yet converted to return blocks',
-    tn.StateIfScope: 'Conditional inter-state edges are not yet converted to SDFGs',
     tn.ConsumeScope: 'Consume scopes are not yet converted to SDFGs',
-    tn.BreakNode: 'Break blocks are not supported by the SDFG-to-tree conversion',
-    tn.ContinueNode: 'Continue blocks are not supported by the SDFG-to-tree conversion',
     tn.NView: 'Nested SDFG views are only applied inside nested SDFGs created for map scopes',
     tn.NViewEnd: 'Nested SDFG views are only applied inside nested SDFGs created for map scopes',
 }

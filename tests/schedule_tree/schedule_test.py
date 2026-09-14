@@ -5,6 +5,9 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 import numpy as np
 
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, ReturnBlock
+
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -282,6 +285,51 @@ def test_multiview():
     assert [type(n) for n in stree.children] == [tn.ViewNode, tn.ViewNode, tn.ViewNode, tn.ViewNode, tn.CopyNode]
 
 
+def _returning_sdfg(name: str) -> dace.SDFG:
+    """
+    Creates an SDFG that returns if ``N > 5`` and otherwise writes to ``A[0]``.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [1], dace.float64)
+    block = ConditionalBlock('maybe_return')
+    sdfg.add_node(block, is_start_block=True)
+    branch = ControlFlowRegion('return_branch', sdfg=sdfg, parent=block)
+    branch.add_node(ReturnBlock('return'), is_start_block=True)
+    block.add_branch(CodeBlock('N > 5'), branch)
+    state = sdfg.add_state_after(block, 'write')
+    tasklet = state.add_tasklet('write', {}, {'out'}, 'out = 1')
+    state.add_edge(tasklet, 'out', state.add_write('A'), None, dace.Memlet('A[0]'))
+    return sdfg
+
+
+def test_nested_sdfg_return_labels():
+    """
+    Exits of nested SDFGs jump to a unique label at the end of each flattened nested SDFG, whereas exits of the
+    top-level SDFG remain exit gotos.
+    """
+    sdfg = _returning_sdfg('tester')
+    sdfg.add_array('B', [1], dace.float64)
+    previous = sdfg.sink_nodes()[0]
+    for i in range(2):
+        state = sdfg.add_state_after(previous, f'call_{i}')
+        nsdfg = state.add_nested_sdfg(_returning_sdfg(f'nested_{i}'), {}, {'A'}, symbol_mapping={'N': 'N'})
+        state.add_edge(nsdfg, 'A', state.add_write('B'), None, dace.Memlet('B[0]'))
+        previous = state
+
+    stree = as_schedule_tree(sdfg)
+    labels = [n for n in stree.preorder_traversal() if isinstance(n, tn.StateLabel)]
+    gotos = [n for n in stree.preorder_traversal() if isinstance(n, tn.GotoNode)]
+    assert len(labels) == 2
+    assert len({label.name for label in labels}) == 2
+    assert [goto.target for goto in gotos] == [None, labels[0].name, labels[1].name]
+
+    # Each label directly follows the statements of its nested SDFG
+    for label in labels:
+        index = next(i for i, child in enumerate(stree.children) if child is label)
+        assert isinstance(stree.children[index - 1], tn.TaskletNode)
+
+
 if __name__ == '__main__':
     test_for_in_map_in_for()
     test_libnode()
@@ -294,3 +342,4 @@ if __name__ == '__main__':
     test_code_to_code()
     test_dyn_map_range()
     test_multiview()
+    test_nested_sdfg_return_labels()

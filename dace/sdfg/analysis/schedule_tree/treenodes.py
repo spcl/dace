@@ -9,7 +9,7 @@ from dace.sdfg import InterstateEdge
 from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 from dace.memlet import Memlet
 from typing import TYPE_CHECKING, Any, Iterable, Iterator, Literal, Optional
 
@@ -335,10 +335,18 @@ class GBlock(ControlFlowScope):
 
 @dataclass
 class StateLabel(ScheduleTreeNode):
-    state: SDFGState
+    """
+    A label that can be the target of a ``GotoNode``.
+    """
+    state: ControlFlowBlock | str  #: The labeled control flow block, or the name of a label without a block
+
+    @property
+    def name(self) -> str:
+        """The name of the label, which is used as the target of gotos."""
+        return self.state if isinstance(self.state, str) else self.state.label
 
     def as_string(self, indent: int = 0):
-        return indent * INDENTATION + f'label {self.state.name}:'
+        return indent * INDENTATION + f'label {self.name}:'
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         return MemletSet()
