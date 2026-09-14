@@ -1113,17 +1113,22 @@ class Map(object):
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
-    def __init__(
-        self,
-        label,
-        params,
-        ndrange,
-        schedule=dtypes.ScheduleType.Default,
-        unroll=False,
-        collapse=1,
-        fence_instrumentation=False,
-        debuginfo=None,
-    ):
+    allow_chiplet_threadblock_distribution = Property(
+        dtype=bool,
+        default=True,
+        desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
+        "(see the `compiler.cuda.chiplet_number` configuration entry)",
+        serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock))
+
+    def __init__(self,
+                 label,
+                 params,
+                 ndrange,
+                 schedule=dtypes.ScheduleType.Default,
+                 unroll=False,
+                 collapse=1,
+                 fence_instrumentation=False,
+                 debuginfo=None):
         super(Map, self).__init__()
 
         # Assign properties

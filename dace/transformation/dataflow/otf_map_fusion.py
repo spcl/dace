@@ -489,6 +489,10 @@ def advanced_replace(subgraph: StateSubgraphView, s: str, s_: str) -> None:
         elif isinstance(node, nodes.NestedSDFG):
             for nsdfg in node.sdfg.all_sdfgs_recursive():
                 nsdfg.replace(s, s_)
+                # The symbol is renamed inside, so the enclosing node's mapping has to be keyed by the new name
+                parent_node = nsdfg.parent_nsdfg_node
+                if parent_node is not None and s in parent_node.symbol_mapping:
+                    parent_node.symbol_mapping[s_] = parent_node.symbol_mapping.pop(s)
                 for cfg in nsdfg.all_control_flow_regions():
                     cfg.replace(s, s_)
                     for nblock in cfg.nodes():
