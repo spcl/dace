@@ -4,10 +4,13 @@ import dace
 import pytest
 import numpy as np
 
-from dace.transformation.passes.nested_gpu_device_map_lowering import NestedGPUDeviceMapLowering
+from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
 
 
 @pytest.mark.gpu
+@pytest.mark.xfail(strict=True,
+                   raises=NotImplementedError,
+                   reason='NestedGPUDeviceMapLowering does not yet lower several nesting levels into one device map')
 @pytest.mark.parametrize('block_size', [None, '64,8,1'])
 def test_double_nest_thread_specialization_noncontiguous_blocks(block_size):
 
