@@ -21,6 +21,33 @@ def test_general_einsum():
     assert np.allclose(out, np.einsum('ij,ji,i->', A, B, C))
 
 
+@pytest.mark.parametrize('spec', ['abi,ab->ai', 'ijou,aj,au,ao->ai'])
+def test_an_einsum_of_real_and_complex_operands_is_complex(spec):
+    """numpy's result type of float64 and complex128 operands is complex128. Typing the output after
+    the first operand alone cannot even hold the product: quantum espresso's exchange kernel contracts
+    a real table with complex projections, and the generated C++ refused the double assignment."""
+    rng = np.random.default_rng(0)
+    if spec == 'abi,ab->ai':
+
+        @dace.program
+        def einsumtest(A: dace.float64[M, N, 3], B: dace.complex128[M, N]):
+            return np.einsum('abi,ab->ai', A, B)
+
+        operands = (rng.random((4, 5, 3)), rng.random((4, 5)) + 1j * rng.random((4, 5)))
+    else:
+
+        @dace.program
+        def einsumtest(K: dace.float64[N, N, N, N], P: dace.complex128[M, N], Q: dace.complex128[M, N],
+                       R: dace.complex128[M, N]):
+            return np.einsum('ijou,aj,au,ao->ai', K, P, Q, R)
+
+        operands = (rng.random((3, 3, 3, 3)), *(rng.random((4, 3)) + 1j * rng.random((4, 3)) for _ in range(3)))
+    got = einsumtest(*operands)
+    want = np.einsum(spec, *operands)
+    assert got.dtype == want.dtype, (got.dtype, want.dtype)
+    assert np.allclose(got, want, rtol=1e-13, atol=0.0)
+
+
 def test_matmul():
 
     @dace.program

@@ -302,7 +302,8 @@ def _create_einsum_internal(sdfg: SDFG,
     output_index = ','.join(param[o] for o in einsum.output) or '0'
 
     if output is None:
-        dtype = dtype or sdfg.arrays[arrays[0]].dtype
+        # numpy's result type of every operand: a float64 x complex128 contraction is complex128.
+        dtype = dtype or dtypes.result_type_of(*(sdfg.arrays[array].dtype for array in arrays))
         if output_name is None:
             output, odesc = sdfg.add_temp_transient(output_shape, dtype)
         else:
@@ -336,7 +337,8 @@ def _create_einsum_internal(sdfg: SDFG,
         state.add_edge(rnode, '_out', c, None,
                        dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])))
 
-    elif not einsum.is_bmm():
+    # GEMM reads every operand at the output's dtype; mixed operands (float64 x complex128) take the maps.
+    elif not einsum.is_bmm() or any(sdfg.arrays[array].dtype != dtype for array in arrays):
         # Fall back to "pure" SDFG einsum with conflict resolution
         c = state.add_write(output)
 
