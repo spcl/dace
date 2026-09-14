@@ -175,6 +175,37 @@ def test_short_loop_unroll_leaves_a_loop_rolled_when_its_body_exceeds_the_taskle
     assert np.allclose(B[0], A.sum())
 
 
+def test_short_loop_unroll_fuses_once_per_level_of_innermost_loops(monkeypatch):
+    """Sibling innermost loops unroll together and their region is fused once before the enclosing loop is
+    judged; fusing after every single unroll repeated the fusion for each sibling."""
+    from dace.transformation.passes import parallelization_prep
+
+    @dace.program
+    def nest(A: dace.float64[3, 4], B: dace.float64[1]):
+        acc = 0.0
+        for i in range(3):
+            for j in range(2):
+                acc += A[i, j]
+            for k in range(2):
+                acc += A[i, k + 2] * 2.0
+        B[0] = acc
+
+    sdfg = nest.to_sdfg(simplify=True)
+    assert _num_loops(sdfg) == 3, 'the fixture must be one short loop holding two sibling short loops'
+    fusions = []
+    original = parallelization_prep._local_state_fusion
+    monkeypatch.setattr(parallelization_prep, '_local_state_fusion',
+                        lambda graph, region: fusions.append(region) or original(graph, region))
+    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) == 3
+    assert _num_loops(sdfg) == 0
+    assert len(fusions) == 2, len(fusions)  # one per level: the two siblings, then the outer loop
+
+    A = np.random.default_rng(7).random((3, 4))
+    B = np.zeros(1)
+    sdfg(A=A, B=B)
+    assert np.allclose(B[0], A[:, :2].sum() + 2.0 * A[:, 2:4].sum())
+
+
 def test_short_loop_unroll_refuses_unfusable_branchy_body() -> None:
     """The unroll is declined exactly when it can neither specialize an index nor decide a guard.
 

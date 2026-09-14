@@ -20,7 +20,7 @@ imports pull in).
 """
 import ast
 import copy
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Set
 
 import sympy
 
@@ -340,6 +340,38 @@ class ShortLoopUnroll(ppl.Pass):
     def depends_on(self):
         return set()
 
+    def eligible(self, loop: LoopRegion, sdfg: SDFG, trips: Dict[LoopRegion, Optional[int]]) -> bool:
+        """Whether ``loop`` passes every gate short of LoopUnroll's own applicability check."""
+        if loop not in trips:
+            trips[loop] = _constant_trip_count(loop, sdfg)
+        trip = trips[loop]
+        if trip is None or trip > self.unroll_limit:
+            return False
+        tasklets, holds_map = loop_body_census(loop)
+        if holds_map or tasklets > self.unroll_tasklet_budget:
+            return False  # a map body is already parallel, a large body clones too much; leave for LoopToMap
+        return not _unfusable_branchy_body(loop)  # a branchy body local fusion cannot re-merge
+
+    @staticmethod
+    def unroll_one(loop: LoopRegion) -> Optional[bool]:
+        """Unroll ``loop``: True on success, None when LoopUnroll refuses it, False when apply raised part-way.
+
+        Applicability is decided first, on its own, so a refusal (graph untouched, not a modification) is
+        distinguishable from a mid-apply failure (possibly half-rewritten, a modification). ``annotate=False``
+        skips the per-apply full-SDFG propagation; the pass propagates once at its end.
+        """
+        from dace.transformation.interstate.loop_unroll import LoopUnroll
+        try:
+            if not LoopUnroll.can_be_applied_to(sdfg=loop.sdfg, loop=loop):
+                return None
+        except Exception:
+            return None
+        try:
+            LoopUnroll().apply_to(sdfg=loop.sdfg, loop=loop, annotate=False, verify=False)
+        except Exception:
+            return False
+        return True
+
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Unroll short constant-trip loops.
 
@@ -358,7 +390,6 @@ class ShortLoopUnroll(ppl.Pass):
         """
         if self.unroll_limit <= 0:
             return None
-        from dace.transformation.interstate.loop_unroll import LoopUnroll
         unrolled = 0
         # Unrolls that raised part-way through ``LoopUnroll.apply``. Counted separately from
         # ``unrolled`` so they feed the return value (the graph may be half-rewritten) without
@@ -368,56 +399,34 @@ class ShortLoopUnroll(ppl.Pass):
         # ``sdfg.constants``; no step here rewrites a live loop's header (an unroll substitutes
         # into fresh copies), and the keys stay referenced, so no id is reused.
         trips: Dict[LoopRegion, Optional[int]] = {}
-        changed = True
-        while changed:
-            changed = False
-            # Bottom-up: unroll the deepest loops first, so an enclosing loop is only unrolled once its
-            # inner loops are already unrolled + locally fused into a compact body.
-            for loop in sorted(_loops(sdfg), key=_loop_depth, reverse=True):
-                if loop not in trips:
-                    trips[loop] = _constant_trip_count(loop, sdfg)
-                trip = trips[loop]
-                if trip is None or trip > self.unroll_limit:
-                    continue
-                tasklets, holds_map = loop_body_census(loop)
-                if holds_map or tasklets > self.unroll_tasklet_budget:
-                    continue  # a map body is already parallel, a large body clones too much; leave for LoopToMap
-                if _unfusable_branchy_body(loop):
-                    continue  # would clone a branchy body local fusion cannot re-merge; leave for LoopToMap
+        # Loops LoopUnroll refused or failed on. The gates are re-judged every level instead: unrolling inner
+        # loops can fold a guard away and make a branchy body unrollable.
+        refused: Set[LoopRegion] = set()
+        while True:
+            # One LEVEL at a time: every eligible loop at the deepest eligible depth unrolls, then each
+            # region that received clones is fused once, then the next innermost level is judged. The
+            # per-unroll re-sort and re-fusion this replaces repeated both for every single unroll.
+            eligible = [loop for loop in _loops(sdfg) if loop not in refused and self.eligible(loop, sdfg, trips)]
+            if not eligible:
+                break
+            depth = max(_loop_depth(loop) for loop in eligible)
+            touched: List[ControlFlowRegion] = []
+            for loop in [loop for loop in eligible if _loop_depth(loop) == depth]:
                 parent = loop.parent_graph
-                # Applicability is decided FIRST, on its own, so a refusal is distinguishable
-                # from a failure raised part-way through ``apply``. A refusal leaves the graph
-                # untouched and must not be reported as a modification; a mid-``apply`` failure
-                # can leave the loop half-rewritten and must be. ``apply_to`` below therefore
-                # runs with ``verify=False`` -- ``can_be_applied`` still runs exactly once, so
-                # this is the same check sequence as before, just with the outcome visible here.
-                try:
-                    applicable = LoopUnroll.can_be_applied_to(sdfg=loop.sdfg, loop=loop)
-                except Exception:
-                    applicable = False
-                if not applicable:
+                outcome = self.unroll_one(loop)
+                if not outcome:
+                    refused.add(loop)  # refused (None) or raised part-way (False); never retried in this call
+                if outcome is None:
                     continue  # not unrollable in this context; leave it for LoopToMap
-                try:
-                    # ``annotate=False``: skip the per-apply full-SDFG memlet/state
-                    # propagation. The transformation framework otherwise re-runs it
-                    # after EVERY unroll -- O(unrolls x sdfg_size) redundant work
-                    # (the dominant ~83% cost of unrolling a d-deep trip-t tile
-                    # nest, whose SDFG grows to ~t^d blocks). The trip-count / loop
-                    # re-collection below reads only loop bounds, not memlets, so
-                    # the interim annotations are never observed; one propagation
-                    # after the whole fixpoint (below) refreshes them.
-                    LoopUnroll().apply_to(sdfg=loop.sdfg, loop=loop, annotate=False, verify=False)
-                except Exception:
-                    # Raised from inside ``apply``: the rewrite may be half-done, so this
-                    # counts as a modification even though no loop was fully unrolled.
-                    partial += 1
+                if not outcome:
+                    partial += 1  # raised inside apply: the rewrite may be half-done
                     continue
                 unrolled += 1
-                changed = True
-                if parent is not None:
-                    # Compact the just-unrolled region before an enclosing loop deepcopies it.
-                    _local_state_fusion(sdfg, parent)
-                break
+                if parent is not None and all(parent is not seen for seen in touched):
+                    touched.append(parent)
+            for region in touched:
+                # Compact the just-unrolled clones before an enclosing loop deepcopies them.
+                _local_state_fusion(sdfg, region)
         if unrolled:
             # Propagate once, at the end of the pass (not per-apply).
             from dace.sdfg.propagation import propagate_memlets_sdfg
