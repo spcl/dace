@@ -321,11 +321,13 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
     identifiers_seen = set()
 
     for nsdfg in sdfg.all_sdfgs_recursive():
-        # Rename duplicate states
-        for state in nsdfg.states():
-            if state.label in state_names_seen:
-                state.label = data.find_new_name(state.label, state_names_seen)
-            state_names_seen.add(state.label)
+        # Rename duplicate states and control flow blocks, whose labels are targets of gotos
+        for block in nsdfg.all_control_flow_blocks():
+            if block is nsdfg:
+                continue
+            if block.label in state_names_seen:
+                block.label = data.find_new_name(block.label, state_names_seen)
+            state_names_seen.add(block.label)
 
         replacements: Dict[str, str] = {}
         parent_node = nsdfg.parent_nsdfg_node
@@ -715,21 +717,20 @@ def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge],
 def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
     if isinstance(block, ControlFlowRegion):
         children: List[tn.ScheduleTreeNode] = []
-        if isinstance(block.start_block, SDFGState):
-            first_state_node = tn.StateLabel(state=block.start_block)
-            children.append(first_state_node)
 
         if isinstance(block, UnstructuredControlFlow) or any(block.out_degree(n) > 1 for n in block.nodes()):
             # This control flow graph contains multiple outgoing edges from a single node, which indicates
-            # unstructured control flow. This is represented through a GBlock that wraps everything.
+            # unstructured control flow. This is represented through a GBlock that wraps everything. Every block
+            # starts with a label, followed by its contents and the gotos of its outgoing edges. The start block comes
+            # first, and falling off the end of a block exits the GBlock.
             subnodes: List[tn.ScheduleTreeNode] = []
-            processed_edges: Set[gr.Edge[InterstateEdge]] = set()
-            for n in block.nodes():
+            start_block = block.start_block
+            for n in [start_block] + [n for n in block.nodes() if n is not start_block]:
+                subnodes.append(tn.StateLabel(state=n))
                 subnodes.extend(_block_schedule_tree(n))
-                for oe in block.out_edges(n):
-                    if oe not in processed_edges:
-                        subnodes.extend(_isedge_schedule_tree(oe, emit_goto_for_successors=True))
-                        processed_edges.add(oe)
+                # Conditional transitions come first, such that an unconditional transition does not shadow them
+                for oe in sorted(block.out_edges(n), key=lambda e: e.data.is_unconditional()):
+                    subnodes.extend(_isedge_schedule_tree(oe, emit_goto_for_successors=True))
             gblock = tn.GBlock(children=subnodes)
             children = [gblock]
         else:

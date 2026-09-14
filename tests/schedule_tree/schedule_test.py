@@ -6,7 +6,7 @@ from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 import numpy as np
 
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, ReturnBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -330,6 +330,30 @@ def test_nested_sdfg_return_labels():
         assert isinstance(stree.children[index - 1], tn.TaskletNode)
 
 
+def test_gblock_labels():
+    """
+    Every block in a general block is labeled, even if no goto jumps to it, and the start block comes first.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int64)
+    other = sdfg.add_state('other')
+    start = sdfg.add_state('start', is_start_block=True)
+    loop = LoopRegion('loop', 'i < 3', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop)
+    loop.add_state('body', is_start_block=True)
+    sdfg.add_edge(start, other, dace.InterstateEdge('N > 0'))
+    sdfg.add_edge(start, loop, dace.InterstateEdge('N <= 0'))
+
+    stree = as_schedule_tree(sdfg)
+    assert len(stree.children) == 1 and isinstance(stree.children[0], tn.GBlock)
+    labels = [child.name for child in stree.children[0].children if isinstance(child, tn.StateLabel)]
+    assert labels == ['start', 'other', 'loop']
+    assert isinstance(stree.children[0].children[0], tn.StateLabel)
+
+    gotos = {n.target for n in stree.preorder_traversal() if isinstance(n, tn.GotoNode)}
+    assert gotos == {'other', 'loop'}
+
+
 if __name__ == '__main__':
     test_for_in_map_in_for()
     test_libnode()
@@ -343,3 +367,4 @@ if __name__ == '__main__':
     test_dyn_map_range()
     test_multiview()
     test_nested_sdfg_return_labels()
+    test_gblock_labels()

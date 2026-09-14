@@ -8,7 +8,8 @@ from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, ReturnBlock, SDFGState
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, ReturnBlock, SDFGState,
+                             UnstructuredControlFlow)
 
 import numpy as np
 import pytest
@@ -1459,6 +1460,98 @@ def test_invalid_goto(target: str) -> None:
         stree.as_sdfg(simplify=False)
 
 
+def test_gblock_goto_loop() -> None:
+    # A loop written with forward and backward gotos, with assignments on transitions
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [10]),
+            'B': data.Array(dace.float64, [1]),
+        },
+        symbols={'i': dace.int64},
+        children=[
+            tn.GBlock(children=[
+                tn.StateLabel(state='start'),
+                tn.AssignNode('i', CodeBlock('0'), dace.InterstateEdge(assignments={'i': '0'})),
+                tn.GotoNode(target='check'),
+                tn.StateLabel(state='check'),
+                tn.StateIfScope(condition=CodeBlock('i >= 5'), children=[tn.GotoNode(target='done')]),
+                _write_node('i', 'A[i]'),
+                tn.AssignNode('i', CodeBlock('i + 1'), dace.InterstateEdge(assignments={'i': 'i + 1'})),
+                tn.GotoNode(target='check'),
+                tn.StateLabel(state='done'),
+                _write_node('1', 'B[0]'),
+            ]),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    assert UnstructuredControlFlow in _node_types(sdfg)
+
+    a = np.zeros(10)
+    b = np.zeros(1)
+    sdfg(A=a, B=b)
+    assert np.allclose(a, [0, 1, 2, 3, 4, 0, 0, 0, 0, 0])
+    assert b[0] == 1
+
+
+@pytest.mark.parametrize('value', (7, 3, 0))
+def test_gblock_conditional_gotos(value: int) -> None:
+    # Two conditional gotos out of one segment, followed by statements that only run if neither is taken. Falling off
+    # the end of a segment exits the general block.
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [2])},
+        symbols={'n': dace.int64},
+        children=[
+            tn.GBlock(children=[
+                tn.StateLabel(state='entry'),
+                tn.StateIfScope(condition=CodeBlock('n > 5'), children=[tn.GotoNode(target='big')]),
+                tn.StateIfScope(condition=CodeBlock('n > 2'), children=[tn.GotoNode(target='medium')]),
+                _write_node('3', 'A[0]'),
+                tn.StateLabel(state='big'),
+                _write_node('1', 'A[0]'),
+                tn.StateLabel(state='medium'),
+                _write_node('2', 'A[0]'),
+            ]),
+            tn.TaskletNode(nodes.Tasklet('after', {'inp'}, {'out'}, 'out = inp + 10'), {'inp': dace.Memlet('A[0]')},
+                           {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+
+    a = np.zeros(2)
+    sdfg(A=a, n=value)
+    expected = {7: 1, 3: 2, 0: 3}[value]
+    assert np.allclose(a, [expected, expected + 10])
+
+
+def test_gblock_goto_to_loop() -> None:
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [10])},
+        symbols={'i': dace.int64},
+        children=[
+            tn.GBlock(children=[
+                tn.StateLabel(state='entry'),
+                tn.GotoNode(target='loop'),
+                tn.StateLabel(state='unreachable'),
+                _write_node('99', 'A[9]'),
+                tn.StateLabel(state='loop'),
+                tn.ForScope(loop=LoopRegion('loop', 'i < 5', 'i', 'i = 0', 'i = i + 1'),
+                            children=[_write_node('i', 'A[i]')]),
+            ]),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+
+    a = np.zeros(10)
+    sdfg(A=a)
+    assert np.allclose(a, [0, 1, 2, 3, 4, 0, 0, 0, 0, 0])
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -1521,3 +1614,8 @@ if __name__ == '__main__':
     test_forward_goto_nested_sdfg(0)
     test_invalid_goto('missing')
     test_invalid_goto('backward')
+    test_gblock_goto_loop()
+    test_gblock_conditional_gotos(7)
+    test_gblock_conditional_gotos(3)
+    test_gblock_conditional_gotos(0)
+    test_gblock_goto_to_loop()

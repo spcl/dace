@@ -23,8 +23,6 @@ ABSTRACT_NODE_TYPES = {tn.ScheduleTreeNode, tn.ScheduleTreeScope, tn.ControlFlow
 
 #: Node types whose conversion to an SDFG is not yet supported, mapped to the reason
 UNSUPPORTED_NODE_TYPES = {
-    tn.GBlock: 'Unstructured control flow is not yet converted to SDFGs',
-    tn.StateLabel: 'Labels of unstructured control flow are not emitted by the SDFG-to-tree conversion',
     tn.ConsumeScope: 'Consume scopes are not yet converted to SDFGs',
     tn.NView: 'Nested SDFG views are only applied inside nested SDFGs created for map scopes',
     tn.NViewEnd: 'Nested SDFG views are only applied inside nested SDFGs created for map scopes',
