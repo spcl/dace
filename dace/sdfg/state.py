@@ -1960,7 +1960,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Validate missing symbols
             missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
+            # Walks the whole parent SDFG, so only when a missing symbol or an undeclared mapped one needs it.
+            needs_parent = missing_symbols or any(sym not in sdfg.symbols for sym in symbol_mapping)
+            defined_symbols = self.defined_symbols() if self.sdfg is not None and needs_parent else {}
             if missing_symbols and self.sdfg is not None:
                 # If symbols are missing, try to get them from the parent SDFG
                 parent_mapping = {s: s for s in missing_symbols if s in defined_symbols}
