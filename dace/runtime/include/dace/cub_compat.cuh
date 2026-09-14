@@ -20,13 +20,15 @@
 #elif defined(CUB_MAJOR_VERSION) && CUB_MAJOR_VERSION >= 3
 // CCCL 3.x (shipped with CUDA Toolkit 13+) removed the inline functor structs;
 // ``cuda::std::plus`` is the supported replacement for ``gpucub::Sum``. ``min``/``max``
-// remain as device-side lambdas because ``cuda::std::minimum`` / ``maximum`` are
+// use the ``::dace::cub`` functors below because ``cuda::std::minimum`` / ``maximum`` are
 // not part of the CCCL surface area as of 13.0.
 #include <cuda/std/functional>
 #define DACE_CUB_SUM_OP \
   ::cuda::std::plus<> {}
-#define DACE_CUB_MIN_OP [] __device__(auto _a, auto _b) { return _a < _b ? _a : _b; }
-#define DACE_CUB_MAX_OP [] __device__(auto _a, auto _b) { return _a > _b ? _a : _b; }
+#define DACE_CUB_MIN_OP \
+  ::dace::cub::Minimum {}
+#define DACE_CUB_MAX_OP \
+  ::dace::cub::Maximum {}
 #else
 // CUB 1.x / 2.x (shipped with CUDA Toolkit 11 / 12): use the legacy structs.
 #define DACE_CUB_SUM_OP ::gpucub::Sum()
@@ -34,8 +36,9 @@
 #define DACE_CUB_MAX_OP ::gpucub::Max()
 #endif
 
-// ``product`` was never a CUB-provided functor in any version; use a lambda.
-#define DACE_CUB_MUL_OP [] __device__(auto _a, auto _b) { return _a * _b; }
+// ``product`` was never a CUB-provided functor in any version.
+#define DACE_CUB_MUL_OP \
+  ::dace::cub::Multiplies {}
 
 // ArgMax / ArgMin, for the one libnode that emits them (``ArgReduce``'s CUDA expansion).
 //
@@ -81,6 +84,29 @@ struct AbsXf {
   template <typename T>
   __host__ __device__ __forceinline__ T operator()(const T& v) const {
     return v < T(0) ? -v : v;
+  }
+};
+
+/// Binary operators behind ``DACE_CUB_MUL_OP`` / ``MIN_OP`` / ``MAX_OP``. Functors, not lambdas: nvcc
+/// rejects a ``__device__`` lambda unless ``--extended-lambda`` is passed.
+struct Multiplies {
+  template <typename A, typename B>
+  __host__ __device__ __forceinline__ auto operator()(const A& a, const B& b) const {
+    return a * b;
+  }
+};
+
+struct Minimum {
+  template <typename A, typename B>
+  __host__ __device__ __forceinline__ auto operator()(const A& a, const B& b) const {
+    return a < b ? a : b;
+  }
+};
+
+struct Maximum {
+  template <typename A, typename B>
+  __host__ __device__ __forceinline__ auto operator()(const A& a, const B& b) const {
+    return a > b ? a : b;
   }
 };
 

@@ -376,3 +376,24 @@ def test_the_strided_lowering_is_not_limited_to_a_fixed_dtype_set(dtype):
     codes = generate_code(gpu_strided_scan(4, ScanOp.MAX, dtype))
     cuda = '\n'.join(c.code for c in codes if c.title == 'CUDA')
     assert f'strided_inclusive_max<{dtype.ctype}>' in cuda
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize('op,operator_macro,oracle', [
+    (ScanOp.PRODUCT, 'DACE_CUB_MUL_OP', np.cumprod),
+    (ScanOp.MIN, 'DACE_CUB_MIN_OP', np.minimum.accumulate),
+    (ScanOp.MAX, 'DACE_CUB_MAX_OP', np.maximum.accumulate),
+],
+                         ids=['product', 'min', 'max'])
+def test_a_contiguous_gpu_scan_compiles_and_matches_numpy(op: ScanOp, operator_macro: str, oracle):
+    """Stride 1 hands CUB the operator macro directly; nvcc rejected it while it expanded to a ``__device__`` lambda."""
+    import cupy
+
+    codes = generate_code(gpu_strided_scan(1, op))
+    cuda = '\n'.join(c.code for c in codes if c.title == 'CUDA')
+    assert 'DeviceScan::InclusiveScan' in cuda and operator_macro in cuda
+
+    host = np.random.default_rng(20260914).uniform(0.95, 1.05, size=64)
+    device_out = cupy.zeros(64, dtype=np.float64)
+    gpu_strided_scan(1, op).compile()(A=cupy.asarray(host), B=device_out)
+    np.testing.assert_allclose(cupy.asnumpy(device_out), oracle(host), rtol=1e-12)
