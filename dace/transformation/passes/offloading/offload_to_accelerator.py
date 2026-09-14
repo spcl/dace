@@ -25,7 +25,9 @@ from dace.transformation.dataflow import TrivialMapElimination
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                            ConvertScalarsToLengthOneArrays)
-from dace.transformation.passes.offloading.offloading_helpers import join_fall_through_exits, remove_empty_exits
+from dace.transformation.passes.offloading.offloading_helpers import (blocks_with_exit_last, join_fall_through_exits,
+                                                                      link_early_returns, remove_empty_exits,
+                                                                      separate_early_returns)
 from dace.transformation.passes.offloading.taskloop import taskloop_maps
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps
 
@@ -689,8 +691,8 @@ class OffloadToAccelerator(ppl.Pass):
         remove_empty_exits(exits)
 
     def join_exits_and_refresh_scopes(self, sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
-        """Join each region's fall-through sinks into one exit, so the region's end copies on every path."""
-        exits = join_fall_through_exits(sdfg)
+        """Join each region's fall-through sinks into one exit and give each return an entry: every way out copies."""
+        exits = join_fall_through_exits(sdfg) + separate_early_returns(sdfg)
         if exits:
             # The analysis reads scopes from the cache, which predates the exit states.
             self.cache_scopes(sdfg)
@@ -1425,6 +1427,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         # finish graph: tie the final node together with the inital close node
         end.append_node(IR.close)
+        link_early_returns(IR)
         # Only what this SDFG WROTE goes back: restoring a read-only input is dead traffic, and
         # inside a nested SDFG it writes an input connector, which is invalid.
         written = self.written_arrays(sdfg)
@@ -1438,7 +1441,7 @@ class OffloadToAccelerator(ppl.Pass):
     def _parse_to_IR(self, sdfg: SDFG, cfr: ControlFlowRegion, curr_node: OffloadingIRNode) -> OffloadingIRNode:
         # NOTE to self: ControlFlowRegion inherits from ControlFlowBlock
         block: ControlFlowBlock
-        for block in cfr.bfs_nodes():
+        for block in blocks_with_exit_last(cfr):
 
             # iterate through all (incoming) interstate edges
             in_edge_arrays = OrderedSet()
