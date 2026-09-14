@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, ReturnBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -24,29 +25,33 @@ def _roundtrip(sdfg: dace.SDFG, expected_node_type: type) -> dace.SDFG:
     return stree.as_sdfg(simplify=dace.config.Config.get_bool('optimizer', 'automatic_simplification'))
 
 
-def _roundtrip_and_compare(sdfg: dace.SDFG, expected_node_type: type, **args) -> dace.SDFG:
+def _roundtrip_and_compare(sdfg: dace.SDFG, expected_node_type: type, *arguments: dict) -> dace.SDFG:
     """
     Converts an SDFG to a schedule tree and back, ensuring the tree contains a node of the given type, and that both
-    SDFGs compute the same outputs and return values on copies of the given arguments.
+    SDFGs compute the same outputs and return values for each of the given argument sets (on copies of the arrays).
     """
     new_sdfg = _roundtrip(sdfg, expected_node_type)
+    new_sdfg.name = f'{sdfg.name}_roundtrip'  # Avoid overwriting the compiled original SDFG
+    compiled = sdfg.compile()
+    new_compiled = new_sdfg.compile()
 
-    expected_args = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in args.items()}
-    actual_args = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in args.items()}
-    expected_result = sdfg(**expected_args)
-    actual_result = new_sdfg(**actual_args)
+    for args in arguments:
+        expected_args = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in args.items()}
+        actual_args = {k: v.copy() if isinstance(v, np.ndarray) else v for k, v in args.items()}
+        expected_result = compiled(**expected_args)
+        actual_result = new_compiled(**actual_args)
 
-    for name, expected in expected_args.items():
-        if isinstance(expected, np.ndarray):
-            assert np.allclose(actual_args[name], expected), f'Argument "{name}" differs after roundtrip'
-    if expected_result is None:
-        assert actual_result is None
-    else:
-        expected_result = expected_result if isinstance(expected_result, tuple) else (expected_result, )
-        actual_result = actual_result if isinstance(actual_result, tuple) else (actual_result, )
-        assert len(actual_result) == len(expected_result)
-        for expected, actual in zip(expected_result, actual_result):
-            assert np.allclose(actual, expected), 'Return value differs after roundtrip'
+        for name, expected in expected_args.items():
+            if isinstance(expected, np.ndarray):
+                assert np.allclose(actual_args[name], expected), f'Argument "{name}" differs for {args}'
+        if expected_result is None:
+            assert actual_result is None
+        else:
+            expected_result = expected_result if isinstance(expected_result, tuple) else (expected_result, )
+            actual_result = actual_result if isinstance(actual_result, tuple) else (actual_result, )
+            assert len(actual_result) == len(expected_result)
+            for expected, actual in zip(expected_result, actual_result):
+                assert np.allclose(actual, expected), f'Return value differs for {args}'
 
     return new_sdfg
 
@@ -316,7 +321,7 @@ def test_do_for_loop(update_before_condition: bool):
                       inverted=True,
                       update_before_condition=update_before_condition)
     sdfg = _inverted_loop_sdfg('tester', loop)
-    _roundtrip_and_compare(sdfg, tn.LoopScope, A=np.zeros(10))
+    _roundtrip_and_compare(sdfg, tn.LoopScope, dict(A=np.zeros(10)))
 
 
 def test_transients_and_nested_sdfg() -> None:
@@ -442,6 +447,125 @@ def test_transients_and_nested_sdfg() -> None:
     assert tmp_condition == dace.bool
 
 
+def _write_tasklet(state: dace.SDFGState, code: str, inputs: dict[str, str], output: str) -> None:
+    """
+    Adds a tasklet with the given code, which reads the input memlets (by connector) and writes ``out`` to the output.
+    """
+    tasklet = state.add_tasklet('compute', set(inputs.keys()), {'out'}, code)
+    for connector, memlet in inputs.items():
+        state.add_edge(state.add_read(memlet.split('[')[0]), None, tasklet, connector, dace.Memlet(memlet))
+    state.add_edge(tasklet, 'out', state.add_write(output.split('[')[0]), None, dace.Memlet(output))
+
+
+def _add_conditional_return(region: dace.sdfg.state.ControlFlowRegion, condition: str,
+                            after: dace.SDFGState) -> ConditionalBlock:
+    """
+    Adds a conditional block that returns if the condition holds to the start of a region, followed by ``after``.
+    """
+    block = ConditionalBlock('maybe_return')
+    region.add_node(block, is_start_block=True)
+    branch = dace.sdfg.ControlFlowRegion('return_branch', sdfg=region.sdfg if region.sdfg else region, parent=block)
+    branch.add_node(ReturnBlock('return'), is_start_block=True)
+    block.add_branch(CodeBlock(condition), branch)
+    region.add_edge(block, after, dace.InterstateEdge())
+    return block
+
+
+def test_return_block():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [2], dace.float64)
+    after = sdfg.add_state('after')
+    _write_tasklet(after, 'out = 1', {}, 'A[1]')
+    _add_conditional_return(sdfg, 'N > 5', after)
+
+    _roundtrip_and_compare(sdfg, tn.GotoNode, dict(A=np.zeros(2), N=10), dict(A=np.zeros(2), N=0))
+
+
+def test_conditional_edge_exit():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [2], dace.float64)
+    first = sdfg.add_state('first', is_start_block=True)
+    second = sdfg.add_state('second')
+    _write_tasklet(first, 'out = 1', {}, 'A[0]')
+    _write_tasklet(second, 'out = 2', {}, 'A[1]')
+    sdfg.add_edge(first, second, dace.InterstateEdge('N > 0'))
+
+    _roundtrip_and_compare(sdfg, tn.StateIfScope, dict(A=np.zeros(2), N=1), dict(A=np.zeros(2), N=0))
+
+
+def _nested_return_sdfg(in_map: bool, in_loop: bool) -> dace.SDFG:
+    """
+    Creates an SDFG that calls a nested SDFG that returns early, followed by a computation on its output.
+
+    :param in_map: If True, the nested SDFG and the subsequent computation are in a map scope.
+    :param in_loop: If True, the nested SDFG returns from within a loop.
+    """
+    inner = dace.SDFG('inner')
+    inner.add_symbol('N', dace.int64)
+    inner.add_array('X', [1], dace.float64)
+    increment = dace.SDFGState('increment')
+    if in_loop:
+        # for j in range(3): if j >= N: return; X[0] += 1
+        inner.add_symbol('j', dace.int64)
+        loop = LoopRegion('loop', 'j < 3', 'j', 'j = 0', 'j = j + 1')
+        inner.add_node(loop, is_start_block=True)
+        loop.add_node(increment)
+        _add_conditional_return(loop, 'j >= N', increment)
+    else:
+        # if N > 5: return; X[0] += 1
+        inner.add_node(increment)
+        _add_conditional_return(inner, 'N > 5', increment)
+    _write_tasklet(increment, 'out = inp + 1', {'inp': 'X[0]'}, 'X[0]')
+
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_array('B', [10], dace.float64)
+    state = sdfg.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {'X'}, {'X'}, symbol_mapping={'N': 'N'})
+    tasklet = state.add_tasklet('after_call', {'inp'}, {'out'}, 'out = inp + 10')
+    index = 'i' if in_map else '0'
+    written = state.add_access('A')
+    state.add_edge(nsdfg, 'X', written, None, dace.Memlet(f'A[{index}]'))
+    state.add_edge(written, None, tasklet, 'inp', dace.Memlet(f'A[{index}]'))
+    if in_map:
+        entry, exit_node = state.add_map('map', dict(i='0:10'))
+        state.add_memlet_path(state.add_read('A'), entry, nsdfg, dst_conn='X', memlet=dace.Memlet('A[i]'))
+        state.add_memlet_path(tasklet, exit_node, state.add_write('B'), src_conn='out', memlet=dace.Memlet('B[i]'))
+        state.add_memlet_path(written, exit_node, state.add_write('A'), memlet=dace.Memlet('A[i]'))
+    else:
+        state.add_edge(state.add_read('A'), None, nsdfg, 'X', dace.Memlet('A[0]'))
+        state.add_edge(tasklet, 'out', state.add_write('B'), None, dace.Memlet('B[0]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('in_loop', (False, True))
+@pytest.mark.parametrize('in_map', (False, True))
+def test_nested_sdfg_return(in_map: bool, in_loop: bool):
+    sdfg = _nested_return_sdfg(in_map, in_loop)
+    sdfg.validate()
+    arguments = [dict(A=np.random.rand(10), B=np.zeros(10), N=n) for n in (0, 2, 10)]
+    new_sdfg = _roundtrip_and_compare(sdfg, tn.StateLabel, *arguments)
+    new_sdfg.validate()
+
+
+def test_break_in_conditional():
+    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    sdfg = _inverted_loop_sdfg('tester', loop)
+    sdfg.add_symbol('N', dace.int64)
+    body = loop.start_block
+    block = ConditionalBlock('maybe_break')
+    loop.add_node(block, is_start_block=True)
+    branch = dace.sdfg.ControlFlowRegion('break_branch', sdfg=sdfg, parent=block)
+    branch.add_node(BreakBlock('break'), is_start_block=True)
+    block.add_branch(CodeBlock('i == N'), branch)
+    loop.add_edge(block, body, dace.InterstateEdge())
+
+    _roundtrip_and_compare(sdfg, tn.BreakNode, dict(A=np.zeros(10), N=4), dict(A=np.zeros(10), N=20))
+
+
 if __name__ == '__main__':
     test_implicit_inline_and_constants()
     test_name_propagation()
@@ -457,4 +581,10 @@ if __name__ == '__main__':
     test_do_while_loop()
     test_do_for_loop(False)
     test_do_for_loop(True)
+    test_return_block()
+    test_conditional_edge_exit()
+    for in_map in (False, True):
+        for in_loop in (False, True):
+            test_nested_sdfg_return(in_map, in_loop)
+    test_break_in_conditional()
     test_transients_and_nested_sdfg()

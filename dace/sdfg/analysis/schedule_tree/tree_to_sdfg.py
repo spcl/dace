@@ -11,8 +11,9 @@ from dace import subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, SDFGState, LoopRegion
-from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, LoopRegion, ReturnBlock,
+                             SDFGState)
+from dace.sdfg.analysis.schedule_tree import passes as stpasses, treenodes as tn
 from dace.sdfg import propagation
 
 
@@ -64,6 +65,17 @@ class _TreeScope:
         assert cache_key in self._ctx.access_cache
 
         self._ctx.current_scope = self._parent_scope
+
+
+class _NestedSDFGScope(tn.ControlFlowScope):
+    """
+    A scope whose children are converted into a nested SDFG. Only used internally during the conversion, e.g., to
+    bound the effect of return blocks that lower gotos to the end of this scope.
+    """
+
+    def as_string(self, indent: int = 0):
+        result = indent * tn.INDENTATION + 'nested sdfg:\n'
+        return result + super().as_string(indent)
 
 
 class _StreeToSDFG(tn.ScheduleNodeVisitor):
@@ -187,10 +199,21 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_StateLabel(self, node: tn.StateLabel, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        # Outside of general blocks, labels only mark the target of forward gotos, which are lowered by
+        # ``_lower_forward_gotos`` and ``visit_GotoNode``.
+        pass
 
     def visit_GotoNode(self, node: tn.GotoNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for{type(node)} not yet implemented.")
+        if node.target is not None:
+            label = _find_label(node)
+            if label is None or not _jumps_to_sdfg_end(node, label):
+                raise ValueError(f"Cannot convert '{node.as_string().strip()}': the target label is not at the end of "
+                                 "the SDFG being built.")
+        elif any(isinstance(scope, (tn.DataflowScope, _NestedSDFGScope)) for scope in _ancestors(node)):
+            raise ValueError("Exit gotos inside dataflow scopes or nested SDFGs are not supported.")
+
+        # Jumping to the end of the SDFG that is being built is equivalent to returning from it
+        self._insert_exit_block(ReturnBlock(f"return_{id(node)}"))
 
     def visit_AssignNode(self, node: tn.AssignNode, sdfg: SDFG) -> None:
         # We just collect them here. They'll be added when state boundaries are added,
@@ -378,14 +401,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._current_state = merge_state
 
     def visit_StateIfScope(self, node: tn.StateIfScope, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        # Outside of general blocks, a state transition condition is a regular conditional (e.g., around a goto)
+        self.visit_IfScope(node, sdfg)
 
-    def _add_loop_control_block(self, block: BreakBlock | ContinueBlock) -> None:
+    def _insert_exit_block(self, block: BreakBlock | ContinueBlock | ReturnBlock) -> None:
         """
-        Adds a break or continue block after the current state. Statements that follow it in the same scope are
-        unreachable and are placed into a new state after the block.
+        Adds a control flow exit block (break, continue, or return) after the current state. Statements that follow it
+        in the same scope are unreachable and are placed into a new state after the block.
 
-        :param block: The break or continue block to add.
+        :param block: The exit block to add.
         """
         cf_region = self._current_state.parent_graph
         cf_region.add_node(block, ensure_unique_name=True)
@@ -393,10 +417,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = _insert_and_split_assignments(block, label=f"after_{block.label}")
 
     def visit_BreakNode(self, node: tn.BreakNode, sdfg: SDFG) -> None:
-        self._add_loop_control_block(BreakBlock(f"break_{id(node)}"))
+        self._insert_exit_block(BreakBlock(f"break_{id(node)}"))
 
     def visit_ContinueNode(self, node: tn.ContinueNode, sdfg: SDFG) -> None:
-        self._add_loop_control_block(ContinueBlock(f"continue_{id(node)}"))
+        self._insert_exit_block(ContinueBlock(f"continue_{id(node)}"))
 
     def visit_ElifScope(self, node: tn.ElifScope, sdfg: SDFG) -> None:
         # get ConditionalBlock and merge state from stack
@@ -439,7 +463,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._pending_interstate_assignments():
             raise NotImplementedError("TODO: update edge with new assignments")
 
-    def _insert_nestedSDFG_in_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
+    def _insert_nested_sdfg(self, node: tn.ScheduleTreeScope, sdfg: SDFG) -> None:
+        """
+        Converts the children of a scope into a nested SDFG and connects it in the current state, either within the
+        surrounding map scope or directly to the accessed data containers.
+
+        :param node: The scope whose children form the body of the nested SDFG.
+        :param sdfg: The SDFG that is currently being built.
+        """
         dataflow_stack_size = len(self._dataflow_stack)
         state_stack_size = len(self._state_stack)
         outer_nestedSDFG = self._current_nestedSDFG
@@ -481,8 +512,34 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             outputs={name: None
                      for name in connectors["outputs"]},
         )
-        # connect nested SDFG to surrounding map scope
-        assert self._dataflow_stack
+        if self._dataflow_stack and isinstance(self._dataflow_stack[-1][0], nodes.EntryNode):
+            self._connect_nested_sdfg_in_map(nsdfg, inner_sdfg)
+        else:
+            self._connect_nested_sdfg(nsdfg, inner_sdfg, sdfg)
+
+        # Move NViews back to "free" NViews for usage in a sibling scope.
+        for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
+            # If this NView ended in the current nested SDFG, don't add it back to the
+            # "free NView" nodes. We need to keep it alive until here to make sure that
+            # we can add the memlets above.
+            if nview in self._nviews_deferred_removal[id(inner_sdfg)]:
+                continue
+            self._nviews_free.append(nview)
+
+        del self._nviews_bound_per_scope[id(inner_sdfg)]
+        del self._nviews_deferred_removal[id(inner_sdfg)]
+
+        # Restore current nested SDFG
+        self._current_nestedSDFG = outer_nestedSDFG
+        self._known_data_outside_nestedSDFG = outer_known_data
+
+    def _connect_nested_sdfg_in_map(self, nsdfg: nodes.NestedSDFG, inner_sdfg: SDFG) -> None:
+        """
+        Connects the inputs and outputs of a nested SDFG to the pass-through connectors of the surrounding map scope.
+
+        :param nsdfg: The nested SDFG node.
+        :param inner_sdfg: The SDFG of the nested SDFG node.
+        """
         map_entry, to_connect = self._dataflow_stack[-1]
 
         # connect nsdfg input memlets (to be propagated upon completion of the SDFG)
@@ -523,21 +580,34 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             if not edge_added:
                 to_connect[name] = (nsdfg, Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
 
-        # Move NViews back to "free" NViews for usage in a sibling scope.
-        for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
-            # If this NView ended in the current nested SDFG, don't add it back to the
-            # "free NView" nodes. We need to keep it alive until here to make sure that
-            # we can add the memlets above.
-            if nview in self._nviews_deferred_removal[id(inner_sdfg)]:
-                continue
-            self._nviews_free.append(nview)
+    def _connect_nested_sdfg(self, nsdfg: nodes.NestedSDFG, inner_sdfg: SDFG, sdfg: SDFG) -> None:
+        """
+        Connects the inputs and outputs of a nested SDFG outside of a map scope to the accessed data containers.
 
-        del self._nviews_bound_per_scope[id(inner_sdfg)]
-        del self._nviews_deferred_removal[id(inner_sdfg)]
+        :param nsdfg: The nested SDFG node.
+        :param inner_sdfg: The SDFG of the nested SDFG node.
+        :param sdfg: The SDFG that is currently being built.
+        """
+        nview_memlets = {nview.target: nview.memlet for nview in self._nviews_bound_per_scope[id(inner_sdfg)]}
 
-        # Restore current nested SDFG
-        self._current_nestedSDFG = outer_nestedSDFG
-        self._known_data_outside_nestedSDFG = outer_known_data
+        def memlet(name: str) -> Memlet:
+            if name in nview_memlets:
+                return Memlet.from_memlet(nview_memlets[name])
+            return Memlet.from_array(name, inner_sdfg.arrays[name])
+
+        for name in nsdfg.in_connectors:
+            source, source_conn = self._read_source(name, sdfg)
+            self._current_state.add_edge(source, source_conn, nsdfg, name, memlet(name))
+        for name in nsdfg.out_connectors:
+            self._connect_output(nsdfg, name, name, memlet(name), sdfg)
+
+    def visit__NestedSDFGScope(self, node: _NestedSDFGScope, sdfg: SDFG) -> None:
+        self._insert_nested_sdfg(node, sdfg)
+
+        # Start a new state such that subsequent accesses do not share access nodes with the nested SDFG's outputs
+        self._current_state = _insert_and_split_assignments(self._current_state,
+                                                            label="nested_sdfg_after",
+                                                            assignments=self._pending_interstate_assignments())
 
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
@@ -568,7 +638,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             with _TreeScope(node, self._ctx, self._current_state):
                 self.visit(node.children[-1], sdfg=sdfg)
         elif any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
-            self._insert_nestedSDFG_in_MapScope(node, sdfg)
+            self._insert_nested_sdfg(node, sdfg)
         else:
             with _TreeScope(node, self._ctx, self._current_state):
                 self.visit(node.children, sdfg=sdfg)
@@ -1039,6 +1109,9 @@ def from_schedule_tree(
     result.constants_prop = copy.deepcopy(stree.constants)
     result.symbols = copy.deepcopy(stree.symbols)
 
+    # Restructure or nest the targets of forward gotos, such that they can be lowered to return blocks
+    _lower_forward_gotos(stree)
+
     # Insert artificial state boundaries after WAW, before label, etc.
     stree = _insert_state_boundaries_to_tree(stree)
 
@@ -1054,6 +1127,113 @@ def from_schedule_tree(
     propagation.propagate_memlets_sdfg(result)
 
     return result
+
+
+def _ancestors(node: tn.ScheduleTreeNode) -> list[tn.ScheduleTreeScope]:
+    """Returns the scopes containing the given node, from the innermost to the root."""
+    result = []
+    scope = node.parent
+    while scope is not None:
+        result.append(scope)
+        scope = scope.parent
+    return result
+
+
+def _find_label(goto: tn.GotoNode) -> tn.StateLabel | None:
+    """
+    Returns the label a goto jumps to, if the label is contained in one of the scopes that contain the goto.
+    """
+    for scope in _ancestors(goto):
+        for child in scope.children:
+            if isinstance(child, tn.StateLabel) and child.name == goto.target:
+                return child
+    return None
+
+
+def _is_sdfg_end(label: tn.StateLabel) -> bool:
+    """
+    Returns True if nothing follows the given label in the SDFG it is converted into. This is the case at the end of
+    the tree root and at the end of scopes that are converted into nested SDFGs.
+
+    Dataflow scopes that contain a label are always converted into nested SDFGs, as a state boundary is inserted
+    before the label.
+    """
+    scope = label.parent
+    if not isinstance(scope, (tn.ScheduleTreeRoot, tn.DataflowScope, _NestedSDFGScope)):
+        return False
+    index = _list_index(scope.children, label)
+    return all(isinstance(child, (tn.StateLabel, tn.StateBoundaryNode)) for child in scope.children[index + 1:])
+
+
+def _jumps_to_sdfg_end(goto: tn.GotoNode, label: tn.StateLabel) -> bool:
+    """
+    Returns True if the goto jumps to the end of the SDFG it is converted in, i.e., it can be lowered to a return block.
+    """
+    if not _is_sdfg_end(label):
+        return False
+    for scope in _ancestors(goto):
+        if scope is label.parent:
+            return True
+        if isinstance(scope, (tn.DataflowScope, _NestedSDFGScope)):
+            return False  # The goto is converted within another SDFG
+    return False
+
+
+def _lower_forward_gotos(stree: tn.ScheduleTreeRoot) -> None:
+    """
+    Prepares gotos outside of general blocks for their conversion into return blocks. Operates in-place.
+
+    Exit gotos and gotos to labels that follow them in an enclosing scope (e.g., the end of an inlined nested SDFG)
+    are handled in order of preference:
+
+      1. Gotos in conditionals are removed by moving the subsequent statements into the other branches.
+      2. Gotos that jump to the end of the SDFG being built are kept and later converted into return blocks.
+      3. Otherwise, the statements from the first one containing a goto up to the label are wrapped in a scope that
+         is converted into a nested SDFG, at whose end the label then is.
+
+    :param stree: The schedule tree to operate on.
+    """
+    if _gotos_to(stree, None):
+        stpasses.eliminate_forward_gotos(stree, len(stree.children), None)
+
+    labels = [
+        n for n in stree.preorder_traversal() if isinstance(n, tn.StateLabel) and not isinstance(n.parent, tn.GBlock)
+    ]
+    for label in labels:
+        scope = label.parent
+        index = _list_index(scope.children, label)
+        gotos = _gotos_to(stree, label.name)
+        if not gotos:
+            continue
+
+        preceding = {id(n) for child in scope.children[:index] for n in child.preorder_traversal()}
+        for goto in gotos:
+            if id(goto) not in preceding:
+                raise ValueError(f"Cannot convert '{goto.as_string().strip()}': gotos may only jump forward to a "
+                                 "label in an enclosing scope.")
+            enclosed_by = _ancestors(goto)
+            if any(isinstance(s, tn.DataflowScope) for s in enclosed_by[:_list_index(enclosed_by, scope)]):
+                raise ValueError(f"Cannot convert '{goto.as_string().strip()}': gotos may not leave dataflow scopes.")
+
+        if stpasses.eliminate_forward_gotos(scope, index, label.name):
+            continue
+        if all(_jumps_to_sdfg_end(goto, label) for goto in gotos):
+            continue
+
+        # Nest the statements from the first one containing a goto up to (and including) the label
+        first = next(i for i, child in enumerate(scope.children) if _gotos_to(child, label.name))
+        nested = [n for child in scope.children[first:index + 1] for n in child.preorder_traversal()]
+        nested_labels = {n.name for n in nested if isinstance(n, tn.StateLabel)}
+        for goto in (n for n in nested if isinstance(n, tn.GotoNode)):
+            if goto.target is None or goto.target not in nested_labels:
+                raise NotImplementedError(f"Cannot convert '{goto.as_string().strip()}' within the nested SDFG that "
+                                          f"is required for the gotos to '{label.name}'.")
+        scope.children[first:index + 1] = [_NestedSDFGScope(children=scope.children[first:index + 1], parent=scope)]
+
+
+def _gotos_to(node: tn.ScheduleTreeNode, target: str | None) -> list[tn.GotoNode]:
+    """Returns the gotos to the given target (``None`` for exit gotos) in the given node and its descendants."""
+    return [n for n in node.preorder_traversal() if isinstance(n, tn.GotoNode) and n.target == target]
 
 
 def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTreeRoot:

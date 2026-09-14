@@ -8,7 +8,7 @@ from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, SDFGState
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, ReturnBlock, SDFGState
 
 import numpy as np
 import pytest
@@ -1322,6 +1322,143 @@ def test_create_if_elif_else_values(value: int) -> None:
     assert a[0] == {7: 1, 3: 2, -1: 3}[value]
 
 
+def _write_node(value: str, memlet: str) -> tn.TaskletNode:
+    """
+    Creates a tasklet node that writes ``value`` to the given memlet.
+    """
+    return tn.TaskletNode(nodes.Tasklet('write', {}, {'out'}, f'out = {value}'), {}, {'out': dace.Memlet(memlet)})
+
+
+def _node_types(sdfg: dace.SDFG) -> set[type]:
+    """
+    Returns the types of all nodes and control flow blocks in the SDFG and its nested SDFGs.
+    """
+    return {type(n) for n, _ in sdfg.all_nodes_recursive()}
+
+
+def test_goto_exit_in_loop() -> None:
+    # The exit cannot be restructured out of the loop, so it becomes a return block
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [10]),
+            'B': data.Array(dace.float64, [1]),
+        },
+        symbols={'i': dace.int64},
+        children=[
+            tn.ForScope(loop=LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1'),
+                        children=[
+                            tn.IfScope(condition=CodeBlock('i == 5'), children=[tn.GotoNode(target=None)]),
+                            _write_node('i', 'A[i]'),
+                        ]),
+            _write_node('1', 'B[0]'),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    assert ReturnBlock in _node_types(sdfg)
+
+    a = np.zeros(10)
+    b = np.zeros(1)
+    sdfg(A=a, B=b)
+    assert np.allclose(a, [0, 1, 2, 3, 4, 0, 0, 0, 0, 0])
+    assert b[0] == 0
+
+
+@pytest.mark.parametrize('value', (10, 0))
+def test_forward_goto_structured(value: int) -> None:
+    # The statements after the if/else chain only run in the else branch, and the write after the goto is unreachable
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [3])},
+        symbols={'n': dace.int64},
+        children=[
+            tn.IfScope(condition=CodeBlock('n > 5'),
+                       children=[_write_node('1', 'A[0]'),
+                                 tn.GotoNode(target='end'),
+                                 _write_node('99', 'A[0]')]),
+            tn.ElseScope(children=[_write_node('2', 'A[0]')]),
+            _write_node('3', 'A[1]'),
+            tn.StateLabel(state='end'),
+            _write_node('4', 'A[2]'),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    node_types = _node_types(sdfg)
+    assert ReturnBlock not in node_types
+    assert nodes.NestedSDFG not in node_types
+    assert not any(isinstance(n, nodes.Tasklet) and '99' in n.code.as_string for n, _ in sdfg.all_nodes_recursive())
+
+    a = np.zeros(3)
+    sdfg(A=a, n=value)
+    assert np.allclose(a, [1, 0, 4] if value > 5 else [2, 3, 4])
+
+
+def test_forward_goto_at_sdfg_end() -> None:
+    # Jumping to the end of the program is equivalent to returning
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [10])},
+        symbols={'i': dace.int64},
+        children=[
+            tn.ForScope(loop=LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1'),
+                        children=[
+                            tn.IfScope(condition=CodeBlock('i == 3'), children=[tn.GotoNode(target='end')]),
+                            _write_node('i', 'A[i]'),
+                        ]),
+            tn.StateLabel(state='end'),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    node_types = _node_types(sdfg)
+    assert ReturnBlock in node_types
+    assert nodes.NestedSDFG not in node_types
+
+    a = np.zeros(10)
+    sdfg(A=a)
+    assert np.allclose(a, [0, 1, 2, 0, 0, 0, 0, 0, 0, 0])
+
+
+@pytest.mark.parametrize('value', (10, 3, 0))
+def test_forward_goto_nested_sdfg(value: int) -> None:
+    # Two branches fall through to the statements after the chain, which would have to be duplicated. Instead, the
+    # statements up to the label are nested, and the goto returns from the nested SDFG.
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [3])},
+        symbols={'n': dace.int64},
+        children=[
+            tn.IfScope(condition=CodeBlock('n > 5'), children=[tn.GotoNode(target='end')]),
+            tn.ElifScope(condition=CodeBlock('n > 2'), children=[_write_node('2', 'A[0]')]),
+            _write_node('3', 'A[1]'),
+            tn.StateLabel(state='end'),
+            _write_node('4', 'A[2]'),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    nested = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]
+    assert len(nested) == 1
+    assert any(isinstance(block, ReturnBlock) for block in nested[0].sdfg.all_control_flow_blocks(recursive=True))
+
+    a = np.zeros(3)
+    sdfg(A=a, n=value)
+    assert np.allclose(a, {10: [0, 0, 4], 3: [2, 3, 4], 0: [0, 3, 4]}[value])
+
+
+@pytest.mark.parametrize('target', ('missing', 'backward'))
+def test_invalid_goto(target: str) -> None:
+    children = [_write_node('1', 'A[0]'), tn.GotoNode(target=target)]
+    if target == 'backward':
+        children.insert(0, tn.StateLabel(state='backward'))
+    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [1])}, children=children)
+
+    with pytest.raises(ValueError):
+        stree.as_sdfg(simplify=False)
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -1375,3 +1512,12 @@ if __name__ == '__main__':
     test_create_if_elif_else_values(7)
     test_create_if_elif_else_values(3)
     test_create_if_elif_else_values(-1)
+    test_goto_exit_in_loop()
+    test_forward_goto_structured(10)
+    test_forward_goto_structured(0)
+    test_forward_goto_at_sdfg_end()
+    test_forward_goto_nested_sdfg(10)
+    test_forward_goto_nested_sdfg(3)
+    test_forward_goto_nested_sdfg(0)
+    test_invalid_goto('missing')
+    test_invalid_goto('backward')

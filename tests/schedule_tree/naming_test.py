@@ -51,9 +51,9 @@ def test_clash_states():
     unique_names = set()
     for node in stree.preorder_traversal():
         if isinstance(node, tn.StateLabel):
-            if node.state.name in unique_names:
+            if node.name in unique_names:
                 raise NameError('Name clash')
-            unique_names.add(node.state.name)
+            unique_names.add(node.name)
 
 
 @pytest.mark.parametrize('constprop', (False, True))
