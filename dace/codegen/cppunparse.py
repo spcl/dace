@@ -406,6 +406,11 @@ class CPPUnparser:
         """Whether the C dialect prints the operator ``op`` as a typed helper call (``//`` and ``%``)."""
         return cpf_lowering.standalone_c() and isinstance(op, (ast.FloorDiv, ast.Mod))
 
+    def c_float_mod(self, op: ast.operator, left: ast.AST, right: ast.AST) -> bool:
+        """Whether the C dialect prints ``left % right`` as ``c_mod``: C has no ``%`` on floating point."""
+        return (isinstance(op, ast.Mod) and cpf_lowering.standalone_c()
+                and self.c_type(ast.BinOp(left=left, op=op, right=right)) in cpf_lowering.C_FLOATING_RANKS)
+
     def c_argument_types(self, arguments) -> Optional[Tuple[Optional[str], ...]]:
         """Each argument node's C type (:meth:`c_type`) when rendering the C dialect, else ``None``."""
         return tuple(self.c_type(node) for node in arguments) if cpf_lowering.standalone_c() else None
@@ -728,7 +733,11 @@ class CPPUnparser:
         self.fill()
         self.dispatch(t.target)
         # Operations that require a function call
-        if t.op.__class__.__name__ in self.funcops and self.c_typed_funcop(t.op):
+        if self.c_float_mod(t.op, t.target, t.value):
+            operands = [t.target, t.value]
+            self.write(" = " + runtime_call('c_mod', [self.render(node)
+                                                      for node in operands], self.c_argument_types(operands)))
+        elif t.op.__class__.__name__ in self.funcops and self.c_typed_funcop(t.op):
             operands = [t.target, t.value]
             self.write(" = " + runtime_call(self.funcops[t.op.__class__.__name__][1],
                                             [self.render(node) for node in operands], self.c_argument_types(operands)))
@@ -1330,9 +1339,8 @@ class CPPUnparser:
         # int/complex mixed arithmetic (illegal for std::complex) is emitted.
         if self._complex_literal_fold(t):
             return
-        # Operations that require a function call; C has no ``%`` on floating point.
-        if isinstance(t.op,
-                      ast.Mod) and cpf_lowering.standalone_c() and self.c_type(t) in cpf_lowering.C_FLOATING_RANKS:
+        # Operations that require a function call
+        if self.c_float_mod(t.op, t.left, t.right):
             self.emit_call('c_mod', [t.left, t.right])
         elif t.op.__class__.__name__ in self.funcops and self.c_typed_funcop(t.op):
             self.emit_call(self.funcops[t.op.__class__.__name__][1], [t.left, t.right])
