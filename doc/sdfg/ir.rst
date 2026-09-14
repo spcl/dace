@@ -403,8 +403,9 @@ nothing about schedules. Two kinds exist today:
   * :class:`~dace.sdfg.memlet_schedule.LoopCursor`: the memlet's element offset is affine in the induction variable of
     an enclosing :class:`~dace.sdfg.state.LoopRegion`. The record names the loop and states the number of elements the
     address advances per iteration (``step``), the loop-invariant part of the base offset (``base_invariant``), the
-    part that depends on thread/lane map parameters (``lane_part``), and the intended cursor type (``int32``,
-    ``int64``, or ``auto``). Schedules of this kind can be attached by hand, by a tuner, or by the
+    part that depends on thread/lane map parameters (``lane_part``), and optionally the cursor's integer type
+    (``cursor_type``, a DaCe data type; ``None`` picks int32 when the array extent provably fits, else int64).
+    Schedules of this kind can be attached by hand, by a tuner, or by the
     :class:`~dace.transformation.passes.memlet_schedules.ScheduleLoopCursors` analysis pass:
 
 .. code-block:: python

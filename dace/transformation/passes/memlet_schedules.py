@@ -45,13 +45,14 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.memlet_schedule import CURSOR_TYPES, LoopCursor, MemletSchedule
+from dace.sdfg.memlet_schedule import LoopCursor, MemletSchedule
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import LoopRegion
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import loop_analysis
 
-_LEAF_NODE_TYPES = (nodes.Tasklet, nodes.LibraryNode, nodes.NestedSDFG)
+_SCOPE_NODES = (nodes.EntryNode, nodes.ExitNode)
 _GPU_KERNEL_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)
 _LANE_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
 _INT32_MAX_BYTES = 2**31
@@ -147,24 +148,31 @@ def flat_length(desc: dt.Data, subset) -> Optional[symbolic.SymbolicType]:
 
 
 def leaf_edges(state: SDFGState) -> Iterator[MultiConnectorEdge[Memlet]]:
-    """Edges whose memlet produces an address in generated code: connector bindings of tasklets, library nodes
-    and nested SDFGs, and access-node-to-access-node copies (lifted to ``CopyLibraryNode`` operands at codegen).
-    Scope-crossing edges (map entry/exit connectors), view-defining edges (``views`` connector) and reference
-    ``set`` edges are not leaves."""
+    """Edges whose memlet produces an address in generated code: the innermost edge of each memlet path, i.e. the
+    edge whose endpoint away from the memlet's data container is not a scope (map entry/exit) node. This covers
+    connector bindings of tasklets, library nodes and nested SDFGs, access nodes inside scopes fed through a map
+    entry, and access-node-to-access-node copies. View-defining edges (``views`` connector) and reference ``set``
+    edges are not leaves."""
     for e in state.edges():
         if e.data.is_empty() or e.data.data is None:
             continue
         if e.dst_conn in ('set', 'views') or e.src_conn == 'views':
             continue
-        if isinstance(e.dst, _LEAF_NODE_TYPES) or isinstance(e.src, _LEAF_NODE_TYPES):
-            yield e
-        elif isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
+        src_scope, dst_scope = isinstance(e.src, _SCOPE_NODES), isinstance(e.dst, _SCOPE_NODES)
+        if src_scope and dst_scope:
+            continue  # between two scope nodes: never innermost
+        if not src_scope and not dst_scope:
+            yield e  # direct binding or copy
+            continue
+        # One scope endpoint: innermost iff the other endpoint is not the data's own access node (the path root).
+        other = e.dst if src_scope else e.src
+        if not (isinstance(other, nodes.AccessNode) and other.data == e.data.data):
             yield e
 
 
-def _leaf_node(edge: MultiConnectorEdge[Memlet]) -> nodes.Node:
-    """The node whose scope determines the lane symbols of a leaf edge."""
-    return edge.dst if isinstance(edge.dst, _LEAF_NODE_TYPES) else edge.src
+def _scope_node(edge: MultiConnectorEdge[Memlet]) -> nodes.Node:
+    """A node whose scope is the scope the leaf memlet is accessed in (used to find lane symbols)."""
+    return edge.dst if not isinstance(edge.dst, _SCOPE_NODES) else edge.src
 
 
 def _root(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> Tuple[Optional[nodes.AccessNode], bool]:
@@ -231,20 +239,6 @@ def lane_symbols(state: SDFGState, node: nodes.Node) -> Set[str]:
             result.update(cur.map.params)
         cur = parent
     return result
-
-
-def in_gpu_kernel(state: SDFGState, node: nodes.Node) -> bool:
-    """True if ``node`` is (transitively, through nested SDFGs) inside a GPU kernel map scope."""
-    sdict = state.scope_dict()
-    cur = sdict.get(node)
-    while cur is not None:
-        if cur.map.schedule in _GPU_KERNEL_SCHEDULES:
-            return True
-        cur = sdict.get(cur)
-    sdfg = state.sdfg
-    if sdfg.parent is not None and sdfg.parent_nsdfg_node is not None:
-        return in_gpu_kernel(sdfg.parent, sdfg.parent_nsdfg_node)
-    return False
 
 
 def extent_bytes_int32(desc: dt.Data) -> bool:
@@ -332,7 +326,7 @@ def analyze_edge(state: SDFGState, edge: MultiConnectorEdge[Memlet], loops: List
         return None
     if not is_read and flat_length(desc, edge.data.subset) is None:
         return None  # non-contiguous writes are not lowered (window references are read-only)
-    lanes = lane_symbols(state, _leaf_node(edge))
+    lanes = lane_symbols(state, _scope_node(edge))
     for idx, loop in enumerate(loops):
         if loop not in inner_cache:
             inner_cache[loop] = inner_symbols(loop)
@@ -357,11 +351,11 @@ class ScheduleLoopCursors(ppl.Pass):
                                 default='gpu',
                                 choices=['gpu', 'all'],
                                 desc='"gpu": only memlets inside GPU kernel map scopes; "all": every loop.')
-    cursor_type = properties.Property(dtype=str,
-                                      default='auto',
-                                      choices=list(CURSOR_TYPES),
-                                      desc='Cursor type recorded on every schedule (planner may override per '
-                                      'memlet). "auto" = int32 when the array extent is provably < 2**31.')
+    cursor_type = properties.TypeClassProperty(default=None,
+                                               allow_none=True,
+                                               desc='Integer type of the cursor symbols (planner may override per '
+                                               'memlet). None = int32 when the array extent is provably < 2**31, '
+                                               'else int64.')
     arrays = properties.SetProperty(element_type=str,
                                     default=set(),
                                     desc='If non-empty, only schedule memlets of these arrays.')
@@ -406,7 +400,7 @@ class ScheduleLoopCursors(ppl.Pass):
                         continue
                     if not schedulable_array(nsdfg.arrays.get(memlet.data)):
                         continue  # scalars carry no address arithmetic; views/references have no fixed base
-                    if self.scope == 'gpu' and not in_gpu_kernel(state, _leaf_node(edge)):
+                    if self.scope == 'gpu' and not is_devicelevel_gpu(nsdfg, state, _scope_node(edge)):
                         continue
                     dec = analyze_edge(state, edge, loops, inner_cache)
                     if dec is None:
@@ -646,28 +640,21 @@ class _References:
 def _reroute(state: SDFGState, edge: MultiConnectorEdge[Memlet], new_root: nodes.AccessNode, is_read: bool,
              new_memlet: Memlet) -> None:
     """Replace the memlet path of ``edge`` by one from/to ``new_root`` carrying ``new_memlet`` at the leaf
-    (outer memlets are re-propagated through the scopes)."""
+    (outer memlets are re-propagated through the scopes). The new path is added before the old one is removed,
+    so scope nodes and the leaf connector are never orphaned in between."""
     path = state.memlet_path(edge)
-    old_root = path[0].src if is_read else path[-1].dst
     if is_read:
-        leaf, conn = path[-1].dst, path[-1].dst_conn
-        conn_type = leaf.in_connectors.get(conn) if conn is not None else None
+        old_root = path[0].src
         node_seq = [new_root] + [e.dst for e in path]
-        src_conn, dst_conn = None, conn
+        src_conn, dst_conn = None, path[-1].dst_conn
     else:
-        leaf, conn = path[0].src, path[0].src_conn
-        conn_type = leaf.out_connectors.get(conn) if conn is not None else None
+        old_root = path[-1].dst
         node_seq = [e.src for e in path] + [new_root]
-        src_conn, dst_conn = conn, None
+        src_conn, dst_conn = path[0].src_conn, None
+    state.add_memlet_path(*node_seq, memlet=new_memlet, src_conn=src_conn, dst_conn=dst_conn, propagate=True)
     state.remove_memlet_path(edge, remove_orphans=True)
     if old_root in state.nodes() and state.degree(old_root) == 0:
         state.remove_node(old_root)
-    if conn is not None:  # remove_memlet_path drops a connector that no other edge uses
-        if is_read and conn not in leaf.in_connectors:
-            leaf.add_in_connector(conn, conn_type)
-        elif not is_read and conn not in leaf.out_connectors:
-            leaf.add_out_connector(conn, conn_type)
-    state.add_memlet_path(*node_seq, memlet=new_memlet, src_conn=src_conn, dst_conn=dst_conn, propagate=True)
 
 
 def lower_loop_cursors(sdfg: SDFG, entries: List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]],
@@ -726,7 +713,7 @@ def lower_loop_cursors(sdfg: SDFG, entries: List[Tuple[SDFGState, MultiConnector
             root, is_read = _root(state, edge) if schedulable_array(desc) else (None, False)
             dec = None
             if root is not None and (is_read or flat_length(desc, memlet.subset) is not None):
-                dec = decompose(desc, memlet, loop, inner, lane_symbols(state, _leaf_node(edge)))
+                dec = decompose(desc, memlet, loop, inner, lane_symbols(state, _scope_node(edge)))
             if dec is None or sp.expand(dec.step - sched.step) != 0:
                 warnings.warn(f'Memlet schedule of "{memlet}" is stale or not lowerable (recorded step '
                               f'{sched.step}, derived {None if dec is None else dec.step}); dropping it.')
@@ -757,10 +744,8 @@ def _default() -> MemletSchedule:
 
 
 def _cursor_dtype(sched: LoopCursor, desc: dt.Data, assume_int32: bool) -> dtypes.typeclass:
-    if sched.cursor_type == 'int32':
-        return dtypes.int32
-    if sched.cursor_type == 'int64':
-        return dtypes.int64
+    if sched.cursor_type is not None:
+        return sched.cursor_type
     return dtypes.int32 if (assume_int32 or extent_bytes_int32(desc)) else dtypes.int64
 
 

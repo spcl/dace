@@ -180,9 +180,19 @@ def test_symbolic_extent_int64_and_assume_int32():
     sdfg = _shared_and_inner.to_sdfg()
     ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
     for m in _scheduled_memlets(sdfg):
-        m.schedule.cursor_type = 'int64'
+        m.schedule.cursor_type = dace.int64
     LowerMemletSchedules(assume_int32=True).apply_pass(sdfg, {})
     assert all(sdfg.symbols[c] == dace.int64 for c in _cursors(_loops(sdfg)[0]))
+
+    # The analysis pass can pin the type for every schedule it creates.
+    sdfg = _shared_and_inner.to_sdfg()
+    ScheduleLoopCursors(scope='all', cursor_type=dace.int16).apply_pass(sdfg, {})
+    assert all(m.schedule.cursor_type == dace.int16 for m in _scheduled_memlets(sdfg))
+    LowerMemletSchedules().apply_pass(sdfg, {})
+    cursors = _cursors(_loops(sdfg)[0])
+    assert all(sdfg.symbols[c] == dace.int16 for c in cursors)
+    code = _code(sdfg)
+    assert all(f'{dace.int16.ctype} {c};' in code for c in cursors)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -300,7 +310,7 @@ def test_manual_schedule_lowering_matches_analysis():
     for st in sdfg.all_states():
         for e in leaf_edges(st):
             if e.data.data == 'A':
-                e.data.schedule = LoopCursor(_loops(sdfg)[0].label, 'i', 64, cursor_type='int32')
+                e.data.schedule = LoopCursor(_loops(sdfg)[0].label, 'i', 64, cursor_type=dace.int32)
     low = LowerMemletSchedules().apply_pass(sdfg, {})
     assert low['cursors'] == 1 and low['dropped'] == 0
     cur, _, _ = _cursor_of(_loops(sdfg)[0], 'A')
@@ -499,6 +509,53 @@ def test_non_contiguous_write_is_not_scheduled():
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# Leaf memlets are the innermost edges of memlet paths: an access node inside a map fed through the map entry
+# ---------------------------------------------------------------------------------------------------------------
+def _access_map_access_sdfg() -> dace.SDFG:
+    """``for i in range(N)``: a map over j copies ``A[i, j]`` into a scalar transient inside the map (access node
+    -> map entry -> access node), doubles it and writes ``B[i, j]``."""
+    sdfg = dace.SDFG('access_map_access')
+    sdfg.add_array('A', [N, M], dace.float32)
+    sdfg.add_array('B', [N, M], dace.float32)
+    sdfg.add_scalar('tmp', dace.float32, transient=True)
+    sdfg.add_symbol('i', dace.int64)
+    loop = LoopRegion('loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state('body', is_start_block=True)
+    entry, exit_ = state.add_map('cols', {'j': '0:M'})
+    a, b, tmp = state.add_read('A'), state.add_write('B'), state.add_access('tmp')
+    tasklet = state.add_tasklet('double', {'x'}, {'y'}, 'y = 2 * x')
+    state.add_memlet_path(a, entry, tmp, memlet=dace.Memlet('A[i, j]'))
+    state.add_edge(tmp, None, tasklet, 'x', dace.Memlet('tmp[0]'))
+    state.add_memlet_path(tasklet, exit_, b, src_conn='y', memlet=dace.Memlet('B[i, j]'))
+    return sdfg
+
+
+def test_access_node_inside_map_is_a_leaf():
+    sdfg = _access_map_access_sdfg()
+    res = ScheduleLoopCursors(scope='all').apply_pass(sdfg, {})
+    assert {m.data for m in _scheduled_memlets(sdfg)} == {'A', 'B'}
+    assert res['scheduled'] == 2
+    low = LowerMemletSchedules().apply_pass(sdfg, {})
+    assert low == {'cursors': 2, 'memlets': 2, 'dropped': 0}
+    sdfg.validate()
+    state = next(iter(sdfg.all_states()))
+    # The map-entry -> tmp edge now reads the flat reference; the outer edge was re-propagated over the map.
+    inner = [e for e in state.edges() if isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == 'tmp'
+             and not isinstance(e.src, dace.nodes.AccessNode)][0]
+    cur, init, step = _cursor_of(_loops(sdfg)[0], 'A')
+    assert inner.data.data == '__dace_flat_A' and str(inner.data.subset) == f'{cur} + j'
+    outer = state.memlet_path(inner)[0]
+    assert outer.src.data == '__dace_flat_A' and str(outer.data.subset) == f'{cur}:{cur} + M'
+    assert str(step) == 'M' and str(init) == '0'
+    n, m = 5, 7
+    A = np.random.default_rng(8).random((n, m)).astype(np.float32)
+    B = np.zeros_like(A)
+    sdfg(A=A, B=B, N=n, M=m)
+    np.testing.assert_allclose(B, 2 * A)
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # Stress test 1: 3-D stencil on a window with padded strides and a nonzero base offset
 # ---------------------------------------------------------------------------------------------------------------
 K = dace.symbol('K')
@@ -672,5 +729,6 @@ if __name__ == '__main__':
     test_codegen_lowers_schedules_automatically()
     test_non_contiguous_read_uses_window_reference()
     test_non_contiguous_write_is_not_scheduled()
+    test_access_node_inside_map_is_a_leaf()
     test_stencil3d_window_padded_strides_and_offset()
     test_k_loop_with_successive_ij_nests_shares_k_cursors()
