@@ -337,6 +337,46 @@ def test_an_irreducible_cycle_entered_from_the_start_block_is_lifted_whole_into_
         dace.sdfg.utils.require_structured_control_flow(sut, 'X')
 
 
+def add_dead_cycle(sdfg: dace.SDFG) -> dace.SDFGState:
+    """Adds ``dead_a`` and ``dead_b`` jumping into each other, which no path from the start block reaches."""
+    dead_a, dead_b = sdfg.add_state('dead_a'), sdfg.add_state('dead_b')
+    sdfg.add_edge(dead_a, dead_b, dace.InterstateEdge())
+    sdfg.add_edge(dead_b, dead_a, dace.InterstateEdge())
+    return dead_b
+
+
+def test_a_dead_block_branching_into_live_code_is_dropped_and_the_loop_is_lifted():
+    sut = dace.SDFG('dead_block_branching_into_live_code')
+    sut.add_symbol('i', dace.int64)
+    init = sut.add_state('init', is_start_block=True)
+    guard, body, done = sut.add_state('guard'), sut.add_state('body'), sut.add_state('done')
+    sut.add_edge(init, guard, dace.InterstateEdge(assignments={'i': '0'}))
+    sut.add_edge(guard, body, dace.InterstateEdge(condition='i < 10'))
+    sut.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sut.add_edge(guard, done, dace.InterstateEdge(condition='i >= 10'))
+    sut.add_edge(add_dead_cycle(sut), done, dace.InterstateEdge(condition='i > 100'))
+
+    ControlFlowRaising().apply_pass(sut, {})
+
+    sut.validate()
+    assert {block.label for block in sut.nodes() if isinstance(block, dace.SDFGState)} == {'init', 'done'}
+    assert len([block for block in sut.nodes() if isinstance(block, LoopRegion)]) == 1
+    assert not [block for block in sut.all_control_flow_blocks() if block.label.startswith('dead_')]
+
+
+def test_an_irreducible_cycle_beside_a_dead_cycle_is_lifted_without_the_dead_blocks():
+    sut = cycle_entered_twice_from_the_start_block_sdfg()
+    add_dead_cycle(sut)
+
+    ControlFlowRaising().apply_pass(sut, {})
+
+    sut.validate()
+    assert len(sut.nodes()) == 1
+    region = sut.nodes()[0]
+    assert isinstance(region, UnstructuredControlFlow)
+    assert [block.label for block in region.nodes()] == ['start', 'left', 'right', 'end']
+
+
 if __name__ == '__main__':
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)

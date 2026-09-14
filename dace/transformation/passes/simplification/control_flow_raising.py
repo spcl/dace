@@ -37,6 +37,21 @@ def region_has_cycle(region: AbstractControlFlowRegion) -> bool:
     return removed != len(in_degree)
 
 
+def remove_unreachable_blocks(sdfg: SDFG) -> int:
+    """Removes the blocks no path from their region's start block reaches, since they never run. Returns the count."""
+    removed = 0
+    for region in list(sdfg.all_control_flow_regions()):
+        if region.number_of_nodes() < 2 or isinstance(region, (ConditionalBlock, UnstructuredControlFlow)):
+            continue
+        reachable = OrderedSet(region.bfs_nodes(region.start_block))
+        if len(reachable) == region.number_of_nodes():
+            continue
+        dead = [block for block in region.nodes() if block not in reachable]
+        region.remove_nodes_from(dead)
+        removed += len(dead)
+    return removed
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ControlFlowRaising(ppl.Pass):
@@ -317,14 +332,18 @@ class ControlFlowRaising(ppl.Pass):
         lifted_loops = 0
         lifted_unstructured = 0
         lifted_branches = 0
+        removed_blocks = 0
         for sdfg in top_sdfg.all_sdfgs_recursive():
+            # Dominance and DFS walks start at the start block, so a dead block would read as an unstructured entry.
+            removed_blocks += remove_unreachable_blocks(sdfg)
             lifted_returns += self._lift_returns(sdfg)
             # Every loop LoopLifting accepts closes a back edge, so the VF2 sweep can only match in a cyclic region.
             if any(region_has_cycle(region) for region in sdfg.all_control_flow_regions(recursive=True)):
                 lifted_loops += sdfg.apply_transformations_repeated([LoopLifting], validate_all=False, validate=False)
             lifted_unstructured += self._lift_unstructured(sdfg)
             lifted_branches += self._lift_conditionals(sdfg)
-        if lifted_branches == 0 and lifted_loops == 0 and lifted_unstructured == 0 and lifted_returns == 0:
+        if (removed_blocks == 0 and lifted_branches == 0 and lifted_loops == 0 and lifted_unstructured == 0
+                and lifted_returns == 0):
             return None
         top_sdfg.reset_cfg_list()
         return lifted_returns, lifted_loops, lifted_branches, lifted_unstructured
