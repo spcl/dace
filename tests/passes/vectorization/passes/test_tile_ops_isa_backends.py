@@ -135,7 +135,7 @@ def test_tile_ops_backend_matches_scalar_bit_for_bit(isa: str) -> None:
     zero, infinities, integer extremes) where a SIMD instruction and the scalar
     contract are most likely to part ways. The headers promise bit-for-bit
     agreement -- ``std::fma`` on every backend, one shared reduce association,
-    py_mod for ``%`` -- so the comparison is exact, not a tolerance.
+    c_mod for ``%``, py_mod for ``p`` -- so the comparison is exact, not a tolerance.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         reference = _build_and_run(tmpdir, "scalar")

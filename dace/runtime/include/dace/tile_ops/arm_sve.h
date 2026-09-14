@@ -34,7 +34,9 @@ inline T tile_apply(T a, T b) {
   else if constexpr (Op == '/')
     return a / b;
   else if constexpr (Op == '%')
-    return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
+    return c_mod(a, b);
+  else if constexpr (Op == 'p')
+    return py_mod(a, b);
   else if constexpr (Op == 'm')
     return std::min(a, b);
   else if constexpr (Op == 'M')
@@ -244,16 +246,15 @@ inline VecT sve_tile_apply(svbool_t pg, VecT a, VecT b) {
 template <typename T, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                        const bool* __restrict__ mask, int vlen) {
-  // No SVE modulo intrinsic, and ``sve_tile_apply``'s catch-all is logical-OR;
-  // run a portable scalar lane loop (``py_mod`` = Python/NumPy ``%`` semantics).
-  if constexpr (Op == '%') {
+  // No SVE modulo intrinsic, and ``sve_tile_apply``'s catch-all is logical-OR.
+  if constexpr (Op == '%' || Op == 'p') {
     for (int i = 0; i < vlen; ++i) {
       const T av = BroadcastA ? a[0] : a[i];
       const T bv = BroadcastB ? b[0] : b[i];
       if constexpr (Masked)
-        out[i] = mask[i] ? py_mod(av, bv) : T(0);
+        out[i] = mask[i] ? tile_apply<T, Op>(av, bv) : T(0);
       else
-        out[i] = py_mod(av, bv);
+        out[i] = tile_apply<T, Op>(av, bv);
     }
     return;
   }
@@ -274,16 +275,15 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
 template <typename T, int VLEN, char Op, bool BroadcastA, bool BroadcastB, bool Masked>
 inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __restrict__ b,
                        const bool* __restrict__ mask) {
-  // No SVE modulo intrinsic, and ``sve_tile_apply``'s catch-all is logical-OR;
-  // run a portable scalar lane loop (``py_mod`` = Python/NumPy ``%`` semantics).
-  if constexpr (Op == '%') {
+  // No SVE modulo intrinsic, and ``sve_tile_apply``'s catch-all is logical-OR.
+  if constexpr (Op == '%' || Op == 'p') {
     for (int i = 0; i < VLEN; ++i) {
       const T av = BroadcastA ? a[0] : a[i];
       const T bv = BroadcastB ? b[0] : b[i];
       if constexpr (Masked)
-        out[i] = mask[i] ? py_mod(av, bv) : T(0);
+        out[i] = mask[i] ? tile_apply<T, Op>(av, bv) : T(0);
       else
-        out[i] = py_mod(av, bv);
+        out[i] = tile_apply<T, Op>(av, bv);
     }
     return;
   }

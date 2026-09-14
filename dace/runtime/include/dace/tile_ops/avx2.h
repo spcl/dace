@@ -34,7 +34,9 @@ inline T tile_apply(T a, T b) {
   else if constexpr (Op == '/')
     return a / b;
   else if constexpr (Op == '%')
-    return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
+    return c_mod(a, b);
+  else if constexpr (Op == 'p')
+    return py_mod(a, b);
   else if constexpr (Op == 'm')
     return std::min(a, b);
   else if constexpr (Op == 'M')
@@ -224,11 +226,8 @@ inline void tile_binop(T* __restrict__ out, const T* __restrict__ a, const T* __
       out[i] = tile_apply<T, Op>(av, bv);
   };
 
-  // Modulo has no AVX2 vector intrinsic, and Python ``py_mod`` semantics differ
-  // from C ``%`` -- run the portable scalar lane loop (``tile_apply`` -> py_mod)
-  // for every element type, before the fp/int SIMD dispatch which has no ``%``
-  // case (``binop_ps`` would otherwise fall through to its logical-OR branch).
-  if constexpr (Op == '%') {
+  // No AVX2 modulo intrinsic; ``binop_ps`` would fall through to its logical-OR branch.
+  if constexpr (Op == '%' || Op == 'p') {
     for (int i = 0; i < vlen; ++i) scalar_tail(i);
     return;
   }

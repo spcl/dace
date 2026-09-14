@@ -31,7 +31,9 @@ inline T tile_apply(T a, T b) {
   else if constexpr (Op == '/')
     return a / b;
   else if constexpr (Op == '%')
-    return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
+    return c_mod(a, b);
+  else if constexpr (Op == 'p')
+    return py_mod(a, b);
   else if constexpr (Op == 'm')
     return std::min(a, b);
   else if constexpr (Op == 'M')

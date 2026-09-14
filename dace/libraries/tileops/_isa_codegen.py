@@ -122,12 +122,8 @@ OP_TO_CHAR = {
     "-": "-",
     "*": "*",
     "/": "/",
-    # Python/NumPy modulo: the backend headers lower the ``%`` op char to
-    # ``dace::math::py_mod`` (divisor-sign semantics), never C's truncated ``%``.
-    # ``py_mod`` is the function-call spelling of the same op (emitted by the
-    # ``RewriteModuloToPyMod`` cleaning step) and maps to the SAME backend char.
     "%": "%",
-    "py_mod": "%",
+    "py_mod": "p",
     "min": "m",
     "max": "M",
     "<": "<",

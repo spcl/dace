@@ -7,7 +7,7 @@
 // tile op result is dumped as raw hex on stdout. The scalar backend's dump is
 // the oracle: an ISA backend must be BIT-IDENTICAL (the headers document
 // bit-for-bit agreement -- ``std::fma`` everywhere, the same pairwise reduce
-// tree, the same py_mod).
+// tree, the same c_mod and py_mod).
 //
 // Inputs are generated from the case index alone, so the scalar and ISA runs
 // see identical operands without sharing any state.
@@ -128,6 +128,7 @@ void run_all_binops(std::uint64_t salt) {
   run_binop_flags<T, VLEN, '!'>(salt + 1300);
   run_binop_flags<T, VLEN, '&'>(salt + 1400);
   run_binop_flags<T, VLEN, '|'>(salt + 1500);
+  run_binop_flags<T, VLEN, 'p'>(salt + 1600);
 }
 
 // -------------------------------- unop --------------------------------

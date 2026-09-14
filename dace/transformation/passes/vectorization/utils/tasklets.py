@@ -135,22 +135,9 @@ def emit_op(op_: str) -> str:
 
 
 def binop_cpp(l_op: str, op_: str, r_op: str) -> str:
-    """C++ rendering of a binary operator in the CPP fallback lane loop.
-
-    ``%`` -> ``py_mod(l, r)``: Python/NumPy modulo (result follows the *divisor's*
-    sign), NOT C's truncated ``%`` (dividend's) -- matches the scalar reference on
-    negative operands + well-formed for floats (C ``%`` ill-formed there).
-    ``py_mod`` = GLOBAL runtime helper (outside ``dace::math``), called
-    unqualified, same form the tile-op backends / ``np.mod`` ufunc emit. Every
-    other operator emitted infix.
-
-    :param l_op: Left operand expression.
-    :param op_: Operator symbol.
-    :param r_op: Right operand expression.
-    :returns: C++ expression string.
-    """
+    """C++ rendering of a binary operator in the CPP fallback lane loop; ``%`` is ``c_mod``, which takes floats."""
     if op_ == "%":
-        return f"py_mod({l_op}, {r_op})"
+        return f"c_mod({l_op}, {r_op})"
     return f"({l_op} {op_} {r_op})"
 
 
@@ -366,8 +353,7 @@ def _generate_code(ctx: EmitCtx, rhs1_: str | None, rhs2_: str | None, const1_: 
     else:
         if op_ in BINARY_OPERATORS:
             # Constant operand emitted bare; array operand indexed ``[_vi]``.
-            # ``binop_cpp`` renders ``%`` as ``dace::math::py_mod`` (Python
-            # semantics), every other operator infix.
+            # ``binop_cpp`` renders ``%`` as ``c_mod``, every other operator infix.
             l_operand = rhs_left if rhs_left == const1_ else f"{rhs_left}[_vi]"
             r_operand = rhs_right if rhs_right == const2_ else f"{rhs_right}[_vi]"
             code_lines.append(f"{lhs_expr} = {binop_cpp(l_operand, op_, r_operand)}{comparison_suffix};")

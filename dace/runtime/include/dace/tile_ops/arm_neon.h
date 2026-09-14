@@ -35,7 +35,9 @@ inline T tile_apply(T a, T b) {
   else if constexpr (Op == '/')
     return a / b;
   else if constexpr (Op == '%')
-    return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
+    return c_mod(a, b);
+  else if constexpr (Op == 'p')
+    return py_mod(a, b);
   else if constexpr (Op == 'm')
     return std::min(a, b);
   else if constexpr (Op == 'M')
@@ -94,7 +96,7 @@ inline int64x2_t neon_select_0_1_s64(uint64x2_t mask) { return vandq_s64(vreinte
 // truthiness producing ``T(1)`` / ``T(0)`` and have no NEON intrinsic) maps to
 // a native intrinsic. And / Or -> scalar.
 template <char Op>
-inline constexpr bool neon_float_has_vector = (Op != '&' && Op != '|');
+inline constexpr bool neon_float_has_vector = (Op != '&' && Op != '|' && Op != '%' && Op != 'p');
 
 template <char Op>
 inline float32x4_t neon_binop_f32(float32x4_t a, float32x4_t b) {

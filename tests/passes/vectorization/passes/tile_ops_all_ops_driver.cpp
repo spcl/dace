@@ -62,6 +62,7 @@ inline void drive_all_binops() {
   drive_one_binop<T, VLEN, '!'>();
   drive_one_binop<T, VLEN, '&'>();
   drive_one_binop<T, VLEN, '|'>();
+  drive_one_binop<T, VLEN, 'p'>();
 }
 
 template <typename T, int VLEN, char Op>

@@ -3,7 +3,7 @@
 // Scalar (portable) backend of the K=1 tile-op intrinsics: the reference implementation and
 // always-available fallback; avx512/avx2/arm_neon/arm_sve mirror the same signatures.
 //
-// Op codes (binop only): + - * / % (Python/NumPy modulo, not C's) m/M min/max, < l > g = !
+// Op codes (binop only): + - * / % (C modulo) p (Python modulo) m/M min/max, < l > g = !
 // comparisons (yield T(1)/T(0)), & | logical. Producers zero-fill inactive lanes and guard
 // the read; array writers (store/scatter) skip inactive lanes instead (RMW).
 #pragma once
@@ -53,6 +53,8 @@ inline T tile_apply(T a, T b) {
   else if constexpr (Op == '/')
     return a / b;
   else if constexpr (Op == '%')
+    return c_mod(a, b);
+  else if constexpr (Op == 'p')
     return py_mod(a, b);
   else if constexpr (Op == 'm')
     return std::min(a, b);
