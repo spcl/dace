@@ -327,9 +327,14 @@ def affine_in_iv(
         # text, changing emitted subsets for every fold this pass performs.
         scale = offset = None
         screened_by_expand = False
+        # Differentiate once; both normalize forms and the screened_by_expand recompute reuse it.
+        try:
+            raw_diff = sympy.diff(e, iv_sym)
+        except Exception:
+            continue
         for normalize in (sympy.expand, symbolic.simplify):
             try:
-                cand_scale = normalize(sympy.diff(e, iv_sym))
+                cand_scale = normalize(raw_diff)
                 cand_offset = normalize(e - cand_scale * iv_sym)
             except Exception:
                 break
@@ -355,7 +360,7 @@ def affine_in_iv(
             continue
         if screened_by_expand:
             try:
-                scale = symbolic.simplify(sympy.diff(e, iv_sym))
+                scale = symbolic.simplify(raw_diff)
                 offset = symbolic.simplify(e - scale * iv_sym)
             except Exception:
                 continue
