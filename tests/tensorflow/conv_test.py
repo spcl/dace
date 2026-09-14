@@ -9,6 +9,7 @@ def test_conv():
     import tensorflow as tf
     from tensorflow.python.ops import gen_nn_ops
     from dace.frontend.ml.tensorflow import TFSession
+
     inp_shape = [10, 10, 10, 10]
     filter_shape = [3, 3, 10, 3]
     strides = [1, 3, 3, 1]
@@ -78,16 +79,12 @@ def test_conv():
                 test_grads = np.random.uniform(size=outp.shape).astype(np.float64)
                 test_input = np.random.uniform(size=tuple(inp_shape)).astype(np.float64)
 
-                output_tf = sess_tf.run(filter_gradients,
-                                        feed_dict={
-                                            input_placeholder: test_input,
-                                            out_backprop: test_grads
-                                        })
-                output_dace = sess_dace.run(filter_gradients,
-                                            feed_dict={
-                                                input_placeholder: test_input,
-                                                out_backprop: test_grads
-                                            })
+                output_tf = sess_tf.run(
+                    filter_gradients, feed_dict={input_placeholder: test_input, out_backprop: test_grads}
+                )
+                output_dace = sess_dace.run(
+                    filter_gradients, feed_dict={input_placeholder: test_input, out_backprop: test_grads}
+                )
 
                 try:
                     assert tf.norm(output_dace - output_tf).eval(session=sess_tf) < 1e-10

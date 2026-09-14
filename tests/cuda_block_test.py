@@ -89,7 +89,7 @@ def test_different_block_sizes_nesting():
                     out >> v2[i + bi - 1]
                     out = in_V * 3
 
-            nested2(V[bi - 1:bi + 33], v1[bi // 32:bi // 32 + 1])
+            nested2(V[bi - 1 : bi + 33], v1[bi // 32 : bi // 32 + 1])
 
     sdfg = diffblocks.to_sdfg()
     assert sdfg.apply_transformations(GPUTransformSDFG, dict(sequential_innermaps=False)) == 1
@@ -99,7 +99,7 @@ def test_different_block_sizes_nesting():
     expected_v2 = V[1:129] * 3
     expected_v1 = np.zeros([4], np.float64)
     for i in range(4):
-        expected_v1[i] = np.sum(V[i * 32:(i + 1) * 32 + 2]) * 2
+        expected_v1[i] = np.sum(V[i * 32 : (i + 1) * 32 + 2]) * 2
 
     sdfg(V, v1, v2)
     assert np.linalg.norm(v1 - expected_v1) <= 1e-6
@@ -148,8 +148,10 @@ def test_custom_block_size_twomaps():
     sdfg = tester.to_sdfg()
     sdfg.apply_gpu_transformations(sequential_innermaps=True)
     mapentry: dace.nodes.MapEntry = next(
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device)
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device
+    )
 
     mapentry.map.gpu_block_size = (127, 5)
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
@@ -175,8 +177,9 @@ def test_block_thread_specialization():
 
     sdfg = tester.to_sdfg()
     sdfg.apply_gpu_transformations(sequential_innermaps=False)
-    tasklet = next(n for n, _ in sdfg.all_nodes_recursive()
-                   if isinstance(n, dace.nodes.Tasklet) and '2' in n.code.as_string)
+    tasklet = next(
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and '2' in n.code.as_string
+    )
     tasklet.location['gpu_thread'] = dace.subsets.Range.from_string('2:9:3')
     tasklet.location['gpu_block'] = 1
 

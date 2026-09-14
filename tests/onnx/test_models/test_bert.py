@@ -8,8 +8,9 @@ import pytest
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("onnxsim", reason="ONNX Simplifier not installed. Please install with: pip install dace[ml]")
-pytest.importorskip("transformers",
-                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
+pytest.importorskip(
+    "transformers", reason="transformers not installed. Please install with: pip install dace[ml-testing]"
+)
 import os
 import tempfile
 
@@ -26,18 +27,20 @@ BERT_TINY_MODEL = "google/bert_uncased_L-2_H-128_A-2"
 
 
 class _BertONNXExportWrapper(torch.nn.Module):
-    """ Fixes the forward kwargs: the ONNX tracer passes BertModel's use_cache default positionally otherwise. """
+    """Fixes the forward kwargs: the ONNX tracer passes BertModel's use_cache default positionally otherwise."""
 
     def __init__(self, model):
         super().__init__()
         self.model = model
 
     def forward(self, input_ids, attention_mask, token_type_ids):
-        output = self.model(input_ids=input_ids,
-                            attention_mask=attention_mask,
-                            token_type_ids=token_type_ids,
-                            use_cache=False,
-                            return_dict=False)
+        output = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            use_cache=False,
+            return_dict=False,
+        )
         return output[0], output[1]
 
 
@@ -60,20 +63,27 @@ def test_bert_full():
     with tempfile.TemporaryDirectory() as tmp_dir:
         bert_path = os.path.join(tmp_dir, "bert-tiny.onnx")
         # eval(): the exporter restores the wrapper's mode afterwards, which would turn dropout back on
-        torch.onnx.export(_BertONNXExportWrapper(pt_model).eval(), (tokens_tensor, attention_mask, segments_tensors),
-                          bert_path,
-                          input_names=["input_ids", "attention_mask", "token_type_ids"],
-                          output_names=["output_0", "output_1"],
-                          opset_version=14,
-                          dynamo=False)
+        torch.onnx.export(
+            _BertONNXExportWrapper(pt_model).eval(),
+            (tokens_tensor, attention_mask, segments_tensors),
+            bert_path,
+            input_names=["input_ids", "attention_mask", "token_type_ids"],
+            output_names=["output_0", "output_1"],
+            opset_version=14,
+            dynamo=False,
+        )
 
         model = onnx.load(bert_path)
         # infer shapes
-        model, _ = onnxsim.simplify(model,
-                                    skip_fuse_bn=True,
-                                    input_shapes=dict(input_ids=tokens_tensor.shape,
-                                                      token_type_ids=segments_tensors.shape,
-                                                      attention_mask=attention_mask.shape))
+        model, _ = onnxsim.simplify(
+            model,
+            skip_fuse_bn=True,
+            input_shapes=dict(
+                input_ids=tokens_tensor.shape,
+                token_type_ids=segments_tensors.shape,
+                attention_mask=attention_mask.shape,
+            ),
+        )
 
     dace_model = donnx.ONNXModel("test_bert_full", model, auto_merge=True)
 

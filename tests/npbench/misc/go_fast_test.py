@@ -21,6 +21,7 @@ def go_fast_kernel(a: dc.float64[N, N]):
 
 def initialize(N):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     x = rng.random((N, N), dtype=np.float64)
     return x
@@ -78,7 +79,7 @@ def run_go_fast_autodiff():
 
     # Initialize gradient computation data
     gradient_a = np.zeros_like(a)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -117,7 +118,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

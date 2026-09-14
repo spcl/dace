@@ -51,7 +51,7 @@ def test_persistent_thread_block():
 
     sdfg(A=A, B=A, out=out_AA, N=N)
 
-    assert (np.allclose(out_AB, np.dot(A, B)) and np.allclose(out_AA, np.dot(A, A))), "Result doesn't match!"
+    assert np.allclose(out_AB, np.dot(A, B)) and np.allclose(out_AA, np.dot(A, A)), "Result doesn't match!"
     print("Complete.")
 
 

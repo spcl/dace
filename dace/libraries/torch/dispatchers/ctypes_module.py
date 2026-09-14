@@ -5,6 +5,7 @@ A torch python autograd function that calls the SDFG using ctypes.
 This can be as an alternative to the C++ registration for large neural nets to
 get around the 64 parameter limit of torch's dispatcher.
 """
+
 import copy
 import itertools
 from typing import List, Dict, Tuple
@@ -17,8 +18,7 @@ import dace
 from dace.autodiff import BackwardResult
 from dace.frontend.ml.onnx.importer import create_output_array
 from dace.libraries.torch.dispatchers import DaceTorchFunction
-from dace.libraries.torch.dispatchers.common import compile_and_init_sdfgs, \
-    get_arglist
+from dace.libraries.torch.dispatchers.common import compile_and_init_sdfgs, get_arglist
 
 
 def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
@@ -37,9 +37,11 @@ def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
     for name in remaining:
         # remaining arguments must be constant
         if name not in module.dace_model.clean_weights:
-            raise ValueError(f"Cannot generate ctypes dispatcher: SDFG argument {name} is "
-                             f"not an input or output of the PyTorch Module, and not a"
-                             f" constant.")
+            raise ValueError(
+                f"Cannot generate ctypes dispatcher: SDFG argument {name} is "
+                f"not an input or output of the PyTorch Module, and not a"
+                f" constant."
+            )
         constants[name] = module.dace_model.clean_weights[name]
         if fwd_arglist[name].storage in dace.dtypes.GPU_STORAGES:
             constants[name] = constants[name].cuda()
@@ -71,9 +73,11 @@ def callable_for_fwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward
         # initialize the outputs
         for name in output_names:
             output_desc = forward_compiled.sdfg.arrays[name]
-            kwargs[name] = create_output_array(
-                {}, output_desc, use_torch=True, zeros=False
-            ) if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[name]
+            kwargs[name] = (
+                create_output_array({}, output_desc, use_torch=True, zeros=False)
+                if name not in module.dace_model.initialized_parameters
+                else module.dace_model.initialized_parameters[name]
+            )
 
         # call the SDFG
         return forward_compiled(**kwargs, **constants)
@@ -81,9 +85,13 @@ def callable_for_fwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward
     return forward
 
 
-def callable_for_bwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward_compiled: CompiledSDFG,
-                            backward_compiled: CompiledSDFG, backward_result: BackwardResult,
-                            forwarded_arrays: Dict[str, data.Data]):
+def callable_for_bwd_module(
+    module: 'dace.frontend.ml.torch.DaceModule',
+    forward_compiled: CompiledSDFG,
+    backward_compiled: CompiledSDFG,
+    backward_result: BackwardResult,
+    forwarded_arrays: Dict[str, data.Data],
+):
 
     assert forward_compiled._initialized
     assert backward_compiled._initialized
@@ -127,7 +135,6 @@ def callable_for_bwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward
     constants = init_remaining_parameters(module, fwd_arglist, input_names, outputs_with_forwarded_outputs)
 
     class DifferentiableFunction(torch.autograd.Function):
-
         @staticmethod
         def forward(ctx, *inputs):
             kwargs = {}
@@ -139,10 +146,11 @@ def callable_for_bwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward
             # initialize the outputs
             for name in outputs_with_forwarded_outputs:
                 output_desc = forward_compiled.sdfg.arrays[name]
-                kwargs[name] = create_output_array(
-                    {}, output_desc, use_torch=True, zeros=True
-                ) if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[
-                    name]
+                kwargs[name] = (
+                    create_output_array({}, output_desc, use_torch=True, zeros=True)
+                    if name not in module.dace_model.initialized_parameters
+                    else module.dace_model.initialized_parameters[name]
+                )
 
             # call the SDFG
             outputs = forward_compiled(**kwargs, **constants)
@@ -218,5 +226,6 @@ def get_ctypes_dispatcher(module: 'dace.frontend.ml.torch.DaceModule', dummy_inp
         function=function,
         compiled_sdfgs=compiled_sdfgs,
         # no pointers required for ctypes dispatcher
-        ptr=[])
+        ptr=[],
+    )
     return result

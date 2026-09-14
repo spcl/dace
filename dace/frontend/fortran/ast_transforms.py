@@ -24,7 +24,7 @@ def iter_child_nodes(node: ast_internal_classes.FNode):
     """
 
     for name, field in iter_fields(node):
-        #print("NASME:",name)
+        # print("NASME:",name)
         if isinstance(field, ast_internal_classes.FNode):
             yield field
         elif isinstance(field, list):
@@ -188,9 +188,16 @@ class CallToArray(NodeTransformer):
         self.funcs = funcs
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
+
         self.excepted_funcs = [
-            "malloc", "pow", "cbrt", "__dace_sign", "tanh", "atan2", "__dace_epsilon",
-            *FortranIntrinsics.function_names()
+            "malloc",
+            "pow",
+            "cbrt",
+            "__dace_sign",
+            "tanh",
+            "atan2",
+            "__dace_epsilon",
+            *FortranIntrinsics.function_names(),
         ]
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
@@ -225,8 +232,13 @@ class CallExtractorNodeLister(NodeVisitor):
                 stop = True
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
+
         if not stop and node.name.name not in [
-                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+            "malloc",
+            "pow",
+            "cbrt",
+            "__dace_epsilon",
+            *FortranIntrinsics.call_extraction_exemptions(),
         ]:
             self.nodes.append(node)
         return self.generic_visit(node)
@@ -248,8 +260,13 @@ class CallExtractor(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
+
         if node.name.name in [
-                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+            "malloc",
+            "pow",
+            "cbrt",
+            "__dace_epsilon",
+            *FortranIntrinsics.call_extraction_exemptions(),
         ]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
@@ -281,29 +298,32 @@ class CallExtractor(NodeTransformer):
                 # We go in reverse order, counting from end-1 to 0.
                 temp = self.count + len(res) - 1
                 for i in reversed(range(0, len(res))):
-
                     newbody.append(
-                        ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                            ast_internal_classes.Var_Decl_Node(
-                                name="tmp_call_" + str(temp), type=res[i].type, sizes=None)
-                        ]))
+                        ast_internal_classes.Decl_Stmt_Node(
+                            vardecl=[
+                                ast_internal_classes.Var_Decl_Node(
+                                    name="tmp_call_" + str(temp), type=res[i].type, sizes=None
+                                )
+                            ]
+                        )
+                    )
                     newbody.append(
-                        ast_internal_classes.BinOp_Node(op="=",
-                                                        lval=ast_internal_classes.Name_Node(name="tmp_call_" +
-                                                                                            str(temp),
-                                                                                            type=res[i].type),
-                                                        rval=res[i],
-                                                        line_number=child.line_number))
+                        ast_internal_classes.BinOp_Node(
+                            op="=",
+                            lval=ast_internal_classes.Name_Node(name="tmp_call_" + str(temp), type=res[i].type),
+                            rval=res[i],
+                            line_number=child.line_number,
+                        )
+                    )
                     temp = temp - 1
             if isinstance(child, ast_internal_classes.Call_Expr_Node):
                 new_args = []
                 if hasattr(child, "args"):
                     for i in child.args:
                         new_args.append(self.visit(i))
-                new_child = ast_internal_classes.Call_Expr_Node(type=child.type,
-                                                                name=child.name,
-                                                                args=new_args,
-                                                                line_number=child.line_number)
+                new_child = ast_internal_classes.Call_Expr_Node(
+                    type=child.type, name=child.name, args=new_args, line_number=child.line_number
+                )
                 newbody.append(new_child)
             else:
                 newbody.append(self.visit(child))
@@ -313,11 +333,11 @@ class CallExtractor(NodeTransformer):
 
 class ParentScopeAssigner(NodeVisitor):
     """
-        For each node, it assigns its parent scope - program, subroutine, function.
+    For each node, it assigns its parent scope - program, subroutine, function.
 
-        If the parent node is one of the "parent" types, we assign it as the parent.
-        Otherwise, we look for the parent of my parent to cover nested AST nodes within
-        a single scope.
+    If the parent node is one of the "parent" types, we assign it as the parent.
+    Otherwise, we look for the parent of my parent to cover nested AST nodes within
+    a single scope.
     """
 
     def __init__(self):
@@ -326,8 +346,10 @@ class ParentScopeAssigner(NodeVisitor):
     def visit(self, node: ast_internal_classes.FNode, parent_node: Optional[ast_internal_classes.FNode] = None):
 
         parent_node_types = [
-            ast_internal_classes.Subroutine_Subprogram_Node, ast_internal_classes.Function_Subprogram_Node,
-            ast_internal_classes.Main_Program_Node, ast_internal_classes.Module_Node
+            ast_internal_classes.Subroutine_Subprogram_Node,
+            ast_internal_classes.Function_Subprogram_Node,
+            ast_internal_classes.Main_Program_Node,
+            ast_internal_classes.Module_Node,
         ]
 
         if parent_node is not None and type(parent_node) in parent_node_types:
@@ -349,9 +371,9 @@ class ParentScopeAssigner(NodeVisitor):
 
 class ScopeVarsDeclarations(NodeVisitor):
     """
-        Creates a mapping (scope name, variable name) -> variable declaration.
+    Creates a mapping (scope name, variable name) -> variable declaration.
 
-        The visitor is used to access information on variable dimension, sizes, and offsets.
+    The visitor is used to access information on variable dimension, sizes, and offsets.
     """
 
     def __init__(self):
@@ -384,6 +406,7 @@ class IndexExtractorNodeLister(NodeVisitor):
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
+
         if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
             return self.generic_visit(node)
         else:
@@ -419,6 +442,7 @@ class IndexExtractor(NodeTransformer):
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
+
         if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
             return self.generic_visit(node)
         else:
@@ -455,15 +479,16 @@ class IndexExtractor(NodeTransformer):
                             tmp_name = "tmp_index_" + str(temp)
                             temp = temp + 1
                             newbody.append(
-                                ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                                    ast_internal_classes.Var_Decl_Node(name=tmp_name,
-                                                                       type="INTEGER",
-                                                                       sizes=None,
-                                                                       line_number=child.line_number)
-                                ],
-                                                                    line_number=child.line_number))
+                                ast_internal_classes.Decl_Stmt_Node(
+                                    vardecl=[
+                                        ast_internal_classes.Var_Decl_Node(
+                                            name=tmp_name, type="INTEGER", sizes=None, line_number=child.line_number
+                                        )
+                                    ],
+                                    line_number=child.line_number,
+                                )
+                            )
                             if self.normalize_offsets:
-
                                 # Find the offset of a variable to which we are assigning
                                 var_name = ""
                                 if isinstance(j, ast_internal_classes.Name_Node):
@@ -481,8 +506,11 @@ class IndexExtractor(NodeTransformer):
                                             op="-",
                                             lval=i,
                                             rval=ast_internal_classes.Int_Literal_Node(value=str(offset)),
-                                            line_number=child.line_number),
-                                        line_number=child.line_number))
+                                            line_number=child.line_number,
+                                        ),
+                                        line_number=child.line_number,
+                                    )
+                                )
                             else:
                                 newbody.append(
                                     ast_internal_classes.BinOp_Node(
@@ -492,8 +520,11 @@ class IndexExtractor(NodeTransformer):
                                             op="-",
                                             lval=i,
                                             rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                                            line_number=child.line_number),
-                                        line_number=child.line_number))
+                                            line_number=child.line_number,
+                                        ),
+                                        line_number=child.line_number,
+                                    )
+                                )
             newbody.append(self.visit(child))
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
@@ -507,37 +538,49 @@ class SignToIf(NodeTransformer):
         if isinstance(node.rval, ast_internal_classes.Call_Expr_Node) and node.rval.name.name == "__dace_sign":
             args = node.rval.args
             lval = node.lval
-            cond = ast_internal_classes.BinOp_Node(op=">=",
-                                                   rval=ast_internal_classes.Real_Literal_Node(value="0.0"),
-                                                   lval=args[1],
-                                                   line_number=node.line_number)
-            body_if = ast_internal_classes.Execution_Part_Node(execution=[
-                ast_internal_classes.BinOp_Node(lval=copy.deepcopy(lval),
-                                                op="=",
-                                                rval=ast_internal_classes.Call_Expr_Node(
-                                                    name=ast_internal_classes.Name_Node(name="abs"),
-                                                    type="DOUBLE",
-                                                    args=[copy.deepcopy(args[0])],
-                                                    line_number=node.line_number),
-                                                line_number=node.line_number)
-            ])
-            body_else = ast_internal_classes.Execution_Part_Node(execution=[
-                ast_internal_classes.BinOp_Node(lval=copy.deepcopy(lval),
-                                                op="=",
-                                                rval=ast_internal_classes.UnOp_Node(
-                                                    op="-",
-                                                    lval=ast_internal_classes.Call_Expr_Node(
-                                                        name=ast_internal_classes.Name_Node(name="abs"),
-                                                        type="DOUBLE",
-                                                        args=[copy.deepcopy(args[0])],
-                                                        line_number=node.line_number),
-                                                    line_number=node.line_number),
-                                                line_number=node.line_number)
-            ])
-            return (ast_internal_classes.If_Stmt_Node(cond=cond,
-                                                      body=body_if,
-                                                      body_else=body_else,
-                                                      line_number=node.line_number))
+            cond = ast_internal_classes.BinOp_Node(
+                op=">=",
+                rval=ast_internal_classes.Real_Literal_Node(value="0.0"),
+                lval=args[1],
+                line_number=node.line_number,
+            )
+            body_if = ast_internal_classes.Execution_Part_Node(
+                execution=[
+                    ast_internal_classes.BinOp_Node(
+                        lval=copy.deepcopy(lval),
+                        op="=",
+                        rval=ast_internal_classes.Call_Expr_Node(
+                            name=ast_internal_classes.Name_Node(name="abs"),
+                            type="DOUBLE",
+                            args=[copy.deepcopy(args[0])],
+                            line_number=node.line_number,
+                        ),
+                        line_number=node.line_number,
+                    )
+                ]
+            )
+            body_else = ast_internal_classes.Execution_Part_Node(
+                execution=[
+                    ast_internal_classes.BinOp_Node(
+                        lval=copy.deepcopy(lval),
+                        op="=",
+                        rval=ast_internal_classes.UnOp_Node(
+                            op="-",
+                            lval=ast_internal_classes.Call_Expr_Node(
+                                name=ast_internal_classes.Name_Node(name="abs"),
+                                type="DOUBLE",
+                                args=[copy.deepcopy(args[0])],
+                                line_number=node.line_number,
+                            ),
+                            line_number=node.line_number,
+                        ),
+                        line_number=node.line_number,
+                    )
+                ]
+            )
+            return ast_internal_classes.If_Stmt_Node(
+                cond=cond, body=body_if, body_else=body_else, line_number=node.line_number
+            )
 
         else:
             return self.generic_visit(node)
@@ -621,11 +664,14 @@ def functionStatementEliminator(node=ast_internal_classes.Program_Node):
                 specification_part=i.specification_part,
                 subroutine_definitions=module_subroutine_definitions,
                 function_definitions=module_function_definitions,
-            ))
-    return ast_internal_classes.Program_Node(main_program=main_program,
-                                             function_definitions=function_definitions,
-                                             subroutine_definitions=subroutine_definitions,
-                                             modules=modules)
+            )
+        )
+    return ast_internal_classes.Program_Node(
+        main_program=main_program,
+        function_definitions=function_definitions,
+        subroutine_definitions=subroutine_definitions,
+        modules=modules,
+    )
 
 
 def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
@@ -642,7 +688,8 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
         if isinstance(i, ast_internal_classes.BinOp_Node):
             if i.op == "=":
                 if isinstance(i.lval, ast_internal_classes.Call_Expr_Node) or isinstance(
-                        i.lval, ast_internal_classes.Structure_Constructor_Node):
+                    i.lval, ast_internal_classes.Structure_Constructor_Node
+                ):
                     function_statement_name = i.lval.name
                     is_actually_function_statement = False
                     # In Fortran, function statement are defined as scalar values,
@@ -666,7 +713,7 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                         new_exec.remove(i)
 
                     else:
-                        #There are no function statements after the first one that isn't a function statement
+                        # There are no function statements after the first one that isn't a function statement
                         break
     still_changing = True
     while still_changing:
@@ -680,7 +727,7 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                     if k.name == j[0].name:
                         calls_to_replace = FindFunctionCalls()
                         calls_to_replace.visit(j[1])
-                        #must check if it is recursive and contains other function statements
+                        # must check if it is recursive and contains other function statements
                         it_is_simple = True
                         for l in calls_to_replace.nodes:
                             for m in to_change:
@@ -730,14 +777,16 @@ class ArrayLoopNodeLister(NodeVisitor):
         return
 
 
-def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
-                          ranges: list,
-                          rangepos: list,
-                          rangeslen: list,
-                          count: int,
-                          newbody: list,
-                          scope_vars: ScopeVarsDeclarations,
-                          declaration=True):
+def par_Decl_Range_Finder(
+    node: ast_internal_classes.Array_Subscript_Node,
+    ranges: list,
+    rangepos: list,
+    rangeslen: list,
+    count: int,
+    newbody: list,
+    scope_vars: ScopeVarsDeclarations,
+    declaration=True,
+):
     """
     Helper function for the transformation of array operations and sums to loops
     :param node: The AST to be transformed
@@ -758,30 +807,27 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
     for idx, i in enumerate(node.indices):
         if isinstance(i, ast_internal_classes.ParDecl_Node):
-
             if i.type == "ALL":
-
                 lower_boundary = None
                 if offsets[idx] != 1:
                     lower_boundary = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
                 else:
                     lower_boundary = ast_internal_classes.Int_Literal_Node(value="1")
 
-                upper_boundary = ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
-                                                                      type="INTEGER",
-                                                                      arrname=node.name,
-                                                                      pos=currentindex)
+                upper_boundary = ast_internal_classes.Name_Range_Node(
+                    name="f2dace_MAX", type="INTEGER", arrname=node.name, pos=currentindex
+                )
                 """
                     When there's an offset, we add MAX_RANGE + offset.
                     But since the generated loop has `<=` condition, we need to subtract 1.
                 """
                 if offsets[idx] != 1:
                     upper_boundary = ast_internal_classes.BinOp_Node(
-                        lval=upper_boundary,
-                        op="+",
-                        rval=ast_internal_classes.Int_Literal_Node(value=str(offsets[idx])))
+                        lval=upper_boundary, op="+", rval=ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+                    )
                     upper_boundary = ast_internal_classes.BinOp_Node(
-                        lval=upper_boundary, op="-", rval=ast_internal_classes.Int_Literal_Node(value="1"))
+                        lval=upper_boundary, op="-", rval=ast_internal_classes.Int_Literal_Node(value="1")
+                    )
                 ranges.append([lower_boundary, upper_boundary])
                 rangeslen.append(-1)
 
@@ -804,10 +850,17 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
             rangepos.append(currentindex)
             if declaration:
                 newbody.append(
-                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                        ast_internal_classes.Symbol_Decl_Node(
-                            name="tmp_parfor_" + str(count + len(rangepos) - 1), type="INTEGER", sizes=None, init=None)
-                    ]))
+                    ast_internal_classes.Decl_Stmt_Node(
+                        vardecl=[
+                            ast_internal_classes.Symbol_Decl_Node(
+                                name="tmp_parfor_" + str(count + len(rangepos) - 1),
+                                type="INTEGER",
+                                sizes=None,
+                                init=None,
+                            )
+                        ]
+                    )
+                )
             indices.append(ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)))
         else:
             indices.append(i)
@@ -836,7 +889,6 @@ class ArrayToLoop(NodeTransformer):
             res = lister.nodes
             res_range = lister.range_nodes
             if res is not None and len(res) > 0:
-
                 current = child.lval
                 val = child.rval
                 ranges = []
@@ -849,8 +901,9 @@ class ArrayToLoop(NodeTransformer):
                         rangeposrval = []
                         rangesrval = []
 
-                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars,
-                                              False)
+                        par_Decl_Range_Finder(
+                            i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars, False
+                        )
 
                         for i, j in zip(ranges, rangesrval):
                             if i != j:
@@ -858,7 +911,8 @@ class ArrayToLoop(NodeTransformer):
                                     for k, l in zip(i, j):
                                         if k != l:
                                             if isinstance(k, ast_internal_classes.Name_Range_Node) and isinstance(
-                                                    l, ast_internal_classes.Name_Range_Node):
+                                                l, ast_internal_classes.Name_Range_Node
+                                            ):
                                                 if k.name != l.name:
                                                     raise NotImplementedError("Ranges must be the same")
                                             else:
@@ -875,26 +929,31 @@ class ArrayToLoop(NodeTransformer):
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
                         op="=",
                         rval=initrange,
-                        line_number=child.line_number)
+                        line_number=child.line_number,
+                    )
                     cond = ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
                         op="<=",
                         rval=finalrange,
-                        line_number=child.line_number)
+                        line_number=child.line_number,
+                    )
                     iter = ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
                         op="=",
                         rval=ast_internal_classes.BinOp_Node(
                             lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
                             op="+",
-                            rval=ast_internal_classes.Int_Literal_Node(value="1")),
-                        line_number=child.line_number)
+                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                        ),
+                        line_number=child.line_number,
+                    )
                     current_for = ast_internal_classes.Map_Stmt_Node(
                         init=init,
                         cond=cond,
                         iter=iter,
                         body=ast_internal_classes.Execution_Part_Node(execution=[body]),
-                        line_number=child.line_number)
+                        line_number=child.line_number,
+                    )
                     body = current_for
                     range_index += 1
 
@@ -913,6 +972,7 @@ def mywalk(node):
     only want to modify nodes in place and don't care about the context.
     """
     from collections import deque
+
     todo = deque([node])
     while todo:
         node = todo.popleft()
@@ -921,7 +981,6 @@ def mywalk(node):
 
 
 class RenameVar(NodeTransformer):
-
     def __init__(self, oldname: str, newname: str):
         self.oldname = oldname
         self.newname = newname
@@ -946,14 +1005,17 @@ class ForDeclarer(NodeTransformer):
                 continue
             if isinstance(child, ast_internal_classes.For_Stmt_Node):
                 newbody.append(
-                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                        ast_internal_classes.Symbol_Decl_Node(
-                            name="_for_it_" + str(self.count), type="INTEGER", sizes=None, init=None)
-                    ]))
-                final_assign = ast_internal_classes.BinOp_Node(lval=child.init.lval,
-                                                               op="=",
-                                                               rval=child.cond.rval,
-                                                               line_number=child.line_number)
+                    ast_internal_classes.Decl_Stmt_Node(
+                        vardecl=[
+                            ast_internal_classes.Symbol_Decl_Node(
+                                name="_for_it_" + str(self.count), type="INTEGER", sizes=None, init=None
+                            )
+                        ]
+                    )
+                )
+                final_assign = ast_internal_classes.BinOp_Node(
+                    lval=child.init.lval, op="=", rval=child.cond.rval, line_number=child.line_number
+                )
                 newfor = RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child)
                 self.count += 1
                 newfor = self.visit(newfor)

@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    Utility functions for SVE: Contains many datatype mappings (Python to SVE) and frequently used functions.
+Utility functions for SVE: Contains many datatype mappings (Python to SVE) and frequently used functions.
 """
 
 import numpy as np
@@ -41,7 +41,6 @@ SVE_LEN = dace.symbol('__dace_sve_len')
 
 
 class NotSupportedError(Exception):
-
     def __init__(self, message):
         super().__init__(message)
 
@@ -79,7 +78,7 @@ BIN_OP_TO_SVE = {
     ast.BitOr: 'svorr',
     # Logical shifts
     ast.LShift: 'svlsl',
-    ast.RShift: 'svlsr'
+    ast.RShift: 'svlsr',
 }
 
 COMPARE_TO_SVE = {
@@ -102,7 +101,7 @@ FLIP_INEQUALITY = {
     ast.Lt: ast.GtE,
     ast.LtE: ast.Gt,
     ast.Gt: ast.LtE,
-    ast.GtE: ast.Lt
+    ast.GtE: ast.Lt,
 }
 
 # UAdd is ignored
@@ -133,7 +132,7 @@ TYPE_TO_SVE_SUFFIX = {
     dace.uint64: 'u64',
     dace.float16: 'f16',
     dace.float32: 'f32',
-    dace.float64: 'f64'
+    dace.float64: 'f64',
 }
 
 SVE_SUFFIX_TO_TYPE = dict((v, k) for k, v in TYPE_TO_SVE_SUFFIX.items())
@@ -162,14 +161,14 @@ TYPE_TO_SVE = {
     dace.uint64: 'svuint64_t',
     dace.float16: 'svfloat16_t',
     dace.float32: 'svfloat32_t',
-    dace.float64: 'svfloat64_t'
+    dace.float64: 'svfloat64_t',
 }
 
 REDUCTION_TYPE_TO_SVE = {
     # Note: tree-based reduction for FP
     dace.dtypes.ReductionType.Sum: 'svaddv',
     dace.dtypes.ReductionType.Max: 'svmaxv',
-    dace.dtypes.ReductionType.Min: 'svminv'
+    dace.dtypes.ReductionType.Min: 'svminv',
 }
 
 MATH_FUNCTION_TO_SVE = {'math.min': 'svmin', 'math.max': 'svmax', 'math.abs': 'svabs', 'math.sqrt': 'svsqrt'}
@@ -185,8 +184,9 @@ def get_internal_symbols() -> dict:
     res = {}
 
     for func, type in itertools.product(FUSED_OPERATION_TO_SVE, TYPE_TO_SVE_SUFFIX):
-        res[f'{func}_{TYPE_TO_SVE_SUFFIX[type.type if isinstance(type, dace.dtypes.typeclass) else type]}'] = dtypes.vector(
-            type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), SVE_LEN)
+        res[f'{func}_{TYPE_TO_SVE_SUFFIX[type.type if isinstance(type, dace.dtypes.typeclass) else type]}'] = (
+            dtypes.vector(type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), SVE_LEN)
+        )
     return res
 
 
@@ -202,14 +202,14 @@ def internal_to_external(name: str) -> tuple:
     """
     und = name.rfind('_')
     meth = name[:und]
-    ext = name[und + 1:]
+    ext = name[und + 1 :]
     if meth not in FUSED_OPERATION_TO_SVE:
         raise NotSupportedError('Unknown internal function')
     return (FUSED_OPERATION_TO_SVE[meth] + '_' + ext, SVE_SUFFIX_TO_TYPE[ext])
 
 
 def get_base_type(type: dace.typeclass) -> dace.typeclass:
-    """ Returns the underlying type for any dtype. """
+    """Returns the underlying type for any dtype."""
     if isinstance(type, dtypes.vector):
         return type.vtype
     elif isinstance(type, dtypes.pointer):
@@ -231,12 +231,12 @@ def is_scalar(type: dace.typeclass) -> bool:
 
 
 def infer_ast(defined_symbols: collections.OrderedDict, *args) -> tuple:
-    """ Returns the inferred types of the arguments, which must be AST nodes, as tuples. """
+    """Returns the inferred types of the arguments, which must be AST nodes, as tuples."""
     return tuple([infer.infer_expr_type(t, defined_symbols) for t in args])
 
 
 def only_scalars_involed(defined_symbols: collections.OrderedDict, *terms) -> bool:
-    """ Takes AST nodes and returns whether only scalars are involved in the subtrees. """
+    """Takes AST nodes and returns whether only scalars are involved in the subtrees."""
     return all([is_scalar(infer_ast(defined_symbols, t)[0]) for t in terms])
 
 

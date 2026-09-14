@@ -77,7 +77,6 @@ def run_pytorch_module(
 def test_simple():
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             x = torch.sqrt(x)
             x = torch.log(x)
@@ -91,7 +90,6 @@ def test_simple():
 def test_repeated():
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             x = torch.sqrt(x)
             x = torch.sqrt(x)
@@ -105,7 +103,6 @@ def test_repeated():
 def test_softmax():
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             x = F.softmax(x, dim=1)
             return x
@@ -119,12 +116,11 @@ def test_reshape_on_memlet_path():
     # required test: this function in a nn.Module, with apply simplify so that the reshape is
     # inlined and copy is removed
     class Module(torch.nn.Module):
-
         def forward(self, x):
             reshaped = torch.reshape(x + 1, [3, 3])
             return torch.log(reshaped) + torch.reshape(torch.tensor([[3, 2, 1]], device=reshaped.device), [3])
 
-    run_pytorch_module(Module(), sdfg_name="test_reshape_on_memlet_path", shape=(9, ))
+    run_pytorch_module(Module(), sdfg_name="test_reshape_on_memlet_path", shape=(9,))
 
 
 @pytest.mark.torch
@@ -132,7 +128,6 @@ def test_reshape_on_memlet_path():
 def test_weights_ln():
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Linear(784, 120)
@@ -155,7 +150,6 @@ def test_weights_ln():
 def test_layernorm():
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.ln = nn.LayerNorm(3)
@@ -171,7 +165,6 @@ def test_layernorm():
 def test_weights():
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Linear(784, 120)
@@ -192,7 +185,6 @@ def test_weights():
 def test_nested_gradient_summation():
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Parameter(torch.rand(10, 10))
@@ -202,11 +194,9 @@ def test_nested_gradient_summation():
             z = x * 2
             return z + y
 
-    run_pytorch_module(Module(),
-                       sdfg_name="test_nested_gradient_summation",
-                       shape=(4, 10),
-                       use_max=False,
-                       auto_optimize=False)
+    run_pytorch_module(
+        Module(), sdfg_name="test_nested_gradient_summation", shape=(4, 10), use_max=False, auto_optimize=False
+    )
 
 
 @pytest.mark.torch
@@ -214,7 +204,6 @@ def test_nested_gradient_summation():
 def test_trans_add():
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
 
@@ -223,7 +212,7 @@ def test_trans_add():
             x = torch.transpose(x.reshape(4, 4), 1, 0)
             return x
 
-    run_pytorch_module(Module(), sdfg_name="test_trans_add", shape=(16, ), use_max=False)
+    run_pytorch_module(Module(), sdfg_name="test_trans_add", shape=(16,), use_max=False)
 
 
 @pytest.mark.torch
@@ -231,7 +220,6 @@ def test_trans_add():
 def test_batched_matmul():
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Parameter(torch.ones([10, 5, 3]))
@@ -247,7 +235,6 @@ def test_batched_matmul():
 def test_scalar_forwarding():
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.factor = nn.Parameter(torch.ones(()))
@@ -263,7 +250,6 @@ def test_scalar_forwarding():
 def test_scalar_buffer():
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.register_buffer("factor", torch.tensor(2))
@@ -280,7 +266,6 @@ def test_scalar_buffer():
 def test_simple_broadcasted_mul():
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             y = x.sum(axis=0)
             return x * y

@@ -10,10 +10,10 @@ from dace.memlet import Memlet
 def test_blockreduce():
     # Create SDFG
     sdfg = dace.SDFG('block_reduction')
-    sdfg.add_array('A', (128, ), dace.float32)
-    sdfg.add_array('B', (2, ), dace.float32)
-    sdfg.add_transient('tA', (2, ), dace.float32)
-    sdfg.add_transient('tB', (1, ), dace.float32)
+    sdfg.add_array('A', (128,), dace.float32)
+    sdfg.add_array('B', (2,), dace.float32)
+    sdfg.add_transient('tA', (2,), dace.float32)
+    sdfg.add_transient('tB', (1,), dace.float32)
     state = sdfg.add_state('a')
 
     # Nodes

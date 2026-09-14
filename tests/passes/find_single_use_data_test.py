@@ -217,7 +217,7 @@ def _make_access_nested_nsdfg() -> dace.SDFG:
     for aname in 'ab':
         sdfg.add_array(
             aname,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -235,7 +235,7 @@ def _make_access_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFG]:
     for aname in 'ab':
         sdfg.add_array(
             aname,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )

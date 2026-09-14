@@ -56,9 +56,13 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     llmr_sdfg(**input_data_llmr)
 
     # No difference should be observable
-    assert (sum(not np.array_equal(input_data_orig[argName], input_data_llmr[argName])
-                for argName, argType in llmr_sdfg.arglist().items()) == 0
-            ), f"Output differs after transformation! Options: {options}"
+    assert (
+        sum(
+            not np.array_equal(input_data_orig[argName], input_data_llmr[argName])
+            for argName, argType in llmr_sdfg.arglist().items()
+        )
+        == 0
+    ), f"Output differs after transformation! Options: {options}"
 
     # Memory footprint should be reduced
     orig_mem = sum(np.prod(arrType.shape) for arrName, arrType in orig_sdfg.arrays.items())
@@ -72,13 +76,9 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
 def check_transformation(sdfg: dace.SDFG, N: int, aps: bool = False):
     for bitmask in [False, True]:
         for np2 in [False, True]:
-            check_transformation_option(sdfg,
-                                        N,
-                                        options={
-                                            "bitmask_indexing": bitmask,
-                                            "next_power_of_two": np2,
-                                            "assume_positive_symbols": aps
-                                        })
+            check_transformation_option(
+                sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2, "assume_positive_symbols": aps}
+            )
 
 
 def test_simple():
@@ -938,10 +938,23 @@ def test_symbolic_k():
 def test_cloudsc():
 
     @dace.program
-    def tester(pt: dace.float64[100000], tendency_tmp_t: dace.float64[100000], ptsphy: dace.float64, r2es: dace.float64,
-               rtice: dace.float64, rtwat: dace.float64, rtwat_rtice_r: dace.float64, r3les: dace.float64,
-               r4les: dace.float64, r3ies: dace.float64, r4ies: dace.float64, rtt: dace.float64,
-               pap: dace.float64[100000], zqx: dace.float64, zsolqa: dace.float64[100000]):
+    def tester(
+        pt: dace.float64[100000],
+        tendency_tmp_t: dace.float64[100000],
+        ptsphy: dace.float64,
+        r2es: dace.float64,
+        rtice: dace.float64,
+        rtwat: dace.float64,
+        rtwat_rtice_r: dace.float64,
+        r3les: dace.float64,
+        r4les: dace.float64,
+        r3ies: dace.float64,
+        r4ies: dace.float64,
+        rtt: dace.float64,
+        pap: dace.float64[100000],
+        zqx: dace.float64,
+        zsolqa: dace.float64[100000],
+    ):
         ztp1 = dace.define_local([100000], dace.float64)
         zfoeewmt = dace.define_local([100000], dace.float64)
         zlevap = dace.define_local([100000], dace.float64)
@@ -953,10 +966,18 @@ def test_cloudsc():
         for jk in range(2, 100000):
             ztp1[jk] = pt[jk] + ptsphy * tendency_tmp_t[jk]
             zfoeewmt[jk] = min(
-                ((r2es * ((min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2)) *
-                          ((r3les * (ztp1[jk] - rtt)) / (ztp1[jk] - r4les)) +
-                          (1.0 - (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2))) *
-                          ((r3ies * (ztp1[jk] - rtt)) / (ztp1[jk] - r4ies))))) / pap[jk], 0.5)
+                (
+                    r2es
+                    * (
+                        (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r) ** 2))
+                        * ((r3les * (ztp1[jk] - rtt)) / (ztp1[jk] - r4les))
+                        + (1.0 - (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r) ** 2)))
+                        * ((r3ies * (ztp1[jk] - rtt)) / (ztp1[jk] - r4ies))
+                    )
+                )
+                / pap[jk],
+                0.5,
+            )
             zlevap[jk] = zfoeewmt[jk - 1] + max(zqx, 0.0)
             zsolqa[jk] = zsolqa[jk] + zlevap[jk - 1] * zlevap[jk - 2]
 

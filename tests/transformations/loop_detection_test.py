@@ -7,7 +7,6 @@ from dace.transformation import transformation as xf
 
 
 class CountLoops(DetectLoop, xf.MultiStateTransformation):
-
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return super().can_be_applied(graph, expr_index, sdfg, permissive)
 

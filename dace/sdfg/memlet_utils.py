@@ -18,10 +18,12 @@ class MemletReplacer(ast.NodeTransformer):
     The callable can also return another memlet to replace the current one.
     """
 
-    def __init__(self,
-                 arrays: Dict[str, data.Data],
-                 process: Callable[[Memlet], Union[Memlet, None]],
-                 array_filter: Optional[Set[str]] = None) -> None:
+    def __init__(
+        self,
+        arrays: Dict[str, data.Data],
+        process: Callable[[Memlet], Union[Memlet, None]],
+        array_filter: Optional[Set[str]] = None,
+    ) -> None:
         """
         Create a new memlet replacer.
 
@@ -123,7 +125,7 @@ class MemletSet(Set[Memlet]):
                 self.update(i)
             return
 
-        to_update, = iterable
+        (to_update,) = iterable
         for elem in to_update:
             self.add(elem)
 
@@ -332,13 +334,15 @@ def memlet_to_map(
         cnt = itertools.count(0)
         a_index = [
             symbolic.pystr_to_symbolic(f'{src_subset[i][0]}')
-            if s == 1 else symbolic.pystr_to_symbolic(f'__j{next(cnt)} + ({src_subset[i][0]})')
+            if s == 1
+            else symbolic.pystr_to_symbolic(f'__j{next(cnt)} + ({src_subset[i][0]})')
             for i, s in enumerate(src_subset_size)
         ]
         cnt = itertools.count(0)
         b_index = [
             symbolic.pystr_to_symbolic(f'{dst_subset[i][0]}')
-            if s == 1 else symbolic.pystr_to_symbolic(f'__j{next(cnt)} + ({dst_subset[i][0]})')
+            if s == 1
+            else symbolic.pystr_to_symbolic(f'__j{next(cnt)} + ({dst_subset[i][0]})')
             for i, s in enumerate(dst_subset_size)
         ]
     else:
@@ -365,15 +369,17 @@ def memlet_to_map(
             schedule = dtypes.ScheduleType.GPU_Device
 
     # Add copy map
-    t, me, mx = state.add_mapped_tasklet(f'copy_{av}_{bv}',
-                                         maprange,
-                                         dict(__inp=Memlet(data=av, subset=a_subset)),
-                                         '__out = __inp',
-                                         dict(__out=Memlet(data=bv, subset=b_subset)),
-                                         schedule,
-                                         external_edges=True,
-                                         input_nodes={av: avnode},
-                                         output_nodes={bv: bvnode})
+    t, me, mx = state.add_mapped_tasklet(
+        f'copy_{av}_{bv}',
+        maprange,
+        dict(__inp=Memlet(data=av, subset=a_subset)),
+        '__out = __inp',
+        dict(__out=Memlet(data=bv, subset=b_subset)),
+        schedule,
+        external_edges=True,
+        input_nodes={av: avnode},
+        output_nodes={bv: bvnode},
+    )
 
     # Set connector types (due to this transformation appearing in codegen, after connector
     # types have been resolved)
@@ -422,8 +428,9 @@ def can_memlet_be_turned_into_a_map(
     return True
 
 
-def _memlet_to_copy_delinearize_linearize(desc: data.Array, copy_shape: Tuple[symbolic.SymbolicType],
-                                          rng: subsets.Range) -> Tuple[symbolic.SymbolicType]:
+def _memlet_to_copy_delinearize_linearize(
+    desc: data.Array, copy_shape: Tuple[symbolic.SymbolicType], rng: subsets.Range
+) -> Tuple[symbolic.SymbolicType]:
     indices = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
 
     # Special case for when both dimensionalities are equal
@@ -433,7 +440,7 @@ def _memlet_to_copy_delinearize_linearize(desc: data.Array, copy_shape: Tuple[sy
     if rng is not None:  # Deal with offsets and strides in range
         indices = rng.coord_at(indices)
 
-    linear_index = sum(indices[i] * data._prod(copy_shape[i + 1:]) for i in range(len(indices)))
+    linear_index = sum(indices[i] * data._prod(copy_shape[i + 1 :]) for i in range(len(indices)))
 
     cur_index = [0] * len(desc.shape)
     divide_by = 1

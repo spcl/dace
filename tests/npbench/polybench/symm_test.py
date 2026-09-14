@@ -18,7 +18,7 @@ M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
 @dc.program
 def symm_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[M, N], A: dc.float64[M, M], B: dc.float64[M, N]):
 
-    temp2 = np.empty((N, ), dtype=C.dtype)
+    temp2 = np.empty((N,), dtype=C.dtype)
     C *= beta
     for i in range(M):
         for j in range(N):
@@ -34,14 +34,14 @@ def initialize(M, N, datatype=np.float64):
     B = np.fromfunction(lambda i, j: ((N + i - j) % 100) / M, (M, N), dtype=datatype)
     A = np.empty((M, M), dtype=datatype)
     for i in range(M):
-        A[i, :i + 1] = np.fromfunction(lambda j: ((i + j) % 100) / M, (i + 1, ), dtype=datatype)
-        A[i, i + 1:] = -999
+        A[i, : i + 1] = np.fromfunction(lambda j: ((i + j) % 100) / M, (i + 1,), dtype=datatype)
+        A[i, i + 1 :] = -999
 
     return alpha, beta, C, A, B
 
 
 def symm_jax_kernel(jnp, lax, alpha, beta, C, A, B):
-    temp2 = jnp.empty((C.shape[1], ), dtype=C.dtype)
+    temp2 = jnp.empty((C.shape[1],), dtype=C.dtype)
     C = C * beta
 
     def row_update_body(carry, i):
@@ -68,7 +68,7 @@ def symm_jax_kernel(jnp, lax, alpha, beta, C, A, B):
 
 def ground_truth(alpha, beta, C, A, B):
 
-    temp2 = np.empty((C.shape[1], ), dtype=C.dtype)
+    temp2 = np.empty((C.shape[1],), dtype=C.dtype)
     C *= beta
     for i in range(C.shape[0]):
         for j in range(C.shape[1]):
@@ -110,12 +110,13 @@ def run_symm_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[M, N], A: dc.float64[M, M],
-                        B: dc.float64[M, N]):
+    def autodiff_kernel(
+        alpha: dc.float64, beta: dc.float64, C: dc.float64[M, N], A: dc.float64[M, M], B: dc.float64[M, N]
+    ):
         symm_kernel(alpha, beta, C, A, B)
         return np.sum(C)
 
@@ -151,7 +152,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

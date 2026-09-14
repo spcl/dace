@@ -44,14 +44,16 @@ def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args
     return sdfg
 
 
-def run_gemv(target: str,
-             n: int,
-             m: int,
-             alpha: float = 1,
-             transposed: bool = False,
-             vectorize: int = 1,
-             tile_size_x: int = 32,
-             tile_size_y: int = 32):
+def run_gemv(
+    target: str,
+    n: int,
+    m: int,
+    alpha: float = 1,
+    transposed: bool = False,
+    vectorize: int = 1,
+    tile_size_x: int = 32,
+    tile_size_y: int = 32,
+):
 
     beta = 0  # TODO: GEMV is not currently implemented for beta != 0
     if target == "pure":
@@ -94,5 +96,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    run_gemv(args.target, args.N, args.M, args.alpha, args.transposed, args.vectorize, args.tile_size_x,
-             args.tile_size_y)
+    run_gemv(
+        args.target, args.N, args.M, args.alpha, args.transposed, args.vectorize, args.tile_size_x, args.tile_size_y
+    )

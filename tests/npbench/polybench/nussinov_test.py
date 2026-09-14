@@ -68,7 +68,7 @@ def ground_truth(N, seq):
 
 def init_data(N):
 
-    seq = np.empty((N, ), dtype=np.int32)
+    seq = np.empty((N,), dtype=np.int32)
     table = np.empty((N, N), dtype=np.int32)
     for i in range(N):
         seq[i] = (i + 1) % 4
@@ -113,7 +113,6 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

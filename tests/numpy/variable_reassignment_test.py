@@ -13,7 +13,7 @@ def reassign(a: dace.float64[1]):
 def test():
     a = np.random.rand(1).astype(np.float64)
     reassign(a)
-    assert (a == 1.0)
+    assert a == 1.0
 
 
 if __name__ == '__main__':

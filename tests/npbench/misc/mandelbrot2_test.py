@@ -28,15 +28,16 @@ def linspace(start: dc.float64, stop: dc.float64, X: dc.float64[N]):
 
 
 @dc.program
-def mandelbrot_kernel(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax: dc.float64, maxiter: dc.int64,
-                      horizon: dc.float64):
+def mandelbrot_kernel(
+    xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax: dc.float64, maxiter: dc.int64, horizon: dc.float64
+):
     # Adapted from
     # https://thesamovar.wordpress.com/2009/03/22/fast-fractals-with-python-and-numpy/
     Xi = np.ndarray((XN, YN), dtype=np.int64)
     Yi = np.ndarray((XN, YN), dtype=np.int64)
     mgrid(Xi, Yi)
-    X = np.ndarray((XN, ), dtype=np.float64)
-    Y = np.ndarray((YN, ), dtype=np.float64)
+    X = np.ndarray((XN,), dtype=np.float64)
+    Y = np.ndarray((YN,), dtype=np.float64)
     linspace(xmin, xmax, X)
     linspace(ymin, ymax, Y)
     C = np.ndarray((XN, YN), dtype=np.complex128)
@@ -44,16 +45,15 @@ def mandelbrot_kernel(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax
         C[i, j] = X[i] + Y[j] * 1j
     N_ = np.zeros(C.shape, dtype=np.int64)
     Z_ = np.zeros(C.shape, dtype=np.complex128)
-    Xiv = np.reshape(Xi, (XN * YN, ))
-    Yiv = np.reshape(Yi, (XN * YN, ))
-    Cv = np.reshape(C, (XN * YN, ))
+    Xiv = np.reshape(Xi, (XN * YN,))
+    Yiv = np.reshape(Yi, (XN * YN,))
+    Cv = np.reshape(C, (XN * YN,))
 
     Z = np.zeros(Cv.shape, np.complex128)
-    I = np.ndarray((XN * YN, ), dtype=np.bool_)
+    I = np.ndarray((XN * YN,), dtype=np.bool_)
     length = XN * YN
     k = 0
     while length > 0 and k < maxiter:
-
         # Compute for relevant points only
         Z[:length] = np.multiply(Z[:length], Z[:length])
         Z[:length] = np.add(Z[:length], Cv[:length])
@@ -152,7 +152,6 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

@@ -23,12 +23,9 @@ except (ImportError, ModuleNotFoundError):
 
 
 class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
-
-    def __init__(self,
-                 sdfg: SDFG,
-                 i,
-                 j,
-                 measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+    def __init__(
+        self, sdfg: SDFG, i, j, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer
+    ) -> None:
         super().__init__(task="OnTheFlyMapFusion", sdfg=sdfg, i=i, j=j)
         self.instrument = measurement
 
@@ -63,12 +60,10 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         cutout.start_state.instrument = self.instrument
 
         new_kwargs = {
-            "space_kwargs": {
-                "cutout": cutout
-            },
+            "space_kwargs": {"cutout": cutout},
             "cutout": cutout.to_json(),
             "measurements": measurements,
-            "key": lambda point: str(point[0])
+            "key": lambda point: str(point[0]),
         }
         return new_kwargs
 
@@ -252,13 +247,14 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_state.instrument = dace.InstrumentationType.GPU_Events
 
                         experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
-                        experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg,
-                                                                         graph=experiment_state,
-                                                                         map_entries=experiment_maps)
+                        experiment_subgraph = helpers.subgraph_from_maps(
+                            sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps
+                        )
 
                         map_fusion = sg.SubgraphOTFFusion()
-                        map_fusion.setup_match(experiment_subgraph, experiment_sdfg.cfg_id,
-                                               experiment_sdfg.node_id(experiment_state))
+                        map_fusion.setup_match(
+                            experiment_subgraph, experiment_sdfg.cfg_id, experiment_sdfg.node_id(experiment_state)
+                        )
                         if map_fusion.can_be_applied(experiment_state, experiment_sdfg):
                             try:
                                 experiment_fuse_counter = map_fusion.apply(experiment_state, experiment_sdfg)
@@ -301,8 +297,9 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:
-        tasklets = filter(lambda node: isinstance(node, dace.nodes.Tasklet),
-                          map(lambda edge: edge.dst, state.out_edges(map_entry)))
+        tasklets = filter(
+            lambda node: isinstance(node, dace.nodes.Tasklet), map(lambda edge: edge.dst, state.out_edges(map_entry))
+        )
         tasklets = set(tasklets)
 
         desc = []

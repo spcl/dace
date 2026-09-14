@@ -30,6 +30,7 @@ which is what makes a transform-vs-reference comparison meaningful: a random
 constant set sits on every ``MIN``/``MAX`` and ``< rlmin`` boundary, so a
 harmless floating-point reassociation flips branches and masquerades as a bug.
 """
+
 import copy
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -266,10 +267,9 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
 
         if name in CLOUDSC_CONSTANTS:
             value = CLOUDSC_CONSTANTS[name]
-            arrays[name] = np.full(dims,
-                                   int(value) if is_int else value,
-                                   dtype=np.int32 if is_int else np.float64,
-                                   order='F')
+            arrays[name] = np.full(
+                dims, int(value) if is_int else value, dtype=np.int32 if is_int else np.float64, order='F'
+            )
         elif is_int:
             if name in CLOUDSC_SYMBOLS:
                 data = np.zeros(dims, order='F').astype(np.int32)
@@ -287,8 +287,7 @@ def generate_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Dict[str, Union[n
                 arrays[name] = (lo + (hi - lo) * rng.random(dims)).astype(np.float64, order='F')
 
     inputs: Dict[str, Union[np.ndarray, int, float]] = {
-        name: (data.flat[0] if data.size == 1 else data)
-        for name, data in arrays.items()
+        name: (data.flat[0] if data.size == 1 else data) for name, data in arrays.items()
     }
     inputs.update(CLOUDSC_SYMBOLS)
     return inputs
@@ -317,11 +316,13 @@ def make_sequential(sdfg: dace.SDFG) -> Tuple[int, int]:
     return n_maps, n_lib
 
 
-def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
-                    cand_inputs: Dict[str, Union[np.ndarray, int, float]],
-                    rtol: float = 1e-15,
-                    atol: float = 1e-15,
-                    verbose: bool = False) -> Dict[str, Tuple[float, float, bool]]:
+def compare_outputs(
+    ref_inputs: Dict[str, Union[np.ndarray, int, float]],
+    cand_inputs: Dict[str, Union[np.ndarray, int, float]],
+    rtol: float = 1e-15,
+    atol: float = 1e-15,
+    verbose: bool = False,
+) -> Dict[str, Tuple[float, float, bool]]:
     """Per-array (per-subset) tolerance check between two driven input/output sets.
 
     Returns ``{array_name: (max_abs, max_rel, ok)}`` for every shared
@@ -362,14 +363,16 @@ def compare_outputs(ref_inputs: Dict[str, Union[np.ndarray, int, float]],
     return report
 
 
-def run_and_compare(reference: dace.SDFG,
-                    candidate: dace.SDFG,
-                    seed: int = 0,
-                    rtol: float = 1e-15,
-                    atol: float = 1e-15,
-                    sequential: bool = True,
-                    ieee_build: bool = True,
-                    verbose: bool = False) -> bool:
+def run_and_compare(
+    reference: dace.SDFG,
+    candidate: dace.SDFG,
+    seed: int = 0,
+    rtol: float = 1e-15,
+    atol: float = 1e-15,
+    sequential: bool = True,
+    ieee_build: bool = True,
+    verbose: bool = False,
+) -> bool:
     """Run two CloudSC SDFGs on identical inputs and compare every shared
     non-transient output array, each at its own ``rtol`` / ``atol``.
 

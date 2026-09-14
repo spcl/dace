@@ -6,6 +6,7 @@ from numbers import Number
 import os
 
 from dace import dtypes, SDFG
+
 try:
     from numpy.typing import ArrayLike
 except ImportError:
@@ -46,6 +47,7 @@ class InstrumentedDataReport:
     :seealso: dace.dtypes.DataInstrumentationType.Save
     :seealso: dace.dtypes.DataInstrumentationType.Restore
     """
+
     sdfg: SDFG
     folder: str
     files: Dict[str, List[str]]
@@ -77,7 +79,7 @@ class InstrumentedDataReport:
             self.files[aname] = files
 
     def keys(self) -> Set[str]:
-        """ Returns the array names available in this data report. """
+        """Returns the array names available in this data report."""
         return self.files.keys()
 
     def _read_array_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
@@ -88,7 +90,7 @@ class InstrumentedDataReport:
         """
         with open(filename, 'rb') as fp:
             # Recreate runtime shape and strides from buffer
-            ndims, = struct.unpack('i', fp.read(4))
+            (ndims,) = struct.unpack('i', fp.read(4))
             shape = struct.unpack('i' * ndims, fp.read(4 * ndims))
             strides = struct.unpack('i' * ndims, fp.read(4 * ndims))
             strides = tuple(s * npdtype.itemsize for s in strides)

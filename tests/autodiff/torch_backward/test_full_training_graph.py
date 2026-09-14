@@ -23,12 +23,14 @@ def test_module():
     torch_module = copy.deepcopy(module)
     dace_module = copy.deepcopy(module)
 
-    dace_module = DaceModule(dace_module,
-                             sdfg_name="test_full_training_graph_module",
-                             simplify=False,
-                             backward=True,
-                             training=True,
-                             auto_optimize=False)
+    dace_module = DaceModule(
+        dace_module,
+        sdfg_name="test_full_training_graph_module",
+        simplify=False,
+        backward=True,
+        training=True,
+        auto_optimize=False,
+    )
 
     x = torch.randn(8, 12)
 
@@ -43,8 +45,9 @@ def test_module():
     pt_loss.backward()
 
     tensors_close("loss", pt_loss, dc_loss)
-    assert all(hasattr(p, 'grad') and p.grad is not None for p in dace_module.parameters()), \
+    assert all(hasattr(p, 'grad') and p.grad is not None for p in dace_module.parameters()), (
         "Not all parameters have gradients computed"
+    )
 
     for d, t in zip(dace_module.parameters(), torch_module.parameters()):
         torch_tensors_close("param", t.grad, d.grad)

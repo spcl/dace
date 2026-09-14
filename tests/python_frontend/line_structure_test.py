@@ -4,7 +4,7 @@ import numpy as np
 
 N = dace.symbol('N')
 
-# yapf: disable
+# fmt: off
 
 
 @dace.program
@@ -73,13 +73,13 @@ def blank_lines(A: dace.float32[N], B: dace.float32[N]):
 
     B[:] = tmp[:]  # for i in 0 .. N-1; B[i] = tmp[i]
 
-# yapf: enable
+# fmt: on
 
 
 def test_blank_lines():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     blank_lines(A, B)
     assert np.allclose(A, B)
 

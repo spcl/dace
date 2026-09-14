@@ -31,9 +31,9 @@ def test_fortran_frontend_simplify():
     sdfg.simplify(verbose=True)
     a = np.full([2, 3], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0, 0] == 0)
-    assert (a[0, 1] == 5)
-    assert (a[1, 2] == 0)
+    assert a[0, 0] == 0
+    assert a[0, 1] == 5
+    assert a[1, 2] == 0
 
 
 if __name__ == "__main__":

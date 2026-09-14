@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the use of Reference data descriptors. """
+"""Tests the use of Reference data descriptors."""
+
 import json
 import tempfile
 
@@ -28,12 +29,14 @@ def _assert_roundtrip_json_stable(sdfg):
 def test_frontend_reference():
     N = dace.symbol('N')
     M = dace.symbol('M')
-    mystruct = dace.data.Structure(members={
-        "data": dace.data.Array(dace.float32, (N, M), strides=(1, N)),
-        "arrA": dace.data.ArrayReference(dace.float32, (N, )),
-        "arrB": dace.data.ArrayReference(dace.float32, (N, )),
-    },
-                                   name="MyStruct")
+    mystruct = dace.data.Structure(
+        members={
+            "data": dace.data.Array(dace.float32, (N, M), strides=(1, N)),
+            "arrA": dace.data.ArrayReference(dace.float32, (N,)),
+            "arrB": dace.data.ArrayReference(dace.float32, (N,)),
+        },
+        name="MyStruct",
+    )
 
     @dace.program
     def init_prog(mydat: mystruct, fill_value: int) -> None:
@@ -287,30 +290,36 @@ def _create_neighbor_sdfg():
     b = state.add_read('B')
     ref1 = state.add_access('ref')
     ref2 = state.add_write('ref')
-    state.add_mapped_tasklet('addtwo',
-                             dict(i='0:2', j='0:2'),
-                             dict(r=dace.Memlet('B[i, j]')),
-                             'w = r + 2',
-                             dict(w=dace.Memlet('ref[i, j]')),
-                             external_edges=True,
-                             input_nodes=dict(B=b),
-                             output_nodes=dict(ref=ref1))
-    state.add_mapped_tasklet('sum',
-                             dict(i='0:2'),
-                             dict(r=dace.Memlet('ref[0, i]')),
-                             'w = r',
-                             dict(w=dace.Memlet('ref[1, 0]', wcr='lambda a,b: a+b')),
-                             external_edges=True,
-                             input_nodes=dict(ref=ref1),
-                             output_nodes=dict(ref=ref2))
-    state.add_mapped_tasklet('addone',
-                             dict(i='1:2'),
-                             dict(r=dace.Memlet('ref[i - 1, i - 1]')),
-                             'w = r + 1',
-                             dict(w=dace.Memlet('ref[i, i]')),
-                             external_edges=True,
-                             input_nodes=dict(ref=ref1),
-                             output_nodes=dict(ref=ref2))
+    state.add_mapped_tasklet(
+        'addtwo',
+        dict(i='0:2', j='0:2'),
+        dict(r=dace.Memlet('B[i, j]')),
+        'w = r + 2',
+        dict(w=dace.Memlet('ref[i, j]')),
+        external_edges=True,
+        input_nodes=dict(B=b),
+        output_nodes=dict(ref=ref1),
+    )
+    state.add_mapped_tasklet(
+        'sum',
+        dict(i='0:2'),
+        dict(r=dace.Memlet('ref[0, i]')),
+        'w = r',
+        dict(w=dace.Memlet('ref[1, 0]', wcr='lambda a,b: a+b')),
+        external_edges=True,
+        input_nodes=dict(ref=ref1),
+        output_nodes=dict(ref=ref2),
+    )
+    state.add_mapped_tasklet(
+        'addone',
+        dict(i='1:2'),
+        dict(r=dace.Memlet('ref[i - 1, i - 1]')),
+        'w = r + 1',
+        dict(w=dace.Memlet('ref[i, i]')),
+        external_edges=True,
+        input_nodes=dict(ref=ref1),
+        output_nodes=dict(ref=ref2),
+    )
     return sdfg
 
 
@@ -448,6 +457,7 @@ def test_reference_tasklet_assignment_analysis():
 
 def test_reference_tasklet_assignment_stree():
     from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as tn
+
     sdfg = _create_tasklet_assignment_sdfg()
     stree = s2t.as_schedule_tree(sdfg)
     assert [type(n) for n in stree.children] == [tn.TaskletNode, tn.RefSetNode, tn.TaskletNode]
@@ -606,6 +616,7 @@ def test_reference_loop_nonfree():
 
     # Test loop-to-map - should fail to apply
     from dace.transformation.interstate import LoopToMap
+
     assert sdfg.apply_transformations(LoopToMap) == 0
 
     # Test reference-to-view - should fail to apply
@@ -771,7 +782,7 @@ def test_ref2view_reconnection():
     # Test correctness before pass
     A = np.random.rand(2)
     B = np.random.rand(1)
-    ref = (A[1] + 2)
+    ref = A[1] + 2
     sdfg(A=A, B=B)
     assert np.allclose(B, ref)
 
@@ -783,7 +794,7 @@ def test_ref2view_reconnection():
     assert len(list(nx.weakly_connected_components(state.nx))) == 1
 
     # Test correctness after pass
-    ref = (A[1] + 2)
+    ref = A[1] + 2
     sdfg(A=A, B=B)
     assert np.allclose(B, ref)
 

@@ -17,8 +17,14 @@ I, J, K = (dc.symbol(s, dtype=dc.int64) for s in ('I', 'J', 'K'))
 
 # Adapted from https://github.com/GridTools/gt4py/blob/1caca893034a18d5df1522ed251486659f846589/tests/test_integration/stencil_definitions.py#L111
 @dc.program
-def vadv_kernel(utens_stage: dc.float64[I, J, K], u_stage: dc.float64[I, J, K], wcon: dc.float64[I + 1, J, K],
-                u_pos: dc.float64[I, J, K], utens: dc.float64[I, J, K], dtr_stage: dc.float64):
+def vadv_kernel(
+    utens_stage: dc.float64[I, J, K],
+    u_stage: dc.float64[I, J, K],
+    wcon: dc.float64[I + 1, J, K],
+    u_pos: dc.float64[I, J, K],
+    utens: dc.float64[I, J, K],
+    dtr_stage: dc.float64,
+):
     ccol = np.ndarray((I, J, K), dtype=utens_stage.dtype)
     dcol = np.ndarray((I, J, K), dtype=utens_stage.dtype)
     data_col = np.ndarray((I, J), dtype=utens_stage.dtype)
@@ -32,7 +38,7 @@ def vadv_kernel(utens_stage: dc.float64[I, J, K], u_stage: dc.float64[I, J, K], 
 
         # update the d column
         correction_term = -cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])
-        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
 
         # Thomas forward
         divided = 1.0 / bcol
@@ -52,9 +58,10 @@ def vadv_kernel(utens_stage: dc.float64[I, J, K], u_stage: dc.float64[I, J, K], 
 
         # update the d column
         # correction_term = -as_ * (u_stage[:, :, k - 1] -
-        correction_term[:] = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs * (u_stage[:, :, k + 1] -
-                                                                                      u_stage[:, :, k])
-        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+        correction_term[:] = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs * (
+            u_stage[:, :, k + 1] - u_stage[:, :, k]
+        )
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
 
         # Thomas forward
         # divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
@@ -74,7 +81,7 @@ def vadv_kernel(utens_stage: dc.float64[I, J, K], u_stage: dc.float64[I, J, K], 
         # update the d column
         # correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])
         correction_term[:] = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])
-        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
 
         # Thomas forward
         # divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
@@ -112,7 +119,8 @@ def vadv_jax_kernel(jnp, lax, utens_stage, u_stage, wcon, u_pos, utens, dtr_stag
         divided = 1.0 / bcol
         ccol = ccol.at[:, :, k].set(bs * divided)
         dcol = dcol.at[:, :, k].set(
-            (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term) * divided)
+            (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term) * divided
+        )
         return (ccol, dcol), None
 
     (ccol, dcol), _ = lax.scan(loop1_body, (ccol, dcol), jnp.arange(0, 1))
@@ -127,13 +135,18 @@ def vadv_jax_kernel(jnp, lax, utens_stage, u_stage, wcon, u_pos, utens, dtr_stag
         bs = gcv * BET_P
         acol = gav * BET_P
         bcol = dtr_stage - acol - bs
-        correction_term = (-as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs *
-                           (u_stage[:, :, k + 1] - u_stage[:, :, k]))
+        correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs * (
+            u_stage[:, :, k + 1] - u_stage[:, :, k]
+        )
         divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
         ccol = ccol.at[:, :, k].set(bs * divided)
         dcol = dcol.at[:, :, k].set(
-            ((dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term) -
-             dcol[:, :, k - 1] * acol) * divided)
+            (
+                (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+                - dcol[:, :, k - 1] * acol
+            )
+            * divided
+        )
         return (ccol, dcol), None
 
     (ccol, dcol), _ = lax.scan(loop2_body, (ccol, dcol), jnp.arange(1, K - 1))
@@ -147,8 +160,12 @@ def vadv_jax_kernel(jnp, lax, utens_stage, u_stage, wcon, u_pos, utens, dtr_stag
         correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])
         divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
         dcol = dcol.at[:, :, k].set(
-            ((dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term) -
-             dcol[:, :, k - 1] * acol) * divided)
+            (
+                (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+                - dcol[:, :, k - 1] * acol
+            )
+            * divided
+        )
         return dcol, None
 
     dcol, _ = lax.scan(loop3_body, dcol, jnp.arange(K - 1, K))
@@ -178,9 +195,10 @@ def vadv_jax_kernel(jnp, lax, utens_stage, u_stage, wcon, u_pos, utens, dtr_stag
 
 def initialize(I, J, K):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
-    dtr_stage = 3. / 20.
+    dtr_stage = 3.0 / 20.0
 
     # Define arrays
     utens_stage = rng.random((I, J, K))
@@ -208,7 +226,7 @@ def ground_truth(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage):
 
         # update the d column
         correction_term = -cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])
-        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
 
         # Thomas forward
         divided = 1.0 / bcol
@@ -227,9 +245,10 @@ def ground_truth(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage):
         bcol = dtr_stage - acol - ccol[:, :, k]
 
         # update the d column
-        correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs * (u_stage[:, :, k + 1] -
-                                                                                   u_stage[:, :, k])
-        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+        correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs * (
+            u_stage[:, :, k + 1] - u_stage[:, :, k]
+        )
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
 
         # Thomas forward
         divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
@@ -244,7 +263,7 @@ def ground_truth(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage):
 
         # update the d column
         correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])
-        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
 
         # Thomas forward
         divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
@@ -298,36 +317,45 @@ def run_vadv_autodiff():
 
     # Initialize gradient computation data
     gradient_utens = np.zeros_like(utens)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(utens_stage: dc.float64[I, J, K], u_stage: dc.float64[I, J, K], wcon: dc.float64[I + 1, J, K],
-                        u_pos: dc.float64[I, J, K], utens: dc.float64[I, J, K], dtr_stage: dc.float64):
+    def autodiff_kernel(
+        utens_stage: dc.float64[I, J, K],
+        u_stage: dc.float64[I, J, K],
+        wcon: dc.float64[I + 1, J, K],
+        u_pos: dc.float64[I, J, K],
+        utens: dc.float64[I, J, K],
+        dtr_stage: dc.float64,
+    ):
         vadv_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage)
         return np.sum(utens_stage)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["utens"], outputs=["__return"])
-    sdfg(utens_stage,
-         u_stage,
-         wcon,
-         u_pos,
-         utens,
-         dtr_stage,
-         I=I,
-         J=J,
-         K=K,
-         gradient_utens=gradient_utens,
-         gradient___return=gradient___return)
+    sdfg(
+        utens_stage,
+        u_stage,
+        wcon,
+        u_pos,
+        utens,
+        dtr_stage,
+        I=I,
+        J=J,
+        K=K,
+        gradient_utens=gradient_utens,
+        gradient___return=gradient___return,
+    )
 
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_kernel = lambda utens_stage, u_stage, wcon, u_pos, utens, dtr_stage: vadv_jax_kernel(
-        jnp, lax, utens_stage, u_stage, wcon, u_pos, utens, dtr_stage)
+        jnp, lax, utens_stage, u_stage, wcon, u_pos, utens, dtr_stage
+    )
     jax_grad = jax.jit(jax.grad(jax_kernel, argnums=4))
     jax_grad_utens = jax_grad(utens_stage_jax, u_stage_jax, wcon_jax, u_pos_jax, utens_jax, dtr_stage_jax)
     np.testing.assert_allclose(gradient_utens, jax_grad_utens)
@@ -351,7 +379,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

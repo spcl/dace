@@ -23,16 +23,16 @@ def test_decreasing_propagation():
             me = n
             state = s
             break
-    assert (me)
-    assert (state)
+    assert me
+    assert state
     edges = state.in_edges(me)
-    assert (len(edges) == 1)
+    assert len(edges) == 1
     subset = edges[0].data.src_subset
-    assert (subset.ranges == [(3, 6, 1), (15, 17, 1)])
+    assert subset.ranges == [(3, 6, 1), (15, 17, 1)]
 
     copy_nw_corner(q)
     copy_nw_corner.f(ref)
-    assert (np.allclose(q, ref))
+    assert np.allclose(q, ref)
 
 
 if __name__ == '__main__':

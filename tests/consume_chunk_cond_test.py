@@ -23,14 +23,18 @@ def test():
     # Consume and tasklet
     consume_entry, consume_exit = state.add_consume('cons', ('p', str(nprocs)), 'res[0] >= 44', chunksize=2)
     tasklet = state.add_tasklet(
-        'fibonacci', {'s'}, {'sout', 'val'}, """
+        'fibonacci',
+        {'s'},
+        {'sout', 'val'},
+        """
 for i in range(__dace_cons_numelems):
     if s[i] == 1:
         val = 1
     elif s[i] > 1:
         sout = s[i] - 1   # Recurse by pushing smaller values
         sout = s[i] - 2
-""")
+""",
+    )
 
     # Edges
     state.add_nedge(initial_value, stream_init, dp.Memlet.from_array(stream_init.data, stream_init.desc(sdfg)))
@@ -45,10 +49,12 @@ for i in range(__dace_cons_numelems):
     state.add_edge(consume_entry, 'OUT_stream', tasklet, 's', memlet)
     state.add_edge(tasklet, 'sout', consume_exit, 'IN_S', dp.Memlet.simple(stream_out, '0', num_accesses=-1))
     state.add_edge(consume_exit, 'OUT_S', stream_out, None, dp.Memlet.simple(stream_out, '0', num_accesses=-1))
-    state.add_edge(tasklet, 'val', consume_exit, 'IN_V',
-                   dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
-    state.add_edge(consume_exit, 'OUT_V', output, None,
-                   dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
+    state.add_edge(
+        tasklet, 'val', consume_exit, 'IN_V', dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1)
+    )
+    state.add_edge(
+        consume_exit, 'OUT_V', output, None, dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1)
+    )
 
     consume_exit.add_in_connector('IN_S')
     consume_exit.add_in_connector('IN_V')

@@ -63,9 +63,9 @@ def _env2bool(envval):
 
 
 def _add_defaults(config, metadata):
-    """ Add defaults to configuration from metadata.
+    """Add defaults to configuration from metadata.
 
-        :return: True if configuration was modified, False otherwise.
+    :return: True if configuration was modified, False otherwise.
     """
     osname = platform.system()
     modified = False
@@ -387,29 +387,29 @@ class Config(object):
 
     @staticmethod
     def get_metadata(*key_hierarchy):
-        """ Returns the configuration specification of a given entry
-            from the schema.
+        """Returns the configuration specification of a given entry
+        from the schema.
 
-            :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry.
-                                  For example: ('a', 'b', 'c') would be
-                                  configuration entry c which is in the
-                                  path a->b.
-            :return: Configuration specification as a dictionary.
+        :param key_hierarchy: A tuple of strings leading to the
+                              configuration entry.
+                              For example: ('a', 'b', 'c') would be
+                              configuration entry c which is in the
+                              path a->b.
+        :return: Configuration specification as a dictionary.
         """
         return Config._data.get_metadata(*key_hierarchy)
 
     @staticmethod
     def get_default(*key_hierarchy):
-        """ Returns the default value of a given configuration entry.
-            Takes into account current operating system.
+        """Returns the default value of a given configuration entry.
+        Takes into account current operating system.
 
-            :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry.
-                                  For example: ('a', 'b', 'c') would be
-                                  configuration entry c which is in the
-                                  path a->b.
-            :return: Default configuration value.
+        :param key_hierarchy: A tuple of strings leading to the
+                              configuration entry.
+                              For example: ('a', 'b', 'c') would be
+                              configuration entry c which is in the
+                              path a->b.
+        :return: Default configuration value.
         """
         return Config._data.get_default(*key_hierarchy)
 
@@ -429,16 +429,16 @@ class Config(object):
 
     @staticmethod
     def get_bool(*key_hierarchy):
-        """ Returns the current value of a given boolean configuration entry.
-            This specialization allows more string types to be converted to
-            boolean, e.g., due to environment variable overrides.
+        """Returns the current value of a given boolean configuration entry.
+        This specialization allows more string types to be converted to
+        boolean, e.g., due to environment variable overrides.
 
-            :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry.
-                                  For example: ('a', 'b', 'c') would be
-                                  configuration entry c which is in the
-                                  path a->b.
-            :return: Configuration entry value (as a boolean).
+        :param key_hierarchy: A tuple of strings leading to the
+                              configuration entry.
+                              For example: ('a', 'b', 'c') would be
+                              configuration entry c which is in the
+                              path a->b.
+        :return: Configuration entry value (as a boolean).
         """
         return Config._data.get_bool(*key_hierarchy)
 

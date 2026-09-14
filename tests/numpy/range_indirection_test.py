@@ -18,7 +18,7 @@ def test():
     M = 100
     N = 100
 
-    x = np.ndarray((M, ), dtype=np.int32)
+    x = np.ndarray((M,), dtype=np.int32)
     for i in range(M):
         x[i] = M - 1 - i
     A = np.ndarray((M, N), dtype=np.float64)

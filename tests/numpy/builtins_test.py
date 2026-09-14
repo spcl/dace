@@ -20,7 +20,7 @@ def test_len_constant():
 
     @dace.program
     def tester(A: dace.float64[N, M]):
-        b = np.array([1., 2., 3.])
+        b = np.array([1.0, 2.0, 3.0])
         return len(b)
 
     a = np.random.rand(20, 30)

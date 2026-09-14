@@ -7,8 +7,8 @@ from dace.memlet import Memlet
 def test_nested_reduction():
     # Create SDFG
     sdfg = dace.SDFG('nested_reduction')
-    sdfg.add_array('A', (40, ), dace.float32)
-    sdfg.add_array('B', (20, ), dace.float32)
+    sdfg.add_array('A', (40,), dace.float32)
+    sdfg.add_array('B', (20,), dace.float32)
 
     # Nodes
     state = sdfg.add_state('a')

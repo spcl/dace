@@ -42,7 +42,7 @@ if __name__ == "__main__":
     a = dace.float64(np.random.rand())
     x = np.random.rand(N).astype(np.float64)
     y = np.random.rand(N).astype(np.float64)
-    regression = (a * x + y)
+    regression = a * x + y
 
     sdfg = axpy.to_sdfg()
 
@@ -63,8 +63,8 @@ if __name__ == "__main__":
 
     # Get range handled by this rank
     partition = N // ranks
-    reg = regression[partition * rank:partition * (rank + 1)]
-    res = y[partition * rank:partition * (rank + 1)]
+    reg = regression[partition * rank : partition * (rank + 1)]
+    res = y[partition * rank : partition * (rank + 1)]
 
     diff = np.linalg.norm(reg - res)
     print("== Rank %d == Difference:" % rank, diff)

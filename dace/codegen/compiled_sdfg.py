@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains functionality to load, use, and invoke compiled SDFG libraries. """
+"""Contains functionality to load, use, and invoke compiled SDFG libraries."""
+
 import ctypes
 import os
 import re
@@ -50,11 +51,12 @@ class ReloadableDLL(object):
         self._lib = None
 
     def get_symbol(self, name, restype=ctypes.c_int):
-        """ Returns a symbol (e.g., function name) in the loaded library. """
+        """Returns a symbol (e.g., function name) in the loaded library."""
 
         if self._lib is None or self._lib.value is None:
-            raise ReferenceError('ReloadableDLL can only be used with a ' +
-                                 '"with" statement or with load() and unload()')
+            raise ReferenceError(
+                'ReloadableDLL can only be used with a ' + '"with" statement or with load() and unload()'
+            )
 
         func = self._stub.get_symbol(self._lib, ctypes.c_char_p(name.encode()))
         if func is None:
@@ -63,7 +65,7 @@ class ReloadableDLL(object):
         return ctypes.CFUNCTYPE(restype)(func)
 
     def is_loaded(self) -> bool:
-        """ Checks if the library is already loaded. """
+        """Checks if the library is already loaded."""
 
         # If internal library is already loaded, skip
         if self._lib is not None and self._lib.value is not None:
@@ -92,7 +94,7 @@ class ReloadableDLL(object):
         return self._stub.is_library_loaded(lib_cfilename) == 1
 
     def load(self):
-        """ Loads the internal library using the stub. """
+        """Loads the internal library using the stub."""
 
         # If internal library is already loaded, skip
         if self._lib is not None and self._lib.value is not None:
@@ -140,9 +142,11 @@ class ReloadableDLL(object):
                     assert self._library_filename != lib_filename
                     shutil.copyfile(self._library_filename, lib_filename)
                 except shutil.Error:
-                    raise cgx.DuplicateDLLError(f'Library {os.path.basename(self._library_filename)}'
-                                                'is already loaded somewhere else and cannot be unloaded. '
-                                                'Please use a different name for the SDFG/program.')
+                    raise cgx.DuplicateDLLError(
+                        f'Library {os.path.basename(self._library_filename)}'
+                        'is already loaded somewhere else and cannot be unloaded. '
+                        'Please use a different name for the SDFG/program.'
+                    )
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
@@ -159,7 +163,7 @@ class ReloadableDLL(object):
             raise RuntimeError(f'Could not load library {os.path.basename(self._library_filename)}. {reason}')
 
     def unload(self):
-        """ Unloads the internal library using the stub. """
+        """Unloads the internal library using the stub."""
 
         if self._stub is None:
             return
@@ -217,6 +221,7 @@ class CompiledSDFG(object):
 
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: Optional[List[str]] = None):
         from dace.sdfg import SDFG
+
         self._sdfg: SDFG = sdfg
         self._lib = lib
         self._initialized = False
@@ -265,22 +270,26 @@ class CompiledSDFG(object):
         self.argnames = argnames
 
         if self.argnames is None and len(sdfg.arg_names) != 0:
-            warnings.warn('You passed `None` as `argnames` to `CompiledSDFG`, but the SDFG you passed has positional'
-                          ' arguments. This is allowed but deprecated.')
+            warnings.warn(
+                'You passed `None` as `argnames` to `CompiledSDFG`, but the SDFG you passed has positional'
+                ' arguments. This is allowed but deprecated.'
+            )
 
         if any(aval.storage == dtypes.StorageType.GPU_Global for _, _, aval in self._sdfg.arrays_recursive()):
             self.has_gpu_code = True
         elif any(
-                isinstance(node, (nodes.EntryNode, nodes.ExitNode,
-                                  nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
-                for node, _ in self._sdfg.all_nodes_recursive()):
+            isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode))
+            and node.schedule in dtypes.GPU_SCHEDULES
+            for node, _ in self._sdfg.all_nodes_recursive()
+        ):
             self.has_gpu_code = True
         else:
             self.has_gpu_code = False
 
         self.external_memory_types = {
             aval.storage
-            for _, _, aval in self._sdfg.arrays_recursive() if aval.lifetime == dtypes.AllocationLifetime.External
+            for _, _, aval in self._sdfg.arrays_recursive()
+            if aval.lifetime == dtypes.AllocationLifetime.External
         }
 
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
@@ -297,12 +306,12 @@ class CompiledSDFG(object):
             return None
 
     def get_state_struct(self) -> ctypes.Structure:
-        """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
-            consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
-            encountered, the method exits early. All fields defined until then will nevertheless be available in the
-            structure.
+        """Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
+        consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
+        encountered, the method exits early. All fields defined until then will nevertheless be available in the
+        structure.
 
-            :return: the ctypes.Structure representation of the state struct.
+        :return: the ctypes.Structure representation of the state struct.
         """
         if not self._libhandle:
             raise ValueError('Library was not initialized')
@@ -311,9 +320,11 @@ class CompiledSDFG(object):
 
     def _try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid import cycle
+
         # the path of the main sdfg file containing the state struct
-        main_src_path = os.path.join(os.path.dirname(os.path.dirname(self._lib._library_filename)), "src", "cpu",
-                                     self._sdfg.name + ".cpp")
+        main_src_path = os.path.join(
+            os.path.dirname(os.path.dirname(self._lib._library_filename)), "src", "cpu", self._sdfg.name + ".cpp"
+        )
         code = open(main_src_path, 'r').read()
 
         code_flat = code.replace("\n", " ")
@@ -330,8 +341,9 @@ class CompiledSDFG(object):
         for field_str in struct_defn.split(";"):
             field_str = field_str.strip()
 
-            match_name = re.match(r'(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+\_\_restrict\_\_\s+)([a-zA-Z_][a-zA-Z_0-9]*)$',
-                                  field_str)
+            match_name = re.match(
+                r'(?:const)?\s*(.*)(?:\s+\*\s*|\s*\*\s+\_\_restrict\_\_\s+)([a-zA-Z_][a-zA-Z_0-9]*)$', field_str
+            )
             if match_name is None:
                 # reached a non-ptr field or something unparsable, we have to abort here
                 break
@@ -360,11 +372,13 @@ class CompiledSDFG(object):
                and the call to this function.
         """
         if not self._initialized:
-            raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
-                             'querying external memory size.')
+            raise ValueError(
+                'Compiled SDFG is uninitialized, please call ``initialize`` prior to querying external memory size.'
+            )
         if self._lastargs is None:
             raise ValueError(
-                'To use ``get_workspace_sizes()``, ``__call__()`` or ``initialize()`` must be called beforehand.')
+                'To use ``get_workspace_sizes()``, ``__call__()`` or ``initialize()`` must be called beforehand.'
+            )
 
         result: Dict[dtypes.StorageType, int] = {}
         for storage in self.external_memory_types:
@@ -390,13 +404,15 @@ class CompiledSDFG(object):
             and the call to this function.
         """
         if not self._initialized:
-            raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
-                             'setting external memory.')
+            raise ValueError(
+                'Compiled SDFG is uninitialized, please call ``initialize`` prior to setting external memory.'
+            )
         if storage not in self.external_memory_types:
             raise ValueError(f'Compiled SDFG does not specify external memory of {storage}')
         if self._lastargs is None:
             raise ValueError(
-                'To use ``get_workspace_sizes()``, ``__call__()`` or ``initialize()`` must be called beforehand.')
+                'To use ``get_workspace_sizes()``, ``__call__()`` or ``initialize()`` must be called beforehand.'
+            )
 
         func = self._lib.get_symbol(f'__dace_set_external_memory_{storage.name}', None)
         ptr = dtypes.array_interface_ptr(workspace, storage)
@@ -448,15 +464,19 @@ class CompiledSDFG(object):
             self._initialized = False
             if res != 0:
                 raise RuntimeError(
-                    f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}')
+                    f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}'
+                )
 
     def _get_error_text(self, result: Union[str, int]) -> str:
         from dace.codegen import common  # Circular import
+
         if self.has_gpu_code:
             if isinstance(result, int):
                 result = common.get_gpu_runtime().get_error_string(result)
-            return (f'{result}. Consider enabling synchronous debugging mode (environment variable: '
-                    'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
+            return (
+                f'{result}. Consider enabling synchronous debugging mode (environment variable: '
+                'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.'
+            )
         else:
             return result
 
@@ -500,13 +520,18 @@ class CompiledSDFG(object):
                     'stublibrary_path': self._lib._stub_filename,
                     "sdfg": self.sdfg,
                     'args': args,
-                    'kwargs': kwargs
-                }, f)
+                    'kwargs': kwargs,
+                },
+                f,
+            )
             temp_path = f.name
 
         # Call the SDFG in a separate process
-        result = subprocess.run([
-            sys.executable, '-c', f'''
+        result = subprocess.run(
+            [
+                sys.executable,
+                '-c',
+                f'''
 import pickle
 from dace.codegen import compiled_sdfg as csd
 from dace.config import Config
@@ -528,8 +553,9 @@ with open(r"{temp_path}", "wb") as f:
         'args': data['args'],
         'kwargs': data['kwargs']
     }}, f)
-             '''
-        ])
+             ''',
+            ]
+        )
 
         # Receive the result
         with open(temp_path, 'rb') as f:
@@ -584,7 +610,8 @@ with open(r"{temp_path}", "wb") as f:
                 lasterror: int = self._gpu_last_error(self._libhandle)
                 if lasterror != 0:
                     raise RuntimeError(
-                        f'An error was detected when calling "{self._sdfg.name}": {self._get_error_text(lasterror)}')
+                        f'An error was detected when calling "{self._sdfg.name}": {self._get_error_text(lasterror)}'
+                    )
             return
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):
             self._lib.unload()
@@ -665,18 +692,24 @@ with open(r"{temp_path}", "wb") as f:
         self._argument_to_pyobject.clear()
         no_view_arguments = not Config.get_bool('compiler', 'allow_view_arguments')
         cargs = tuple(
-            dt.make_ctypes_argument(aval,
-                                    atype,
-                                    aname,
-                                    allow_views=not no_view_arguments,
-                                    symbols=kwargs,
-                                    callback_retval_references=self._callback_retval_references,
-                                    argument_to_pyobject=self._argument_to_pyobject)
-            for aval, atype, aname in zip(arglist, argtypes, argnames))
+            dt.make_ctypes_argument(
+                aval,
+                atype,
+                aname,
+                allow_views=not no_view_arguments,
+                symbols=kwargs,
+                callback_retval_references=self._callback_retval_references,
+                argument_to_pyobject=self._argument_to_pyobject,
+            )
+            for aval, atype, aname in zip(arglist, argtypes, argnames)
+        )
 
         symbols = self._free_symbols
-        callparams = tuple((carg, aname) for arg, carg, aname in zip(arglist, cargs, argnames)
-                           if not ((hasattr(arg, 'name') and arg.name in self._constants) and symbolic.issymbolic(arg)))
+        callparams = tuple(
+            (carg, aname)
+            for arg, carg, aname in zip(arglist, cargs, argnames)
+            if not ((hasattr(arg, 'name') and arg.name in self._constants) and symbolic.issymbolic(arg))
+        )
         newargs = tuple(carg for carg, _aname in callparams)
         initargs = tuple(carg for carg, aname in callparams if aname in symbols)
 
@@ -703,14 +736,22 @@ with open(r"{temp_path}", "wb") as f:
             assert len(self._return_arrays) == 1
             return self._return_arrays[0].item() if self._retarray_is_pyobject[0] else self._return_arrays[0]
         else:
-            return tuple(r.item() if is_pyobj else r
-                         for r, is_pyobj in zip(self._return_arrays, self._retarray_is_pyobject))
+            return tuple(
+                r.item() if is_pyobj else r for r, is_pyobj in zip(self._return_arrays, self._retarray_is_pyobject)
+            )
 
     def clear_return_values(self):
         warnings.warn('The "CompiledSDFG.clear_return_values" API is deprecated.', DeprecationWarning)
 
-    def _create_array(self, _: str, dtype: np.dtype, storage: dtypes.StorageType, shape: Tuple[int],
-                      strides: Tuple[int], total_size: int):
+    def _create_array(
+        self,
+        _: str,
+        dtype: np.dtype,
+        storage: dtypes.StorageType,
+        shape: Tuple[int],
+        strides: Tuple[int],
+        total_size: int,
+    ):
         ndarray = np.ndarray
         zeros = np.empty
 
@@ -743,8 +784,9 @@ with open(r"{temp_path}", "wb") as f:
 
         if self._initialized and self._return_syms == syms:
             # Use stored sizes to recreate arrays (fast path)
-            self._return_arrays = tuple(kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc)
-                                        for desc in self._retarray_shapes)
+            self._return_arrays = tuple(
+                kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc) for desc in self._retarray_shapes
+            )
             return
 
         self._return_syms = syms
@@ -760,7 +802,7 @@ with open(r"{temp_path}", "wb") as f:
                     # The return value is passed as an argument, in that case store the name in `self._retarray_shapes`.
                     warnings.warn(f'Return value "{arrname}" is passed as a regular argument.', stacklevel=2)
                     self._return_arrays.append(kwargs[arrname])
-                    self._retarray_shapes.append((arrname, ))
+                    self._retarray_shapes.append((arrname,))
 
                 elif isinstance(arr, dt.Stream):
                     raise NotImplementedError('Return streams are unsupported')
@@ -800,12 +842,14 @@ with open(r"{temp_path}", "wb") as f:
                     elif isinstance(arr, dt.Array):
                         # An array, let's check if it is just a wrapper for a single value.
                         if not (len(arr.shape) == 1 and arr.shape[0] == 1):
-                            warnings.warn(f'Decay an array of `pyobject`s with shape {arr.shape} to a single one.',
-                                          stacklevel=2)
+                            warnings.warn(
+                                f'Decay an array of `pyobject`s with shape {arr.shape} to a single one.', stacklevel=2
+                            )
                         self._retarray_is_pyobject.append(True)
                     else:
                         raise ValueError(
-                            f'Does not know how to handle "{arrname}", which is a {type(arr).__name__} of `pyobject`.')
+                            f'Does not know how to handle "{arrname}", which is a {type(arr).__name__} of `pyobject`.'
+                        )
                 else:
                     self._retarray_is_pyobject.append(False)
 

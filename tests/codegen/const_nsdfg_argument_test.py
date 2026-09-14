@@ -4,6 +4,7 @@
 A nested SDFG's parameters must be ``const``-qualified exactly when the connector is read-only --
 for array references as well as scalars. Codegen only; nothing is compiled or run.
 """
+
 import re
 
 import dace
@@ -45,22 +46,21 @@ def _param(signature: str, connector: str) -> str:
 def _inner_copy(name: str) -> dace.SDFG:
     """Inner SDFG ``b[j] = a[j]``: ``a`` read-only, ``b`` written."""
     g = dace.SDFG(name)
-    g.add_array('a', (8, ), dace.float64)
-    g.add_array('b', (8, ), dace.float64)
+    g.add_array('a', (8,), dace.float64)
+    g.add_array('b', (8,), dace.float64)
     s = g.add_state('s')
-    s.add_mapped_tasklet('cp',
-                         dict(j='0:8'), {'x': dace.Memlet('a[j]')},
-                         'y = x', {'y': dace.Memlet('b[j]')},
-                         external_edges=True)
+    s.add_mapped_tasklet(
+        'cp', dict(j='0:8'), {'x': dace.Memlet('a[j]')}, 'y = x', {'y': dace.Memlet('b[j]')}, external_edges=True
+    )
     return g
 
 
 def _inner_with_view(name: str, write_through_view: bool) -> dace.SDFG:
     """Inner SDFG with a ``View`` ``av`` of ``a``, read-direction or write-direction."""
     g = dace.SDFG(name)
-    g.add_array('a', (8, ), dace.float64)
-    g.add_array('b', (8, ), dace.float64)
-    g.add_view('av', (8, ), dace.float64)
+    g.add_array('a', (8,), dace.float64)
+    g.add_array('b', (8,), dace.float64)
+    g.add_view('av', (8,), dace.float64)
     s = g.add_state('s')
     a, b, av = s.add_access('a'), s.add_access('b'), s.add_access('av')
     t = s.add_tasklet('cp', {'x': None}, {'y': None}, 'y = x')
@@ -83,12 +83,11 @@ def test_readonly_input_is_const_and_written_output_is_not():
 
 def test_inout_array_is_not_const():
     g = dace.SDFG('inout')
-    g.add_array('d', (8, ), dace.float64)
+    g.add_array('d', (8,), dace.float64)
     s = g.add_state('s')
-    s.add_mapped_tasklet('inc',
-                         dict(j='0:8'), {'v': dace.Memlet('d[j]')},
-                         'w = v + 1.0', {'w': dace.Memlet('d[j]')},
-                         external_edges=True)
+    s.add_mapped_tasklet(
+        'inc', dict(j='0:8'), {'v': dace.Memlet('d[j]')}, 'w = v + 1.0', {'w': dace.Memlet('d[j]')}, external_edges=True
+    )
     sig = _signature(g, {'d'}, {'d'}, [('d', 'D', 'i,0:8', True), ('d', 'D', 'i,0:8', False)])
     assert not _param(sig, 'd').startswith('const '), _param(sig, 'd')
 

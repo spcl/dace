@@ -26,7 +26,7 @@ def crc16_kernel(data: dace.uint8[N]):
             else:
                 crc >>= 1
             cur_byte >>= 1
-    crc = (~crc & 0xFFFF)
+    crc = ~crc & 0xFFFF
     crc = (crc << 8) | ((crc >> 8) & 0xFF)
 
     return crc & 0xFFFF
@@ -34,8 +34,9 @@ def crc16_kernel(data: dace.uint8[N]):
 
 def initialize(N):
     from numpy.random import default_rng
+
     rng = default_rng(42)
-    data = rng.integers(0, 256, size=(N, ), dtype=np.uint8)
+    data = rng.integers(0, 256, size=(N,), dtype=np.uint8)
     return data
 
 
@@ -52,7 +53,7 @@ def ground_truth(data, poly=0x8408):
             else:
                 crc >>= 1
             cur_byte >>= 1
-    crc = (~crc & 0xFFFF)
+    crc = ~crc & 0xFFFF
     crc = (crc << 8) | ((crc >> 8) & 0xFF)
 
     return crc & 0xFFFF
@@ -91,7 +92,6 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

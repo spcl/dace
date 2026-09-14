@@ -25,7 +25,6 @@ class ExpandPotrfPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandPotrfOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -39,17 +38,14 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
         n = n or node.n
         uplo = "'L'" if node.lower else "'U'"
         code = f"_res = LAPACKE_{lapack_dtype}potrf(LAPACK_ROW_MAJOR, {uplo}, {rows_x}, _xin, {stride_x});"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandPotrfMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -59,7 +55,6 @@ class ExpandPotrfMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandPotrfCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
@@ -76,7 +71,9 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
             n /= veclen
         uplo = "CUBLAS_FILL_MODE_LOWER" if node.lower else "CUBLAS_FILL_MODE_UPPER"
 
-        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
+        code = (
+            environments.cusolverdn.cuSolverDn.handle_setup_code(node)
+            + f"""
                 int __dace_workspace_size = 0;
                 {cuda_type}* __dace_workspace;
                 cusolverDn{func}_bufferSize(
@@ -89,13 +86,12 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
                     __dace_cusolverDn_handle, {uplo}, {rows_x}, _xin,
                     {stride_x}, __dace_workspace, __dace_workspace_size, _res);
                 cudaFree(__dace_workspace);
-                """)
+                """
+        )
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         conn = tasklet.out_connectors
         conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
@@ -105,7 +101,6 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Potrf(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {"OpenBLAS": ExpandPotrfOpenBLAS, "MKL": ExpandPotrfMKL, "cuSolverDn": ExpandPotrfCuSolverDn}
     default_implementation = None

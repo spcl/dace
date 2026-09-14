@@ -35,5 +35,4 @@ def test_fortran_frontend_call_extract():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_call_extract()

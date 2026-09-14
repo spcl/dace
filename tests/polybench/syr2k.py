@@ -5,7 +5,7 @@ import polybench
 M = dace.symbol('M')
 N = dace.symbol('N')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -35,7 +35,7 @@ def syr2k(C: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: dataty
     def mult_c_rows(i: _[0:N]):
 
         @dace.map
-        def mult_c_cols(j: _[0:i + 1]):
+        def mult_c_cols(j: _[0 : i + 1]):
             ic << C[i, j]
             ib << beta
             oc >> C[i, j]
@@ -45,7 +45,7 @@ def syr2k(C: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: dataty
     def compute(i: _[0:N], k: _[0:M]):
 
         @dace.map
-        def compute_elem(j: _[0:i + 1]):
+        def compute_elem(j: _[0 : i + 1]):
             ialpha << alpha
             ia << A[i, k]
             iat << A[j, k]

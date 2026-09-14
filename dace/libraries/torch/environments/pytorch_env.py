@@ -20,6 +20,7 @@ def torch_cpp_extension():
     something imported this module (a wedged driver turns that probe into a hang).
     """
     import torch.utils.cpp_extension  # noqa: PLC0415  -- deferred on purpose, see docstring
+
     return torch.utils.cpp_extension
 
 

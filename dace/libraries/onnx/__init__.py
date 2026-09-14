@@ -23,7 +23,15 @@ from dace.library import register_library, _DACE_REGISTERED_LIBRARIES
 
 try:
     # Import schema and node utilities (nodes are lazy-loaded via __getattr__)
-    from .schema import onnx_representation, ONNXAttributeType, ONNXAttribute, ONNXTypeConstraint, ONNXParameterType, ONNXSchema, ONNXParameter
+    from .schema import (
+        onnx_representation,
+        ONNXAttributeType,
+        ONNXAttribute,
+        ONNXTypeConstraint,
+        ONNXParameterType,
+        ONNXSchema,
+        ONNXParameter,
+    )
     from .nodes import get_onnx_node, has_onnx_node
 
     register_library(__name__, "dace.libraries.onnx")
@@ -35,15 +43,19 @@ try:
         """Lazy attribute access for ONNX node classes, ONNXModel, and utilities."""
         if name == 'ONNXModel':
             from dace.frontend.ml.onnx import ONNXModel as _ONNXModel
+
             return _ONNXModel
         if name == 'parse_variadic_param':
             from .nodes.node_utils import parse_variadic_param as _parse_variadic_param
+
             return _parse_variadic_param
         if name.startswith('ONNX'):
             # Initialize registry and get the node class
             from .nodes.onnx_op_registry import _initialize_onnx_registry
+
             _initialize_onnx_registry()
             from .nodes import onnx_op_registry
+
             if hasattr(onnx_op_registry, name):
                 return getattr(onnx_op_registry, name)
         raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

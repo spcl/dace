@@ -32,9 +32,9 @@ def test_fortran_frontend_array_access():
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0] == 42)
-    assert (a[1] == 5.5)
-    assert (a[2] == 42)
+    assert a[0] == 42
+    assert a[1] == 5.5
+    assert a[2] == 42
 
 
 def test_fortran_frontend_array_ranges():
@@ -65,11 +65,11 @@ def test_fortran_frontend_array_ranges():
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 0] == 15)
-    assert (d[0, 1, 0] == 10)
-    assert (d[1, 0, 0] == 3)
-    assert (d[2, 3, 3] == 4)
-    assert (d[0, 0, 2] == 5)
+    assert d[0, 0, 0] == 15
+    assert d[0, 1, 0] == 10
+    assert d[1, 0, 0] == 3
+    assert d[2, 3, 3] == 4
+    assert d[0, 0, 2] == 5
 
 
 def test_fortran_frontend_array_3dmap():
@@ -94,11 +94,12 @@ def test_fortran_frontend_array_3dmap():
     sdfg.simplify(verbose=True)
     sdutil.normalize_offsets(sdfg)
     from dace.transformation.auto import auto_optimize as aopt
+
     aopt.auto_optimize(sdfg, dtypes.DeviceType.CPU)
     a = np.full([4, 4, 4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0, 0, 0] == 7)
-    assert (a[3, 3, 3] == 7)
+    assert a[0, 0, 0] == 7
+    assert a[3, 3, 3] == 7
 
 
 def test_fortran_frontend_twoconnector():
@@ -123,9 +124,9 @@ def test_fortran_frontend_twoconnector():
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0] == 42)
-    assert (a[1] == 84)
-    assert (a[2] == 42)
+    assert a[0] == 42
+    assert a[1] == 84
+    assert a[2] == 42
 
 
 def test_fortran_frontend_input_output_connector():
@@ -154,9 +155,9 @@ def test_fortran_frontend_input_output_connector():
     sdfg.simplify(verbose=True)
     a = np.full([2, 3], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0, 0] == 0)
-    assert (a[0, 1] == 5)
-    assert (a[1, 2] == 0)
+    assert a[0, 0] == 0
+    assert a[0, 1] == 5
+    assert a[1, 2] == 0
 
 
 def test_fortran_frontend_memlet_in_map_test():
@@ -209,7 +210,6 @@ def test_fortran_frontend_memlet_in_map_test():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_array_3dmap()
     test_fortran_frontend_array_access()
     test_fortran_frontend_input_output_connector()

@@ -5,7 +5,7 @@ import polybench
 M = dace.symbol('M')
 N = dace.symbol('N')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -47,7 +47,7 @@ def trmm(A: datatype[M, M], B: datatype[M, N], alpha: datatype[1]):
                 out = 0
 
             @dace.map
-            def compute_elem(k: _[i + 1:M]):
+            def compute_elem(k: _[i + 1 : M]):
                 ia << A[k, i]
                 ib << B[k, j]
                 ob >> tmp(1, lambda a, b: a + b)

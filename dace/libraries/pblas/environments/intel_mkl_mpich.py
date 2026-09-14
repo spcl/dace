@@ -8,8 +8,7 @@ import warnings
 
 @dace.library.environment
 class IntelMKLScaLAPACKMPICH:
-    """ An environment for the Intel Math Kernel Library (MKL), which implements the ScaLAPACK library using MPICH.
-    """
+    """An environment for the Intel Math Kernel Library (MKL), which implements the ScaLAPACK library using MPICH."""
 
     # NOTE: MKL ScaLAPACK linking needs special options depending on the
     # compiler, MPI vendor and machine (e.g., CRAY). The following work for a
@@ -24,11 +23,12 @@ class IntelMKLScaLAPACKMPICH:
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
     state_fields = [
-        "MKL_INT __mkl_scalapack_context;", "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",
+        "MKL_INT __mkl_scalapack_context;",
+        "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",
         "MKL_INT __mkl_scalapack_prows = 0, __mkl_scalapack_pcols = 0;",
         "MKL_INT __mkl_scalapack_myprow = 0, __mkl_scalapack_mypcol = 0;",
         "MKL_INT __mkl_int_zero = 0, __mkl_int_one = 1, __mkl_int_negone = -1;",
-        "bool __mkl_scalapack_grid_init = false;"
+        "bool __mkl_scalapack_grid_init = false;",
     ]
     init_code = """
     blacs_pinfo(&__state->__mkl_scalapack_rank, &__state->__mkl_scalapack_size);
@@ -73,8 +73,10 @@ class IntelMKLScaLAPACKMPICH:
             return os.path.dirname(os.path.abspath(libfile))
 
         if 'CONDA_PREFIX' in os.environ:
-            warnings.warn('Anaconda Python is installed but the MKL library file cannot be found for linkage. Please '
-                          'install libraries with "conda install mkl-devel" or set the MKLROOT environment variable.')
+            warnings.warn(
+                'Anaconda Python is installed but the MKL library file cannot be found for linkage. Please '
+                'install libraries with "conda install mkl-devel" or set the MKLROOT environment variable.'
+            )
         else:
             warnings.warn('MKL was not found. Please install MKL or set hte MKLROOT environment variable.')
 
@@ -95,10 +97,12 @@ class IntelMKLScaLAPACKMPICH:
             candpath = os.path.join(base_path, 'include')
             if os.path.isfile(os.path.join(candpath, 'mkl.h')):
                 return [candpath]
-            warnings.warn('Anaconda Python is installed but the MKL include directory cannot '
-                          'be found. Please install MKL includes with '
-                          '"conda install mkl-include" or set the MKLROOT environment '
-                          'variable')
+            warnings.warn(
+                'Anaconda Python is installed but the MKL include directory cannot '
+                'be found. Please install MKL includes with '
+                '"conda install mkl-include" or set the MKLROOT environment '
+                'variable'
+            )
             return []
         else:
             return []
@@ -133,7 +137,6 @@ class IntelMKLScaLAPACKMPICH:
 
         cwd = os.getcwd()
         with tempfile.TemporaryDirectory() as tmp_dir:
-
             os.chdir(tmp_dir)
             with open("CMakeLists.txt", "w") as f:
                 f.write("cmake_minimum_required(VERSION 3.10)\nproject(DACE_findMPI)\nfind_package(MPI)\n")

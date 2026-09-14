@@ -20,13 +20,14 @@ class Einsum(nodes.LibraryNode):
     default_implementation = 'specialize'
 
     # Configurable properties of the einsum node
-    einsum_str = properties.Property(dtype=str,
-                                     default='',
-                                     desc='The Einstein notation string that describes this einsum')
+    einsum_str = properties.Property(
+        dtype=str, default='', desc='The Einstein notation string that describes this einsum'
+    )
 
     alpha = properties.SymbolicProperty(desc='The coefficient to multiply the inputs with', default=1.0)
-    beta = properties.SymbolicProperty(desc='The coefficient to multiply the output with when added to the product',
-                                       default=0.0)
+    beta = properties.SymbolicProperty(
+        desc='The coefficient to multiply the output with when added to the product', default=0.0
+    )
 
 
 # Define the expansion, which specializes the einsum by lowering it to either a BLAS operation or a direct contraction
@@ -51,31 +52,37 @@ class SpecializeEinsum(xf.ExpandTransformation):
             desc = parent_sdfg.arrays[e.data.data]
             insubset = deepcopy(e.data.src_subset)
             isqdim = insubset.squeeze()
-            sdfg.add_array(e.dst_conn,
-                           insubset.size(),
-                           desc.dtype,
-                           strides=[s for i, s in enumerate(desc.strides) if i in isqdim],
-                           storage=desc.storage)
+            sdfg.add_array(
+                e.dst_conn,
+                insubset.size(),
+                desc.dtype,
+                strides=[s for i, s in enumerate(desc.strides) if i in isqdim],
+                storage=desc.storage,
+            )
 
         for e in parent_state.out_edges(node):
             output = e.src_conn
             desc = parent_sdfg.arrays[e.data.data]
             outsubset = deepcopy(e.data.dst_subset)
             osqdim = outsubset.squeeze()
-            sdfg.add_array(output,
-                           outsubset.size(),
-                           desc.dtype,
-                           strides=[s for i, s in enumerate(desc.strides) if i in osqdim],
-                           storage=desc.storage)
+            sdfg.add_array(
+                output,
+                outsubset.size(),
+                desc.dtype,
+                strides=[s for i, s in enumerate(desc.strides) if i in osqdim],
+                storage=desc.storage,
+            )
         #######################################
 
         # Fill SDFG with einsum contents
-        einsum.create_einsum_sdfg(sdfg,
-                                  state,
-                                  node.einsum_str,
-                                  *sorted(inputs),
-                                  output=output,
-                                  output_name=output,
-                                  alpha=node.alpha,
-                                  beta=node.beta)
+        einsum.create_einsum_sdfg(
+            sdfg,
+            state,
+            node.einsum_str,
+            *sorted(inputs),
+            output=output,
+            output_name=output,
+            alpha=node.alpha,
+            beta=node.beta,
+        )
         return sdfg

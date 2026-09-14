@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that fuse Tasklets """
+"""Contains classes that fuse Tasklets"""
 
 import ast
 import re
@@ -15,13 +15,12 @@ from dace.transformation import transformation as pm
 
 
 class PythonConnectorRenamer(ast.NodeTransformer):
-    """ Renames connector names in Tasklet code.
-    """
+    """Renames connector names in Tasklet code."""
 
     def __init__(self, repl_dict: Dict[str, str]) -> None:
-        """ Initializes AST transformer.
+        """Initializes AST transformer.
 
-            :param repl_dict: Replacement dictionary.
+        :param repl_dict: Replacement dictionary.
         """
         self.repl_dict = repl_dict
 
@@ -32,8 +31,7 @@ class PythonConnectorRenamer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class CPPConnectorRenamer():
-
+class CPPConnectorRenamer:
     def __init__(self, repl_dict: Dict[str, str]) -> None:
         self.repl_dict = repl_dict
 
@@ -45,7 +43,6 @@ class CPPConnectorRenamer():
 
 
 class PythonInliner(ast.NodeTransformer):
-
     def __init__(self, target_id, target_ast):
         self.target_id = target_id
         self.target_ast = target_ast
@@ -57,8 +54,7 @@ class PythonInliner(ast.NodeTransformer):
             return self.generic_visit(node)
 
 
-class CPPInliner():
-
+class CPPInliner:
     def __init__(self, inline_target, inline_val):
         self.inline_target = inline_target
         self.inline_val = inline_val
@@ -144,10 +140,9 @@ class TaskletFusion(pm.SingleStateTransformation):
     data = pm.PatternNode(nodes.AccessNode)
     t2 = pm.PatternNode(nodes.Tasklet)
 
-    new_name = Property(dtype=str,
-                        default=None,
-                        allow_none=True,
-                        desc='New name to give tasklet. If None, fuses tasklet names')
+    new_name = Property(
+        dtype=str, default=None, allow_none=True, desc='New name to give tasklet. If None, fuses tasklet names'
+    )
 
     @classmethod
     def expressions(cls):
@@ -213,7 +208,6 @@ class TaskletFusion(pm.SingleStateTransformation):
 
             # Check if there is a conflict.
             if in_edge.dst_conn in all_conns:
-
                 # Check for conflicts with the second tasklet's output connectors
                 if in_edge.dst_conn in t2.out_connectors:
                     in_edge.dst_conn = dace.data.find_new_name(in_edge.dst_conn, all_conns_with_inputs)
@@ -231,8 +225,12 @@ class TaskletFusion(pm.SingleStateTransformation):
                             break
                 else:
                     t2edge = conflict_edges[0]
-                if t2edge is not None and (in_edge.data != t2edge.data or in_edge.data.data != t2edge.data.data
-                                           or in_edge.data is None or in_edge.data.data is None):
+                if t2edge is not None and (
+                    in_edge.data != t2edge.data
+                    or in_edge.data.data != t2edge.data.data
+                    or in_edge.data is None
+                    or in_edge.data.data is None
+                ):
                     in_edge.dst_conn = dace.data.find_new_name(in_edge.dst_conn, all_conns_with_inputs)
                     repldict[old_value] = in_edge.dst_conn
                 else:
@@ -275,18 +273,20 @@ class TaskletFusion(pm.SingleStateTransformation):
         else:
             new_name = t1.label + '_fused_' + t2.label
 
-        new_tasklet = graph.add_tasklet(new_name,
-                                        inputs,
-                                        t2.out_connectors,
-                                        new_code_str,
-                                        t1.language,
-                                        state_fields=t1.state_fields + t2.state_fields,
-                                        code_global=t1.code_global.code + t2.code_global.code,
-                                        code_init=t1.code_init.code + t2.code_init.code,
-                                        code_exit=t1.code_exit.code + t2.code_exit.code,
-                                        location=_merge_dicts(t1.location, t2.location),
-                                        side_effects=t1.side_effects or t2.side_effects,
-                                        debuginfo=_merge_debuginfo(t1.debuginfo, t2.debuginfo))
+        new_tasklet = graph.add_tasklet(
+            new_name,
+            inputs,
+            t2.out_connectors,
+            new_code_str,
+            t1.language,
+            state_fields=t1.state_fields + t2.state_fields,
+            code_global=t1.code_global.code + t2.code_global.code,
+            code_init=t1.code_init.code + t2.code_init.code,
+            code_exit=t1.code_exit.code + t2.code_exit.code,
+            location=_merge_dicts(t1.location, t2.location),
+            side_effects=t1.side_effects or t2.side_effects,
+            debuginfo=_merge_debuginfo(t1.debuginfo, t2.debuginfo),
+        )
 
         for in_edge in graph.in_edges(t1):
             if in_edge.src_conn is None and isinstance(in_edge.src, dace.nodes.EntryNode):

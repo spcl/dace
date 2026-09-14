@@ -7,7 +7,6 @@ _OP_TO_STRING = {'+': 'plus', '-': 'minus', '*': 'emult', '/': 'ediv', '%': 'mod
 
 
 class AST_UnaryExpression(AST_Node):
-
     def __init__(self, context, arg, op, order):
         AST_Node.__init__(self, context)
         self.arg = arg
@@ -16,8 +15,7 @@ class AST_UnaryExpression(AST_Node):
         self.children = [self.arg]
 
     def __repr__(self):
-        return "AST_UnaryExpression(" + str(self.arg) + ", " + str(self.op) + \
-                ", " + str(self.order) + ")"
+        return "AST_UnaryExpression(" + str(self.arg) + ", " + str(self.op) + ", " + str(self.order) + ")"
 
     def get_children(self):
         return [self.arg]
@@ -30,6 +28,7 @@ class AST_UnaryExpression(AST_Node):
 
     def specialize(self):
         from .ast_values import AST_Constant
+
         # -A is syntactic sugar for -1*A
         if (self.op == "-") and isinstance(self.arg, AST_Constant):
             new = AST_Constant(self.context, -self.arg.get_value())
@@ -37,7 +36,7 @@ class AST_UnaryExpression(AST_Node):
             new.prev = self.prev
             new.parent = self.parent
             return new
-        elif (self.op == "-"):
+        elif self.op == "-":
             new = AST_BinExpression(self.context, self.arg, AST_Constant(None, -1), "*")
             new.next = self.next
             new.prev = self.prev
@@ -48,7 +47,6 @@ class AST_UnaryExpression(AST_Node):
 
 
 class AST_BinExpression(AST_Node):
-
     def __init__(self, context, lhs, rhs, op):
         AST_Node.__init__(self, context)
         self.lhs = lhs
@@ -165,7 +163,7 @@ class AST_BinExpression(AST_Node):
         sdfg.add_transient(tmpname, [M, N, K], self.get_basetype())
         tmp = s.add_access(tmpname)
         s.add_edge(tasklet, "c", map_exit, None, dace.memlet.Memlet.simple(tmp, 'i,j,k'))
-        rednode = s.add_reduce('lambda a,b: a+b', (2, ), 0)
+        rednode = s.add_reduce('lambda a,b: a+b', (2,), 0)
         s.add_edge(map_exit, None, tmp, None, dace.memlet.Memlet.simple(tmp, '0:' + M + ',0:' + N + ',0:' + K))
         s.add_edge(tmp, None, rednode, None, dace.memlet.Memlet.simple(tmp, '0:' + M + ',0:' + N + ',0:' + K))
         s.add_edge(rednode, None, C, None, dace.memlet.Memlet.simple(C, '0:' + M + ',0:' + N))
@@ -194,7 +192,7 @@ class AST_BinExpression(AST_Node):
         sdfg.add_transient(tmpname, [N], self.get_basetype())
         tmp = s.add_access(tmpname)
         s.add_edge(tasklet, "c", map_exit, None, dace.memlet.Memlet.simple(tmp, 'i'))
-        rednode = s.add_reduce('lambda a,b: a+b', (0, ), 0)
+        rednode = s.add_reduce('lambda a,b: a+b', (0,), 0)
         s.add_edge(map_exit, None, tmp, None, dace.memlet.Memlet.simple(tmp, '0:' + N))
         s.add_edge(tmp, None, rednode, None, dace.memlet.Memlet.simple(tmp, '0:' + N))
         s.add_edge(rednode, None, C, None, dace.memlet.Memlet.simple(C, '0'))
@@ -257,15 +255,22 @@ class AST_BinExpression(AST_Node):
         if lhs_dims[0] == 1 and rhs_dims[1] == 1 and self.op == "*":
             self.vec_mult_vect(sdfg, state, self.op)
         elif lhs_dims == [1, 1] or lhs_dims == [1]:
-            raise NotImplementedError("Binary expression with scalar on lhs not implemented: " + str(self) +
-                                      ", lhs dims: " + str(lhs_dims) + ", rhs dims: " + str(rhs_dims))
+            raise NotImplementedError(
+                "Binary expression with scalar on lhs not implemented: "
+                + str(self)
+                + ", lhs dims: "
+                + str(lhs_dims)
+                + ", rhs dims: "
+                + str(rhs_dims)
+            )
         else:
             if self.op == "*":
                 self.matrix2d_matrix2d_mult(sdfg, state)
             elif self.op == "-" or self.op == "+":
                 self.matrix2d_matrix2d_plus_or_minus(sdfg, state, self.op)
             else:
-                raise NotImplementedError("Binary expression with two " + "matrices and op=" + str(self.op) +
-                                          " not implemented")
+                raise NotImplementedError(
+                    "Binary expression with two " + "matrices and op=" + str(self.op) + " not implemented"
+                )
 
     __str__ = __repr__

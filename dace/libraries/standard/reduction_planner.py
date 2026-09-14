@@ -1,5 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Helper function to compute GPU schedule for reduction node "GPUAuto" expansion. """
+"""Helper function to compute GPU schedule for reduction node "GPUAuto" expansion."""
 
 from dace.data import Array
 from typing import List
@@ -24,19 +24,22 @@ def combine(shape, strides, dims):
     for d in dims:
         new_shape_element *= shape[d]
 
-    combined_shape = shape[0:dims[0]]
+    combined_shape = shape[0 : dims[0]]
     combined_shape.append(new_shape_element)
-    combined_shape.extend(shape[dims[-1] + 1:])
+    combined_shape.extend(shape[dims[-1] + 1 :])
 
     new_stride_element = strides[dims[0]]
     for d in dims[0:]:
-        if (strides[d] < new_stride_element) == True or strides[d] == 1 or expr_is_contained(
-                strides[d], new_stride_element):
+        if (
+            (strides[d] < new_stride_element) == True
+            or strides[d] == 1
+            or expr_is_contained(strides[d], new_stride_element)
+        ):
             new_stride_element = strides[d]
 
-    combined_strides = strides[0:dims[0]]
+    combined_strides = strides[0 : dims[0]]
     combined_strides.append(new_stride_element)
-    combined_strides.extend(strides[dims[-1] + 1:])
+    combined_strides.extend(strides[dims[-1] + 1 :])
 
     return combined_shape, combined_strides
 
@@ -118,12 +121,9 @@ def simplify_input(shape, strides, axes):
     return shape, strides, axes, out_shape, out_strides
 
 
-def get_reduction_schedule(in_array: Array,
-                           axes: List[int],
-                           use_vectorization=True,
-                           use_mini_warps=True,
-                           warp_size=32,
-                           wide_load_bytes=16):
+def get_reduction_schedule(
+    in_array: Array, axes: List[int], use_vectorization=True, use_mini_warps=True, warp_size=32, wide_load_bytes=16
+):
     """
     Computes a data movement minimizing GPU reduction schedule depending on the input data shape and
     the axes to reduce.
@@ -168,8 +168,9 @@ def get_reduction_schedule(in_array: Array,
         error: str  #: if not "", error contains the error reason as warning
 
     # initialize empty schedule
-    schedule = ReductionSchedule([], [], [], 0, [], [], [], [], [], False, False, 1, False, 1, False, False, [], [], [],
-                                 [], '')
+    schedule = ReductionSchedule(
+        [], [], [], 0, [], [], [], [], [], False, False, 1, False, 1, False, False, [], [], [], [], ''
+    )
 
     initial_shape = in_array.shape
     initial_strides = in_array.strides
@@ -235,8 +236,11 @@ def get_reduction_schedule(in_array: Array,
         schedule.contiguous_dim = True
 
         # TODO: Fix vectorization for non-exact-fitting sizes
-        if (shape[contiguous_dimension] > 32) == True and (shape[contiguous_dimension] % num_loaded_elements
-                                                           == 0) == True and use_vectorization:
+        if (
+            (shape[contiguous_dimension] > 32) == True
+            and (shape[contiguous_dimension] % num_loaded_elements == 0) == True
+            and use_vectorization
+        ):
             schedule.vectorize = True
 
         # all non-reduced dimensions in grid
@@ -249,8 +253,9 @@ def get_reduction_schedule(in_array: Array,
             schedule.grid = [1]
 
         # 32 threads per block unless contiguous dimension too small
-        threads_per_block = shape[contiguous_dimension] if (shape[contiguous_dimension]
-                                                            < warp_size) == True else warp_size
+        threads_per_block = (
+            shape[contiguous_dimension] if (shape[contiguous_dimension] < warp_size) == True else warp_size
+        )
         schedule.block = [threads_per_block]
 
         stride = warp_size * num_loaded_elements if schedule.vectorize else warp_size
@@ -266,7 +271,7 @@ def get_reduction_schedule(in_array: Array,
     else:
         # we are reducing a non-contiguous dimension
 
-        schedule.grid = shape[:axes[0]]  # add all leading dimensions into the grid
+        schedule.grid = shape[: axes[0]]  # add all leading dimensions into the grid
         grid_dim = symbolic.int_ceil(shape[contiguous_dimension], 32)  # each block computes 32 output values
         schedule.grid.append(grid_dim)
 
@@ -294,8 +299,11 @@ def get_reduction_schedule(in_array: Array,
     last_grid_dim = 1
     for b in whole_grid[:-2]:
         last_grid_dim *= b
-    if (whole_grid[-1] > 2147483647) == True or (len(whole_grid) > 1
-                                                 and whole_grid[-2] > 65535) == True or (last_grid_dim > 65535) == True:
+    if (
+        (whole_grid[-1] > 2147483647) == True
+        or (len(whole_grid) > 1 and whole_grid[-2] > 65535) == True
+        or (last_grid_dim > 65535) == True
+    ):
         # grid dimension must not exceed 2147483647, resp . 65535
         schedule.error = 'Schedule is invalid (some grid dimension too large). Falling back to pure expansion.'
 

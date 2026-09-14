@@ -14,7 +14,7 @@ class IntelMKL:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []  #["BLAS"]
+    cmake_packages = []  # ["BLAS"]
     cmake_variables = {"BLA_VENDOR": "Intel10_64lp"}
     cmake_compile_flags = []
     cmake_link_flags = []
@@ -41,10 +41,12 @@ class IntelMKL:
             candpath = os.path.join(base_path, 'include')
             if os.path.isfile(os.path.join(candpath, 'mkl.h')):
                 return [candpath]
-            warnings.warn('Anaconda Python is installed but the MKL include directory cannot '
-                          'be found. Please install MKL includes with '
-                          '"conda install mkl-include" or set the MKLROOT environment '
-                          'variable')
+            warnings.warn(
+                'Anaconda Python is installed but the MKL include directory cannot '
+                'be found. Please install MKL includes with '
+                '"conda install mkl-include" or set the MKLROOT environment '
+                'variable'
+            )
             return []
         else:
             return []
@@ -72,10 +74,12 @@ class IntelMKL:
                 if os.path.isfile(libfile):
                     return [libfile]
                 elif 'CONDA_PREFIX' in os.environ:
-                    warnings.warn('Anaconda Python is installed but the MKL library file '
-                                  'cannot be found for linkage. Please install libraries with '
-                                  '"conda install mkl-devel" or set the MKLROOT environment '
-                                  'variable')
+                    warnings.warn(
+                        'Anaconda Python is installed but the MKL library file '
+                        'cannot be found for linkage. Please install libraries with '
+                        '"conda install mkl-devel" or set the MKLROOT environment '
+                        'variable'
+                    )
                     return []
                 else:
                     return []

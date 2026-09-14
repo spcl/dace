@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes and functions that implement copying a nested SDFG
-    and its dependencies to a given device. """
+"""Contains classes and functions that implement copying a nested SDFG
+and its dependencies to a given device."""
 
 from copy import deepcopy as dcpy
 from dace import data, properties, symbolic, dtypes
@@ -20,19 +20,19 @@ def change_storage(sdfg: SDFG, storage: dtypes.StorageType):
 
 @properties.make_properties
 class CopyToDevice(transformation.SingleStateTransformation):
-    """ Implements the copy-to-device transformation, which copies a nested
-        SDFG and its dependencies to a given device.
+    """Implements the copy-to-device transformation, which copies a nested
+    SDFG and its dependencies to a given device.
 
-        The transformation changes all data storage types of a nested SDFG to
-        the given `storage` property, and creates new arrays and copies around
-        the nested SDFG to that storage.
+    The transformation changes all data storage types of a nested SDFG to
+    the given `storage` property, and creates new arrays and copies around
+    the nested SDFG to that storage.
     """
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
-    storage = properties.EnumProperty(dtype=dtypes.StorageType,
-                                      desc="Nested SDFG storage",
-                                      default=dtypes.StorageType.Default)
+    storage = properties.EnumProperty(
+        dtype=dtypes.StorageType, desc="Nested SDFG storage", default=dtypes.StorageType.Default
+    )
 
     @staticmethod
     def annotates_memlets():
@@ -48,12 +48,14 @@ class CopyToDevice(transformation.SingleStateTransformation):
         for edge in graph.all_edges(nested_sdfg):
             # Stream inputs/outputs not allowed
             path = graph.memlet_path(edge)
-            if ((isinstance(path[0].src, nodes.AccessNode) and isinstance(sdfg.arrays[path[0].src.data], data.Stream))
-                    or (isinstance(path[-1].dst, nodes.AccessNode)
-                        and isinstance(sdfg.arrays[path[-1].dst.data], data.Stream))):
+            if (
+                isinstance(path[0].src, nodes.AccessNode) and isinstance(sdfg.arrays[path[0].src.data], data.Stream)
+            ) or (
+                isinstance(path[-1].dst, nodes.AccessNode) and isinstance(sdfg.arrays[path[-1].dst.data], data.Stream)
+            ):
                 return False
             # WCR outputs with arrays are not allowed
-            if (edge.data.wcr is not None and edge.data.subset.num_elements() != 1):
+            if edge.data.wcr is not None and edge.data.subset.num_elements() != 1:
                 return False
 
         return True
@@ -64,7 +66,6 @@ class CopyToDevice(transformation.SingleStateTransformation):
         created_arrays = set()
 
         for _, edge in enumerate(state.in_edges(nested_sdfg)):
-
             src, src_conn, dst, dst_conn, memlet = edge
             dataname = memlet.data
             if dataname is None:
@@ -74,18 +75,22 @@ class CopyToDevice(transformation.SingleStateTransformation):
             name = 'device_' + dataname + '_in'
             if name not in created_arrays:
                 if isinstance(memdata, data.Array):
-                    name, _ = sdfg.add_array('device_' + dataname + '_in',
-                                             shape=[symbolic.overapproximate(r) for r in memlet.bounding_box_size()],
-                                             dtype=memdata.dtype,
-                                             transient=True,
-                                             storage=storage,
-                                             find_new_name=True)
+                    name, _ = sdfg.add_array(
+                        'device_' + dataname + '_in',
+                        shape=[symbolic.overapproximate(r) for r in memlet.bounding_box_size()],
+                        dtype=memdata.dtype,
+                        transient=True,
+                        storage=storage,
+                        find_new_name=True,
+                    )
                 elif isinstance(memdata, data.Scalar):
-                    name, _ = sdfg.add_scalar('device_' + dataname + '_in',
-                                              dtype=memdata.dtype,
-                                              transient=True,
-                                              storage=storage,
-                                              find_new_name=True)
+                    name, _ = sdfg.add_scalar(
+                        'device_' + dataname + '_in',
+                        dtype=memdata.dtype,
+                        transient=True,
+                        storage=storage,
+                        find_new_name=True,
+                    )
                 else:
                     raise NotImplementedError
                 created_arrays.add(name)
@@ -111,7 +116,6 @@ class CopyToDevice(transformation.SingleStateTransformation):
             state.add_edge(data_node, None, dst, dst_conn, from_data_mm)
 
         for _, edge in enumerate(state.out_edges(nested_sdfg)):
-
             src, src_conn, dst, dst_conn, memlet = edge
             dataname = memlet.data
             if dataname is None:
@@ -121,12 +125,14 @@ class CopyToDevice(transformation.SingleStateTransformation):
             name = 'device_' + dataname + '_out'
             if name not in created_arrays:
                 if isinstance(memdata, data.Array):
-                    name, _ = sdfg.add_array(name,
-                                             shape=[symbolic.overapproximate(r) for r in memlet.bounding_box_size()],
-                                             dtype=memdata.dtype,
-                                             transient=True,
-                                             storage=storage,
-                                             find_new_name=True)
+                    name, _ = sdfg.add_array(
+                        name,
+                        shape=[symbolic.overapproximate(r) for r in memlet.bounding_box_size()],
+                        dtype=memdata.dtype,
+                        transient=True,
+                        storage=storage,
+                        find_new_name=True,
+                    )
                 elif isinstance(memdata, data.Scalar):
                     name, _ = sdfg.add_scalar(name, dtype=memdata.dtype, transient=True, storage=storage)
                 else:

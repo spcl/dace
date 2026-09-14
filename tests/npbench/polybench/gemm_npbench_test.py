@@ -15,15 +15,16 @@ sizes = {
     "small": (60, 70, 80),
     "medium": (200, 220, 240),
     "large": (1000, 1100, 1200),
-    "extra-large": (2000, 2300, 2600)
+    "extra-large": (2000, 2300, 2600),
 }
 
 NI, NJ, NK = (dc.symbol(s, dtype=dc.int64) for s in ('NI', 'NJ', 'NK'))
 
 
 @dc.program
-def gemm_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK,
-                                                                                                                 NJ]):
+def gemm_kernel(
+    alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK, NJ]
+):
     C[:] = alpha * A @ B + beta * C
 
 
@@ -73,12 +74,13 @@ def run_gemm_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK],
-                        B: dc.float64[NK, NJ]):
+    def autodiff_kernel(
+        alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK, NJ]
+    ):
         gemm_kernel(alpha, beta, C, A, B)
         return np.sum(C)
 
@@ -113,7 +115,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

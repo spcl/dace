@@ -4,6 +4,7 @@ Ctypes interoperability for data descriptors.
 
 This module contains functions for converting data descriptors to ctypes.
 """
+
 import ctypes
 import warnings
 
@@ -18,13 +19,15 @@ if TYPE_CHECKING:
     from dace.data import Data
 
 
-def make_ctypes_argument(arg: Any,
-                         argtype: 'Data',
-                         name: Optional[str] = None,
-                         allow_views: Optional[bool] = None,
-                         symbols: Optional[Dict[str, Any]] = None,
-                         callback_retval_references: Optional[List[Any]] = None,
-                         argument_to_pyobject: Optional[Dict[Any, Any]] = None) -> Any:
+def make_ctypes_argument(
+    arg: Any,
+    argtype: 'Data',
+    name: Optional[str] = None,
+    allow_views: Optional[bool] = None,
+    symbols: Optional[Dict[str, Any]] = None,
+    callback_retval_references: Optional[List[Any]] = None,
+    argument_to_pyobject: Optional[Dict[Any, Any]] = None,
+) -> Any:
     """
     Converts a given argument to the expected ``ctypes`` type for passing to compiled SDFG functions.
 
@@ -74,29 +77,38 @@ def make_ctypes_argument(arg: Any,
         # GPU scalars and return values are pointers, so this is fine
         if argtype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
             raise TypeError(f'Passing an array to a scalar (type {argtype.dtype.ctype}) in argument "{a}"')
-    elif (is_dtArray and is_ndarray and not isinstance(argtype, ContainerArray)
-          and argtype.dtype.as_numpy_dtype() != arg.dtype):
+    elif (
+        is_dtArray
+        and is_ndarray
+        and not isinstance(argtype, ContainerArray)
+        and argtype.dtype.as_numpy_dtype() != arg.dtype
+    ):
         # Make exception for vector types
-        if (isinstance(argtype.dtype, dtypes.vector) and argtype.dtype.vtype.as_numpy_dtype() == arg.dtype):
+        if isinstance(argtype.dtype, dtypes.vector) and argtype.dtype.vtype.as_numpy_dtype() == arg.dtype:
             pass
         else:
             print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {argtype.dtype.type.__name__} array')
     elif is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments:
-        raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
-                        'programs is not allowed in order to retain analyzability. '
-                        'Please make a copy with "numpy.copy(...)". If you know what '
-                        'you are doing, you can override this error in the '
-                        'configuration by setting compiler.allow_view_arguments '
-                        'to True.')
-    elif (not isinstance(argtype, (Array, Structure)) and not isinstance(argtype.dtype, dtypes.callback)
-          and not isinstance(arg, (argtype.dtype.type, sp.Basic))
-          and not (isinstance(arg, symbolic.symbol) and arg.dtype == argtype.dtype)):
+        raise TypeError(
+            f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
+            'programs is not allowed in order to retain analyzability. '
+            'Please make a copy with "numpy.copy(...)". If you know what '
+            'you are doing, you can override this error in the '
+            'configuration by setting compiler.allow_view_arguments '
+            'to True.'
+        )
+    elif (
+        not isinstance(argtype, (Array, Structure))
+        and not isinstance(argtype.dtype, dtypes.callback)
+        and not isinstance(arg, (argtype.dtype.type, sp.Basic))
+        and not (isinstance(arg, symbolic.symbol) and arg.dtype == argtype.dtype)
+    ):
         is_int = isinstance(arg, int)
         if is_int and argtype.dtype.type == np.int64:
             pass
-        elif (is_int and argtype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1):
+        elif is_int and argtype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1:
             pass
-        elif (is_int and argtype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
+        elif is_int and argtype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1:
             pass
         elif isinstance(arg, float) and argtype.dtype.type == np.float64:
             pass

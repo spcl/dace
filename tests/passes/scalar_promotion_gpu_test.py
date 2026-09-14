@@ -5,6 +5,7 @@ Each test pinpoints one rewrite slot that the pass touches (or should touch)
 and one issue from PR #2394 / Issue #2393. Tests run with no GPU runtime --
 they introspect SDFG state after the pass, not generated code.
 """
+
 import pytest
 
 import dace
@@ -48,11 +49,13 @@ def _build_issue_2393_sdfg():
     outer = dace.SDFG('where')
     state = outer.add_state()
     for name in 'abcd':
-        outer.add_array(name,
-                        shape=(10, ),
-                        dtype=(dace.bool_ if name == 'c' else dace.float64),
-                        storage=dtypes.StorageType.GPU_Global,
-                        transient=False)
+        outer.add_array(
+            name,
+            shape=(10,),
+            dtype=(dace.bool_ if name == 'c' else dace.float64),
+            storage=dtypes.StorageType.GPU_Global,
+            transient=False,
+        )
 
     a, b, c, d = (state.add_access(n) for n in 'abcd')
     me, mx = state.add_map('map', ndrange={'__i': '0:10'}, schedule=dtypes.ScheduleType.GPU_Device)
@@ -79,11 +82,9 @@ def test_loop_region_init_update_condition_rewrite():
     sdfg.add_scalar('cnt', dtype=dace.int64, transient=False, storage=dtypes.StorageType.GPU_Global)
     sdfg.add_symbol('i', dace.int64)
     sdfg.add_state('start', is_start_block=True)
-    loop = LoopRegion('lr',
-                      condition_expr='i < cnt',
-                      loop_var='i',
-                      initialize_expr='i = cnt',
-                      update_expr='i = i + cnt')
+    loop = LoopRegion(
+        'lr', condition_expr='i < cnt', loop_var='i', initialize_expr='i = cnt', update_expr='i = i + cnt'
+    )
     sdfg.add_node(loop)
     loop.add_state('body', is_start_block=True)
 
@@ -143,7 +144,7 @@ def test_memlet_other_subset_preserved_x_as_data():
     """Promoted scalar X is the ``data`` side of a copy memlet; other_subset on Y survives."""
     sdfg = dace.SDFG('m_xdata')
     sdfg.add_scalar('X', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('Y', shape=(4, ), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('Y', shape=(4,), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state()
     x = state.add_access('X')
     y = state.add_access('Y')
@@ -158,7 +159,7 @@ def test_memlet_other_subset_preserved_x_as_other():
     """Y is the ``data`` side, X is referenced by ``other_subset='0'``; survives promotion."""
     sdfg = dace.SDFG('m_xother')
     sdfg.add_scalar('X', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('Y', shape=(4, ), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('Y', shape=(4,), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state()
     y = state.add_access('Y')
     x = state.add_access('X')
@@ -191,7 +192,7 @@ def test_memlet_dynamic_and_wcr_preserved():
     """A memlet's ``dynamic`` flag and WCR string survive promotion (the pass touches descriptors, not memlets)."""
     sdfg = dace.SDFG('m_dyn_wcr')
     sdfg.add_scalar('X', dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('Y', shape=(4, ), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('Y', shape=(4,), dtype=dace.float64, transient=False, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state()
     x = state.add_access('X')
     y = state.add_access('Y')
@@ -212,7 +213,7 @@ def test_memlet_dynamic_and_wcr_preserved():
 # kernel-output scalar SHOULD be promoted.
 def _build_kernel_output_sdfg(transient_inside: bool, kernel_output_visible: bool):
     sdfg = dace.SDFG('rule2')
-    sdfg.add_array('A', shape=(10, ), dtype=dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('A', shape=(10,), dtype=dace.float64, storage=dtypes.StorageType.GPU_Global)
     if kernel_output_visible:
         sdfg.add_scalar('out_s', dtype=dace.float64, transient=False, storage=dtypes.StorageType.Default)
     sdfg.add_scalar('local_s', dtype=dace.float64, transient=transient_inside, storage=dtypes.StorageType.Default)
@@ -262,8 +263,9 @@ def test_symbol_mapping_value_rewrite():
     ostate = outer.add_state()
     nsdfg = ostate.add_nested_sdfg(sdfg=inner, inputs=set(), outputs=set(), symbol_mapping={'s_inner': 'X'})
     _run(outer)
-    assert nsdfg.symbol_mapping['s_inner'] == 'X[0]' or str(nsdfg.symbol_mapping['s_inner']) == 'X[0]', \
+    assert nsdfg.symbol_mapping['s_inner'] == 'X[0]' or str(nsdfg.symbol_mapping['s_inner']) == 'X[0]', (
         nsdfg.symbol_mapping['s_inner']
+    )
 
 
 # NestedSDFG connector residency. An outer ``Scalar`` ``h`` that is one end of a

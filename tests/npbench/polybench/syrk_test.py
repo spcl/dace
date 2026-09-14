@@ -19,9 +19,9 @@ M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 def kernel(alpha: dc.float32, beta: dc.float32, C: dc.float32[N, N], A: dc.float32[N, M]):
 
     for i in range(N):
-        C[i, :i + 1] *= beta
+        C[i, : i + 1] *= beta
         for k in range(M):
-            C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]
+            C[i, : i + 1] += alpha * A[i, k] * A[: i + 1, k]
 
 
 def init_data(N, M):
@@ -85,9 +85,9 @@ def syrk_jax_kernel(jnp, lax, alpha, beta, C, A):
 def ground_truth(N, M, alpha, beta, C, A):
 
     for i in range(N):
-        C[i, :i + 1] *= beta
+        C[i, : i + 1] *= beta
         for k in range(M):
-            C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]
+            C[i, : i + 1] += alpha * A[i, k] * A[: i + 1, k]
 
 
 def run_syrk(device_type: dace.dtypes.DeviceType):
@@ -125,7 +125,7 @@ def run_syrk_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
@@ -162,7 +162,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

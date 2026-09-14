@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Implements the LIKWID counter performance instrumentation provider.
-    Used for collecting CPU performance counters.
+"""Implements the LIKWID counter performance instrumentation provider.
+Used for collecting CPU performance counters.
 """
 
 import dace
@@ -94,23 +94,27 @@ class LIKWIDMarkers:
 @library.environment
 class LIKWIDPerfmon(LIKWIDMarkers):
     """LIKWID with its CPU marker API active."""
+
     cmake_compile_flags = ['-DLIKWID_PERFMON']
 
 
 @library.environment
 class LIKWIDNvmon(LIKWIDMarkers):
     """LIKWID with its NVIDIA marker API active."""
+
     cmake_compile_flags = ['-DLIKWID_NVMON']
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_CPU)
 class LIKWIDInstrumentationCPU(InstrumentationProvider):
-    """ Instrumentation provider that reports CPU performance counters using
-        the Likwid tool.
+    """Instrumentation provider that reports CPU performance counters using
+    the Likwid tool.
     """
 
     perf_whitelist_schedules = [
-        dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential
+        dtypes.ScheduleType.CPU_Multicore,
+        dtypes.ScheduleType.CPU_Persistent,
+        dtypes.ScheduleType.Sequential,
     ]
 
     def __init__(self):
@@ -254,8 +258,14 @@ LIKWID_MARKER_CLOSE;
 '''
         self.codegen._exitcode.write(exit_code, sdfg)
 
-    def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
-                       global_stream: CodeIOStream) -> None:
+    def on_state_begin(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        local_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
         if not self._likwid_used:
             return
 
@@ -291,8 +301,14 @@ LIKWID_MARKER_CLOSE;
 '''
             local_stream.write(marker_code)
 
-    def on_state_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
-                     global_stream: CodeIOStream) -> None:
+    def on_state_end(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        local_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
         if not self._likwid_used:
             return
 
@@ -310,8 +326,16 @@ LIKWID_MARKER_CLOSE;
 '''
             local_stream.write(marker_code)
 
-    def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
-                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_entry(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        node: nodes.EntryNode,
+        outer_stream: CodeIOStream,
+        inner_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
         if not self._likwid_used or node.instrument != dace.InstrumentationType.LIKWID_CPU:
             return
 
@@ -337,8 +361,16 @@ LIKWID_MARKER_CLOSE;
 '''
         outer_stream.write(marker_code)
 
-    def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
-                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_exit(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        node: nodes.ExitNode,
+        outer_stream: CodeIOStream,
+        inner_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
         entry_node = state.entry_node(node)
         if not self._likwid_used or entry_node.instrument != dace.InstrumentationType.LIKWID_CPU:
             return
@@ -359,8 +391,8 @@ LIKWID_MARKER_CLOSE;
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_GPU)
 class LIKWIDInstrumentationGPU(InstrumentationProvider):
-    """ Instrumentation provider that reports CPU performance counters using
-        the Likwid tool.
+    """Instrumentation provider that reports CPU performance counters using
+    the Likwid tool.
     """
 
     perf_whitelist_schedules = [dtypes.ScheduleType.GPU_Device]
@@ -448,8 +480,14 @@ LIKWID_NVMARKER_CLOSE;
 '''
         self.codegen._exitcode.write(exit_code, sdfg)
 
-    def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
-                       global_stream: CodeIOStream) -> None:
+    def on_state_begin(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        local_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
         if not self._likwid_used:
             return
 
@@ -471,8 +509,14 @@ LIKWID_NVMARKER_START("{region}");
 '''
             local_stream.write(marker_code)
 
-    def on_state_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
-                     global_stream: CodeIOStream) -> None:
+    def on_state_end(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        local_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
         if not self._likwid_used:
             return
 
@@ -487,8 +531,16 @@ LIKWID_NVMARKER_STOP("{region}");
 '''
             local_stream.write(marker_code)
 
-    def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
-                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_entry(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        node: nodes.EntryNode,
+        outer_stream: CodeIOStream,
+        inner_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
         if not self._likwid_used or node.instrument != dace.InstrumentationType.LIKWID_GPU:
             return
 
@@ -514,8 +566,16 @@ LIKWID_NVMARKER_START("{region}");
 '''
         outer_stream.write(marker_code)
 
-    def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
-                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_exit(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        node: nodes.ExitNode,
+        outer_stream: CodeIOStream,
+        inner_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
         entry_node = state.entry_node(node)
         if not self._likwid_used or entry_node.instrument != dace.InstrumentationType.LIKWID_GPU:
             return

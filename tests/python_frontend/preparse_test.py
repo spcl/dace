@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests preprocessing of SDFG call tree and (nested) closure. """
+"""Tests preprocessing of SDFG call tree and (nested) closure."""
+
 import dace
 import numpy as np
 import os
@@ -9,7 +10,6 @@ import tempfile
 def test_nested_objects_same_name():
 
     class ObjA:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
 
@@ -18,7 +18,6 @@ def test_nested_objects_same_name():
             return A + self.q
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
             self.obja = ObjA(q * 2)
@@ -67,7 +66,6 @@ def test_nested_objects_same_name():
 def test_calltree():
 
     class ObjA:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
 
@@ -76,7 +74,6 @@ def test_calltree():
             return A + self.q
 
     class ObjB:
-
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
             self.obja = ObjA(q * 2)

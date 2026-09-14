@@ -100,17 +100,21 @@ class RemoveUnusedSymbols(ppl.Pass):
                 for node in block.nodes():
                     if isinstance(node, nodes.Tasklet):
                         if node.code.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(node.code.as_string, sdfg.symbols.keys(),
-                                                               node.ignored_symbols)
+                            result |= symbolic.symbols_in_code(
+                                node.code.as_string, sdfg.symbols.keys(), node.ignored_symbols
+                            )
                         if node.code_global.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(node.code_global.as_string, sdfg.symbols.keys(),
-                                                               node.ignored_symbols)
+                            result |= symbolic.symbols_in_code(
+                                node.code_global.as_string, sdfg.symbols.keys(), node.ignored_symbols
+                            )
                         if node.code_init.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(node.code_init.as_string, sdfg.symbols.keys(),
-                                                               node.ignored_symbols)
+                            result |= symbolic.symbols_in_code(
+                                node.code_init.as_string, sdfg.symbols.keys(), node.ignored_symbols
+                            )
                         if node.code_exit.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(node.code_exit.as_string, sdfg.symbols.keys(),
-                                                               node.ignored_symbols)
+                            result |= symbolic.symbols_in_code(
+                                node.code_exit.as_string, sdfg.symbols.keys(), node.ignored_symbols
+                            )
             else:
                 result |= block.used_symbols(all_symbols=True, with_contents=False)
 

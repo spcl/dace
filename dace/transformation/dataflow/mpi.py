@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains the MPITransformMap transformation. """
+"""Contains the MPITransformMap transformation."""
 
 from dace import dtypes
 from dace.sdfg import has_dynamic_map_inputs
@@ -126,7 +126,7 @@ class MPITransformMap(transformation.SingleStateTransformation):
                 continue
             in_local_storage_subgraph = {
                 LocalStorage.node_a: graph.node_id(outer_map),
-                LocalStorage.node_b: self.subgraph[MPITransformMap.map_entry]
+                LocalStorage.node_b: self.subgraph[MPITransformMap.map_entry],
             }
             cfg_id = graph.parent_graph.cfg_id
             in_local_storage = InLocalStorage()
@@ -144,7 +144,7 @@ class MPITransformMap(transformation.SingleStateTransformation):
             name = e.data.data
             outlocalstorage_subgraph = {
                 LocalStorage.node_a: graph.node_id(in_map_exit),
-                LocalStorage.node_b: graph.node_id(out_map_exit)
+                LocalStorage.node_b: graph.node_id(out_map_exit),
             }
             cfg_id = graph.parent_graph.cfg_id
             outlocalstorage = OutLocalStorage()

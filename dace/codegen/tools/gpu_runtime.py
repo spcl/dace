@@ -2,6 +2,7 @@
 """
 GPU runtime testing functionality. Used for checking error codes after GPU-capable SDFG execution.
 """
+
 import ctypes
 from typing import Optional
 

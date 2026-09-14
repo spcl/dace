@@ -34,8 +34,10 @@ def vectorize(sdfg: SDFG) -> vector_inference.VectorInferenceGraph:
 
 
 def is_vector_connector(inf: vector_inference.VectorInferenceGraph, conn: str, is_in: bool):
-    return inf.get_constraint((find_tasklet_by_connector(inf.sdfg,
-                                                         conn), conn, is_in)) == vector_inference.InferenceNode.Vector
+    return (
+        inf.get_constraint((find_tasklet_by_connector(inf.sdfg, conn), conn, is_in))
+        == vector_inference.InferenceNode.Vector
+    )
 
 
 def has_vector_accessnode(inf: vector_inference.VectorInferenceGraph):

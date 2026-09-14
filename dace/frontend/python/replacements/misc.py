@@ -3,6 +3,7 @@
 Contains replacements for miscellaneous functions and convenience utility functions, such as a function that
 calls element-wise operations on data containers.
 """
+
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
@@ -17,7 +18,7 @@ from typing import Union
 
 @oprepo.replaces('slice')
 def _slice(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
-    return (slice(*args, **kwargs), )
+    return (slice(*args, **kwargs),)
 
 
 @oprepo.replaces_operator('Array', 'MatMult', otherclass='StorageType')
@@ -28,12 +29,9 @@ def _cast_storage(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: st
 
 
 @oprepo.replaces('dace.elementwise')
-def elementwise(pv: ProgramVisitor,
-                sdfg: SDFG,
-                state: SDFGState,
-                func: Union[StringLiteral, str],
-                in_array: str,
-                out_array=None):
+def elementwise(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, func: Union[StringLiteral, str], in_array: str, out_array=None
+):
     """
     Apply a lambda function to each element in the input.
     """
@@ -69,13 +67,11 @@ def elementwise(pv: ProgramVisitor,
     else:
         state.add_mapped_tasklet(
             name="_elementwise_",
-            map_ranges={
-                f'__i{dim}': f'0:{N}'
-                for dim, N in enumerate(inparr.shape)
-            },
+            map_ranges={f'__i{dim}': f'0:{N}' for dim, N in enumerate(inparr.shape)},
             inputs={'__inp': Memlet.simple(in_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))},
             code=code,
             outputs={'__out': Memlet.simple(out_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))},
-            external_edges=True)
+            external_edges=True,
+        )
 
     return out_array

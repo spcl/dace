@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement a redundant array removal transformation.
-"""
+"""Contains classes that implement a redundant array removal transformation."""
 
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -8,8 +7,8 @@ from dace.transformation import transformation as pm
 
 
 class TensorflowRedundantArray(pm.SingleStateTransformation):
-    """ Implements the redundant array removal transformation, applied
-        to remove ReadVariableOps and control dependencies. """
+    """Implements the redundant array removal transformation, applied
+    to remove ReadVariableOps and control dependencies."""
 
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
@@ -36,8 +35,8 @@ class TensorflowRedundantArray(pm.SingleStateTransformation):
 
         # Only apply if arrays are of same shape (no need to modify subset)
         if len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape) or any(
-                i != o for i, o in zip(in_array.desc(sdfg).shape,
-                                       out_array.desc(sdfg).shape)):
+            i != o for i, o in zip(in_array.desc(sdfg).shape, out_array.desc(sdfg).shape)
+        ):
             return False
 
         return True

@@ -8,8 +8,18 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional, Set
 import warnings
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock,
-                             ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState, UnstructuredControlFlow)
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+    UnstructuredControlFlow,
+)
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.codegen.common import unparse_interstate_edge
@@ -19,9 +29,9 @@ if TYPE_CHECKING:
 
 
 def _clean_loop_body(body: str) -> str:
-    """ Cleans loop body from extraneous continue statements. """
+    """Cleans loop body from extraneous continue statements."""
     if body.endswith('continue;\n'):
-        body = body[:-len('continue;\n')]
+        body = body[: -len('continue;\n')]
     return body
 
 
@@ -34,12 +44,14 @@ def _child_of(node: SDFGState, parent: SDFGState, ptree: Dict[SDFGState, SDFGSta
     return False
 
 
-def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
-                                   sdfg: SDFG,
-                                   cfg: ControlFlowRegion,
-                                   codegen: 'DaCeCodeGenerator',
-                                   assignments_only: bool = False,
-                                   exit_on_else: bool = False) -> str:
+def _generate_interstate_edge_code(
+    edge: Edge[InterstateEdge],
+    sdfg: SDFG,
+    cfg: ControlFlowRegion,
+    codegen: 'DaCeCodeGenerator',
+    assignments_only: bool = False,
+    exit_on_else: bool = False,
+) -> str:
     """
     Generates C++ code for an interstate edge, which may include a condition and assignments.
     :param edge:             The interstate edge to generate code for.
@@ -57,10 +69,13 @@ def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
         expr += f'if ({condition_string}) {{\n'
 
     if len(edge.data.assignments) > 0:
-        expr += ';\n'.join([
-            "{} = {}".format(variable, unparse_interstate_edge(value, sdfg, codegen=codegen))
-            for variable, value in edge.data.assignments.items()
-        ] + [''])
+        expr += ';\n'.join(
+            [
+                "{} = {}".format(variable, unparse_interstate_edge(value, sdfg, codegen=codegen))
+                for variable, value in edge.data.assignments.items()
+            ]
+            + ['']
+        )
 
     if not assignments_only:
         dst: ControlFlowBlock = edge.dst
@@ -76,8 +91,12 @@ def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
     return expr
 
 
-def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState], str], codegen: 'DaCeCodeGenerator',
-                         symbols: Dict[str, dtypes.typeclass]) -> str:
+def _loop_region_to_code(
+    region: LoopRegion,
+    dispatch_state: Callable[[SDFGState], str],
+    codegen: 'DaCeCodeGenerator',
+    symbols: Dict[str, dtypes.typeclass],
+) -> str:
     """
     Converts a LoopRegion to C++ code with the correct control flow expressions.
 
@@ -95,8 +114,11 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
 
     lsyms = {}
     lsyms.update(symbols)
-    if (loop.loop_variable and codegen.dispatcher.defined_vars.has(loop.loop_variable)
-            and not loop.loop_variable in lsyms):
+    if (
+        loop.loop_variable
+        and codegen.dispatcher.defined_vars.has(loop.loop_variable)
+        and not loop.loop_variable in lsyms
+    ):
         lsyms[loop.loop_variable] = codegen.dispatcher.defined_vars.get(loop.loop_variable)[1]
 
     if loop.init_statement:
@@ -145,8 +167,12 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
     return expr
 
 
-def _conditional_block_to_code(region: ConditionalBlock, dispatch_state: Callable[[SDFGState], str],
-                               codegen: 'DaCeCodeGenerator', symbols: Dict[str, dtypes.typeclass]) -> str:
+def _conditional_block_to_code(
+    region: ConditionalBlock,
+    dispatch_state: Callable[[SDFGState], str],
+    codegen: 'DaCeCodeGenerator',
+    symbols: Dict[str, dtypes.typeclass],
+) -> str:
     """
     Converts a ConditionalBlock to C++ code with the correct control flow expressions.
 
@@ -176,15 +202,17 @@ def _conditional_block_to_code(region: ConditionalBlock, dispatch_state: Callabl
     return expr
 
 
-def control_flow_region_to_code(region: AbstractControlFlowRegion,
-                                dispatch_state: Callable[[SDFGState], str],
-                                codegen: 'DaCeCodeGenerator',
-                                symbols: Dict[str, dtypes.typeclass],
-                                start: Optional[ControlFlowBlock] = None,
-                                stop: Optional[ControlFlowBlock] = None,
-                                generate_children_of: Optional[ControlFlowBlock] = None,
-                                ptree: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
-                                visited: Optional[Set[ControlFlowBlock]] = None) -> str:
+def control_flow_region_to_code(
+    region: AbstractControlFlowRegion,
+    dispatch_state: Callable[[SDFGState], str],
+    codegen: 'DaCeCodeGenerator',
+    symbols: Dict[str, dtypes.typeclass],
+    start: Optional[ControlFlowBlock] = None,
+    stop: Optional[ControlFlowBlock] = None,
+    generate_children_of: Optional[ControlFlowBlock] = None,
+    ptree: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+    visited: Optional[Set[ControlFlowBlock]] = None,
+) -> str:
     """
     Converts a control flow region to C++ code with the correct control flow expressions.
 
@@ -201,13 +229,14 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
     start = start if start is not None else region.start_block
     visited = set() if visited is None else visited
 
-    contains_irreducible = any(region.out_degree(node) > 1
-                               for node in region.nodes()) or isinstance(region, UnstructuredControlFlow)
+    contains_irreducible = any(region.out_degree(node) > 1 for node in region.nodes()) or isinstance(
+        region, UnstructuredControlFlow
+    )
 
     stack = [region.start_block]
     while stack:
         node = stack.pop()
-        if (generate_children_of is not None and not _child_of(node, generate_children_of, ptree)):
+        if generate_children_of is not None and not _child_of(node, generate_children_of, ptree):
             continue
         if node in visited or node is stop:
             continue
@@ -245,11 +274,9 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
             # Only one outgoing edge, continue to the next block.
             if out_edges[0].data.is_unconditional():
                 # If unconditional, just continue to the next state, adding an unconditional goto.
-                expr += _generate_interstate_edge_code(out_edges[0],
-                                                       region.sdfg,
-                                                       region,
-                                                       codegen,
-                                                       assignments_only=(not contains_irreducible))
+                expr += _generate_interstate_edge_code(
+                    out_edges[0], region.sdfg, region, codegen, assignments_only=(not contains_irreducible)
+                )
             else:
                 # If conditional, generate a conditional goto and exit otherwise.
                 expr += _generate_interstate_edge_code(out_edges[0], region.sdfg, region, codegen, exit_on_else=True)
@@ -266,7 +293,8 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
                     if unconditional_edge is not None:
                         warnings.warn(
                             f'Unstructured control flow region {region.label} has multiple unconditional edges '
-                            f'leading out of block {node.label}.')
+                            f'leading out of block {node.label}.'
+                        )
                     else:
                         unconditional_edge = e
                         continue

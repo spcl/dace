@@ -96,10 +96,12 @@ def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge: graph.MultiConnectorEdge)
     in_edge = next(iter(state.in_edges(tasklet)))
     out_edge = next(iter(state.out_edges(tasklet)))
 
-    assert all(pattern.fullmatch(str(idxs[0]).strip())
-               for idxs in in_edge.data.src_subset), f"IN: {in_edge.data.src_subset}"
-    assert all(pattern.fullmatch(str(idxs[0]).strip())
-               for idxs in out_edge.data.dst_subset), f"OUT: {out_edge.data.dst_subset}"
+    assert all(pattern.fullmatch(str(idxs[0]).strip()) for idxs in in_edge.data.src_subset), (
+        f"IN: {in_edge.data.src_subset}"
+    )
+    assert all(pattern.fullmatch(str(idxs[0]).strip()) for idxs in out_edge.data.dst_subset), (
+        f"OUT: {out_edge.data.dst_subset}"
+    )
 
     # Now call it again after the optimization.
     sdfg(a=a, b=b_opt)
@@ -107,8 +109,7 @@ def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge: graph.MultiConnectorEdge)
 
 
 def _make_non_lin_delin_sdfg(
-    shape_a: Tuple[int, ...],
-    shape_b: Optional[Tuple[int, ...]] = None
+    shape_a: Tuple[int, ...], shape_b: Optional[Tuple[int, ...]] = None
 ) -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.AccessNode, dace.nodes.AccessNode]:
 
     if shape_b is None:

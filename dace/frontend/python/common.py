@@ -9,7 +9,6 @@ from dace.sdfg.sdfg import SDFG
 
 
 class DaceSyntaxError(Exception):
-
     def __init__(self, visitor, node: ast.AST, message: str):
         self.visitor = visitor
         self.node = node
@@ -33,7 +32,7 @@ class DaceSyntaxError(Exception):
 
 
 def inverse_dict_lookup(dict: Dict[str, Any], value: Any):
-    """ Finds the first key in a dictionary with the input value. """
+    """Finds the first key in a dictionary with the input value."""
     for k, v in dict.items():
         if v == value:
             return k
@@ -42,7 +41,8 @@ def inverse_dict_lookup(dict: Dict[str, Any], value: Any):
 
 @dataclass(unsafe_hash=True)
 class StringLiteral:
-    """ A string literal found in a parsed DaCe program. """
+    """A string literal found in a parsed DaCe program."""
+
     value: Union[str, bytes]
 
     def __str__(self) -> str:
@@ -100,10 +100,9 @@ class SDFGConvertible(object):
         """
         raise NotImplementedError
 
-    def closure_resolver(self,
-                         constant_args: Dict[str, Any],
-                         given_args: Set[str],
-                         parent_closure: Optional['SDFGClosure'] = None) -> 'SDFGClosure':
+    def closure_resolver(
+        self, constant_args: Dict[str, Any], given_args: Set[str], parent_closure: Optional['SDFGClosure'] = None
+    ) -> 'SDFGClosure':
         """
         Returns an SDFGClosure object representing the closure of the
         object to be converted to an SDFG.
@@ -182,7 +181,6 @@ class SDFGClosure:
 
         for _, child in self.nested_closures:
             for arrname, (_, desc, evaluator, _) in sorted(child.closure_arrays.items()):
-
                 # Check if the same array is already passed as part of a
                 # nested closure
                 arr = evaluator()

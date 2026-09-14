@@ -8,8 +8,9 @@ import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
-                                           for s in ('N', 'H', 'W', 'C1', 'C2', 'S0', 'S1', 'S2', 'S3', 'S4', 'S5'))
+N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (
+    dc.symbol(s, dtype=dc.int64) for s in ('N', 'H', 'W', 'C1', 'C2', 'S0', 'S1', 'S2', 'S3', 'S4', 'S5')
+)
 
 
 @dc.program
@@ -33,7 +34,7 @@ def conv2d(input: dc.float32[S0, S1, S2, S3], weights: dc.float32[S4, S4, S3, S5
     for i in range(S1 - S4 + 1):
         for j in range(S2 - S4 + 1):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + S4, j:j + S4, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + S4, j : j + S4, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -57,8 +58,12 @@ def batchnorm2d(x: dc.float32[S0, S1, S2, S3]):
 # Bottleneck residual block (after initial convolution, without downsampling)
 # in the ResNet-50 CNN (inference)
 @dc.program
-def resnet_basicblock(input: dc.float32[N, H, W, C1], conv1: dc.float32[1, 1, C1, C2], conv2: dc.float32[3, 3, C2, C2],
-                      conv3: dc.float32[1, 1, C2, C1]):
+def resnet_basicblock(
+    input: dc.float32[N, H, W, C1],
+    conv1: dc.float32[1, 1, C1, C2],
+    conv2: dc.float32[3, 3, C2, C2],
+    conv3: dc.float32[1, 1, C2, C1],
+):
     # Pad output of first convolution for second convolution
     # padded = np.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2,
     #                    conv1.shape[3]))
@@ -79,8 +84,13 @@ def resnet_basicblock(input: dc.float32[N, H, W, C1], conv1: dc.float32[1, 1, C1
 # Bottleneck residual block (after initial convolution, without downsampling)
 # in the ResNet-50 CNN (inference)
 @dc.program
-def resnet_basicblock_gpu(out: dc.float32[N, H, W, C1], input: dc.float32[N, H, W, C1], conv1: dc.float32[1, 1, C1, C2],
-                          conv2: dc.float32[3, 3, C2, C2], conv3: dc.float32[1, 1, C2, C1]):
+def resnet_basicblock_gpu(
+    out: dc.float32[N, H, W, C1],
+    input: dc.float32[N, H, W, C1],
+    conv1: dc.float32[1, 1, C1, C2],
+    conv2: dc.float32[3, 3, C2, C2],
+    conv3: dc.float32[1, 1, C2, C1],
+):
     # Pad output of first convolution for second convolution
     # padded = np.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2,
     #                    conv1.shape[3]))
@@ -88,7 +98,7 @@ def resnet_basicblock_gpu(out: dc.float32[N, H, W, C1], input: dc.float32[N, H, 
     padded[:] = 0
 
     # padded[:, 1:-1, 1:-1, :] = conv2d(input, conv1)
-    padded[:, 1:H + 1, 1:W + 1, :] = conv2d(input, conv1)
+    padded[:, 1 : H + 1, 1 : W + 1, :] = conv2d(input, conv1)
     x = batchnorm2d(padded)
     x1 = relu(x)
 
@@ -102,6 +112,7 @@ def resnet_basicblock_gpu(out: dc.float32[N, H, W, C1], input: dc.float32[N, H, 
 
 def initialize(N, W, H, C1, C2):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
     # Input
@@ -133,7 +144,7 @@ def conv2d_np(input, weights):
     for i in range(H_out):
         for j in range(W_out):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -257,12 +268,16 @@ def run_resnet_autodiff():
 
     # Initialize gradient computation data
     gradient_input = np.zeros_like(input, dtype=np.float32)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(input: dc.float32[N, H, W, C1], conv1: dc.float32[1, 1, C1, C2],
-                        conv2: dc.float32[3, 3, C2, C2], conv3: dc.float32[1, 1, C2, C1]):
+    def autodiff_kernel(
+        input: dc.float32[N, H, W, C1],
+        conv1: dc.float32[1, 1, C1, C2],
+        conv2: dc.float32[3, 3, C2, C2],
+        conv3: dc.float32[1, 1, C2, C1],
+    ):
         # Pad output of first convolution for second convolution
         x = resnet_basicblock(input, conv1, conv2, conv3)
         return np.sum(x)
@@ -271,17 +286,19 @@ def run_resnet_autodiff():
     sdfg = autodiff_kernel.to_sdfg(simplify=True)
     add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"])
 
-    sdfg(input,
-         conv1,
-         conv2,
-         conv3,
-         N=N,
-         W=W,
-         H=H,
-         C1=C1,
-         C2=C2,
-         gradient_input=gradient_input,
-         gradient___return=gradient___return)
+    sdfg(
+        input,
+        conv1,
+        conv2,
+        conv3,
+        N=N,
+        W=W,
+        H=H,
+        C1=C1,
+        C2=C2,
+        gradient_input=gradient_input,
+        gradient___return=gradient___return,
+    )
 
     # Numerically validate vs JAX
     jax_kernel = lambda input, conv1, conv2, conv3: resnet_jax_kernel(jnp, lax, input, conv1, conv2, conv3)
@@ -310,7 +327,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

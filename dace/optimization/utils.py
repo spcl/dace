@@ -80,6 +80,7 @@ def get_world_size():
 import traceback
 
 import multiprocessing as mp
+
 if __name__ == '__main__':
     mp.set_start_method("spawn")
 
@@ -151,7 +152,6 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queu
 
 
 class MeasureProcess(mp.Process):
-
     def __init__(self, *args, **kwargs):
         mp.Process.__init__(self, *args, **kwargs)
         self._pconn, self._cconn = mp.Pipe()

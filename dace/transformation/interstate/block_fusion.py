@@ -7,10 +7,10 @@ from dace.transformation import transformation
 
 @transformation.explicit_cf_compatible
 class BlockFusion(transformation.MultiStateTransformation):
-    """ Implements the block-fusion transformation.
+    """Implements the block-fusion transformation.
 
-        Block-fusion takes two control flow blocks that are connected through a single edge, where either one or both
-        blocks are 'no-op' control flow blocks, and fuses them into one.
+    Block-fusion takes two control flow blocks that are connected through a single edge, where either one or both
+    blocks are 'no-op' control flow blocks, and fuses them into one.
     """
 
     first_block = transformation.PatternNode(ControlFlowBlock)

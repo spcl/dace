@@ -4,13 +4,16 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
-from dace.libraries.mpi.nodes.node import (MPINode, expanded_input_connectors, input_descriptor_name,
-                                           validate_integer_descriptor)
+from dace.libraries.mpi.nodes.node import (
+    MPINode,
+    expanded_input_connectors,
+    input_descriptor_name,
+    validate_integer_descriptor,
+)
 
 
 @dace.library.expansion
 class ExpandIrecvMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -38,16 +41,18 @@ class ExpandIrecvMPI(ExpandTransformation):
                             """
             mpi_dtype_str = "newtype"
             count_str = "1"
-        buffer_offset = 0  #this is here because the frontend already changes the pointer
+        buffer_offset = 0  # this is here because the frontend already changes the pointer
         code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, _request);"
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
 
         conn = tasklet.out_connectors
         conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
@@ -57,7 +62,6 @@ class ExpandIrecvMPI(ExpandTransformation):
 
 @dace.library.node
 class Irecv(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandIrecvMPI,

@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Sample showing the Consume scope by unrolling a Fibonacci sequence recursive computation. """
+"""Sample showing the Consume scope by unrolling a Fibonacci sequence recursive computation."""
+
 import argparse
 import dace
 import numpy as np
@@ -37,7 +38,7 @@ def fibonacci(iv: dace.int32[1], res: dace.float32[1]):
 
 
 def fibonacci_py(v):
-    """ Computes the Fibonacci sequence at point v. """
+    """Computes the Fibonacci sequence at point v."""
     if v == 0:
         return 0
     if v == 1:
@@ -59,6 +60,6 @@ if __name__ == '__main__':
 
     fibonacci(input, output)
 
-    diff = (regression - output[0])**2
+    diff = (regression - output[0]) ** 2
     print('Difference:', diff)
     exit(0 if diff <= 1e-5 else 1)

@@ -99,8 +99,9 @@ class AST_translator:
             a.update(sdfg.arrays)
         return a
 
-    def get_memlet_range(self, sdfg: SDFG, variables: List[ast_internal_classes.FNode], var_name: str,
-                         var_name_tasklet: str) -> str:
+    def get_memlet_range(
+        self, sdfg: SDFG, variables: List[ast_internal_classes.FNode], var_name: str, var_name_tasklet: str
+    ) -> str:
         """
         This function returns the memlet range for the given variable.
         :param sdfg: The sdfg in which the variable is used
@@ -114,7 +115,7 @@ class AST_translator:
         if len(var.shape) == 0:
             return ""
 
-        if (len(var.shape) == 1 and var.shape[0] == 1):
+        if len(var.shape) == 1 and var.shape[0] == 1:
             return "0"
 
         for o_v in variables:
@@ -211,15 +212,17 @@ class AST_translator:
                         self.contexts[sdfg.name] = ast_utils.Context(name=sdfg.name)
                     if i.name.name not in self.contexts[sdfg.name].containers:
                         self.contexts[sdfg.name].containers.append(i.name.name)
-                    sdfg.add_array(self.name_mapping[sdfg][i.name.name],
-                                   shape=sizes,
-                                   dtype=datatype,
-                                   offset=offset,
-                                   strides=strides,
-                                   transient=transient)
+                    sdfg.add_array(
+                        self.name_mapping[sdfg][i.name.name],
+                        shape=sizes,
+                        dtype=datatype,
+                        offset=offset,
+                        strides=strides,
+                        transient=transient,
+                    )
 
     def write2sdfg(self, node: ast_internal_classes.Write_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
-        #TODO implement
+        # TODO implement
         raise NotImplementedError("Fortran write statements are not implemented yet")
 
     def ifstmt2sdfg(self, node: ast_internal_classes.If_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
@@ -244,9 +247,9 @@ class AST_translator:
         cfg.add_edge(guard_substate, body_ifstart_state, InterstateEdge(condition))
 
         if self.last_sdfg_states[cfg] not in [
-                self.last_loop_breaks.get(cfg),
-                self.last_loop_continues.get(cfg),
-                self.last_returns.get(cfg)
+            self.last_loop_breaks.get(cfg),
+            self.last_loop_continues.get(cfg),
+            self.last_returns.get(cfg),
         ]:
             body_ifend_state = ast_utils.add_simple_state_to_sdfg(self, cfg, f"BodyIfEnd{name}")
             cfg.add_edge(body_ifend_state, final_substate, InterstateEdge())
@@ -327,8 +330,9 @@ class AST_translator:
             if isinstance(node.iter, ast_internal_classes.BinOp_Node):
                 increment = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(node.iter.rval)
 
-            loop_region = LoopRegion(name, condition, iter_name, f"{iter_name} = {entry[iter_name]}",
-                                     f"{iter_name} = {increment}")
+            loop_region = LoopRegion(
+                name, condition, iter_name, f"{iter_name} = {entry[iter_name]}", f"{iter_name} = {increment}"
+            )
             is_start = self.last_sdfg_states.get(cfg) is None
             cfg.add_node(loop_region, is_start_block=is_start)
             if not is_start:
@@ -351,7 +355,8 @@ class AST_translator:
             self.contexts[sdfg.name] = ast_utils.Context(name=sdfg.name)
         if self.contexts[sdfg.name].constants.get(node.name) is None:
             if isinstance(node.init, ast_internal_classes.Int_Literal_Node) or isinstance(
-                    node.init, ast_internal_classes.Real_Literal_Node):
+                node.init, ast_internal_classes.Real_Literal_Node
+            ):
                 self.contexts[sdfg.name].constants[node.name] = node.init.value
             if isinstance(node.init, ast_internal_classes.Name_Node):
                 self.contexts[sdfg.name].constants[node.name] = self.contexts[sdfg.name].constants[node.init.name]
@@ -375,8 +380,9 @@ class AST_translator:
             "Symbol_Decl_Node not implemented. This should be done via a transformation that itemizes the constant array."
         )
 
-    def subroutine2sdfg(self, node: ast_internal_classes.Subroutine_Subprogram_Node, sdfg: SDFG,
-                        cfg: ControlFlowRegion):
+    def subroutine2sdfg(
+        self, node: ast_internal_classes.Subroutine_Subprogram_Node, sdfg: SDFG, cfg: ControlFlowRegion
+    ):
         """
         This function is responsible for translating Fortran subroutine declarations into a SDFG.
         :param node: The node to be translated
@@ -406,9 +412,13 @@ class AST_translator:
             variables_in_call = self.last_call_expression[sdfg]
 
         # Sanity check to make sure the parameter numbers match
-        if not ((len(variables_in_call) == len(parameters)) or
-                (len(variables_in_call) == len(parameters) + 1
-                 and not isinstance(node.result_type, ast_internal_classes.Void))):
+        if not (
+            (len(variables_in_call) == len(parameters))
+            or (
+                len(variables_in_call) == len(parameters) + 1
+                and not isinstance(node.result_type, ast_internal_classes.Void)
+            )
+        ):
             for i in variables_in_call:
                 print("VAR CALL: ", i.name)
             for j in parameters:
@@ -446,26 +456,32 @@ class AST_translator:
             par2.append(parameters[arg_i])
             var2.append(variable)
 
-        #This handles the case where the function is called with literals
+        # This handles the case where the function is called with literals
         variables_in_call = var2
         parameters = par2
         assigns = []
         for lit, litval in zip(literals, literal_values):
             local_name = lit
             assigns.append(
-                ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=local_name.name),
-                                                rval=litval,
-                                                op="=",
-                                                line_number=node.line_number))
+                ast_internal_classes.BinOp_Node(
+                    lval=ast_internal_classes.Name_Node(name=local_name.name),
+                    rval=litval,
+                    op="=",
+                    line_number=node.line_number,
+                )
+            )
 
         # This handles the case where the function is called with symbols
         for parameter, symbol in symbol_arguments:
             if parameter.name != symbol.name:
                 assigns.append(
-                    ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=parameter.name),
-                                                    rval=ast_internal_classes.Name_Node(name=symbol.name),
-                                                    op="=",
-                                                    line_number=node.line_number))
+                    ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name=parameter.name),
+                        rval=ast_internal_classes.Name_Node(name=symbol.name),
+                        op="=",
+                        line_number=node.line_number,
+                    )
+                )
 
         # This handles the case where the function is called with variables starting with the case that the variable is local to the calling SDFG
         for variable_in_call in variables_in_call:
@@ -514,7 +530,7 @@ class AST_translator:
                     if isinstance(variable_in_call, ast_internal_classes.Name_Node):
                         shape = list(array.shape)
                     # Functionally, this identifies the case where the array is in fact a scalar
-                    if shape == () or shape == (1, ) or shape == [] or shape == [1]:
+                    if shape == () or shape == (1,) or shape == [] or shape == [1]:
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
                     else:
                         # This is the case where the array is not a scalar and we need to create a view
@@ -522,17 +538,20 @@ class AST_translator:
                             offsets_zero = []
                             for index in offsets:
                                 offsets_zero.append(0)
-                            viewname, view = sdfg.add_view(array_name + "_view_" + str(self.views),
-                                                           shape,
-                                                           array.dtype,
-                                                           storage=array.storage,
-                                                           strides=strides,
-                                                           offset=offsets_zero)
+                            viewname, view = sdfg.add_view(
+                                array_name + "_view_" + str(self.views),
+                                shape,
+                                array.dtype,
+                                storage=array.storage,
+                                strides=strides,
+                                offset=offsets_zero,
+                            )
                             from dace import subsets
 
                             all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
-                            subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
-                                                    for i, s in zip(all_indices, array.shape)])
+                            subset = subsets.Range(
+                                [(i, i, 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, array.shape)]
+                            )
                             smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
                             memlet = Memlet(f'{array_name}[{subset}]->[{smallsubset}]')
@@ -551,12 +570,14 @@ class AST_translator:
                             self.views = self.views + 1
                             views.append([array_name, wv, rv, variables_in_call.index(variable_in_call)])
 
-                        new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
-                                           shape,
-                                           array.dtype,
-                                           array.storage,
-                                           strides=strides,
-                                           offset=offsets)
+                        new_sdfg.add_array(
+                            self.name_mapping[new_sdfg][local_name.name],
+                            shape,
+                            array.dtype,
+                            array.storage,
+                            strides=strides,
+                            offset=offsets,
+                        )
             if not matched:
                 # This handles the case where the function is called with global variables
                 for array_name, array in all_arrays.items():
@@ -575,16 +596,19 @@ class AST_translator:
 
                         shape = array.shape[indices:]
 
-                        if shape == () or shape == (1, ):
-                            new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype,
-                                                array.storage)
+                        if shape == () or shape == (1,):
+                            new_sdfg.add_scalar(
+                                self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage
+                            )
                         else:
-                            new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
-                                               shape,
-                                               array.dtype,
-                                               array.storage,
-                                               strides=array.strides,
-                                               offset=array.offset)
+                            new_sdfg.add_array(
+                                self.name_mapping[new_sdfg][local_name.name],
+                                shape,
+                                array.dtype,
+                                array.storage,
+                                strides=array.strides,
+                                offset=array.offset,
+                            )
 
         # Preparing symbol dictionary for nested sdfg
         sym_dict = {}
@@ -627,13 +651,15 @@ class AST_translator:
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
                     elif array_in_global.type == "Array":
-                        new_sdfg.add_array(self.name_mapping[new_sdfg][i],
-                                           array_in_global.shape,
-                                           array_in_global.dtype,
-                                           array_in_global.storage,
-                                           transient=False,
-                                           strides=array_in_global.strides,
-                                           offset=array_in_global.offset)
+                        new_sdfg.add_array(
+                            self.name_mapping[new_sdfg][i],
+                            array_in_global.shape,
+                            array_in_global.dtype,
+                            array_in_global.storage,
+                            transient=False,
+                            strides=array_in_global.strides,
+                            offset=array_in_global.offset,
+                        )
                 elif self.name_mapping[self.globalsdfg].get(i) is not None:
                     self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     globalmemlets.append(i)
@@ -647,13 +673,15 @@ class AST_translator:
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
                     elif array_in_global.type == "Array":
-                        new_sdfg.add_array(self.name_mapping[new_sdfg][i],
-                                           array_in_global.shape,
-                                           array_in_global.dtype,
-                                           array_in_global.storage,
-                                           transient=False,
-                                           strides=array_in_global.strides,
-                                           offset=array_in_global.offset)
+                        new_sdfg.add_array(
+                            self.name_mapping[new_sdfg][i],
+                            array_in_global.shape,
+                            array_in_global.dtype,
+                            array_in_global.storage,
+                            transient=False,
+                            strides=array_in_global.strides,
+                            offset=array_in_global.offset,
+                        )
         # This handles the case where the function is called with wrriten but not read variables found in a module
         for i in not_found_write_names:
             if i in not_found_read_names:
@@ -672,13 +700,15 @@ class AST_translator:
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
                     elif array_in_global.type == "Array":
-                        new_sdfg.add_array(self.name_mapping[new_sdfg][i],
-                                           array_in_global.shape,
-                                           array_in_global.dtype,
-                                           array_in_global.storage,
-                                           transient=False,
-                                           strides=array_in_global.strides,
-                                           offset=array_in_global.offset)
+                        new_sdfg.add_array(
+                            self.name_mapping[new_sdfg][i],
+                            array_in_global.shape,
+                            array_in_global.dtype,
+                            array_in_global.storage,
+                            transient=False,
+                            strides=array_in_global.strides,
+                            offset=array_in_global.offset,
+                        )
                 elif self.name_mapping[self.globalsdfg].get(i) is not None:
                     self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     globalmemlets.append(i)
@@ -692,13 +722,15 @@ class AST_translator:
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
                     elif array_in_global.type == "Array":
-                        new_sdfg.add_array(self.name_mapping[new_sdfg][i],
-                                           array_in_global.shape,
-                                           array_in_global.dtype,
-                                           array_in_global.storage,
-                                           transient=False,
-                                           strides=array_in_global.strides,
-                                           offset=array_in_global.offset)
+                        new_sdfg.add_array(
+                            self.name_mapping[new_sdfg][i],
+                            array_in_global.shape,
+                            array_in_global.dtype,
+                            array_in_global.storage,
+                            transient=False,
+                            strides=array_in_global.strides,
+                            offset=array_in_global.offset,
+                        )
 
         internal_sdfg = substate.add_nested_sdfg(new_sdfg, ins_in_new_sdfg, outs_in_new_sdfg, symbol_mapping=sym_dict)
 
@@ -706,14 +738,15 @@ class AST_translator:
         for i in self.libstates:
             memlet = "0"
             if i in write_names:
-                ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                           self.name_mapping[new_sdfg][i], memlet)
+                ast_utils.add_memlet_write(
+                    substate, self.name_mapping[sdfg][i], internal_sdfg, self.name_mapping[new_sdfg][i], memlet
+                )
             if i in read_names:
-                ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                          self.name_mapping[new_sdfg][i], memlet)
+                ast_utils.add_memlet_read(
+                    substate, self.name_mapping[sdfg][i], internal_sdfg, self.name_mapping[new_sdfg][i], memlet
+                )
 
         for i in variables_in_call:
-
             local_name = parameters[variables_in_call.index(i)]
             if self.name_mapping.get(sdfg).get(ast_utils.get_name(i)) is not None:
                 var = sdfg.arrays.get(self.name_mapping[sdfg][ast_utils.get_name(i)])
@@ -730,7 +763,7 @@ class AST_translator:
 
             if not isinstance(var, dat.Data) or len(var.shape) == 0:
                 memlet = ""
-            elif (len(var.shape) == 1 and var.shape[0] == 1):
+            elif len(var.shape) == 1 and var.shape[0] == 1:
                 memlet = "0"
             else:
                 memlet = ast_utils.generate_memlet(i, sdfg, self)
@@ -742,56 +775,74 @@ class AST_translator:
 
                     if local_name.name in write_names:
                         memlet = subsets.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[2].label].shape])
-                        substate.add_memlet_path(internal_sdfg,
-                                                 elem[2],
-                                                 src_conn=self.name_mapping[new_sdfg][local_name.name],
-                                                 memlet=Memlet(expr=elem[2].label, subset=memlet))
+                        substate.add_memlet_path(
+                            internal_sdfg,
+                            elem[2],
+                            src_conn=self.name_mapping[new_sdfg][local_name.name],
+                            memlet=Memlet(expr=elem[2].label, subset=memlet),
+                        )
                     if local_name.name in read_names:
                         memlet = subsets.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
-                        substate.add_memlet_path(elem[1],
-                                                 internal_sdfg,
-                                                 dst_conn=self.name_mapping[new_sdfg][local_name.name],
-                                                 memlet=Memlet(expr=elem[1].label, subset=memlet))
+                        substate.add_memlet_path(
+                            elem[1],
+                            internal_sdfg,
+                            dst_conn=self.name_mapping[new_sdfg][local_name.name],
+                            memlet=Memlet(expr=elem[1].label, subset=memlet),
+                        )
 
             if not found:
                 if local_name.name in write_names:
-                    ast_utils.add_memlet_write(substate, mapped_name, internal_sdfg,
-                                               self.name_mapping[new_sdfg][local_name.name], dpcp(memlet))
+                    ast_utils.add_memlet_write(
+                        substate, mapped_name, internal_sdfg, self.name_mapping[new_sdfg][local_name.name], dpcp(memlet)
+                    )
                 if local_name.name in read_names:
-                    ast_utils.add_memlet_read(substate, mapped_name, internal_sdfg,
-                                              self.name_mapping[new_sdfg][local_name.name], dpcp(memlet))
+                    ast_utils.add_memlet_read(
+                        substate, mapped_name, internal_sdfg, self.name_mapping[new_sdfg][local_name.name], dpcp(memlet)
+                    )
 
         for i in addedmemlets:
-
             memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
             if local_name.name in write_names:
-                ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                           self.name_mapping[new_sdfg][i], memlet)
+                ast_utils.add_memlet_write(
+                    substate, self.name_mapping[sdfg][i], internal_sdfg, self.name_mapping[new_sdfg][i], memlet
+                )
             if local_name.name in read_names:
-                ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                          self.name_mapping[new_sdfg][i], memlet)
+                ast_utils.add_memlet_read(
+                    substate, self.name_mapping[sdfg][i], internal_sdfg, self.name_mapping[new_sdfg][i], memlet
+                )
         for i in globalmemlets:
-
             memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
             if local_name.name in write_names:
-                ast_utils.add_memlet_write(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                           self.name_mapping[new_sdfg][i], memlet)
+                ast_utils.add_memlet_write(
+                    substate,
+                    self.name_mapping[self.globalsdfg][i],
+                    internal_sdfg,
+                    self.name_mapping[new_sdfg][i],
+                    memlet,
+                )
             if local_name.name in read_names:
-                ast_utils.add_memlet_read(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                          self.name_mapping[new_sdfg][i], memlet)
+                ast_utils.add_memlet_read(
+                    substate,
+                    self.name_mapping[self.globalsdfg][i],
+                    internal_sdfg,
+                    self.name_mapping[new_sdfg][i],
+                    memlet,
+                )
 
-        #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
+        # Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
 
         if node.execution_part is not None:
             for j in node.specification_part.uses:
                 for k in j.list:
                     if self.contexts.get(new_sdfg.name) is None:
                         self.contexts[new_sdfg.name] = ast_utils.Context(name=new_sdfg.name)
-                    if self.contexts[new_sdfg.name].constants.get(
-                            ast_utils.get_name(k)) is None and self.contexts[self.globalsdfg.name].constants.get(
-                                ast_utils.get_name(k)) is not None:
+                    if (
+                        self.contexts[new_sdfg.name].constants.get(ast_utils.get_name(k)) is None
+                        and self.contexts[self.globalsdfg.name].constants.get(ast_utils.get_name(k)) is not None
+                    ):
                         self.contexts[new_sdfg.name].constants[ast_utils.get_name(k)] = self.contexts[
-                            self.globalsdfg.name].constants[ast_utils.get_name(k)]
+                            self.globalsdfg.name
+                        ].constants[ast_utils.get_name(k)]
 
                     pass
             for j in node.specification_part.specifications:
@@ -814,8 +865,13 @@ class AST_translator:
         if len(calls.nodes) == 1:
             augmented_call = calls.nodes[0]
             from dace.frontend.fortran.intrinsics import FortranIntrinsics
+
             if augmented_call.name.name not in [
-                    "pow", "atan2", "tanh", "__dace_epsilon", *FortranIntrinsics.retained_function_names()
+                "pow",
+                "atan2",
+                "tanh",
+                "__dace_epsilon",
+                *FortranIntrinsics.retained_function_names(),
             ]:
                 augmented_call.args.append(node.lval)
                 augmented_call.hasret = True
@@ -853,24 +909,31 @@ class AST_translator:
                 input_names_tasklet.append(i.name + "_" + str(count) + "_in")
 
         substate = ast_utils.add_simple_state_to_sdfg(
-            self, cfg, "_state_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]))
+            self, cfg, "_state_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1])
+        )
 
         output_names_changed = [o_t + "_out" for o_t in output_names]
 
-        tasklet = ast_utils.add_tasklet(substate, "_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]),
-                                        input_names_tasklet, output_names_changed, "text", node.line_number,
-                                        self.file_name)
+        tasklet = ast_utils.add_tasklet(
+            substate,
+            "_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]),
+            input_names_tasklet,
+            output_names_changed,
+            "text",
+            node.line_number,
+            self.file_name,
+        )
 
         for i, j in zip(input_names, input_names_tasklet):
             memlet_range = self.get_memlet_range(sdfg, input_vars, i, j)
             ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
 
         for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
-
             memlet_range = self.get_memlet_range(sdfg, output_vars, i, j)
             ast_utils.add_memlet_write(substate, i, tasklet, k, memlet_range)
-        tw = ast_utils.TaskletWriter(output_names, output_names_changed, sdfg, self.name_mapping, input_names,
-                                     input_names_tasklet)
+        tw = ast_utils.TaskletWriter(
+            output_names, output_names_changed, sdfg, self.name_mapping, input_names, input_names_tasklet
+        )
 
         text = tw.write_code(node)
         tasklet.code = CodeBlock(text, lang.Python)
@@ -922,7 +985,8 @@ class AST_translator:
             special_list_out = []
             if libstate is not None:
                 special_list_in[self.name_mapping[sdfg][libstate] + "_task"] = dtypes.pointer(
-                    sdfg.arrays.get(self.name_mapping[sdfg][libstate]).dtype)
+                    sdfg.arrays.get(self.name_mapping[sdfg][libstate]).dtype
+                )
                 special_list_out.append(self.name_mapping[sdfg][libstate] + "_task_out")
             used_vars = [
                 node for node in ast_transforms.mywalk(node) if isinstance(node, ast_internal_classes.Name_Node)
@@ -935,7 +999,7 @@ class AST_translator:
                         scalar = False
                         if len(elem.shape) == 0:
                             scalar = True
-                        elif (len(elem.shape) == 1 and elem.shape[0] == 1):
+                        elif len(elem.shape) == 1 and elem.shape[0] == 1:
                             scalar = True
                         if not scalar and not node.name.name in ["fprintf", "printf"]:
                             output_names.append(j)
@@ -948,40 +1012,57 @@ class AST_translator:
             for o, o_t in zip(output_names, output_names_tasklet):
                 output_names_changed.append(o_t + "_out")
 
-            tw = ast_utils.TaskletWriter(output_names_tasklet.copy(), output_names_changed.copy(), sdfg,
-                                         self.name_mapping)
+            tw = ast_utils.TaskletWriter(
+                output_names_tasklet.copy(), output_names_changed.copy(), sdfg, self.name_mapping
+            )
             if not isinstance(rettype, ast_internal_classes.Void) and hasret:
                 special_list_in[retval.name] = pointer(self.get_dace_type(rettype))
                 special_list_out.append(retval.name + "_out")
                 text = tw.write_code(
-                    ast_internal_classes.BinOp_Node(lval=retval, op="=", rval=node, line_number=node.line_number))
+                    ast_internal_classes.BinOp_Node(lval=retval, op="=", rval=node, line_number=node.line_number)
+                )
 
             else:
                 text = tw.write_code(node)
             substate = ast_utils.add_simple_state_to_sdfg(self, cfg, "_state" + str(node.line_number[0]))
 
-            tasklet = ast_utils.add_tasklet(substate, str(node.line_number[0]), {
-                **input_names_tasklet,
-                **special_list_in
-            }, output_names_changed + special_list_out, "text", node.line_number, self.file_name)
+            tasklet = ast_utils.add_tasklet(
+                substate,
+                str(node.line_number[0]),
+                {**input_names_tasklet, **special_list_in},
+                output_names_changed + special_list_out,
+                "text",
+                node.line_number,
+                self.file_name,
+            )
             if libstate is not None:
-                ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][libstate], tasklet,
-                                          self.name_mapping[sdfg][libstate] + "_task", "0")
+                ast_utils.add_memlet_read(
+                    substate,
+                    self.name_mapping[sdfg][libstate],
+                    tasklet,
+                    self.name_mapping[sdfg][libstate] + "_task",
+                    "0",
+                )
 
-                ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][libstate], tasklet,
-                                           self.name_mapping[sdfg][libstate] + "_task_out", "0")
+                ast_utils.add_memlet_write(
+                    substate,
+                    self.name_mapping[sdfg][libstate],
+                    tasklet,
+                    self.name_mapping[sdfg][libstate] + "_task_out",
+                    "0",
+                )
             if not isinstance(rettype, ast_internal_classes.Void) and hasret:
                 ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][retval.name], tasklet, retval.name, "0")
 
-                ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][retval.name], tasklet,
-                                           retval.name + "_out", "0")
+                ast_utils.add_memlet_write(
+                    substate, self.name_mapping[sdfg][retval.name], tasklet, retval.name + "_out", "0"
+                )
 
             for i, j in zip(input_names, input_names_tasklet):
                 memlet_range = self.get_memlet_range(sdfg, used_vars, i, j)
                 ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
 
             for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
-
                 memlet_range = self.get_memlet_range(sdfg, used_vars, i, j)
                 ast_utils.add_memlet_write(substate, i, tasklet, k, memlet_range)
 
@@ -1004,7 +1085,7 @@ class AST_translator:
         :param sdfg: The sdfg to attach the access node to
 
         """
-        #if the sdfg is the toplevel-sdfg, the variable is a global variable
+        # if the sdfg is the toplevel-sdfg, the variable is a global variable
         transient = True
         # find the type
         datatype = self.get_dace_type(node.type)
@@ -1038,12 +1119,14 @@ class AST_translator:
             sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
         else:
             strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
-            sdfg.add_array(self.name_mapping[sdfg][node.name],
-                           shape=sizes,
-                           dtype=datatype,
-                           offset=offset,
-                           strides=strides,
-                           transient=transient)
+            sdfg.add_array(
+                self.name_mapping[sdfg][node.name],
+                shape=sizes,
+                dtype=datatype,
+                offset=offset,
+                strides=strides,
+                transient=transient,
+            )
 
         self.all_array_names.append(self.name_mapping[sdfg][node.name])
         if self.contexts.get(sdfg.name) is None:
@@ -1057,10 +1140,9 @@ class AST_translator:
         cfg.add_edge(self.last_sdfg_states[cfg], self.last_loop_continues.get(cfg), InterstateEdge())
 
 
-def create_ast_from_string(source_string: str,
-                           sdfg_name: str,
-                           transform: bool = False,
-                           normalize_offsets: bool = False):
+def create_ast_from_string(
+    source_string: str, sdfg_name: str, transform: bool = False, normalize_offsets: bool = False
+):
     """
     Creates an AST from a Fortran file in a string
     :param source_string: The fortran file as a string
@@ -1096,10 +1178,9 @@ def create_ast_from_string(source_string: str,
     return (program, own_ast)
 
 
-def create_sdfg_from_string(source_string: str,
-                            sdfg_name: str,
-                            normalize_offsets: bool = False,
-                            use_explicit_cf: bool = False):
+def create_sdfg_from_string(
+    source_string: str, sdfg_name: str, normalize_offsets: bool = False, use_explicit_cf: bool = False
+):
     """
     Creates an SDFG from a fortran file in a string
     :param source_string: The fortran file as a string

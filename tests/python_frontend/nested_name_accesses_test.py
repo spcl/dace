@@ -280,7 +280,7 @@ def test_issue_1139():
     def tester(xmin: dc.float64, xmax: dc.float64):
         a = np.ndarray((XN, YN), dtype=np.int64)
         b = np.ndarray((XN, YN), dtype=np.int64)
-        c = np.ndarray((XN, ), dtype=np.float64)
+        c = np.ndarray((XN,), dtype=np.float64)
         nester(xmin, xmax, c)
         return c
 
@@ -300,9 +300,7 @@ def test_issue_2100():
     @dc.program
     def global_matmul(C: dc.float32[N, N] @ dc.StorageType.GPU_Global):
         for i, j in dc.map[0:N:N, 0:N:N] @ dc.ScheduleType.GPU_Device:
-
             for l in dc.map[0:64] @ dc.ScheduleType.GPU_ThreadBlock:
-
                 c = dc.ndarray(
                     [N, N],
                     dtype=dc.float32,
@@ -313,7 +311,7 @@ def test_issue_2100():
                 for k in dc.map[0:1] @ dc.ScheduleType.Sequential:
                     c.fill(0.0)
 
-                C[i:i + N, j:j + N] = c[:, :]
+                C[i : i + N, j : j + N] = c[:, :]
 
     sdfg = global_matmul.to_sdfg(simplify=False)
     sdfg.validate()

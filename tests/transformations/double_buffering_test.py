@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" An example and test for the DoubleBuffering transformation. """
+"""An example and test for the DoubleBuffering transformation."""
+
 import dace
 import numpy as np
 
@@ -52,7 +53,7 @@ def test_double_buffering():
     diff2 = np.linalg.norm(expected_C - C) / (256 * 256)
     print('Difference (after):', diff2)
 
-    assert (diff <= 1e-5 and diff2 <= 1e-5)
+    assert diff <= 1e-5 and diff2 <= 1e-5
 
 
 if __name__ == '__main__':

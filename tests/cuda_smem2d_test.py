@@ -76,12 +76,12 @@ def test_gpu_2localstorage():
 
     sdfg = addtwoandmult.to_sdfg()
     sdfg.name = "cuda_2_smem2d_gpu_localstorage"
-    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage, InLocalStorage],
-                                      options=[{}, {
-                                          'array': 'gpu_A'
-                                      }, {
-                                          'array': 'gpu_B'
-                                      }]) == 3
+    assert (
+        sdfg.apply_transformations(
+            [GPUTransformMap, InLocalStorage, InLocalStorage], options=[{}, {'array': 'gpu_A'}, {'array': 'gpu_B'}]
+        )
+        == 3
+    )
 
     A = np.random.rand(128, 64)
     B = np.random.rand(128, 64)
@@ -100,8 +100,8 @@ def test_gpu_2shared_for():
             for _ in range(1):
                 local_a = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
                 local_b = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
-                local_a << A[i:i + 8, j:j + 32]
-                local_b << B[i:i + 8, j:j + 32]
+                local_a << A[i : i + 8, j : j + 32]
+                local_b << B[i : i + 8, j : j + 32]
                 for bi, bj in dace.map[0:8, 0:32]:
                     with dace.tasklet:
                         a << local_a[bi, bj]
@@ -130,7 +130,7 @@ def test_gpu_2shared_for():
 
 
 def _find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
-    """ Finds the first map entry node by the given parameter name. """
+    """Finds the first map entry node by the given parameter name."""
     return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
@@ -144,8 +144,8 @@ def test_gpu_2shared_map():
             for _ in dace.map[0:K]:
                 local_a = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
                 local_b = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
-                local_a << A[i:i + 8, j:j + 32]
-                local_b << B[i:i + 8, j:j + 32]
+                local_a << A[i : i + 8, j : j + 32]
+                local_b << B[i : i + 8, j : j + 32]
                 for bi, bj in dace.map[0:8, 0:32]:
                     with dace.tasklet:
                         a << local_a[bi, bj]

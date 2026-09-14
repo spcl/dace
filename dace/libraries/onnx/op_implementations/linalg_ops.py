@@ -31,7 +31,6 @@ from dace.frontend.common import create_einsum_sdfg
 
 @op_implementation(op="MatMul", name="pure")
 class PureMatMul(ONNXForward):
-
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         input0_dim = len(in_desc_with_name(node, state, sdfg, "A").shape)
@@ -143,7 +142,6 @@ class PureMatMul(ONNXForward):
 
 @op_implementation(op="Einsum", name="pure")
 class PureEinsum(ONNXForward):
-
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         if "..." in node.equation:
@@ -170,12 +168,14 @@ class PureEinsum(ONNXForward):
         assert len(output_edge) == 1, "Einsum node should have exactly one output edge"
         output_edge = output_edge[0]
         beta = 1 if output_edge.data.wcr else 0
-        create_einsum_sdfg(nsdfg,
-                           nstate,
-                           node.equation.replace(" ", ""),
-                           *(e.dst_conn for e in node.iter_inputs_in_onnx_order(state)),
-                           output="Output",
-                           beta=beta)
+        create_einsum_sdfg(
+            nsdfg,
+            nstate,
+            node.equation.replace(" ", ""),
+            *(e.dst_conn for e in node.iter_inputs_in_onnx_order(state)),
+            output="Output",
+            beta=beta,
+        )
         return nsdfg
 
 
@@ -186,7 +186,6 @@ class PureEinsum(ONNXForward):
 
 @op_implementation(op="Gemm", name="pure")
 class PureGemm(ONNXForward):
-
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         return True
@@ -194,6 +193,7 @@ class PureGemm(ONNXForward):
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
+
         A_desc = in_desc_with_name(node, state, sdfg, "A")
         B_desc = in_desc_with_name(node, state, sdfg, "B")
         Y_desc = out_desc_with_name(node, state, sdfg, "Y")
@@ -313,10 +313,7 @@ class PureGemm(ONNXForward):
         if node.alpha != 1:
             nstate.add_mapped_tasklet(
                 node.label + '_alphascale',
-                {
-                    k: f'0:{Ytmp_desc.shape[i]}'
-                    for i, k in enumerate(result)
-                },
+                {k: f'0:{Ytmp_desc.shape[i]}' for i, k in enumerate(result)},
                 dict(a=dace.Memlet(data=mm_result, subset=','.join(result))),
                 f'o = a * dace.{Ytmp_desc.dtype}({node.alpha})',
                 dict(o=dace.Memlet(data=scal_result, subset=','.join(result))),
@@ -329,27 +326,26 @@ class PureGemm(ONNXForward):
             C_desc = in_desc_with_name(node, state, sdfg, "C")
             nsdfg.add_datadesc("C", copy.deepcopy(C_desc))
             nsdfg.arrays["C"].transient = False
-            scal_result_node = next(n for n in nstate.sink_nodes()
-                                    if isinstance(n, dace.nodes.AccessNode) and n.data == scal_result)
+            scal_result_node = next(
+                n for n in nstate.sink_nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == scal_result
+            )
             beta_scale_code = f'o = s + c * dace.{C_desc.dtype}({node.beta})'
             if node.beta == 1:
                 beta_scale_code = f'o = s + c'
 
             # Support broadcasting in C -> Y
-            c_index = result[-len(C_desc.shape):]
+            c_index = result[-len(C_desc.shape) :]
             for c_shp, y_shp in zip(reversed(C_desc.shape), reversed(Y_desc.shape)):
                 if c_shp != y_shp:
-                    raise ValueError('Could not broadcast dimensions from C '
-                                     'to Y in ONNXGemm')
+                    raise ValueError('Could not broadcast dimensions from C to Y in ONNXGemm')
 
             nstate.add_mapped_tasklet(
                 node.label + '_betascale',
-                {
-                    k: f'0:{Y_desc.shape[i]}'
-                    for i, k in enumerate(result)
-                },
-                dict(s=dace.Memlet(data=scal_result, subset=','.join(result)),
-                     c=dace.Memlet(data="C", subset=','.join(c_index))),
+                {k: f'0:{Y_desc.shape[i]}' for i, k in enumerate(result)},
+                dict(
+                    s=dace.Memlet(data=scal_result, subset=','.join(result)),
+                    c=dace.Memlet(data="C", subset=','.join(c_index)),
+                ),
                 beta_scale_code,
                 dict(o=dace.Memlet(data="Y", subset=','.join(result))),
                 external_edges=True,

@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for GPU kernels with scalar outputs. """
+"""Tests for GPU kernels with scalar outputs."""
+
 import numpy as np
 import pytest
 import dace

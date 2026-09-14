@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This file implements the ConnectedEnumerator class """
+"""This file implements the ConnectedEnumerator class"""
 
 from dace.transformation.estimator.enumeration import MapScoringEnumerator
 
@@ -21,12 +21,14 @@ class ConnectedEnumerator(MapScoringEnumerator):
 
     prune = Property(desc="Perform pruning during enumeration", default=True, dtype=bool)
 
-    def __init__(self,
-                 sdfg: SDFG,
-                 graph: SDFGState,
-                 subgraph: SubgraphView = None,
-                 condition_function: Callable = None,
-                 scoring_function=None):
+    def __init__(
+        self,
+        sdfg: SDFG,
+        graph: SDFGState,
+        subgraph: SubgraphView = None,
+        condition_function: Callable = None,
+        scoring_function=None,
+    ):
 
         # initialize base class
         super().__init__(sdfg, graph, subgraph, condition_function, scoring_function)
@@ -52,7 +54,8 @@ class ConnectedEnumerator(MapScoringEnumerator):
             go_next = list()
             if conditional_eval or self.prune == False or len(current) == 1:
                 go_next = list(
-                    set(m for c in current for m in self._adjacency_list[c] if m not in current and m not in forbidden))
+                    set(m for c in current for m in self._adjacency_list[c] if m not in current and m not in forbidden)
+                )
 
                 # for determinism and correctness during pruning
                 go_next.sort(key=lambda me: self._labels[me])

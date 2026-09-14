@@ -15,12 +15,14 @@ nsdfg = dace.SDFG('noncontig_internal')
 nsdfg.add_array('aA', [2, 3, 4], dace.float32)
 nsdfg.add_array('bB', [2, 3, 4], dace.float32)
 s = nsdfg.add_state()
-s.add_mapped_tasklet('dostuff',
-                     dict(i='0:2', k='0:4'),
-                     dict(a=dace.Memlet.simple('aA', 'i, 0, k')),
-                     'b = a * 5',
-                     dict(b=dace.Memlet.simple('bB', 'i, 0, k')),
-                     external_edges=True)
+s.add_mapped_tasklet(
+    'dostuff',
+    dict(i='0:2', k='0:4'),
+    dict(a=dace.Memlet.simple('aA', 'i, 0, k')),
+    'b = a * 5',
+    dict(b=dace.Memlet.simple('bB', 'i, 0, k')),
+    external_edges=True,
+)
 ########################
 
 # Add nested SDFG to SDFG
@@ -48,7 +50,7 @@ def test():
     print("Difference:", diff2)
 
     print("==== Program end ====")
-    assert (diff1 <= 1e-5 and diff2 <= 1e-5)
+    assert diff1 <= 1e-5 and diff2 <= 1e-5
 
 
 if __name__ == "__main__":

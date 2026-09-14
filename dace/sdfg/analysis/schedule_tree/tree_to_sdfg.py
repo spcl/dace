@@ -53,13 +53,15 @@ class _TreeScope:
         self._ctx.access_cache[cache_key] = {}
 
     def __enter__(self) -> None:
-        assert not self._ctx.access_cache[(self._state, id(
-            self._node))], "Expecting an empty access_cache when entering the context."
+        assert not self._ctx.access_cache[(self._state, id(self._node))], (
+            "Expecting an empty access_cache when entering the context."
+        )
 
         self._ctx.current_scope = self._node
 
-    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None,
-                 exc_tb: TracebackType | None) -> None:
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
+    ) -> None:
         cache_key = (self._state, id(self._node))
         assert cache_key in self._ctx.access_cache
 
@@ -67,7 +69,6 @@ class _TreeScope:
 
 
 class _StreeToSDFG(tn.ScheduleNodeVisitor):
-
     def __init__(
         self,
         *,
@@ -107,8 +108,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # dataflow scopes
         # list[ (MapEntryNode, ToConnect) | (SDFG, {"inputs": set(), "outputs": set()}) ]
-        self._dataflow_stack: list[tuple[nodes.EntryNode, dict[str, tuple[nodes.AccessNode, Memlet]]]
-                                   | tuple[SDFG, dict[str, set[str]]]] = []
+        self._dataflow_stack: list[
+            tuple[nodes.EntryNode, dict[str, tuple[nodes.AccessNode, Memlet]]] | tuple[SDFG, dict[str, set[str]]]
+        ] = []
 
         self._max_nested_sdfg = max_nested_sdfg
 
@@ -423,10 +425,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # insert nested SDFG
         nsdfg = self._current_state.add_nested_sdfg(
             sdfg=inner_sdfg,
-            inputs={name: None
-                    for name in connectors["inputs"]},
-            outputs={name: None
-                     for name in connectors["outputs"]},
+            inputs={name: None for name in connectors["inputs"]},
+            outputs={name: None for name in connectors["outputs"]},
         )
         # connect nested SDFG to surrounding map scope
         assert self._dataflow_stack
@@ -444,14 +444,16 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             edge_added = False
             for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
                 if name == nview.target:
-                    self._current_state.add_edge(map_entry, out_connector, nsdfg, name,
-                                                 Memlet.from_memlet(nview.memlet))
+                    self._current_state.add_edge(
+                        map_entry, out_connector, nsdfg, name, Memlet.from_memlet(nview.memlet)
+                    )
                     edge_added = True
                     break
 
             if not edge_added:
-                self._current_state.add_edge(map_entry, out_connector, nsdfg, name,
-                                             Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
+                self._current_state.add_edge(
+                    map_entry, out_connector, nsdfg, name, Memlet.from_array(name, nsdfg.sdfg.arrays[name])
+                )
 
         # Add empty memlet if we didn't add any in the loop above
         if self._current_state.out_degree(map_entry) < 1:
@@ -554,8 +556,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 else:
                     _sdfg = self._parent_sdfg_with_array(memlet_data, sdfg)
                     data_descriptor = _sdfg.arrays[memlet_data]
-                self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector,
-                                             Memlet.from_array(memlet_data, data_descriptor))
+                self._current_state.add_edge(
+                    outer_map_entry,
+                    connector_name,
+                    map_entry,
+                    connector,
+                    Memlet.from_array(memlet_data, data_descriptor),
+                )
             else:
                 if isinstance(outer_map_entry, SDFG):
                     # Copy data descriptor from parent SDFG and add input connector
@@ -622,17 +629,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     # let's remove it and add a direct connection instead
                     edges = [edge for edge in self._current_state.edges() if edge.dst == access_node]
                     assert len(edges) == 1
-                    self._current_state.add_memlet_path(edges[0].src,
-                                                        map_exit,
-                                                        src_conn=edges[0].src_conn,
-                                                        dst_conn=in_connector_name,
-                                                        memlet=edges[0].data)
+                    self._current_state.add_memlet_path(
+                        edges[0].src,
+                        map_exit,
+                        src_conn=edges[0].src_conn,
+                        dst_conn=in_connector_name,
+                        memlet=edges[0].data,
+                    )
                     self._current_state.remove_node(access_node)  # edge is remove automatically
                 else:
-                    self._current_state.add_memlet_path(access_node,
-                                                        map_exit,
-                                                        dst_conn=in_connector_name,
-                                                        memlet=memlet)
+                    self._current_state.add_memlet_path(
+                        access_node, map_exit, dst_conn=in_connector_name, memlet=memlet
+                    )
 
             if isinstance(outer_map_entry, SDFG):
                 if name not in sdfg.arrays:
@@ -666,10 +674,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             else:
                 _sdfg = self._parent_sdfg_with_array(name, sdfg)
                 data_descriptor = _sdfg.arrays[name]
-            self._current_state.add_memlet_path(map_exit,
-                                                access_node,
-                                                src_conn=out_connector_name,
-                                                memlet=Memlet.from_array(name, data_descriptor))
+            self._current_state.add_memlet_path(
+                map_exit, access_node, src_conn=out_connector_name, memlet=Memlet.from_array(name, data_descriptor)
+            )
 
             if isinstance(outer_map_entry, nodes.EntryNode):
                 outer_to_connect[name] = (access_node, Memlet.from_array(name, data_descriptor))
@@ -808,8 +815,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         target_name = node.target
         # only re-use cached write-only nodes, e.g. don't create a cycle for
         # field[5, 0, 0:73] = copy field[0, 0, 0:73]
-        if target_name not in access_cache or self._current_state.out_degree(
-                access_cache[target_name]) > 0 or src_name == target_name:
+        if (
+            target_name not in access_cache
+            or self._current_state.out_degree(access_cache[target_name]) > 0
+            or src_name == target_name
+        ):
             # cache new write access node
             target_access_node = self._current_state.add_write(node.target)
             access_cache[node.target] = target_access_node
@@ -925,7 +935,6 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
 
     # Simple boundary node inserter for control flow blocks and state labels
     class SimpleStateBoundaryInserter(tn.ScheduleNodeTransformer):
-
         def visit_scope(self, scope: tn.ScheduleTreeScope):
             if isinstance(scope, tn.ControlFlowScope) and not isinstance(scope, (tn.ElifScope, tn.ElseScope)):
                 return [tn.StateBoundaryNode(True), self.generic_visit(scope)]
@@ -942,7 +951,6 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
 
     # Insert a state boundary after every symbol assignment to ensure symbols are assigned before usage
     class SymbolAssignmentBoundaryInserter(tn.ScheduleNodeTransformer):
-
         def visit_AssignNode(self, node: tn.AssignNode):
             # We can assume that assignment nodes are at least contained in the root scope.
             assert node.parent, "Expected assignment nodes live a parent scope."
@@ -951,8 +959,9 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
             node_index = _list_index(node.parent.children, node)
 
             # Don't add boundary if there's already one or for immediately following assignment nodes.
-            if node_index < len(node.parent.children) - 1 and isinstance(node.parent.children[node_index + 1],
-                                                                         (tn.StateBoundaryNode, tn.AssignNode)):
+            if node_index < len(node.parent.children) - 1 and isinstance(
+                node.parent.children[node_index + 1], (tn.StateBoundaryNode, tn.AssignNode)
+            ):
                 return self.generic_visit(node)
 
             return [self.generic_visit(node), tn.StateBoundaryNode()]
@@ -961,7 +970,6 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
 
     # Hack: "backprop-insert" state boundaries from nested SDFGs
     class NestedSDFGStateBoundaryInserter(tn.ScheduleNodeTransformer):
-
         def visit_MapScope(self, scope: tn.MapScope):
             visited = self.generic_visit(scope)
             if any([isinstance(child, tn.StateBoundaryNode) for child in scope.children]):

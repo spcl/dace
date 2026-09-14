@@ -102,7 +102,6 @@ def test_string_literal_in_complex_object():
     success = False
 
     class HashableObject:
-
         def __init__(self, q) -> None:
             self.q = q
 

@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" This sample uses basic grid-search based tuning to adapt memory layouts for a simple matrix multiplication. """
+"""This sample uses basic grid-search based tuning to adapt memory layouts for a simple matrix multiplication."""
+
 import dace
 from dace.codegen.instrumentation.report import InstrumentationReport
 import itertools
@@ -24,8 +25,9 @@ def matmult(A: dtype[M, K], B: dtype[K, N], C: dtype[M, N]):
         C[:] = A @ B
 
 
-def test_configuration(a_trans: bool, b_trans: bool, a_padding: int, b_padding: int, M: int, K: int,
-                       N: int) -> InstrumentationReport:
+def test_configuration(
+    a_trans: bool, b_trans: bool, a_padding: int, b_padding: int, M: int, K: int, N: int
+) -> InstrumentationReport:
     """
     Tests a single configuration of A and B and returns the instrumentation
     report from running the SDFG.
@@ -66,14 +68,12 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int, b_padding: 
 
     # Create matching arrays in numpy and fill with random values
     nbytes = dtype.bytes
-    A = np.ndarray([M, K],
-                   dtype.type,
-                   buffer=np.ndarray([total_a], dtype.type),
-                   strides=[s * nbytes for s in a_strides])
-    B = np.ndarray([K, N],
-                   dtype.type,
-                   buffer=np.ndarray([total_b], dtype.type),
-                   strides=[s * nbytes for s in b_strides])
+    A = np.ndarray(
+        [M, K], dtype.type, buffer=np.ndarray([total_a], dtype.type), strides=[s * nbytes for s in a_strides]
+    )
+    B = np.ndarray(
+        [K, N], dtype.type, buffer=np.ndarray([total_b], dtype.type), strides=[s * nbytes for s in b_strides]
+    )
 
     A[:] = np.random.rand(M, K)
     B[:] = np.random.rand(K, N)
@@ -109,8 +109,9 @@ if __name__ == '__main__':
     for tA_order, tB_order in itertools.product(ORDERS, ORDERS):
         for tA_padding, tB_padding in itertools.product(PADDINGS, PADDINGS):
             print(tA_order, tA_padding, tB_order, tB_padding)
-            report = test_configuration(tA_order == 'transposed', tB_order == 'transposed', tA_padding, tB_padding, M,
-                                        K, N)
+            report = test_configuration(
+                tA_order == 'transposed', tB_order == 'transposed', tA_padding, tB_padding, M, K, N
+            )
 
             # Obtain the first entry type from the report (there is only one)
             durations = next(iter(next(iter(report.durations.values())).values()))

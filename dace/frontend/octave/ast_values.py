@@ -5,7 +5,6 @@ from .ast_node import AST_Node
 
 
 class AST_Ident(AST_Node):
-
     def __init__(self, context, value):
         AST_Node.__init__(self, context)
         if isinstance(value, str):
@@ -37,12 +36,14 @@ class AST_Ident(AST_Node):
 
     def get_dims(self):
         from .ast_loop import AST_ForLoop
+
         """ Check in the scope if this is defined and return the dims of the
             corresponding SDFG access node it currently maps to. """
         vardef = self.search_vardef_in_scope(self.value)
         if vardef is None:
-            raise ValueError("Request for dims of identifier " + self.value +
-                             " which is not defined in the current scope")
+            raise ValueError(
+                "Request for dims of identifier " + self.value + " which is not defined in the current scope"
+            )
         elif isinstance(vardef, AST_ForLoop):
             dims = vardef.initializer.get_dims()[:1]
             return dims
@@ -59,12 +60,13 @@ class AST_Ident(AST_Node):
         return None
 
     def get_basetype(self):
-        """ Check in the scope if this is defined and return the basetype of the
-            corresponding SDFG access node this currently maps to. """
+        """Check in the scope if this is defined and return the basetype of the
+        corresponding SDFG access node this currently maps to."""
         bt = self.search_vardef_in_scope(self.value).get_basetype()
         if bt is None:
-            raise ValueError("Request for basetype of identifier " + self.value +
-                             " which is not defined in the current scope")
+            raise ValueError(
+                "Request for basetype of identifier " + self.value + " which is not defined in the current scope"
+            )
         else:
             return bt
 
@@ -72,7 +74,6 @@ class AST_Ident(AST_Node):
 
 
 class AST_Constant(AST_Node):
-
     def __init__(self, context, value):
         AST_Node.__init__(self, context)
         self.value = value
@@ -98,8 +99,9 @@ class AST_Constant(AST_Node):
         trans = sdfg.nodes()[state].add_access(name)
         code = "out = " + str(self.get_value()) + ";"
         tasklet = sdfg.nodes()[state].add_tasklet('init', {}, {'out'}, code, dace.Language.CPP)
-        sdfg.nodes()[state].add_edge(tasklet, 'out', trans, None,
-                                     dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
+        sdfg.nodes()[state].add_edge(
+            tasklet, 'out', trans, None, dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg))
+        )
         print("The result of expr " + str(self) + " will be stored in " + str(name))
 
     def get_children(self):

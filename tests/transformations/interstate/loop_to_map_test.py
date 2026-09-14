@@ -53,35 +53,42 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, 
     if map_in_guard:
         guard_read = guard.add_read("C")
         guard_write = guard.add_write("C")
-        guard.add_mapped_tasklet("write_self", {"i": "0:N"}, {"c_in": dace.Memlet("C[i]")},
-                                 "c_out = c_in", {"c_out": dace.Memlet("C[i]")},
-                                 external_edges=True,
-                                 input_nodes={"C": guard_read},
-                                 output_nodes={"C": guard_write})
+        guard.add_mapped_tasklet(
+            "write_self",
+            {"i": "0:N"},
+            {"c_in": dace.Memlet("C[i]")},
+            "c_out = c_in",
+            {"c_out": dace.Memlet("C[i]")},
+            external_edges=True,
+            input_nodes={"C": guard_read},
+            output_nodes={"C": guard_write},
+        )
 
     tasklet0 = body.add_tasklet("tasklet0", {"a"}, {"c"}, "c = 1/a")
     tasklet1 = body.add_tasklet("tasklet1", {"a", "b"}, {"d"}, "d = sqrt(a**2 + b**2)")
 
-    tasklet2 = body.add_tasklet("tasklet2", {}, {},
-                                f"""\
+    tasklet2 = body.add_tasklet(
+        "tasklet2",
+        {},
+        {},
+        f"""\
 static std::mutex mutex;
 std::unique_lock<std::mutex> lock(mutex);
 std::ofstream of("{log_path}", std::ofstream::app);
 of << i << "\\n";""",
-                                language=dace.Language.CPP)
+        language=dace.Language.CPP,
+    )
 
     body.add_memlet_path(a, tasklet0, dst_conn="a", memlet=dace.Memlet("A[i]"))
-    body.add_memlet_path(tasklet0,
-                         c,
-                         src_conn="c",
-                         memlet=dace.Memlet("C[i]", wcr="lambda a, b: a + b" if with_wcr else None))
+    body.add_memlet_path(
+        tasklet0, c, src_conn="c", memlet=dace.Memlet("C[i]", wcr="lambda a, b: a + b" if with_wcr else None)
+    )
 
     body.add_memlet_path(a, tasklet1, dst_conn="a", memlet=dace.Memlet("A[i]"))
     body.add_memlet_path(b, tasklet1, dst_conn="b", memlet=dace.Memlet("B[i]"))
-    body.add_memlet_path(tasklet1,
-                         d,
-                         src_conn="d",
-                         memlet=dace.Memlet("D[i]", wcr="lambda a, b: a + b" if with_wcr else None))
+    body.add_memlet_path(
+        tasklet1, d, src_conn="d", memlet=dace.Memlet("D[i]", wcr="lambda a, b: a + b" if with_wcr else None)
+    )
 
     e = post.add_write("E")
     post_tasklet = post.add_tasklet("post", {}, {"e"}, "e = i" if use_variable else "e = N")
@@ -103,11 +110,11 @@ def run_loop_to_map(n, *args):
     if n is None:
         n = dace.int32(16)
 
-    a = 4 * np.ones((n, ), dtype=np.float64)
-    b = 3 * np.ones((n, ), dtype=np.float64)
-    c = np.zeros((n, ), dtype=np.float64)
-    d = np.zeros((n, ), dtype=np.float64)
-    e = np.empty((1, ), dtype=np.uint16)
+    a = 4 * np.ones((n,), dtype=np.float64)
+    b = 3 * np.ones((n,), dtype=np.float64)
+    c = np.zeros((n,), dtype=np.float64)
+    d = np.zeros((n,), dtype=np.float64)
+    e = np.empty((1,), dtype=np.uint16)
 
     num_transformations = sdfg.apply_transformations(LoopToMap)
 
@@ -222,7 +229,7 @@ def test_specialize():
             inp << in_data[i]
             is_greater >> tmp[i]
 
-            if (inp > 0.5):
+            if inp > 0.5:
                 is_greater = True
             else:
                 is_greater = False
@@ -268,7 +275,7 @@ def test_empty_loop():
 def test_interstate_dep():
 
     sdfg = dace.SDFG('intestate_dep')
-    sdfg.add_array('A', (10, ), dtype=np.int32)
+    sdfg.add_array('A', (10,), dtype=np.int32)
     init = sdfg.add_state('init', is_start_block=True)
     guard = sdfg.add_state('guard')
     body0 = sdfg.add_state('body0')
@@ -285,7 +292,7 @@ def test_interstate_dep():
     a = body1.add_access('A')
     body1.add_edge(t, '__out', a, None, dace.Memlet('A[i]'))
 
-    ref = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
+    ref = np.random.randint(0, 10, size=(10,), dtype=np.int32)
     val = np.copy(ref)
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg(A=ref)
@@ -300,8 +307,8 @@ def test_need_for_tasklet():
     # Note: Since the introduction of loop regions this no longer requires a tasklet, as the nested SDFG is directly
     # equivalent to the loop region, including all direct access node to access node copy operations.
     sdfg = dace.SDFG('needs_tasklet')
-    aname, _ = sdfg.add_array('A', (10, ), dace.int32)
-    bname, _ = sdfg.add_array('B', (10, ), dace.int32)
+    aname, _ = sdfg.add_array('A', (10,), dace.int32)
+    bname, _ = sdfg.add_array('B', (10,), dace.int32)
     body = sdfg.add_state('body')
     _, _, _ = sdfg.add_loop_state_machine(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
     anode = body.add_access(aname)
@@ -312,7 +319,7 @@ def test_need_for_tasklet():
     sdfg.apply_transformations_repeated(LoopToMap)
 
     A = np.arange(10, dtype=np.int32)
-    B = np.empty((10, ), dtype=np.int32)
+    B = np.empty((10,), dtype=np.int32)
     sdfg(A=A, B=B)
 
     assert np.array_equal(B, np.arange(9, -1, -1, dtype=np.int32))
@@ -377,7 +384,7 @@ def test_symbol_race():
                 else:
                     crc >>= 1
                 cur_byte >>= 1
-        crc = (~crc & 0xFFFF)
+        crc = ~crc & 0xFFFF
         crc = (crc << 8) | ((crc >> 8) & 0xFF)
 
     sdfg = tester.to_sdfg(simplify=True)
@@ -498,8 +505,8 @@ def test_shared_local_transient_single_state():
     sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    sdfg.add_array('A', (10, ), dace.int32, transient=True)
-    sdfg.add_array('__return', (10, ), dace.int32)
+    sdfg.add_array('A', (10,), dace.int32, transient=True)
+    sdfg.add_array('__return', (10,), dace.int32)
 
     t1 = body.add_tasklet('t1', {}, {'__out'}, '__out = 5 + j')
     anode = body.add_access('A')
@@ -537,8 +544,8 @@ def test_thread_local_transient_single_state():
     sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    sdfg.add_array('A', (i + 1, ), dace.int32, transient=True)
-    sdfg.add_array('__return', (10, ), dace.int32)
+    sdfg.add_array('A', (i + 1,), dace.int32, transient=True)
+    sdfg.add_array('__return', (10,), dace.int32)
 
     t1 = body.add_tasklet('t1', {}, {'__out'}, '__out = 5 + j')
     anode = body.add_access('A')
@@ -575,8 +582,8 @@ def test_shared_local_transient_multi_state():
     sdfg.add_edge(body1, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    sdfg.add_array('A', (10, ), dace.int32, transient=True)
-    sdfg.add_array('__return', (10, ), dace.int32)
+    sdfg.add_array('A', (10,), dace.int32, transient=True)
+    sdfg.add_array('__return', (10,), dace.int32)
 
     t1 = body0.add_tasklet('t1', {}, {'__out'}, '__out = 5 + i + 1')
     anode0 = body0.add_access('A')
@@ -617,8 +624,8 @@ def test_thread_local_transient_multi_state():
     sdfg.add_edge(body1, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    sdfg.add_array('A', (i + 1, ), dace.int32, transient=True)
-    sdfg.add_array('__return', (10, ), dace.int32)
+    sdfg.add_array('A', (i + 1,), dace.int32, transient=True)
+    sdfg.add_array('__return', (10,), dace.int32)
 
     t1 = body0.add_tasklet('t1', {}, {'__out'}, '__out = 5 + i + 1')
     anode0 = body0.add_access('A')
@@ -685,7 +692,7 @@ def test_internal_write():
 
     @dace.program
     def internal_write(inp0: dace.int32[10], inp1: dace.int32[10], out: dace.int32[10]):
-        tmp = np.ndarray((10, ), dtype=np.int32)
+        tmp = np.ndarray((10,), dtype=np.int32)
         for i in range(10):
             tmp[i] = inp0[i] + 5
             out[i] = inp1[i] + tmp[i]
@@ -693,21 +700,23 @@ def test_internal_write():
     sdfg = internal_write.to_sdfg(simplify=False)
     from dace.transformation.pass_pipeline import Pipeline
     from dace.transformation.passes import FuseStates
+
     mypass = Pipeline([FuseStates()])
     mypass.apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(LoopToMap)
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.AccessNode):
-            if isinstance(node.desc(state.parent), dace.data.Scalar) and any(e.data.wcr is None
-                                                                             for e in state.in_edges(node)):
+            if isinstance(node.desc(state.parent), dace.data.Scalar) and any(
+                e.data.wcr is None for e in state.in_edges(node)
+            ):
                 continue
             assert state.scope_dict()[node] is None
 
     rng = np.random.default_rng(42)
     inp0 = rng.integers(0, 100, size=10, dtype=np.int32)
     inp1 = rng.integers(0, 100, size=10, dtype=np.int32)
-    ref = np.empty((10, ), dtype=np.int32)
-    val = np.empty((10, ), dtype=np.int32)
+    ref = np.empty((10,), dtype=np.int32)
+    val = np.empty((10,), dtype=np.int32)
 
     internal_write.f(inp0, inp1, ref)
     sdfg(inp0, inp1, val)
@@ -941,7 +950,6 @@ def test_dynamic_write_slab_separated_by_iteration_var():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=16, type=int)
     args = parser.parse_args()

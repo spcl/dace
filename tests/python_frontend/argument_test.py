@@ -33,7 +33,7 @@ def test_missing_arguments_regression():
 
     @dace.program
     def tester(x: dace.float64[20, 20]):
-        gdx = np.ones((10, ), dace.float64)
+        gdx = np.ones((10,), dace.float64)
         for T in range(2):
             nester(x, gdx, T)
 

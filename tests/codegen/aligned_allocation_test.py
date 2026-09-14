@@ -6,6 +6,7 @@ affected the allocation and newer GCC rejects it outright for constant array
 bounds, so heap arrays are allocated with C++17 aligned ``operator new`` (when
 ``compiler.cpp_standard`` >= 17) or with no annotation at all (below 17).
 """
+
 import numpy as np
 import re
 

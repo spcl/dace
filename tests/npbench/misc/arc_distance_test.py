@@ -21,15 +21,16 @@ def arc_distance(theta_1: dace.float64[N], phi_1: dace.float64[N], theta_2: dace
     """
     Calculates the pairwise arc distance between all points in vector a and b.
     """
-    temp = np.sin((theta_2 - theta_1) / 2)**2 + np.cos(theta_1) * np.cos(theta_2) * np.sin((phi_2 - phi_1) / 2)**2
+    temp = np.sin((theta_2 - theta_1) / 2) ** 2 + np.cos(theta_1) * np.cos(theta_2) * np.sin((phi_2 - phi_1) / 2) ** 2
     distance_matrix = 2 * (np.arctan2(np.sqrt(temp), np.sqrt(1 - temp)))
     return distance_matrix
 
 
 def initialize(N):
     from numpy.random import default_rng
+
     rng = default_rng(42)
-    t0, p0, t1, p1 = rng.random((N, )), rng.random((N, )), rng.random((N, )), rng.random((N, ))
+    t0, p0, t1, p1 = rng.random((N,)), rng.random((N,)), rng.random((N,)), rng.random((N,))
     return t0, p0, t1, p1
 
 
@@ -53,7 +54,7 @@ def run_arc_distance(device_type: dace.dtypes.DeviceType):
 
     # Compute ground truth and Validate result
     ref = arc_distance.f(t0, p0, t1, p1)
-    assert (np.allclose(val, ref) or relerror(val, ref) < 1e-10)
+    assert np.allclose(val, ref) or relerror(val, ref) < 1e-10
     return sdfg
 
 
@@ -67,7 +68,6 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

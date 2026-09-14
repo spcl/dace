@@ -18,6 +18,7 @@ import addlib
 @library.register_expansion(addlib.AddNode, 'tiled')
 class ExpandAddTiled(ExpandTransformation):
     """Test expansion that accepts tile_size keyword argument"""
+
     environments = []
 
     @staticmethod

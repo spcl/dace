@@ -2,10 +2,12 @@
 """
 Hooks for PyTorch tensors to make them compatible with dace
 """
+
 import copy
 
 try:
     import torch
+
     TORCH_AVAILABLE = True
 except ImportError:
     torch = None

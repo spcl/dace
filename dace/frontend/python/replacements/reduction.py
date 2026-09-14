@@ -3,6 +3,7 @@
 Contains replacements of reduction operations, which cover both NumPy's Mathematical Functions (e.g., ``numpy.sum``)
 and Sorting, Searching, and Counting Functions (e.g., ``numpy.argmax``).
 """
+
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.nested_call import NestedCall
@@ -16,19 +17,21 @@ from typing import Any, Dict, Callable, Optional, Union
 
 
 @oprepo.replaces('dace.reduce')
-def reduce(pv: ProgramVisitor,
-           sdfg: SDFG,
-           state: SDFGState,
-           redfunction: Callable[[Any, Any], Any],
-           in_array: str,
-           out_array=None,
-           axis=None,
-           identity=None):
+def reduce(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    redfunction: Callable[[Any, Any], Any],
+    in_array: str,
+    out_array=None,
+    axis=None,
+    identity=None,
+):
     if out_array is None:
         inarr = in_array
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
-            axis = (axis, )
+            axis = (axis,)
         if axis is not None:
             axis = tuple(symbolic.pystr_to_symbolic(a) for a in axis)
             axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
@@ -49,13 +52,11 @@ def reduce(pv: ProgramVisitor,
             output_subset = copy.deepcopy(input_subset)
             output_subset.pop(axis)
             output_shape = output_subset.size()
-        if (len(output_shape) == 1 and output_shape[0] == 1):
+        if len(output_shape) == 1 and output_shape[0] == 1:
             outarr = pv.get_target_name()
-            outarr, arr = sdfg.add_scalar(outarr,
-                                          sdfg.arrays[inarr].dtype,
-                                          sdfg.arrays[inarr].storage,
-                                          transient=True,
-                                          find_new_name=True)
+            outarr, arr = sdfg.add_scalar(
+                outarr, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage, transient=True, find_new_name=True
+            )
         else:
             outarr, arr = pv.add_temp_transient(output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
         output_memlet = Memlet.from_array(outarr, arr)
@@ -65,7 +66,7 @@ def reduce(pv: ProgramVisitor,
 
         # Convert axes to tuple
         if axis is not None and not isinstance(axis, (tuple, list)):
-            axis = (axis, )
+            axis = (axis,)
         if axis is not None:
             axis = tuple(symbolic.pystr_to_symbolic(a) for a in axis)
             axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
@@ -149,6 +150,7 @@ def _min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, in
 @oprepo.replaces_method('View', 'max')
 def _ndarray_max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     from dace.frontend.python.replacements.ufunc import implement_ufunc_reduce  # Avoid import loop
+
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, 'maximum', [arr], kwargs)[0]
 
@@ -158,12 +160,13 @@ def _ndarray_max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
 @oprepo.replaces_method('View', 'min')
 def _ndarray_min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     from dace.frontend.python.replacements.ufunc import implement_ufunc_reduce  # Avoid import loop
+
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, 'minimum', [arr], kwargs)[0]
 
 
 def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, ismin=True):
-    """ Implements the min or max function with 2 scalar arguments. """
+    """Implements the min or max function with 2 scalar arguments."""
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.frontend.python.replacements.operators import result_type
 
@@ -243,33 +246,29 @@ def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Numbe
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(pv: ProgramVisitor,
-            sdfg: SDFG,
-            state: SDFGState,
-            a: str,
-            axis: Optional[int] = None,
-            result_type=dtypes.int32):
+def _argmax(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: Optional[int] = None, result_type=dtypes.int32
+):
     return _argminmax(pv, sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(pv: ProgramVisitor,
-            sdfg: SDFG,
-            state: SDFGState,
-            a: str,
-            axis: Optional[int] = None,
-            result_type=dtypes.int32):
+def _argmin(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis: Optional[int] = None, result_type=dtypes.int32
+):
     return _argminmax(pv, sdfg, state, a, axis, func="min", result_type=result_type)
 
 
-def _argminmax(pv: ProgramVisitor,
-               sdfg: SDFG,
-               state: SDFGState,
-               a: str,
-               axis: Optional[int],
-               func: str,
-               result_type: dtypes.typeclass = dtypes.int32,
-               return_both: bool = False):
+def _argminmax(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    a: str,
+    axis: Optional[int],
+    func: str,
+    result_type: dtypes.typeclass = dtypes.int32,
+    return_both: bool = False,
+):
     from dace.frontend.python.replacements.array_manipulation import flat  # Avoid import loop
     from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
 
@@ -301,52 +300,55 @@ def _argminmax(pv: ProgramVisitor,
     reduced_structs, reduced_struct_arr = pv.add_temp_transient(reduced_shape, val_and_idx)
 
     code = "__init = _val_and_idx(val={}, idx=-1)".format(
-        dtypes.min_value(a_arr.dtype) if func == 'max' else dtypes.max_value(a_arr.dtype))
+        dtypes.min_value(a_arr.dtype) if func == 'max' else dtypes.max_value(a_arr.dtype)
+    )
 
     reduced_expr = ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis)
     reduced_maprange = {'__i%d' % i: '0:%s' % n for i, n in enumerate(a_arr.shape) if i != axis}
     if not reduced_expr:
         reduced_expr = '0'
         reduced_maprange = {'__i0': '0:1'}
-    nest.add_state().add_mapped_tasklet(name="_arg{}_convert_".format(func),
-                                        map_ranges=reduced_maprange,
-                                        inputs={},
-                                        code=code,
-                                        outputs={'__init': Memlet.simple(reduced_structs, reduced_expr)},
-                                        external_edges=True)
+    nest.add_state().add_mapped_tasklet(
+        name="_arg{}_convert_".format(func),
+        map_ranges=reduced_maprange,
+        inputs={},
+        code=code,
+        outputs={'__init': Memlet.simple(reduced_structs, reduced_expr)},
+        external_edges=True,
+    )
 
     nest.add_state().add_mapped_tasklet(
         name="_arg{}_reduce_".format(func),
-        map_ranges={
-            '__i%d' % i: '0:%s' % n
-            for i, n in enumerate(a_arr.shape)
-        },
+        map_ranges={'__i%d' % i: '0:%s' % n for i, n in enumerate(a_arr.shape)},
         inputs={'__in': Memlet.simple(a, ','.join('__i%d' % i for i in range(len(a_arr.shape))))},
         code="__out = _val_and_idx(idx={}, val=__in)".format("__i%d" % axis),
         outputs={
-            '__out':
-            Memlet.simple(reduced_structs,
-                          reduced_expr,
-                          wcr_str=("lambda x, y:"
-                                   "_val_and_idx(val={}(x.val, y.val), "
-                                   "idx=(y.idx if x.val {} y.val else x.idx))").format(
-                                       func, '<' if func == 'max' else '>'))
+            '__out': Memlet.simple(
+                reduced_structs,
+                reduced_expr,
+                wcr_str=(
+                    "lambda x, y:_val_and_idx(val={}(x.val, y.val), idx=(y.idx if x.val {} y.val else x.idx))"
+                ).format(func, '<' if func == 'max' else '>'),
+            )
         },
-        external_edges=True)
+        external_edges=True,
+    )
 
     if return_both:
         outidx, outidxarr = pv.add_temp_transient(sdfg.arrays[reduced_structs].shape, result_type, output_index=0)
         outval, outvalarr = pv.add_temp_transient(sdfg.arrays[reduced_structs].shape, a_arr.dtype, output_index=1)
 
-        nest.add_state().add_mapped_tasklet(name="_arg{}_extract_".format(func),
-                                            map_ranges=reduced_maprange,
-                                            inputs={'__in': Memlet.simple(reduced_structs, reduced_expr)},
-                                            code="__out_val = __in.val\n__out_idx = __in.idx",
-                                            outputs={
-                                                '__out_val': Memlet.simple(outval, reduced_expr),
-                                                '__out_idx': Memlet.simple(outidx, reduced_expr)
-                                            },
-                                            external_edges=True)
+        nest.add_state().add_mapped_tasklet(
+            name="_arg{}_extract_".format(func),
+            map_ranges=reduced_maprange,
+            inputs={'__in': Memlet.simple(reduced_structs, reduced_expr)},
+            code="__out_val = __in.val\n__out_idx = __in.idx",
+            outputs={
+                '__out_val': Memlet.simple(outval, reduced_expr),
+                '__out_idx': Memlet.simple(outidx, reduced_expr),
+            },
+            external_edges=True,
+        )
 
         return nest, (outval, outidx)
 
@@ -360,12 +362,9 @@ def _argminmax(pv: ProgramVisitor,
 @oprepo.replaces_method('Array', 'argmax')
 @oprepo.replaces_method('Scalar', 'argmax')
 @oprepo.replaces_method('View', 'argmax')
-def _ndarray_argmax(pv: ProgramVisitor,
-                    sdfg: SDFG,
-                    state: SDFGState,
-                    arr: str,
-                    axis: int = None,
-                    out: str = None) -> str:
+def _ndarray_argmax(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis: int = None, out: str = None
+) -> str:
     nest, newarr = _argmax(pv, sdfg, state, arr, axis)
     if out:
         r = state.add_read(newarr)
@@ -378,12 +377,9 @@ def _ndarray_argmax(pv: ProgramVisitor,
 @oprepo.replaces_method('Array', 'argmin')
 @oprepo.replaces_method('Scalar', 'argmin')
 @oprepo.replaces_method('View', 'argmin')
-def _ndarray_argmin(pv: ProgramVisitor,
-                    sdfg: SDFG,
-                    state: SDFGState,
-                    arr: str,
-                    axis: int = None,
-                    out: str = None) -> str:
+def _ndarray_argmin(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis: int = None, out: str = None
+) -> str:
     nest, newarr = _argmin(pv, sdfg, state, arr, axis)
     if out:
         r = state.add_read(newarr)

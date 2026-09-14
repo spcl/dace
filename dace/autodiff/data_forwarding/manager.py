@@ -14,7 +14,6 @@ import dace.autodiff.data_forwarding as data_forwarding
 
 
 class DataForwardingManager:
-
     def __init__(self, bwd_generator: 'BackwardPassGenerator'):
 
         # The user specified strategy for forwarding
@@ -29,10 +28,18 @@ class DataForwardingManager:
         strategy_choice, recomputation_nsdfgs = self._get_overwrite_resolution_strategy()
 
         # Make the connection according to the chosen strategy
-        for index, (forward_state, backward_state, access_node, node,
-                    edge) in enumerate(self.bwd_generator.data_to_forward):
-            self._connect_forward_accessnode(forward_state, backward_state, access_node, node, edge,
-                                             recomputation_nsdfgs[index], strategy_choice[index])
+        for index, (forward_state, backward_state, access_node, node, edge) in enumerate(
+            self.bwd_generator.data_to_forward
+        ):
+            self._connect_forward_accessnode(
+                forward_state,
+                backward_state,
+                access_node,
+                node,
+                edge,
+                recomputation_nsdfgs[index],
+                strategy_choice[index],
+            )
 
     def _get_overwrite_resolution_strategy(self) -> Tuple[List[str], List[Optional[nodes.NestedSDFG]]]:
         """
@@ -49,8 +56,9 @@ class DataForwardingManager:
         # NOTE: This can be relaxed since if an input is not overwritten
         # it can be recomputed
         to_remove = []
-        for i, (forward_state, backward_state, access_node, node,
-                edge) in enumerate(self.bwd_generator.data_to_forward):
+        for i, (forward_state, backward_state, access_node, node, edge) in enumerate(
+            self.bwd_generator.data_to_forward
+        ):
             if access_node.data not in self.bwd_generator.sdfg.arg_names:
                 continue
 
@@ -76,12 +84,13 @@ class DataForwardingManager:
             recomputation_nsdfgs = [None] * len(self.bwd_generator.data_to_forward)
         elif self.bwd_generator.data_forwarding_strategy == "user_defined":
             if self.bwd_generator.data_to_recompute is None:
-                raise AutoDiffException("The overwrite resolution strategy is User Defined "
-                                        "but no recomputation list has been provided."
-                                        "Please set the data_to_recompute parameter.")
+                raise AutoDiffException(
+                    "The overwrite resolution strategy is User Defined "
+                    "but no recomputation list has been provided."
+                    "Please set the data_to_recompute parameter."
+                )
 
             for forward_state, backward_state, access_node, node, edge in self.bwd_generator.data_to_forward:
-
                 if access_node.data in self.bwd_generator.data_to_recompute:
                     try:
                         nsdfg = data_forwarding.get_recomputation_nsdfg(self.bwd_generator, forward_state, access_node)
@@ -101,15 +110,23 @@ class DataForwardingManager:
                     recomputation_nsdfgs.append(None)
                     strategy_choice.append("store")
         else:
-            raise AutoDiffException("Please specify a valid overwrite resolution strategy. "
-                                    "Expected either store_all, recompute_all, or user_defined "
-                                    f"but got {self.bwd_generator.data_forwarding_strategy}")
+            raise AutoDiffException(
+                "Please specify a valid overwrite resolution strategy. "
+                "Expected either store_all, recompute_all, or user_defined "
+                f"but got {self.bwd_generator.data_forwarding_strategy}"
+            )
         return strategy_choice, recomputation_nsdfgs
 
-    def _connect_forward_accessnode(self, forward_state: SDFGState, backward_state: SDFGState,
-                                    forward_node: nodes.AccessNode, target_node: nodes.Node,
-                                    starting_edge: dgraph.MultiConnectorEdge,
-                                    recomputation_nsdfg: Optional[nodes.NestedSDFG], strategy: str):
+    def _connect_forward_accessnode(
+        self,
+        forward_state: SDFGState,
+        backward_state: SDFGState,
+        forward_node: nodes.AccessNode,
+        target_node: nodes.Node,
+        starting_edge: dgraph.MultiConnectorEdge,
+        recomputation_nsdfg: Optional[nodes.NestedSDFG],
+        strategy: str,
+    ):
         """
         We need to forward an array from the forward pass to the backward pass.
         To do this we first check if this array has been overwritten or not.
@@ -132,15 +149,17 @@ class DataForwardingManager:
         if strategy == "recompute" and recomputable:
             try:
                 if recomputation_nsdfg is None:
-                    recomputation_nsdfg = data_forwarding.get_recomputation_nsdfg(self.bwd_generator,
-                                                                                  forward_state,
-                                                                                  target_an=forward_node)
-                data_forwarding.resolve_overwrite_with_recomputation(recomputation_nsdfg=recomputation_nsdfg,
-                                                                     forward_state=forward_state,
-                                                                     backward_state=backward_state,
-                                                                     target_an=forward_node,
-                                                                     target_node=target_node,
-                                                                     starting_edge=starting_edge)
+                    recomputation_nsdfg = data_forwarding.get_recomputation_nsdfg(
+                        self.bwd_generator, forward_state, target_an=forward_node
+                    )
+                data_forwarding.resolve_overwrite_with_recomputation(
+                    recomputation_nsdfg=recomputation_nsdfg,
+                    forward_state=forward_state,
+                    backward_state=backward_state,
+                    target_an=forward_node,
+                    target_node=target_node,
+                    starting_edge=starting_edge,
+                )
             except Exception as e:
                 # If anything goes bad, print a warning and fall back to storing
                 if config.Config.get_bool('debugprint'):
@@ -156,16 +175,19 @@ class DataForwardingManager:
             # The data has been overwritten
             if not overwritten:
                 # We still have access to this data
-                self._connect_forward_accessnode_not_overwritten(forward_state, backward_state, forward_node,
-                                                                 target_node, starting_edge)
+                self._connect_forward_accessnode_not_overwritten(
+                    forward_state, backward_state, forward_node, target_node, starting_edge
+                )
                 return
 
-            data_forwarding.resolve_overwrite_with_store(bwd_generator=self.bwd_generator,
-                                                         forward_state=forward_state,
-                                                         backward_state=backward_state,
-                                                         forward_node=forward_node,
-                                                         target_node=target_node,
-                                                         starting_edge=starting_edge)
+            data_forwarding.resolve_overwrite_with_store(
+                bwd_generator=self.bwd_generator,
+                forward_state=forward_state,
+                backward_state=backward_state,
+                forward_node=forward_node,
+                target_node=target_node,
+                starting_edge=starting_edge,
+            )
 
     def _check_node_overwrite(self, forward_state: SDFGState, node: nodes.AccessNode) -> Tuple[bool, bool]:
         """
@@ -203,8 +225,11 @@ class DataForwardingManager:
         # Get all the AccessNodes with the same data
         matches = []
         for d_state in descendant_states:
-            matches += [(nd, parent) for nd, parent in d_state.all_nodes_recursive()
-                        if isinstance(nd, nodes.AccessNode) and nd.data == node.data]
+            matches += [
+                (nd, parent)
+                for nd, parent in d_state.all_nodes_recursive()
+                if isinstance(nd, nodes.AccessNode) and nd.data == node.data
+            ]
 
         # There needs to be at least one occurrence which is the node passed as a parameter
         if len(matches) == 0 or (node, forward_state) not in matches:
@@ -227,7 +252,7 @@ class DataForwardingManager:
         # If we haven't already confirmed that this node has not been overwritten
         if not decided:
             # Iterate through all the successor occurrences
-            for nd, parent in matches[index + 1:]:
+            for nd, parent in matches[index + 1 :]:
                 # Check if this node has an incoming edge
                 if len(parent.in_edges(nd)) > 0:
                     overwritten = True
@@ -237,10 +262,12 @@ class DataForwardingManager:
             # Check if this state is within a loop
             is_in_loop, loop = ad_utils.state_within_loop(forward_state)
             if is_in_loop:
-
                 # Check if there is any write to this access node within the loop
-                loop_matches = [(nd, parent) for nd, parent in loop.all_nodes_recursive()
-                                if isinstance(nd, nodes.AccessNode) and nd.data == node.data]
+                loop_matches = [
+                    (nd, parent)
+                    for nd, parent in loop.all_nodes_recursive()
+                    if isinstance(nd, nodes.AccessNode) and nd.data == node.data
+                ]
                 for match, match_parent in loop_matches:
                     # Check if this node has an incoming edge
                     if len(match_parent.in_edges(match)) > 0:
@@ -266,19 +293,21 @@ class DataForwardingManager:
                         overwritten = False
 
         # Iterate through all the predecessor occurrences
-        for nd, parent in matches[:index + 1]:
+        for nd, parent in matches[: index + 1]:
             # Check if this node has an incoming edge
             if len(parent.in_edges(nd)) > 0:
                 recomputable = True
         return overwritten, recomputable
 
-    def _connect_forward_accessnode_not_overwritten(self,
-                                                    forward_state: SDFGState,
-                                                    backward_state: SDFGState,
-                                                    forward_node: nodes.AccessNode,
-                                                    target_node: nodes.Node,
-                                                    starting_edge: dgraph.MultiConnectorEdge,
-                                                    replicated_node: Optional[nodes.AccessNode] = None):
+    def _connect_forward_accessnode_not_overwritten(
+        self,
+        forward_state: SDFGState,
+        backward_state: SDFGState,
+        forward_node: nodes.AccessNode,
+        target_node: nodes.Node,
+        starting_edge: dgraph.MultiConnectorEdge,
+        replicated_node: Optional[nodes.AccessNode] = None,
+    ):
         """
         Replicate and connect the forward AccessNode to the requesting node in the backward pass.
         Because the AccessNode has not been overwritten, we just need to create the same connection
@@ -307,9 +336,9 @@ class DataForwardingManager:
 
         # We replicate the exact link between this forward access node and the target node
         # Get all the edges in the path
-        all_edges_inbetween = ad_utils.get_all_path_edges(state=forward_state,
-                                                          source=forward_node,
-                                                          starting_edge=starting_edge)
+        all_edges_inbetween = ad_utils.get_all_path_edges(
+            state=forward_state, source=forward_node, starting_edge=starting_edge
+        )
 
         # A dictionary to keep track of temporary nodes in the path
         replicated_tmp_nodes = {}
@@ -322,8 +351,9 @@ class DataForwardingManager:
             # If the destination is a map entry,
             if isinstance(dst, nodes.MapEntry):
                 # We need to get the corresponding map entry in the backward pass.
-                bwd_dst = self.bwd_generator._find_backward_entry_node_for_map_entry(backward_state=backward_state,
-                                                                                     entry_node=dst)
+                bwd_dst = self.bwd_generator._find_backward_entry_node_for_map_entry(
+                    backward_state=backward_state, entry_node=dst
+                )
                 # Add the dst connector to the map
                 added = bwd_dst.add_in_connector(bwd_dst_conn)
                 assert added
@@ -331,8 +361,9 @@ class DataForwardingManager:
             # If the destination is a map entry,
             if isinstance(src, nodes.MapEntry):
                 # We need to get the corresponding map entry in the backward pass.
-                bwd_src = self.bwd_generator._find_backward_entry_node_for_map_entry(backward_state=backward_state,
-                                                                                     entry_node=src)
+                bwd_src = self.bwd_generator._find_backward_entry_node_for_map_entry(
+                    backward_state=backward_state, entry_node=src
+                )
                 # Add the src connector to the map
                 added = bwd_src.add_out_connector(bwd_src_conn)
                 assert added

@@ -25,13 +25,9 @@ def generate_matrix(size, dtype):
     return A
 
 
-def make_sdfg(implementation,
-              dtype,
-              id=0,
-              in_shape=[n, n],
-              out_shape=[n, n],
-              in_subset="0:n, 0:n",
-              out_subset="0:n, 0:n"):
+def make_sdfg(
+    implementation, dtype, id=0, in_shape=[n, n], out_shape=[n, n], in_subset="0:n, 0:n", out_subset="0:n, 0:n"
+):
 
     sdfg = dace.SDFG("linalg_solve_{}_{}_{}".format(implementation, dtype.__name__, id))
     sdfg.add_symbol("n", dace.int64)
@@ -50,34 +46,52 @@ def make_sdfg(implementation,
 
     state.add_memlet_path(ain, solve_node, dst_conn="_ain", memlet=Memlet.simple(ain, in_subset, num_accesses=n * n))
     state.add_memlet_path(bin, solve_node, dst_conn="_bin", memlet=Memlet.simple(bin, out_subset, num_accesses=n * n))
-    state.add_memlet_path(solve_node,
-                          bout,
-                          src_conn="_bout",
-                          memlet=Memlet.simple(bout, out_subset, num_accesses=n * n))
+    state.add_memlet_path(
+        solve_node, bout, src_conn="_bout", memlet=Memlet.simple(bout, out_subset, num_accesses=n * n)
+    )
 
     return sdfg
 
 
-@pytest.mark.parametrize("implementation, dtype, size, shape", [
-    pytest.param('MKL', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.mkl),
-    pytest.param('MKL', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.mkl),
-    pytest.param(
-        'MKL', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], marks=pytest.mark.mkl),
-    pytest.param(
-        'MKL', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], marks=pytest.mark.mkl),
-    pytest.param('OpenBLAS', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.lapack),
-    pytest.param('OpenBLAS', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.lapack),
-    pytest.param('OpenBLAS',
-                 np.float32,
-                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-                 marks=pytest.mark.lapack),
-    pytest.param('OpenBLAS',
-                 np.float64,
-                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-                 marks=pytest.mark.lapack),
-    pytest.param('cuSolverDn', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.gpu),
-    pytest.param('cuSolverDn', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.gpu)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype, size, shape",
+    [
+        pytest.param('MKL', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.mkl),
+        pytest.param('MKL', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.mkl),
+        pytest.param(
+            'MKL', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], marks=pytest.mark.mkl
+        ),
+        pytest.param(
+            'MKL', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], marks=pytest.mark.mkl
+        ),
+        pytest.param(
+            'OpenBLAS', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.lapack
+        ),
+        pytest.param(
+            'OpenBLAS', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.lapack
+        ),
+        pytest.param(
+            'OpenBLAS',
+            np.float32,
+            4,
+            [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+            marks=pytest.mark.lapack,
+        ),
+        pytest.param(
+            'OpenBLAS',
+            np.float64,
+            4,
+            [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+            marks=pytest.mark.lapack,
+        ),
+        pytest.param(
+            'cuSolverDn', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.gpu
+        ),
+        pytest.param(
+            'cuSolverDn', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.gpu
+        ),
+    ],
+)
 def test_solve(implementation, dtype, size, shape):
     global id
     id += 1
@@ -100,9 +114,11 @@ def test_solve(implementation, dtype, size, shape):
     out_subset = tuple([slice(o, o + size) if i in out_dims else o for i, o in enumerate(out_offset)])
 
     in_subset_str = ','.join(
-        ["{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o) for i, o in enumerate(in_offset)])
+        ["{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o) for i, o in enumerate(in_offset)]
+    )
     out_subset_str = ','.join(
-        ["{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o) for i, o in enumerate(out_offset)])
+        ["{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o) for i, o in enumerate(out_offset)]
+    )
 
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape, in_subset_str, out_subset_str)
     if implementation == 'cuSolverDn':

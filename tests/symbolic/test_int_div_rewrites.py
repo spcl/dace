@@ -6,6 +6,7 @@ folded a unit denominator. That asymmetry leaked: ``strides_from_layout`` pads w
 ``alignment=1``, so every symbolic descriptor came back carrying an ``int_ceil(N, 1)`` that never
 folded back to ``N``. Both functions now share the unit-denominator and exact-division rules.
 """
+
 import pytest
 import sympy
 

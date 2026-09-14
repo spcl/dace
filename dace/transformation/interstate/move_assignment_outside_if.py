@@ -17,7 +17,6 @@ from dace.transformation import transformation
 
 @transformation.explicit_cf_compatible
 class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
-
     conditional = transformation.PatternNode(ConditionalBlock)
 
     @classmethod
@@ -31,8 +30,9 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
             return False
         fcond = self.conditional.branches[0][0]
         scond = self.conditional.branches[1][0]
-        if (fcond is None or (scond is not None and
-                              (pystr_to_symbolic(fcond.as_string)) != sp.Not(pystr_to_symbolic(scond.as_string)))):
+        if fcond is None or (
+            scond is not None and (pystr_to_symbolic(fcond.as_string)) != sp.Not(pystr_to_symbolic(scond.as_string))
+        ):
             return False
 
         # set of the variables which get a const value assigned

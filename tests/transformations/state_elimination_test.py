@@ -70,8 +70,13 @@ def test_sae_scalar():
     sdfg.add_array('B', [1], dace.float64)
     sdfg.add_scalar('scal', dace.int32, transient=True)
     initstate = sdfg.add_state()
-    initstate.add_edge(initstate.add_tasklet('do', {}, {'out'}, 'out = 5'), 'out', initstate.add_write('scal'), None,
-                       dace.Memlet('scal'))
+    initstate.add_edge(
+        initstate.add_tasklet('do', {}, {'out'}, 'out = 5'),
+        'out',
+        initstate.add_write('scal'),
+        None,
+        dace.Memlet('scal'),
+    )
     state = sdfg.add_state()
     sdfg.add_edge(initstate, state, dace.InterstateEdge(assignments=dict(s2='scal')))
     a = state.add_read('A')

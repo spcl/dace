@@ -3,6 +3,7 @@
 
 These assert on emitted code, so they need a GPU for neither compilation nor a run.
 """
+
 import re
 
 import dace
@@ -31,10 +32,9 @@ def persistent_gpu_transient() -> dace.SDFG:
     sdfg = dace.SDFG('persistent_gpu_transient')
     sdfg.add_array('A', [20], dace.float64, storage=dtypes.StorageType.GPU_Global)
     sdfg.add_array('B', [20], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_transient('T', [20],
-                       dace.float64,
-                       storage=dtypes.StorageType.GPU_Global,
-                       lifetime=dtypes.AllocationLifetime.Persistent)
+    sdfg.add_transient(
+        'T', [20], dace.float64, storage=dtypes.StorageType.GPU_Global, lifetime=dtypes.AllocationLifetime.Persistent
+    )
 
     state = sdfg.add_state('main')
     a = state.add_access('A')
@@ -115,9 +115,11 @@ def test_a_failed_target_initializer_stops_before_the_state_it_left_unset():
     assert initializer, 'the CUDA target initializer is not called, so this test is anchored on nothing'
     allocation = re.search(r'DACE_GPU_CHECK\(', init)
     assert allocation, 'the persistent GPU allocation was not hoisted into the init function'
-    bailout = re.search(BAILOUT, init[initializer.end():allocation.start()])
-    assert bailout, ('the persistent GPU allocation runs even when __dace_init_cuda failed, and every DACE_GPU_CHECK '
-                     'in it dereferences the gpu_context that the failed initializer never constructed')
+    bailout = re.search(BAILOUT, init[initializer.end() : allocation.start()])
+    assert bailout, (
+        'the persistent GPU allocation runs even when __dace_init_cuda failed, and every DACE_GPU_CHECK '
+        'in it dereferences the gpu_context that the failed initializer never constructed'
+    )
 
 
 def test_the_init_function_still_checks_what_runs_after_the_allocations():
@@ -125,8 +127,9 @@ def test_the_init_function_still_checks_what_runs_after_the_allocations():
     init = init_function(generated_code(persistent_gpu_transient()), 'persistent_gpu_transient')
     allocation = re.search(r'DACE_GPU_CHECK\(', init)
     assert allocation, 'the persistent GPU allocation was not hoisted into the init function'
-    assert re.search(BAILOUT, init[allocation.end():]), (
-        'nothing checks __result after the allocation and init code, so a failure there returns a live state')
+    assert re.search(BAILOUT, init[allocation.end() :]), (
+        'nothing checks __result after the allocation and init code, so a failure there returns a live state'
+    )
 
 
 def test_cross_stream_event_synchronization_is_checked():
@@ -134,7 +137,7 @@ def test_cross_stream_event_synchronization_is_checked():
     code = generated_code(cross_stream_consumer())
     calls = list(re.finditer(EVENT_CALL, code))
     assert calls, 'no cross-stream event synchronization was emitted, so this test is anchored on nothing'
-    unchecked = [call.group(0) for call in calls if not code[:call.start()].endswith('DACE_GPU_CHECK(')]
+    unchecked = [call.group(0) for call in calls if not code[: call.start()].endswith('DACE_GPU_CHECK(')]
     assert not unchecked, f'event synchronization emitted without an error check: {unchecked}'
 
 
@@ -145,8 +148,9 @@ def test_cublas_calls_are_checked():
         calls = list(re.finditer(CUBLAS_CALL, code))
         assert calls, f'no cuBLAS call was emitted for alpha={alpha}, so this test is anchored on nothing'
         unchecked = [
-            call.group(0) for call in calls
-            if not code[:call.start()].rstrip().endswith('dace::blas::CheckCublasError(')
+            call.group(0)
+            for call in calls
+            if not code[: call.start()].rstrip().endswith('dace::blas::CheckCublasError(')
         ]
         assert not unchecked, f'cuBLAS called without checking its status: {unchecked}'
 

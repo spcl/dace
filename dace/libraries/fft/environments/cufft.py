@@ -4,7 +4,6 @@ import dace.library
 
 @dace.library.environment
 class cuFFT:
-
     cmake_minimum_version = None
     cmake_packages = ["CUDA"]
     cmake_variables = {}

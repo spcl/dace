@@ -32,7 +32,6 @@ class TuningGroups(enum.Enum):
 
 
 class DataLayoutTuner(cutout_tuner.CutoutTuner):
-
     def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(task="DataLayout", sdfg=sdfg)
         self.instrument = measurement
@@ -72,7 +71,8 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
                 for member in group:
                     if ndims is not None and len(arrays[member].shape) != ndims:
                         raise ValueError(
-                            f'Group "{group}" contains arrays with different dimensions. Cannot tune together')
+                            f'Group "{group}" contains arrays with different dimensions. Cannot tune together'
+                        )
                     ndims = len(arrays[member].shape)
                 if ndims is None:
                     ndims = 0
@@ -109,8 +109,14 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         # TODO
         raise NotImplementedError
 
-    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
-                     group_by: TuningGroups, **kwargs) -> Dict:
+    def pre_evaluate(
+        self,
+        cutout: dace.SDFG,
+        dreport: data_report.InstrumentedDataReport,
+        measurements: int,
+        group_by: TuningGroups,
+        **kwargs,
+    ) -> Dict:
         # No modification to original SDFG, best configuration needs to be determined globally
         cutout.instrument = self.instrument
 
@@ -126,14 +132,11 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         groups = self.setup_tuning_groups(cutout, group_by)
 
         new_kwargs = {
-            "space_kwargs": {
-                "cutout": cutout,
-                "groups": groups
-            },
+            "space_kwargs": {"cutout": cutout, "groups": groups},
             "cutout": cutout,
             "arguments": arguments,
             "measurements": measurements,
-            "key": lambda config: '\n'.join([f'  {k}: {v.strides}' for k, v in config[1].items() if not v.transient])
+            "key": lambda config: '\n'.join([f'  {k}: {v.strides}' for k, v in config[1].items() if not v.transient]),
         }
         new_kwargs["group_by"] = group_by
         return new_kwargs

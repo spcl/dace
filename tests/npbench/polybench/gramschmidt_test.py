@@ -35,6 +35,7 @@ def gramschmidt_kernel(A: dc.float64[M, N]):
 
 def initialize(M, N, datatype=np.float64):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
     A = rng.random((M, N), dtype=datatype)
@@ -127,7 +128,7 @@ def run_gramschmidt_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -167,7 +168,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

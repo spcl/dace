@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests constants, optional, and keyword arguments. """
+"""Tests constants, optional, and keyword arguments."""
+
 from types import SimpleNamespace
 import dace
 import numpy as np
@@ -192,7 +193,6 @@ def test_none_convertibles_2():
     myfunc = None
 
     class AConvertible(SDFGConvertible):
-
         def __sdfg__(self):
 
             @dace.program
@@ -247,7 +247,7 @@ def test_optional_argument_jit():
 
     @dace.program
     def linear(x, w, bias):
-        """ Linear layer with weights w applied to x, and optional bias. """
+        """Linear layer with weights w applied to x, and optional bias."""
         if bias is not None:
             return x @ w.T + bias
         else:
@@ -268,7 +268,7 @@ def test_optional_argument_jit_kwarg():
 
     @dace.program
     def linear(x, w, bias=None):
-        """ Linear layer with weights w applied to x, and optional bias. """
+        """Linear layer with weights w applied to x, and optional bias."""
         if bias is not None:
             return np.dot(x, w.T) + bias
         else:
@@ -289,7 +289,7 @@ def test_optional_argument():
 
     @dace.program
     def linear(x: dace.float64[13, 14], w: dace.float64[10, 14], bias: dace.float64[10] = None):
-        """ Linear layer with weights w applied to x, and optional bias. """
+        """Linear layer with weights w applied to x, and optional bias."""
         if bias is not None:
             return np.dot(x, w.T) + bias
         else:
@@ -355,7 +355,6 @@ def test_constant_argument_object():
     """
 
     class MyConfiguration:
-
         def __init__(self, parameter):
             self.p = parameter * 2
             self.q = parameter * 4
@@ -387,7 +386,6 @@ def test_constant_argument_object():
 def test_none_field():
 
     class ClassA:
-
         def __init__(self, field_or_none):
             self.field_or_none = field_or_none
 
@@ -398,12 +396,12 @@ def test_none_field():
             if (self.field_or_none is not None) and (self.field_or_none is not None):
                 A[...] += self.field_or_none
 
-    A = np.ones((10, ))
+    A = np.ones((10,))
     obja = ClassA(None)
     obja.method(A)
     assert np.allclose(A, 7.0)
-    A = np.ones((10, ))
-    obja = ClassA(np.ones((10, )))
+    A = np.ones((10,))
+    obja = ClassA(np.ones((10,)))
     obja.method(A)
     assert np.allclose(A, 2.0)
 
@@ -411,16 +409,15 @@ def test_none_field():
 def test_array_by_str_key():
 
     class AClass:
-
         def __init__(self):
-            self.adict = dict(akey=7.0 * np.ones((10, )))
+            self.adict = dict(akey=7.0 * np.ones((10,)))
 
         @dace.method
         def __call__(self, A):
             A[...] = self.adict['akey']
 
     aobj = AClass()
-    arr = np.empty((10, ))
+    arr = np.empty((10,))
     aobj(arr)
     assert np.allclose(7.0, arr)
 
@@ -453,7 +450,7 @@ def test_boolglobal():
             tmp = 1
         A[...] = tmp
 
-    a = np.empty((10, ))
+    a = np.empty((10,))
     func(a)
     assert np.allclose(a, 1)
 
@@ -470,7 +467,7 @@ def test_intglobal():
                 tmp = 0
         A[...] = tmp
 
-    func(np.empty((10, )))
+    func(np.empty((10,)))
 
 
 def test_numpynumber_condition():
@@ -543,6 +540,7 @@ def test_constant_propagation():
     sdfg = conditional_val.to_sdfg(val=3, simplify=True)
     from dace.transformation.passes.dead_state_elimination import DeadStateElimination
     from dace.transformation.passes.constant_propagation import ConstantPropagation
+
     simp_pipeline = FixedPointPipeline([ConstantPropagation(), DeadStateElimination()])
     res = dict()
     simp_pipeline.apply_pass(sdfg, res)
@@ -568,6 +566,7 @@ def test_constant_propagation_with_normal_argument():
     a = np.random.rand(20)
     sdfg = conditional_val_with_access.to_sdfg(a, 3, simplify=True, use_cache=True)
     from dace.transformation.passes.constant_propagation import ConstantPropagation
+
     res = dict()
     ConstantPropagation().apply_pass(sdfg, res, {'val': 3})
     sdfg.simplify()
@@ -581,7 +580,8 @@ def test_constant_propagation_with_normal_argument():
     assert np.allclose(a, 4)
     conditional_val_with_access(a, 7)  # correct value of `a` should be 8
     assert np.allclose(
-        a, 4)  # the value of `a` will be set to 4 again since we've substituted `val` with the 3 in the cached SDFG
+        a, 4
+    )  # the value of `a` will be set to 4 again since we've substituted `val` with the 3 in the cached SDFG
 
 
 def test_constant_propagation_pass():
@@ -654,7 +654,7 @@ def test_constant_proper_use():
 
 
 def test_constant_proper_use_2():
-    """ Stress test constants with strings. """
+    """Stress test constants with strings."""
 
     @dace.program
     def good_function(cfg: dace.compiletime, cfg2: dace.compiletime, arr):

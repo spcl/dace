@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``FillLibraryNode``: write one constant over a contiguous output subset, or broadcast a
 single-element value supplied through an input connector."""
+
 from typing import Any, Optional, Tuple
 
 import dace
@@ -29,11 +30,13 @@ class FillLibraryNode(nodes.LibraryNode):
     def __init__(self, name: str, *args, value=0, **kwargs):
         # Dotted structure-member data names reach here through the callers that build the label;
         # the label names the wrapper SDFG, i.e. a C++ function. See CopyLibraryNode.__init__.
-        super().__init__(name.replace('.', '_'),
-                         *args,
-                         inputs={self.VALUE_CONNECTOR_NAME},
-                         outputs={self.OUTPUT_CONNECTOR_NAME},
-                         **kwargs)
+        super().__init__(
+            name.replace('.', '_'),
+            *args,
+            inputs={self.VALUE_CONNECTOR_NAME},
+            outputs={self.OUTPUT_CONNECTOR_NAME},
+            **kwargs,
+        )
         self.value = value
 
     def value_edge(self, state: dace.SDFGState) -> Optional[Any]:
@@ -60,18 +63,21 @@ class FillLibraryNode(nodes.LibraryNode):
 
         src = state.memlet_path(edge)[0].src
         if not isinstance(src, nodes.AccessNode):
-            raise ValueError(f"{type(self).__name__} dynamic fill value must come from an access node, "
-                             f"got {type(src).__name__}.")
+            raise ValueError(
+                f"{type(self).__name__} dynamic fill value must come from an access node, got {type(src).__name__}."
+            )
 
         name = src.data
         desc = state.sdfg.arrays[name]
         subset = edge.data.subset
         if subset.num_elements_exact() != 1:
-            raise ValueError(f"{type(self).__name__} dynamic fill value must be a single element, "
-                             f"got subset {subset} on '{name}'.")
+            raise ValueError(
+                f"{type(self).__name__} dynamic fill value must be a single element, got subset {subset} on '{name}'."
+            )
         if desc.dtype != out.dtype:
-            raise ValueError(f"{type(self).__name__} dynamic fill value dtype ({desc.dtype}) must match "
-                             f"output dtype ({out.dtype}).")
+            raise ValueError(
+                f"{type(self).__name__} dynamic fill value dtype ({desc.dtype}) must match output dtype ({out.dtype})."
+            )
 
         return name, desc, subset
 
@@ -86,14 +92,15 @@ class FillLibraryNode(nodes.LibraryNode):
         """
         data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == self.OUTPUT_CONNECTOR_NAME]
         if len(data_oes) != 1:
-            raise ValueError(f"{type(self).__name__} expects exactly one "
-                             f"``{self.OUTPUT_CONNECTOR_NAME}`` output edge.")
+            raise ValueError(f"{type(self).__name__} expects exactly one ``{self.OUTPUT_CONNECTOR_NAME}`` output edge.")
 
         reserved = {CURRENT_STREAM_NAME, self.VALUE_CONNECTOR_NAME}
         extra = [ie.dst_conn for ie in state.in_edges(self) if ie.dst_conn not in reserved and not ie.data.is_empty()]
         if extra:
-            raise ValueError(f"{type(self).__name__} does not accept arbitrary dynamic input connectors; got {extra}. "
-                             f"Subset expressions must use symbols already in scope.")
+            raise ValueError(
+                f"{type(self).__name__} does not accept arbitrary dynamic input connectors; got {extra}. "
+                f"Subset expressions must use symbols already in scope."
+            )
 
         # Also raises if the dynamic value connector is wired but invalid.
         self.value_descriptor(state)

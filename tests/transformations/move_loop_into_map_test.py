@@ -119,7 +119,7 @@ def test_apply_multiple_times():
     sdfg = apply_multiple_times.to_sdfg(simplify=True)
     overall = 0
     count = 1
-    while (count > 0):
+    while count > 0:
         count = sdfg.apply_transformations_repeated(MoveLoopIntoMap, permissive=True)
         overall += count
         sdfg.simplify()
@@ -139,7 +139,7 @@ def test_apply_multiple_times_1():
     sdfg = apply_multiple_times_1.to_sdfg(simplify=True)
     overall = 0
     count = 1
-    while (count > 0):
+    while count > 0:
         count = sdfg.apply_transformations_repeated(MoveLoopIntoMap, permissive=True)
         overall += count
         sdfg.simplify()
@@ -156,7 +156,7 @@ def test_apply_multiple_times_1():
 
 
 def test_more_than_a_map():
-    """ `out` is read and written indirectly by the MapExit, potentially leading to a RW dependency.
+    """`out` is read and written indirectly by the MapExit, potentially leading to a RW dependency.
 
     Note that there is actually no dependency, however, the transformation, because it relies
     on `SDFGState.read_and_write_sets()` it can not detect this and can thus not be applied.
@@ -174,14 +174,16 @@ def test_more_than_a_map():
     bread = body.add_access('B')
     twrite = body.add_access('tmp')
     owrite = body.add_access('out')
-    body.add_mapped_tasklet('op',
-                            dict(i='0:3', j='0:3'),
-                            dict(__in1=dace.Memlet('out[i, j]'), __in2=dace.Memlet('B[i, j]')),
-                            '__out = __in1 - __in2',
-                            dict(__out=dace.Memlet('tmp[i, j]')),
-                            external_edges=True,
-                            input_nodes=dict(out=oread, B=bread),
-                            output_nodes=dict(tmp=twrite))
+    body.add_mapped_tasklet(
+        'op',
+        dict(i='0:3', j='0:3'),
+        dict(__in1=dace.Memlet('out[i, j]'), __in2=dace.Memlet('B[i, j]')),
+        '__out = __in1 - __in2',
+        dict(__out=dace.Memlet('tmp[i, j]')),
+        external_edges=True,
+        input_nodes=dict(out=oread, B=bread),
+        output_nodes=dict(tmp=twrite),
+    )
     body.add_nedge(aread, oread, dace.Memlet.from_array('A', aarr))
     body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
     count = sdfg.apply_transformations(MoveLoopIntoMap)
@@ -204,14 +206,16 @@ def test_more_than_a_map_1():
     bread = body.add_access('B')
     twrite = body.add_access('tmp')
     owrite = body.add_access('out')
-    body.add_mapped_tasklet('op',
-                            dict(i='0:3', j='0:3'),
-                            dict(__in1=dace.Memlet('A[i, j]'), __in2=dace.Memlet('B[i, j]')),
-                            '__out = __in1 - __in2',
-                            dict(__out=dace.Memlet('tmp[i, j]')),
-                            external_edges=True,
-                            input_nodes=dict(A=aread, B=bread),
-                            output_nodes=dict(tmp=twrite))
+    body.add_mapped_tasklet(
+        'op',
+        dict(i='0:3', j='0:3'),
+        dict(__in1=dace.Memlet('A[i, j]'), __in2=dace.Memlet('B[i, j]')),
+        '__out = __in1 - __in2',
+        dict(__out=dace.Memlet('tmp[i, j]')),
+        external_edges=True,
+        input_nodes=dict(A=aread, B=bread),
+        output_nodes=dict(tmp=twrite),
+    )
     body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count > 0
@@ -232,8 +236,8 @@ def test_more_than_a_map_1():
 
 
 def test_more_than_a_map_2():
-    """ `out` is written indirectly by the MapExit with a subset dependent on the loop variable. This creates a RW
-        dependency.
+    """`out` is written indirectly by the MapExit with a subset dependent on the loop variable. This creates a RW
+    dependency.
     """
     sdfg = dace.SDFG('more_than_a_map_2')
     _, aarr = sdfg.add_array('A', (3, 3), dace.float64)
@@ -247,21 +251,23 @@ def test_more_than_a_map_2():
     bread = body.add_access('B')
     twrite = body.add_access('tmp')
     owrite = body.add_access('out')
-    body.add_mapped_tasklet('op',
-                            dict(i='0:3', j='0:3'),
-                            dict(__in1=dace.Memlet('A[i, j]'), __in2=dace.Memlet('B[i, j]')),
-                            '__out = __in1 - __in2',
-                            dict(__out=dace.Memlet('tmp[i, j]')),
-                            external_edges=True,
-                            input_nodes=dict(A=aread, B=bread),
-                            output_nodes=dict(tmp=twrite))
+    body.add_mapped_tasklet(
+        'op',
+        dict(i='0:3', j='0:3'),
+        dict(__in1=dace.Memlet('A[i, j]'), __in2=dace.Memlet('B[i, j]')),
+        '__out = __in1 - __in2',
+        dict(__out=dace.Memlet('tmp[i, j]')),
+        external_edges=True,
+        input_nodes=dict(A=aread, B=bread),
+        output_nodes=dict(tmp=twrite),
+    )
     body.add_nedge(twrite, owrite, dace.Memlet('out[k%3, (k+1)%3]', other_subset='(k+1)%3, k%3'))
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count == 0
 
 
 def test_more_than_a_map_3():
-    """ There are more than one connected components in the loop body. The transformation should not apply. """
+    """There are more than one connected components in the loop body. The transformation should not apply."""
     sdfg = dace.SDFG('more_than_a_map_3')
     _, aarr = sdfg.add_array('A', (3, 3), dace.float64)
     _, barr = sdfg.add_array('B', (3, 3), dace.float64)
@@ -274,14 +280,16 @@ def test_more_than_a_map_3():
     bread = body.add_access('B')
     twrite = body.add_access('tmp')
     owrite = body.add_access('out')
-    body.add_mapped_tasklet('op',
-                            dict(i='0:3', j='0:3'),
-                            dict(__in1=dace.Memlet('A[i, j]'), __in2=dace.Memlet('B[i, j]')),
-                            '__out = __in1 - __in2',
-                            dict(__out=dace.Memlet('tmp[i, j]')),
-                            external_edges=True,
-                            input_nodes=dict(A=aread, B=bread),
-                            output_nodes=dict(tmp=twrite))
+    body.add_mapped_tasklet(
+        'op',
+        dict(i='0:3', j='0:3'),
+        dict(__in1=dace.Memlet('A[i, j]'), __in2=dace.Memlet('B[i, j]')),
+        '__out = __in1 - __in2',
+        dict(__out=dace.Memlet('tmp[i, j]')),
+        external_edges=True,
+        input_nodes=dict(A=aread, B=bread),
+        output_nodes=dict(tmp=twrite),
+    )
     body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
     aread2 = body.add_access('A')
     owrite2 = body.add_access('out')
@@ -306,14 +314,16 @@ def test_more_than_a_map_4():
     bread = body.add_access('B')
     twrite = body.add_access('tmp')
     owrite = body.add_access('out')
-    body.add_mapped_tasklet('op',
-                            dict(i='0:3', j='0:3'),
-                            dict(__in1=dace.Memlet('out[i, j]'), __in2=dace.Memlet('B[i, j]')),
-                            '__out = __in1 - __in2',
-                            dict(__out=dace.Memlet('tmp[i, j]')),
-                            external_edges=True,
-                            input_nodes=dict(out=oread, B=bread),
-                            output_nodes=dict(tmp=twrite))
+    body.add_mapped_tasklet(
+        'op',
+        dict(i='0:3', j='0:3'),
+        dict(__in1=dace.Memlet('out[i, j]'), __in2=dace.Memlet('B[i, j]')),
+        '__out = __in1 - __in2',
+        dict(__out=dace.Memlet('tmp[i, j]')),
+        external_edges=True,
+        input_nodes=dict(out=oread, B=bread),
+        output_nodes=dict(tmp=twrite),
+    )
     body.add_nedge(aread, oread, dace.Memlet('A[Mod(_, 3), 0:3] -> [Mod(_ + 1, 3), 0:3]', aarr))
     body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
     sdfg.add_loop(None, body, None, '_', '0', '_ < 10', '_ + 1')

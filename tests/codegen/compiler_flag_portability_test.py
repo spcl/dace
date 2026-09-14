@@ -2,6 +2,7 @@
 """Each family's ``compiler.*.args`` default must compile under that family. The GCC/Clang defaults
 have four switches nvc++ rejects, so :mod:`dace.codegen.compiler_family` picks a per-family default.
 Absent compilers yield no test case (not a skip); CI has no NVHPC, so nvc++ runs on dev machines."""
+
 import re
 import shutil
 import subprocess
@@ -14,8 +15,20 @@ from dace.config import Config, set_temporary
 
 #: Compilers to try, by the name they are normally installed under. Version-suffixed names are
 #: included because a distribution's unsuffixed ``g++`` may be older than the one under test.
-CANDIDATES = ('g++', 'g++-12', 'g++-13', 'g++-14', 'g++-15', 'clang++', 'clang++-18', 'clang++-19', 'clang++-20',
-              'clang++-21', 'nvc++', 'icpx')
+CANDIDATES = (
+    'g++',
+    'g++-12',
+    'g++-13',
+    'g++-14',
+    'g++-15',
+    'clang++',
+    'clang++-18',
+    'clang++-19',
+    'clang++-20',
+    'clang++-21',
+    'nvc++',
+    'icpx',
+)
 
 AVAILABLE = [name for name in CANDIDATES if shutil.which(name)]
 
@@ -33,19 +46,21 @@ def flags_for(executable: str) -> list:
 def compile_probe(executable: str, flags: list, tmp_path: Path) -> subprocess.CompletedProcess:
     source = tmp_path / 'probe.cpp'
     source.write_text(PROBE_SOURCE)
-    return subprocess.run([executable, *flags, '-c',
-                           str(source), '-o', str(tmp_path / 'probe.o')],
-                          capture_output=True,
-                          text=True,
-                          timeout=300)
+    return subprocess.run(
+        [executable, *flags, '-c', str(source), '-o', str(tmp_path / 'probe.o')],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
 
 
 @pytest.mark.parametrize('executable', AVAILABLE)
 def test_default_flags_are_accepted(executable, tmp_path):
     """Every flag DaCe would pass this compiler is one it understands."""
     result = compile_probe(executable, flags_for(executable), tmp_path)
-    assert result.returncode == 0, (f'{executable} ({compiler_family.detect(executable)}) rejected DaCe\'s default '
-                                    f'flags:\n{result.stderr}')
+    assert result.returncode == 0, (
+        f'{executable} ({compiler_family.detect(executable)}) rejected DaCe\'s default flags:\n{result.stderr}'
+    )
 
 
 @pytest.mark.parametrize('executable', AVAILABLE)
@@ -70,16 +85,15 @@ def test_configured_compiler_accepts_its_flags(tmp_path):
 
 def cmake_compiler_id(executable: str, tmp_path: Path) -> str:
     """What CMake calls ``executable``. The second opinion, from the tool that picks the flags."""
-    (tmp_path / 'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.16)\n'
-                                             'project(probe CXX)\n'
-                                             'message(STATUS "ID=${CMAKE_CXX_COMPILER_ID}")\n')
+    (tmp_path / 'CMakeLists.txt').write_text(
+        'cmake_minimum_required(VERSION 3.16)\nproject(probe CXX)\nmessage(STATUS "ID=${CMAKE_CXX_COMPILER_ID}")\n'
+    )
     out = subprocess.run(
-        ['cmake', '-S',
-         str(tmp_path), '-B',
-         str(tmp_path / 'b'), f'-DCMAKE_CXX_COMPILER={shutil.which(executable)}'],
+        ['cmake', '-S', str(tmp_path), '-B', str(tmp_path / 'b'), f'-DCMAKE_CXX_COMPILER={shutil.which(executable)}'],
         capture_output=True,
         text=True,
-        timeout=300)
+        timeout=300,
+    )
     assert out.returncode == 0, out.stderr
     match = re.search(r'ID=(\w+)', out.stdout)
     assert match, f'cmake did not report a compiler id for {executable}:\n{out.stdout}'

@@ -24,7 +24,6 @@ from dace.libraries.onnx.op_implementations.utils import op_implementation
 
 @op_implementation(op="Resize", name="pure")
 class PureResize(ONNXForward):
-
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         # Check if we have either scales or sizes (but not both)
@@ -43,15 +42,22 @@ class PureResize(ONNXForward):
         if mode == 'nearest':
             nearest_mode = getattr(node, 'nearest_mode', 'round_prefer_floor')
             if nearest_mode is not None and nearest_mode not in [
-                    'round_prefer_floor', 'round_prefer_ceil', 'floor', 'ceil'
+                'round_prefer_floor',
+                'round_prefer_ceil',
+                'floor',
+                'ceil',
             ]:
                 return False
 
         # Check coordinate transformation mode
         coord_mode = getattr(node, 'coordinate_transformation_mode', 'half_pixel')
         if coord_mode is not None and coord_mode not in [
-                'half_pixel', 'half_pixel_symmetric', 'pytorch_half_pixel', 'align_corners', 'asymmetric',
-                'tf_crop_and_resize'
+            'half_pixel',
+            'half_pixel_symmetric',
+            'pytorch_half_pixel',
+            'align_corners',
+            'asymmetric',
+            'tf_crop_and_resize',
         ]:
             return False
 
@@ -229,10 +235,12 @@ class PureResize(ONNXForward):
             tasklet_code.append(f"for (int i{i} = 0; i{i} < {out_data_desc.shape[i]}; i{i}++) {{")
 
         # Calculate input indices
-        tasklet_code.append("""
+        tasklet_code.append(
+            """
         // Calculate input indices for each dimension
         int inp_indices[{}];
-        """.format(num_dims))
+        """.format(num_dims)
+        )
 
         # Declare all size variables at the beginning
         for i in range(num_dims):
@@ -318,8 +326,8 @@ class PureResize(ONNXForward):
                         float w3_{i} = cubic_weight(x_original_{i} - x3_{i});
                         inp_indices[{i}] = int(x0_{i});
                         inp_indices[{i} + {num_dims}] = int(x1_{i});  // Store indices for cubic interpolation
-                        inp_indices[{i} + {2*num_dims}] = int(x2_{i});
-                        inp_indices[{i} + {3*num_dims}] = int(x3_{i});
+                        inp_indices[{i} + {2 * num_dims}] = int(x2_{i});
+                        inp_indices[{i} + {3 * num_dims}] = int(x3_{i});
                         """)
                 else:  # has_sizes
                     tasklet_code.append(f"""
@@ -359,8 +367,8 @@ class PureResize(ONNXForward):
             // Cubic interpolation
             float x0 = __inp [inp_idx];
             float x1 = __inp [inp_idx + {inp_data_desc.strides[axes[0]]}];
-            float x2 = __inp [inp_idx + {2*inp_data_desc.strides[axes[0]]}];
-            float x3 = __inp [inp_idx + {3*inp_data_desc.strides[axes[0]]}];
+            float x2 = __inp [inp_idx + {2 * inp_data_desc.strides[axes[0]]}];
+            float x3 = __inp [inp_idx + {3 * inp_data_desc.strides[axes[0]]}];
             float result = w0 * x0 + w1 * x1 + w2 * x2 + w3 * x3;
             """)
         else:  # nearest or default
@@ -422,16 +430,20 @@ class PureResize(ONNXForward):
         for i in range(len(out_data_desc.shape)):
             tasklet_code.append("}")
 
-        tasklet = nstate.add_tasklet(f'tasklet_reshape',
-                                     tasklet_inputs, {'__out': dace.pointer(out_data_desc.dtype)},
-                                     "\n".join(tasklet_code),
-                                     language=dace.Language.CPP)
+        tasklet = nstate.add_tasklet(
+            f'tasklet_reshape',
+            tasklet_inputs,
+            {'__out': dace.pointer(out_data_desc.dtype)},
+            "\n".join(tasklet_code),
+            language=dace.Language.CPP,
+        )
 
         # Connect tasklet inputs
         nstate.add_edge(inp_read, None, tasklet, "__inp", dace.Memlet.from_array(inp_name, inp_data_desc))
         if has_scales:
-            nstate.add_edge(scales_read, None, tasklet, "__scales",
-                            dace.Memlet.from_array(scales_name, scales_data_desc))
+            nstate.add_edge(
+                scales_read, None, tasklet, "__scales", dace.Memlet.from_array(scales_name, scales_data_desc)
+            )
         if has_sizes:
             nstate.add_edge(sizes_read, None, tasklet, "__sizes", dace.Memlet.from_array(sizes_name, sizes_data_desc))
         if has_roi:

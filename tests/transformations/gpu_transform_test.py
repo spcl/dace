@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Unit tests for the GPU to-device transformation. """
+"""Unit tests for the GPU to-device transformation."""
 
 import dace
 import numpy as np
@@ -48,7 +48,7 @@ def test_scalar_to_symbol_in_nested_sdfg():
 
     @dace.program
     def main_program(a: dace.int32):
-        out = np.ndarray((10, ), dtype=np.int32)
+        out = np.ndarray((10,), dtype=np.int32)
         nested_program(a, out)
         return out
 
@@ -127,7 +127,7 @@ def test_free_tasklet(transient, scalar):
     if scalar:
         arr_name, arr = sdfg.add_scalar("A", dace.float32, transient=transient)
     else:
-        arr_name, arr = sdfg.add_array("A", (4, ), dace.float32, transient=transient)
+        arr_name, arr = sdfg.add_array("A", (4,), dace.float32, transient=transient)
 
     an = state.add_access(arr_name)
 
@@ -136,12 +136,14 @@ def test_free_tasklet(transient, scalar):
 
     sdfg.validate()
 
-    sdfg.apply_gpu_transformations(validate=True,
-                                   validate_all=True,
-                                   permissive=True,
-                                   sequential_innermaps=True,
-                                   register_transients=False,
-                                   simplify=False)
+    sdfg.apply_gpu_transformations(
+        validate=True,
+        validate_all=True,
+        permissive=True,
+        sequential_innermaps=True,
+        register_transients=False,
+        simplify=False,
+    )
 
     sdfg.validate()
 

@@ -16,8 +16,8 @@ def cpp_tasklet(A: dace.uint32[2], B: dace.uint32[1]):
 
 
 def test():
-    A = dace.ndarray((2, ), dace.uint32)
-    B = dace.ndarray((1, ), dace.uint32)
+    A = dace.ndarray((2,), dace.uint32)
+    B = dace.ndarray((1,), dace.uint32)
 
     A[:] = 5
     B[:] = 0

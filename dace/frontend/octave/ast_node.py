@@ -4,8 +4,7 @@ import dace
 from collections import OrderedDict
 
 
-class AST_Node():
-
+class AST_Node:
     def __init__(self, context):
         self.context = context
         self.name = None  # Name of the variable holding the result in the SDFG
@@ -27,16 +26,16 @@ class AST_Node():
         raise NotImplementedError(str(type(self)) + " does not implement replace_child()")
 
     def specialize(self):
-        """ Some nodes can be simplified after parsing the complete AST and
-            before actually generating code, i.e., AST_FunCall nodes could be
-            function calls or array accesses, and we don't really know unless
-            we know the context of the call.
+        """Some nodes can be simplified after parsing the complete AST and
+        before actually generating code, i.e., AST_FunCall nodes could be
+        function calls or array accesses, and we don't really know unless
+        we know the context of the call.
 
-            This function traverses the AST
-            and tries to specialize nodes after completing the AST. It should
-            be called on the top-level AST_Statements node, and a node that
-            wants to be specialized should return its new instance. If no
-            specialzation should take place, it should return None.
+        This function traverses the AST
+        and tries to specialize nodes after completing the AST. It should
+        be called on the top-level AST_Statements node, and a node that
+        wants to be specialized should return its new instance. If no
+        specialzation should take place, it should return None.
         """
         for c in self.get_children():
             n = c.specialize()
@@ -72,17 +71,19 @@ class AST_Node():
         from .ast_assign import AST_Assign
         from .ast_values import AST_Ident
         from .ast_loop import AST_ForLoop
+
         current_node = self
 
         # check if we found the definition:
         # * current_node is an AST_Assign with name as lhs or
         # * a loop with name as the iterator
-        if isinstance(current_node, AST_Assign) and \
-           isinstance(current_node.lhs, AST_Ident) and \
-           (current_node.lhs.get_name() == name):
+        if (
+            isinstance(current_node, AST_Assign)
+            and isinstance(current_node.lhs, AST_Ident)
+            and (current_node.lhs.get_name() == name)
+        ):
             return current_node.rhs
-        elif isinstance(current_node, AST_ForLoop) and \
-            current_node.var.get_name() == name:
+        elif isinstance(current_node, AST_ForLoop) and current_node.var.get_name() == name:
             return current_node
 
         # if current node is inside list of stmts, traverse this list using
@@ -109,9 +110,9 @@ class AST_Node():
 
     def get_datanode(self, sdfg, state):
         try:
-            result = self.find_data_node_in_sdfg_state(sdfg=sdfg,
-                                                       state=state,
-                                                       nodename=self.get_name_in_sdfg(sdfg=sdfg))
+            result = self.find_data_node_in_sdfg_state(
+                sdfg=sdfg, state=state, nodename=self.get_name_in_sdfg(sdfg=sdfg)
+            )
         except ValueError:
             result = sdfg.nodes()[state].add_access(self.get_name_in_sdfg(sdfg=sdfg))
         return result
@@ -132,13 +133,13 @@ class AST_Node():
         return new_name
 
     def get_name_in_sdfg(self, sdfg):
-        """ If this node has no name assigned yet, create a new one of the form
-            ``__tmp_X`` where ``X`` is an integer, such that this node does not yet
-            exist in the given SDFG.
+        """If this node has no name assigned yet, create a new one of the form
+        ``__tmp_X`` where ``X`` is an integer, such that this node does not yet
+        exist in the given SDFG.
 
-            :note: We assume that we create exactly one SDFG from each AST,
-                   otherwise we need to store the hash of the SDFG the name was
-                   created for (would be easy but seems useless at this point).
+        :note: We assume that we create exactly one SDFG from each AST,
+               otherwise we need to store the hash of the SDFG the name was
+               created for (would be easy but seems useless at this point).
         """
         if self.name is not None:
             return self.name
@@ -180,7 +181,6 @@ class AST_Node():
 
 
 class AST_Statements(AST_Node):
-
     def __init__(self, context, stmts):
         AST_Node.__init__(self, context)
         self.statements = stmts
@@ -188,8 +188,9 @@ class AST_Statements(AST_Node):
         # we expect stmts to be a list of AST_Node objects
         for s in stmts:
             if not isinstance(s, AST_Node):
-                raise ValueError("Expected a list of AST_Nodes, but one of the members is: " + str(s) + " type " +
-                                 str(type(s)))
+                raise ValueError(
+                    "Expected a list of AST_Nodes, but one of the members is: " + str(s) + " type " + str(type(s))
+                )
 
     def __repr__(self):
         res = ["Statements:"]
@@ -242,6 +243,7 @@ class AST_Statements(AST_Node):
             func = None
             for c in self.get_children():
                 from .ast_function import AST_Function, AST_EndFunc
+
                 if isinstance(c, AST_Function):
                     func = c
                     stmts = []
@@ -254,6 +256,7 @@ class AST_Statements(AST_Node):
 
         # Remove NullStatements, they are only useful during parsing
         from .ast_nullstmt import AST_NullStmt
+
         self.statements = [x for x in self.statements if not isinstance(x, AST_NullStmt)]
         self.provide_parents(self.parent)
 

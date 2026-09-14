@@ -5,7 +5,6 @@ from dace import config, library
 
 @library.environment
 class HPTT:
-
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}

@@ -47,9 +47,11 @@ def test_fused_batch_norm():
     )
 
     try:
-        assert (tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) < 1e-1
-                and tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) < 1e-4
-                and tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) < 1e-4)
+        assert (
+            tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) < 1e-1
+            and tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) < 1e-4
+            and tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) < 1e-4
+        )
     except:
         print("FBN test failed")
         print(tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf))
@@ -58,13 +60,9 @@ def test_fused_batch_norm():
 
     ################# FBN GRADIENT TEST ###############################
     outputGrad = tf.placeholder(tf.float32, size)
-    x_grad, gamma_grad, beta_grad, _, _ = gen_nn_ops.fused_batch_norm_grad(outputGrad,
-                                                                           inp,
-                                                                           scale,
-                                                                           outputs[1],
-                                                                           var_sqrt,
-                                                                           epsilon=0.1,
-                                                                           is_training=True)
+    x_grad, gamma_grad, beta_grad, _, _ = gen_nn_ops.fused_batch_norm_grad(
+        outputGrad, inp, scale, outputs[1], var_sqrt, epsilon=0.1, is_training=True
+    )
     gradients = [x_grad, gamma_grad, beta_grad]
     test_outputgrad = np.random.uniform(size=size).astype(np.float32)
     outputs_dace = sess_dace.run(
@@ -98,9 +96,11 @@ def test_fused_batch_norm():
         },
     )
     try:
-        assert (tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) < 1e-1
-                and tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) < 10
-                and tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) < 10)
+        assert (
+            tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf) < 1e-1
+            and tf.linalg.norm(outputs_dace[2] - outputs_tf[2]).eval(session=sess_tf) < 10
+            and tf.linalg.norm(outputs_dace[1] - outputs_tf[1]).eval(session=sess_tf) < 10
+        )
     except:
         print("FBN Gradient test failed")
         print(tf.linalg.norm(outputs_tf[0] - outputs_dace[0]).eval(session=sess_tf))

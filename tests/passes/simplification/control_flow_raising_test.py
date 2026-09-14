@@ -32,7 +32,7 @@ def test_dataflow_if_check(lowered_returns: bool):
 
     assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())
 
-    A = np.zeros((10, ), np.int32)
+    A = np.zeros((10,), np.int32)
     A[4] = 10
     A[5] = 100
     assert sdfg(A, 0)[0] == 0
@@ -117,8 +117,8 @@ def test_elif_chain(lowered_returns: bool):
 def test_unstructured_control_flow_sibling_loops():
     sdfg = dace.SDFG('unstructured_control_flow_sibling_loops')
 
-    sdfg.add_array('A', (10, ), dace.int32)
-    sdfg.add_array('B', (10, ), dace.int32)
+    sdfg.add_array('A', (10,), dace.int32)
+    sdfg.add_array('B', (10,), dace.int32)
 
     init_state = sdfg.add_state('init', is_start_block=True)
 
@@ -170,16 +170,17 @@ def test_unstructured_control_flow_sibling_loops():
     unstructured_nodes = set(unstructured_region.nodes())
     assert exit_state in top_level_nodes
     assert init_state in top_level_nodes
-    assert all(n in unstructured_nodes
-               for n in [l1_guard, l1_body1, l1_body2, l1_exit, l2_guard, l2_body1, l2_body2, l2_exit])
+    assert all(
+        n in unstructured_nodes for n in [l1_guard, l1_body1, l1_body2, l1_exit, l2_guard, l2_body1, l2_body2, l2_exit]
+    )
 
-    A_test = np.zeros((10, ), np.int32)
-    B_test = np.zeros((10, ), np.int32)
+    A_test = np.zeros((10,), np.int32)
+    B_test = np.zeros((10,), np.int32)
     A_test[3] = 1  # This will trigger the jump from the first loop to the second loop
 
-    A_valid = np.zeros((10, ), np.int32)
+    A_valid = np.zeros((10,), np.int32)
     A_valid[:4] = 1
-    B_valid = np.zeros((10, ), np.int32)
+    B_valid = np.zeros((10,), np.int32)
     B_valid[3:] = 1
 
     sdfg(A=A_test, B=B_test)

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Single-call host fill through ``std::fill_n``."""
+
 from typing import TYPE_CHECKING
 
 import dace
@@ -22,9 +23,11 @@ class ExpandCPU(ExpandTransformation):
     def expansion(node: "FillLibraryNode", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
         if not out_subset.is_contiguous_subset(out):
-            raise ValueError(f"FillLibraryNode CPU expansion requires a contiguous subset; got '{out_name}' "
-                             f"subset {out_subset} on shape {tuple(out.shape)} strides {tuple(out.strides)}. "
-                             f"Use the 'pure' expansion (mapped tasklet) for non-contiguous regions.")
+            raise ValueError(
+                f"FillLibraryNode CPU expansion requires a contiguous subset; got '{out_name}' "
+                f"subset {out_subset} on shape {tuple(out.shape)} strides {tuple(out.strides)}. "
+                f"Use the 'pure' expansion (mapped tasklet) for non-contiguous regions."
+            )
 
         value_info = node.value_descriptor(parent_state)
         if value_info is not None:
@@ -42,8 +45,10 @@ class ExpandCPU(ExpandTransformation):
         count = sym2cpp(out_subset.num_elements_exact())
         code = f"std::fill_n({OUTPUT_CONNECTOR_NAME}, {count}, {value_expr});"
 
-        return nodes.Tasklet(node.name,
-                             inputs=inputs,
-                             outputs={OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
-                             code=code,
-                             language=dace.Language.CPP)
+        return nodes.Tasklet(
+            node.name,
+            inputs=inputs,
+            outputs={OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
+            code=code,
+            language=dace.Language.CPP,
+        )

@@ -6,6 +6,7 @@ can appear in -- ``T name`` on the entry point, ``T &name`` on a nested SDFG con
 one either loses the result or fails to render as C. What each test pins is therefore the SIGNATURE
 and the descriptor, not only that the pass returned a count.
 """
+
 import numpy as np
 import pytest
 
@@ -31,7 +32,7 @@ def test_written_signature_scalar_becomes_a_pointer_parameter():
 
     assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) == 1
     descriptor = sdfg.arrays['out']
-    assert isinstance(descriptor, dace.data.Array) and descriptor.shape == (1, ), descriptor
+    assert isinstance(descriptor, dace.data.Array) and descriptor.shape == (1,), descriptor
     assert 'double * __restrict__ out' in sdfg.signature()
     sdfg.validate()
 
@@ -77,8 +78,9 @@ def test_nested_scalar_connector_is_promoted_with_its_parent():
     # so the inner scalar is never reached as an independent candidate.
     assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) == 1
     assert isinstance(sdfg.arrays['out'], dace.data.Array)
-    assert isinstance(nested.arrays['out'], dace.data.Array), ('the inner descriptor is still a Scalar, so the '
-                                                               'nested call would bind it by reference')
+    assert isinstance(nested.arrays['out'], dace.data.Array), (
+        'the inner descriptor is still a Scalar, so the nested call would bind it by reference'
+    )
     sdfg.validate()
 
 
@@ -102,8 +104,9 @@ def test_promoted_sdfg_matches_a_hand_written_array_output():
 
     promoted = scalar_output_sdfg('promote_run')
     PromoteScalarOutputsToArrays().apply_pass(promoted, {})
-    assert promoted.signature() == reference.signature(), (f'{promoted.signature()!r} is not the signature a hand-'
-                                                           f'written array output gives: {reference.signature()!r}')
+    assert promoted.signature() == reference.signature(), (
+        f'{promoted.signature()!r} is not the signature a hand-written array output gives: {reference.signature()!r}'
+    )
     out = np.zeros(1)
     promoted(a=a, out=out)
 

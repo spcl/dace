@@ -11,7 +11,6 @@ from dace.sdfg.nodes import CodeBlock
 
 
 class ASTSplitter:
-
     def __init__(self):
         self.n = 0
         self.stmts = []
@@ -70,7 +69,6 @@ def to_ssa(code):
 
 
 class VarCollector(ast.NodeVisitor):
-
     def __init__(self):
         self.vars = set()
 
@@ -186,15 +184,20 @@ class SplitTasklets(ppl.Pass):
                     matched_in_conns = set()
                     for in_conn in t.in_connectors:
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
-                        assert len(
-                            matching_in_edges
-                        ) <= 1, f"Required 1 matching in edge always, found: {matching_in_edges}, original tasklet code: {tasklet.code.as_string}, current tasklet code: {t.code.as_string}"
+                        assert len(matching_in_edges) <= 1, (
+                            f"Required 1 matching in edge always, found: {matching_in_edges}, original tasklet code: {tasklet.code.as_string}, current tasklet code: {t.code.as_string}"
+                        )
 
                         if len(matching_in_edges) > 0:
                             matching_in_edge = next(iter(matching_in_edges))
 
-                            state.add_edge(matching_in_edge.src, matching_in_edge.src_conn, t, in_conn,
-                                           copy.deepcopy(matching_in_edge.data))
+                            state.add_edge(
+                                matching_in_edge.src,
+                                matching_in_edge.src_conn,
+                                t,
+                                in_conn,
+                                copy.deepcopy(matching_in_edge.data),
+                            )
                             matched_in_conns.add(in_conn)
 
                     for in_conn in list(t.in_connectors.keys()):
@@ -223,14 +226,24 @@ class SplitTasklets(ppl.Pass):
                                 assert array_name not in added_accesses
                                 added_accesses[array_name] = state.add_access(array_name)
                             state.add_edge(
-                                added_accesses[array_name], None, t, in_conn,
-                                dace.memlet.Memlet.from_array(dataname=array_name,
-                                                              datadesc=state.sdfg.arrays[array_name]))
+                                added_accesses[array_name],
+                                None,
+                                t,
+                                in_conn,
+                                dace.memlet.Memlet.from_array(
+                                    dataname=array_name, datadesc=state.sdfg.arrays[array_name]
+                                ),
+                            )
                         else:
                             assert len(matching_in_edges) == 1
                             matching_in_edge = next(iter(matching_in_edges))
-                            state.add_edge(matching_in_edge.src, matching_in_edge.src_conn, t, in_conn,
-                                           copy.deepcopy(matching_in_edge.data))
+                            state.add_edge(
+                                matching_in_edge.src,
+                                matching_in_edge.src_conn,
+                                t,
+                                in_conn,
+                                copy.deepcopy(matching_in_edge.data),
+                            )
 
                 # Then do the outputs
                 if i == len(added_tasklets) - 1:  # last tasklet
@@ -239,8 +252,13 @@ class SplitTasklets(ppl.Pass):
                         matching_out_edges = {oe for oe in tasklet_output_edges if oe.src_conn == out_conn}
                         assert len(matching_out_edges) == 1
                         matching_out_edge = next(iter(matching_out_edges))
-                        state.add_edge(t, out_conn, matching_out_edge.dst, matching_out_edge.dst_conn,
-                                       copy.deepcopy(matching_out_edge.data))
+                        state.add_edge(
+                            t,
+                            out_conn,
+                            matching_out_edge.dst,
+                            matching_out_edge.dst_conn,
+                            copy.deepcopy(matching_out_edge.data),
+                        )
                 else:
                     # Output should have been added already
                     assert len(t.out_connectors) == 1
@@ -256,8 +274,12 @@ class SplitTasklets(ppl.Pass):
                         assert array_name not in added_accesses
                         added_accesses[array_name] = state.add_access(array_name)
                     state.add_edge(
-                        t, out_conn, added_accesses[array_name], None,
-                        dace.memlet.Memlet.from_array(dataname=array_name, datadesc=state.sdfg.arrays[array_name]))
+                        t,
+                        out_conn,
+                        added_accesses[array_name],
+                        None,
+                        dace.memlet.Memlet.from_array(dataname=array_name, datadesc=state.sdfg.arrays[array_name]),
+                    )
 
             split_access_counter += 1
 

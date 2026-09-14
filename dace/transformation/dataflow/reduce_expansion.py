@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes that implement the reduce-map transformation.
-"""
+"""This module contains classes that implement the reduce-map transformation."""
 
 from dace import dtypes
 from dace.sdfg import SDFG, nodes, utils, graph
@@ -20,13 +19,13 @@ from copy import deepcopy as dcpy
 
 @make_properties
 class ReduceExpansion(transformation.SingleStateTransformation):
-    """ Implements the ReduceExpansion transformation.
-        Expands a Reduce node into inner and outer map components,
-        where the outer map consists of the axes not being reduced.
-        A new reduce node is created inside the inner map.
-        Special cases where e.g reduction identities are not defined
-        and arrays being reduced to already exist are handled
-        on the fly.
+    """Implements the ReduceExpansion transformation.
+    Expands a Reduce node into inner and outer map components,
+    where the outer map consists of the axes not being reduced.
+    A new reduce node is created inside the inner map.
+    Special cases where e.g reduction identities are not defined
+    and arrays being reduced to already exist are handled
+    on the fly.
     """
 
     import dace.libraries.standard as stdlib  # Avoid slow imports
@@ -35,21 +34,25 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
     debug = Property(desc="Debug Info", dtype=bool, default=False)
 
-    create_in_transient = Property(desc="Create local in-transient"
-                                   "in registers", dtype=bool, default=False)
+    create_in_transient = Property(desc="Create local in-transientin registers", dtype=bool, default=False)
 
-    create_out_transient = Property(desc="Create local out-transient"
-                                    "in registers", dtype=bool, default=False)
+    create_out_transient = Property(desc="Create local out-transientin registers", dtype=bool, default=False)
 
-    reduce_implementation = Property(desc="Reduce implementation of inner reduce. If specified,"
-                                     "overrides any existing implementations",
-                                     dtype=str,
-                                     default=None,
-                                     choices=[
-                                         'pure', 'OpenMP', 'CUDA (device)', 'CUDA (block)', 'CUDA (block allreduce)',
-                                         'CUDA (warp)', 'CUDA (warp allreduce)'
-                                     ],
-                                     allow_none=True)
+    reduce_implementation = Property(
+        desc="Reduce implementation of inner reduce. If specified,overrides any existing implementations",
+        dtype=str,
+        default=None,
+        choices=[
+            'pure',
+            'OpenMP',
+            'CUDA (device)',
+            'CUDA (block)',
+            'CUDA (block allreduce)',
+            'CUDA (warp)',
+            'CUDA (warp allreduce)',
+        ],
+        allow_none=True,
+    )
 
     reduction_type_update = {
         dtypes.ReductionType.Max: 'out = max(reduction_in, array_in)',
@@ -61,7 +64,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         dtypes.ReductionType.Bitwise_Xor: 'out = reduction_in ^ array_in',
         dtypes.ReductionType.Logical_And: 'out = reduction_in and array_in',
         dtypes.ReductionType.Logical_Or: 'out = reduction_in or array_in',
-        dtypes.ReductionType.Logical_Xor: 'out = reduction_in != array_in'
+        dtypes.ReductionType.Logical_Xor: 'out = reduction_in != array_in',
     }
 
     reduction_type_identity = {
@@ -69,7 +72,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         dtypes.ReductionType.Product: 1,
         dtypes.ReductionType.Bitwise_Or: 0,
         dtypes.ReductionType.Logical_And: True,
-        dtypes.ReductionType.Logical_Or: False
+        dtypes.ReductionType.Logical_Or: False,
     }
 
     @classmethod
@@ -86,7 +89,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             return False
 
         # we cannot expand if there are not outer dimensions
-        for (i, sz) in enumerate(inedge.data.subset.size()):
+        for i, sz in enumerate(inedge.data.subset.size()):
             if i not in reduce_node.axes and sz != 1:
                 break
         else:
@@ -95,19 +98,19 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        """ Splits the data dimension into an inner and outer dimension,
-            where the inner dimension are the reduction axes and the
-            outer axes the complement. Pushes the reduce inside a new
-            map consisting of the complement axes.
+        """Splits the data dimension into an inner and outer dimension,
+        where the inner dimension are the reduction axes and the
+        outer axes the complement. Pushes the reduce inside a new
+        map consisting of the complement axes.
         """
         reduce_node = self.reduce
         self.expand(sdfg, graph, reduce_node)
 
     def expand(self, sdfg: SDFG, graph: SDFGState, reduce_node):
-        """ Splits the data dimension into an inner and outer dimension,
-            where the inner dimension are the reduction axes and the
-            outer axes the complement. Pushes the reduce inside a new
-            map consisting of the complement axes.
+        """Splits the data dimension into an inner and outer dimension,
+        where the inner dimension are the reduction axes and the
+        outer axes the complement. Pushes the reduce inside a new
+        map consisting of the complement axes.
 
         """
 
@@ -176,9 +179,10 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             array_out = nstate.out_edges(outer_exit)[0].data.data
 
             from dace.transformation.dataflow.local_storage import LocalStorage, OutLocalStorage
+
             local_storage_subgraph = {
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
-                LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
+                LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(outer_exit),
             }
             nsdfg_id = nsdfg.sdfg.cfg_list.index(nsdfg.sdfg)
             nstate_id = 0
@@ -198,7 +202,6 @@ class ReduceExpansion(transformation.SingleStateTransformation):
                 nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
                 nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
         else:
-
             # remove WCR from outer exit
             nstate.out_edges(outer_exit)[0].data.wcr = None
 
@@ -207,9 +210,10 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             array_in = nstate.in_edges(outer_entry)[0].data.data
 
             from dace.transformation.dataflow.local_storage import LocalStorage, InLocalStorage
+
             local_storage_subgraph = {
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
-                LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
+                LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry),
             }
 
             nsdfg_id = nsdfg.sdfg.cfg_list.index(nsdfg.sdfg)
@@ -225,14 +229,13 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
         # inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
+
         inline_sdfg = InlineSDFG()
         inline_sdfg.setup_match(sdfg, sdfg.cfg_id, graph.block_id, {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)}, 0)
         inline_sdfg.apply(graph, sdfg)
 
         new_schedule = dtypes.ScheduleType.Default
-        new_implementation = self.reduce_implementation \
-                             if self.reduce_implementation is not None \
-                             else implementation
+        new_implementation = self.reduce_implementation if self.reduce_implementation is not None else implementation
         new_axes = dcpy(reduce_node.axes)
 
         reduce_node_new = graph.add_reduce(wcr=wcr, axes=new_axes, schedule=new_schedule, identity=identity)
@@ -272,15 +275,14 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             try:
                 reduce_node_new.identity = self.reduction_type_identity[reduction_type]
             except KeyError:
-
                 if reduction_type == dtypes.ReductionType.Min:
                     reduce_node_new.identity = dtypes.max_value(sdfg.arrays[out_storage_node.data].dtype)
                 elif reduction_type == dtypes.ReductionType.Max:
                     reduce_node_new.identity = dtypes.min_value(sdfg.arrays[out_storage_node.data].dtype)
                 else:
-                    raise ValueError(f"Cannot infer reduction identity."
-                                     "Please specify the identity of node"
-                                     "{reduce_node_new}")
+                    raise ValueError(
+                        f"Cannot infer reduction identity.Please specify the identity of node{{reduce_node_new}}"
+                    )
 
         return
 
@@ -302,17 +304,17 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        nsdfg.add_array('_in',
-                        inedge.data.subset.size(),
-                        input_data.dtype,
-                        strides=input_data.strides,
-                        storage=input_data.storage)
+        nsdfg.add_array(
+            '_in', inedge.data.subset.size(), input_data.dtype, strides=input_data.strides, storage=input_data.storage
+        )
 
-        nsdfg.add_array('_out',
-                        outedge.data.subset.size(),
-                        output_data.dtype,
-                        strides=output_data.strides,
-                        storage=output_data.storage)
+        nsdfg.add_array(
+            '_out',
+            outedge.data.subset.size(),
+            output_data.dtype,
+            strides=output_data.strides,
+            storage=output_data.storage,
+        )
 
         if node.identity is not None:
             raise ValueError("Node identity has to be None at this point.")
@@ -335,10 +337,9 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
             output_size = outedge.data.subset.size()
 
-            ome, omx = nstate.add_map('reduce_output', {
-                '_o%d' % i: '0:%s' % symstr(sz)
-                for i, sz in enumerate(outedge.data.subset.size())
-            })
+            ome, omx = nstate.add_map(
+                'reduce_output', {'_o%d' % i: '0:%s' % symstr(sz) for i, sz in enumerate(outedge.data.subset.size())}
+            )
             outm = Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = Memlet.simple('_in', ','.join(input_subset))
         else:
@@ -348,10 +349,10 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
-        ime, imx = nstate.add_map('reduce_values', {
-            '_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
-            for i, axis in enumerate(sorted(axes))
-        })
+        ime, imx = nstate.add_map(
+            'reduce_values',
+            {'_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis]) for i, axis in enumerate(sorted(axes))},
+        )
 
         # Add identity tasklet for reduction
         t = nstate.add_tasklet('identity', {'inp'}, {'out'}, 'out = inp')

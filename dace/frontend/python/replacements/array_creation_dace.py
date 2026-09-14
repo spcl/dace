@@ -3,6 +3,7 @@
 Contains definitions of new data containers (arrays, locals, streams) as per DaCe's API, as well as several
 array creation functions for NumPy that reuse the same functionality.
 """
+
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError, StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, Size
@@ -17,15 +18,17 @@ import numpy as np
 
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('dace.ndarray')
-def _define_local_ex(pv: ProgramVisitor,
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     shape: Shape,
-                     dtype: dtypes.typeclass,
-                     strides: Optional[Shape] = None,
-                     storage: dtypes.StorageType = dtypes.StorageType.Default,
-                     lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
-    """ Defines a local array in a DaCe program. """
+def _define_local_ex(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    shape: Shape,
+    dtype: dtypes.typeclass,
+    strides: Optional[Shape] = None,
+    storage: dtypes.StorageType = dtypes.StorageType.Default,
+    lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+):
+    """Defines a local array in a DaCe program."""
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
     if strides is not None:
@@ -33,30 +36,28 @@ def _define_local_ex(pv: ProgramVisitor,
             strides = [strides]
         strides = [int(s) if isinstance(s, Integral) else s for s in strides]
     name = pv.get_target_name()
-    name, _ = sdfg.add_transient(name,
-                                 shape,
-                                 dtype,
-                                 strides=strides,
-                                 storage=storage,
-                                 lifetime=lifetime,
-                                 find_new_name=True)
+    name, _ = sdfg.add_transient(
+        name, shape, dtype, strides=strides, storage=storage, lifetime=lifetime, find_new_name=True
+    )
     return name
 
 
 @oprepo.replaces('numpy.ndarray')
 def _define_local(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dtypes.typeclass):
-    """ Defines a local array in a DaCe program. """
+    """Defines a local array in a DaCe program."""
     return _define_local_ex(pv, sdfg, state, shape, dtype)
 
 
 @oprepo.replaces('dace.define_local_scalar')
-def _define_local_scalar(pv: ProgramVisitor,
-                         sdfg: SDFG,
-                         state: SDFGState,
-                         dtype: dtypes.typeclass,
-                         storage: dtypes.StorageType = dtypes.StorageType.Default,
-                         lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
-    """ Defines a local scalar in a DaCe program. """
+def _define_local_scalar(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    dtype: dtypes.typeclass,
+    storage: dtypes.StorageType = dtypes.StorageType.Default,
+    lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+):
+    """Defines a local scalar in a DaCe program."""
     name = pv.get_target_name()
     name, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage, lifetime=lifetime, find_new_name=True)
     pv.variables[name] = name
@@ -64,13 +65,15 @@ def _define_local_scalar(pv: ProgramVisitor,
 
 
 @oprepo.replaces('dace.define_local_structure')
-def _define_local_structure(pv: ProgramVisitor,
-                            sdfg: SDFG,
-                            state: SDFGState,
-                            dtype: data.Structure,
-                            storage: dtypes.StorageType = dtypes.StorageType.Default,
-                            lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
-    """ Defines a local structure in a DaCe program. """
+def _define_local_structure(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    dtype: data.Structure,
+    storage: dtypes.StorageType = dtypes.StorageType.Default,
+    lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+):
+    """Defines a local structure in a DaCe program."""
     name = pv.get_target_name()
     desc = dcpy(dtype)
     desc.transient = True
@@ -83,7 +86,7 @@ def _define_local_structure(pv: ProgramVisitor,
 
 @oprepo.replaces('dace.define_stream')
 def _define_stream(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dtype: dtypes.typeclass, buffer_size: Size = 1):
-    """ Defines a local stream array in a DaCe program. """
+    """Defines a local stream array in a DaCe program."""
     name = pv.get_target_name()
     name, _ = sdfg.add_stream(name, dtype, buffer_size=buffer_size, transient=True, find_new_name=True)
     return name
@@ -91,13 +94,10 @@ def _define_stream(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dtype: dtyp
 
 @oprepo.replaces('dace.define_streamarray')
 @oprepo.replaces('dace.stream')
-def _define_streamarray(pv: ProgramVisitor,
-                        sdfg: SDFG,
-                        state: SDFGState,
-                        shape: Shape,
-                        dtype: dtypes.typeclass,
-                        buffer_size: Size = 1):
-    """ Defines a local stream array in a DaCe program. """
+def _define_streamarray(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dtypes.typeclass, buffer_size: Size = 1
+):
+    """Defines a local stream array in a DaCe program."""
     name = pv.get_target_name()
     name, _ = sdfg.add_stream(name, dtype, shape=shape, buffer_size=buffer_size, transient=True, find_new_name=True)
     return name
@@ -105,19 +105,21 @@ def _define_streamarray(pv: ProgramVisitor,
 
 @oprepo.replaces('numpy.array')
 @oprepo.replaces('dace.array')
-def _define_literal_ex(pv: ProgramVisitor,
-                       sdfg: SDFG,
-                       state: SDFGState,
-                       obj: Any,
-                       dtype: dtypes.typeclass = None,
-                       copy: bool = True,
-                       order: StringLiteral = StringLiteral('K'),
-                       subok: bool = False,
-                       ndmin: int = 0,
-                       like: Any = None,
-                       storage: Optional[dtypes.StorageType] = None,
-                       lifetime: Optional[dtypes.AllocationLifetime] = None):
-    """ Defines a literal array in a DaCe program. """
+def _define_literal_ex(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    obj: Any,
+    dtype: dtypes.typeclass = None,
+    copy: bool = True,
+    order: StringLiteral = StringLiteral('K'),
+    subok: bool = False,
+    ndmin: int = 0,
+    like: Any = None,
+    storage: Optional[dtypes.StorageType] = None,
+    lifetime: Optional[dtypes.AllocationLifetime] = None,
+):
+    """Defines a literal array in a DaCe program."""
     if like is not None:
         raise NotImplementedError('"like" argument unsupported for numpy.array')
 
@@ -162,20 +164,22 @@ def _define_literal_ex(pv: ProgramVisitor,
 
 @oprepo.replaces('numpy.empty')
 def _numpy_empty(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dtypes.typeclass):
-    """ Creates an unitialized array of the specificied shape and dtype. """
+    """Creates an unitialized array of the specificied shape and dtype."""
     return _define_local(pv, sdfg, state, shape, dtype)
 
 
 @oprepo.replaces('numpy.empty_like')
-def _numpy_empty_like(pv: ProgramVisitor,
-                      sdfg: SDFG,
-                      state: SDFGState,
-                      prototype: str,
-                      dtype: dtypes.typeclass = None,
-                      shape: Shape = None):
-    """ Creates an unitialized array of the same shape and dtype as prototype.
-        The optional dtype and shape inputs allow overriding the corresponding
-        attributes of prototype.
+def _numpy_empty_like(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    prototype: str,
+    dtype: dtypes.typeclass = None,
+    shape: Shape = None,
+):
+    """Creates an unitialized array of the same shape and dtype as prototype.
+    The optional dtype and shape inputs allow overriding the corresponding
+    attributes of prototype.
     """
     if prototype not in sdfg.arrays.keys():
         raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=prototype))

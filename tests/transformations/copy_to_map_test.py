@@ -66,7 +66,7 @@ def test_flatten_to_map_gpu():
 
 @pytest.mark.gpu
 def test_preprocess():
-    """ Tests preprocessing in the GPU code generator, adding CopyToMap automatically. """
+    """Tests preprocessing in the GPU code generator, adding CopyToMap automatically."""
     sdfg = dace.SDFG('copytest')
 
     # Create two arrays with different allocation structure
@@ -105,11 +105,11 @@ def test_preprocess():
 
 
 if __name__ == '__main__':
-
     test_copy_to_map()
     test_flatten_to_map()
     try:
         import cupy  # noqa: F401
+
         test_copy_to_map_gpu()
         test_flatten_to_map_gpu()
         test_preprocess()

@@ -20,13 +20,17 @@ def setup_sdfg() -> dp.SDFG:
     # Consume and tasklet
     consume_entry, consume_exit = state.add_consume('cons', ('p', '4'))
     tasklet = state.add_tasklet(
-        'fibonacci', {'s'}, {'sout', 'val'}, """
+        'fibonacci',
+        {'s'},
+        {'sout', 'val'},
+        """
 if s == 1:
     val = 1
 elif s > 1:
     sout = s - 1   # Recurse by pushing smaller values
     sout = s - 2
-""")
+""",
+    )
 
     # Edges
     state.add_nedge(initial_value, stream_init, dp.Memlet.from_array(stream_init.data, stream_init.desc(sdfg)))
@@ -34,10 +38,12 @@ elif s > 1:
     state.add_edge(consume_entry, 'OUT_stream', tasklet, 's', dp.Memlet.from_array(stream.data, stream.desc(sdfg)))
     state.add_edge(tasklet, 'sout', consume_exit, 'IN_S', dp.Memlet.simple(stream_out, '0', num_accesses=-1))
     state.add_edge(consume_exit, 'OUT_S', stream_out, None, dp.Memlet.simple(stream_out, '0', num_accesses=-1))
-    state.add_edge(tasklet, 'val', consume_exit, 'IN_V',
-                   dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
-    state.add_edge(consume_exit, 'OUT_V', output, None,
-                   dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
+    state.add_edge(
+        tasklet, 'val', consume_exit, 'IN_V', dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1)
+    )
+    state.add_edge(
+        consume_exit, 'OUT_V', output, None, dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1)
+    )
 
     consume_exit.add_in_connector('IN_S')
     consume_exit.add_in_connector('IN_V')
@@ -48,7 +54,7 @@ elif s > 1:
 
 
 def fibonacci(v):
-    """ Computes the Fibonacci sequence at point v. """
+    """Computes the Fibonacci sequence at point v."""
     if v == 0:
         return 0
     if v == 1:
@@ -66,7 +72,7 @@ def test_fibonacci_recursion_using_consume():
     sdfg = setup_sdfg()
     sdfg(iv=input, res=output)
 
-    diff = (regression - output[0])**2
+    diff = (regression - output[0]) ** 2
     assert diff <= 1e-5
 
 

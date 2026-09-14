@@ -22,7 +22,7 @@ def conv2d(input: dc.float32[N, H, W, C_in], weights: dc.float32[K, K, C_in, C_o
     for i in range(H - K + 1):
         for j in range(W - K + 1):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -30,19 +30,21 @@ def conv2d(input: dc.float32[N, H, W, C_in], weights: dc.float32[K, K, C_in, C_o
 
 
 @dc.program
-def conv2d_bias_kernel(input: dc.float32[N, H, W, C_in], weights: dc.float32[K, K, C_in, C_out],
-                       bias: dc.float32[C_out]):
+def conv2d_bias_kernel(
+    input: dc.float32[N, H, W, C_in], weights: dc.float32[K, K, C_in, C_out], bias: dc.float32[C_out]
+):
     return conv2d(input, weights) + bias
 
 
 def initialize(C_in, C_out, H, K, N, W):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     # NHWC data layout
     input = rng.random((N, H, W, C_in), dtype=np.float32)
     # Weights
     weights = rng.random((K, K, C_in, C_out), dtype=np.float32)
-    bias = rng.random((C_out, ), dtype=np.float32)
+    bias = rng.random((C_out,), dtype=np.float32)
     return input, weights, bias
 
 
@@ -58,7 +60,7 @@ def conv2d_np(input, weights):
     for i in range(H_out):
         for j in range(W_out):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -139,12 +141,13 @@ def run_conv2d_bias_autodiff():
 
     # Initialize gradient computation data
     gradient_input = np.zeros_like(input, dtype=np.float32)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(input: dc.float32[N, H, W, C_in], weights: dc.float32[K, K, C_in, C_out],
-                        bias: dc.float32[C_out]):
+    def autodiff_kernel(
+        input: dc.float32[N, H, W, C_in], weights: dc.float32[K, K, C_in, C_out], bias: dc.float32[C_out]
+    ):
         A = conv2d(input, weights) + bias
         return np.sum(A)
 
@@ -152,17 +155,19 @@ def run_conv2d_bias_autodiff():
     sdfg = autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"])
 
-    sdfg(input,
-         weights,
-         bias,
-         C_in=C_in,
-         C_out=C_out,
-         H=H,
-         K=K,
-         N=N,
-         W=W,
-         gradient_input=gradient_input,
-         gradient___return=gradient___return)
+    sdfg(
+        input,
+        weights,
+        bias,
+        C_in=C_in,
+        C_out=C_out,
+        H=H,
+        K=K,
+        N=N,
+        W=W,
+        gradient_input=gradient_input,
+        gradient___return=gradient___return,
+    )
 
     # Enable float32 for JAX to match DaCe consistency
     jax.config.update("jax_enable_x64", False)
@@ -191,7 +196,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

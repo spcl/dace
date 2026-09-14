@@ -37,18 +37,15 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(getri_node, res_getri, src_conn="_res", memlet=Memlet.simple(res_getri, "0", num_accesses=1))
     state.add_memlet_path(getrf_node, pivots, src_conn="_ipiv", memlet=Memlet.simple(pivots, "0:n", num_accesses=n))
     state.add_memlet_path(pivots, getri_node, dst_conn="_ipiv", memlet=Memlet.simple(pivots, "0:n", num_accesses=n))
-    state.add_memlet_path(getrf_node,
-                          xout_getrf,
-                          src_conn="_xout",
-                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=n * n))
-    state.add_memlet_path(xout_getrf,
-                          getri_node,
-                          dst_conn="_xin",
-                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=n * n))
-    state.add_memlet_path(getri_node,
-                          xout_getri,
-                          src_conn="_xout",
-                          memlet=Memlet.simple(xout_getri, "0:n, 0:n", num_accesses=n * n))
+    state.add_memlet_path(
+        getrf_node, xout_getrf, src_conn="_xout", memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=n * n)
+    )
+    state.add_memlet_path(
+        xout_getrf, getri_node, dst_conn="_xin", memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=n * n)
+    )
+    state.add_memlet_path(
+        getri_node, xout_getri, src_conn="_xout", memlet=Memlet.simple(xout_getri, "0:n, 0:n", num_accesses=n * n)
+    )
 
     return sdfg
 
@@ -56,12 +53,15 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
+    ],
+)
 def test_getri(implementation, dtype):
     sdfg = make_sdfg(implementation, dtype)
     inv_sdfg = sdfg.compile()

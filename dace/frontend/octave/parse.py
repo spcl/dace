@@ -39,7 +39,7 @@ def p_top(p):
     """
     top :
         | top stmt
-      """
+    """
 
     if len(p) == 1:
         retval = AST_Statements(None, [])
@@ -91,7 +91,7 @@ def p_arg2(p):
 
 def p_global(p):
     """
-     arg1 : GLOBAL
+    arg1 : GLOBAL
     """
     raise NotImplementedError("global not implemented")
 
@@ -116,7 +116,7 @@ def p_args(p):
 
 
 def p_break_stmt(p):
-    """ break_stmt : BREAK SEMI """
+    """break_stmt : BREAK SEMI"""
     raise NotImplementedError("break not implemented")
 
 
@@ -155,7 +155,7 @@ def p_cellarray_2(p):
 
 def p_cellarrayref(p):
     """expr : expr LBRACE expr_list RBRACE
-            | expr LBRACE RBRACE
+    | expr LBRACE RBRACE
     """
     raise NotImplementedError("cellarrayref not implemented")
 
@@ -229,23 +229,23 @@ def p_error_stmt(p):
 
 def p_expr(p):
     """expr : ident
-            | end
-            | number
-            | string
-            | colon
-            | NEG
-            | matrix
-            | cellarray
-            | expr2
-            | expr1
-            | lambda_expr
+    | end
+    | number
+    | string
+    | colon
+    | NEG
+    | matrix
+    | cellarray
+    | expr2
+    | expr1
+    | lambda_expr
     """
     p[0] = p[1]
 
 
 def p_expr_2(p):
     """expr : expr PLUSPLUS
-            | expr MINUSMINUS
+    | expr MINUSMINUS
     """
     startl, endl = p.linespan(2)
     startc, endc = p.lexspan(2)
@@ -256,11 +256,11 @@ def p_expr_2(p):
 
 def p_expr1(p):
     """expr1 : MINUS expr %prec UMINUS
-             | PLUS expr %prec UMINUS
-             | NEG expr
-             | HANDLE ident
-             | PLUSPLUS ident
-             | MINUSMINUS ident
+    | PLUS expr %prec UMINUS
+    | NEG expr
+    | HANDLE ident
+    | PLUSPLUS ident
+    | MINUSMINUS ident
     """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
@@ -271,37 +271,37 @@ def p_expr1(p):
 
 def p_expr2(p):
     """expr2 : expr AND expr
-             | expr ANDAND expr
-             | expr BACKSLASH expr
-             | expr COLON expr
-             | expr DIV expr
-             | expr DOT expr
-             | expr DOTDIV expr
-             | expr DOTDIVEQ expr
-             | expr DOTEXP expr
-             | expr DOTMUL expr
-             | expr DOTMULEQ expr
-             | expr EQEQ expr
-             | expr POW expr
-             | expr EXP expr
-             | expr EXPEQ expr
-             | expr GE expr
-             | expr GT expr
-             | expr LE expr
-             | expr LT expr
-             | expr MINUS expr
-             | expr MUL expr
-             | expr NE expr
-             | expr OR expr
-             | expr OROR expr
-             | expr PLUS expr
-             | expr EQ expr
-             | expr MULEQ expr
-             | expr DIVEQ expr
-             | expr MINUSEQ expr
-             | expr PLUSEQ expr
-             | expr OREQ expr
-             | expr ANDEQ expr
+    | expr ANDAND expr
+    | expr BACKSLASH expr
+    | expr COLON expr
+    | expr DIV expr
+    | expr DOT expr
+    | expr DOTDIV expr
+    | expr DOTDIVEQ expr
+    | expr DOTEXP expr
+    | expr DOTMUL expr
+    | expr DOTMULEQ expr
+    | expr EQEQ expr
+    | expr POW expr
+    | expr EXP expr
+    | expr EXPEQ expr
+    | expr GE expr
+    | expr GT expr
+    | expr LE expr
+    | expr LT expr
+    | expr MINUS expr
+    | expr MUL expr
+    | expr NE expr
+    | expr OR expr
+    | expr OROR expr
+    | expr PLUS expr
+    | expr EQ expr
+    | expr MULEQ expr
+    | expr DIVEQ expr
+    | expr MINUSEQ expr
+    | expr PLUSEQ expr
+    | expr OREQ expr
+    | expr ANDEQ expr
     """
     startl, endl = p.linespan(2)
     startc, endc = p.lexspan(2)
@@ -316,7 +316,7 @@ def p_expr2(p):
 
 
 def p_expr_colon(p):
-    """ colon : COLON """
+    """colon : COLON"""
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
     di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
@@ -325,12 +325,12 @@ def p_expr_colon(p):
 
 
 def p_expr_end(p):
-    """ end : END_EXPR """
+    """end : END_EXPR"""
     raise NotImplementedError("end expression needs to be implemented")
 
 
 def p_expr_ident(p):
-    """ ident : IDENT """
+    """ident : IDENT"""
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
     di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
@@ -361,7 +361,7 @@ def p_expr_list(p):
 
 
 def p_expr_number(p):
-    """ number : NUMBER """
+    """number : NUMBER"""
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
     di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
@@ -377,7 +377,7 @@ def p_expr_stmt(p):
 
 
 def p_expr_string(p):
-    """ string : STRING """
+    """string : STRING"""
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
     di1 = dace.dtypes.DebugInfo(startl, startc, endl, endc)
@@ -405,7 +405,7 @@ def p_field_expr(p):
 
 
 def p_foo_stmt(p):
-    """ foo_stmt : expr OROR expr SEMI """
+    """foo_stmt : expr OROR expr SEMI"""
     raise NotImplementedError("foo_stmt needs to be implemented")
 
 
@@ -424,7 +424,7 @@ def p_for_stmt(p):
 
 def p_func_stmt(p):
     """func_stmt : FUNCTION ident lambda_args SEMI
-                 | FUNCTION ret EQ ident lambda_args SEMI
+    | FUNCTION ret EQ ident lambda_args SEMI
     """
     di = None
     if len(p) == 5:
@@ -435,7 +435,7 @@ def p_func_stmt(p):
 
 def p_funcall_expr(p):
     """expr : expr LPAREN expr_list RPAREN
-            | expr LPAREN RPAREN
+    | expr LPAREN RPAREN
     """
     startl, endl = p.linespan(1)
     startc, endc = p.lexspan(1)
@@ -449,7 +449,7 @@ def p_funcall_expr(p):
 
 def p_global_list(p):
     """global_list : ident
-                   | global_list ident
+    | global_list ident
     """
     raise NotImplementedError("globals need to be implemented")
 
@@ -472,7 +472,7 @@ def p_if_stmt(p):
 
 def p_lambda_args(p):
     """lambda_args : LPAREN RPAREN
-                   | LPAREN arg_list RPAREN
+    | LPAREN arg_list RPAREN
     """
     if len(p) == 3:
         p[0] = []
@@ -481,15 +481,14 @@ def p_lambda_args(p):
 
 
 def p_lambda_expr(p):
-    """lambda_expr : HANDLE lambda_args expr
-    """
+    """lambda_expr : HANDLE lambda_args expr"""
     raise NotImplementedError("lambda needs to be implemented")
 
 
 def p_matrix(p):
     """matrix : LBRACKET RBRACKET
-              | LBRACKET matrix_row RBRACKET
-              | LBRACKET matrix_row SEMI RBRACKET
+    | LBRACKET matrix_row RBRACKET
+    | LBRACKET matrix_row SEMI RBRACKET
     """
     startl, endl = p.linespan(0)
     startc, endc = p.lexspan(0)
@@ -503,7 +502,7 @@ def p_matrix(p):
 
 def p_matrix_2(p):
     """matrix : LBRACKET expr_list RBRACKET
-              | LBRACKET expr_list SEMI RBRACKET
+    | LBRACKET expr_list SEMI RBRACKET
     """
     startl, endl = p.linespan(0)
     startc, endc = p.lexspan(0)
@@ -554,7 +553,7 @@ def p_ret(p):
 
 
 def p_return_stmt(p):
-    """ return_stmt : RETURN SEMI """
+    """return_stmt : RETURN SEMI"""
     raise NotImplementedError("return needs to be implemented")
 
 
@@ -642,7 +641,7 @@ def p_switch_stmt(p):
 def p_transpose_expr(p):
     # p[2] contains the exact combination of plain and conjugate
     # transpose operators, such as "'.''.''''".
-    """ expr : expr TRANSPOSE """
+    """expr : expr TRANSPOSE"""
     startl, endl = p.linespan(2)
     startc, endc = p.lexspan(2)
     di2 = dace.dtypes.DebugInfo(startl, startc, endl, endc)

@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This file implements the GreedyEnumerator class """
+"""This file implements the GreedyEnumerator class"""
 
 from dace.transformation.estimator.enumeration import Enumerator
 
@@ -15,7 +15,6 @@ import heapq
 
 
 class QueuedEntry:
-
     def __init__(self, map_entry, index, reverse=False):
         self.map_entry = map_entry
         self.index = index
@@ -35,18 +34,21 @@ class GreedyEnumerator(Enumerator):
     each of the corresponding map sets from an iteration being disjoint
     """
 
-    mode = Property(desc="Data type the Iterator should return. "
-                    "Choice between Subgraph and List of Map Entries.",
-                    default="map_entries",
-                    choices=["subgraph", "map_entries"],
-                    dtype=str)
+    mode = Property(
+        desc="Data type the Iterator should return. Choice between Subgraph and List of Map Entries.",
+        default="map_entries",
+        choices=["subgraph", "map_entries"],
+        dtype=str,
+    )
 
-    def __init__(self,
-                 sdfg: SDFG,
-                 graph: SDFGState,
-                 subgraph: SubgraphView = None,
-                 condition_function: Callable = CompositeFusion.can_be_applied,
-                 reverse=False):
+    def __init__(
+        self,
+        sdfg: SDFG,
+        graph: SDFGState,
+        subgraph: SubgraphView = None,
+        condition_function: Callable = CompositeFusion.can_be_applied,
+        reverse=False,
+    ):
 
         super().__init__(sdfg, graph, subgraph, condition_function)
 
@@ -69,7 +71,6 @@ class GreedyEnumerator(Enumerator):
         outer_queued = set(self._source_maps)
         outer_queue = [QueuedEntry(me, self._labels[me], reverse=self._reverse) for me in self._source_maps]
         while len(outer_queue) > 0:
-
             # current iteration: define queue / set with which we are going
             # to find current components
 
@@ -89,7 +90,6 @@ class GreedyEnumerator(Enumerator):
             inner_queued = {next_iterate.map_entry}
 
             while len(inner_queue) > 0:
-
                 # select starting map
                 current = heapq.heappop(inner_queue)
                 current_map = current.map_entry
@@ -114,17 +114,19 @@ class GreedyEnumerator(Enumerator):
                             if current_neighbor_map not in outer_queued:
                                 heapq.heappush(
                                     outer_queue,
-                                    QueuedEntry(current_neighbor_map,
-                                                self._labels[current_neighbor_map],
-                                                reverse=self._reverse))
+                                    QueuedEntry(
+                                        current_neighbor_map, self._labels[current_neighbor_map], reverse=self._reverse
+                                    ),
+                                )
                                 outer_queued.add(current_neighbor_map)
                             # add to inner queue and set
                             if current_neighbor_map not in inner_queued:
                                 heapq.heappush(
                                     inner_queue,
-                                    QueuedEntry(current_neighbor_map,
-                                                self._labels[current_neighbor_map],
-                                                reverse=self._reverse))
+                                    QueuedEntry(
+                                        current_neighbor_map, self._labels[current_neighbor_map], reverse=self._reverse
+                                    ),
+                                )
                                 inner_queued.add(current_neighbor_map)
 
             # yield

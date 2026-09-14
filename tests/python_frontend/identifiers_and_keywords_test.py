@@ -16,7 +16,7 @@ def keyword_false(A: dace.float32[N], B: dace.float32[N], C: dace.bool):
 def test_keyword_false():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     C = False
     keyword_false(A, B, C)
     assert np.allclose(A, B)
@@ -31,7 +31,7 @@ def keyword_none(A: dace.float32[N], B: dace.float32[N], C: Optional[dace.int32[
 def test_keyword_none():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     C = None
     keyword_none(A, B, C)
     assert np.allclose(A, B)
@@ -46,7 +46,7 @@ def keyword_true(A: dace.float32[N], B: dace.float32[N], C: dace.bool):
 def test_keyword_true():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     C = True
     keyword_true(A, B, C)
     assert np.allclose(A, B)
@@ -61,7 +61,7 @@ def keyword_and(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace.bo
 def test_keyword_and():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     C = True
     D = True
     keyword_and(A, B, C, D)
@@ -72,9 +72,10 @@ def test_keyword_and():
 def keyword_assert(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace.bool):
     with C as A:
         from dace import symbolic  # noqa: F401 (syntactic element that is part of the test)
+
         a = 5
         del a
-        assert (C == True)
+        assert C == True
         if C and D:
             B[:] = A[:]
 
@@ -82,7 +83,7 @@ def keyword_assert(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace
 def test_keyword_assert():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     C = True
     D = True
     with pytest.raises(Exception):
@@ -102,7 +103,7 @@ def keyword_ifelse(A: dace.float32[N], B: dace.float32[N], C: dace.int32):
 def test_keyword_ifelse():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     C = np.int32(2)
     keyword_ifelse(A, B, C)
     assert np.allclose(A, B)
@@ -117,7 +118,7 @@ def keyword_for(A: dace.float32[N], B: dace.float32[N]):
 def test_keyword_for():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     keyword_for(A, B)
     assert np.allclose(A, B)
 
@@ -138,7 +139,7 @@ def keyword_while(A: dace.float32[N], B: dace.float32[N]):
 def test_keyword_while():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     keyword_while(A, B)
     assert np.allclose(A, B)
 
@@ -147,7 +148,7 @@ def test_keyword_while():
 def keyword_return(A: dace.float32[N]):
     i = dace.define_local_scalar(dtype=dace.int32)
     i = 0
-    B = dace.define_local((N, ), dtype=dace.float32)
+    B = dace.define_local((N,), dtype=dace.float32)
     while True:
         B[i] = A[i] + i - i
         i += 1
@@ -161,7 +162,7 @@ def keyword_return(A: dace.float32[N]):
 def test_keyword_return():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     B[:] = keyword_return(A)
     assert np.allclose(A, B)
 
@@ -175,7 +176,7 @@ def keyword_notor(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace.
 def test_keyword_notor():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     C = False
     D = True
     keyword_notor(A, B, C, D)
@@ -192,7 +193,7 @@ def keyword_lambda(A: dace.float32[N], B: dace.float32[N]):
 def test_keyword_lambda():
     N = 128
     A = np.random.rand(N).astype(np.float32)
-    B = np.zeros((N, ), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     with pytest.raises(Exception):
         keyword_lambda(A, B)
 

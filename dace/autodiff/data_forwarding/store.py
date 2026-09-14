@@ -18,21 +18,28 @@ if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 
-def resolve_overwrite_with_store(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState,
-                                 backward_state: SDFGState, forward_node: nodes.AccessNode, target_node: nodes.Node,
-                                 starting_edge: dstate.MultiConnectorEdge):
+def resolve_overwrite_with_store(
+    bwd_generator: 'BackwardPassGenerator',
+    forward_state: SDFGState,
+    backward_state: SDFGState,
+    forward_node: nodes.AccessNode,
+    target_node: nodes.Node,
+    starting_edge: dstate.MultiConnectorEdge,
+):
     """
     Given the AccessNode pointing to the data required by the backward pass,
     We will save the values of this array in a new array and forward it to the backward pass.
     """
 
     # Modify the forward pass to save the data in a new array
-    new_stored_array, memlets = _store_data(bwd_generator=bwd_generator,
-                                            forward_state=forward_state,
-                                            backward_state=backward_state,
-                                            forward_an=forward_node,
-                                            target_node=target_node,
-                                            edge=starting_edge)
+    new_stored_array, memlets = _store_data(
+        bwd_generator=bwd_generator,
+        forward_state=forward_state,
+        backward_state=backward_state,
+        forward_an=forward_node,
+        target_node=target_node,
+        edge=starting_edge,
+    )
 
     # Check if this data needs to be forwarded through NestedSDFGs
     if bwd_generator.separate_sdfgs or forward_state.sdfg.parent_sdfg is not None:
@@ -45,19 +52,26 @@ def resolve_overwrite_with_store(bwd_generator: 'BackwardPassGenerator', forward
             bwd_generator.backward_input_arrays[new_stored_array.data] = data_desc
 
     # Connect the new array to the target node
-    _connect_stored_data_to_target(bwd_generator=bwd_generator,
-                                   forward_state=forward_state,
-                                   backward_state=backward_state,
-                                   source_node=new_stored_array,
-                                   forward_node=forward_node,
-                                   starting_edge=starting_edge,
-                                   memlets=memlets,
-                                   target_node=target_node)
+    _connect_stored_data_to_target(
+        bwd_generator=bwd_generator,
+        forward_state=forward_state,
+        backward_state=backward_state,
+        source_node=new_stored_array,
+        forward_node=forward_node,
+        starting_edge=starting_edge,
+        memlets=memlets,
+        target_node=target_node,
+    )
 
 
-def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState, backward_state: SDFGState,
-                forward_an: nodes.AccessNode, target_node: nodes.Node,
-                edge: dgraph.MultiConnectorEdge) -> Tuple[nodes.AccessNode, List[Memlet]]:
+def _store_data(
+    bwd_generator: 'BackwardPassGenerator',
+    forward_state: SDFGState,
+    backward_state: SDFGState,
+    forward_an: nodes.AccessNode,
+    target_node: nodes.Node,
+    edge: dgraph.MultiConnectorEdge,
+) -> Tuple[nodes.AccessNode, List[Memlet]]:
     """
     Given an edge leading an AccessNode or a map to the target node in the forward state,
     add a path from the connector for this AccessNode to store its values for all iterations.
@@ -71,7 +85,6 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
     # Get the connector and edge to save
     if isinstance(edge.src, nodes.AccessNode) and edge.src is not forward_an:
-
         # Get the incoming edge to this AccessNode
         in_edges = forward_state.in_edges(edge.src)
 
@@ -161,8 +174,9 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
         # Make sure the subset elements are (i,i,1) and (j,j,1)
         # Then check if this matches the loop indices
         if all(
-                str(subset[0]) == loop_param_list[i] and subset[0] == subset[1] and subset[2] == 1
-                for i, subset in enumerate(edge.data.subset)):
+            str(subset[0]) == loop_param_list[i] and subset[0] == subset[1] and subset[2] == 1
+            for i, subset in enumerate(edge.data.subset)
+        ):
             # We only use the loop accesses
             # Both should work since shape[:nb_enclosing_loops] == shape[nb_enclosing_loops:]
             shape = shape[nb_enclosing_loops:]
@@ -209,11 +223,13 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
     params_to_add = new_param_dict
     # First, we need to add an assign tasklet
-    assign_tasklet_node, assign_tasklet_node_out_connector = _get_assign_tasklet(forward_state=forward_state,
-                                                                                 node=forward_an,
-                                                                                 stored_node=new_store_node,
-                                                                                 last_edge=edge,
-                                                                                 loop_iterators=loop_access)
+    assign_tasklet_node, assign_tasklet_node_out_connector = _get_assign_tasklet(
+        forward_state=forward_state,
+        node=forward_an,
+        stored_node=new_store_node,
+        last_edge=edge,
+        loop_iterators=loop_access,
+    )
 
     # Start iterating
     previous_node = assign_tasklet_node
@@ -251,16 +267,19 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
             in_state_access = ','.join(access_list)
 
-            memlet_data = Memlet(
-                expr=f"{new_store_node.data}[{loop_access},{in_state_access}]") if loop_access else Memlet(
-                    expr=f"{new_store_node.data}[{in_state_access}]")
+            memlet_data = (
+                Memlet(expr=f"{new_store_node.data}[{loop_access},{in_state_access}]")
+                if loop_access
+                else Memlet(expr=f"{new_store_node.data}[{in_state_access}]")
+            )
 
             # Save the memlet for later
             memlets_stack.append(memlet_data)
 
             # Connect the previous node to this map exist
-            forward_state.add_edge(previous_node, previous_node_out_connector, map_exist, map_exit_in_connector,
-                                   memlet_data)
+            forward_state.add_edge(
+                previous_node, previous_node_out_connector, map_exist, map_exit_in_connector, memlet_data
+            )
 
             previous_node = map_exist
             previous_node_out_connector = map_exit_out_connector
@@ -297,9 +316,11 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
             in_state_access = ','.join(access_list)
 
             # Get the memlet data for the connection between the last map exit and the new store AccessNode
-            memlet_data = Memlet(
-                expr=f"{new_store_node.data}[{loop_access},{in_state_access}]") if loop_access else Memlet(
-                    expr=f"{new_store_node.data}[{in_state_access}]")
+            memlet_data = (
+                Memlet(expr=f"{new_store_node.data}[{loop_access},{in_state_access}]")
+                if loop_access
+                else Memlet(expr=f"{new_store_node.data}[{in_state_access}]")
+            )
 
             memlets_stack.append(memlet_data)
 
@@ -345,8 +366,9 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
         if map_exist:
             # Check if this map exit writes to the data we want to save
             if any(
-                    isinstance(e.dst, nodes.AccessNode) and e.dst.data == forward_an.data
-                    for e in forward_state.out_edges(map_exist)):
+                isinstance(e.dst, nodes.AccessNode) and e.dst.data == forward_an.data
+                for e in forward_state.out_edges(map_exist)
+            ):
                 # Get the map entry of this map exit
                 tasklet_in_edges = forward_state.in_edges(assign_tasklet_node)
                 assert len(tasklet_in_edges) == 1
@@ -360,7 +382,8 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
                 # Get all the edges coming out of this specific in connector
                 collusion_edges = [
-                    e for e in forward_state.out_edges(tasklet_in_edge.src)
+                    e
+                    for e in forward_state.out_edges(tasklet_in_edge.src)
                     if e.src_conn == tasklet_in_edge.src_conn and e.dst != assign_tasklet_node
                 ]
 
@@ -371,18 +394,24 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
     return new_store_node, memlets_stack
 
 
-def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState,
-                                   backward_state: SDFGState, source_node: nodes.AccessNode,
-                                   forward_node: nodes.AccessNode, target_node: nodes.Node, memlets: List[Memlet],
-                                   starting_edge: dgraph.MultiConnectorEdge):
+def _connect_stored_data_to_target(
+    bwd_generator: 'BackwardPassGenerator',
+    forward_state: SDFGState,
+    backward_state: SDFGState,
+    source_node: nodes.AccessNode,
+    forward_node: nodes.AccessNode,
+    target_node: nodes.Node,
+    memlets: List[Memlet],
+    starting_edge: dgraph.MultiConnectorEdge,
+):
     """
-        Connect the source node to the sink target node (both in the backawrd state) through a set of maps using the parameter memelets.
-        We use the forward_sink_edge to track which maps to make this connection through.
-        :param source_node: the source node of the new memlet path
-        :param sink_node: the sink node of the new memlet path
-        :param memlets: the set of memlets to use for the edges in the path
-        :param forward_sink_edge: the sink edge connecting the original nodes in the forward state
-        """
+    Connect the source node to the sink target node (both in the backawrd state) through a set of maps using the parameter memelets.
+    We use the forward_sink_edge to track which maps to make this connection through.
+    :param source_node: the source node of the new memlet path
+    :param sink_node: the sink node of the new memlet path
+    :param memlets: the set of memlets to use for the edges in the path
+    :param forward_sink_edge: the sink edge connecting the original nodes in the forward state
+    """
     # First, if the stored data is not already in the sdfg descriptors, add it
     # This is the case for NestedSDFGs
     if source_node.data not in backward_state.sdfg.arrays:
@@ -428,8 +457,9 @@ def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forwa
             memlet_data = copy.deepcopy(memlets.pop(0))
 
             # Add the edge with the corresponding memlet
-            backward_state.add_edge(bwd_map_entry, parent_node_out_connector, child_node, child_node_in_connector,
-                                    memlet_data)
+            backward_state.add_edge(
+                bwd_map_entry, parent_node_out_connector, child_node, child_node_in_connector, memlet_data
+            )
 
             child_node = bwd_map_entry
             child_node_in_connector = parent_node_in_connector
@@ -468,20 +498,21 @@ def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forwa
                 # We take the last elements since we might add loop indices to the shape
                 # Sanity check the strides for this desc should be less than or equal to the stored strides
                 assert len(input_desc.strides) <= len(stored_strides)
-                input_desc.strides = stored_strides[-len(input_desc.shape):]
+                input_desc.strides = stored_strides[-len(input_desc.shape) :]
 
     # There should be the same number of memlets through the new path
     assert len(memlets) == 0
 
 
-def _get_assign_tasklet(forward_state: SDFGState,
-                        node: nodes.AccessNode,
-                        stored_node: nodes.AccessNode,
-                        last_edge: dgraph.MultiConnectorEdge,
-                        loop_iterators: str,
-                        cuda: bool = False):
-    """
-        """
+def _get_assign_tasklet(
+    forward_state: SDFGState,
+    node: nodes.AccessNode,
+    stored_node: nodes.AccessNode,
+    last_edge: dgraph.MultiConnectorEdge,
+    loop_iterators: str,
+    cuda: bool = False,
+):
+    """ """
     # Create the assign tasklet
     assign_tasklet_node_in_connector = "in_stored_" + node.data
     assign_tasklet_node_out_connector = "out_stored_" + node.data
@@ -528,7 +559,8 @@ def _get_assign_tasklet(forward_state: SDFGState,
             code=f"{assign_tasklet_node_out_connector} = {assign_tasklet_node_in_connector}",
             outputs={assign_tasklet_node_out_connector: output_memlet},
             schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
-            external_edges=False)
+            external_edges=False,
+        )
 
         # Add the necessary connectors for external connections
         map_entry.add_in_connector("IN_store_block")
@@ -540,8 +572,9 @@ def _get_assign_tasklet(forward_state: SDFGState,
             if e.dst == assign_tasklet_node:
                 # Update the source connector to route through our external connector
                 forward_state.remove_edge(e)
-                forward_state.add_edge(map_entry, "OUT_store_block", assign_tasklet_node,
-                                       assign_tasklet_node_in_connector, e.data)
+                forward_state.add_edge(
+                    map_entry, "OUT_store_block", assign_tasklet_node, assign_tasklet_node_in_connector, e.data
+                )
                 map_entry.add_out_connector("OUT_store_block")
                 break
 
@@ -550,8 +583,9 @@ def _get_assign_tasklet(forward_state: SDFGState,
             if e.src == assign_tasklet_node:
                 # Update the destination connector to route through our external connector
                 forward_state.remove_edge(e)
-                forward_state.add_edge(assign_tasklet_node, assign_tasklet_node_out_connector, map_exit,
-                                       "IN_store_block", e.data)
+                forward_state.add_edge(
+                    assign_tasklet_node, assign_tasklet_node_out_connector, map_exit, "IN_store_block", e.data
+                )
                 map_exit.add_in_connector("IN_store_block")
                 break
 
@@ -599,8 +633,9 @@ def _find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -
     return src_candidates[0]
 
 
-def _get_symbol_upper_bound_from_loop(bwd_generator: 'BackwardPassGenerator', s: sp.Symbol,
-                                      loops: List[LoopRegion]) -> int:
+def _get_symbol_upper_bound_from_loop(
+    bwd_generator: 'BackwardPassGenerator', s: sp.Symbol, loops: List[LoopRegion]
+) -> int:
     """
     Given a symbol and a list of loops, get the upper bound of the symbol from the loops.
     Raises an error if the symbol is not a loop index or the upper bound cannot be extracted correctly.
@@ -666,7 +701,8 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'BackwardPassGenerator', s:
 
     if loop_size is None:
         raise AutoDiffException(
-            f"Can't figure out how to save the data inside: {l.label} because of its symbol shape {s}")
+            f"Can't figure out how to save the data inside: {l.label} because of its symbol shape {s}"
+        )
 
     # We will call this function recusrively until loop size is numeric or it is a global SDFG symbol
     if ad_utils.shape_has_symbols_to_replace(bwd_generator.sdfg, loop_size):
@@ -676,9 +712,9 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'BackwardPassGenerator', s:
 
 def _get_all_enclosing_loops(forward_state: SDFGState) -> List[LoopRegion]:
     """
-        Check if this state will be executed several times within a loop.
-        We check if any of the parents of this state is a loop region.
-        """
+    Check if this state will be executed several times within a loop.
+    We check if any of the parents of this state is a loop region.
+    """
     all_loops = []
     parent = forward_state.parent_graph
     while parent is not None:

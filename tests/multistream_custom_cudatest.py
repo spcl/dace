@@ -40,12 +40,14 @@ tasklet = state.add_tasklet(
                 c, N);
     ''',
     # Language (C++ in this case)
-    language=dp.Language.CPP)
+    language=dp.Language.CPP,
+)
 
-tasklet2 = state.add_tasklet(name='gemm2',
-                             inputs={'a', 'b'},
-                             outputs={'c'},
-                             code='''
+tasklet2 = state.add_tasklet(
+    name='gemm2',
+    inputs={'a', 'b'},
+    outputs={'c'},
+    code='''
     double alpha = 1.0, beta = 0.0;
     cublasSetStream(handle, __dace_current_stream);
     cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
@@ -54,7 +56,8 @@ tasklet2 = state.add_tasklet(name='gemm2',
                 &beta,
                 c, N);
     ''',
-                             language=dp.Language.CPP)
+    language=dp.Language.CPP,
+)
 
 # Add CPU arrays, GPU arrays, and connect to tasklet
 A = state.add_read('A')

@@ -5,7 +5,7 @@ import numpy as np
 
 N = dace.symbol('N')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -110,7 +110,7 @@ def ludcmp(A: datatype[N, N], b: datatype[N], x: datatype[N], y: datatype[N]):
             out = in_y
 
         @dace.map
-        def set_w4(j: _[i + 1:N]):
+        def set_w4(j: _[i + 1 : N]):
             in_A << A[i, j]
             in_x << x[j]
             out >> w(1, lambda x, y: x + y)

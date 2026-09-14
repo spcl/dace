@@ -57,8 +57,12 @@ class ReverseReduce(BackwardImplementation):
         return True
 
     @staticmethod
-    def backward(forward_node: Node, context: BackwardContext, given_gradients: typing.List[typing.Optional[str]],
-                 required_gradients: typing.List[typing.Optional[str]]) -> typing.Tuple[Node, BackwardResult]:
+    def backward(
+        forward_node: Node,
+        context: BackwardContext,
+        given_gradients: typing.List[typing.Optional[str]],
+        required_gradients: typing.List[typing.Optional[str]],
+    ) -> typing.Tuple[Node, BackwardResult]:
         """Generate the backward pass for a reduction node.
 
         :param forward_node: The forward reduction node.
@@ -71,12 +75,16 @@ class ReverseReduce(BackwardImplementation):
         reduction_type = detect_reduction_type(forward_node.wcr)
 
         if len(given_gradients) != 1:
-            raise AutoDiffException(f"Invalid SDFG: reduce node {forward_node} should have exactly one output edge, "
-                                    f"got {len(given_gradients)} output gradients")
+            raise AutoDiffException(
+                f"Invalid SDFG: reduce node {forward_node} should have exactly one output edge, "
+                f"got {len(given_gradients)} output gradients"
+            )
 
         if len(required_gradients) != 1:
-            raise AutoDiffException(f"Invalid SDFG: reduce node {forward_node} should have exactly one input edge, "
-                                    f"got {len(required_gradients)} input gradients")
+            raise AutoDiffException(
+                f"Invalid SDFG: reduce node {forward_node} should have exactly one input edge, "
+                f"got {len(required_gradients)} input gradients"
+            )
 
         input_name = next(iter(required_gradients))
         in_desc = in_desc_with_name(forward_node, context.forward_state, context.forward_sdfg, input_name)
@@ -90,14 +98,32 @@ class ReverseReduce(BackwardImplementation):
 
         result = BackwardResult.empty()
 
-        return ReverseReduce._backward_reduction(forward_node, context, result, reduction_type, input_name, output_name,
-                                                 in_desc, out_desc, all_axes, non_reduce_axes)
+        return ReverseReduce._backward_reduction(
+            forward_node,
+            context,
+            result,
+            reduction_type,
+            input_name,
+            output_name,
+            in_desc,
+            out_desc,
+            all_axes,
+            non_reduce_axes,
+        )
 
     @staticmethod
-    def _backward_reduction(forward_node: Node, context: BackwardContext, result: BackwardResult,
-                            reduction_type: dtypes.ReductionType, input_name: str, output_name: str, in_desc, out_desc,
-                            all_axes: typing.List[int],
-                            non_reduce_axes: typing.List[int]) -> typing.Tuple[Node, BackwardResult]:
+    def _backward_reduction(
+        forward_node: Node,
+        context: BackwardContext,
+        result: BackwardResult,
+        reduction_type: dtypes.ReductionType,
+        input_name: str,
+        output_name: str,
+        in_desc,
+        out_desc,
+        all_axes: typing.List[int],
+        non_reduce_axes: typing.List[int],
+    ) -> typing.Tuple[Node, BackwardResult]:
         """Backward pass for Sum/Max/Min reductions.
 
         - Sum: Broadcasts gradients uniformly across reduced dimensions
@@ -117,11 +143,9 @@ class ReverseReduce(BackwardImplementation):
         :return: Tuple of the nested SDFG node and the backward result.
         """
         is_extremal = reduction_type in (dtypes.ReductionType.Max, dtypes.ReductionType.Min)
-        type_name = {
-            dtypes.ReductionType.Sum: "sum",
-            dtypes.ReductionType.Max: "max",
-            dtypes.ReductionType.Min: "min"
-        }[reduction_type]
+        type_name = {dtypes.ReductionType.Sum: "sum", dtypes.ReductionType.Max: "max", dtypes.ReductionType.Min: "min"}[
+            reduction_type
+        ]
 
         sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") + "_")
 
@@ -148,11 +172,13 @@ class ReverseReduce(BackwardImplementation):
             # transient inside a loop body is hoisted to the SDFG and cleared once per invocation,
             # and the WCR accumulation below would then carry across iterations.
             count_arr_name = f"_{type_name}_count"
-            sdfg.add_array(count_arr_name,
-                           shape=out_desc.shape,
-                           dtype=out_desc.dtype,
-                           transient=True,
-                           lifetime=dtypes.AllocationLifetime.State)
+            sdfg.add_array(
+                count_arr_name,
+                shape=out_desc.shape,
+                dtype=out_desc.dtype,
+                transient=True,
+                lifetime=dtypes.AllocationLifetime.State,
+            )
 
         reduce_all_axes = forward_node.axes is None or set(range(len(in_desc.shape))) == set(forward_node.axes)
 
@@ -169,81 +195,88 @@ class ReverseReduce(BackwardImplementation):
             count_node.setzero = True
 
             # Count matching elements
-            count_memlet = Memlet.simple(count_arr_name,
-                                         "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes),
-                                         wcr_str="lambda x, y: x + y")
+            count_memlet = Memlet.simple(
+                count_arr_name,
+                "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes),
+                wcr_str="lambda x, y: x + y",
+            )
             extremal_val_memlet_count = Memlet.simple(
-                extremal_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
+                extremal_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes)
+            )
             extremal_idx_memlet_count = Memlet.simple(extremal_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
 
-            count_grad_state.add_mapped_tasklet(f"_count_{type_name}_matches_", {
-                "i" + str(i): "0:{}".format(shape)
-                for i, shape in enumerate(in_desc.shape)
-            }, {
-                "__extremal_val": extremal_val_memlet_count,
-                "__extremal_val_idx": extremal_idx_memlet_count
-            },
-                                                "__count = 1.0 if __extremal_val == __extremal_val_idx else 0.0",
-                                                {"__count": count_memlet},
-                                                external_edges=True,
-                                                output_nodes={count_arr_name: count_node})
+            count_grad_state.add_mapped_tasklet(
+                f"_count_{type_name}_matches_",
+                {"i" + str(i): "0:{}".format(shape) for i, shape in enumerate(in_desc.shape)},
+                {"__extremal_val": extremal_val_memlet_count, "__extremal_val_idx": extremal_idx_memlet_count},
+                "__count = 1.0 if __extremal_val == __extremal_val_idx else 0.0",
+                {"__count": count_memlet},
+                external_edges=True,
+                output_nodes={count_arr_name: count_node},
+            )
 
             # Compute the normalized gradient (grad / count). Reading through ``count_node`` is
             # what orders this map after the counting map above.
             reduction_memlet = Memlet.simple(
-                rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-            reverse_reduction_memlet = Memlet.simple(rev_output_conn_name,
-                                                     ",".join("i" + str(i) for i in all_axes),
-                                                     wcr_str="lambda x, y: x + y")
+                rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes)
+            )
+            reverse_reduction_memlet = Memlet.simple(
+                rev_output_conn_name, ",".join("i" + str(i) for i in all_axes), wcr_str="lambda x, y: x + y"
+            )
             extremal_val_memlet = Memlet.simple(
-                extremal_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
+                extremal_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes)
+            )
             extremal_idx_memlet = Memlet.simple(extremal_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
             count_read_memlet = Memlet.simple(
-                count_arr_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
+                count_arr_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes)
+            )
 
             tasklet_inputs = {
                 "__in": reduction_memlet,
                 "__extremal_val": extremal_val_memlet,
                 "__extremal_val_idx": extremal_idx_memlet,
-                "__count": count_read_memlet
+                "__count": count_read_memlet,
             }
             tasklet_code = "__out = __in / __count if __extremal_val == __extremal_val_idx else 0"
 
-            _, _, exit_map = count_grad_state.add_mapped_tasklet(f"_{type_name}_grad_" +
-                                                                 str(reduction_type).replace(".", "_") + "_", {
-                                                                     "i" + str(i): "0:{}".format(shape)
-                                                                     for i, shape in enumerate(in_desc.shape)
-                                                                 },
-                                                                 tasklet_inputs,
-                                                                 tasklet_code, {"__out": reverse_reduction_memlet},
-                                                                 external_edges=True,
-                                                                 input_nodes={count_arr_name: count_node})
+            _, _, exit_map = count_grad_state.add_mapped_tasklet(
+                f"_{type_name}_grad_" + str(reduction_type).replace(".", "_") + "_",
+                {"i" + str(i): "0:{}".format(shape) for i, shape in enumerate(in_desc.shape)},
+                tasklet_inputs,
+                tasklet_code,
+                {"__out": reverse_reduction_memlet},
+                external_edges=True,
+                input_nodes={count_arr_name: count_node},
+            )
 
             state = count_grad_state
         else:
             # Sum reduction: simple broadcast
             state = sdfg.add_state(f"block_{id(forward_node)}")
             reduction_memlet = Memlet.simple(
-                rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-            reverse_reduction_memlet = Memlet.simple(rev_output_conn_name,
-                                                     ",".join("i" + str(i) for i in all_axes),
-                                                     wcr_str="lambda x, y: x + y")
+                rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes)
+            )
+            reverse_reduction_memlet = Memlet.simple(
+                rev_output_conn_name, ",".join("i" + str(i) for i in all_axes), wcr_str="lambda x, y: x + y"
+            )
             tasklet_inputs = {"__in": reduction_memlet}
             tasklet_code = "__out = __in"
 
-            _, _, exit_map = state.add_mapped_tasklet(f"_{type_name}_grad_" + str(reduction_type).replace(".", "_") +
-                                                      "_", {
-                                                          "i" + str(i): "0:{}".format(shape)
-                                                          for i, shape in enumerate(in_desc.shape)
-                                                      },
-                                                      tasklet_inputs,
-                                                      tasklet_code, {"__out": reverse_reduction_memlet},
-                                                      external_edges=True)
+            _, _, exit_map = state.add_mapped_tasklet(
+                f"_{type_name}_grad_" + str(reduction_type).replace(".", "_") + "_",
+                {"i" + str(i): "0:{}".format(shape) for i, shape in enumerate(in_desc.shape)},
+                tasklet_inputs,
+                tasklet_code,
+                {"__out": reverse_reduction_memlet},
+                external_edges=True,
+            )
 
-        nsdfg = context.backward_state.add_nested_sdfg(sdfg,
-                                                       sorted(nsdfg_inputs), [rev_output_conn_name],
-                                                       symbol_mapping=ad_utils.backward_symbol_mapping(
-                                                           sdfg, context.backward_state))
+        nsdfg = context.backward_state.add_nested_sdfg(
+            sdfg,
+            sorted(nsdfg_inputs),
+            [rev_output_conn_name],
+            symbol_mapping=ad_utils.backward_symbol_mapping(sdfg, context.backward_state),
+        )
 
         out_edges = state.out_edges(exit_map)
         if len(out_edges) != 1:

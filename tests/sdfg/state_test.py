@@ -102,8 +102,9 @@ def test_read_and_write_set_filter():
     read_set, write_set = state._read_and_write_sets()
 
     for expected_sets, computed_sets in [(expected_reads, read_set), (expected_writes, write_set)]:
-        assert expected_sets.keys() == computed_sets.keys(
-        ), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        assert expected_sets.keys() == computed_sets.keys(), (
+            f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        )
         for access_data in expected_sets.keys():
             for exp in expected_sets[access_data]:
                 found_match = False
@@ -137,8 +138,9 @@ def test_read_and_write_set_selection():
     read_set, write_set = state._read_and_write_sets()
 
     for expected_sets, computed_sets in [(expected_reads, read_set), (expected_writes, write_set)]:
-        assert expected_sets.keys() == computed_sets.keys(
-        ), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        assert expected_sets.keys() == computed_sets.keys(), (
+            f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        )
         for access_data in expected_sets.keys():
             for exp in expected_sets[access_data]:
                 found_match = False
@@ -184,8 +186,9 @@ def test_read_and_write_set_names():
     read_set, write_set = state._read_and_write_sets()
 
     for expected_sets, computed_sets in [(expected_read_set, read_set), (expected_write_set, write_set)]:
-        assert expected_sets.keys() == computed_sets.keys(
-        ), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        assert expected_sets.keys() == computed_sets.keys(), (
+            f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        )
         for access_data in expected_sets.keys():
             for exp in expected_sets[access_data]:
                 found_match = False
@@ -206,10 +209,7 @@ def test_add_mapped_tasklet():
 
     tsklt, me, mx = state.add_mapped_tasklet(
         "test_map",
-        map_ranges={
-            "i": "0:10",
-            "j": "0:10"
-        },
+        map_ranges={"i": "0:10", "j": "0:10"},
         inputs={"__in": dace.Memlet("A[i, j]")},
         code="__out = math.sin(__in)",
         outputs={"__out": dace.Memlet("B[j, i]")},
@@ -227,7 +227,7 @@ def _make_find_upstream_and_downstream_node_test_sdfg():
     state = sdfg.add_state()
 
     for name in "ab":
-        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=True)
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=True)
     a, b = (state.add_access(name) for name in "ab")
 
     tlet, me, mx = state.add_mapped_tasklet(

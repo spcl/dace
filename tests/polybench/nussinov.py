@@ -4,7 +4,7 @@ import polybench
 
 N = dace.symbol('N')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.int32
 base = dace.int8
 

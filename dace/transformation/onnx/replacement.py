@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" General class for pattern replacement transformations. """
+"""General class for pattern replacement transformations."""
+
 import abc
 import dace
 from dace import nodes, data as dt
@@ -38,8 +39,9 @@ def add_connecting_access_nodes(graph: gr.OrderedDiGraph):
                 outputs[pnode] = new_node
 
     for e in graph.edges():
-        if (issubclass(e.src.node, (nodes.LibraryNode, nodes.NestedSDFG))
-                and issubclass(e.dst.node, (nodes.LibraryNode, nodes.NestedSDFG))):
+        if issubclass(e.src.node, (nodes.LibraryNode, nodes.NestedSDFG)) and issubclass(
+            e.dst.node, (nodes.LibraryNode, nodes.NestedSDFG)
+        ):
             # Direct path between two library nodes means that there is at least
             # another access node in between
             if e.src in outputs:
@@ -60,18 +62,18 @@ def onnx_constant_or_none(sdfg: dace.SDFG, node_or_name: Union[nodes.AccessNode,
 
 
 class ReplacementTransformation(transformation.SingleStateTransformation, abc.ABC):
-
     _pattern: Optional[gr.OrderedDiGraph] = None
 
     @classmethod
     @abc.abstractmethod
     def pattern(cls) -> gr.OrderedDiGraph[nodes.Node, dace.Memlet]:
-        """ Returns a pattern to match as a directed graph. """
+        """Returns a pattern to match as a directed graph."""
         raise NotImplementedError
 
     @abc.abstractmethod
-    def replacement(self, subgraph: List[nodes.Node], sdfg: dace.SDFG,
-                    state: dace.SDFGState) -> Tuple[nodes.Node, Dict[str, Tuple[nodes.Node, Union[str, dt.Data]]]]:
+    def replacement(
+        self, subgraph: List[nodes.Node], sdfg: dace.SDFG, state: dace.SDFGState
+    ) -> Tuple[nodes.Node, Dict[str, Tuple[nodes.Node, Union[str, dt.Data]]]]:
         """
         Defines replacement behavior for the transformation. This method returns
         a node (which could also be a nested SDFG if a subgraph should be
@@ -102,8 +104,14 @@ class ReplacementTransformation(transformation.SingleStateTransformation, abc.AB
             setattr(cls, f'_pnode{i}', node)
         return [result]
 
-    def can_be_applied(self, graph: Union[dace.SDFG, dace.SDFGState], candidate: Dict[transformation.PatternNode, int],
-                       expr_index: int, sdfg: dace.SDFG, simplify: bool) -> bool:
+    def can_be_applied(
+        self,
+        graph: Union[dace.SDFG, dace.SDFGState],
+        candidate: Dict[transformation.PatternNode, int],
+        expr_index: int,
+        sdfg: dace.SDFG,
+        simplify: bool,
+    ) -> bool:
         # All internal nodes must not be global (non-transient) or reused
         # anywhere else
         subgraph = gr.SubgraphView(graph, [graph.node(id) for id in candidate.values()])
@@ -116,7 +124,9 @@ class ReplacementTransformation(transformation.SingleStateTransformation, abc.AB
             if not node.desc(sdfg).transient:
                 return False
             other_data_nodes_with_same_name = [
-                n for s in sdfg.nodes() for n in s.nodes()
+                n
+                for s in sdfg.nodes()
+                for n in s.nodes()
                 if isinstance(n, nodes.AccessNode) and n.data == node.data and n not in subgraph.nodes()
             ]
             if len(other_data_nodes_with_same_name) > 0:
@@ -153,7 +163,8 @@ class ReplacementTransformation(transformation.SingleStateTransformation, abc.AB
         # Remove subgraph nodes that are not connected from outside
         sgview = gr.SubgraphView(state, subgraph)
         state.remove_nodes_from(
-            [n for n in subgraph if isinstance(n, nodes.CodeNode) or state.degree(n) == sgview.degree(n)])
+            [n for n in subgraph if isinstance(n, nodes.CodeNode) or state.degree(n) == sgview.degree(n)]
+        )
         # Remove orphan nodes
         state.remove_nodes_from([n for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.degree(n) == 0])
         return new_node

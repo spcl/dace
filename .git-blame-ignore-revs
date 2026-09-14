@@ -1,0 +1,10 @@
+# Repository-wide reformats. `git blame` on github.com applies this file
+# automatically; to get the same locally, run once:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: migrate formatting from yapf to ruff format
+8b34cefaaa8ceea2a642dd9134ead7d2f262da27
+
+# Change line width to 120 columns
+93efe94cc722c0e08a9ccfee9ac80dfd5638fa37

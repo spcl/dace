@@ -9,11 +9,25 @@ N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]
 
 
 @dace.program
-def subgraph_fusion_parallel(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], D: dace.float64[M],
-                             E: dace.float64[N], F: dace.float64[P], G: dace.float64[M], H: dace.float64[P],
-                             I: dace.float64[N], J: dace.float64[R], X: dace.float64[N], Y: dace.float64[M],
-                             Z: dace.float64[P], o1: dace.float64[N, M, O], o2: dace.float64[M, N, P],
-                             o3: dace.float64[P, N, R], o4: dace.float64[N, M, P]):
+def subgraph_fusion_parallel(
+    A: dace.float64[N],
+    B: dace.float64[M],
+    C: dace.float64[O],
+    D: dace.float64[M],
+    E: dace.float64[N],
+    F: dace.float64[P],
+    G: dace.float64[M],
+    H: dace.float64[P],
+    I: dace.float64[N],
+    J: dace.float64[R],
+    X: dace.float64[N],
+    Y: dace.float64[M],
+    Z: dace.float64[P],
+    o1: dace.float64[N, M, O],
+    o2: dace.float64[M, N, P],
+    o3: dace.float64[P, N, R],
+    o4: dace.float64[N, M, P],
+):
 
     for i, j, k in dace.map[0:N, 0:M, 0:O]:
         with dace.tasklet:
@@ -84,29 +98,31 @@ def test_p1():
     o4 = np.random.rand(N, M, P)
 
     csdfg = sdfg.compile()
-    csdfg(A=A,
-          B=B,
-          C=C,
-          D=D,
-          E=E,
-          F=F,
-          G=G,
-          H=H,
-          I=I,
-          J=J,
-          X=X,
-          Y=Y,
-          Z=Z,
-          N=N,
-          M=M,
-          O=O,
-          P=P,
-          R=R,
-          Q=Q,
-          o1=o1,
-          o2=o2,
-          o3=o3,
-          o4=o4)
+    csdfg(
+        A=A,
+        B=B,
+        C=C,
+        D=D,
+        E=E,
+        F=F,
+        G=G,
+        H=H,
+        I=I,
+        J=J,
+        X=X,
+        Y=Y,
+        Z=Z,
+        N=N,
+        M=M,
+        O=O,
+        P=P,
+        R=R,
+        Q=Q,
+        o1=o1,
+        o2=o2,
+        o3=o3,
+        o4=o4,
+    )
     del csdfg
 
     subgraph = SubgraphView(state, [node for node in state.nodes()])
@@ -126,29 +142,31 @@ def test_p1():
     sf.apply(sdfg)
 
     csdfg = sdfg.compile()
-    csdfg(A=A,
-          B=B,
-          C=C,
-          D=D,
-          E=E,
-          F=F,
-          G=G,
-          H=H,
-          I=I,
-          J=J,
-          X=X,
-          Y=Y,
-          Z=Z,
-          N=N,
-          M=M,
-          O=O,
-          P=P,
-          R=R,
-          Q=Q,
-          o1=o1,
-          o2=o2,
-          o3=o3,
-          o4=o4)
+    csdfg(
+        A=A,
+        B=B,
+        C=C,
+        D=D,
+        E=E,
+        F=F,
+        G=G,
+        H=H,
+        I=I,
+        J=J,
+        X=X,
+        Y=Y,
+        Z=Z,
+        N=N,
+        M=M,
+        O=O,
+        P=P,
+        R=R,
+        Q=Q,
+        o1=o1,
+        o2=o2,
+        o3=o3,
+        o4=o4,
+    )
 
 
 if __name__ == "__main__":

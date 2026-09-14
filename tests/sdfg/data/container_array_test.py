@@ -10,8 +10,9 @@ from scipy import sparse
 def test_read_struct_array():
 
     L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
-    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                                  name='CSRMatrix')
+    csr_obj = dace.data.Structure(
+        dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]), name='CSRMatrix'
+    )
 
     sdfg = dace.SDFG('array_of_csr_to_dense')
 
@@ -38,11 +39,9 @@ def test_read_struct_array():
 
     state.add_memlet_path(A, bme, vcsr, dst_conn='views', memlet=dace.Memlet(data='A', subset='b'))
     state.add_edge(vcsr, None, indptr, 'views', memlet=dace.Memlet.from_array('vcsr.indptr', csr_obj.members['indptr']))
-    state.add_edge(vcsr,
-                   None,
-                   indices,
-                   'views',
-                   memlet=dace.Memlet.from_array('vcsr.indices', csr_obj.members['indices']))
+    state.add_edge(
+        vcsr, None, indices, 'views', memlet=dace.Memlet.from_array('vcsr.indices', csr_obj.members['indices'])
+    )
     state.add_edge(vcsr, None, data, 'views', memlet=dace.Memlet.from_array('vcsr.data', csr_obj.members['data']))
 
     ime, imx = state.add_map('i', dict(i='0:M'))
@@ -55,27 +54,25 @@ def test_read_struct_array():
     state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i+1'), dst_conn='stop')
     state.add_memlet_path(indices, ime, jme, t, memlet=dace.Memlet(data='vindices', subset='idx'), dst_conn='j')
     state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
-    state.add_memlet_path(t,
-                          jmx,
-                          imx,
-                          bmx,
-                          B,
-                          memlet=dace.Memlet(data='B', subset='b, 0:M, 0:N', volume=1),
-                          src_conn='__out')
+    state.add_memlet_path(
+        t, jmx, imx, bmx, B, memlet=dace.Memlet(data='B', subset='b, 0:M, 0:N', volume=1), src_conn='__out'
+    )
 
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
-    A = np.ndarray((10, ), dtype=sparse.csr_matrix)
-    dace_A = np.ndarray((10, ), dtype=ctypes.c_void_p)
+    A = np.ndarray((10,), dtype=sparse.csr_matrix)
+    dace_A = np.ndarray((10,), dtype=ctypes.c_void_p)
     B = np.zeros((10, 20, 20), dtype=np.float32)
 
     ctypes_A = []
     for b in range(10):
         A[b] = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
-        ctypes_obj = csr_obj.dtype._typeclass.as_ctypes()(indptr=A[b].indptr.__array_interface__['data'][0],
-                                                          indices=A[b].indices.__array_interface__['data'][0],
-                                                          data=A[b].data.__array_interface__['data'][0])
+        ctypes_obj = csr_obj.dtype._typeclass.as_ctypes()(
+            indptr=A[b].indptr.__array_interface__['data'][0],
+            indices=A[b].indices.__array_interface__['data'][0],
+            data=A[b].data.__array_interface__['data'][0],
+        )
         ctypes_A.append(ctypes_obj)  # This is needed to keep the object alive ...
         dace_A[b] = ctypes.addressof(ctypes_obj)
 
@@ -90,9 +87,9 @@ def test_read_struct_array():
 def test_write_struct_array():
 
     L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
-    csr_obj = dace.data.Structure([('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]),
-                                   ('data', dace.float32[nnz])],
-                                  name='CSRMatrix')
+    csr_obj = dace.data.Structure(
+        [('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]), ('data', dace.float32[nnz])], name='CSRMatrix'
+    )
 
     sdfg = dace.SDFG('array_dense_to_csr')
 
@@ -125,23 +122,13 @@ def test_write_struct_array():
     if_body.add_edge(indices, 'views', vcsr, None, dace.Memlet(data='vcsr.indices', subset='0:nnz'))
     if_body.add_edge(vcsr, 'views', B, None, dace.Memlet(data='B', subset='k'))
     # Make For Loop  for j
-    j_before, _, j_after = sdfg.add_loop_state_machine(None,
-                                                       if_before,
-                                                       None,
-                                                       'j',
-                                                       '0',
-                                                       'j < N',
-                                                       'j + 1',
-                                                       loop_end_state=if_after)
+    j_before, _, j_after = sdfg.add_loop_state_machine(
+        None, if_before, None, 'j', '0', 'j < N', 'j + 1', loop_end_state=if_after
+    )
     # Make For Loop  for i
-    i_before, i_guard, i_after = sdfg.add_loop_state_machine(None,
-                                                             j_before,
-                                                             None,
-                                                             'i',
-                                                             '0',
-                                                             'i < M',
-                                                             'i + 1',
-                                                             loop_end_state=j_after)
+    i_before, i_guard, i_after = sdfg.add_loop_state_machine(
+        None, j_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=j_after
+    )
     sdfg.start_state = sdfg.node_id(i_before)
     i_before_guard = sdfg.edges_between(i_before, i_guard)[0]
     i_before_guard.data.assignments['idx'] = '0'
@@ -165,8 +152,8 @@ def test_write_struct_array():
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
-    B = np.ndarray((10, ), dtype=sparse.csr_matrix)
-    dace_B = np.ndarray((10, ), dtype=ctypes.c_void_p)
+    B = np.ndarray((10,), dtype=sparse.csr_matrix)
+    dace_B = np.ndarray((10,), dtype=ctypes.c_void_p)
     A = np.empty((10, 20, 20), dtype=np.float32)
 
     ctypes_B = []
@@ -177,9 +164,11 @@ def test_write_struct_array():
         B[b].indptr[:] = -1
         B[b].indices[:] = -1
         B[b].data[:] = -1
-        ctypes_obj = csr_obj.dtype._typeclass.as_ctypes()(indptr=B[b].indptr.__array_interface__['data'][0],
-                                                          indices=B[b].indices.__array_interface__['data'][0],
-                                                          data=B[b].data.__array_interface__['data'][0])
+        ctypes_obj = csr_obj.dtype._typeclass.as_ctypes()(
+            indptr=B[b].indptr.__array_interface__['data'][0],
+            indices=B[b].indices.__array_interface__['data'][0],
+            data=B[b].data.__array_interface__['data'][0],
+        )
         ctypes_B.append(ctypes_obj)  # This is needed to keep the object alive ...
         dace_B[b] = ctypes.addressof(ctypes_obj)
 
@@ -211,8 +200,9 @@ def test_jagged_container_array():
 
     m = 20
     # Create a ctypes array of arrays
-    jagged_array = (ctypes.POINTER(ctypes.c_double) * m)(*[(ctypes.c_double * i)(*np.random.rand(i))
-                                                           for i in range(1, m + 1)])
+    jagged_array = (ctypes.POINTER(ctypes.c_double) * m)(
+        *[(ctypes.c_double * i)(*np.random.rand(i)) for i in range(1, m + 1)]
+    )
     ref = 0
     for i in range(m):
         for j in range(i):
@@ -253,11 +243,15 @@ def test_two_levels():
             (ctypes.POINTER(ctypes.c_double) * 5)(
                 *[
                     #
-                    (ctypes.c_double * 5)(*np.random.rand(5)) for _ in range(5)
+                    (ctypes.c_double * 5)(*np.random.rand(5))
+                    for _ in range(5)
                     #
-                ]) for _ in range(5)
+                ]
+            )
+            for _ in range(5)
             #
-        ])
+        ]
+    )
 
     ref = jagged_array[1][2][3]
 
@@ -286,8 +280,12 @@ def test_multi_nested_containers():
     wout = state.add_write('out')
 
     me, mx = state.add_map('outer_product', dict(i='0:M', j='0:N'))
-    tasklet = state.add_tasklet('outer_product', {'__in_A_B_E_F', '__in_A_B_E_G', '__in_A_C', '__in_A_D'}, {'__out'},
-                                '__out = (__in_A_B_E_F + __in_A_B_E_G) * (__in_A_C + __in_A_D)')
+    tasklet = state.add_tasklet(
+        'outer_product',
+        {'__in_A_B_E_F', '__in_A_B_E_G', '__in_A_C', '__in_A_D'},
+        {'__out'},
+        '__out = (__in_A_B_E_F + __in_A_B_E_G) * (__in_A_C + __in_A_D)',
+    )
 
     state.add_edge(rA, None, vB, 'views', dace.Memlet('A.B'))
     state.add_memlet_path(vB, me, vE, dst_conn='views', memlet=dace.Memlet('vB[i]'))
@@ -302,15 +300,15 @@ def test_multi_nested_containers():
 
     e_class = E_desc.dtype._typeclass.as_ctypes()
     b_obj = []
-    b_data = np.ndarray((5, ), dtype=ctypes.c_void_p)
+    b_data = np.ndarray((5,), dtype=ctypes.c_void_p)
     for i in range(5):
         f_obj = f_data[i].__array_interface__['data'][0]
         e_obj = e_class(F=f_obj, G=ctypes.c_float(0.1))
         b_obj.append(e_obj)  # NOTE: This is needed to keep the object alive ...
         b_data[i] = ctypes.addressof(e_obj)
-    a_dace = A_desc.dtype._typeclass.as_ctypes()(B=b_data.__array_interface__['data'][0],
-                                                 C=c_data.__array_interface__['data'][0],
-                                                 D=ctypes.c_float(0.2))
+    a_dace = A_desc.dtype._typeclass.as_ctypes()(
+        B=b_data.__array_interface__['data'][0], C=c_data.__array_interface__['data'][0], D=ctypes.c_float(0.2)
+    )
 
     out_dace = np.empty((5, 3), dtype=np.float32)
     ref = np.empty((5, 3), dtype=np.float32)

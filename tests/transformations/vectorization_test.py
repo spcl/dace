@@ -28,7 +28,7 @@ def tovec_sym(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
 
 @dace.program
 def tovec_uneven(A: dace.float64[N + 2]):
-    for i in dace.map[1:N + 1]:
+    for i in dace.map[1 : N + 1]:
         with dace.tasklet:
             a << A[i]
             b >> A[i]
@@ -48,7 +48,7 @@ def test_vectorization_uneven():
     sdfg: dace.SDFG = tovec_uneven.to_sdfg()
 
     A = np.ones([22], np.float64)
-    result = np.array([1.] + [2.] * 20 + [1.], dtype=np.float64)
+    result = np.array([1.0] + [2.0] * 20 + [1.0], dtype=np.float64)
     sdfg(A=A, N=20)
     assert np.allclose(A, result)
 

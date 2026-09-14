@@ -3,6 +3,7 @@
 Sample showing the Shiloach-Viskin pointer-chasing connected components graph algorithm in the explicit DaCe syntax.
 It showcases write-conflicting accesses, location constraints, and explicit data movement volume.
 """
+
 import argparse
 import dace
 import numpy as np
@@ -39,7 +40,7 @@ def shiloach_vishkin(EL: dace.uint64[2 * E, 2], comp: dace.uint64[V]):
 
         # Hook in parallel. Notice that writing to `comp` may have conflicts, but the last access will "win" and set
         # the flag.
-        for e in dace.map[0:2 * E]:
+        for e in dace.map[0 : 2 * E]:
             with dace.tasklet:
                 u << EL[e, 0]
                 v << EL[e, 1]
@@ -60,7 +61,7 @@ def shiloach_vishkin(EL: dace.uint64[2 * E, 2], comp: dace.uint64[V]):
         # backwards, so we introduce this as a location constraint "hint" in the memlet.
         for v in dace.map[0:V]:
             with dace.tasklet:
-                inp << comp(-1)[0:v + 1]  # The volume is unknown, but the location constraints are known
+                inp << comp(-1)[0 : v + 1]  # The volume is unknown, but the location constraints are known
                 out >> comp(-1)[v]
 
                 p = inp[v]

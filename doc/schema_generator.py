@@ -94,7 +94,7 @@ def _write_entry_doc(fp: TextIO, name: str, element: Dict[str, Any]) -> None:
     # Write platform-specific defaults
     for k, v in element.items():
         if k.startswith('default_'):
-            platform_name = k[len('default_'):]
+            platform_name = k[len('default_') :]
             fp.write(f'    * **Default value (on {platform_name})**: {_format_default(v)}\n')
 
     # Footer

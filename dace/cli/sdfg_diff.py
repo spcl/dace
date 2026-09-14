@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" SDFG diff tool. """
+"""SDFG diff tool."""
 
 import argparse
 from hashlib import sha256
@@ -8,6 +8,7 @@ import os
 import platform
 import tempfile
 from typing import Dict, Set, Tuple, Union
+
 try:
     from typing import Literal
 except ImportError:
@@ -144,20 +145,24 @@ def main():
     parser.add_argument('sdfg_A_path', help='<PATH TO FIRST SDFG FILE>', type=str)
     parser.add_argument('sdfg_B_path', help='<PATH TO SECOND SDFG FILE>', type=str)
 
-    parser.add_argument('-g',
-                        '--graphical',
-                        dest='graphical',
-                        action='store_true',
-                        help="If set, visualize the difference graphically",
-                        default=False)
+    parser.add_argument(
+        '-g',
+        '--graphical',
+        dest='graphical',
+        action='store_true',
+        help="If set, visualize the difference graphically",
+        default=False,
+    )
     parser.add_argument('-o', '--output', dest='output', help="The output filename to generate", type=str)
-    parser.add_argument('-H',
-                        '--hash',
-                        dest='hash',
-                        action='store_true',
-                        help="If set, use the hash of JSON serialized properties for change checks instead of " +
-                        "Python's dictionary equivalence checks. This makes changes order sensitive.",
-                        default=False)
+    parser.add_argument(
+        '-H',
+        '--hash',
+        dest='hash',
+        action='store_true',
+        help="If set, use the hash of JSON serialized properties for change checks instead of "
+        + "Python's dictionary equivalence checks. This makes changes order sensitive.",
+        default=False,
+    )
 
     args = parser.parse_args()
 
@@ -188,12 +193,14 @@ def main():
         template = template_env.get_template('sdfv_diff_view.html')
 
         # if we are serving, the base path should just be root
-        html = template.render(sdfgA=json.dumps(dace.serialize.dumps(sdfg_A.to_json())),
-                               sdfgB=json.dumps(dace.serialize.dumps(sdfg_B.to_json())),
-                               removedKeysList=json.dumps(list(diff_sets[0])),
-                               addedKeysList=json.dumps(list(diff_sets[1])),
-                               changedKeysList=json.dumps(list(diff_sets[2])),
-                               dir=basepath + '/')
+        html = template.render(
+            sdfgA=json.dumps(dace.serialize.dumps(sdfg_A.to_json())),
+            sdfgB=json.dumps(dace.serialize.dumps(sdfg_B.to_json())),
+            removedKeysList=json.dumps(list(diff_sets[0])),
+            addedKeysList=json.dumps(list(diff_sets[1])),
+            changedKeysList=json.dumps(list(diff_sets[2])),
+            dir=basepath + '/',
+        )
 
         if args.output:
             fd = None

@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Inline multi-state SDFGs. """
+"""Inline multi-state SDFGs."""
 
 from copy import deepcopy as dc
 import itertools
@@ -37,8 +37,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.nested_sdfg)]
 
     @staticmethod
-    def _check_strides(inner_strides: List[symbolic.SymbolicType], outer_strides: List[symbolic.SymbolicType],
-                       memlet: Memlet, nested_sdfg: nodes.NestedSDFG) -> bool:
+    def _check_strides(
+        inner_strides: List[symbolic.SymbolicType],
+        outer_strides: List[symbolic.SymbolicType],
+        memlet: Memlet,
+        nested_sdfg: nodes.NestedSDFG,
+    ) -> bool:
         """
         Returns True if the strides of the inner array can be matched
         to the strides of the outer array upon inlining. Takes into
@@ -105,7 +109,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             #  for that. Clone the descriptor because the operation is inplace.
             inner_desc = nested_sdfg.sdfg.arrays[edge.dst_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+            if outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides:
                 return False
 
         for edge in state.out_edges(nested_sdfg):
@@ -124,7 +128,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
             inner_desc = nested_sdfg.sdfg.arrays[edge.src_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+            if outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides:
                 return False
 
         if not helpers.isolate_nested_sdfg(state, nsdfg_node=nested_sdfg, test_if_applicable=True):
@@ -170,8 +174,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
 
         # Isolate the nested SDFG in a separate state.
-        predecessor_state, nsdfg_state, successor_state = helpers.isolate_nested_sdfg(state=outer_state,
-                                                                                      nsdfg_node=nsdfg_node)
+        predecessor_state, nsdfg_state, successor_state = helpers.isolate_nested_sdfg(
+            state=outer_state, nsdfg_node=nsdfg_node
+        )
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
@@ -233,7 +238,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     datadesc = nsdfg.arrays[node.data]
                     if node.data not in transients and datadesc.transient:
                         new_name = node.data
-                        if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
+                        if new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants:
                             new_name = f'{nsdfg.label}_{node.data}'
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
@@ -241,12 +246,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
             # All transients of edges between code nodes are also added to parent
             for edge in nstate.edges():
-                if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
+                if isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode):
                     if edge.data.data is not None:
                         datadesc = nsdfg.arrays[edge.data.data]
                         if edge.data.data not in transients and datadesc.transient:
                             new_name = edge.data.data
-                            if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
+                            if new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants:
                                 new_name = f'{nsdfg.label}_{edge.data.data}'
 
                             name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)

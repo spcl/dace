@@ -15,7 +15,6 @@ from dace.ml import DaceModule
 def test_conv2d(use_cpp_dispatcher: bool):
 
     class Model(nn.Module):
-
         def __init__(self):
             super(Model, self).__init__()
             self.conv1 = nn.Conv2d(1, 4, 3)
@@ -34,9 +33,9 @@ def test_conv2d(use_cpp_dispatcher: bool):
     class TestDecorator(Model):
         pass
 
-    dace_model = DaceModule(ptmodel,
-                            sdfg_name=f"test_conv2d_{dispatcher_suffix}",
-                            compile_torch_extension=use_cpp_dispatcher)
+    dace_model = DaceModule(
+        ptmodel, sdfg_name=f"test_conv2d_{dispatcher_suffix}", compile_torch_extension=use_cpp_dispatcher
+    )
     dace_output = dace_model(x)
 
     dace_model_decorated = TestDecorator()
@@ -44,10 +43,12 @@ def test_conv2d(use_cpp_dispatcher: bool):
 
     torch_output = ptmodel(x)
 
-    np.testing.assert_allclose(torch_output.detach().numpy(),
-                               dace_output.detach().numpy(),
-                               atol=1e-06,
-                               err_msg="Conv2d output mismatch between PyTorch and DaCe")
+    np.testing.assert_allclose(
+        torch_output.detach().numpy(),
+        dace_output.detach().numpy(),
+        atol=1e-06,
+        err_msg="Conv2d output mismatch between PyTorch and DaCe",
+    )
 
 
 if __name__ == "__main__":

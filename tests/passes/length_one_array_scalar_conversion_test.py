@@ -8,6 +8,7 @@ into a fresh transient scalar (copy-in in a new start state, copy-out in a new s
 ``ConvertScalarsToLengthOneArrays`` is the inverse. These are pure-SDFG (no Fortran) tests of the Pass
 classes, covering the staging, ``preserve_abi``, ``filter`` gating and ``opaque``/View exemptions.
 """
+
 import ctypes
 
 import numpy as np
@@ -84,8 +85,8 @@ def test_scalarize_keeps_overlapping_name_subscript():
     """A scalarized name that is a suffix of another array must not eat that array's literal ``[0]``
     (scalarized ``ar`` vs multi-element ``bar``)."""
     sdfg = dace.SDFG("overlap")
-    sdfg.add_array("ar", (1, ), dace.float64, transient=True)
-    sdfg.add_array("bar", (4, ), dace.float64)
+    sdfg.add_array("ar", (1,), dace.float64, transient=True)
+    sdfg.add_array("bar", (4,), dace.float64)
     s0, s1 = sdfg.add_state("s0"), sdfg.add_state("s1")
     sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"k": "ar[0] + bar[0]"}))
     ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
@@ -96,8 +97,8 @@ def test_scalarize_keeps_overlapping_name_subscript():
 
 def test_collapsed_memlet_preserves_dynamic():
     sdfg = dace.SDFG("dynmem")
-    sdfg.add_array("a", (1, ), dace.float64, transient=True)
-    sdfg.add_array("b", (1, ), dace.float64, transient=True)
+    sdfg.add_array("a", (1,), dace.float64, transient=True)
+    sdfg.add_array("b", (1,), dace.float64, transient=True)
     state = sdfg.add_state("s")
     an_a, an_b = state.add_access("a"), state.add_access("b")
     state.add_nedge(an_a, an_b, dace.Memlet(data="a", subset="0", dynamic=True))
@@ -166,7 +167,7 @@ def test_preserve_abi_stages_a_signature_scalar_into_a_length_one_array():
     assert rewritten == {"alpha"}
     assert isinstance(sdfg.arrays["alpha"], dd.Scalar) and not sdfg.arrays["alpha"].transient
     staged = sdfg.arrays["arr_alpha"]
-    assert isinstance(staged, dd.Array) and staged.transient and tuple(staged.shape) == (1, )
+    assert isinstance(staged, dd.Array) and staged.transient and tuple(staged.shape) == (1,)
     labels = {s.label for s in sdfg.all_states()}
     assert "stage_copyin" in labels, "a read signature scalar needs a copy-in"
     assert "stage_copyout" not in labels, "alpha is never written -- no copy-out"
@@ -237,7 +238,7 @@ def test_inverse_roundtrip_transient():
     rewritten = ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
     assert rewritten == {"a"}
     assert isinstance(sdfg.arrays["a"], dd.Array)
-    assert tuple(sdfg.arrays["a"].shape) == (1, )
+    assert tuple(sdfg.arrays["a"].shape) == (1,)
 
 
 def test_opaque_length_one_array_is_not_scalarized():
@@ -264,7 +265,11 @@ def test_opaque_scalar_is_not_arrayized():
 
 def test_passes_expose_property_options():
     assert set(ConvertLengthOneArraysToScalars.__properties__) == {
-        "recursive", "preserve_abi", "filter", "single_element", "skip_gpu_outputs"
+        "recursive",
+        "preserve_abi",
+        "filter",
+        "single_element",
+        "skip_gpu_outputs",
     }
     assert set(ConvertScalarsToLengthOneArrays.__properties__) == {"recursive", "preserve_abi", "filter"}
     for cls in (ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays):
@@ -280,7 +285,7 @@ def _three_transient_len1() -> dace.SDFG:
     """Three transient length-1 arrays referenced from one interstate edge."""
     sdfg = dace.SDFG("flt")
     for nm in ("keep_me", "skip_me", "local"):
-        sdfg.add_array(nm, (1, ), dace.float64, transient=True)
+        sdfg.add_array(nm, (1,), dace.float64, transient=True)
     s0, s1 = sdfg.add_state("s0"), sdfg.add_state("s1")
     sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"k": "keep_me[0] + skip_me[0] + local[0]"}))
     return sdfg
@@ -325,11 +330,11 @@ def test_filter_empty_set_converts_nothing_both_directions():
 
 def test_filter_only_gates_root_level_nested_recursion_unaffected():
     inner = dace.SDFG("inner")
-    inner.add_array("inner_local", (1, ), dace.float64, transient=True)
+    inner.add_array("inner_local", (1,), dace.float64, transient=True)
     inner.add_state("s")
     outer = dace.SDFG("outer")
-    outer.add_array("outer_arr", (1, ), dace.float64, transient=True)
-    outer.add_array("outer_unrelated", (1, ), dace.float64, transient=True)
+    outer.add_array("outer_arr", (1,), dace.float64, transient=True)
+    outer.add_array("outer_unrelated", (1,), dace.float64, transient=True)
     ostate = outer.add_state()
     ostate.add_nested_sdfg(sdfg=inner, inputs=set(), outputs=set())
     ConvertLengthOneArraysToScalars(recursive=True, filter={"outer_arr"}).apply_pass(outer, {})

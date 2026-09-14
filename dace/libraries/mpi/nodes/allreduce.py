@@ -9,7 +9,6 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, in
 
 @dace.library.expansion
 class ExpandAllreduceMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -32,17 +31,18 @@ class ExpandAllreduceMPI(ExpandTransformation):
             MPI_Allreduce({buffer}, _outbuffer, {count_str}, {mpi_dtype_str},
                           {node.op}, {comm});
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.node
 class Allreduce(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandAllreduceMPI,

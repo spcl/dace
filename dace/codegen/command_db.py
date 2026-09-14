@@ -8,6 +8,7 @@ recipe any later SDFG of the same shape can run directly, with no CMake and no N
 Advisory: a recording that does not describe the program being built is rejected and the caller
 falls back to a full CMake build.
 """
+
 import json
 import os
 import shutil
@@ -61,8 +62,9 @@ def drop(cache_root: str, key: str) -> None:
 def capture(build_folder: str) -> List[Dict[str, str]]:
     """The commands Ninja just ran, or ``[]`` if they cannot be read."""
     try:
-        report = subprocess.run(['ninja', '-t', 'compdb'], cwd=build_folder, capture_output=True, text=True,
-                                check=True).stdout
+        report = subprocess.run(
+            ['ninja', '-t', 'compdb'], cwd=build_folder, capture_output=True, text=True, check=True
+        ).stdout
         entries = json.loads(report)
     except (OSError, subprocess.SubprocessError, ValueError):
         return []
@@ -83,8 +85,9 @@ def rewrite(entries: Sequence[Dict[str, str]], pairs: Sequence[Sequence[str]]) -
     return out
 
 
-def template(entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str,
-             program_name: str) -> List[Dict[str, str]]:
+def template(
+    entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str, program_name: str
+) -> List[Dict[str, str]]:
     """Replace this program's identity with placeholders, leaving a recipe for its whole shape.
 
     Longest-first, since the build folder lies inside the program folder.
@@ -92,8 +95,9 @@ def template(entries: Sequence[Dict[str, str]], build_folder: str, program_folde
     return rewrite(entries, [(build_folder, '$BUILD'), (program_folder, '$PROG'), (program_name, '$NAME')])
 
 
-def accepts(entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str, program_name: str,
-            files: Sequence[str]) -> Optional[List[Dict[str, str]]]:
+def accepts(
+    entries: Sequence[Dict[str, str]], build_folder: str, program_folder: str, program_name: str, files: Sequence[str]
+) -> Optional[List[Dict[str, str]]]:
     """Substitute this program into ``entries``, or ``None`` if the recording is not about it.
 
     Every path in a recorded command came from one of the three placeholders, so a substitution that

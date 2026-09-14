@@ -2,6 +2,7 @@
 """
 Nesting and dealiasing tests for schedule trees.
 """
+
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree

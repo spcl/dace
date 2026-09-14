@@ -22,6 +22,7 @@ def softmax_kernel(x: dc.float32[N, H, SM, SM]):
 
 def initialize(N, H, SM):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     x = rng.random((N, H, SM, SM), dtype=np.float32)
     return x
@@ -74,7 +75,7 @@ def run_softmax_autodiff():
 
     # Initialize gradient computation data
     gradient_x = np.zeros_like(x)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
@@ -109,7 +110,6 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 

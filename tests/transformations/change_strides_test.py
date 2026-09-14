@@ -14,16 +14,15 @@ def change_strides_test():
     sdfg.add_array('B', [N, M, 3], dace.float64)
     state = sdfg.add_state()
 
-    task1, mentry1, mexit1 = state.add_mapped_tasklet(name="map1",
-                                                      map_ranges={
-                                                          'i': '0:N',
-                                                          'j': '0:M'
-                                                      },
-                                                      inputs={'a': Memlet(data='A', subset='i, j')},
-                                                      outputs={'b': Memlet(data='B', subset='i, j, 0')},
-                                                      code='b = a + 1',
-                                                      external_edges=True,
-                                                      propagate=True)
+    task1, mentry1, mexit1 = state.add_mapped_tasklet(
+        name="map1",
+        map_ranges={'i': '0:N', 'j': '0:M'},
+        inputs={'a': Memlet(data='A', subset='i, j')},
+        outputs={'b': Memlet(data='B', subset='i, j, 0')},
+        code='b = a + 1',
+        external_edges=True,
+        propagate=True,
+    )
 
     # Check that states are as expected
     changed_sdfg = change_strides(sdfg, ['N'], ScheduleType.Sequential)

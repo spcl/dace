@@ -1,15 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Map iteration must be ascending.
+"""Map iteration must be ascending.
 
-    A ``Map`` with a negative step fails SDFG validation. An empty
-    ``end < begin`` positive-step range is valid (it iterates zero times).
-    A symbolic step is checked at runtime by an ``assert(step > 0)`` the
-    CPU codegen emits, active only in Debug builds.
+A ``Map`` with a negative step fails SDFG validation. An empty
+``end < begin`` positive-step range is valid (it iterates zero times).
+A symbolic step is checked at runtime by an ``assert(step > 0)`` the
+CPU codegen emits, active only in Debug builds.
 
-    The symbolic-step assertion runs in a subprocess: a failing C
-    ``assert`` raises ``SIGABRT`` rather than a Python exception, so the
-    Debug build type is set in the child's environment only.
+The symbolic-step assertion runs in a subprocess: a failing C
+``assert`` raises ``SIGABRT`` rather than a Python exception, so the
+Debug build type is set in the child's environment only.
 """
+
 import os
 import subprocess
 import sys
@@ -96,19 +97,21 @@ def test_symbolic_negative_step_aborts_in_debug_build():
     """A symbolic step that is negative at runtime trips the debug-only
     ``assert(step > 0)`` -> the process aborts (SIGABRT)."""
     proc = _run_child(-1)
-    assert proc.returncode != 0 and b'NO_ABORT' not in proc.stdout, \
+    assert proc.returncode != 0 and b'NO_ABORT' not in proc.stdout, (
         f"expected abort, rc={proc.returncode} out={proc.stdout!r}"
-    assert (proc.returncode == -6 or b'requires a positive step' in proc.stderr
-            or b'Assertion' in proc.stderr), \
+    )
+    assert proc.returncode == -6 or b'requires a positive step' in proc.stderr or b'Assertion' in proc.stderr, (
         f"expected assertion failure, stderr={proc.stderr[-400:]!r}"
+    )
 
 
 def test_symbolic_positive_step_runs_in_debug_build():
     """A positive symbolic step passes the assertion and runs normally in a
     Debug build."""
     proc = _run_child(2)
-    assert proc.returncode == 0 and b'NO_ABORT' in proc.stdout, \
+    assert proc.returncode == 0 and b'NO_ABORT' in proc.stdout, (
         f"expected clean run, rc={proc.returncode} stderr={proc.stderr[-400:]!r}"
+    )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests that name minting consults every namespace without materializing them.
+"""Tests that name minting consults every namespace without materializing them.
 
 Both cases below were kept because a mutation proved the rest of the suite misses them: a view
 that answers ``in`` from arrays and symbols but FORGETS constants leaves 787 sdfg + frontend

@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the distribution of the thread-blocks of a kernel over the chiplets of a GPU. """
+"""Tests the distribution of the thread-blocks of a kernel over the chiplets of a GPU."""
 
 import re
 import sys
@@ -50,7 +50,7 @@ def explicit_threadblock(a: dace.float64[N, M] @ dace.StorageType.GPU_Global):
             a[i + bi, j + bj] = 1.0
 
 
-def _fake_amdsmi(chiplets, handles=(object(), )):
+def _fake_amdsmi(chiplets, handles=(object(),)):
     """
     Returns a stand-in for the ``amdsmi`` module that reports GPUs with ``chiplets`` chiplets.
 
@@ -284,7 +284,8 @@ def test_allow_chiplet_threadblock_distribution_is_serialized():
     restored = dace.SDFG.from_json(sdfg.to_json())
 
     maps = [
-        node.map for node, _ in restored.all_nodes_recursive()
+        node.map
+        for node, _ in restored.all_nodes_recursive()
         if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device
     ]
     assert maps

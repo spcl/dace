@@ -17,7 +17,7 @@ def rw_data_race(A: dace.float32[10, 10], B: dace.float32[10, 10]):
 
 @dace.program
 def flip(A: dace.float64[N]):
-    B = np.ndarray((N, ), dtype=np.float64)
+    B = np.ndarray((N,), dtype=np.float64)
     for i in dace.map[0:N]:
         B[i] = A[N - 1 - i]
     return B
@@ -25,8 +25,8 @@ def flip(A: dace.float64[N]):
 
 @dace.program
 def offset(A: dace.float64[N]):
-    B = np.ndarray((N - 1, ), dtype=np.float64)
-    for i in dace.map[0:N - 1]:
+    B = np.ndarray((N - 1,), dtype=np.float64)
+    for i in dace.map[0 : N - 1]:
         B[i] = A[i + 1]
     return B
 
@@ -52,7 +52,7 @@ def test_rw_data_race():
     sdfg = rw_data_race.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(MapFusionVertical)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert (len(map_entry_nodes) > 1)
+    assert len(map_entry_nodes) > 1
 
 
 def test_rw_data_race_2_mf():
@@ -60,28 +60,28 @@ def test_rw_data_race_2_mf():
     nb_applied = sdfg.apply_transformations_repeated(MapFusionVertical)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert nb_applied > 0
-    assert (len(map_entry_nodes) > 1)
+    assert len(map_entry_nodes) > 1
 
 
 def test_rw_data_race_2_sgf():
     sdfg = rw_data_race_2.to_sdfg(simplify=True)
     greedy_fuse(sdfg, True)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert (len(map_entry_nodes) > 1)
+    assert len(map_entry_nodes) > 1
 
 
 def test_rw_data_race_3_sgf():
     sdfg = rw_data_race_3.to_sdfg(simplify=True)
     greedy_fuse(sdfg, True)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert (len(map_entry_nodes) > 1)
+    assert len(map_entry_nodes) > 1
 
 
 def test_rw_data_race_3_mf():
     sdfg = rw_data_race_3.to_sdfg(simplify=True)
     nb_applied = sdfg.apply_transformations_repeated(MapFusionVertical)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert (len(map_entry_nodes) > 1)
+    assert len(map_entry_nodes) > 1
     assert nb_applied > 0
 
 
@@ -91,7 +91,7 @@ def test_rw_data_race_4_mf():
     sdfg = rw_data_race_4.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(MapFusionVertical)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert (len(map_entry_nodes) >= 1)
+    assert len(map_entry_nodes) >= 1
 
 
 if __name__ == "__main__":

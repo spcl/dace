@@ -58,7 +58,7 @@ def test_pow_with_implicit_casting():
         return array**3.3
 
     rng = np.random.default_rng(42)
-    arr = rng.random((10, ), dtype=np.float32)
+    arr = rng.random((10,), dtype=np.float32)
     ref = f32_pow_failure.f(arr)
     val = f32_pow_failure(arr)
     assert np.allclose(ref, val)
@@ -72,23 +72,31 @@ def test_tasklets_with_same_local_name():
     state = sdfg.add_state()
     me, mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.ScheduleType.GPU_Device)
     t1 = state.add_tasklet(
-        'sgn', {'a'}, {'b'}, '''
+        'sgn',
+        {'a'},
+        {'b'},
+        '''
 mylocal: dace.float32
 if a > 0:
     mylocal = 1
 else:
     mylocal = -1
 b = mylocal
-    ''')
+    ''',
+    )
     t2 = state.add_tasklet(
-        'sgn', {'a'}, {'b'}, '''
+        'sgn',
+        {'a'},
+        {'b'},
+        '''
 mylocal: dace.float32
 if a > 0:
     mylocal = 1
 else:
     mylocal = -1
 b = mylocal
-    ''')
+    ''',
+    )
 
     a = state.add_read('A')
     b = state.add_write('A')

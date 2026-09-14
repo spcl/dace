@@ -57,10 +57,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(xin, getrf_node, dst_conn="_xin", memlet=Memlet.simple(xin, "0:n, 0:n", num_accesses=n * n))
     state.add_memlet_path(getrf_node, result, src_conn="_res", memlet=Memlet.simple(result, "0", num_accesses=1))
     state.add_memlet_path(getrf_node, pivots, src_conn="_ipiv", memlet=Memlet.simple(pivots, "0:n", num_accesses=n))
-    state.add_memlet_path(getrf_node,
-                          xout,
-                          src_conn="_xout",
-                          memlet=Memlet.simple(xout, "0:n, 0:n", num_accesses=n * n))
+    state.add_memlet_path(
+        getrf_node, xout, src_conn="_xout", memlet=Memlet.simple(xout, "0:n, 0:n", num_accesses=n * n)
+    )
 
     return sdfg
 
@@ -68,20 +67,24 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-])
+@pytest.mark.parametrize(
+    "implementation, dtype, storage",
+    [
+        pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    ],
+)
 def test_getrf(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     getrf_sdfg = sdfg.compile()
     np_dtype = getattr(np, dtype.to_string())
 
     from scipy.linalg import lu_factor
+
     size = 4
     lapack_status = np.array([-1], dtype=np.int32)
     A = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=np_dtype)

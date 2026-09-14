@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the results of a kernel whose thread-blocks are distributed over the chiplets of a GPU. """
+"""Tests the results of a kernel whose thread-blocks are distributed over the chiplets of a GPU."""
 
 import math
 
@@ -25,9 +25,14 @@ ARRAYS = ('zqx_l', 'zqx_i', 'zqx_v', 'za', 'ptend_q', 'ptend_t')
 
 
 @dace.program
-def cloudsc_tidy_branch(zqx_l: dace.float64[KLEV, KLON], zqx_i: dace.float64[KLEV, KLON],
-                        zqx_v: dace.float64[KLEV, KLON], za: dace.float64[KLEV, KLON],
-                        ptend_q: dace.float64[KLEV, KLON], ptend_t: dace.float64[KLEV, KLON]):
+def cloudsc_tidy_branch(
+    zqx_l: dace.float64[KLEV, KLON],
+    zqx_i: dace.float64[KLEV, KLON],
+    zqx_v: dace.float64[KLEV, KLON],
+    za: dace.float64[KLEV, KLON],
+    ptend_q: dace.float64[KLEV, KLON],
+    ptend_t: dace.float64[KLEV, KLON],
+):
     # cloudsc_bottom_lower.F90: "Tidy up very small cloud cover or total
     # cloud water" — guarded read-modify-write over several arrays (the
     # CLOUDSC-characteristic conditional accumulation pattern).
@@ -89,7 +94,7 @@ def _reference(inputs):
 
 
 def _setup():
-    """ Returns the inputs, the expected results, and a fresh copy of the inputs to compute into. """
+    """Returns the inputs, the expected results, and a fresh copy of the inputs to compute into."""
     inputs = _random_inputs()
     expected, taken = _reference(inputs)
 

@@ -6,31 +6,17 @@ NX = dace.symbol('NX')
 NY = dace.symbol('NY')
 TMAX = dace.symbol('TMAX')
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    TMAX: 20,
-    NX: 20,
-    NY: 30
-}, {
-    TMAX: 40,
-    NX: 60,
-    NY: 80
-}, {
-    TMAX: 100,
-    NX: 200,
-    NY: 240
-}, {
-    TMAX: 500,
-    NX: 1000,
-    NY: 1200
-}, {
-    TMAX: 1000,
-    NX: 2000,
-    NY: 2600
-}]
+sizes = [
+    {TMAX: 20, NX: 20, NY: 30},
+    {TMAX: 40, NX: 60, NY: 80},
+    {TMAX: 100, NX: 200, NY: 240},
+    {TMAX: 500, NX: 1000, NY: 1200},
+    {TMAX: 1000, NX: 2000, NY: 2600},
+]
 args = [
     ([NX, NY], datatype),  # ex
     ([NX, NY], datatype),  # ey
@@ -79,7 +65,7 @@ def fdtd2d(ex: datatype[NX, NY], ey: datatype[NX, NY], hz: datatype[NX, NY], _fi
             exout = exin - datatype(0.5) * (hz1 - hz2)
 
         @dace.map
-        def update_hz(i: _[0:NX - 1], j: _[0:NY - 1]):
+        def update_hz(i: _[0 : NX - 1], j: _[0 : NY - 1]):
             hzin << hz[i, j]
             ex1 << ex[i, j + 1]
             ex2 << ex[i, j]

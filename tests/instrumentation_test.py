@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests that generate various instrumentation reports with timers and
-    performance counters. """
+"""Tests that generate various instrumentation reports with timers and
+performance counters."""
 
 import pytest
 import numpy as np
@@ -47,12 +47,14 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.GPU_TX_MARKERS]:
         sdfg.apply_transformations(GPUTransformSDFG)
 
-    with dace.instrument(instrumentation,
-                         filter='*',
-                         annotate_maps=True,
-                         annotate_tasklets=False,
-                         annotate_states=True,
-                         annotate_sdfgs=True):
+    with dace.instrument(
+        instrumentation,
+        filter='*',
+        annotate_maps=True,
+        annotate_tasklets=False,
+        annotate_states=True,
+        annotate_sdfgs=True,
+    ):
         sdfg(A=A, B=B, C=C, N=size)
 
     # Check for correctness
@@ -112,7 +114,7 @@ def test_gpu_tx_markers():
 
 @pytest.mark.gpu
 def test_gpu_tx_markers_with_timer():
-    """ The report is still needed when another instrumentation type is used next to GPU_TX_MARKERS. """
+    """The report is still needed when another instrumentation type is used next to GPU_TX_MARKERS."""
     sdfg: dace.SDFG = slowmm.to_sdfg()
     sdfg.name = 'instrumentation_test_GPU_TX_MARKERS_with_timer'
     sdfg.simplify()

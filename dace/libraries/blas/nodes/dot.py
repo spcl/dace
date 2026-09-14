@@ -44,25 +44,26 @@ class ExpandDotPure(ExpandTransformation):
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
         # Initialization map
-        init_state.add_mapped_tasklet("_i_dotnit", {"__i_unused": "0:1"}, {},
-                                      "_out = 0", {"_out": dace.Memlet("_result[0]")},
-                                      external_edges=True)
+        init_state.add_mapped_tasklet(
+            "_i_dotnit", {"__i_unused": "0:1"}, {}, "_out = 0", {"_out": dace.Memlet("_result[0]")}, external_edges=True
+        )
 
         # Multiplication map
-        state.add_mapped_tasklet("dot", {"__i": f"0:{n}"}, {
-            "__x": dace.Memlet("_x[__i]"),
-            "__y": dace.Memlet("_y[__i]")
-        },
-                                 mul_program, {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
-                                 external_edges=True,
-                                 output_nodes=None)
+        state.add_mapped_tasklet(
+            "dot",
+            {"__i": f"0:{n}"},
+            {"__x": dace.Memlet("_x[__i]"), "__y": dace.Memlet("_y[__i]")},
+            mul_program,
+            {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
+            external_edges=True,
+            output_nodes=None,
+        )
 
         return sdfg
 
 
 @dace.library.expansion
 class ExpandDotOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -84,16 +85,14 @@ class ExpandDotOpenBLAS(ExpandTransformation):
             n /= veclen
         code = f"_result = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
         # The return type is scalar in cblas_?dot signature
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': dtype},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, {'_result': dtype}, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandDotMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -103,7 +102,6 @@ class ExpandDotMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandDotCuBLAS(ExpandTransformation):
-
     environments = [environments.cublas.cuBLAS]
 
     @staticmethod
@@ -143,17 +141,15 @@ class ExpandDotCuBLAS(ExpandTransformation):
                 {blas_helpers.dtype_to_cudadatatype(node.accumulator_type)}));
             """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': dtypes.pointer(dtype)},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, {'_result': dtypes.pointer(dtype)}, code, language=dace.dtypes.Language.CPP
+        )
 
         return tasklet
 
 
 @dace.library.node
 class Dot(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "pure": ExpandDotPure,
@@ -165,9 +161,9 @@ class Dot(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
-    accumulator_type = dace.properties.TypeClassProperty(default=None,
-                                                         allow_none=True,
-                                                         desc="Accumulator or intermediate storage type")
+    accumulator_type = dace.properties.TypeClassProperty(
+        default=None, allow_none=True, desc="Accumulator or intermediate storage type"
+    )
 
     def __init__(self, name, n=None, accumulator_type=None, **kwargs):
         super().__init__(name, inputs={"_x", "_y"}, outputs={"_result"}, **kwargs)

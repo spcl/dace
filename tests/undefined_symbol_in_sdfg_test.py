@@ -47,12 +47,9 @@ def test_undefined_symbol_in_sdfg():
     # Connect everything using add_memlet_path
     state.add_memlet_path(A, outer_map_entry, inner_map_entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i, j]'))
     state.add_memlet_path(tasklet, inner_map_exit, outer_map_exit, tmp, src_conn='t', memlet=dace.Memlet('tmp[i, 0]'))
-    state.add_memlet_path(tmp,
-                          outer_map_entry,
-                          inner_map_entry,
-                          read_tasklet,
-                          dst_conn='t',
-                          memlet=dace.Memlet('tmp[i, 0]'))
+    state.add_memlet_path(
+        tmp, outer_map_entry, inner_map_entry, read_tasklet, dst_conn='t', memlet=dace.Memlet('tmp[i, 0]')
+    )
     state.add_memlet_path(read_tasklet, inner_map_exit, outer_map_exit, B, src_conn='b', memlet=dace.Memlet('B[i]'))
 
     with pytest.raises(dace.sdfg.InvalidSDFGError, match="undefined symbol"):

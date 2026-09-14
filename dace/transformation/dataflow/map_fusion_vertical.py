@@ -245,10 +245,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  different from the ones performed by `has_read_write_dependency()`, which
         #  only checks the data dependencies that go through the scope nodes.
         if self.has_inner_read_write_dependency(
-                first_map_entry=first_map_entry,
-                second_map_entry=second_map_entry,
-                state=graph,
-                sdfg=sdfg,
+            first_map_entry=first_map_entry,
+            second_map_entry=second_map_entry,
+            state=graph,
+            sdfg=sdfg,
         ):
             return False
 
@@ -256,11 +256,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  the data that goes through the scope nodes. `has_inner_read_write_dependency()`
         #  if used to check if there are internal dependencies.
         if self.has_read_write_dependency(
-                first_map_entry=first_map_entry,
-                second_map_entry=second_map_entry,
-                param_repl=param_repl,
-                state=graph,
-                sdfg=sdfg,
+            first_map_entry=first_map_entry,
+            second_map_entry=second_map_entry,
+            param_repl=param_repl,
+            state=graph,
+            sdfg=sdfg,
         ):
             return False
 
@@ -405,12 +405,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         second_map_entry: nodes.MapEntry,
         param_repl: Dict[str, str],
     ) -> Union[
-            Tuple[
-                OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
-                OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
-                OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
-            ],
-            None,
+        Tuple[
+            OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
+            OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
+            OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
+        ],
+        None,
     ]:
         """Partition the output edges of `first_map_exit` for serial Map fusion.
 
@@ -469,9 +469,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # If the second Map is not reachable from the intermediate node, then
             #  the output is pure and we can end here.
             if not mfhelper.is_node_reachable_from(
-                    graph=state,
-                    begin=intermediate_node,
-                    end=second_map_entry,
+                graph=state,
+                begin=intermediate_node,
+                end=second_map_entry,
             ):
                 if self.require_all_intermediates:  # We do not allow pure output nodes.
                     return None
@@ -490,9 +490,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 if intermediate_node_iedge.src is first_map_exit:
                     return None
                 if mfhelper.is_node_reachable_from(
-                        graph=state,
-                        begin=first_map_exit,
-                        end=intermediate_node_iedge.src,
+                    graph=state,
+                    begin=first_map_exit,
+                    end=intermediate_node_iedge.src,
                 ):
                     return None
 
@@ -524,7 +524,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #   To handle this we need to associate a consumer edge (the outgoing edges
             #   of the second Map) with exactly one producer.
             producer_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = list(
-                state.in_edges_by_connector(first_map_exit, "IN_" + out_edge.src_conn[4:]))
+                state.in_edges_by_connector(first_map_exit, "IN_" + out_edge.src_conn[4:])
+            )
             if len(producer_edges) > 1:
                 return None
 
@@ -555,7 +556,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return None
 
                 _, reduced_inter_shape, _ = self.compute_reduced_intermediate(
-                    producer_subset=producer_edge.data.dst_subset, inter_desc=intermediate_desc)
+                    producer_subset=producer_edge.data.dst_subset, inter_desc=intermediate_desc
+                )
 
                 # If we reduce the intermediate node then we also change the underlying
                 #  memory layout, i.e. the strides. This change is not captured by the
@@ -565,12 +567,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     final_producer = final_producer_edge.dst
                     if isinstance(final_producer, nodes.NestedSDFG):
                         if not self._check_if_nested_sdfg_can_be_handled(
-                                state=state,
-                                sdfg=sdfg,
-                                nsdfg=final_producer,
-                                intermediate=intermediate_node,
-                                reduced_intermediate_shape=reduced_inter_shape,
-                                outer_edge=final_producer_edge,
+                            state=state,
+                            sdfg=sdfg,
+                            nsdfg=final_producer,
+                            intermediate=intermediate_node,
+                            reduced_intermediate_shape=reduced_inter_shape,
+                            outer_edge=final_producer_edge,
                         ):
                             return None
 
@@ -602,9 +604,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  node, then ensure that there is no path that goes to it. Needed to
                 #  prevent cycles.
                 if intermediate_consumer_edge.dst is not second_map_entry:
-                    if mfhelper.is_node_reachable_from(graph=state,
-                                                       begin=intermediate_consumer_edge.dst,
-                                                       end=second_map_entry):
+                    if mfhelper.is_node_reachable_from(
+                        graph=state, begin=intermediate_consumer_edge.dst, end=second_map_entry
+                    ):
                         return None
                     continue
                 found_second_map = True
@@ -624,7 +626,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #   even if it might not be read.
                 has_found_a_consumer = False
                 for inner_consumer_edge in state.out_edges_by_connector(
-                        second_map_entry, "OUT_" + intermediate_consumer_edge.dst_conn[3:]):
+                    second_map_entry, "OUT_" + intermediate_consumer_edge.dst_conn[3:]
+                ):
                     assert not inner_consumer_edge.data.is_empty()
                     consumer_subset = inner_consumer_edge.data.src_subset
                     if consumer_subset is None:
@@ -640,7 +643,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     #  For this we look if the producer covers the consumer. It is
                     #  important that a consumer must be covered by exactly one producer.
                     prospective_producers = [
-                        producer_subset for producer_subset in producer_subsets
+                        producer_subset
+                        for producer_subset in producer_subsets
                         if producer_subset.covers(consumer_subset)
                     ]
                     if len(prospective_producers) != 1:
@@ -654,17 +658,17 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         final_consumer = final_consumer_edge.dst
                         if isinstance(final_consumer, nodes.NestedSDFG):
                             if not self._check_if_nested_sdfg_can_be_handled(
-                                    state=state,
-                                    sdfg=sdfg,
-                                    nsdfg=final_consumer,
-                                    intermediate=intermediate_node,
-                                    reduced_intermediate_shape=reduced_inter_shape,
-                                    outer_edge=final_consumer_edge,
+                                state=state,
+                                sdfg=sdfg,
+                                nsdfg=final_consumer,
+                                intermediate=intermediate_node,
+                                reduced_intermediate_shape=reduced_inter_shape,
+                                outer_edge=final_consumer_edge,
                             ):
                                 return None
 
                     has_found_a_consumer = True
-            assert found_second_map, (f"Found '{intermediate_node}' which looked like a pure node, but is not one.")
+            assert found_second_map, f"Found '{intermediate_node}' which looked like a pure node, but is not one."
             assert has_found_a_consumer
 
             # After we have ensured coverage, we have to decide if the intermediate
@@ -672,7 +676,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  Note that "removed" here means that it is reconstructed by a new
             #  output of the second Map.
             if self.is_shared_data(data=intermediate_node, state=state, sdfg=sdfg):
-
                 # We found a non exclusive intermediate, but we only exclusive ones were
                 #  requested. Thus the decomposition does not exist.
                 if self.require_exclusive_intermediates:
@@ -689,9 +692,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #   do this in the strict data flow mode.
                 if self.strict_dataflow:
                     if self._is_data_accessed_downstream(
-                            data=intermediate_node.data,
-                            graph=state,
-                            begin=intermediate_node,  # is ignored itself.
+                        data=intermediate_node.data,
+                        graph=state,
+                        begin=intermediate_node,  # is ignored itself.
                     ):
                         return None
                 shared_outputs.add(out_edge)
@@ -750,10 +753,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 raise NotImplementedError()
             pre_exit_edge = pre_exit_edges[0]
 
-            (new_inter_shape_raw, new_inter_shape, squeezed_dims) = (self.compute_reduced_intermediate(
+            (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
                 producer_subset=pre_exit_edge.data.dst_subset,
                 inter_desc=inter_desc,
-            ))
+            )
 
             # This is the name of the new "intermediate" node that we will create.
             #  It will only have the shape `new_inter_shape` which is basically its
@@ -1170,10 +1173,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # Find the data that is internally referenced. Because of the first rule above,
         #  we filter all views above.
-        first_map_body_data, second_map_body_data = [{
-            dnode.data
-            for dnode in map_body.nodes() if isinstance(dnode, nodes.AccessNode) and not self.is_view(dnode, sdfg)
-        } for map_body in [first_map_body, second_map_body]]
+        first_map_body_data, second_map_body_data = [
+            {
+                dnode.data
+                for dnode in map_body.nodes()
+                if isinstance(dnode, nodes.AccessNode) and not self.is_view(dnode, sdfg)
+            }
+            for map_body in [first_map_body, second_map_body]
+        ]
 
         # If there is data that is referenced in both, then we consider this as an error
         #  this is the second rule above.
@@ -1245,10 +1252,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  Note that `len(real_read_map_1) <= len(read_map_1)` holds because of Views.
         resolved_sets: List[Set[str]] = []
         for unresolved_set in [read_map_1, write_map_1, read_map_2, write_map_2]:
-            resolved_sets.append({
-                self.track_view(node, state, sdfg).data if self.is_view(node, sdfg) else node.data
-                for node in unresolved_set.values()
-            })
+            resolved_sets.append(
+                {
+                    self.track_view(node, state, sdfg).data if self.is_view(node, sdfg) else node.data
+                    for node in unresolved_set.values()
+                }
+            )
             # If the resolved and unresolved names do not have the same length.
             #  Then different views point to the same location, which we forbid
             if len(unresolved_set) != len(resolved_sets[-1]):
@@ -1326,7 +1335,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     state=state,
                     sdfg=sdfg,
                     param_repl=None,
-                ))
+                )
+            )
             all_subsets.extend(
                 self.find_subsets(
                     node=write_map_1[data_to_inspect],
@@ -1334,7 +1344,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     state=state,
                     sdfg=sdfg,
                     param_repl=None,
-                ))
+                )
+            )
             if not self.test_if_subsets_are_point_wise(all_subsets):
                 return True
             del all_subsets
@@ -1358,7 +1369,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     state=state,
                     sdfg=sdfg,
                     param_repl=None,
-                ))
+                )
+            )
             #  While the subsets defining writing are given by the second MapExit
             #  node, there we also have to apply renaming.
             all_subsets.extend(
@@ -1368,7 +1380,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     state=state,
                     sdfg=sdfg,
                     param_repl=param_repl,
-                ))
+                )
+            )
             # Now we can test if these subsets are point wise
             if not self.test_if_subsets_are_point_wise(all_subsets):
                 return True
@@ -1591,8 +1604,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             get_edges = lambda node: state.out_edges(node)  # noqa: E731 [lambda-assignment]
             other_node = lambda e: e.dst  # noqa: E731 [lambda-assignment]
         access_set: Set[nodes.AccessNode] = {
-            node
-            for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
+            node for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
         }
 
         return access_set
@@ -1624,12 +1636,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node]
             get_subset = lambda e: e.data.src_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
-                lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:]))
+                lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:])
+            )
         else:
             outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node]
             get_subset = lambda e: e.data.dst_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
-                lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:]))
+                lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:])
+            )
 
         found_subsets: List[subsets.Subset] = []
         for edge in outer_edges_to_inspect:
@@ -1742,21 +1756,24 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         return False
 
                     # Test if the data is not used by views, because we also would have to modify them.
-                    edges_to_inspect = itertools.chain(inner_state.in_edges(inner_node),
-                                                       inner_state.out_edges(inner_node))
+                    edges_to_inspect = itertools.chain(
+                        inner_state.in_edges(inner_node), inner_state.out_edges(inner_node)
+                    )
                     for inner_edge in edges_to_inspect:
                         other_node = inner_edge.dst if inner_edge.src is inner_node else inner_edge.src
                         assert other_node is not inner_node
-                        if isinstance(other_node, nodes.AccessNode) and isinstance(other_node.desc(inner_sdfg),
-                                                                                   data.View):
+                        if isinstance(other_node, nodes.AccessNode) and isinstance(
+                            other_node.desc(inner_sdfg), data.View
+                        ):
                             return False
 
                 elif isinstance(inner_node, nodes.NestedSDFG):
                     # Test if the data is not passed further into nested SDFG.
                     # TODO(phimuell): Probably only one kind of edge needs to be tests, this is
                     #   implied by the AccessNode test above.
-                    edges_to_inspect = itertools.chain(inner_state.in_edges(inner_node),
-                                                       inner_state.out_edges(inner_node))
+                    edges_to_inspect = itertools.chain(
+                        inner_state.in_edges(inner_node), inner_state.out_edges(inner_node)
+                    )
                     for inner_edge in edges_to_inspect:
                         if inner_edge.data.data == inner_data:
                             return False
@@ -1822,7 +1839,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Check if we have the simple cases, i.e. there is nothing to do.
         if isinstance(inner_desc, data.Scalar):
             return
-        elif isinstance(inner_desc, data.Array) and inner_desc.shape == (1, ):
+        elif isinstance(inner_desc, data.Array) and inner_desc.shape == (1,):
             return
 
         # We now compute the new strides and shape of the inner data descriptor. Since we already

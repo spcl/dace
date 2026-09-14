@@ -46,15 +46,13 @@ def test_in_local_storage_explicit():
 
     outer_map_entry, inner_map_entry = find_map_entries(sdfg)
 
-    InLocalStorage.apply_to(sdfg=sdfg,
-                            node_a=outer_map_entry,
-                            node_b=inner_map_entry,
-                            options={
-                                "array": "A",
-                                "create_array": True,
-                                "prefix": "loc_"
-                            },
-                            save=True)
+    InLocalStorage.apply_to(
+        sdfg=sdfg,
+        node_a=outer_map_entry,
+        node_b=inner_map_entry,
+        options={"array": "A", "create_array": True, "prefix": "loc_"},
+        save=True,
+    )
 
     # Finding relevant node
     local_storage_node = None
@@ -91,14 +89,13 @@ def test_in_local_storage_implicit():
 
     outer_map_entry, inner_map_entry = find_map_entries(sdfg)
 
-    InLocalStorage.apply_to(sdfg=sdfg,
-                            node_a=outer_map_entry,
-                            node_b=inner_map_entry,
-                            options={
-                                "create_array": True,
-                                "prefix": "loc_"
-                            },
-                            save=True)
+    InLocalStorage.apply_to(
+        sdfg=sdfg,
+        node_a=outer_map_entry,
+        node_b=inner_map_entry,
+        options={"create_array": True, "prefix": "loc_"},
+        save=True,
+    )
 
     # Finding relevant node
     local_storage_node = None
@@ -137,15 +134,13 @@ def test_out_local_storage_explicit():
     outer_map_exit = sdfg.start_state.exit_node(outer_map_entry)
     inner_map_exit = sdfg.start_state.exit_node(inner_map_entry)
 
-    OutLocalStorage.apply_to(sdfg=sdfg,
-                             node_a=inner_map_exit,
-                             node_b=outer_map_exit,
-                             options={
-                                 "array": "B",
-                                 "create_array": True,
-                                 "prefix": "loc_"
-                             },
-                             save=True)
+    OutLocalStorage.apply_to(
+        sdfg=sdfg,
+        node_a=inner_map_exit,
+        node_b=outer_map_exit,
+        options={"array": "B", "create_array": True, "prefix": "loc_"},
+        save=True,
+    )
 
     # Finding relevant node
     local_storage_node = None
@@ -184,14 +179,13 @@ def test_out_local_storage_implicit():
     outer_map_exit = sdfg.start_state.exit_node(outer_map_entry)
     inner_map_exit = sdfg.start_state.exit_node(inner_map_entry)
 
-    OutLocalStorage.apply_to(sdfg=sdfg,
-                             node_a=inner_map_exit,
-                             node_b=outer_map_exit,
-                             options={
-                                 "create_array": True,
-                                 "prefix": "loc_"
-                             },
-                             save=True)
+    OutLocalStorage.apply_to(
+        sdfg=sdfg,
+        node_a=inner_map_exit,
+        node_b=outer_map_exit,
+        options={"create_array": True, "prefix": "loc_"},
+        save=True,
+    )
 
     # Finding relevant node
     local_storage_node = None
@@ -231,7 +225,6 @@ def arange():
 
 
 class LocalStorageTests(unittest.TestCase):
-
     def test_even(self):
         sdfg = arange.to_sdfg()
         sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [8]}, {}])

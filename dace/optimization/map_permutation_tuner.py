@@ -16,7 +16,6 @@ except (ImportError, ModuleNotFoundError):
 
 
 class MapPermutationTuner(cutout_tuner.CutoutTuner):
-
     def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(task="MapPermutation", sdfg=sdfg)
         self.instrument = measurement
@@ -44,7 +43,9 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
         map_entry = self._sdfg.node(int(state_id)).node(int(node_id))
 
         map_entry.range.ranges = [
-            r for list_param in config for map_param, r in zip(map_entry.map.params, map_entry.range.ranges)
+            r
+            for list_param in config
+            for map_param, r in zip(map_entry.map.params, map_entry.range.ranges)
             if list_param == map_param
         ]
         map_entry.map.params = config
@@ -60,13 +61,11 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
         assert map_entry is not None
 
         new_kwargs = {
-            "space_kwargs": {
-                "map_entry": map_entry
-            },
+            "space_kwargs": {"map_entry": map_entry},
             "cutout": cutout.to_json(),
             "map_entry_id": cutout.start_state.node_id(map_entry),
             "measurements": measurements,
-            "key": lambda point: ".".join(point)
+            "key": lambda point: ".".join(point),
         }
         return new_kwargs
 
@@ -75,7 +74,9 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
         map_ = cutout_.start_state.node(map_entry_id)
 
         map_.range.ranges = [
-            r for list_param in config for map_param, r in zip(map_.map.params, map_.range.ranges)
+            r
+            for list_param in config
+            for map_param, r in zip(map_.map.params, map_.range.ranges)
             if list_param == map_param
         ]
         map_.map.params = config

@@ -121,8 +121,9 @@ def _test_import_empty_transformation(env_key: str, env_value: str):
     file_path = list(import_path.rglob(EXPECTED_FILE))
     assert file_path, f"{EXPECTED_FILE} not found"
 
-    spec = importlib.util.spec_from_file_location(f"external_transformations.{REPO_NAME}.{EXPECTED_FILE[:-3]}",
-                                                  file_path[0])
+    spec = importlib.util.spec_from_file_location(
+        f"external_transformations.{REPO_NAME}.{EXPECTED_FILE[:-3]}", file_path[0]
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 

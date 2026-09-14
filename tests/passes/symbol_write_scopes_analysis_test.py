@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the symbol write scopes analysis pass. """
+"""Tests the symbol write scopes analysis pass."""
 
 import dace
 from dace.transformation.pass_pipeline import Pipeline
@@ -98,10 +98,18 @@ def test_loop_iter_symbol_reused_split():
     assert set(sdfg_results['N'].keys()) == {None}
     assert sdfg_results['i'].keys() == {loop_1_init_edge, loop_2_init_edge}
     assert sdfg_results['i'][loop_1_init_edge] == {
-        loop_1_in_condition_edge, loop_1_inc_edge, loop_1_out_condition_edge, loop_1_2, loop_1_1
+        loop_1_in_condition_edge,
+        loop_1_inc_edge,
+        loop_1_out_condition_edge,
+        loop_1_2,
+        loop_1_1,
     }
     assert sdfg_results['i'][loop_2_init_edge] == {
-        loop_2_in_condition_edge, loop_2_inc_edge, loop_2_out_condition_edge, loop_2_2, loop_2_1
+        loop_2_in_condition_edge,
+        loop_2_inc_edge,
+        loop_2_out_condition_edge,
+        loop_2_2,
+        loop_2_1,
     }
 
 
@@ -179,8 +187,9 @@ def test_loop_iter_symbol_reused_fused():
     loop_1_in_condition_edge = sdfg.add_edge(guard_1, loop_1_1, dace.InterstateEdge(condition='i < (N - 1)'))
     sdfg.add_edge(loop_1_1, loop_1_2, dace.InterstateEdge())
     loop_1_inc_edge = sdfg.add_edge(loop_1_2, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    shared_cond_init_edge = sdfg.add_edge(guard_1, guard_2,
-                                          dace.InterstateEdge(condition='i >= (N - 1)', assignments={'i': 0}))
+    shared_cond_init_edge = sdfg.add_edge(
+        guard_1, guard_2, dace.InterstateEdge(condition='i >= (N - 1)', assignments={'i': 0})
+    )
 
     loop_2_in_condition_edge = sdfg.add_edge(guard_2, loop_2_1, dace.InterstateEdge(condition='i < (N - 1)'))
     sdfg.add_edge(loop_2_1, loop_2_2, dace.InterstateEdge())
@@ -196,10 +205,18 @@ def test_loop_iter_symbol_reused_fused():
     assert set(sdfg_results['N'].keys()) == {None}
     assert set(sdfg_results['i'].keys()) == {loop_1_init_edge, shared_cond_init_edge}
     assert sdfg_results['i'][loop_1_init_edge] == {
-        loop_1_in_condition_edge, loop_1_inc_edge, shared_cond_init_edge, loop_1_2, loop_1_1
+        loop_1_in_condition_edge,
+        loop_1_inc_edge,
+        shared_cond_init_edge,
+        loop_1_2,
+        loop_1_1,
     }
     assert sdfg_results['i'][shared_cond_init_edge] == {
-        loop_2_in_condition_edge, loop_2_inc_edge, loop_2_out_condition_edge, loop_2_2, loop_2_1
+        loop_2_in_condition_edge,
+        loop_2_inc_edge,
+        loop_2_out_condition_edge,
+        loop_2_2,
+        loop_2_1,
     }
 
 
@@ -219,8 +236,9 @@ def test_branch_subscope():
     right_after = sdfg.add_state('right_after')
     merge_after = sdfg.add_state('merge_after')
     first_assign = sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 'A[0]'}))
-    combined_assign_cond = sdfg.add_edge(guard_1, guard_2,
-                                         dace.InterstateEdge(assignments={'i': 'A[1]'}, condition='i > 0'))
+    combined_assign_cond = sdfg.add_edge(
+        guard_1, guard_2, dace.InterstateEdge(assignments={'i': 'A[1]'}, condition='i > 0')
+    )
     right_cond = sdfg.add_edge(guard_1, right1_state, dace.InterstateEdge(condition='i <= 0'))
     left_2_cond = sdfg.add_edge(guard_2, left2_state, dace.InterstateEdge(condition='i <= 0'))
     right_2_cond = sdfg.add_edge(guard_2, right2_state, dace.InterstateEdge(condition='i > 0'))
@@ -242,7 +260,12 @@ def test_branch_subscope():
     assert set(sdfg_results.keys()) == {'i'}
     assert set(sdfg_results['i'].keys()) == {first_assign}
     assert sdfg_results['i'][first_assign] == {
-        right_cond, combined_assign_cond, after_cond_right, after_cond_left, right_2_cond, left_2_cond
+        right_cond,
+        combined_assign_cond,
+        after_cond_right,
+        after_cond_left,
+        right_2_cond,
+        left_2_cond,
     }
 
 

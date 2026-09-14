@@ -6,6 +6,7 @@ as ``floor(a / b)`` over rationals: ``SymExpr(N - 1, N) // 8`` became ``floor(N/
 the wrong tree -- a pass matching ``int_floor``, or any ``subs`` or equality against the integer
 form, no longer sees it -- and the split rationals truncate term by term in C++.
 """
+
 import pytest
 import sympy
 

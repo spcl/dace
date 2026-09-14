@@ -97,7 +97,7 @@ def test_expand_without_dynamic_inputs():
     def expansion(A: dace.float32[20, 30, 5], rng: dace.int32[2]):
 
         @dace.map
-        def mymap(i: _[0:20], j: _[rng[0]:rng[1]], k: _[0:5]):
+        def mymap(i: _[0:20], j: _[rng[0] : rng[1]], k: _[0:5]):
             a << A[i, j, k]
             b >> A[i, j, k]
             b = a * 2

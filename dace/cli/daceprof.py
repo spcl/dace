@@ -3,6 +3,7 @@
 A command-line tool that provides performance measurements and analysis on
 Python scripts, modules, or existing instrumentation report files.
 """
+
 import argparse
 from contextlib import contextmanager
 import runpy
@@ -21,12 +22,13 @@ DEFAULT_REPETITIONS = 100
 
 
 def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser('daceprof',
-                                     usage='''daceprof [-h] [arguments] file ...
+    parser = argparse.ArgumentParser(
+        'daceprof',
+        usage='''daceprof [-h] [arguments] file ...
        daceprof [arguments] -m module ...
        daceprof [arguments] -i profile.json''',
-                                     formatter_class=argparse.RawDescriptionHelpFormatter,
-                                     description='''
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='''
 daceprof - DaCe Profiler and Report Viewer
 
 This tool provides performance results and modeling for DaCe programs.
@@ -41,7 +43,8 @@ with a Python executable module:
 
 or to print an existing report:
   daceprof [ARGUMENTS] -i profile.json
-''')
+''',
+    )
 
     parser.add_argument('file', help='Path to the script or module', nargs='?')
 
@@ -52,58 +55,66 @@ or to print an existing report:
 
     # Profiling arguments
     group = parser.add_argument_group('profiling arguments')
-    group.add_argument('--repetitions',
-                       '-r',
-                       help='Runs each profiled program for the specified number of repetitions',
-                       type=int,
-                       default=DEFAULT_REPETITIONS)
-    group.add_argument('--warmup',
-                       '-w',
-                       help='Number of additional repetitions to run without measurement',
-                       type=int,
-                       default=0)
+    group.add_argument(
+        '--repetitions',
+        '-r',
+        help='Runs each profiled program for the specified number of repetitions',
+        type=int,
+        default=DEFAULT_REPETITIONS,
+    )
+    group.add_argument(
+        '--warmup', '-w', help='Number of additional repetitions to run without measurement', type=int, default=0
+    )
     group.add_argument(
         '--type',
         '-t',
         help='Instrumentation type to use. If not given, times the entire SDFG with a wall-clock timer',
         choices=[
-            e.name for e in dtypes.InstrumentationType
+            e.name
+            for e in dtypes.InstrumentationType
             if e not in [dtypes.InstrumentationType.No_Instrumentation, dtypes.InstrumentationType.Undefined]
-        ])
-    group.add_argument('--instrument',
-                       help='Which elements to instrument. Can be a comma-separated list of element '
-                       'types from the following: map, tasklet, state, sdfg',
-                       default='map')
+        ],
+    )
+    group.add_argument(
+        '--instrument',
+        help='Which elements to instrument. Can be a comma-separated list of element '
+        'types from the following: map, tasklet, state, sdfg',
+        default='map',
+    )
     group.add_argument('--sequential', help='Disable CPU multi-threading in code generation', action='store_true')
 
     # Data instrumentation
     group = parser.add_argument_group('data instrumentation arguments')
-    group.add_argument('--save-data',
-                       '-ds',
-                       help='Enable data instrumentation and store all (or filtered) arrays',
-                       action='store_true')
-    group.add_argument('--restore-data',
-                       '-dr',
-                       help='Reproducibly run code by restoring all (or filtered) arrays',
-                       action='store_true')
+    group.add_argument(
+        '--save-data', '-ds', help='Enable data instrumentation and store all (or filtered) arrays', action='store_true'
+    )
+    group.add_argument(
+        '--restore-data', '-dr', help='Reproducibly run code by restoring all (or filtered) arrays', action='store_true'
+    )
 
     # Filtering arguments
     group = parser.add_argument_group('filtering arguments')
-    group.add_argument('--filter',
-                       '-f',
-                       help='Filter profiled elements with wildcards (e.g., *_map, assign_??). '
-                       'Multiple filters can be separated by commas',
-                       type=str)
-    group.add_argument('--filter-data',
-                       '-df',
-                       help='Filter arrays to save/load in data instrumentation (with wildcards, comma-separated)',
-                       type=str)
+    group.add_argument(
+        '--filter',
+        '-f',
+        help='Filter profiled elements with wildcards (e.g., *_map, assign_??). '
+        'Multiple filters can be separated by commas',
+        type=str,
+    )
+    group.add_argument(
+        '--filter-data',
+        '-df',
+        help='Filter arrays to save/load in data instrumentation (with wildcards, comma-separated)',
+        type=str,
+    )
 
     # Report printout arguments
     group = parser.add_argument_group('report arguments')
-    group.add_argument('--sort',
-                       help='Sort report by a specific criterion',
-                       choices=('min', 'max', 'mean', 'median', 'counter', 'value'))
+    group.add_argument(
+        '--sort',
+        help='Sort report by a specific criterion',
+        choices=('min', 'max', 'mean', 'median', 'counter', 'value'),
+    )
     group.add_argument('--ascending', '-a', help='Sort in ascending order', action='store_true')
     group.add_argument('--csv', help='Print report as CSV', action='store_true')
     group.add_argument('--output', '-o', help='Report output file path', type=str)
@@ -132,8 +143,10 @@ def validate_arguments(args: argparse.Namespace) -> Optional[str]:
         warnings.warn('Instrumentation mode is enabled, repetitions and warmup will be ignored.')
     for inst in args.instrument:
         if inst not in ('map', 'tasklet', 'state', 'sdfg'):
-            return (f'Instrumentation element "{inst}" is not valid, please use a comma-separated list composed of '
-                    '{map, tasklet, state, sdfg}')
+            return (
+                f'Instrumentation element "{inst}" is not valid, please use a comma-separated list composed of '
+                '{map, tasklet, state, sdfg}'
+            )
 
     return None
 
@@ -162,12 +175,14 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[Instrumenta
     errcode = 0
     # Use built-in context managers for two hooks: profiling and data instrumentation
     if args.type:
-        profile_ctx = dace.instrument(filter=args.filter,
-                                      itype=dtypes.InstrumentationType[args.type],
-                                      annotate_maps='map' in args.instrument,
-                                      annotate_tasklets='tasklet' in args.instrument,
-                                      annotate_states='state' in args.instrument,
-                                      annotate_sdfgs='sdfg' in args.instrument)
+        profile_ctx = dace.instrument(
+            filter=args.filter,
+            itype=dtypes.InstrumentationType[args.type],
+            annotate_maps='map' in args.instrument,
+            annotate_tasklets='tasklet' in args.instrument,
+            annotate_states='state' in args.instrument,
+            annotate_sdfgs='sdfg' in args.instrument,
+        )
     elif args.save_data or args.restore_data:
         # Data instrumentation will run once
         profile_ctx = _nop()
@@ -177,7 +192,7 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[Instrumenta
 
     # Data instrumentation
     if args.save_data or args.restore_data:
-        ditype = (dtypes.DataInstrumentationType.Save if args.save_data else dtypes.DataInstrumentationType.Restore)
+        ditype = dtypes.DataInstrumentationType.Save if args.save_data else dtypes.DataInstrumentationType.Restore
         data_instrumenter = dace.instrument_data(filter=args.filter_data, ditype=ditype, verbose=True)
     else:
         data_instrumenter = _nop()
@@ -227,8 +242,11 @@ def enable_hooks(args: argparse.Namespace) -> List[int]:
             for n, _ in sdfg.all_nodes_recursive():
                 if isinstance(n, dace.nodes.EntryNode):
                     sched = getattr(n, 'schedule', False)
-                    if sched in (dace.ScheduleType.CPU_Multicore, dace.ScheduleType.CPU_Persistent,
-                                 dace.ScheduleType.Default):
+                    if sched in (
+                        dace.ScheduleType.CPU_Multicore,
+                        dace.ScheduleType.CPU_Persistent,
+                        dace.ScheduleType.Default,
+                    ):
                         n.schedule = dace.ScheduleType.Sequential
 
         registered.append(dace.hooks.register_sdfg_call_hook(before_hook=make_sequential))

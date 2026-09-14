@@ -15,6 +15,7 @@ dependencies and configuration for code generation.
 
 try:
     from .environments import PyTorch, PyTorchGPU
+
     __all__ = ["PyTorch", "PyTorchGPU"]
 except ImportError:
     # PyTorch not available

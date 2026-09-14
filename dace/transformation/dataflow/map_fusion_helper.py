@@ -56,12 +56,10 @@ def find_parameter_remapping(
         simp = lambda e: e  # noqa: E731 [lambda-assignment]
 
     first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng)
-        for param, rng in zip(first_params, first_map.range)
+        param: tuple(simp(r) for r in rng) for param, rng in zip(first_params, first_map.range)
     }
     second_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng)
-        for param, rng in zip(second_params, second_map.range)
+        param: tuple(simp(r) for r in rng) for param, rng in zip(second_params, second_map.range)
     }
 
     # Parameters of the second map that have not yet been matched to a parameter
@@ -188,7 +186,7 @@ def get_new_conn_name(
 
     # If we have a MapExit or have a nested Map we never consolidate or if
     #  especially requested.
-    if (isinstance(to_node, nodes.MapExit) or scope_dict[to_node] is not None or never_consolidate_edges):
+    if isinstance(to_node, nodes.MapExit) or scope_dict[to_node] is not None or never_consolidate_edges:
         return to_node.next_connector(old_conn), False
 
     # Now look for an edge that already referees to the data of the edge.
@@ -223,10 +221,12 @@ def get_new_conn_name(
     # NOTE: One could also say that we should only do that if `edge_that_is_already_there`
     #   covers the new one, but since the order, is kind of arbitrary, we test if
     #   either one covers.
-    return ((edge_that_is_already_present.dst_conn[3:],
-             True) if edge_that_is_already_present_subset.covers(edge_to_move_subset)
-            or edge_to_move_subset.covers(edge_that_is_already_present_subset) else
-            (to_node.next_connector(old_conn), False))
+    return (
+        (edge_that_is_already_present.dst_conn[3:], True)
+        if edge_that_is_already_present_subset.covers(edge_to_move_subset)
+        or edge_to_move_subset.covers(edge_that_is_already_present_subset)
+        else (to_node.next_connector(old_conn), False)
+    )
 
 
 def relocate_nodes(
@@ -281,12 +281,15 @@ def relocate_nodes(
 
             # TODO(phimuell): Check if the symbol is really unused in the target scope.
             if dmr_symbol in to_node.in_connectors:
-                raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                                          f" to '{to_node}', but the symbol is already known there, but the"
-                                          " renaming is not implemented.")
+                raise NotImplementedError(
+                    f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
+                    f" to '{to_node}', but the symbol is already known there, but the"
+                    " renaming is not implemented."
+                )
             if not to_node.add_in_connector(dmr_symbol, force=False):
                 raise RuntimeError(  # Might fail because of out connectors.
-                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'.")
+                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
+                )
             helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
@@ -435,7 +438,8 @@ def can_topologically_be_fused(
     """
     if only_inner_maps and only_toplevel_maps:
         raise ValueError(
-            "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionVertical instance.")
+            "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionVertical instance."
+        )
 
     # Ensure that both have the same schedule
     if first_map_entry.map.schedule != second_map_entry.map.schedule:

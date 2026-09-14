@@ -2,6 +2,7 @@
 """
 Abstract Base Classes for Autodiff
 """
+
 import abc
 import dataclasses
 import typing
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 
 try:
     from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+
     ONNX_AVAILABLE = True
 except ImportError:
     ONNXOp = None
@@ -25,12 +27,14 @@ except ImportError:
 
 class AutoDiffException(Exception):
     """Base class for all exceptions related to automatic differentiation failures."""
+
     pass
 
 
 @dataclasses.dataclass
 class BackwardContext:
     """A tuple holding the graph context required to construct reverse nodes."""
+
     forward_sdfg: SDFG  #: The forward SDFG
     forward_state: SDFGState  #: The forward SDFG state
     backward_sdfg: SDFG  #: The backward SDFG
@@ -41,7 +45,7 @@ class BackwardContext:
 @dataclasses.dataclass
 class BackwardResult:
     """The return type of a differentiated node. It contains the names of the gradients the node calculates and
-     requires.
+    requires.
     """
 
     #: Mapping from names of output connectors to the connector name of the gradient for that connector.
@@ -90,8 +94,12 @@ class BackwardImplementation(abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: typing.List[typing.Optional[str]],
-                 required_gradients: typing.List[typing.Optional[str]]) -> typing.Tuple[nd.Node, BackwardResult]:
+    def backward(
+        forward_node: nd.Node,
+        context: BackwardContext,
+        given_gradients: typing.List[typing.Optional[str]],
+        required_gradients: typing.List[typing.Optional[str]],
+    ) -> typing.Tuple[nd.Node, BackwardResult]:
         """Add the reverse node for a node from the forward pass to the backward pass, and return it.
 
         For each input connector with name ``n`` of the forward in required_gradients, the returned backward node must
@@ -115,8 +123,9 @@ class BackwardImplementation(abc.ABC):
 import dace.autodiff.implementations
 
 
-def find_backward_implementation(forward_sdfg: SDFG, forward_state: SDFGState,
-                                 node: nd.Node) -> typing.Optional[BackwardImplementation]:
+def find_backward_implementation(
+    forward_sdfg: SDFG, forward_state: SDFGState, node: nd.Node
+) -> typing.Optional[BackwardImplementation]:
     """Try to find the backward implementation for ``node``.
 
     :param forward_sdfg: The parent SDFG of the node.
@@ -129,15 +138,15 @@ def find_backward_implementation(forward_sdfg: SDFG, forward_state: SDFGState,
         if "name" not in args:
             raise ValueError(f"Expected name in arguments of implementation {impl}.")
 
-        if "node_type" in args and isinstance(node, args["node_type"]) or (ONNX_AVAILABLE and isinstance(node, ONNXOp)
-                                                                           and "op" in args
-                                                                           and node.schema.name == args["op"]):
-
+        if (
+            "node_type" in args
+            and isinstance(node, args["node_type"])
+            or (ONNX_AVAILABLE and isinstance(node, ONNXOp) and "op" in args and node.schema.name == args["op"])
+        ):
             if impl.backward_can_be_applied(node, forward_state, forward_sdfg):
                 valid_impls.append((args["name"], impl))
 
     if ONNX_AVAILABLE and isinstance(node, ONNXOp) and node.backward_implementation:
-
         implementation = node.backward_implementation
     elif ONNX_AVAILABLE and isinstance(node, ONNXOp) and node.default_backward_implementation:
         implementation = node.default_backward_implementation
@@ -150,8 +159,10 @@ def find_backward_implementation(forward_sdfg: SDFG, forward_state: SDFGState,
             return filtered_impls[0]
 
         if config.Config.get_bool('debugprint'):
-            print(f"Warning: Set backward_implementation {node.backward_implementation} on {node}, but it could not be"
-                  f" applied. Falling back to default selection.")
+            print(
+                f"Warning: Set backward_implementation {node.backward_implementation} on {node}, but it could not be"
+                f" applied. Falling back to default selection."
+            )
     if valid_impls:
         return valid_impls[0][1]
     else:
@@ -169,6 +180,7 @@ class ExpansionTemplate(xf.ExpandTransformation):
     - _impl: The implementation object containing the forward method
     - _match_node: The pattern node to match
     """
+
     environments = []
     _impl = None
 

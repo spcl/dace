@@ -7,7 +7,7 @@ import numpy as np
 
 @pytest.mark.parametrize("reverse", [True, False])
 def test_mapped_dependency_edge(reverse):
-    """ Tests dependency edges in a map scope """
+    """Tests dependency edges in a map scope"""
 
     sdfg = dace.SDFG("mapped_dependency_edge")
     state = sdfg.add_state()
