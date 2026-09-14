@@ -41,6 +41,22 @@ def test_assign_pointer():
         get_code(program)
 
 
+def test_a_scalar_python_modulo_lowers_to_py_mod():
+
+    @dace.program
+    def program(A: dace.int32[N], B: dace.int32[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a + (M % 4)
+
+    code = get_code(program)
+
+    assert 'py_mod(' in code
+    assert 'PyMod' not in code
+
+
 def test_compare_scalar_vector():
 
     @dace.program
