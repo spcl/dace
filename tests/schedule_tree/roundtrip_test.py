@@ -8,7 +8,7 @@ import pytest
 
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.properties import CodeBlock
-from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, ReturnBlock
+from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, NamedRegion, ReturnBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -850,6 +850,65 @@ def test_empty_map(side_effect: bool):
     assert any(isinstance(n, dace.nodes.MapExit) for n, _ in new_sdfg.all_nodes_recursive())
 
 
+def test_named_region():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [2], dace.float64)
+    region = NamedRegion('my_region')
+    sdfg.add_node(region, is_start_block=True)
+    _write_tasklet(region.add_state('write', is_start_block=True), 'out = 1', {}, 'A[0]')
+    _write_tasklet(sdfg.add_state_after(region, 'after'), 'out = inp + 1', {'inp': 'A[0]'}, 'A[1]')
+
+    # Simplification would inline the named region checked below
+    new_sdfg = _roundtrip_and_compare(sdfg, tn.NamedRegionScope, dict(A=np.zeros(2)), simplify=False)
+    assert [block.label for block in new_sdfg.all_control_flow_blocks()
+            if isinstance(block, NamedRegion)] == ['my_region']
+
+
+def test_sdfg_metadata():
+    """
+    Code blocks (including those of nested SDFGs), callback mappings, and argument names are preserved.
+    """
+    inner = dace.SDFG('inner')
+    inner.add_array('X', [1], dace.float64)
+    inner.set_global_code('static double nested_helper(double x) { return x * 3; }')
+    inner.set_init_code('/* nested init */')
+    state = inner.add_state()
+    tasklet = state.add_tasklet('call_helper', {}, {'out'}, 'out = nested_helper(2);', language=dace.Language.CPP)
+    state.add_edge(tasklet, 'out', state.add_write('X'), None, dace.Memlet('X[0]'))
+
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.arg_names = ['B', 'A']
+    sdfg.set_global_code('static double helper(double x) { return x + 1; }')
+    sdfg.set_exit_code('/* exit */')
+    sdfg.callback_mapping = {'__dace_callback_0': 'my_callback'}
+    state = sdfg.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {}, {'X'})
+    written = state.add_access('A')
+    state.add_edge(nsdfg, 'X', written, None, dace.Memlet('A[0]'))
+    tasklet = state.add_tasklet('call_helper', {'inp'}, {'out'}, 'out = helper(inp);', language=dace.Language.CPP)
+    state.add_edge(written, None, tasklet, 'inp', dace.Memlet('A[0]'))
+    state.add_edge(tasklet, 'out', state.add_write('B'), None, dace.Memlet('B[0]'))
+
+    stree = sdfg.as_schedule_tree()
+    assert 'nested_helper' in stree.global_code['frame'].as_string
+    assert 'helper(double x) { return x + 1; }' in stree.global_code['frame'].as_string
+    new_sdfg = stree.as_sdfg(simplify=False)
+
+    assert 'nested_helper' in new_sdfg.global_code['frame'].as_string
+    assert 'return x + 1' in new_sdfg.global_code['frame'].as_string
+    assert 'nested init' in new_sdfg.init_code['frame'].as_string
+    assert 'exit' in new_sdfg.exit_code['frame'].as_string
+    assert new_sdfg.callback_mapping == {'__dace_callback_0': 'my_callback'}
+    assert new_sdfg.arg_names == ['B', 'A']
+
+    a = np.zeros(1)
+    b = np.zeros(1)
+    new_sdfg(b, a)
+    assert a[0] == 6 and b[0] == 7
+
+
 if __name__ == '__main__':
     test_implicit_inline_and_constants()
     test_name_propagation()
@@ -886,3 +945,5 @@ if __name__ == '__main__':
     test_empty_map(False)
     test_empty_map(True)
     test_transients_and_nested_sdfg()
+    test_named_region()
+    test_sdfg_metadata()

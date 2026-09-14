@@ -6,7 +6,8 @@ from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 import numpy as np
 
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.state import (ConditionalBlock, ControlFlowRegion, FunctionCallRegion, LoopRegion, NamedRegion,
+                             ReturnBlock)
 
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -374,6 +375,24 @@ def test_consume_stream_input():
     assert stree.children[0].memlet.data == 'S'
 
 
+def test_named_regions():
+    """
+    Named regions become named region scopes, whereas function call regions are flattened.
+    """
+    sdfg = dace.SDFG('tester')
+    named = NamedRegion('named')
+    call = FunctionCallRegion('call')
+    sdfg.add_node(named, is_start_block=True)
+    sdfg.add_node(call)
+    sdfg.add_edge(named, call, dace.InterstateEdge())
+    named.add_state('named_state', is_start_block=True)
+    call.add_state('call_state', is_start_block=True)
+
+    stree = as_schedule_tree(sdfg)
+    assert [type(n) for n in stree.children] == [tn.NamedRegionScope]
+    assert stree.children[0].label == 'named'
+
+
 if __name__ == '__main__':
     test_for_in_map_in_for()
     test_libnode()
@@ -389,3 +408,4 @@ if __name__ == '__main__':
     test_nested_sdfg_return_labels()
     test_gblock_labels()
     test_consume_stream_input()
+    test_named_regions()
