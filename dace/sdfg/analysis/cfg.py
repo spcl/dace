@@ -229,6 +229,20 @@ def all_postdominators(cfg: ControlFlowRegion,
     return all_postdoms
 
 
+def shared_dominators(dominators: Dict[ControlFlowBlock, OrderedSet], target_nodes: OrderedSet) -> Optional[OrderedSet]:
+    """Blocks dominating every target in ``dominators``. A root has no strict dominator, so it counts as its own."""
+    common: Optional[OrderedSet] = None
+    for node in target_nodes:
+        if node not in dominators:
+            continue
+        doms = dominators[node] or OrderedSet([node])
+        if common is None:
+            common = doms.copy()
+        else:
+            common &= doms
+    return common
+
+
 def find_sese_region(
         graph: ControlFlowRegion,
         target_nodes: OrderedSet) -> Tuple[OrderedSet, Optional[ControlFlowBlock], Optional[ControlFlowBlock]]:
@@ -266,15 +280,7 @@ def find_sese_region(
         post_dominators = all_postdominators(graph, sink=sink)
 
         # Find the entry node: the lowest common dominator of all target nodes
-        common_dominators = None
-        for node in target_nodes:
-            if node not in dominators:
-                continue
-            if common_dominators is None:
-                common_dominators = dominators[node].copy()
-            else:
-                common_dominators &= dominators[node]
-
+        common_dominators = shared_dominators(dominators, target_nodes)
         if not common_dominators:
             return OrderedSet(), None, None
 
@@ -298,15 +304,7 @@ def find_sese_region(
                 entry_node = dom
 
         # Find the exit node: the lowest common post-dominator of all target nodes
-        common_post_dominators = None
-        for node in target_nodes:
-            if node not in post_dominators:
-                continue
-            if common_post_dominators is None:
-                common_post_dominators = post_dominators[node].copy()
-            else:
-                common_post_dominators &= post_dominators[node]
-
+        common_post_dominators = shared_dominators(post_dominators, target_nodes)
         if not common_post_dominators:
             return OrderedSet(), entry_node, None
 

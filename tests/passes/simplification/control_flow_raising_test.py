@@ -306,6 +306,37 @@ def test_unconditional_edge_lifted_as_last_branch():
     sdfg.validate()
 
 
+def cycle_entered_twice_from_the_start_block_sdfg() -> dace.SDFG:
+    """``left`` and ``right`` jump into each other, and ``start`` branches into both: an irreducible cycle."""
+    sdfg = dace.SDFG('cycle_entered_twice_from_the_start_block')
+    sdfg.add_symbol('n', dace.int64)
+    start = sdfg.add_state('start', is_start_block=True)
+    left, right, end = sdfg.add_state('left'), sdfg.add_state('right'), sdfg.add_state('end')
+    sdfg.add_edge(start, left, dace.InterstateEdge(condition='n > 0'))
+    sdfg.add_edge(start, right, dace.InterstateEdge(condition='n <= 0'))
+    sdfg.add_edge(left, right, dace.InterstateEdge(condition='n > 1', assignments={'n': 'n - 1'}))
+    sdfg.add_edge(left, end, dace.InterstateEdge(condition='n <= 1'))
+    sdfg.add_edge(right, left, dace.InterstateEdge(assignments={'n': 'n - 1'}))
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_irreducible_cycle_entered_from_the_start_block_is_lifted_whole_into_an_unstructured_region():
+    sut = cycle_entered_twice_from_the_start_block_sdfg()
+
+    ControlFlowRaising().apply_pass(sut, {})
+
+    sut.validate()
+    assert len(sut.nodes()) == 1
+    region = sut.nodes()[0]
+    assert isinstance(region, UnstructuredControlFlow)
+    assert region.start_block.label == 'start'
+    assert [block.label for block in region.nodes()] == ['start', 'left', 'right', 'end']
+    assert region.number_of_edges() == 5
+    with pytest.raises(NotImplementedError, match='X requires structured control flow'):
+        dace.sdfg.utils.require_structured_control_flow(sut, 'X')
+
+
 if __name__ == '__main__':
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
@@ -315,3 +346,4 @@ if __name__ == '__main__':
     test_elif_chain(True)
     test_unstructured_control_flow_sibling_loops()
     test_unconditional_edge_lifted_as_last_branch()
+    test_an_irreducible_cycle_entered_from_the_start_block_is_lifted_whole_into_an_unstructured_region()
