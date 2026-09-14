@@ -325,6 +325,64 @@ def test_rebind_view_to_a_different_slice_is_still_refused():
         rebind_other_view.to_sdfg(simplify=False)
 
 
+@dace.program
+def real_of_a_view_twice(psi: dace.complex128[4, 5], out: dace.float64[4, 2]):
+    cv = psi[:4, 1:3]
+    out[:] = np.real(cv) * np.real(cv)
+
+
+@dace.program
+def imag_of_a_view(psi: dace.complex128[4, 5], out: dace.float64[4, 2]):
+    cv = psi[:4, 1:3]
+    out[:] = np.imag(cv)
+
+
+@dace.program
+def abs_of_a_view(psi: dace.complex128[4, 5], out: dace.float64[4, 2]):
+    cv = psi[:4, 1:3]
+    out[:] = abs(cv)
+
+
+@dace.program
+def flip_of_a_view(psi: dace.complex128[4, 5], out: dace.complex128[4, 2]):
+    cv = psi[:4, 1:3]
+    out[:] = np.flip(cv)
+
+
+@dace.program
+def triu_of_a_view(psi: dace.complex128[4, 5], out: dace.complex128[4, 2]):
+    cv = psi[:4, 1:3]
+    out[:] = np.triu(cv)
+
+
+def complex_grid() -> np.ndarray:
+    """A contiguous 4x5 complex array with distinct real and imaginary parts."""
+    return np.ascontiguousarray((np.arange(20) - 1j * np.arange(20)[::-1]).reshape(4, 5))
+
+
+def test_real_of_a_view_used_twice_computes_what_numpy_computes():
+    """cegterg's ``np.real(cv) * np.real(cv)``: the result of ``np.real`` was cloned from the View and
+    became a View of nothing, which validation refuses (``Ambiguous or invalid edge to/from a View``)."""
+    psi = complex_grid()
+    out = np.zeros((4, 2))
+    real_of_a_view_twice.to_sdfg(simplify=False).validate()
+    real_of_a_view_twice(psi=psi, out=out)
+    assert np.allclose(out, np.real(psi[:4, 1:3])**2)
+
+
+@pytest.mark.parametrize('program, reference, dtype', [(imag_of_a_view, np.imag, np.float64),
+                                                       (abs_of_a_view, np.abs, np.float64),
+                                                       (flip_of_a_view, np.flip, np.complex128),
+                                                       (triu_of_a_view, np.triu, np.complex128)])
+def test_a_new_array_built_from_a_view_is_a_plain_array(program, reference, dtype):
+    """Every replacement that sizes its result like its operand made a View of nothing from a view operand."""
+    psi = complex_grid()
+    out = np.zeros((4, 2), dtype=dtype)
+    program.to_sdfg(simplify=False).validate()
+    program(psi=psi, out=out)
+    assert np.allclose(out, reference(psi[:4, 1:3]))
+
+
 if __name__ == '__main__':
     test_set_by_view()
     test_set_by_view_1()

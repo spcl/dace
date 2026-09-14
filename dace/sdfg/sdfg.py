@@ -2381,6 +2381,14 @@ class SDFG(ControlFlowRegion):
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
         dtype = dtype or desc.dtype
+        if isinstance(desc, dt.ArrayView):
+            # A new container views nothing: it is a contiguous array of the view's shape.
+            return self.add_transient(name or self.temp_data_name(),
+                                      desc.shape,
+                                      dtype,
+                                      storage=desc.storage,
+                                      debuginfo=debuginfo,
+                                      find_new_name=True)
         newdesc = desc.clone()
         newdesc.dtype = dtype
         newdesc.transient = True
