@@ -154,7 +154,7 @@ class CopyInsertionPhase():
                         name].storage == dtypes.StorageType.GPU_Global:  # starts on GPU, but this access is on CPU
                     rename_dict[name] = self._get_host_name(name)
 
-            self.insert_copy_names_in_block(sdfg, node.block, rename_dict)
+            self.insert_copy_names_in_block(sdfg, node.block, rename_dict, node.type == OffloadingIRNode.EDGE)
 
         helpers.traverse_IR(IR, _insert_copy_names_in_node)
 
@@ -238,7 +238,11 @@ class CopyInsertionPhase():
                 if memlet is not None and not memlet.is_empty() and memlet.data in rename_dict:
                     memlet.data = rename_dict[memlet.data]
 
-    def insert_copy_names_in_block(self, sdfg: SDFG, block: ControlFlowBlock, rename_dict: Dict[str, str]) -> None:
+    def insert_copy_names_in_block(self,
+                                   sdfg: SDFG,
+                                   block: ControlFlowBlock,
+                                   rename_dict: Dict[str, str],
+                                   interstate_only: bool = False) -> None:
         if block is None: return
 
         cfr = block.parent_graph
@@ -259,6 +263,11 @@ class CopyInsertionPhase():
                 for name in relevant_edge_arrays:
                     if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global:
                         edge.data.replace(name, self._get_host_name(name))
+
+        # An EDGE node holds the block its interstate edges reach; its decision is about those edges
+        # only, and applying it to the block's dataflow as well points device accesses at host twins.
+        if interstate_only:
+            return
 
         if isinstance(block, SDFGState):
             self.insert_copy_names_in_state(sdfg, block, rename_dict)
