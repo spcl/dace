@@ -135,7 +135,7 @@ required:
 
                     unroll_tasklet_budget:
                         type: int
-                        default: 100
+                        default: 200
                         title: Short-loop unroll tasklet budget
                         description: >
                             Leave a constant-trip loop rolled when its body holds a map or more
