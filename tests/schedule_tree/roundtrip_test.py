@@ -777,6 +777,79 @@ def test_consume_body(in_map: bool, push: bool, multistate: bool):
     assert len(list(new_sdfg.all_sdfgs_recursive())) == 1 + int(multistate) * (1 + int(in_map))
 
 
+def _nview_sdfg(in_loop: bool) -> dace.SDFG:
+    """
+    Creates an SDFG that passes a slice of an array to a nested SDFG with a shape that cannot be mapped to the slice.
+
+    :param in_loop: If True, the nested SDFG is called in a loop over the sliced dimension.
+    """
+    inner = dace.SDFG('inner')
+    inner.add_array('X', [40], dace.float64)
+    inner_state = inner.add_state()
+    _write_tasklet(inner_state, 'out = inp + 1', {'inp': 'X[3]'}, 'X[3]')
+
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [4, 5, 10], dace.float64)
+    init = sdfg.add_state('init', is_start_block=True)
+    if in_loop:
+        sdfg.add_symbol('i', dace.int64)
+        loop = LoopRegion('loop', 'i < 5', 'i', 'i = 0', 'i = i + 1')
+        sdfg.add_node(loop)
+        sdfg.add_edge(init, loop, dace.InterstateEdge())
+        state = loop.add_state('call', is_start_block=True)
+        index = 'i'
+    else:
+        state = sdfg.add_state_after(init, 'call')
+        index = '1'
+    nsdfg = state.add_nested_sdfg(inner, {'X'}, {'X'})
+    state.add_edge(state.add_read('A'), None, nsdfg, 'X', dace.Memlet(f'A[0:4, {index}, 0:10]'))
+    state.add_edge(nsdfg, 'X', state.add_write('A'), None, dace.Memlet(f'A[0:4, {index}, 0:10]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('in_loop', (False, True))
+def test_nview_outside_map(in_loop: bool):
+    _roundtrip_and_compare(_nview_sdfg(in_loop), tn.NView, dict(A=np.random.rand(4, 5, 10)))
+
+
+def test_reference_set_from_tasklet():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_reference('ref', [19], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('ptrset', {'a': dace.pointer(dace.float64)}, {'o'}, 'o = a + 1')
+    state.add_edge(state.add_read('A'), None, tasklet, 'a', dace.Memlet('A'))
+    ref = state.add_access('ref')
+    state.add_edge(tasklet, 'o', ref, 'set', dace.Memlet('ref'))
+    _write_tasklet(state, 'out = inp + 1', {'inp': 'ref[0]'}, 'B[0]')
+    # Reuse the reference access node for the read
+    read_edge = next(e for e in state.edges() if e.dst_conn == 'inp')
+    state.remove_node(read_edge.src)
+    state.add_edge(ref, None, read_edge.dst, 'inp', dace.Memlet('ref[0]'))
+
+    new_sdfg = _roundtrip_and_compare(sdfg, tn.RefSetNode, dict(A=np.random.rand(20), B=np.zeros(1)))
+    assert any(e.dst_conn == 'set' for state in new_sdfg.states() for e in state.edges())
+
+
+@pytest.mark.parametrize('side_effect', (False, True))
+def test_empty_map(side_effect: bool):
+    sdfg = dace.SDFG('tester')
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('map', dict(i='0:10'))
+    if side_effect:
+        tasklet = state.add_tasklet('print', {}, {}, 'printf("%d\\n", i);', language=dace.Language.CPP)
+        state.add_nedge(entry, tasklet, dace.Memlet())
+        state.add_nedge(tasklet, exit_node, dace.Memlet())
+    else:
+        state.add_nedge(entry, exit_node, dace.Memlet())
+
+    # Simplification would remove the empty map checked below
+    new_sdfg = _roundtrip(sdfg, tn.MapScope, simplify=False)
+    new_sdfg.validate()
+    assert any(isinstance(n, dace.nodes.MapExit) for n, _ in new_sdfg.all_nodes_recursive())
+
+
 if __name__ == '__main__':
     test_implicit_inline_and_constants()
     test_name_propagation()
@@ -803,8 +876,13 @@ if __name__ == '__main__':
     test_state_machine_in_loop()
     test_consume_fibonacci(False)
     test_consume_fibonacci(True)
+    test_nview_outside_map(False)
+    test_nview_outside_map(True)
+    test_reference_set_from_tasklet()
     for in_map in (False, True):
         for push in (False, True):
             for multistate in (False, True):
                 test_consume_body(in_map, push, multistate)
+    test_empty_map(False)
+    test_empty_map(True)
     test_transients_and_nested_sdfg()

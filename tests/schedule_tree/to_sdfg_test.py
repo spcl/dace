@@ -2,6 +2,8 @@
 """
 Tests components in conversion of schedule trees to SDFGs.
 """
+import copy
+
 import dace
 from dace import data, subsets as sbs
 from dace.codegen import control_flow as cf
@@ -1579,6 +1581,52 @@ def test_state_boundaries_read_modify_write() -> None:
     assert np.allclose(a, expected)
 
 
+@pytest.mark.parametrize('scope', ('if', 'elif', 'else', 'loop'))
+def test_trailing_assignment_in_body(scope: str) -> None:
+    # Assignments at the end of a body are performed in that body, even without a state boundary after them
+    assign = tn.AssignNode('k', CodeBlock('k + 10'), dace.InterstateEdge(assignments={'k': 'k + 10'}))
+    if scope == 'loop':
+        body = [tn.ForScope(loop=LoopRegion('loop', 'i < 3', 'i', 'i = 0', 'i = i + 1'), children=[assign])]
+    else:
+        conditions = {'if': ('n > 5', 'n > 2'), 'elif': ('n > 50', 'n > 2'), 'else': ('n > 50', 'n > 20')}[scope]
+        branches = [[], [], []]
+        branches[('if', 'elif', 'else').index(scope)] = [assign]
+        body = [
+            tn.IfScope(condition=CodeBlock(conditions[0]), children=branches[0]),
+            tn.ElifScope(condition=CodeBlock(conditions[1]), children=branches[1]),
+            tn.ElseScope(children=branches[2]),
+        ]
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [1])},
+        symbols={
+            'i': dace.int64,
+            'k': dace.int64,
+            'n': dace.int64
+        },
+        children=[
+            tn.AssignNode('k', CodeBlock('0'), dace.InterstateEdge(assignments={'k': '0'})),
+            tn.StateBoundaryNode(),
+            *body,
+            tn.StateBoundaryNode(True),
+            _write_node('k', 'A[0]'),
+        ],
+    )
+
+    # Convert without inserting state boundaries after assignments
+    sdfg = dace.SDFG('tester')
+    sdfg._arrays.update(copy.deepcopy(stree.containers))
+    sdfg.symbols.update(stree.symbols)
+    t2s._StreeToSDFG().visit(stree, sdfg=sdfg)
+    sdfg.validate()
+
+    # With n=10, the body with the assignment is executed. With n=1, only the else branch is.
+    for n, expected in ((10, 10), (1, 10 if scope == 'else' else 0)):
+        a = np.zeros(1)
+        sdfg(A=a, n=n)
+        assert a[0] == (30 if scope == 'loop' else expected)
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -1647,3 +1695,5 @@ if __name__ == '__main__':
     test_gblock_conditional_gotos(0)
     test_gblock_goto_to_loop()
     test_state_boundaries_read_modify_write()
+    for scope in ('if', 'elif', 'else', 'loop'):
+        test_trailing_assignment_in_body(scope)
