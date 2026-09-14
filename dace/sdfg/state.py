@@ -4080,6 +4080,11 @@ class LoopRegion(ControlFlowRegion):
 
 @make_properties
 class ConditionalBlock(AbstractControlFlowRegion):
+    """
+    A control flow region that represents conditional code exectution (if/elif/else).
+
+    Add branches with `add_branch(condition, region)`, where the condition is optional.
+    """
 
     _branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]]
 
