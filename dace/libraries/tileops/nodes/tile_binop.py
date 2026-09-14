@@ -369,8 +369,9 @@ CUTE_OP_EXPR = {
     "-": "{lhs} - {rhs}",
     "*": "{lhs} * {rhs}",
     "/": "{lhs} / {rhs}",
-    # cuTile is Python-semantics, so a bare ``%`` already matches ``py_mod``.
-    "%": "{lhs} % {rhs}",
+    # cuTile's ``%`` floors like Python's, so it is ``py_mod``. A tasklet ``%`` truncates: the dividend's sign on
+    # ``|lhs| % |rhs|``, where floored and truncating agree.
+    "%": "ct.where({lhs} < 0, -(ct.abs({lhs}) % ct.abs({rhs})), ct.abs({lhs}) % ct.abs({rhs}))",
     "py_mod": "{lhs} % {rhs}",
     "<": "{lhs} < {rhs}",
     "<=": "{lhs} <= {rhs}",
