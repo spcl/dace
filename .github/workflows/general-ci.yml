@@ -12,6 +12,11 @@ concurrency:
   group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
 
+env:
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
+  UV_NO_EDITABLE: 1 # don't install dace in editable mode
+
 jobs:
   test:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
@@ -25,10 +30,13 @@ jobs:
     - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
       with:
         python-version: ${{ matrix.python-version }}
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
     - name: Install dependencies
       run: |
         # Make dependency setup faster
@@ -37,14 +45,12 @@ jobs:
         # Install dependencies
         sudo apt-get update
         sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
-        pip install flake8 pytest-xdist coverage
-        pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
     - name: Test dependencies
       run: |
-        papi_avail
+        uv run --group testing papi_avail
 
     - name: Test with pytest
       run: |
@@ -59,7 +65,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
+        uv run  --group testing pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
 
     - name: Test OpenBLAS LAPACK
@@ -75,7 +81,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
         ./codecov
 
     - name: Run sequential tests
@@ -91,7 +97,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
+        uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
         ./codecov
 
     - name: Run other tests
@@ -101,10 +107,12 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
-        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        export PYTHON_BINARY="uv run --group testing coverage run --source=dace --parallel-mode"
         ./tests/polybench_test.sh
         ./tests/xform_test.sh
-        coverage combine .; coverage report; coverage xml
+        uv run --group testing coverage combine .
+        uv run --group testing coverage report
+        uv run --group testing coverage xml
 
     - uses: codecov/codecov-action@v6
       with:

@@ -222,7 +222,9 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
-        if len(self._dispatcher.instrumentation) > 2:
+        # NOTE: Some instrumentation providers (e.g. GPU_TX_MARKERS) never write to
+        # __state->report, so skip the report machinery unless at least one active provider does.
+        if any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values()):
             self.statestruct.append('dace::perf::Report report;')
             # Reset report if written every invocation
             if config.Config.get_bool('instrumentation', 'report_each_invocation'):
@@ -252,7 +254,7 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
 
         # Instrumentation saving
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+                and any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values())):
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
@@ -362,7 +364,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
 
         # Instrumentation saving
         if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+                and any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values())):
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 

@@ -24,6 +24,7 @@ PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be er
 class DeadDataflowElimination(ppl.ControlFlowRegionPass):
     """
     Removes unused computations from SDFG states.
+
     Traverses the graph backwards, removing any computations that result in transient descriptors
     that are not used again. Removal propagates through scopes (maps), tasklets, and optionally library nodes.
     """
