@@ -157,6 +157,28 @@ def test_promotion_leaves_no_reference_parameter():
     assert np.allclose(result[0], a[0] * 3.0)
 
 
+@pytest.mark.parametrize('language', ['c', 'c++'])
+def test_a_map_range_over_a_promoted_scalar_compiles_and_reads_its_value(language: str):
+    """cegterg's ``for ii in range(nvecx)`` with ``nvecx`` rebound in the body: the promotion made ``nvecx`` a
+    pointer, and the loop bound compared the index against that pointer."""
+    from tests.passes.scalar_promotion_test import map_over_written_scalar_sdfg
+
+    name = 'cpf_promoted_map_range_' + ('c' if language == 'c' else 'cpp')
+    rendering = render_sdfg(map_over_written_scalar_sdfg(name), language=language)
+    assert_standalone(rendering.code, name, language=language)
+
+    a = np.arange(1.0, 9.0)
+    b = np.zeros(8)
+    width = np.array([5], dtype=np.int64)
+    call_standalone(build_standalone(rendering.code, name, language=language), rendering.sdfg, {
+        'A': a,
+        'B': b,
+        'width': width,
+        'N': 8
+    })
+    assert np.array_equal(b, [1.0, 2.0, 3.0, 4.0, 5.0, 0.0, 0.0, 0.0]), b
+
+
 def test_unwritten_scalar_return_is_refused():
     """A ``Scalar`` return nothing writes cannot be promoted, and by value it returns nothing."""
     sdfg = dace.SDFG('cpf_ret_byvalue')

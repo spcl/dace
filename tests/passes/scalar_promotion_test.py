@@ -111,5 +111,46 @@ def test_promoted_sdfg_matches_a_hand_written_array_output():
     assert np.allclose(out[0], a[0] * 3.0)
 
 
+N = dace.symbol('N')
+
+
+def map_over_written_scalar_sdfg(name: str) -> dace.SDFG:
+    """``width = min(width, N); for ii in 0:width: B[ii] = A[ii]``, the range read through a connector named ``width``.
+
+    The connector spelling is the one ``LoopToMap`` gives a scalar a loop bound reads (cegterg's ``nvecx``).
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_scalar('width', dace.int64)
+    clamp = sdfg.add_state('clamp', is_start_block=True)
+    tasklet = clamp.add_tasklet('clamp', {'w_in'}, {'w_out'}, 'w_out = min(w_in, N)')
+    clamp.add_edge(clamp.add_read('width'), None, tasklet, 'w_in', dace.Memlet('width'))
+    clamp.add_edge(tasklet, 'w_out', clamp.add_write('width'), None, dace.Memlet('width'))
+    copy = sdfg.add_state_after(clamp, 'copy')
+    entry, exit_node = copy.add_map('copy', dict(ii='0:width'))
+    entry.add_in_connector('width')
+    copy.add_edge(copy.add_read('width'), None, entry, 'width', dace.Memlet('width'))
+    body = copy.add_tasklet('copy', {'a'}, {'b'}, 'b = a')
+    copy.add_memlet_path(copy.add_read('A'), entry, body, dst_conn='a', memlet=dace.Memlet('A[ii]'))
+    copy.add_memlet_path(body, exit_node, copy.add_write('B'), src_conn='b', memlet=dace.Memlet('B[ii]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_map_range_over_a_promoted_scalar_reads_its_value():
+    """Code generation defines no local for a range input named like its container, so the bound compared the loop
+    index against the promoted array's pointer and the unit did not compile."""
+    sdfg = map_over_written_scalar_sdfg('promote_map_range')
+    assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    a = np.arange(1.0, 9.0)
+    b = np.zeros(8)
+    width = np.array([5], dtype=np.int64)
+    sdfg(A=a, B=b, width=width, N=8)
+    assert np.array_equal(b, [1.0, 2.0, 3.0, 4.0, 5.0, 0.0, 0.0, 0.0]), b
+
+
 if __name__ == '__main__':
     pytest.main([__file__])
