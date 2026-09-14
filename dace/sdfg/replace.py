@@ -219,7 +219,10 @@ def replace_properties_dict(node: Any,
         elif isinstance(propclass, properties.DataProperty):
             if propval in repl:
                 setattr(node, pname, repl[propval])
-        elif isinstance(propclass, (properties.RangeProperty, properties.ShapeProperty)):
+        elif isinstance(propclass, properties.RangeProperty):
+            # A Range is mutable: substitute in place, which keeps its tile sizes.
+            propval.replace(symrepl)
+        elif isinstance(propclass, properties.ShapeProperty):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
             # Don't replace variables that appear as an input or an output
@@ -232,10 +235,10 @@ def replace_properties_dict(node: Any,
         elif (isinstance(propclass, properties.DictProperty) and pname == 'symbol_mapping'):
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
-                try:
-                    propval[symname] = symbolic.pystr_to_symbolic(str(sym_mapping)).subs(symrepl)
-                except AttributeError:  # If the symbolified value has no subs
-                    pass
+                # A string round trip re-mints every symbol in the value with the default dtype and no assumptions.
+                if not isinstance(sym_mapping, sp.Basic):
+                    sym_mapping = symbolic.pystr_to_symbolic(str(sym_mapping))
+                propval[symname] = _internal_replace(sym_mapping, symrepl)
 
 
 def replace_properties(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str,
