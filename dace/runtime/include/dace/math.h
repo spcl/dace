@@ -182,10 +182,7 @@ DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const T& a, const da
 // https://stackoverflow.com/a/39304947
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
-    // ``/`` and ``%`` rather than ``std::div``: the latter is host-only, and nvcc answers a call to
-    // it from device code with a warning rather than an error, then removes the guarded region that
-    // holds the call -- the kernel launches and stores nothing. C++11 pins ``/`` to truncation
-    // toward zero, so the correction below is exact, and this form is constexpr where std::div is not.
+    // Not std::div: it is host-only, and nvcc silently drops it from device code.
     const T quotient = numerator / denominator;
     const T remainder = numerator % denominator;
     const T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
@@ -208,9 +205,7 @@ template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_flo
 static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
     return (T)std::floor(numerator / denominator);
 }
-// Mixed-operand-type overload (e.g. ``a // 7``, where ``a`` is int64_t and the literal ``7`` is
-// int): promote both operands to their common arithmetic type and delegate, since the single-type
-// templates above cannot deduce T from two different types.
+// Mixed operand types promote to their common type.
 template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
     using T = decltype(numerator + denominator);
@@ -244,15 +239,13 @@ static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominato
     return (T)(numerator - quotient * denominator);
 }
 
-// Mixed-operand-type overload, as for py_floor above.
 template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI auto py_mod(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
     using T = decltype(numerator + denominator);
     return py_mod<T>((T)numerator, (T)denominator);
 }
 
-// C modulus (``CMod``, a tasklet's ``%``): the quotient truncates toward zero, so the remainder takes the
-// dividend's sign (``c_mod(-7, 3) == -1``). ``%`` on integers, ``fmod`` on floating point, which has no ``%``.
+// C modulus (CMod): truncating.
 template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T c_mod(const T& numerator, const T& denominator) {
     return numerator % denominator;
@@ -261,21 +254,19 @@ template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullp
 static DACE_CONSTEXPR DACE_HDFI T c_mod(const T& numerator, const T& denominator) {
     return (T)std::fmod(numerator, denominator);
 }
-// Mixed-operand-type overload, as for py_mod above.
 template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI auto c_mod(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
     using T = decltype(numerator + denominator);
     return c_mod<T>((T)numerator, (T)denominator);
 }
 
-// Fortran ``MOD`` (``FtnMod``), also ``AMOD`` / ``DMOD``: ``A - INT(A / P) * P``, the C modulus.
+// Fortran MOD (FtnMod).
 template<typename T1, typename T2>
 static DACE_CONSTEXPR DACE_HDFI auto ftn_mod(const T1& numerator, const T2& denominator) -> decltype(c_mod(numerator, denominator)) {
     return c_mod(numerator, denominator);
 }
 
-// Fortran ``MODULO`` (``FtnModulo``): ``A - FLOOR(A / P) * P``, the remainder takes the divisor's sign
-// (``ftn_modulo(-7, 3) == 2``), which is Python's ``%``.
+// Fortran MODULO (FtnModulo): floored.
 template<typename T1, typename T2>
 static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& denominator) -> decltype(py_mod(numerator, denominator)) {
     return py_mod(numerator, denominator);

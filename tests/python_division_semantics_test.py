@@ -1,7 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Division and modulo semantics (doc/sdfg/ir.rst, "Division and Modulo Semantics"): a Python program's ``//`` and
-``%`` follow Python (hence NumPy), a bare ``%`` in an SDFG is C's, and ``PyMod`` / ``FtnMod`` / ``FtnModulo`` /
-``CMod`` name the others. """
+""" Division and modulo semantics of the Python frontend, tasklets, symbolic expressions and inter-state edges. """
 import itertools
 
 import numpy as np
@@ -14,8 +12,6 @@ from dace import symbolic
 N = dace.symbol('N', dtype=dace.int64)
 I = dace.symbol('I', dtype=dace.int64)
 
-# Both signs, and divisors that do and do not divide evenly: the disagreement between Python and C
-# needs a nonzero remainder and operands of opposite sign.
 VALUES = (-32, -7, -3, -1, 1, 3, 7, 32)
 
 DTYPES = (('int32', dace.int32, np.int32), ('int64', dace.int64, np.int64), ('float32', dace.float32, np.float32),
@@ -51,20 +47,13 @@ def operand_pairs(nptype):
 @pytest.mark.parametrize('name,dtype,nptype', DTYPES)
 @pytest.mark.parametrize('target', TARGETS)
 def test_floor_division_and_modulo_agree_with_numpy(op, name, dtype, nptype, target):
-    """ Python rounds the quotient toward negative infinity, so the remainder takes the divisor's
-        sign: ``-32 // 7 == -5`` and ``-32 % 7 == 3``. C rounds toward zero and answers ``-4`` for
-        both.
-
-        The GPU half of the table is not redundant: the correction term is a branch, and that branch
-        used to hold a call to host-only ``std::div``. nvcc reports such a call with a warning rather
-        than an error and then removes the region around it, so the kernel launched, reported
-        success, and stored nothing.
-    """
+    """ ``-32 // 7 == -5`` and ``-32 % 7 == 3``, where C gives ``-4`` for both. """
     a, b = operand_pairs(nptype)
     expected = (a // b) if op == '//' else (a % b)
 
+    label = 'floordiv' if op == '//' else 'mod'
     sdfg = division_program(op, dtype).to_sdfg()
-    sdfg.name = f'division_{"floordiv" if op == "//" else "mod"}_{name}_{target}'  # one build folder per case
+    sdfg.name = f'division_{label}_{name}_{target}'
     if target == 'device':
         sdfg.apply_gpu_transformations()
     out = np.zeros(a.shape, dtype=nptype)
@@ -76,11 +65,9 @@ def test_floor_division_and_modulo_agree_with_numpy(op, name, dtype, nptype, tar
 
 @pytest.mark.parametrize('op,call', (('//', 'py_floor('), ('%', 'py_mod(')))
 def test_neither_operator_is_emitted_infix(op, call):
-    """ The numeric table above catches an infix ``%`` on integers, but not on floats, where the
-        emitted line does not compile and there is no number left to compare.
-    """
+    """ An infix ``%`` on floats does not compile, so the numeric table cannot catch it. """
     sdfg = division_program(op, dace.int64).to_sdfg()
-    sdfg.name = f'division_code_{"floordiv" if op == "//" else "mod"}'
+    sdfg.name = 'division_code_floordiv' if op == '//' else 'division_code_mod'
     code = sdfg.generate_code()[0].clean_code
     assert call in code, f'{op} lowered without {call}, so it lowered infix'
 
@@ -94,8 +81,7 @@ def test_a_constant_modulo_folds_with_the_rounding_its_spelling_names(text, valu
 
 
 def test_a_symbolic_modulo_reads_back_from_its_string_with_its_own_rounding():
-    """ SymPy prints its floored ``Mod`` as ``Mod(a, b)`` and a bare ``%`` parses to C's modulo, so the two must not
-        print alike: a saved SDFG would otherwise load with the other rounding. """
+    """ A saved SDFG must load with the rounding it was saved with. """
     floored = symbolic.pystr_to_symbolic('PyMod(I - 2, N)')
     truncating = symbolic.pystr_to_symbolic('(I - 2) % N')
 

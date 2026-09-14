@@ -696,8 +696,7 @@ def _scalar_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, lef
 
 
 def binop_tasklet_code(left: str, opcode: str, right: str) -> str:
-    """ The tasklet computing ``left <opcode> right``. Python's ``%`` floors, while a tasklet's ``%`` is C's, so it
-        becomes ``PyMod`` (see :ref:`division-modulo`). """
+    """ Tasklet code for ``left <opcode> right``; Python's ``%`` becomes ``PyMod``. """
     if opcode == '%':
         return f'__out = PyMod({left}, {right})'
     return f'__out = {left} {opcode} {right}'

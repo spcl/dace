@@ -24,7 +24,6 @@ KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]]
     'min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'round': lambda arg_types: dtypes.typeclass(int),
-    # The named modulo functions (doc/sdfg/ir.rst) take their operands' common type, as ``%`` does.
     **{
         name: lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types)
         for name in MODULO_FUNCTIONS
