@@ -5,7 +5,9 @@ import math
 
 from scipy.signal import convolve2d
 
+from dace.sdfg.state import StateSubgraphView
 from dace.transformation.dataflow import OTFMapFusion, MapExpansion, MapCollapse
+from dace.transformation.dataflow.otf_map_fusion import advanced_replace
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -718,6 +720,29 @@ def test_hdiff():
     assert np.allclose(out_field, out_field_)
 
 
+def test_advanced_replace_nested_sdfg_symbol_mapping():
+    inner = dace.SDFG('inner')
+    inner.add_symbol('i', dace.int64)
+    inner.add_array('b', [10], dace.float64)
+    istate = inner.add_state()
+    tasklet = istate.add_tasklet('t', {}, {'o'}, 'o = 1')
+    istate.add_edge(tasklet, 'o', istate.add_write('b'), None, dace.Memlet('b[i]'))
+
+    sdfg = dace.SDFG('advanced_replace_nested')
+    sdfg.add_array('B', [10], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:10'))
+    node = state.add_nested_sdfg(inner, {}, {'b'}, {'i': 'i'})
+    state.add_nedge(me, node, dace.Memlet())
+    state.add_memlet_path(node, mx, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[0:10]'))
+    sdfg.validate()
+
+    advanced_replace(StateSubgraphView(state, state.nodes()), 'i', 'j')
+
+    assert set(node.symbol_mapping.keys()) == {'j'}
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     # Solver
     test_solve()
@@ -751,3 +776,6 @@ if __name__ == '__main__':
     # Applications
     test_matmuls()
     test_hdiff()
+
+    # Symbol replacement
+    test_advanced_replace_nested_sdfg_symbol_mapping()
