@@ -193,6 +193,36 @@ def test_diag_builds_a_matrix_from_a_vector():
     check(prog, np.diag(a), a=a, out=np.zeros((4, 4)))
 
 
+def test_two_diag_results_in_one_expression_keep_both_bands():
+    """``np.diag`` zero-fills its result, then writes the diagonal: two writes the frontend left in one
+    state with nothing ordering them. Simplify fused two such results and emitted a fill after its
+    diagonal, so a tridiagonal built as ``np.diag(o, 1) + np.diag(o, -1)`` lost its lower band (ls3df_scf's
+    Lanczos bound)."""
+
+    @dace.program
+    def prog(o: dace.float64[5], out: dace.float64[6, 6]):
+        out[:] = np.diag(o, 1) + np.diag(o, -1)
+
+    o = np.random.default_rng(0).random(5)
+    out = np.zeros((6, 6))
+    prog.to_sdfg(simplify=True)(o=o, out=out)
+    np.testing.assert_allclose(out, np.diag(o, 1) + np.diag(o, -1), rtol=1e-12, atol=0.0)
+
+
+def test_two_pad_results_in_one_expression_keep_both_interiors():
+    """``np.pad`` fills, then copies the interior, ordered by the same state boundary ``np.diag`` needs."""
+
+    @dace.program
+    def prog(a: dace.float64[4], b: dace.float64[4], out: dace.float64[6]):
+        out[:] = np.pad(a, 1) + np.pad(b, 1)
+
+    rng = np.random.default_rng(0)
+    a, b = rng.random(4), rng.random(4)
+    out = np.zeros(6)
+    prog.to_sdfg(simplify=True)(a=a, b=b, out=out)
+    np.testing.assert_allclose(out, np.pad(a, 1) + np.pad(b, 1), rtol=1e-12, atol=0.0)
+
+
 def test_real_and_imag_of_a_real_array_compile():
     """``np.real`` / ``np.imag`` of a float array are the array and zero; the tasklet called ``real(x)``,
     which C++ has no overload for on a double."""

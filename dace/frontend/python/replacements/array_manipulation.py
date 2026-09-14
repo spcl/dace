@@ -6,7 +6,7 @@ import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.nested_call import NestedCall
-from dace.frontend.python.replacements.utils import ProgramVisitor, UfuncInput, UfuncOutput
+from dace.frontend.python.replacements.utils import ProgramVisitor, UfuncInput, UfuncOutput, step_state
 import dace.frontend.python.memlet_parser as mem_parser
 from dace import data, dtypes, subsets, symbolic
 from dace import Memlet, SDFG, SDFGState
@@ -557,8 +557,10 @@ def diag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k: int = 0)
     out = _numpy_full(pv, sdfg, state, [n, n], 0, desc.dtype)
     row0, col0 = (0, int(k)) if k >= 0 else (-int(k), 0)
     # The zero fill and the diagonal write are two statements on one array: the fill has to be
-    # complete before the diagonal lands, which the state boundary is what guarantees.
-    state = pv.last_block
+    # complete before the diagonal lands. The fill stays in the current state unless it promoted a
+    # size, so only this step's state boundary orders them; without it simplify fused two diag
+    # results and emitted a fill after its diagonal (np.diag(o, 1) + np.diag(o, -1) lost a band).
+    state = step_state(pv, pv.last_block)
     state.add_mapped_tasklet('diag', {'__d': f'0:{desc.shape[0]}'}, {'__inp': Memlet(f'{arr}[__d]')},
                              '__out = __inp', {'__out': Memlet(f'{out}[__d + {row0}, __d + {col0}]')},
                              external_edges=True)
@@ -611,9 +613,9 @@ def pad(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, pad_width, m
 
     out_shape = [extent + lo + hi for extent, (lo, hi) in zip(desc.shape, widths)]
     out = _numpy_full(pv, sdfg, state, out_shape, fill, desc.dtype)
-    # The fill and the interior copy are two writes to one array; the state boundary the fill
-    # opened is what orders them.
-    state = pv.last_block
+    # The fill and the interior copy are two writes to one array, ordered only by this step's state
+    # boundary: the fill opens none of its own unless it promoted a size.
+    state = step_state(pv, pv.last_block)
     # symstr, not str: a width like ``k // 2`` prints as sympy's ``floor(k/2)`` under str and
     # comes back a rational, where the subset parser wants ``int_floor``.
     interior = ', '.join(f'{symbolic.symstr(lo)}:{symbolic.symstr(lo + extent)}'
