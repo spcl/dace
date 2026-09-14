@@ -14,8 +14,9 @@ from dace.transformation.passes.offloading.phases.single_element_values import S
 from dace.transformation.passes.offloading.phases.single_iteration_maps import SingleIterationMapPhase
 from dace.transformation.passes.offloading.phases.copy_insertion import CopyInsertionPhase
 from dace.transformation.passes.offloading.phases.single_element_copy_optimization import SingleElementCopyOptimization
-from dace.transformation.passes.offloading.offloading_helpers import (get_sdfg_scope_dict,
-                                                                      register_kernel_local_transients)
+from dace.transformation.passes.offloading.offloading_helpers import (get_sdfg_scope_dict, join_fall_through_exits,
+                                                                      register_kernel_local_transients,
+                                                                      remove_empty_exits)
 
 from typing import Any, Dict, Optional
 
@@ -72,6 +73,8 @@ class OffloadToAccelerator(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        # The IR ties only a region's last block to its end; one exit per region puts its copies on every path.
+        exits = join_fall_through_exits(sdfg)
         cached_scopes = get_sdfg_scope_dict(sdfg)  # cache the result of an expensive operation
 
         # Which maps stay on the host, so that what they launch becomes the kernels.
@@ -115,6 +118,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         # Phase 6: insert explicit host-device copies into the SDFG based on the IR
         CopyInsertionPhase().apply(sdfg, IRep, verbose=self.verbose)
+        remove_empty_exits(exits)
 
         # Phase 7: post-optimization
         # post-optimization 1

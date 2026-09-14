@@ -264,8 +264,7 @@ class CopyInsertionPhase():
                     if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global:
                         edge.data.replace(name, self._get_host_name(name))
 
-        # An EDGE node holds the block its interstate edges reach; its decision is about those edges
-        # only, and applying it to the block's dataflow as well points device accesses at host twins.
+        # An EDGE node decides for its edges only, not for the block they reach.
         if interstate_only:
             return
 
