@@ -484,6 +484,40 @@ def test_scalar_source_not_subscripted_in_interstate_assignment():
     assert "[0]" not in expr, f"Scalar reference should not be subscripted; got {expr!r}"
 
 
+def test_constant_write_at_window_start_is_offset_like_any_relative_index():
+    """Out-edge ``A[4, 1:3, 2]`` binds an inner (1, 2, 1) array written at ``[0, 0, 0]`` and
+    ``[0, 1, 0]``. Both writes are relative to the window, so they must land on ``A[4, 1, 2]``
+    and ``A[4, 2, 2]``. The inner index ``1`` equals the window start ``1``; the in-place
+    read-modify-write check took it as absolute, so both writes landed on ``A[4, 1, 2]``
+    (CloudSC ``zsolqa[4, 1:3, i]`` zeroing)."""
+    sdfg = dace.SDFG("window_start_write")
+    sdfg.add_array("A", (5, 5, 3), dace.float64)
+    state = sdfg.add_state("s")
+
+    inner = dace.SDFG("inner")
+    inner.add_array("A_conn", (1, 2, 1), dace.float64)
+    body = inner.add_state("body")
+    for value, index in ((1.0, "0, 0, 0"), (2.0, "0, 1, 0")):
+        tasklet = body.add_tasklet(f"write_{int(value)}", {}, {"__out"}, f"__out = {value}")
+        body.add_edge(tasklet, "__out", body.add_write("A_conn"), None, dace.Memlet(f"A_conn[{index}]"))
+
+    nsdfg = state.add_nested_sdfg(inner, set(), {"A_conn"}, symbol_mapping={})
+    state.add_edge(nsdfg, "A_conn", state.add_write("A"), None, dace.Memlet("A[4, 1:3, 2]"))
+
+    PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
+    written = sorted(str(e.data.subset) for e in body.edges())
+    assert written == ["4, 1, 2", "4, 2, 2"], f"inner writes must keep their window offset; got {written}"
+
+    PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    a = np.zeros((5, 5, 3))
+    sdfg(A=a)
+    expected = np.zeros((5, 5, 3))
+    expected[4, 1, 2] = 1.0
+    expected[4, 2, 2] = 2.0
+    assert np.array_equal(a, expected), f"nonzero entries: {np.argwhere(a)} values {a[a != 0]}"
+
+
 @dace.program
 def _inplace_tile_rmw(a: dace.float64[N, M], b: dace.float64[N, M]):
     for ii, jj in dace.map[0:N - 2:K, 0:M - 2:K]:

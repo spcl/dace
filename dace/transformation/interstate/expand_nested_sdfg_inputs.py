@@ -20,7 +20,7 @@ Refuses when: the widening would change inner-descriptor rank (axis-collapse, ``
 """
 import ast
 import copy
-from typing import List, Set, Dict, Tuple
+from typing import List, Set, Dict, Tuple, Union
 
 from dace import SDFG, dtypes, subsets, symbolic, data
 from dace.codegen.common import CodeBlock
@@ -140,8 +140,21 @@ def _collect_write_subsets(state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> Di
     return write_subsets
 
 
+def keeps_absolute_index(lo: Union[int, sympy.Basic], offset: Union[int, sympy.Basic],
+                         inner_shape: Tuple[Union[int, sympy.Basic], ...], dim: int) -> bool:
+    """True if inner begin ``lo`` of axis ``dim`` is an absolute in-place access (``lo == offset``).
+    A constant ``lo`` inside the inner extent is relative even when it equals the window start
+    (``A[4, 1:3]`` written at inner ``[0, 1]``)."""
+    lo_expr = sympy.sympify(lo)
+    if lo_expr - sympy.sympify(offset) != 0:
+        return False
+    in_extent = (lo_expr.is_Integer and lo_expr >= 0 and dim < len(inner_shape) and bool(
+        (sympy.sympify(inner_shape[dim]) - lo_expr).is_positive))
+    return not in_extent
+
+
 def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims: List[sympy.Basic],
-                                 collapsed_dims: List[bool]) -> None:
+                                 collapsed_dims: List[bool], inner_shape: Tuple) -> None:
     """Rewrite every memlet referencing ``inner_name``: add ``offset_dims``, uncollapse
     ``collapsed_dims``. Runs BEFORE ``replace_dict({inner_name: outer_name})`` so it matches
     only THIS inner_name's memlets -- else two connectors binding the same outer array at
@@ -183,7 +196,7 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                     # (begin shares ``i`` yet must still rebase), dropping the slide. ``lo==offset``
                     # found via sympy Add cancellation (``i - i`` → 0, relative ``(i-Min)-Min`` stays
                     # ``i-2*Min``). No ``sympy.simplify`` -- too slow on Min/int_floor in a codegen-hot pass.
-                    if (sympy.sympify(lo) - sympy.sympify(offset)) == 0:
+                    if keeps_absolute_index(lo, offset, inner_shape, d):
                         new_range_list.append((lo, hi, stp))
                     else:
                         new_range_list.append((lo + offset, hi + offset, stp))
@@ -242,6 +255,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
 
     # Remove old array, add new, so occurrences can be safely replaced.
     inner_sdfg: SDFG = nsdfg_node.sdfg
+    inner_shape = inner_sdfg.arrays[inner_name].shape
     inner_sdfg.remove_data(inner_name, validate=False)
     copy_desc = copy.deepcopy(desc)
     # A View is a view only next to the data it views: the ``views`` edge stays in the outer state,
@@ -263,7 +277,7 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     # Offset once per array (``apply_offset``): a second pass (array read AND written, shared
     # outer name) still renames/widens its own connector, but re-offsetting double-counts.
     if apply_offset:
-        _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims)
+        _rewrite_memlets_with_offset(inner_sdfg, inner_name, offset_dims, collapsed_dims, inner_shape)
 
     # ``expr.replace(SubscriptClass, fn)``: SymPy splats the matched node's args positionally
     # (not the node), so the callback takes ``*args`` = Subscript arity: ``args[0]`` container,
