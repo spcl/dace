@@ -89,7 +89,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        ulimit -s 65536 || true && uv run --group testing pytest -n 2 --max-worker-restart=0 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -o faulthandler_timeout=180 --durations=40 --junitxml=pytest-general-${{ matrix.python-version }}-${{ matrix.simplify }}.xml -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
+        uv run  --group testing pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
 
     - name: Upload general test artifacts
@@ -113,7 +113,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        ulimit -s 65536 || true && uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
         ./codecov
 
     - name: Test cBLAS / MKL BLAS extension nodes
@@ -174,7 +174,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        ulimit -s 65536 || true && uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
+        uv run --group testing pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "sequential"
         ./codecov
 
     - name: Run other tests
@@ -185,8 +185,8 @@ jobs:
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         export PYTHON_BINARY="uv run --group testing coverage run --source=dace --parallel-mode"
-        ulimit -s 65536 || true; ./tests/polybench_test.sh
-        ulimit -s 65536 || true; ./tests/xform_test.sh
+        ./tests/polybench_test.sh
+        ./tests/xform_test.sh
         uv run --group testing coverage combine .
         uv run --group testing coverage report
         uv run --group testing coverage xml

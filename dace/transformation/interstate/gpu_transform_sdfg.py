@@ -393,12 +393,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 for e in state.out_edges(node):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
-                        _move_to_gpu(dst.data)
+                        desc = sdfg.arrays[dst.data]
+                        desc.storage = dtypes.StorageType.GPU_Global
             elif isinstance(node, nodes.EntryNode):
                 for e in state.out_edges(state.exit_node(node)):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
-                        _move_to_gpu(dst.data)
+                        desc = sdfg.arrays[dst.data]
+                        desc.storage = dtypes.StorageType.GPU_Global
             else:
                 raise RuntimeError(
                     f"GPU node of unexpected type. Expected `LibraryNode` or `EntryNode`, found {type(node)}.")
