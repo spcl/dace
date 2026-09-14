@@ -2,12 +2,11 @@ import argparse
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import infer_types
-from dace import SDFG, SDFGState
+from dace import SDFG, SDFGState, subsets
 from dace.data import View
-from typing import Dict
+from typing import Dict, List, Tuple
 import os
 import sympy as sp
-import dace.dtypes as dtypes
 from copy import deepcopy
 from dace.symbolic import int_floor, pystr_to_symbolic
 from dace.dtypes import StorageType
@@ -16,8 +15,6 @@ from collections import deque
 from dace.transformation.passes.analysis import loop_analysis
 
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ConditionalBlock, ReturnBlock, ContinueBlock, BreakBlock
-
-import dace.transformation.auto.auto_optimize as opt
 
 
 def subs_till_fixed_point(expr: sp.Expr, symbol_map: Dict[sp.Expr, sp.Expr]):
@@ -132,74 +129,74 @@ def calculate_edge_volume(state: SDFGState, edge: MultiConnectorEdge):
     return vol * state.sdfg.arrays[edge.data.data].dtype.bytes
 
 
+def is_counted(sdfg: SDFG, data: str) -> bool:
+    desc = sdfg.arrays[data]
+    return not isinstance(desc, View) and desc.storage in (StorageType.CPU_Heap, StorageType.GPU_Global)
+
+
+def accumulate_over_ranges(volume: sp.Expr, range_var_stack: List[Tuple[str, tuple]]) -> sp.Expr:
+    for (var, (lo, hi, step)) in reversed(range_var_stack):
+        names = {sym.name: sym for sym in volume.free_symbols}
+        sp_var = sp.Symbol(var)
+        if var in names:
+            volume = volume.subs(names[var], sp.sympify(step) * sp_var + lo)
+        volume = sp.summation(volume, (sp_var, sp.sympify(0), int_floor(hi - lo, step)))
+    return sp.simplify(volume)
+
+
+def distinct_volume(state: SDFGState, edges: List[MultiConnectorEdge]) -> sp.Expr:
+    """Bytes of the union subset each counted container has over ``edges``, one count per container."""
+    accessed: Dict[str, subsets.Subset] = {}
+    volume = sp.sympify(0)
+    for edge in edges:
+        if edge.data.is_empty() or not is_counted(state.sdfg, edge.data.data):
+            continue
+        data = edge.data.data
+        merged = subsets.union(accessed[data], edge.data.subset) if data in accessed else edge.data.subset
+        if merged is None:  # an undecidable union counts the edge on its own
+            volume += calculate_edge_volume(state, edge)
+        else:
+            accessed[data] = merged
+    for data, subset in accessed.items():
+        volume += subset.num_elements() * state.sdfg.arrays[data].dtype.bytes
+    return volume
+
+
 def scope_volume(state: SDFGState,
                  entry=None,
                  region_volume_map: dict[AbstractControlFlowRegion, tuple:[sp.Expr, sp.Expr, sp.Expr, sp.Expr]] = {},
-                 range_var_stack: list[tuple[str, tuple]] = []):
+                 range_var_stack: list[tuple[str, tuple]] = [],
+                 map_perfect: bool = False):
     scope_nodes = state.scope_children()[entry]
     read = sp.sympify(0)
     write = sp.sympify(0)
     for node in scope_nodes:
         if isinstance(node, nd.AccessNode):
-            if isinstance(state.sdfg.arrays[node.data], View):
+            if not is_counted(state.sdfg, node.data):
                 continue
-            read_edge_volumes = []
-            for edge in state.out_edges(node):
-                if isinstance(edge.dst, nd.NestedSDFG):
-                    continue
-                if state.sdfg.arrays[node.data].storage is StorageType.CPU_Heap or state.sdfg.arrays[
-                        node.data].storage is StorageType.GPU_Global:
-                    edge_vol = calculate_edge_volume(state, edge)
-                    read_edge_volumes.append(edge_vol)
+            # Under the map-perfect model a map's boundary edges are counted once, at its entry.
+            read_volume = sum(
+                calculate_edge_volume(state, edge) for edge in state.out_edges(node)
+                if not isinstance(edge.dst, nd.NestedSDFG) and not (map_perfect and isinstance(edge.dst, nd.MapEntry)))
+            write_volume = sum(
+                calculate_edge_volume(state, edge) for edge in state.in_edges(node)
+                if not isinstance(edge.src, nd.NestedSDFG) and not (map_perfect and isinstance(edge.src, nd.MapExit)))
+            read += accumulate_over_ranges(sp.sympify(read_volume), range_var_stack)
+            write += accumulate_over_ranges(sp.sympify(write_volume), range_var_stack)
 
-            access_node_read_volume = sp.sympify(sum(read_edge_volumes))
-            write_edge_volumes = []
-            for edge in state.in_edges(node):
-                if isinstance(edge.src, nd.NestedSDFG):
-                    continue
-                if state.sdfg.arrays[node.data].storage is StorageType.CPU_Heap or state.sdfg.arrays[
-                        node.data].storage is StorageType.GPU_Global:
-                    edge_vol = calculate_edge_volume(state, edge)
-                    write_edge_volumes.append(edge_vol)
-
-            access_node_write_volume = sp.sympify(sum(write_edge_volumes))
-            for (var, (lo, hi, step)) in reversed(range_var_stack):
-                read_symbol_map = {}
-                for sym in access_node_read_volume.free_symbols:
-                    read_symbol_map[sym.name] = sym
-
-                write_symbol_map = {}
-                for sym in access_node_write_volume.free_symbols:
-                    write_symbol_map[sym.name] = sym
-
-                shifted_hi = int_floor(hi - lo, step)
-                shifted_lo = sp.sympify(0)
-                sp_var = sp.Symbol(var)
-
-                if var in read_symbol_map.keys():
-                    access_node_read_volume = sp.summation(
-                        access_node_read_volume.subs(read_symbol_map[var], (sp.sympify(step) * sp_var + lo)),
-                        (sp_var, shifted_lo, shifted_hi))
-                else:
-                    access_node_read_volume = sp.summation(access_node_read_volume, (sp_var, shifted_lo, shifted_hi))
-
-                if var in write_symbol_map.keys():
-                    access_node_write_volume = sp.summation(
-                        access_node_write_volume.subs(write_symbol_map[var], (sp.sympify(step) * sp_var + lo)),
-                        (sp_var, shifted_lo, shifted_hi))
-                else:
-                    access_node_write_volume = sp.summation(access_node_write_volume, (sp_var, shifted_lo, shifted_hi))
-
-            access_node_read_volume = sp.simplify(access_node_read_volume)
-            access_node_write_volume = sp.simplify(access_node_write_volume)
-
-            read += access_node_read_volume
-            write += access_node_write_volume
+        elif isinstance(node, nd.MapEntry) and map_perfect:
+            map_read = distinct_volume(state, state.in_edges(node))
+            map_write = distinct_volume(state, state.out_edges(state.exit_node(node)))
+            read += accumulate_over_ranges(sp.sympify(map_read), range_var_stack)
+            write += accumulate_over_ranges(sp.sympify(map_write), range_var_stack)
 
         elif isinstance(node, nd.NestedSDFG):
             # if we have a nested SDFG we calculate the volume of the nested function separately and then replace the symbols such that they match
             # the symbols of the top-level SDFG
-            read_nested, write_nested = cfr_volume(node.sdfg, region_volume_map, range_var_stack)
+            read_nested, write_nested = cfr_volume(node.sdfg,
+                                                   region_volume_map,
+                                                   range_var_stack,
+                                                   map_perfect=map_perfect)
             mapping = {}
 
             # create mapping to replace symbols bound in higher level SDFG correctly
@@ -234,11 +231,12 @@ def scope_volume(state: SDFGState,
 def cfr_volume(control_flow_region: AbstractControlFlowRegion,
                region_volume_map: dict[AbstractControlFlowRegion, tuple:[sp.Expr, sp.Expr]],
                range_var_stack: list[str, tuple],
-               detailed_analysis=False) -> tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr]:
+               detailed_analysis=False,
+               map_perfect: bool = False) -> tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr]:
 
     for cfr in control_flow_region.nodes():
         if isinstance(cfr, SDFGState):
-            scope_read, scope_write = scope_volume(cfr, None, region_volume_map, range_var_stack)
+            scope_read, scope_write = scope_volume(cfr, None, region_volume_map, range_var_stack, map_perfect)
             region_volume_map[cfr] = (scope_read, scope_write)
         elif isinstance(cfr, LoopRegion):
             try:
@@ -249,7 +247,8 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
                 if not loop_var:
                     raise
                 range_var_stack.append((loop_var, (lower_bound, upper_bound, step)))
-                loop_read, loop_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis)
+                loop_read, loop_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis,
+                                                   map_perfect)
 
                 del range_var_stack[-1:]
 
@@ -259,7 +258,8 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
                 loop_executions = cfr.start_block.executions
                 range_var_stack.append((f"byte_access_loop_range_var_{len(range_var_stack)}",
                                         (sp.sympify(0), loop_executions, sp.sympify(1))))
-                inner_read, inner_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis)
+                inner_read, inner_write = cfr_volume(cfr, region_volume_map, range_var_stack, detailed_analysis,
+                                                     map_perfect)
                 del range_var_stack[-1:]
 
                 region_volume_map[cfr] = (inner_read, inner_write)
@@ -272,7 +272,10 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
                 branch_conditions[branch] = pystr_to_symbolic(
                     condition.as_string) if condition is not None else sp.sympify(True)
 
-                branch_read, branch_write = cfr_volume(branch, region_volume_map, range_var_stack)
+                branch_read, branch_write = cfr_volume(branch,
+                                                       region_volume_map,
+                                                       range_var_stack,
+                                                       map_perfect=map_perfect)
 
                 branch_reads.append(branch_read)
                 branch_writes.append(branch_write)
@@ -290,7 +293,7 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
         else:
             # Since the introduction of ControlFLow regions SDFGs only have only one path. Branching is handled by ControlFlowBlocks
             # Thus we can simply sum the volumes for each individual region to get a total
-            reg_read, reg_write = cfr_volume(cfr, region_volume_map, range_var_stack)
+            reg_read, reg_write = cfr_volume(cfr, region_volume_map, range_var_stack, map_perfect=map_perfect)
             region_volume_map[cfr] = (reg_read, reg_write)
 
     traversal_q = deque()
@@ -320,23 +323,28 @@ def cfr_volume(control_flow_region: AbstractControlFlowRegion,
     return region_volume_map[control_flow_region]
 
 
-def analyze_sdfg(sdfg: SDFG):
-    # deepcopy such that original sdfg not changed
+CACHE_MODELS = ('none', 'map_perfect_loop_none')
+
+
+def analyze_sdfg(sdfg: SDFG, cache_model: str = 'none') -> Tuple[sp.Expr, sp.Expr]:
+    """
+    Symbolic bytes read and written by an SDFG, analyzed on a copy without writing files or transforming.
+
+    Under ``'map_perfect_loop_none'`` a map scope counts the union of each container's boundary subsets once,
+    approximating a perfectly caching parallel region, while loops multiply by their iterations.
+
+    :param sdfg: The SDFG to analyze.
+    :param cache_model: ``'none'`` counts every access once per iteration; ``'map_perfect_loop_none'`` as above.
+    :return: The read and the write volume in bytes.
+    """
+    if cache_model not in CACHE_MODELS:
+        raise ValueError(f'Unknown cache model {cache_model!r}; expected one of {CACHE_MODELS}')
     sdfg = deepcopy(sdfg)
-    # Try to use an optimized version of the SDFG to account for compiler optimizations
-    try:
-        opt.auto_optimize(sdfg, dtypes.DeviceType.CPU)
-    except:
-        pass
-
-    sdfg.save("sdfg.sdfg")
-
     infer_types.set_default_schedule_and_storage_types(sdfg)
     tvm = {}
-    rvm = {}
     static_symbol_mapping = get_static_symbols(sdfg)
 
-    read, write = cfr_volume(sdfg, tvm, [], False)
+    read, write = cfr_volume(sdfg, tvm, [], False, cache_model == 'map_perfect_loop_none')
 
     read = read.subs(static_symbol_mapping)
     write = write.subs(static_symbol_mapping)
