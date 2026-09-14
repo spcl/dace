@@ -259,6 +259,26 @@ def test_two_slices_from_one_bound_expression_share_their_symbols():
     assert np.isclose(out[0], np.dot(col[1:4], val[1:4]))
 
 
+@dace.program
+def reshape_to_a_computed_size(a: dace.float64[N], nb: dace.int64[1], out: dace.float64[N]):
+    m = int(nb[0])
+    b = np.zeros(m, dace.float64)
+    b[:] = a[:m]
+    c = b.reshape((1, m))
+    out[:m] = c[0, :] * 2.0
+
+
+def test_a_reshape_accepts_the_computed_size_an_allocation_accepts():
+    """vexx_k reshapes to ``(n1, n2, n3, my_n)`` with ``my_n = int(nibands[0])``: the allocation took that size
+    and the reshape refused it as a data descriptor."""
+    a = np.arange(8, dtype=np.float64)
+    out = np.zeros(8)
+    reshape_to_a_computed_size(a, np.array([5], dtype=np.int64), out, N=8)
+    expected = np.zeros(8)
+    expected[:5] = a[:5] * 2.0
+    assert np.array_equal(out, expected), out
+
+
 if __name__ == '__main__':
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
@@ -274,3 +294,4 @@ if __name__ == '__main__':
     test_a_shape_and_a_slice_bound_from_one_assignment_share_a_symbol()
     test_a_compound_shape_keeps_the_arithmetic_the_slice_bound_keeps()
     test_two_slices_from_one_bound_expression_share_their_symbols()
+    test_a_reshape_accepts_the_computed_size_an_allocation_accepts()

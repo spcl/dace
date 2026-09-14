@@ -825,6 +825,8 @@ def reshape(pv: ProgramVisitor,
     if not isinstance(newshape, (list, tuple)):
         newshape = [newshape]
     newshape = [symbolic.pystr_to_symbolic(s) for s in newshape]
+    from dace.frontend.python.replacements.array_creation_dace import promote_size_scalars_in_shape  # Avoid import loop
+    newshape, _ = promote_size_scalars_in_shape(pv, sdfg, newshape)
     unknown = [i for i, s in enumerate(newshape) if symbolic.equal_valued(-1, s)]
     if len(unknown) > 1:
         raise ValueError('can only specify one unknown dimension')
