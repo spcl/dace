@@ -181,9 +181,10 @@ def test_unsupported_ctypes_refuse_loudly(ctype, dialect):
 def test_helpers_used_finds_calls_and_ignores_definitions(dialect):
     """The helper scan sees a call, and is not confused by a substring of a longer name."""
     # C calls the helper instantiated for the argument type, C++ the template under the runtime name.
-    ceil, modulus = ('int_ceil', 'mod') if dialect is Dialect.STANDALONE else ('cpf_int_ceil_int64', 'cpf_mod_int32')
+    ceil, modulus = ('int_ceil', 'c_mod') if dialect is Dialect.STANDALONE else ('cpf_int_ceil_int64',
+                                                                                 'cpf_c_mod_int32')
     assert cpf_lowering.helpers_used('y = %s(a, b) + %s(c, d);' % (ceil, modulus), dialect) == {ceil, modulus}
-    assert cpf_lowering.helpers_used('y = my_mod(c, d) + a.mod(e);', dialect) == set()
+    assert cpf_lowering.helpers_used('y = my_c_mod(c, d) + a.c_mod(e);', dialect) == set()
 
 
 def test_helpers_used_finds_the_c_typed_helpers():
@@ -195,7 +196,7 @@ def test_helpers_used_finds_the_c_typed_helpers():
 @pytest.mark.parametrize('dialect', [Dialect.STANDALONE, Dialect.STANDALONE_C], ids=['c++', 'c'])
 def test_helpers_used_drives_the_definitions_a_unit_needs(dialect):
     """Scanning emitted text yields exactly the definitions that text requires, callees included."""
-    code = printed(symbolic.mod(X, Y), dialect)
+    code = printed(sympy.Mod(X, Y), dialect)
     assert cpf_lowering.definitions_for(cpf_lowering.helpers_used(code, dialect), dialect)
 
 

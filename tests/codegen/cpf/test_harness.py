@@ -105,7 +105,7 @@ UNQUALIFIED_LEAKS = [
     ('(int_ceil(x, 3))', 'int_ceil'),  # sympy ceiling(x/3) AND symbolic.int_ceil both land here
     ('(reciprocal((x) * (x)))', 'reciprocal'),  # x**-2
     ('(sign(x))', 'sign'),
-    ('(mod(x, y))', 'mod'),
+    ('(py_mod(x, y))', 'py_mod'),
     ('(ROUND(x))', 'ROUND'),
     ('(Abs(x))', 'Abs'),
     ('(Max(x, y))', 'Max'),

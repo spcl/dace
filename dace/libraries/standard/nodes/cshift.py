@@ -49,22 +49,14 @@ class ExpandCShiftPure(ExpandTransformation):
 
     Fortran ``CSHIFT(arr, shift)`` along ``dim`` (1-based) yields
     ``out(i) = arr(MODULO(i - 1 + shift, n) + 1)``.  In 0-based Map
-    iterators that is ``_out[i] = _x[mod(i + shift, n)]`` along ``dim``,
+    iterators that is ``_out[i] = _x[FtnModulo(i + shift, n)]`` along ``dim``,
     with every other axis passed through unchanged.
 
     ``numpy.roll`` runs the same rotation the other way, so a
     :attr:`ShiftDirection.NUMPY` node negates ``shift`` before building
     the subset; everything below is otherwise identical.
 
-    ``fortran_mod`` is the FLOORED modulus (``dace.symbolic.mod`` ->
-    ``dace::math::mod``), NOT sympy's built-in ``Mod``: ``Mod`` lowers
-    to the C ``%`` operator, which TRUNCATES on signed integers
-    (``(-1) % 5 == -1``), so a negative ``shift`` would index out of
-    bounds. That is why the modulus is not a second selectable mode:
-    truncation here is an out-of-bounds read, not a convention.  The floored ``mod`` returns ``[0, n)`` for any sign
-    (``mod(-1, 5) == 4``), matching Fortran ``MODULO`` / ``CSHIFT``
-    wrap semantics.  (A doubled ``Mod(Mod(x,n)+n,n)`` does NOT work --
-    sympy simplifies it straight back to ``Mod(x,n)``.)
+    ``FtnModulo`` is the floored modulo, so a negative ``shift`` stays in ``[0, n)``.
 
     The tasklet body is just ``__out = __in`` -- the rotation lives
     entirely in the source memlet's subset, so no runtime helper is
@@ -110,11 +102,7 @@ class ExpandCShiftPure(ExpandTransformation):
         in_subs = []
         for d in range(rank):
             if d == dim_zero:
-                # ``fortran_mod`` is the FLOORED modulus (NOT sympy ``Mod``,
-                # which lowers to C ``%`` and truncates -- breaking negative
-                # shifts).  It codegens to the self-contained sign-correct
-                # form ``(((a) % (b)) + (b)) % (b)``.
-                in_subs.append(f"fortran_mod(__i{d} + ({shift}), {n})")
+                in_subs.append(f"FtnModulo(__i{d} + ({shift}), {n})")
             else:
                 in_subs.append(f"__i{d}")
         in_sub = ", ".join(in_subs)

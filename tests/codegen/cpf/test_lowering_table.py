@@ -59,8 +59,8 @@ CASES = [
     ('int_ceil', ('7', '3'), '3'),
     ('int_ceil', ('9', '3'), '3'),
     ('int_floor', ('7', '3'), '2'),
-    ('mod', ('-1', '5'), '4'),
-    ('mod', ('7', '5'), '2'),
+    ('ftn_modulo', ('-1', '5'), '4'),
+    ('ftn_modulo', ('7', '5'), '2'),
     ('ipow', ('3', '4'), '81'),
     ('left_shift', ('3', '2'), '12'),
     ('right_shift', ('-8', '1'), '-4'),
@@ -87,13 +87,13 @@ CASES = [
     ('py_floor', ('7', '0'), '0'),
     ('py_mod', ('-7', '0'), '0'),
     ('floor_mod', ('-1', '5'), '4'),
-    ('cpp_mod', ('-1', '5'), '-1'),
-    ('cpp_mod', ('-1.0', '5.0'), '-1.0'),
-    # sympy's ``Mod`` is floored; ``cpp_mod`` above is the truncating remainder.
+    ('c_mod', ('-1', '5'), '-1'),
+    ('c_mod', ('-1.0', '5.0'), '-1.0'),
+    # sympy's ``Mod`` is floored; ``c_mod`` above is the truncating remainder.
     ('Mod', ('-1', '5'), '4'),
-    ('Mod_float', ('-1.0', '5.0'), '-1.0'),
-    ('Modulo', ('-17', '3'), '1'),
-    ('Modulo_float', ('-17.0', '3.0'), '1.0'),
+    ('ftn_mod', ('-1.0', '5.0'), '-1.0'),
+    ('ftn_modulo', ('-17', '3'), '1'),
+    ('ftn_modulo', ('-17.0', '3.0'), '1.0'),
     ('np_float_pow', ('2', '10'), '1024.0'),
     ('sign_numpy_2', ('-2.5', ), '-1.0'),
     ('heaviside', ('2.0', ), '1.0'),
@@ -317,8 +317,8 @@ C_REFUSED_HELPER_CALLS = [
     ('int_floor_ni', ('uint32', 'int32')),
     ('int_floor_ni', ('float64', 'int64')),
     ('int_ceil', ('uint64', 'uint64')),
-    ('mod', ('float32', 'float32')),
-    ('Mod_float', ('int64', 'int64')),
+    ('c_mod', ('uint32', 'uint32')),
+    ('ftn_modulo', ('uint64', 'uint64')),
     ('logical_left_shift', ('float64', 'int32')),
 ]
 
@@ -397,8 +397,6 @@ CONSTEXPR_PROBES = {
     'static_assert(int_ceil(7, 3) == 3);',
     'int_floor_ni':
     'static_assert(int_floor_ni(-7, 3) == -3);',
-    'mod':
-    'static_assert(mod(-1, 5) == 4);',
     'ipow':
     'static_assert(ipow(3, 4) == 81);',
     'logical_left_shift':
@@ -419,10 +417,12 @@ CONSTEXPR_PROBES = {
     'static_assert(py_mod(-1, 5) == 4);',
     'floor_mod':
     'static_assert(floor_mod(-1, 5) == 4);',
-    'cpp_mod':
-    'static_assert(cpp_mod(-1, 5) == -1);',
-    'Mod_float':
-    'static_assert(Mod_float(-1.0, 5.0) == -1.0);',
+    'c_mod':
+    'static_assert(c_mod(-1, 5) == -1);',
+    'ftn_mod':
+    'static_assert(ftn_mod(-1, 5) == -1);',
+    'ftn_modulo':
+    'static_assert(ftn_modulo(-17, 3) == 1);',
     'cpp_divmod':
     'constexpr long cpp_divmod_probe() { long q = 0, r = 0; cpp_divmod(-7L, 3L, q, r); return q; }\n'
     'static_assert(cpp_divmod_probe() == -2);',
@@ -432,8 +432,7 @@ CONSTEXPR_PROBES = {
 }
 
 #: Definitions that cannot be ``constexpr``, and why. ``std::modf`` and ``std::frexp`` write through
-#: a POINTER out-parameter and are not ``constexpr`` in C++20; ``Modulo`` divides through
-#: ``std::floor`` on a ``double`` for every instantiation, so no argument makes it foldable.
+#: a POINTER out-parameter and are not ``constexpr`` in C++20.
 #: A prefix scan cannot fold: it writes through an output iterator, and its OpenMP ``inscan``
 #: clause has no meaning in a constant expression. They are ``static inline`` for that reason, and
 #: this table is what states it rather than leaving the omission to look like an oversight.
@@ -470,10 +469,6 @@ NOT_CONSTEXPR = {
     'std::modf takes a pointer out-parameter and is not constexpr before C++23',
     'np_frexp':
     'std::frexp takes a pointer out-parameter and is not constexpr before C++23',
-    'Modulo':
-    'divides through std::floor on a double for every instantiation (GCC folds it, clang does not)',
-    'Modulo_float':
-    'divides through std::floor for every instantiation (GCC folds it, clang does not)',
 }
 
 
@@ -514,10 +509,11 @@ RETURN_TYPES = [
     ('py_floor(static_cast<int64_t>(-7), 2)', 'int64_t'),
     ('py_mod(-1.0f, 5.0f)', 'float'),
     ('floor_mod(static_cast<int16_t>(-1), static_cast<int16_t>(5))', 'int'),
-    ('mod(static_cast<int64_t>(-1), 5)', 'int64_t'),
-    ('cpp_mod(-1, 5)', 'int'),
-    ('cpp_mod(1, 2.0f)', 'double'),
-    ('cpp_mod(1.0f, 2.0f)', 'float'),
+    ('ftn_modulo(static_cast<int64_t>(-1), 5)', 'int64_t'),
+    ('c_mod(-1, 5)', 'int'),
+    ('c_mod(1, 2.0f)', 'double'),
+    ('c_mod(1.0f, 2.0f)', 'float'),
+    ('ftn_mod(1, 2.0f)', 'double'),
 ]
 
 

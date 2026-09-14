@@ -1318,7 +1318,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'ipow', 'fma', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne',
-    'AND', 'OR', 'pow', 'round', 'ITE', 'merge', 'int32', 'int64', 'float32', 'float64', 'conj', 'mod', 'fortran_mod'
+    'AND', 'OR', 'pow', 'round', 'ITE', 'merge', 'int32', 'int64', 'float32', 'float64', 'conj'
 }
 
 
@@ -1676,7 +1676,7 @@ class DaceFunctionMeta(sympy.core.function.FunctionClass):
             return True
         # The converter's own class, not a name looked up in `_PYSTR2SYM_locals`: that table is keyed
         # by PARSER spellings (`'And'`, `'Or'`, `'round'`) while the classes are `AND`, `OR`, `ROUND`,
-        # and `fma`/`mod`/`logical_*_shift` have no key at all -- so every `And`/`Or` guard, which is
+        # and `fma`/`logical_*_shift` have no key at all -- so every `And`/`Or` guard, which is
         # what the converter mints for the commonest shape there is, answered False.
         head = symbolic_engine.dace_head_class(obj)
         return head is not None and issubclass(head, cls)
@@ -2095,48 +2095,6 @@ class ITE(DaceFunction):
 # runtime helper in ``dace/runtime/include/dace/merge.h`` and any callers
 # that still reference the old name.
 merge = ITE
-
-
-class mod(DaceFunction):
-    """Floored modulus (Fortran ``MODULO`` / Python ``%`` on negatives).
-
-    Two-arg ``mod(a, b)`` — distinct from sympy's built-in ``Mod`` (which
-    prints as ``%`` and lowers to the C ``%`` operator that *truncates*
-    on signed integers).  Used by the HLFIR frontend's ``MODULO``
-    lowering so the C++ codegen routes through ``dace::math::mod``
-    (templated; floored for both int and float)."""
-
-    @classmethod
-    def eval(cls, x, y):
-        if x.is_Number and y.is_Number:
-            return x - y * sympy.floor(x / y)
-
-    def _eval_is_integer(self):
-        return self.args[0].is_integer and self.args[1].is_integer
-
-
-class fortran_mod(DaceFunction):
-    """Floored modulus for use in symbolic expressions / memlet subsets.
-
-    Two-arg ``fortran_mod(a, b)`` -- the Fortran ``MODULO`` semantics:
-    the result has the sign of ``b`` and lies in ``[0, b)`` for ``b > 0``,
-    UNLIKE sympy's ``Mod`` which lowers to the bare C ``%`` operator
-    (truncating on signed integers, so ``(-1) % 5 == -1``).
-
-    A distinct ``Function`` subclass (not ``sympy.Mod``) so it is NOT
-    simplified back to ``Mod`` and survives to C++ codegen, where the
-    printer emits the self-contained floored form
-    ``(((a) % (b)) + (b)) % (b)`` (see ``_print_Function``).  Added for
-    sign-correct array-index wraps (e.g. CSHIFT) without touching the
-    existing ``Mod`` / ``mod`` lowering."""
-
-    @classmethod
-    def eval(cls, x, y):
-        if x.is_Number and y.is_Number:
-            return x - y * sympy.floor(x / y)
-
-    def _eval_is_integer(self):
-        return self.args[0].is_integer and self.args[1].is_integer
 
 
 def _make_typecast_class(name: str) -> type:
@@ -3865,23 +3823,6 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f'{expr.func}[{indices}]'
         if self.cpp_mode and str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
-        # ``fortran_mod(a, b)`` -- a FLOORED modulus (Fortran ``MODULO``
-        # semantics): result lies in ``[0, b)`` for ``b > 0`` for any
-        # sign of ``a`` (``fortran_mod(-1, 5) == 4``).  Distinct from
-        # sympy's ``Mod`` (printed as the bare C ``%`` operator, which
-        # TRUNCATES on signed integers: ``(-1) % 5 == -1``).  Emitted as
-        # the self-contained form ``(((a) % (b)) + (b)) % (b)`` -- pure C
-        # ``%`` (works in the memlet-subset codegen context, where
-        # ``dace::math::`` qualified CALLS don't resolve, only operators
-        # do; and robust to a value/modulus of DIFFERENT integer types,
-        # e.g. ``__i0 - 1`` vs a shape symbol ``n``).  Floored for any
-        # sign.  Added (NOT a change to the existing ``Mod`` / ``mod``
-        # lowering) for sign-correct array-index wraps, e.g. a CSHIFT
-        # source subset ``_x[fortran_mod(i + shift, n)]``.
-        if self.cpp_mode and str(expr.func) == 'fortran_mod':
-            a = self._print(expr.args[0])
-            b = self._print(expr.args[1])
-            return '((((%s) %% (%s)) + (%s)) %% (%s))' % (a, b, b, b)
         # Explicit numeric typecasts (``int32(x)`` / ``float64(x)`` ...)
         # -> the matching ``dace::<type>(x)`` C++ cast (the same form the
         # tasklet-body ``dace.<type>(x)`` lowers to via cppunparse), so a
@@ -4115,9 +4056,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         operands = expr.args
         if name == 'IfExpr':
             operands = expr.args[1:]
-        elif not (isinstance(expr, (sympy.Add, sympy.Mul, sympy.Mod, sympy.Max, sympy.Min, sympy.Abs)) or name
-                  in ('int_floor', 'int_ceil', 'int_floor_ni', 'py_floor', 'py_mod', 'mod', 'fortran_mod',
-                      'bitwise_and', 'bitwise_or', 'bitwise_xor', 'bitwise_invert', 'left_shift', 'right_shift')):
+        elif not (isinstance(expr, (sympy.Add, sympy.Mul, sympy.Mod, sympy.Max, sympy.Min, sympy.Abs))
+                  or name in ('int_floor', 'int_ceil', 'int_floor_ni', 'py_floor', 'py_mod', 'CMod', 'bitwise_and',
+                              'bitwise_or', 'bitwise_xor', 'bitwise_invert', 'left_shift', 'right_shift')):
             return None
         types = tuple(self.c_type(operand) for operand in operands)
         if not types or any(dtype is None for dtype in types):
@@ -4134,7 +4075,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return 'Mod(%s, %s)' % (self._print(dividend), self._print(divisor))
 
     def _print_CMod(self, expr):
-        return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        dividend, divisor = (self._print(argument) for argument in expr.args)
+        # C has no ``%`` on floating point.
+        if self.dialect is cpf_lowering.Dialect.STANDALONE_C and self.c_type(expr) in cpf_lowering.C_FLOATING_RANKS:
+            return cpf_lowering.c_helper_call('c_mod', (dividend, divisor), self.c_argument_types(expr.args))
+        return '((%s) %% (%s))' % (dividend, divisor)
 
     def _print_floor(self, expr):
         """sympy ``floor(...)`` printer.

@@ -3,7 +3,7 @@
 
 The lib node's ``pure`` expansion lowers ``CSHIFT(arr, shift [, dim])``
 to a single Map whose source memlet subset rotates the chosen axis
-(``fortran_mod(__i + shift, n)``), so the tasklet body is just
+(``FtnModulo(__i + shift, n)``), so the tasklet body is just
 ``__out = __in``.  These tests exercise many shape / shift / dim
 combinations of the construction path, verify the pure expansion's
 numerics against ``numpy.roll``, and pin the loud-fail contract when
@@ -156,7 +156,7 @@ def test_cshift_pure_expansion_requires_shift():
 @pytest.mark.parametrize("shift", [2, -1, 0, 1, 4])
 def test_cshift_pure_expansion_computes_circular_shift(shift):
     """``CSHIFT(arr, s)`` rotates LEFT by ``s`` (== ``np.roll(arr, -s)``);
-    the floored ``fortran_mod`` keeps a negative shift in range."""
+    the floored ``FtnModulo`` keeps a negative shift in range."""
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
     sdfg = _build((5, ), dace.float64, dim=1, shift=shift)
     sdfg.expand_library_nodes()

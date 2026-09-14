@@ -498,7 +498,7 @@ class CPPUnparser:
             types = (self.c_type(node.left), self.c_type(node.right))
             if any(dtype is None for dtype in types):
                 return None
-            return cpf_lowering.c_helper_dispatch('py_floor' if isinstance(node.op, ast.FloorDiv) else 'py_mod', types)
+            return cpf_lowering.c_helper_dispatch('py_floor' if isinstance(node.op, ast.FloorDiv) else 'c_mod', types)
         elif isinstance(node, ast.BinOp) and not isinstance(node.op, ast.MatMult):
             operands = [node.left, node.right]
         elif isinstance(node, ast.IfExp):
@@ -509,6 +509,7 @@ class CPPUnparser:
             if node.func.id in cpf_lowering.C_CTYPE_DTYPES:
                 return cpf_lowering.C_CTYPE_DTYPES[node.func.id]
             bare = node.func.id.rsplit('::', 1)[-1]
+            bare = self.modulo_calls.get(bare, bare)
             if bare in cpf_lowering.C_TYPED_MATH:
                 types = tuple(self.c_type(argument) for argument in node.args)
                 return None if any(dtype is None for dtype in types) else cpf_lowering.c_math_result_type(bare, types)
@@ -1329,8 +1330,11 @@ class CPPUnparser:
         # int/complex mixed arithmetic (illegal for std::complex) is emitted.
         if self._complex_literal_fold(t):
             return
-        # Operations that require a function call
-        if t.op.__class__.__name__ in self.funcops and self.c_typed_funcop(t.op):
+        # Operations that require a function call; C has no ``%`` on floating point.
+        if isinstance(t.op,
+                      ast.Mod) and cpf_lowering.standalone_c() and self.c_type(t) in cpf_lowering.C_FLOATING_RANKS:
+            self.emit_call('c_mod', [t.left, t.right])
+        elif t.op.__class__.__name__ in self.funcops and self.c_typed_funcop(t.op):
             self.emit_call(self.funcops[t.op.__class__.__name__][1], [t.left, t.right])
         elif t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
@@ -1588,7 +1592,7 @@ class CPPUnparser:
             # as ``dace::math::sqrt``), or one of the unqualified runtime globals (``reciprocal``,
             # ``int_ceil``). A name with no lowering comes back as the same call this would have
             # printed, so nothing else changes.
-            self.emit_call(t.func.id, t.args)
+            self.emit_call(self.modulo_calls.get(t.func.id, t.func.id), t.args)
             return
 
         if isinstance(t.func, ast.Name) and t.func.id in self.modulo_calls:

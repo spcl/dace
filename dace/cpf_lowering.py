@@ -252,8 +252,7 @@ STD_RENAMES: Dict[str, str] = {
 #:
 #: ``reciprocal`` keeps the runtime's integer-division behaviour for an integer argument: the
 #: runtime is ``T(1) / a``, which for ``T = int`` truncates exactly as ``1 / (a)`` does here.
-#: ``Mod`` is Fortran ``MOD`` on integers, which is plain C++ ``%``; the floating Fortran ``MOD``
-#: is ``Mod_float`` and needs its argument twice, so it is a definition.
+#: ``Mod`` is SymPy's floored modulo, so it is ``py_mod``.
 REWRITES: Dict[str, Tuple[int, str]] = {
     'reciprocal': (1, '(1 / ({0}))'),
     # A complex's components. The runtime helpers forward to ``.real()`` / ``.imag()`` on the
@@ -286,11 +285,7 @@ REWRITES: Dict[str, Tuple[int, str]] = {
 #: argument's type, uses an argument more than once, dispatches on integral-vs-floating, or writes
 #: through out-parameters.
 #:
-#: The modulo family is two DIFFERENT operations and the names do not say which is which:
-#: ``Mod``/``mod``/``py_mod``/``floor_mod``/``Modulo`` are FLOORED (result takes the sign of the
-#: divisor, ``mod(-1, 5) == 4``), while ``cpp_mod``/``Mod_float`` TRUNCATE toward zero
-#: (``cpp_mod(-1, 5) == -1``). Collapsing them onto one spelling would be a silent wrong answer for
-#: half of them.
+#: ``py_mod``/``floor_mod``/``ftn_modulo`` floor (``py_mod(-1, 5) == 4``); ``c_mod``/``ftn_mod`` truncate (``-1``).
 #:
 #: ``sign`` and ``heaviside`` are here rather than in :data:`REWRITES` for a dtype reason. The
 #: runtime's ``sign`` is ``T((T(0) < x) - (x < T(0)))``: the comparisons yield ``bool``, their
@@ -303,8 +298,8 @@ REWRITES: Dict[str, Tuple[int, str]] = {
 #: definition.
 #:
 #: Every definition that CAN be evaluated at compile time is ``constexpr`` (never ``consteval``,
-#: which would forbid the runtime calls that are the normal case). ``Modulo``, ``Modulo_float``,
-#: ``np_modf`` and ``np_frexp`` are not: each reaches a standard function that is not ``constexpr``
+#: which would forbid the runtime calls that are the normal case). ``np_modf`` and ``np_frexp`` are
+#: not: each reaches a standard function that is not ``constexpr``
 #: before C++23 for every instantiation. Marking those ``constexpr`` anyway is ill-formed with no
 #: diagnostic required, and it LOOKS fine -- GCC folds ``std::floor`` as a builtin and accepts it,
 #: while clang rejects the same code. Measured, not assumed; see the constexpr probes in
@@ -626,34 +621,24 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     'static constexpr inline R floor_mod(const T& numerator, const U& denominator) {\n'
     '    return py_mod(numerator, denominator);\n'
     '}',
-    'mod':
-    'template <typename T, typename U, typename R = decltype(std::declval<T>() % std::declval<U>())>\n'
-    'static constexpr inline R mod(const T& value, const U& modulus) {\n'
-    '    return ((value % modulus) + modulus) % modulus;\n'
-    '}',
-    'cpp_mod':
+    'c_mod':
     'template <typename T, typename U, typename R = std::conditional_t<std::is_integral_v<T> && std::is_integral_v<U>, decltype(std::declval<T>() / std::declval<U>()), decltype(std::fmod(std::declval<T>(), std::declval<U>()))>>\n'
-    'static constexpr inline R cpp_mod(const T& numerator, const U& denominator) {\n'
+    'static constexpr inline R c_mod(const T& numerator, const U& denominator) {\n'
     '    if constexpr (std::is_integral_v<T> && std::is_integral_v<U>) {\n'
     '        return numerator % denominator;\n'
     '    } else {\n'
     '        return std::fmod(numerator, denominator);\n'
     '    }\n'
     '}',
-    'Mod_float':
-    'template <typename T>\n'
-    'static constexpr inline T Mod_float(const T& value, const T& modulus) {\n'
-    '    return value - static_cast<int>(value / modulus) * modulus;\n'
+    'ftn_mod':
+    'template <typename T, typename U, typename R = decltype(c_mod(std::declval<T>(), std::declval<U>()))>\n'
+    'static constexpr inline R ftn_mod(const T& numerator, const U& denominator) {\n'
+    '    return c_mod(numerator, denominator);\n'
     '}',
-    'Modulo':
-    'template <typename T>\n'
-    'static inline T Modulo(const T& value, const T& modulus) {\n'
-    '    return value - static_cast<T>(std::floor(static_cast<double>(value) / modulus)) * modulus;\n'
-    '}',
-    'Modulo_float':
-    'template <typename T>\n'
-    'static inline T Modulo_float(const T& value, const T& modulus) {\n'
-    '    return value - static_cast<T>(std::floor(value / modulus)) * modulus;\n'
+    'ftn_modulo':
+    'template <typename T, typename U, typename R = decltype(py_mod(std::declval<T>(), std::declval<U>()))>\n'
+    'static constexpr inline R ftn_modulo(const T& numerator, const U& denominator) {\n'
+    '    return py_mod(numerator, denominator);\n'
     '}',
     'cpp_divmod':
     'template <typename T>\n'
@@ -749,6 +734,8 @@ DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     'py_floor': ('py_divmod', ),
     'py_mod': ('py_divmod', ),
     'floor_mod': ('py_mod', ),
+    'ftn_mod': ('c_mod', ),
+    'ftn_modulo': ('py_mod', ),
 }
 
 #: System headers each inline definition needs, beyond :data:`BASE_HEADERS`.
@@ -764,8 +751,9 @@ DEFINITION_HEADERS: Dict[str, Tuple[str, ...]] = {
     'py_mod': ('<utility>', ),
     'py_divmod': ('<limits>', '<type_traits>'),
     'floor_mod': ('<utility>', ),
-    'mod': ('<utility>', ),
-    'cpp_mod': ('<type_traits>', '<utility>'),
+    'c_mod': ('<type_traits>', '<utility>'),
+    'ftn_mod': ('<utility>', ),
+    'ftn_modulo': ('<utility>', ),
     'np_modf': ('<type_traits>', ),
 }
 
@@ -1771,18 +1759,13 @@ C_TYPED_HELPER_SPECS: Dict[str, Tuple[Tuple[Tuple[str, str], ...], Tuple[Tuple[T
                                                                  C_DIVMOD_HALF_BODY % 'remainder'), )),
     'floor_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')),
                   ((C_ARITHMETIC_DTYPES, '{T}', 'return cpf_py_mod_{t}(numerator, denominator);'), )),
-    'mod': ((('{T}', 'value'), ('{T}', 'modulus')), ((C_SIGNED_DTYPES, '{T}',
-                                                      'return ((value % modulus) + modulus) % modulus;'), )),
-    'cpp_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')),
-                ((C_SIGNED_DTYPES, '{T}', 'return numerator % denominator;'),
-                 (C_FLOATING_DTYPES, '{T}', 'return fmod{f}(numerator, denominator);'))),
-    'Mod_float': ((('{T}', 'value'), ('{T}', 'modulus')), ((C_FLOATING_DTYPES, '{T}',
-                                                            'return value - (int)(value / modulus) * modulus;'), )),
-    'Modulo':
-    ((('{T}', 'value'), ('{T}', 'modulus')),
-     ((C_ARITHMETIC_DTYPES, '{T}', 'return value - ({T})floor((double)(value) / (double)(modulus)) * modulus;'), )),
-    'Modulo_float': ((('{T}', 'value'), ('{T}', 'modulus')),
-                     ((C_FLOATING_DTYPES, '{T}', 'return value - ({T})floor{f}(value / modulus) * modulus;'), )),
+    'c_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')),
+              ((C_SIGNED_DTYPES, '{T}', 'return numerator % denominator;'),
+               (C_FLOATING_DTYPES, '{T}', 'return fmod{f}(numerator, denominator);'))),
+    'ftn_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')), ((C_ARITHMETIC_DTYPES, '{T}',
+                                                                  'return cpf_c_mod_{t}(numerator, denominator);'), )),
+    'ftn_modulo': ((('{T}', 'numerator'), ('{T}', 'denominator')),
+                   ((C_ARITHMETIC_DTYPES, '{T}', 'return cpf_py_mod_{t}(numerator, denominator);'), )),
     'ipow': ((('{T}', 'base'), ('long long', 'exponent')),
              ((C_ARITHMETIC_DTYPES, '{T}',
                '{T} result = 1;\nwhile (exponent > 0) {\n    if (exponent & 1) { result *= base; }\n'
@@ -1794,10 +1777,10 @@ C_TYPED_HELPER_SPECS: Dict[str, Tuple[Tuple[Tuple[str, str], ...], Tuple[Tuple[T
     'gcd': ((('{T}', 'a'), ('{T}', 'b')), ((C_SIGNED_DTYPES, '{T}',
                                             '{T} x = a < 0 ? -a : a;\n{T} y = b < 0 ? -b : b;\nwhile (y != 0) {\n'
                                             '    {T} t = x % y;\n    x = y;\n    y = t;\n}\nreturn x;'), )),
-    'lcm': ((('{T}', 'a'), ('{T}', 'b')),
-            ((C_SIGNED_DTYPES, '{T}',
-              '{T} divisor = cpf_gcd_{t}(a, b);\n{T} product;\nif (divisor == 0) { return 0; }\n'
-              'product = (a / divisor) * b;\nreturn product < 0 ? -product : product;'), )),
+    'lcm':
+    ((('{T}', 'a'), ('{T}', 'b')), ((C_SIGNED_DTYPES, '{T}',
+                                     '{T} divisor = cpf_gcd_{t}(a, b);\n{T} product;\nif (divisor == 0) { return 0; }\n'
+                                     'product = (a / divisor) * b;\nreturn product < 0 ? -product : product;'), )),
     'sign': ((('{T}', 'value'), ), ((C_ARITHMETIC_DTYPES, '{T}', C_SIGN_BODY), )),
     'sgn': ((('{T}', 'value'), ), ((C_ARITHMETIC_DTYPES, '{T}', C_SIGN_BODY), )),
     'sign_numpy_2': ((('{T}', 'value'), ),
