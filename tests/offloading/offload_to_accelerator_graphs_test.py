@@ -908,5 +908,74 @@ def test_a_view_of_a_staged_container_is_staged_with_it():
                 f"{origin} ({sdfg.arrays[origin].storage}) does")
 
 
+def two_arm_branch_sdfg(arms_meet: bool) -> dace.SDFG:
+    """A device map doubles ``A`` into ``t``, and a condition on ``t[0]`` picks one of two device maps writing ``A``.
+
+    With ``arms_meet`` both arms flow into an empty ``end`` state; without it each arm is a sink of
+    the control flow, so the program has two exits.
+    """
+    sdfg = dace.SDFG("two_arm_branch_" + ("meeting" if arms_meet else "sinks"))
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("t", [8], dace.float64, transient=True)
+    fill = sdfg.add_state("fill", is_start_block=True)
+    fill.add_mapped_tasklet("double",
+                            dict(i="0:8"), {"inp": dace.Memlet("A[i]")},
+                            "out = inp * 2.0", {"out": dace.Memlet("t[i]")},
+                            external_edges=True)
+    arms = []
+    for label, condition, offset in (("big", "t[0] > 5.0", "1.0"), ("small", "not (t[0] > 5.0)", "-1.0")):
+        arm = sdfg.add_state(label)
+        arm.add_mapped_tasklet(label,
+                               dict(i="0:8"), {"inp": dace.Memlet("t[i]")},
+                               f"out = inp + {offset}", {"out": dace.Memlet("A[i]")},
+                               external_edges=True)
+        sdfg.add_edge(fill, arm, dace.InterstateEdge(condition=condition))
+        arms.append(arm)
+    if arms_meet:
+        end = sdfg.add_state("end")
+        for arm in arms:
+            sdfg.add_edge(arm, end, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("arms_meet", [False, True], ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
+def test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet: bool) -> None:
+    """Each way out of the program restores ``A``, not only the exit the IR visited last.
+
+    With one sink per arm, the copy-back landed after ``small`` alone and the ``big`` arm returned
+    the caller's array untouched.
+    """
+    sdfg = two_arm_branch_sdfg(arms_meet)
+    OtA().apply_pass(sdfg, {})
+
+    labels = [state.label for state in sdfg.states()]
+    arms = [state for state in sdfg.states() if state.label in ("big", "small")]
+    assert len(arms) == 2 and all(holds_device_map(arm) for arm in arms), f"an arm was not offloaded: {labels}"
+    paths = [path for sink in sdfg.sink_nodes() for path in nx.all_simple_paths(sdfg.nx, sdfg.start_block, sink)]
+    assert len(paths) == 2, f"expected one way out per arm, got {[[s.label for s in p] for p in paths]}"
+    stale_exits = [[state.label for state in path] for path in paths
+                   if not any(writes_container(state, "A") for state in path)]
+    assert not stale_exits, f"these exits never copy A back to the host: {stale_exits}"
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("arms_meet", [False, True], ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
+def test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet: bool) -> None:
+    """3.0 doubles to 6.0 and takes ``big`` (+1 -> 7.0); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""
+    sdfg = two_arm_branch_sdfg(arms_meet)
+    OtA().apply_pass(sdfg, {})
+    sdfg.validate()
+    compiled = sdfg.compile()
+
+    took_big = np.full(8, 3.0)
+    compiled(A=took_big)
+    took_small = np.full(8, 0.5)
+    compiled(A=took_small)
+
+    np.testing.assert_array_equal(took_big, np.full(8, 7.0))
+    np.testing.assert_array_equal(took_small, np.full(8, 0.0))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
