@@ -821,6 +821,33 @@ DACE_MATH_UNARY_LP(exp, dace::bfloat16)
 DACE_MATH_UNARY_LP(log, dace::float16)
 DACE_MATH_UNARY_LP(log, dace::bfloat16)
 #undef DACE_MATH_UNARY_LP
+
+#ifdef DACE_THRUST_COMPLEX
+// ``std::`` has no overload for ``thrust::complex`` (the device complex128/complex64), so the
+// generic forwarders above fail to compile on it. Only functions thrust implements are listed.
+#define DACE_MATH_THRUST_COMPLEX(NAME)                                            \
+  template <typename T>                                                           \
+  DACE_CONSTEXPR DACE_HDFI thrust::complex<T> NAME(const thrust::complex<T>& a) { \
+    return thrust::NAME(a);                                                       \
+  }
+DACE_MATH_THRUST_COMPLEX(exp)
+DACE_MATH_THRUST_COMPLEX(log)
+DACE_MATH_THRUST_COMPLEX(log10)
+DACE_MATH_THRUST_COMPLEX(sqrt)
+DACE_MATH_THRUST_COMPLEX(sin)
+DACE_MATH_THRUST_COMPLEX(cos)
+DACE_MATH_THRUST_COMPLEX(tan)
+DACE_MATH_THRUST_COMPLEX(sinh)
+DACE_MATH_THRUST_COMPLEX(cosh)
+DACE_MATH_THRUST_COMPLEX(tanh)
+DACE_MATH_THRUST_COMPLEX(asin)
+DACE_MATH_THRUST_COMPLEX(acos)
+DACE_MATH_THRUST_COMPLEX(atan)
+DACE_MATH_THRUST_COMPLEX(asinh)
+DACE_MATH_THRUST_COMPLEX(acosh)
+DACE_MATH_THRUST_COMPLEX(atanh)
+#undef DACE_MATH_THRUST_COMPLEX
+#endif
 }  // namespace math
 
 namespace cmath {
