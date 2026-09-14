@@ -1313,7 +1313,10 @@ def reshaped_across_boundary(inner: data.Data, outer_subset: subsets.Subset,
         for extent, size in zip(inner.shape, outer))
 
 
-def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState', nsdfg_node: nodes.NestedSDFG):
+def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG',
+                                  parent_state: 'SDFGState',
+                                  nsdfg_node: nodes.NestedSDFG,
+                                  scope_symbols: Optional[dict[str, dtypes.typeclass]] = None):
     """
     Propagate memlets out of a nested sdfg.
 
@@ -1335,7 +1338,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
     })
 
     sdfg = nsdfg_node.sdfg
-    outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
+    outer_symbols = parent_state.symbols_defined_at(nsdfg_node, scope_symbols)
 
     # Collect contributions from top-level CFG blocks. Plain states contribute
     # directly, while control-flow regions aggregate their child blocks via
@@ -1438,20 +1441,28 @@ def propagate_memlets_sdfg(sdfg: 'SDFG'):
 
         :note: This is an in-place operation on the SDFG.
     """
+    from dace.sdfg.state import sdfg_scope_symbols
+
     # Reset previous annotations first
     reset_state_annotations(sdfg)
 
+    # Once per SDFG: propagation rewrites memlets and annotations, never the symbols, descriptors and
+    # interstate edges this table reads, and rebuilding it per scope walked every descriptor each time.
+    scope_symbols = sdfg_scope_symbols(sdfg)
     for state in sdfg.states():
-        propagate_memlets_state(sdfg, state)
+        propagate_memlets_state(sdfg, state, scope_symbols)
 
     propagate_states(sdfg)
 
 
-def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState'):
+def propagate_memlets_state(sdfg: 'SDFG',
+                            state: 'SDFGState',
+                            scope_symbols: Optional[dict[str, dtypes.typeclass]] = None):
     """ Propagates memlets throughout one SDFG state.
 
         :param sdfg: The SDFG in which the state is situated.
         :param state: The state to propagate in.
+        :param scope_symbols: ``sdfg_scope_symbols(sdfg)`` when the caller already holds it.
         :note: This is an in-place operation on the SDFG state.
     """
     # Algorithm:
@@ -1477,6 +1488,10 @@ def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState'):
     # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
     #    Accumulate information about each array in the target node.
 
+    if scope_symbols is None:
+        from dace.sdfg.state import sdfg_scope_symbols
+        scope_symbols = sdfg_scope_symbols(sdfg)
+
     # First, propagate nested SDFGs in a bottom-up fashion
     for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
@@ -1485,13 +1500,18 @@ def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState'):
             propagate_memlets_sdfg(node.sdfg)
 
             # Propagate memlets out of the nested SDFG.
-            propagate_memlets_nested_sdfg(sdfg, state, node)
+            propagate_memlets_nested_sdfg(sdfg, state, node, scope_symbols)
 
     # Process scopes from the leaves upwards
-    propagate_memlets_scope(sdfg, state, state.scope_leaves())
+    propagate_memlets_scope(sdfg, state, state.scope_leaves(), scope_symbols=scope_symbols)
 
 
-def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate_exit=True):
+def propagate_memlets_scope(sdfg,
+                            state,
+                            scopes,
+                            propagate_entry=True,
+                            propagate_exit=True,
+                            scope_symbols: Optional[dict[str, dtypes.typeclass]] = None):
     """
     Propagate memlets from the given scopes outwards.
 
@@ -1500,9 +1520,14 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
     :param scopes: The ScopeTree object or a list thereof to start from.
     :param propagate_entry: If False, skips propagating out of the scope entry node.
     :param propagate_exit: If False, skips propagating out of the scope exit node.
+    :param scope_symbols: ``sdfg_scope_symbols(sdfg)`` when the caller already holds it.
     :note: This operation is performed in-place on the given SDFG.
     """
     from dace.sdfg.scope import ScopeTree
+    from dace.sdfg.state import sdfg_scope_symbols
+
+    if scope_symbols is None:
+        scope_symbols = sdfg_scope_symbols(sdfg)
 
     if isinstance(scopes, ScopeTree):
         scopes_to_process = [scopes]
@@ -1520,11 +1545,11 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
 
             # Propagate out of entry
             if propagate_entry:
-                _propagate_node(state, scope.entry)
+                _propagate_node(state, scope.entry, scope_symbols)
 
             # Propagate out of exit
             if propagate_exit:
-                _propagate_node(state, scope.exit)
+                _propagate_node(state, scope.exit, scope_symbols)
 
             # Add parent to next frontier
             next_scopes.add(scope.parent)
@@ -1569,7 +1594,7 @@ def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nod
     )
 
 
-def _propagate_node(dfg_state, node):
+def _propagate_node(dfg_state, node, scope_symbols: Optional[dict[str, dtypes.typeclass]] = None):
     if isinstance(node, nodes.EntryNode):
         entry_node = node
         internal_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
@@ -1593,7 +1618,8 @@ def _propagate_node(dfg_state, node):
             edge.data = Memlet()
             continue
         if defined_variables is None:
-            defined_variables = dfg_state.symbols_defined_at(entry_node).keys() | dfg_state.parent.constants.keys()
+            defined_variables = (dfg_state.symbols_defined_at(entry_node, scope_symbols).keys()
+                                 | dfg_state.parent.constants.keys())
         connector = geteconn(edge)
         # An empty internal edge is an ORDERING edge, and ``propagate_memlet`` answers Memlet()
         # for one. Taking it as the seed collapses the external DATA edge to a connector with no

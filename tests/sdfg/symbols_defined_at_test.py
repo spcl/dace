@@ -252,6 +252,52 @@ def test_outside_any_scope_is_empty_of_local_scope_symbols():
     assert 'i' not in syms and 'j' not in syms
 
 
+def test_a_held_scope_table_gives_the_symbols_deriving_it_gives():
+    """Memlet propagation hands one SDFG-scope table to every lookup; a lookup given that table must
+    answer exactly what it answers when it derives the table, and must leave the table unchanged."""
+    from dace.sdfg.state import sdfg_scope_symbols
+
+    sdfg = dace.SDFG('held_table')
+    sdfg.add_symbol('K', dace.int32)
+    sdfg.add_array('A', [N, N], dace.float64)
+    state = sdfg.add_state('s')
+    me, mx = state.add_map('m', dict(i='0:N', j='0:K'))
+    t = state.add_tasklet('t', {}, {'o'}, 'o = i + j')
+    w = state.add_write('A')
+    state.add_nedge(me, t, dace.Memlet())
+    state.add_memlet_path(t, mx, w, src_conn='o', memlet=dace.Memlet('A[i, j]'))
+
+    table = sdfg_scope_symbols(sdfg)
+    before = dict(table)
+    assert state.symbols_defined_at(t, table) == state.symbols_defined_at(t)
+    assert dict(table) == before
+
+
+def test_memlet_propagation_builds_the_sdfg_scope_table_once_per_sdfg(monkeypatch):
+    """Building the table walks every descriptor. sw4_rhs4sg (1781 arrays) spent a third of its
+    ShortLoopUnroll stage rebuilding it once per propagated scope node."""
+    from dace.sdfg import state as state_module
+    from dace.sdfg.propagation import propagate_memlets_sdfg
+
+    sdfg = dace.SDFG('one_table')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    state = sdfg.add_state('s')
+    for name in ('m0', 'm1', 'm2'):
+        state.add_mapped_tasklet(name,
+                                 dict(i='0:N'),
+                                 dict(a=dace.Memlet('A[i]')),
+                                 'b = a',
+                                 dict(b=dace.Memlet('B[i]')),
+                                 external_edges=True)
+
+    calls = []
+    original = state_module.sdfg_scope_symbols
+    monkeypatch.setattr(state_module, 'sdfg_scope_symbols', lambda graph: calls.append(graph) or original(graph))
+    propagate_memlets_sdfg(sdfg)
+    assert len(calls) == 1, len(calls)
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

@@ -1763,7 +1763,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     pass
         return result
 
-    def symbols_defined_at(self, node: nd.Node) -> Dict[str, dtypes.typeclass]:
+    def symbols_defined_at(self,
+                           node: nd.Node,
+                           scope_symbols: Optional[Dict[str, dtypes.typeclass]] = None) -> Dict[str, dtypes.typeclass]:
         """
         Returns all symbols available to a given node.
         The symbols a node can access are a combination of the global SDFG
@@ -1771,13 +1773,17 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         and symbols defined in scope entries in the path to this node.
 
         :param node: The given node.
+        :param scope_symbols: ``sdfg_scope_symbols(self.sdfg)`` when the caller already holds it for a
+                              pass that does not change symbols, descriptors or interstate edges.
+                              Never mutated.
         :return: A dictionary mapping symbol names to their types.
         """
         if node is None:
             return collections.OrderedDict()
 
         sdfg = self.sdfg
-        symbols = enclosing_region_symbols(self, sdfg_scope_symbols(sdfg))
+        base = sdfg_scope_symbols(sdfg) if scope_symbols is None else scope_symbols
+        symbols = enclosing_region_symbols(self, base)
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()
