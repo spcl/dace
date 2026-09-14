@@ -278,6 +278,33 @@ def already_staged(sdfg: SDFG, name: str) -> bool:
     return seen
 
 
+def staging_directions(sdfg: SDFG, name: str, cf_reads: Set[str]) -> Tuple[bool, bool]:
+    """Whether staging ``name`` needs a copy-in (read, including from control flow) and a copy-out."""
+    return name in cf_reads or descriptor_is_read(sdfg, name), descriptor_is_written(sdfg, name)
+
+
+def stage_signature_array(sdfg: SDFG, arr_name: str, arr: 'dace.data.Array', cf_reads: Set[str], rename: Dict[str, str],
+                          staged: List[Tuple[str, str, bool, bool]]) -> None:
+    """Stage the non-transient length-1 array ``arr_name`` into a fresh transient scalar.
+
+    Records the body rename and the copy directions; an unreferenced or already-staged array is left
+    alone so re-application stays a no-op.
+    """
+    is_read, is_written = staging_directions(sdfg, arr_name, cf_reads)
+    if not (is_read or is_written) or already_staged(sdfg, arr_name):
+        return
+    # Fresh name every time (find_new_name): the scalar never collides with an existing descriptor.
+    scal_name, _ = sdfg.add_scalar(f'scal_{arr_name}',
+                                   dtype=arr.dtype,
+                                   storage=arr.storage,
+                                   transient=True,
+                                   lifetime=arr.lifetime,
+                                   debuginfo=arr.debuginfo,
+                                   find_new_name=True)
+    rename[arr_name] = scal_name
+    staged.append((arr_name, scal_name, is_read, is_written))
+
+
 def _copyin_state(sdfg: SDFG) -> SDFGState:
     """A new start state to hold copy-IN edges (prepended before the current start)."""
     return sdfg.add_state_before(sdfg.start_state, 'stage_copyin', is_start_block=True)
@@ -483,23 +510,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                                 find_new_name=False)
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = arr_name in cf_reads or descriptor_is_read(sdfg, arr_name)
-                is_written = descriptor_is_written(sdfg, arr_name)
-                # An unreferenced signature array has nothing to stage, and one already staged would
-                # only gain a second copy hop -- skipping both keeps re-application a true no-op.
-                if not (is_read or is_written) or already_staged(sdfg, arr_name):
-                    continue
-                # Fresh name every time (find_new_name): a re-run over an already-staged array never
-                # collides with the scalar an earlier run created.
-                scal_name, _ = sdfg.add_scalar(f'scal_{arr_name}',
-                                               dtype=arr.dtype,
-                                               storage=arr.storage,
-                                               transient=True,
-                                               lifetime=arr.lifetime,
-                                               debuginfo=arr.debuginfo,
-                                               find_new_name=True)
-                rename[arr_name] = scal_name
-                staged.append((arr_name, scal_name, is_read, is_written))
+                stage_signature_array(sdfg, arr_name, arr, cf_reads, rename, staged)
 
         # Rewrite every body reference of a rewritten descriptor to its target name, collapsing the
         # length-1 subset to the scalar element.
@@ -626,8 +637,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                                find_new_name=False)
                 rename[name] = name
             elif stage_nontransients:
-                is_read = name in cf_reads or descriptor_is_read(sdfg, name)
-                is_written = descriptor_is_written(sdfg, name)
+                is_read, is_written = staging_directions(sdfg, name, cf_reads)
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
                 # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.
