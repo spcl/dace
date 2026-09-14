@@ -16,7 +16,8 @@ from dace.libraries.blas import MatMul
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, NamedRegion,
+                             ReturnBlock)
 
 #: Node types that are only used as base classes and never appear in a schedule tree
 ABSTRACT_NODE_TYPES = {tn.ScheduleTreeNode, tn.ScheduleTreeScope, tn.ControlFlowScope, tn.DataflowScope}
@@ -262,6 +263,15 @@ def _reference_set() -> tn.ScheduleTreeRoot:
     return sdfg.as_schedule_tree()
 
 
+def _named_region() -> tn.ScheduleTreeRoot:
+    sdfg = dace.SDFG('named_region')
+    sdfg.add_array('A', [10], dace.float64)
+    region = NamedRegion('region')
+    sdfg.add_node(region, is_start_block=True)
+    _write_tasklet(region.add_state('write', is_start_block=True), '1', 'A[0]')
+    return sdfg.as_schedule_tree()
+
+
 def _state_boundary() -> tn.ScheduleTreeRoot:
     # State boundaries are inserted during the conversion to an SDFG, but can also be given explicitly
     return tn.ScheduleTreeRoot(
@@ -302,6 +312,7 @@ FACTORIES: dict[type[tn.ScheduleTreeNode], Callable[[], tn.ScheduleTreeRoot]] = 
     tn.NViewEnd: _nview,
     tn.RefSetNode: _reference_set,
     tn.StateBoundaryNode: _state_boundary,
+    tn.NamedRegionScope: _named_region,
 }
 
 

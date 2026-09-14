@@ -11,8 +11,8 @@ from dace import data, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, LoopRegion, ReturnBlock,
-                             SDFGState, UnstructuredControlFlow)
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, LoopRegion, NamedRegion,
+                             ReturnBlock, SDFGState, UnstructuredControlFlow)
 from dace.sdfg.analysis.schedule_tree import passes as stpasses, treenodes as tn
 from dace.sdfg import propagation
 
@@ -500,6 +500,23 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._state_stack.append(conditional_block)
         else:
             self._current_state = merge_state
+
+    def visit_NamedRegionScope(self, node: tn.NamedRegionScope, sdfg: SDFG) -> None:
+        # A labeled grouping becomes a named region, such that the label survives for profiling and transformation
+        # targeting. It constrains nothing, so the body is converted into it unchanged.
+        current_state = self._current_state
+        assert current_state is not None
+        cf_region = current_state.parent_graph
+
+        named_region = NamedRegion(node.label)
+        cf_region.add_node(named_region, ensure_unique_name=True)
+        _insert_and_split_assignments(current_state, named_region, assignments=self._pending_interstate_assignments())
+
+        self._current_state = named_region.add_state(f"named_region_state_{id(node)}", is_start_block=True)
+        self.visit(node.children, sdfg=sdfg)
+        self._flush_pending_assignments(f"named_region_end_{id(node)}")
+
+        self._current_state = _insert_and_split_assignments(named_region, label=f"named_region_after_{id(node)}")
 
     def visit_StateIfScope(self, node: tn.StateIfScope, sdfg: SDFG) -> None:
         # Outside of general blocks, a state transition condition is a regular conditional (e.g., around a goto)
@@ -1345,7 +1362,11 @@ def from_schedule_tree(
     for key, container in stree.containers.items():
         result._arrays[key] = copy.deepcopy(container)
     result.constants_prop = copy.deepcopy(stree.constants)
+    result.callback_mapping = copy.deepcopy(stree.callback_mapping)
     result.symbols = copy.deepcopy(stree.symbols)
+    for code, tree_code in ((result.global_code, stree.global_code), (result.init_code, stree.init_code),
+                            (result.exit_code, stree.exit_code)):
+        code.update(copy.deepcopy(tree_code))
 
     # Restructure or nest the targets of forward gotos, such that they can be lowered to return blocks
     _lower_forward_gotos(stree)

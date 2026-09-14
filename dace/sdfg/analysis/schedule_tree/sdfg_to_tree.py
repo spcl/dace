@@ -6,7 +6,8 @@ import dace
 from dace import data, subsets, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
-                             LoopRegion, ReturnBlock, SDFGState, UnstructuredControlFlow)
+                             FunctionCallRegion, LoopRegion, NamedRegion, ReturnBlock, SDFGState,
+                             UnstructuredControlFlow)
 from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.replace import replace_datadesc_names
 from dace.frontend.python.astutils import negate_expr
@@ -749,6 +750,10 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                 else:
                     pivot = None
 
+        # Function call regions derive from named regions, but are flattened like any other region
+        if isinstance(block, NamedRegion) and not isinstance(block, FunctionCallRegion):
+            return [tn.NamedRegionScope(label=block.label, children=children)]
+
         if isinstance(block, LoopRegion):
             # If this is a loop region, wrap everything in a loop scope node.
             variant = tn.loop_variant(block)
@@ -859,6 +864,8 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
     stree.containers = sdfg.arrays
     stree.symbols = sdfg.symbols
     stree.constants = sdfg.constants_prop
+    stree.callback_mapping = dict(sdfg.callback_mapping)
+    stree.arg_names = list(sdfg.arg_names)
 
     # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of
     # the nested SDFGs' descriptor repositories
@@ -869,6 +876,17 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
         stree.containers.update(transients)
         stree.symbols.update(symbols)
         stree.constants.update(constants)
+        for name, callback in nsdfg.callback_mapping.items():
+            stree.callback_mapping.setdefault(name, callback)
+
+        # Code blocks of all SDFGs are merged per code generation target, without duplicates
+        for merged, code in ((stree.global_code, nsdfg.global_code), (stree.init_code, nsdfg.init_code),
+                             (stree.exit_code, nsdfg.exit_code)):
+            for target, block in code.items():
+                if target not in merged:
+                    merged[target] = CodeBlock(block.as_string, block.language)
+                elif block.as_string.strip() and block.as_string not in merged[target].as_string:
+                    merged[target] = CodeBlock(merged[target].as_string + '\n' + block.as_string, block.language)
 
 
 def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeRoot:
