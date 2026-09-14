@@ -549,6 +549,10 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                 if e in edge_to_stree:
                     result.append(edge_to_stree[e])
                     edges_to_ignore.add(e)
+                elif isinstance(node, dace.nodes.ConsumeEntry) and e.dst_conn == 'IN_stream':
+                    # The consumed stream is read through the scope, so its edge is not a memlet tree leaf
+                    result.append(tn.DynScopeCopyNode(target='IN_stream', memlet=copy.deepcopy(e.data)))
+                    edges_to_ignore.add(e)
 
             # Handle all scoped edges to generate (views)
             views = _generate_views_in_scope(scope_to_edges[node], edge_to_stree)

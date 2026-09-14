@@ -646,6 +646,143 @@ def test_state_machine_in_loop(simplify: bool):
     _roundtrip_and_compare(sdfg, tn.GBlock, simplify, dict(A=np.zeros(10), N=2), dict(A=np.zeros(10), N=7))
 
 
+def _fibonacci_consume_sdfg(chunked: bool) -> dace.SDFG:
+    """
+    Creates an SDFG that computes Fibonacci numbers by consuming a stream and pushing smaller values back into it.
+
+    :param chunked: If True, consumes two elements at a time and stops once the result reaches 44.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('iv', [1], dace.int32)
+    sdfg.add_stream('S', dace.int32, transient=True, buffer_size=256)
+    sdfg.add_array('res', [1], dace.float32)
+    state = sdfg.add_state('state')
+
+    if chunked:
+        entry, exit_node = state.add_consume('cons', ('p', '1'), 'res[0] >= 44', chunksize=2)
+        code = """
+for i in range(__dace_cons_numelems):
+    if s[i] == 1:
+        val = 1
+    elif s[i] > 1:
+        sout = s[i] - 1
+        sout = s[i] - 2
+"""
+        element_memlet = dace.Memlet('S[0:2]')
+        element_memlet.allow_oob = True
+    else:
+        entry, exit_node = state.add_consume('cons', ('p', '1'))
+        code = """
+if s == 1:
+    val = 1
+elif s > 1:
+    sout = s - 1
+    sout = s - 2
+"""
+        element_memlet = dace.Memlet('S[0]')
+    tasklet = state.add_tasklet('fibonacci', {'s'}, {'sout', 'val'}, code)
+
+    state.add_nedge(state.add_read('iv'), state.add_write('S'), dace.Memlet('S[0]'))
+    stream_edge = state.add_edge(state.add_read('S'), None, entry, 'IN_stream', dace.Memlet('S[0]'))
+    stream_edge.data.allow_oob = chunked
+    state.add_edge(entry, 'OUT_stream', tasklet, 's', element_memlet)
+    state.add_memlet_path(tasklet,
+                          exit_node,
+                          state.add_write('S'),
+                          src_conn='sout',
+                          memlet=dace.Memlet('S[0]', volume=-1))
+    state.add_memlet_path(tasklet,
+                          exit_node,
+                          state.add_write('res'),
+                          src_conn='val',
+                          memlet=dace.Memlet('res[0]', wcr='lambda a, b: a + b', volume=-1))
+    return sdfg
+
+
+@pytest.mark.parametrize('chunked', (False, True))
+@pytest.mark.parametrize('simplify', (False, True))
+def test_consume_fibonacci(chunked: bool, simplify: bool):
+    _roundtrip_and_compare(_fibonacci_consume_sdfg(chunked), tn.ConsumeScope, simplify,
+                           dict(iv=np.array([10], np.int32), res=np.zeros(1, np.float32)))
+
+
+def _consume_body_sdfg(in_map: bool, push: bool, multistate: bool) -> dace.SDFG:
+    """
+    Creates an SDFG that fills a stream from an array and consumes it with a nested SDFG, whose result is summed up.
+
+    :param in_map: If True, the consume scope is in a map scope.
+    :param push: If True, the consume body also pushes smaller values back into the stream.
+    :param multistate: If True, the consume body writes twice to a temporary, i.e., requires multiple states.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('V', [4], dace.int32)
+    sdfg.add_stream('S', dace.int32, transient=True)
+    sdfg.add_array('R', [1], dace.int32)
+    fill = sdfg.add_state('fill', is_start_block=True)
+    _, fill_entry, _ = fill.add_mapped_tasklet('fill',
+                                               dict(k='0:4'), {'inp': dace.Memlet('V[k]')},
+                                               'out = inp', {'out': dace.Memlet('S[0]')},
+                                               external_edges=True)
+    fill_entry.map.schedule = dace.ScheduleType.Sequential
+
+    inner = dace.SDFG('inner')
+    inner.add_scalar('x', dace.int32)
+    inner.add_scalar('y', dace.int32)
+    inner.add_array('T', [1], dace.int32, transient=True)
+    first = inner.add_state('first', is_start_block=True)
+    _write_tasklet(first, 'out = inp * 2', {'inp': 'x'}, 'T[0]')
+    last = first
+    if multistate:
+        last = inner.add_state_after(first, 'overwrite')
+        _write_tasklet(last, 'out = inp + 1', {'inp': 'x'}, 'T[0]')
+    result_state = inner.add_state_after(last, 'result')
+    outputs = {'y'}
+    if push:
+        inner.add_stream('Q', dace.int32)
+        tasklet = result_state.add_tasklet('compute', {'inp', 'elem'}, {'out', 'q'},
+                                           'out = inp\nif elem > 1:\n    q = elem - 1')
+        result_state.add_edge(result_state.add_read('T'), None, tasklet, 'inp', dace.Memlet('T[0]'))
+        result_state.add_edge(result_state.add_read('x'), None, tasklet, 'elem', dace.Memlet('x'))
+        result_state.add_edge(tasklet, 'out', result_state.add_write('y'), None, dace.Memlet('y'))
+        result_state.add_edge(tasklet, 'q', result_state.add_write('Q'), None, dace.Memlet('Q[0]'))
+        outputs.add('Q')
+    else:
+        _write_tasklet(result_state, 'out = inp', {'inp': 'T[0]'}, 'y')
+
+    state = sdfg.add_state_after(fill, 'consume')
+    entry, exit_node = state.add_consume('cons', ('p', '1'))
+    body = state.add_nested_sdfg(inner, {'x'}, outputs)
+    stream = state.add_read('S')
+    state.add_edge(entry, 'OUT_stream', body, 'x', dace.Memlet('S[0]'))
+    path = []
+    if in_map:
+        map_entry, map_exit = state.add_map('map', dict(i='0:1'))
+        state.add_memlet_path(stream, map_entry, entry, dst_conn='IN_stream', memlet=dace.Memlet('S[0]'))
+        path = [map_exit]
+    else:
+        state.add_edge(stream, None, entry, 'IN_stream', dace.Memlet('S[0]'))
+    state.add_memlet_path(body,
+                          exit_node,
+                          *path,
+                          state.add_write('R'),
+                          src_conn='y',
+                          memlet=dace.Memlet('R[0]', wcr='lambda a, b: a + b'))
+    if push:
+        state.add_memlet_path(body, exit_node, *path, state.add_write('S'), src_conn='Q', memlet=dace.Memlet('S[0]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('multistate', (False, True))
+@pytest.mark.parametrize('push', (False, True))
+@pytest.mark.parametrize('in_map', (False, True))
+def test_consume_body(in_map: bool, push: bool, multistate: bool):
+    sdfg = _consume_body_sdfg(in_map, push, multistate)
+    new_sdfg = _roundtrip_and_compare(sdfg, tn.ConsumeScope, False,
+                                      dict(V=np.arange(4, dtype=np.int32), R=np.zeros(1, np.int32)))
+    # A body that requires multiple states is nested (within the nested SDFG of the map, if any)
+    assert len(list(new_sdfg.all_sdfgs_recursive())) == 1 + int(multistate) * (1 + int(in_map))
+
+
 if __name__ == '__main__':
     test_implicit_inline_and_constants()
     test_name_propagation()
@@ -671,4 +808,10 @@ if __name__ == '__main__':
         test_state_machine_if_else(simplify)
         test_state_machine_loop(simplify)
         test_state_machine_in_loop(simplify)
+        test_consume_fibonacci(False, simplify)
+        test_consume_fibonacci(True, simplify)
+    for in_map in (False, True):
+        for push in (False, True):
+            for multistate in (False, True):
+                test_consume_body(in_map, push, multistate)
     test_transients_and_nested_sdfg()
