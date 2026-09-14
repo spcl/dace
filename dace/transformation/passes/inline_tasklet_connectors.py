@@ -18,7 +18,7 @@ import warnings
 from typing import Dict, List, Optional, Set, Tuple
 
 from dace import data as dt
-from dace import dtypes
+from dace import dtypes, subsets
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
@@ -163,16 +163,20 @@ class InlineTaskletConnectors(ppl.Pass):
         """The connectors of ``node`` that could be inlined. Pure -- decides, never rewrites."""
         in_acc: Dict[str, Tuple[str, List[str]]] = {}
         out_acc: Dict[str, Tuple[str, List[str]]] = {}
+        in_subset: Dict[str, subsets.Subset] = {}
+        out_subset: Dict[str, subsets.Subset] = {}
         for edge in state.in_edges(node):
             info = self._connector_access(osdfg, state, node, edge, is_output=False)
             if info is not None:
                 conn, data, indices = info
                 in_acc[conn] = (data, indices)
+                in_subset[conn] = edge.data.subset
         for edge in state.out_edges(node):
             info = self._connector_access(osdfg, state, node, edge, is_output=True)
             if info is not None:
                 conn, data, indices = info
                 out_acc[conn] = (data, indices)
+                out_subset[conn] = edge.data.subset
 
         # Connector names are unique within the in-set and within the out-set, but
         # an inout connector shares a name across both. Inline such a name only if
@@ -189,6 +193,17 @@ class InlineTaskletConnectors(ppl.Pass):
                 # else: leave the inout connector in classic form
             else:
                 accesses[name] = in_acc.get(name, out_acc.get(name))
+
+        # An input read under its own name must keep the value from before the tasklet. Once another
+        # output writing an element it may alias names the array too, a later read sees the new value
+        # (``X[i] = X[i] + 1.0; Y[i] = X[i] * 2.0``), so that input keeps its copy-in.
+        for name in in_acc:
+            if name in inout or name not in accesses:
+                continue
+            if any(out_acc[other][0] == in_acc[name][0]
+                   and subsets.intersects(in_subset[name], out_subset[other]) is not False for other in out_acc
+                   if other != name):
+                del accesses[name]
 
         # Only Python bodies are rewritten. A C++/other body is emitted verbatim (no subscript
         # flattening), so an inlined ``A[i, j]`` would become a comma-operator bug -- keep it classic.

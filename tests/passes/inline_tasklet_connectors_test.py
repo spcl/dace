@@ -106,6 +106,53 @@ def test_shadowed_connector_not_inlined():
     sdfg.validate()
 
 
+def read_after_write_sdfg(name: str, read_index: str) -> dace.SDFG:
+    """``o_x`` writes ``X[2 * i]``, then ``o_y`` reads ``X[<read_index>]`` through ``x_in``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('X', [2 * N], dace.float64)
+    sdfg.add_array('Y', [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:N'))
+    tasklet = state.add_tasklet('rw', {'x_in': None}, {'o_x': None, 'o_y': None}, 'o_x = x_in + 1.0\no_y = x_in * 2.0')
+    state.add_memlet_path(state.add_read('X'), me, tasklet, dst_conn='x_in', memlet=dace.Memlet(f'X[{read_index}]'))
+    state.add_memlet_path(tasklet, mx, state.add_write('X'), src_conn='o_x', memlet=dace.Memlet('X[2 * i]'))
+    state.add_memlet_path(tasklet, mx, state.add_write('Y'), src_conn='o_y', memlet=dace.Memlet('Y[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_read_of_an_element_another_output_writes_keeps_its_copy():
+    """Inlined, ``o_y`` would read the ``X[2i]`` that ``o_x`` just wrote; ``x_in`` stays a connector and ``Y``
+    gets twice the old value."""
+    sdfg = read_after_write_sdfg('inline_aliased_read', '2 * i')
+    InlineTaskletConnectors().apply_pass(sdfg, {})
+    assert 'x_in' in _tasklets(sdfg)[0].code.as_string
+
+    n = 5
+    X = np.random.default_rng(3).standard_normal(2 * n)
+    x_inout = X.copy()
+    Y = np.zeros(n)
+    sdfg(X=x_inout, Y=Y, N=n)
+    assert np.array_equal(x_inout[0::2], X[0::2] + 1.0)
+    assert np.array_equal(Y, X[0::2] * 2.0)
+
+
+def test_a_read_disjoint_from_another_outputs_write_is_inlined():
+    """``x_in`` reads ``X[2i + 1]`` and ``o_x`` writes ``X[2i]``, never the same element, so both are inlined."""
+    sdfg = read_after_write_sdfg('inline_disjoint_read', '2 * i + 1')
+    InlineTaskletConnectors().apply_pass(sdfg, {})
+    body = _tasklets(sdfg)[0].code.as_string
+    assert 'x_in' not in body and 'o_x' not in body
+
+    n = 5
+    X = np.random.default_rng(4).standard_normal(2 * n)
+    x_inout = X.copy()
+    Y = np.zeros(n)
+    sdfg(X=x_inout, Y=Y, N=n)
+    assert np.array_equal(x_inout[0::2], X[1::2] + 1.0)
+    assert np.array_equal(Y, X[1::2] * 2.0)
+
+
 def _keyword_named_input_sdfg():
     """A writer and a reader of a length-1 transient, with the input array named ``in``."""
     sdfg = dace.SDFG('keyword_named_input')
