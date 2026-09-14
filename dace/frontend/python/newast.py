@@ -1273,6 +1273,27 @@ class DefinedNames(collections.abc.Mapping):
         return result
 
 
+def transient_python_renames(arrays: Dict[str, data.Data], variables: Dict[str, str]) -> List[Dict[str, str]]:
+    """The transient renames ``ProgramVisitor.parse_program`` makes, in order, one replacement dict each.
+
+    Replays the per-variable checks against a copy of ``arrays``, moving each renamed key the way
+    ``SDFG.replace_dict`` does, so a later variable sees the names earlier renames left behind.
+    """
+    current = dict(arrays)
+    renames: List[Dict[str, str]] = []
+    for pyname, arrname in variables.items():
+        if arrname not in current or pyname in FORBIDDEN_ARRAY_NAMES:
+            continue
+        desc = current[arrname]
+        if not desc.transient or not pyname or not dtypes.validate_name(pyname) or pyname in current:
+            continue
+        repl = {f'{arrname}.{k}': f'{pyname}.{k}' for k in desc.keys()} if isinstance(desc, data.Structure) else {}
+        repl[arrname] = pyname
+        renames.append(repl)
+        current[pyname] = current.pop(arrname)
+    return renames
+
+
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
@@ -1544,16 +1565,15 @@ class ProgramVisitor(ExtNodeVisitor):
                 nodes = _views_to_data(state, nodes)
 
         # Try to replace transients with their python-assigned names
-        for pyname, arrname in self.variables.items():
-            if arrname in self.sdfg.arrays and pyname not in FORBIDDEN_ARRAY_NAMES:
-                desc = self.sdfg.arrays[arrname]
-                if desc.transient:
-                    if (pyname and dtypes.validate_name(pyname) and pyname not in self.sdfg.arrays):
-                        repl_dict = dict()
-                        if isinstance(desc, data.Structure):
-                            repl_dict = {f"{arrname}.{k}": f"{pyname}.{k}" for k in desc.keys()}
-                        repl_dict[arrname] = pyname
-                        self.sdfg.replace_dict(repl_dict)
+        renames = transient_python_renames(self.sdfg.arrays, self.variables)
+        sources = {old for repl in renames for old in repl}
+        if renames and all(new not in sources for repl in renames for new in repl.values()):
+            # One walk of the SDFG for every name: a walk per name was 40% of sw4_rhs4sg's parse.
+            self.sdfg.replace_dict({old: new for repl in renames for old, new in repl.items()})
+        else:
+            # A name that is both a rename source and a target only means what it did when applied in order.
+            for repl in renames:
+                self.sdfg.replace_dict(repl)
 
         propagate_states(self.sdfg)
         for state, memlet, _inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
