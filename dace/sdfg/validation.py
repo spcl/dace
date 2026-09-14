@@ -1336,12 +1336,14 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return nodes[self.node_id]
 
     def __str__(self):
+        block = self.resolve_block()
         state = self.resolve_state()
         node = self.resolve_node(state)
 
-        if self.node_id is None:
+        # A control flow block that is not a state has no nodes to index into
+        if self.node_id is None or block is not state:
             nodestr = ''
-            locinfo = self._getlineinfo(state)
+            locinfo = self._getlineinfo(block)
         elif node is None:
             nodestr = f', node {self.unresolved("node", self.node_id)}'
             locinfo = self._getlineinfo(state)
@@ -1355,7 +1357,7 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         if self.path:
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
-        return f'{self.message} (at state {self.state_label(state)}{nodestr}){locinfo}'
+        return f'{self.message} (at state {self.state_label(block)}{nodestr}){locinfo}'
 
 
 class NodeNotExpandedError(InvalidSDFGNodeError):
@@ -1403,12 +1405,14 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return edges[self.edge_id]
 
     def __str__(self):
+        block = self.resolve_block()
         state = self.resolve_state()
         e = self.resolve_edge(state)
 
-        if self.edge_id is None:
+        # A control flow block that is not a state has no edges to index into
+        if self.edge_id is None or block is not state:
             edgestr = ''
-            locinfo = self._getlineinfo(state)
+            locinfo = self._getlineinfo(block)
         elif e is None:
             edgestr = f', edge {self.unresolved("edge", self.edge_id)}'
             locinfo = self._getlineinfo(state)
@@ -1428,7 +1432,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         if self.path:
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
-        return f'{self.message} (at state {self.state_label(state)}{edgestr}){locinfo}'
+        return f'{self.message} (at state {self.state_label(block)}{edgestr}){locinfo}'
 
 
 def validate_memlet_data(memlet_data: str, access_data: str) -> bool:
