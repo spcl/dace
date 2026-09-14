@@ -146,7 +146,8 @@ Supported
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Supported. ``%`` and ``//`` on data follow NumPy's ``divmod``: the remainder takes the divisor's
-sign, and an integer divided by zero gives 0 instead of trapping.
+sign, and an integer divided by zero gives 0 instead of trapping. The program's ``%`` is emitted as ``PyMod``, since
+a bare ``%`` in an SDFG is C's modulo (see :ref:`division-modulo`).
 
 6.8 Shifting operations
 ^^^^^^^^^^^^^^^^^^^^^^^

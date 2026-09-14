@@ -1066,15 +1066,16 @@ class MathFunctions(IntrinsicTransformation):
         # However, we already replaced kind with types used in DaCe.
         # Thus, a REAL that is really DOUBLE will be double in the first argument.
         "LOG": MathTransformation("log", "FIRST_ARG"),
+        # MOD truncates like C, MODULO floors like Python (see :ref:`division-modulo`).
         "MOD": {
-            "INTEGER": MathTransformation("Mod", "INTEGER"),
-            "REAL": MathTransformation("Mod_float", "REAL"),
-            "DOUBLE": MathTransformation("Mod_float", "DOUBLE")
+            "INTEGER": MathTransformation("FtnMod", "INTEGER"),
+            "REAL": MathTransformation("FtnMod", "REAL"),
+            "DOUBLE": MathTransformation("FtnMod", "DOUBLE")
         },
         "MODULO": {
-            "INTEGER": MathTransformation("Modulo", "INTEGER"),
-            "REAL": MathTransformation("Modulo_float", "REAL"),
-            "DOUBLE": MathTransformation("Modulo_float", "DOUBLE")
+            "INTEGER": MathTransformation("FtnModulo", "INTEGER"),
+            "REAL": MathTransformation("FtnModulo", "REAL"),
+            "DOUBLE": MathTransformation("FtnModulo", "DOUBLE")
         },
         "FLOOR": {
             "REAL": MathTransformation("floor", "INTEGER"),

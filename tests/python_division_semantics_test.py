@@ -1,22 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``//`` and ``%`` in a tasklet mean what they mean in Python, hence in numpy.
+"""Division and modulo semantics (doc/sdfg/ir.rst, "Division and Modulo Semantics").
 
-Both round the quotient toward NEGATIVE INFINITY, so the remainder takes the divisor's sign:
-``-32 // 7`` is ``-5`` and ``-32 % 7`` is ``3``. C rounds toward zero and gives the remainder the
-dividend's sign (``-4`` and ``-4``), and C has no ``%`` for floating point at all. Neither operator
-can therefore be written infix, and both were: ``//`` came out as ``ifloor(a / b)``, where the
-integer division has already truncated and flooring an integer changes nothing, and ``%`` came out
-as a bare ``%``, which answered ``-4`` on integers and failed to compile on floats.
+A Python program's ``//`` and ``%`` mean what they mean in Python, hence in numpy: both round the quotient toward
+NEGATIVE INFINITY, so the remainder takes the divisor's sign (``-32 // 7`` is ``-5`` and ``-32 % 7`` is ``3``). C
+rounds toward zero and gives the remainder the dividend's sign (``-4`` and ``-4``), and C has no ``%`` for floating
+point at all. A bare ``%`` in an SDFG is C's; ``PyMod``, ``FtnMod``, ``FtnModulo`` and ``CMod`` name the others.
 
-The device half of the table is not redundant with the host half. The correction term is a BRANCH,
-and the branch is what once held a call to host-only ``std::div``: nvcc answers a host call from
-device code with warning #20011 rather than an error and deletes the region around it, so the kernel
-launched, returned success, and stored nothing (tsvc ``s315``). Only running it on the device says
-the branch survived.
+The device half of the table is not redundant with the host half. The correction term is a BRANCH, and the branch is
+what once held a call to host-only ``std::div``: nvcc answers a host call from device code with warning #20011 rather
+than an error and deletes the region around it, so the kernel launched, returned success, and stored nothing (tsvc
+``s315``). Only running it on the device says the branch survived.
 
-Both are halves of ``py_divmod``, which answers a zero divisor as numpy does (``0`` for integers,
-``inf``/``nan`` for floats); that and the other special values are tabled in
-``tests/numpy/ufunc_multi_output_test.py``.
+Both are halves of ``py_divmod``, which answers a zero divisor as numpy does (``0`` for integers, ``inf``/``nan`` for
+floats); that and the other special values are tabled in ``tests/numpy/ufunc_multi_output_test.py``.
 """
 import itertools
 
@@ -25,8 +21,12 @@ import pytest
 import sympy
 
 import dace
+from dace import symbolic
 
 N = dace.symbol('N', dtype=dace.int64)
+I = dace.symbol('I', dtype=dace.int64)
+K = dace.symbol('K', nonnegative=True)
+M = dace.symbol('M', positive=True)
 
 #: Both signs, a divisor that divides evenly and ones that do not: the disagreement needs a nonzero
 #: remainder and operands of opposite sign, and every such combination is here.
@@ -70,6 +70,7 @@ def test_floor_division_and_modulo_agree_with_numpy(op, name, dtype, nptype, tar
     expected = (a // b) if op == '//' else (a % b)
 
     sdfg = division_program(op, dtype).to_sdfg()
+    sdfg.name = f'division_{"floordiv" if op == "//" else "mod"}_{name}_{target}'  # one build folder per case
     if target == 'device':
         sdfg.apply_gpu_transformations()
     out = np.zeros(a.shape, dtype=nptype)
@@ -86,7 +87,9 @@ def test_neither_operator_is_emitted_infix(op, call):
     The numeric table above would catch an infix ``%`` on integers but not on floats, where the
     emitted line does not compile at all and there is no number to compare.
     """
-    code = division_program(op, dace.int64).to_sdfg().generate_code()[0].clean_code
+    sdfg = division_program(op, dace.int64).to_sdfg()
+    sdfg.name = f'division_code_{"floordiv" if op == "//" else "mod"}'
+    code = sdfg.generate_code()[0].clean_code
     assert call in code, f'{op} lowered without {call}, so it lowered infix'
 
 
@@ -136,11 +139,6 @@ def test_a_negative_modulo_in_a_subscript_is_floored(n, target):
     assert np.array_equal(out, expected), (out, expected)
 
 
-I = dace.symbol('I')
-K = dace.symbol('K', nonnegative=True)
-M = dace.symbol('M', positive=True)
-
-
 @pytest.mark.parametrize('dividend,divisor,infix', (
     (I - 2, N, False),
     (K, N, False),
@@ -153,3 +151,125 @@ def test_sympy_mod_prints_the_c_operator_only_where_no_sign_can_differ(dividend,
     printed = dace.symbolic.symstr(sympy.Mod(dividend, divisor, evaluate=False), cpp_mode=True)
     assert ('%' in printed and 'py_mod' not in printed) == infix, printed
     assert ('py_mod(' in printed) == (not infix), printed
+
+
+@pytest.mark.parametrize('text,value',
+                         (('(-7) % 3', -1), ('7 % (-3)', 1), ('CMod(-7, 3)', -1), ('FtnMod(-7, 3)', -1),
+                          ('Mod(-7, 3)', 2), ('PyMod(-7, 3)', 2), ('PyMod(7, -3)', -2), ('FtnModulo(-7, 3)', 2)))
+def test_a_constant_modulo_folds_with_the_rounding_its_spelling_names(text, value):
+    """``%``, ``CMod`` and ``FtnMod`` truncate; ``Mod``, ``PyMod`` and ``FtnModulo`` floor."""
+    assert symbolic.pystr_to_symbolic(text) == value
+
+
+def test_a_symbolic_modulo_reads_back_from_its_string_with_its_own_rounding():
+    """SymPy prints its floored ``Mod`` as ``Mod(a, b)`` and a bare ``%`` parses to C's modulo, so the two must not
+    print alike: a saved SDFG would otherwise load with the other rounding."""
+    floored = symbolic.pystr_to_symbolic('PyMod(I - 2, N)')
+    truncating = symbolic.pystr_to_symbolic('(I - 2) % N')
+
+    floored_back = symbolic.pystr_to_symbolic(str(floored))
+    truncating_back = symbolic.pystr_to_symbolic(str(truncating))
+
+    assert floored_back == floored and truncating_back == truncating
+    assert floored_back.subs({I: 0, N: 5}) == 3
+    assert truncating_back.subs({I: 0, N: 5}) == -2
+    assert 'py_mod(' in symbolic.symstr(floored, cpp_mode=True)
+    assert '%' in symbolic.symstr(truncating, cpp_mode=True)
+
+
+def test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_sympy_mod():
+    """The two roundings agree there, so simplification sees a single form."""
+    assert isinstance(symbolic.pystr_to_symbolic('CMod(K, M)', symbol_map={'K': K, 'M': M}), sympy.Mod)
+
+
+def elementwise_tasklet_sdfg(name: str, code: str, dtype) -> dace.SDFG:
+    """``z = <code>`` over ``a`` and ``b``, built with the SDFG API rather than a frontend."""
+    sdfg = dace.SDFG(name)
+    for array in ('a', 'b', 'out'):
+        sdfg.add_array(array, [N], dtype)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('elements', dict(i='0:N'))
+    tasklet = state.add_tasklet('remainder', {'x': dtype, 'y': dtype}, {'z': dtype}, code)
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(state.add_read('b'), entry, tasklet, dst_conn='y', memlet=dace.Memlet('b[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('out'), src_conn='z', memlet=dace.Memlet('out[i]'))
+    return sdfg
+
+
+INT64 = ('int64', dace.int64, np.int64)
+FLOAT64 = ('float64', dace.float64, np.float64)
+TASKLET_CASES = (('percent', 'z = x % y', INT64, np.fmod), ('cmod', 'z = CMod(x, y)', INT64, np.fmod),
+                 ('cmod', 'z = CMod(x, y)', FLOAT64, np.fmod), ('ftnmod', 'z = FtnMod(x, y)', INT64, np.fmod),
+                 ('ftnmod', 'z = FtnMod(x, y)', FLOAT64, np.fmod), ('pymod', 'z = PyMod(x, y)', INT64, np.mod),
+                 ('pymod', 'z = PyMod(x, y)', FLOAT64, np.mod), ('ftnmodulo', 'z = FtnModulo(x, y)', INT64, np.mod),
+                 ('ftnmodulo', 'z = FtnModulo(x, y)', FLOAT64, np.mod))
+
+
+@pytest.mark.parametrize('label,code,types,reference', TASKLET_CASES)
+def test_a_tasklet_modulo_computes_what_its_spelling_names(label, code, types, reference):
+    """A tasklet's ``%`` is C's, whatever language its code is written in; the named functions pick the others."""
+    name, dtype, nptype = types
+    a, b = operand_pairs(nptype)
+    sdfg = elementwise_tasklet_sdfg(f'tasklet_modulo_{label}_{name}', code, dtype)
+
+    out = np.zeros(a.shape, dtype=nptype)
+    sdfg(a=a, b=b, out=out, N=a.shape[0])
+
+    assert np.array_equal(out, reference(a, b))
+
+
+def interstate_modulo_sdfg(name: str, assignment: str) -> dace.SDFG:
+    """Assigns ``k = <assignment>`` on an inter-state edge and stores ``k``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol('I', dace.int64)
+    sdfg.add_array('out', [1], dace.int64)
+    first = sdfg.add_state('first', is_start_block=True)
+    second = sdfg.add_state('second')
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'k': assignment}))
+    tasklet = second.add_tasklet('store', {}, {'o': dace.int64}, 'o = k')
+    second.add_edge(tasklet, 'o', second.add_write('out'), None, dace.Memlet('out[0]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('label,assignment,value', (('percent', '(I - 7) % 3', -1), ('pymod', 'PyMod(I - 7, 3)', 2)))
+def test_an_interstate_edge_modulo_computes_what_its_spelling_names(label, assignment, value):
+    """A symbolic ``%`` is C's too; ``PyMod`` floors."""
+    sdfg = interstate_modulo_sdfg(f'interstate_modulo_{label}', assignment)
+
+    out = np.zeros(1, dtype=np.int64)
+    sdfg(out=out, I=0)
+
+    assert out[0] == value
+
+
+@dace.program
+def floored_condition(out: dace.int64[1]):
+    if (I - 3) % 4 == 1:
+        out[0] = 1
+    else:
+        out[0] = 0
+
+
+def test_a_python_program_modulo_in_a_condition_floors():
+    """``(0 - 3) % 4`` is ``1`` in Python and ``-3`` in C."""
+    out = np.zeros(1, dtype=np.int64)
+
+    floored_condition(out=out, I=0)
+
+    assert out[0] == 1
+
+
+if __name__ == '__main__':
+    for operator in ('//', '%'):
+        for dtype_name, dace_type, numpy_type in DTYPES:
+            test_floor_division_and_modulo_agree_with_numpy(operator, dtype_name, dace_type, numpy_type, 'host')
+    test_neither_operator_is_emitted_infix('//', 'py_floor(')
+    test_neither_operator_is_emitted_infix('%', 'py_mod(')
+    for size in (1, 2, 5, 7):
+        test_a_negative_modulo_in_a_loop_bound_is_floored(size)
+        test_a_negative_modulo_in_a_subscript_is_floored(size, 'host')
+    test_a_symbolic_modulo_reads_back_from_its_string_with_its_own_rounding()
+    test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_sympy_mod()
+    for case in TASKLET_CASES:
+        test_a_tasklet_modulo_computes_what_its_spelling_names(*case)
+    test_a_python_program_modulo_in_a_condition_floors()

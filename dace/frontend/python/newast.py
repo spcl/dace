@@ -5231,6 +5231,10 @@ class ProgramVisitor(ExtNodeVisitor):
         state.add_edge(tasklet, out_conn, ws, None, Memlet(arr_name))
 
     def visit_Call(self, node: ast.Call, create_callbacks=False):
+        # Python's ``%`` arrives as ``PyMod`` (preprocessing.ModuloConverter) and is parsed as the operator.
+        if isinstance(node.func, ast.Name) and node.func.id == 'PyMod' and len(node.args) == 2 and not node.keywords:
+            binop = ast.copy_location(ast.BinOp(left=node.args[0], op=ast.Mod(), right=node.args[1]), node)
+            return self._visit_op(binop, node.args[0], node.args[1])
         func = None
         funcname = None
         # If the call directly refers to an SDFG or dace-compatible program

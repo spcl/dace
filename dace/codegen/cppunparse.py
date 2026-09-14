@@ -1274,23 +1274,17 @@ class CPPUnparser:
         "RShift": ">>",
         "BitOr": "|",
         "BitXor": "^",
-        "BitAnd": "&"
+        "BitAnd": "&",
+        "Mod": "%"
     }
-    #: ``//`` and ``%`` are PYTHON's, which is numpy's: the quotient rounds toward negative infinity
-    #: and the remainder therefore takes the DIVISOR's sign. C rounds toward zero and gives the
-    #: remainder the dividend's sign, so neither operator can be written infix.
-    #:
-    #: ``ifloor(a / b)`` was the old spelling of ``//`` and was wrong on integers, where ``a / b``
-    #: has already truncated and flooring an integer changes nothing (``-32 // 7`` -> ``-4``, Python
-    #: says ``-5``). A bare ``%`` was wrong on integers the same way (``-32 % 7`` -> ``-4``, Python
-    #: says ``3``) and did not compile at all on floats, where C has no ``%``. ``py_floor`` and
-    #: ``py_mod`` dispatch on the operand type and answer for every one of them.
+    # ``//`` is Python's floor division, which C cannot write infix: C's ``/`` truncates toward zero
+    # (``-32 // 7`` is ``-5``, C gives ``-4``), and ``ifloor(a / b)`` floors a quotient that has already
+    # truncated on integers. ``py_floor`` dispatches on the operand type. A tasklet's ``%`` is C's and
+    # stays infix; a frontend that means another modulo calls it by name (see :ref:`division-modulo`).
     funcops = {
         "FloorDiv": (",", "py_floor"),
-        "Mod": (",", "py_mod"),
         "MatMult": (",", "dace::gemm"),
     }
-
     #: Arithmetic ops folded over two complex literal operands (see _BinOp).
     binop_lambda = {
         'Add': (lambda a, b: a + b),
@@ -1530,6 +1524,15 @@ class CPPUnparser:
         'im': 'dace::math::im',
         **cpf_lowering.RUNTIME_QUALIFIED_MATH,
     }
+    # The modulo functions a frontend spells by name, and their runtime helpers (see :ref:`division-modulo`).
+    # ``Mod`` is SymPy's floored modulo, printed by name when it does not agree with C's ``%``.
+    modulo_calls = {
+        "CMod": "c_mod",
+        "FtnMod": "ftn_mod",
+        "Mod": "py_mod",
+        "PyMod": "py_mod",
+        "FtnModulo": "ftn_modulo",
+    }
 
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
@@ -1590,7 +1593,10 @@ class CPPUnparser:
             self.emit_call(t.func.id, t.args)
             return
 
-        self.dispatch(t.func)
+        if isinstance(t.func, ast.Name) and t.func.id in self.modulo_calls:
+            self.write(self.modulo_calls[t.func.id])
+        else:
+            self.dispatch(t.func)
         self.write("(")
         comma = False
         for e in t.args:
