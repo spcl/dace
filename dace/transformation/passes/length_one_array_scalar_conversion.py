@@ -271,6 +271,14 @@ def descriptor_access_summary(sdfg: SDFG) -> Tuple[Set[str], Set[str], Set[str]]
     return read, written, gpu_written
 
 
+def staging_access_summary(sdfg: SDFG, stage_nontransients: bool) -> Tuple[Set[str], Set[str], Set[str]]:
+    """:func:`descriptor_access_summary`, with control-flow reads counted as reads when staging."""
+    read, written, gpu_written = descriptor_access_summary(sdfg)
+    if stage_nontransients:
+        read = read | control_flow_reads(sdfg)
+    return read, written, gpu_written
+
+
 def _copyin_state(sdfg: SDFG) -> SDFGState:
     """A new start state to hold copy-IN edges (prepended before the current start)."""
     return sdfg.add_state_before(sdfg.start_state, 'stage_copyin', is_start_block=True)
@@ -450,8 +458,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         blocked = self._blocked_descriptors(sdfg)
         # Hoisted: the loop below only calls ``remove_data`` / ``add_scalar``; the state rewrite is
         # after it, so no access node moves and these name sets cannot go stale.
-        is_read_set, is_written_set, gpu_written_set = descriptor_access_summary(sdfg)
-        cf_reads = control_flow_reads(sdfg) if stage_nontransients else OrderedSet()
+        is_read_set, is_written_set, gpu_written_set = staging_access_summary(sdfg, stage_nontransients)
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
@@ -472,7 +479,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                                 find_new_name=False)
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = arr_name in is_read_set or arr_name in cf_reads
+                is_read = arr_name in is_read_set
                 is_written = arr_name in is_written_set
                 # The staged scalar is what the BODY accesses, and the copy edges below are the
                 # transfer; inheriting device storage makes every host reference to it invalid.
@@ -596,8 +603,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         rename: Dict[str, str] = {}
         staged: List[Tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
         # Hoisted for the same reason as in the forward pass.
-        is_read_set, is_written_set, _ = descriptor_access_summary(sdfg)
-        cf_reads = control_flow_reads(sdfg) if stage_nontransients else OrderedSet()
+        is_read_set, is_written_set, _ = staging_access_summary(sdfg, stage_nontransients)
 
         for name, desc in list(sdfg.arrays.items()):
             if not isinstance(desc, dace.data.Scalar) or isinstance(desc.dtype, dace.dtypes.opaque):
@@ -616,7 +622,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                                find_new_name=False)
                 rename[name] = name
             elif stage_nontransients:
-                is_read = name in is_read_set or name in cf_reads
+                is_read = name in is_read_set
                 is_written = name in is_written_set
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
