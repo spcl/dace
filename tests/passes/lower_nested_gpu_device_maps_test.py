@@ -8,6 +8,8 @@ inner kernel's body is moved into a ``NestedSDFG`` guarded by an if-bound-check,
 inner ``GPU_Device`` map itself is removed. The result is a single flat ``GPU_Device``
 kernel whose body uses if-guards to fan out to each original inner kernel's range.
 """
+import re
+
 import dace
 import pytest
 
@@ -249,6 +251,72 @@ def test_the_launch_scope_check_passes_a_bound_it_should() -> None:
     assert bounds_outside_launch_scope(
         dace.subsets.Range([(dace.symbolic.pystr_to_symbolic('__k'), dace.symbolic.pystr_to_symbolic('__k + 4'), 1)]),
         OrderedSet(['__k'])) == OrderedSet(['__k'])
+
+
+def build_inner_kernel_reusing_the_outer_param(name: str) -> dace.SDFG:
+    """Outer kernel ``i`` writes ``B[i]``; a same-state inner kernel reuses ``i`` (autodiff ``test_nested``)."""
+    gpu = dace.dtypes.StorageType.GPU_Global
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [3, 4], dace.float64, storage=gpu)
+    sdfg.add_array('B', [1], dace.float64, storage=gpu)
+
+    state = sdfg.add_state('s')
+    outer_me, outer_mx = state.add_map('outer', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    inner_me, inner_mx = state.add_map('inner', dict(i='0:3', j='0:4'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+
+    seven = state.add_tasklet('seven', {}, {'b': dace.float64}, 'b = 7.0')
+    state.add_memlet_path(outer_me, seven, memlet=dace.Memlet())
+    state.add_memlet_path(seven, outer_mx, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+
+    index = state.add_tasklet('index', {}, {'a': dace.float64}, 'a = 10 * i + j')
+    state.add_memlet_path(outer_me, inner_me, index, memlet=dace.Memlet())
+    state.add_memlet_path(index, inner_mx, outer_mx, state.add_write('A'), src_conn='a', memlet=dace.Memlet('A[i, j]'))
+    return sdfg
+
+
+def test_an_inner_param_reusing_a_kernel_param_gets_its_own_dimension() -> None:
+    """A reused name appears once in the kernel params; the outer body keeps the outer index."""
+    sdfg = build_inner_kernel_reusing_the_outer_param('inner_reuses_outer_param')
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    state = sdfg.states()[0]
+    kernel = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    assert len(kernel.map.params) == 3, kernel.map.params
+    assert len(OrderedSet(kernel.map.params)) == 3, kernel.map.params
+    assert kernel.map.params[:1] == ['i'] and 'j' in kernel.map.params, kernel.map.params
+    b_write = next(e for e in state.edges() if e.data.data == 'B' and isinstance(e.src, dace.nodes.Tasklet))
+    assert str(b_write.data.subset) == 'i', b_write.data.subset
+
+
+def test_the_flattened_kernel_declares_each_index_once() -> None:
+    """nvcc rejects a second ``const`` of one index name in a kernel scope."""
+    sdfg = build_inner_kernel_reusing_the_outer_param('inner_reuses_outer_param_codegen')
+
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        code = ''.join(obj.clean_code for obj in sdfg.generate_code())
+
+    kernels = [chunk.split('DACE_EXPORTED')[0] for chunk in code.split('__global__ void')[1:]]
+    assert len(kernels) == 1, len(kernels)
+    declared = re.findall(r'\bconst\s+\w+\s+(\w+)\s*=', kernels[0])
+    assert declared.count('i') == 1, declared
+    assert declared.count('j') == 1, declared
+    assert len(declared) == len(OrderedSet(declared)), declared
+
+
+@pytest.mark.gpu
+def test_the_flattened_kernel_computes_both_indices() -> None:
+    """Outer and inner writes each land at their own index."""
+    import cupy  # Only present on GPU runners.
+    sdfg = build_inner_kernel_reusing_the_outer_param('inner_reuses_outer_param_run')
+    A = cupy.zeros((3, 4), dtype=cupy.float64)
+    B = cupy.zeros((1, ), dtype=cupy.float64)
+
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        sdfg(A=A, B=B)
+
+    assert (cupy.asnumpy(A) == [[0.0, 1.0, 2.0, 3.0], [10.0, 11.0, 12.0, 13.0], [20.0, 21.0, 22.0, 23.0]]).all()
+    assert cupy.asnumpy(B).tolist() == [7.0]
 
 
 if __name__ == '__main__':

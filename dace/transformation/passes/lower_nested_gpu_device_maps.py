@@ -51,6 +51,28 @@ def bounds_outside_launch_scope(hoisted_range, kernel_params):
     return OrderedSet(sym for sym in named if sym in kernel_params)
 
 
+def rename_params_shadowing_kernel(next_level_maps, kernel_params: OrderedSet) -> None:
+    """Rename inner params that repeat a kernel param (flattening would declare them twice); siblings share names."""
+    inner_params = OrderedSet(p for _, inner_map in next_level_maps for p in inner_map.map.params)
+    taken = kernel_params | inner_params
+    for map_state, _ in next_level_maps:
+        taken |= OrderedSet(map_state.sdfg.symbols.keys()) | OrderedSet(map_state.sdfg.arrays.keys())
+    fresh = {}
+    for param in inner_params:
+        if param in kernel_params:
+            fresh[param] = dace.utils.find_new_name(param, taken)
+            taken.add(fresh[param])
+    for map_state, inner_map in next_level_maps:
+        repl = {p: fresh[p] for p in inner_map.map.params if p in fresh}
+        if not repl:
+            continue
+        # The range is evaluated in the enclosing scope, where the old name still means the kernel param.
+        outer_range = copy.deepcopy(inner_map.map.range)
+        symbolic.safe_replace(repl, map_state.scope_subgraph(inner_map).replace_dict)
+        inner_map.map.params = [fresh.get(p, p) for p in inner_map.map.params]
+        inner_map.map.range = outer_range
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NestedGPUDeviceMapLowering(ppl.Pass):
@@ -265,6 +287,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
             for gpu_dev_map in parentless_device_maps:
                 next_level_maps = self._get_next_level_maps(state, gpu_dev_map)
+                rename_params_shadowing_kernel(next_level_maps, OrderedSet(gpu_dev_map.map.params))
 
                 nested_map_params_and_ranges = dict()
                 # Collect all the ranges to build the union of the ranges later
