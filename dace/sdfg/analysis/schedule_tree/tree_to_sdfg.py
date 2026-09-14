@@ -120,6 +120,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._dynamic_scope_inputs: list[tn.DynScopeCopyNode] = []
         """Dynamic scope inputs (e.g., dynamic map ranges) of the next dataflow scope."""
 
+        self._code_reference_sets: dict[tuple[int, str | None], tn.RefSetNode] = {}
+        """Mapping of (id(code node), output connector) -> the reference set node that the output sets."""
+
         self._consume_streams: dict[int, str] = {}
         """Mapping of id(ConsumeEntry) -> name of the stream it consumes."""
 
@@ -191,6 +194,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._current_state = sdfg.add_state(label="tree_root", is_start_block=True)
         self._ctx = _Context(root=node, access_cache={}, current_scope=None)
+        self._code_reference_sets = _code_reference_sets(node)
         with _TreeScope(node, self._ctx, self._current_state):
             self.visit(node.children, sdfg=sdfg)
 
@@ -397,6 +401,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._current_state = loop_state
         self.visit(node.children, sdfg=sdfg)
+        self._flush_pending_assignments(f"{prefix}_loop_body_end")
 
         after_state = _insert_and_split_assignments(loop_region, label=f"{prefix}_loop_after")
         self._current_state = after_state
@@ -462,15 +467,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # visit children of that branch
         self.visit(node.children, sdfg=sdfg)
+        self._flush_pending_assignments("if_body_end")
 
         self._current_state = conditional_block
 
         # add merge_state
-        merge_state = _insert_and_split_assignments(
-            conditional_block,
-            label="merge_state",
-            assignments=self._pending_interstate_assignments(),
-        )
+        merge_state = _insert_and_split_assignments(conditional_block, label="merge_state")
 
         self._continue_conditional_block(node, conditional_block, merge_state)
 
@@ -536,9 +538,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # visit children inside the elif branch
         self.visit(node.children, sdfg=sdfg)
-
-        if self._pending_interstate_assignments():
-            raise NotImplementedError("TODO: update edge with new assignments")
+        self._flush_pending_assignments("elif_body_end")
 
         self._continue_conditional_block(node, conditional_block, merge_state)
 
@@ -554,13 +554,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # visit children inside the else branch
         self.visit(node.children, sdfg=sdfg)
+        self._flush_pending_assignments("else_body_end")
 
         # merge false-branch into merge_state
         merge_state = self._pop_state("merge_state")
         self._current_state = merge_state
-
-        if self._pending_interstate_assignments():
-            raise NotImplementedError("TODO: update edge with new assignments")
 
     def _insert_nested_sdfg(self, node: tn.ScheduleTreeScope, sdfg: SDFG, scope_body: bool) -> None:
         """
@@ -832,7 +830,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # visit children inside the map
         type_of_children = [type(child) for child in node.children]
-        last_child_is_MapScope = type_of_children[-1] == tn.MapScope
+        last_child_is_MapScope = bool(type_of_children) and type_of_children[-1] == tn.MapScope
         all_others_are_Boundaries = type_of_children.count(tn.StateBoundaryNode) == len(type_of_children) - 1
         if last_child_is_MapScope and all_others_are_Boundaries:
             # skip weirdly added StateBoundaryNode
@@ -1013,10 +1011,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             else:
                 assert isinstance(outer_map_entry, SDFG) or outer_map_entry is None
 
-        # TODO If nothing is connected at this point, figure out what's the last thing that
-        #      we should connect to. Then, add an empty memlet from that last thing to this
-        #      map_exit.
-        assert len(self._current_state.in_edges(map_exit)) > 0
+        # Connect empty scopes
+        if self._current_state.in_degree(map_exit) == 0:
+            self._current_state.add_nedge(map_entry, map_exit, Memlet())
 
     def _local_access_cache(self) -> dict[str, nodes.AccessNode]:
         """Returns the access node cache of the current state and tree scope."""
@@ -1200,7 +1197,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._current_state.add_nedge(scope_node, code_node, Memlet())
 
         for name, memlet in outputs:
-            self._connect_output(code_node, name, memlet.data, memlet, sdfg)
+            reference_set = self._code_reference_sets.get((id(code_node), name))
+            if reference_set is not None:
+                self._set_reference(code_node, name, reference_set, sdfg)
+            else:
+                self._connect_output(code_node, name, memlet.data, memlet, sdfg)
 
         # Add empty memlet if this code node is a sink node
         if isinstance(scope_node, nodes.EntryNode) and not out_memlets:
@@ -1264,13 +1265,26 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def visit_RefSetNode(self, node: tn.RefSetNode, sdfg: SDFG) -> None:
         if isinstance(node.src_desc, nodes.CodeNode):
-            raise NotImplementedError("Setting references from code nodes is not yet supported.")
+            if not any(ref is node for ref in self._code_reference_sets.values()):
+                raise ValueError(f"Cannot find the code node that sets reference '{node.target}'.")
+            return  # Connected when the code node is added, see ``_add_code_node``
 
+        source, source_conn = self._read_source(node.memlet.data, sdfg)
+        self._set_reference(source, source_conn, node, sdfg)
+
+    def _set_reference(self, source: nodes.Node, source_conn: str | None, node: tn.RefSetNode, sdfg: SDFG) -> None:
+        """
+        Connects the source of a reference set to a new access node of the reference.
+
+        :param source: The node that provides the value of the reference.
+        :param source_conn: The output connector of ``source``.
+        :param node: The reference set node.
+        :param sdfg: The SDFG that is currently being built.
+        """
         if node.target not in sdfg.arrays:
             # The reference is set inside the nested SDFG that is being built
             sdfg.add_datadesc(node.target, self._ctx.root.containers[node.target].clone())
 
-        source, source_conn = self._read_source(node.memlet.data, sdfg)
         ref_access = self._current_state.add_access(node.target)
         self._current_state.add_edge(source, source_conn, ref_access, "set", copy.deepcopy(node.memlet))
 
@@ -1286,6 +1300,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._current_state,
             assignments=pending,
         )
+
+    def _flush_pending_assignments(self, label: str) -> None:
+        """
+        Performs pending inter-state assignments in a transition to a new state, e.g., at the end of a branch or loop
+        body, where they would otherwise be lost or performed on the wrong path.
+
+        :param label: The label of the new state.
+        """
+        if self._interstate_symbols:
+            self._current_state = _insert_and_split_assignments(self._current_state,
+                                                                label=label,
+                                                                assignments=self._pending_interstate_assignments())
 
     def _pending_interstate_assignments(self) -> dict[str, str]:
         """
@@ -1324,6 +1350,9 @@ def from_schedule_tree(
     # Restructure or nest the targets of forward gotos, such that they can be lowered to return blocks
     _lower_forward_gotos(stree)
 
+    # Nested SDFG views are applied to the nested SDFGs that contain their accesses
+    _nest_nview_regions(stree)
+
     # Insert artificial state boundaries after WAW, before label, etc.
     stree = _insert_state_boundaries_to_tree(stree)
 
@@ -1338,6 +1367,30 @@ def from_schedule_tree(
                 edge.data.try_initialize(nested_sdfg, state, edge)
     propagation.propagate_memlets_sdfg(result)
 
+    return result
+
+
+def _code_reference_sets(stree: tn.ScheduleTreeRoot) -> dict[tuple[int, str | None], tn.RefSetNode]:
+    """
+    Finds the outputs of code nodes that set references.
+
+    :param stree: The schedule tree.
+    :return: A mapping of (id(code node), output connector) to the reference set node of that output.
+    """
+    code_nodes = {id(n.node): n for n in stree.preorder_traversal() if isinstance(n, (tn.TaskletNode, tn.LibraryCall))}
+    result = {}
+    for ref in stree.preorder_traversal():
+        if not isinstance(ref, tn.RefSetNode) or not isinstance(ref.src_desc, nodes.CodeNode):
+            continue
+        code = code_nodes.get(id(ref.src_desc))
+        if code is None:
+            raise ValueError(f"Reference '{ref.target}' is set by a code node that is not in the schedule tree.")
+        outputs = code.out_memlets.items() if isinstance(code.out_memlets, dict) else [(None, m)
+                                                                                       for m in code.out_memlets]
+        connectors = [name for name, memlet in outputs if memlet is ref.memlet or memlet.data == ref.target]
+        if len(connectors) != 1:
+            raise ValueError(f"Cannot determine the output of '{ref.src_desc}' that sets reference '{ref.target}'.")
+        result[(id(ref.src_desc), connectors[0])] = ref
     return result
 
 
@@ -1480,6 +1533,31 @@ def _lower_forward_gotos(stree: tn.ScheduleTreeRoot) -> None:
                 raise NotImplementedError(f"Cannot convert '{goto.as_string().strip()}' within the nested SDFG that "
                                           f"is required for the gotos to '{label.name}'.")
         scope.children[first:index + 1] = [_NestedSDFGScope(children=scope.children[first:index + 1], parent=scope)]
+
+
+def _nest_nview_regions(stree: tn.ScheduleTreeRoot) -> None:
+    """
+    Wraps the nodes from every nested SDFG view (``NView``) to its end (``NViewEnd``) in a scope that is converted into
+    a nested SDFG, whose data descriptor of the view target is the view. Operates in-place.
+
+    :param stree: The schedule tree to operate on.
+    """
+    scopes = [n for n in stree.preorder_traversal() if isinstance(n, tn.ScheduleTreeScope)]
+    for scope in scopes:
+        index = 0
+        while index < len(scope.children):
+            child = scope.children[index]
+            if type(child) is not tn.NView:
+                index += 1
+                continue
+            end = next((i for i in range(index + 1, len(scope.children))
+                        if isinstance(scope.children[i], tn.NViewEnd) and scope.children[i].target == child.target),
+                       None)
+            if end is None:
+                raise ValueError(f"No end found for nested SDFG view '{child.as_string().strip()}'.")
+            region = scope.children[index:end + 1]
+            scope.children[index:end + 1] = [_NestedSDFGScope(children=region, parent=scope)]
+            index += 1
 
 
 def _gotos_to(node: tn.ScheduleTreeNode, target: str | None) -> list[tn.GotoNode]:

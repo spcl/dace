@@ -22,10 +22,7 @@ from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, Control
 ABSTRACT_NODE_TYPES = {tn.ScheduleTreeNode, tn.ScheduleTreeScope, tn.ControlFlowScope, tn.DataflowScope}
 
 #: Node types whose conversion to an SDFG is not yet supported, mapped to the reason
-UNSUPPORTED_NODE_TYPES = {
-    tn.NView: 'Nested SDFG views are only applied inside nested SDFGs created for map scopes',
-    tn.NViewEnd: 'Nested SDFG views are only applied inside nested SDFGs created for map scopes',
-}
+UNSUPPORTED_NODE_TYPES = {}
 
 
 def _write_tasklet(state: dace.SDFGState, value: str, memlet: str) -> None:
