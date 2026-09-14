@@ -6,9 +6,10 @@ vectorization, scheduling, equivalence checks) observe one shape per
 computation.
 """
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from dace import SDFG, symbolic, properties
+from dace.ordered import OrderedSet
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import transformation
@@ -2166,6 +2167,9 @@ class CanonicalizationPipeline(ppl.Pass):
                              ``canonicalize_set_fast_implementations`` pick the inlined
                              ``'pure'`` GEMM for known-small dims. ``None`` leaves every
                              symbol symbolic.
+    :param stages: Stage labels to run, in recipe order (see :func:`stage_labels`); ``None``
+                   (default) runs every stage. A label that does not occur in the recipe
+                   raises ``ValueError``.
     """
 
     CATEGORY: str = 'Canonicalization'
@@ -2254,6 +2258,12 @@ class CanonicalizationPipeline(ppl.Pass):
         default=True,
         desc='Master gate for the post-LoopToMap map->library-node lifts (Einsum + Copy/Fill). '
         'False (set by the vectorizer) keeps the residual as raw maps it can lower.')
+    stages = properties.ListProperty(
+        element_type=str,
+        allow_none=True,
+        default=None,
+        desc='Stage labels to run, in recipe order; None (default) runs every stage. A label '
+        'absent from the recipe raises ValueError.')
 
     def __init__(self,
                  validate: bool = False,
@@ -2273,7 +2283,8 @@ class CanonicalizationPipeline(ppl.Pass):
                  lift: bool = True,
                  lift_copy: bool = True,
                  semantic_lifting: bool = True,
-                 dump_dir: Optional[str] = None):
+                 dump_dir: Optional[str] = None,
+                 stages: Optional[Sequence[str]] = None):
         if target not in TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
@@ -2312,6 +2323,7 @@ class CanonicalizationPipeline(ppl.Pass):
         self.lift = lift
         self.lift_copy = lift_copy
         self.semantic_lifting = semantic_lifting
+        self.stages = list(stages) if stages is not None else None
         self._specialize_constants = specialize_constants or {}
 
     def modifies(self) -> ppl.Modifies:
@@ -2322,6 +2334,26 @@ class CanonicalizationPipeline(ppl.Pass):
 
     def depends_on(self):
         return {}
+
+    def build_stages(self) -> List[Tuple[str, ppl.Pass]]:
+        """Build this pipeline's flat recipe, honoring every knob property.
+
+        :returns: ``(stage_label, pass)`` pairs, in recipe order, fresh instances each call.
+        """
+        return _build_stages(unroll_limit=self.unroll_limit,
+                             peel_limit=self.peel_limit,
+                             break_anti_dependence=self.break_anti_dependence,
+                             interchange_carry_with_map=self.interchange_carry_with_map,
+                             scatter_to_guarded_maps=self.scatter_to_guarded_maps,
+                             privatize_scatter_reductions=self.privatize_scatter_reductions,
+                             reconstruct_wavefront_nest=self.reconstruct_wavefront_nest,
+                             normalize_loop_and_map_origin=self.normalize_loop_and_map_origin,
+                             assume_parallel_guards=self.assume_parallel_guards,
+                             perfect_loop_nesting=self.perfect_loop_nesting,
+                             target=self.target,
+                             lift=self.lift,
+                             lift_copy=self.lift_copy,
+                             semantic_lifting=self.semantic_lifting)
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Canonicalize ``sdfg`` in place.
@@ -2339,20 +2371,14 @@ class CanonicalizationPipeline(ppl.Pass):
         if self._specialize_constants:
             from dace.sdfg.utils import specialize_symbols
             specialize_symbols(sdfg, self._specialize_constants)
-        stages = _build_stages(unroll_limit=self.unroll_limit,
-                               peel_limit=self.peel_limit,
-                               break_anti_dependence=self.break_anti_dependence,
-                               interchange_carry_with_map=self.interchange_carry_with_map,
-                               scatter_to_guarded_maps=self.scatter_to_guarded_maps,
-                               privatize_scatter_reductions=self.privatize_scatter_reductions,
-                               reconstruct_wavefront_nest=self.reconstruct_wavefront_nest,
-                               normalize_loop_and_map_origin=self.normalize_loop_and_map_origin,
-                               assume_parallel_guards=self.assume_parallel_guards,
-                               perfect_loop_nesting=self.perfect_loop_nesting,
-                               target=self.target,
-                               lift=self.lift,
-                               lift_copy=self.lift_copy,
-                               semantic_lifting=self.semantic_lifting)
+        stages = self.build_stages()
+        if self.stages is not None:
+            known_labels = OrderedSet(label for label, _ in stages)
+            unknown = [label for label in self.stages if label not in known_labels]
+            if unknown:
+                raise ValueError(f'unknown canonicalization stage label(s): {unknown}')
+            wanted = OrderedSet(self.stages)
+            stages = [(label, unit) for label, unit in stages if label in wanted]
         if self.dump_dir:
             os.makedirs(self.dump_dir, exist_ok=True)
             sdfg.save(os.path.join(self.dump_dir, '000_input.sdfgz'), compress=True)
@@ -2390,6 +2416,19 @@ class CanonicalizationPipeline(ppl.Pass):
         return len(stages)
 
 
+def stage_labels(target: str = 'cpu') -> List[str]:
+    """Ordered, de-duplicated stage labels of the canonicalization recipe for ``target``.
+
+    Lets a caller slice :func:`canonicalize` -- run every stage up to (not including) a chosen
+    label, do its own thing, then run the rest via ``CanonicalizationPipeline(stages=...)``.
+
+    :param target: ``'cpu'`` (default) or ``'gpu'``.
+    :returns: Stage labels in first-occurrence recipe order.
+    """
+    seen = OrderedSet(label for label, _ in CanonicalizationPipeline(target=target).build_stages())
+    return list(seen)
+
+
 def canonicalize(sdfg: SDFG,
                  validate: bool = False,
                  validate_all: bool = False,
@@ -2408,7 +2447,8 @@ def canonicalize(sdfg: SDFG,
                  lift: bool = True,
                  lift_copy: bool = True,
                  semantic_lifting: bool = True,
-                 dump_dir: Optional[str] = None) -> SDFG:
+                 dump_dir: Optional[str] = None,
+                 stages: Optional[Sequence[str]] = None) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
     One-call recipe analogous to ``auto_optimize``.
@@ -2485,6 +2525,9 @@ def canonicalize(sdfg: SDFG,
                              lifts (Einsum + Copy/Fill). Default ``True``; the
                              vectorizer sets ``False`` to keep the residual as raw
                              maps (a library node is not vectorizable).
+    :param stages: Stage labels to run, in recipe order (see :func:`stage_labels`); ``None``
+                   (default) runs every stage. A label that does not occur in the recipe
+                   raises ``ValueError``.
     :returns: The same ``sdfg`` instance, canonicalized.
     """
     # Every stage below recovers loop bounds from STRING-backed properties, which means re-parsing
@@ -2500,14 +2543,29 @@ def canonicalize(sdfg: SDFG,
                                             scatter_to_guarded_maps, privatize_scatter_reductions,
                                             reconstruct_wavefront_nest, normalize_loop_and_map_origin,
                                             assume_parallel_guards, perfect_loop_nesting, specialize_constants, lift,
-                                            lift_copy, semantic_lifting, dump_dir)
+                                            lift_copy, semantic_lifting, dump_dir, stages)
 
 
-def canonicalize_under_authority(sdfg: SDFG, validate, validate_all, unroll_limit, peel_limit, break_anti_dependence,
-                                 target, interchange_carry_with_map, scatter_to_guarded_maps,
-                                 privatize_scatter_reductions, reconstruct_wavefront_nest,
-                                 normalize_loop_and_map_origin, assume_parallel_guards, perfect_loop_nesting,
-                                 specialize_constants, lift, lift_copy, semantic_lifting, dump_dir) -> SDFG:
+def canonicalize_under_authority(sdfg: SDFG,
+                                 validate,
+                                 validate_all,
+                                 unroll_limit,
+                                 peel_limit,
+                                 break_anti_dependence,
+                                 target,
+                                 interchange_carry_with_map,
+                                 scatter_to_guarded_maps,
+                                 privatize_scatter_reductions,
+                                 reconstruct_wavefront_nest,
+                                 normalize_loop_and_map_origin,
+                                 assume_parallel_guards,
+                                 perfect_loop_nesting,
+                                 specialize_constants,
+                                 lift,
+                                 lift_copy,
+                                 semantic_lifting,
+                                 dump_dir,
+                                 stages: Optional[Sequence[str]] = None) -> SDFG:
     """The body of :func:`canonicalize`, run with the SDFG's symbol dtypes already in scope."""
     CanonicalizationPipeline(validate=validate,
                              validate_all=validate_all,
@@ -2526,7 +2584,8 @@ def canonicalize_under_authority(sdfg: SDFG, validate, validate_all, unroll_limi
                              lift=lift,
                              lift_copy=lift_copy,
                              semantic_lifting=semantic_lifting,
-                             dump_dir=dump_dir).apply_pass(sdfg, {})
+                             dump_dir=dump_dir,
+                             stages=stages).apply_pass(sdfg, {})
     # The guard stage runs last, so nothing cleans up after it: on kernels whose old entry was
     # empty it leaves a redundant empty state between guard and body, which a second canonicalize
     # then removes -- a difference that is only in run 1.
