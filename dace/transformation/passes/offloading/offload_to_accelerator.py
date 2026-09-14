@@ -25,6 +25,7 @@ from dace.transformation.dataflow import TrivialMapElimination
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                            ConvertScalarsToLengthOneArrays)
+from dace.transformation.passes.offloading.offloading_helpers import join_fall_through_exits, remove_empty_exits
 from dace.transformation.passes.offloading.taskloop import taskloop_maps
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps
 
@@ -599,6 +600,7 @@ class OffloadToAccelerator(ppl.Pass):
         # ``preserve_abi`` stages a transient beside it and copies, so the array itself is still an
         # array on the next scan and would be requested again for ever (TSVC s332's ``result``).
         attempted: OrderedSet[str] = OrderedSet()
+        exits = self.join_exits_and_refresh_scopes(sdfg)
 
         for _ in range(3):
             # step 2: copy analysis -> IR stores analysis results
@@ -684,6 +686,15 @@ class OffloadToAccelerator(ppl.Pass):
 
         # step 4: insert copies based on IR
         self.eval_IR(sdfg, sdfgIR)
+        remove_empty_exits(exits)
+
+    def join_exits_and_refresh_scopes(self, sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
+        """Join each region's fall-through sinks into one exit, so the region's end copies on every path."""
+        exits = join_fall_through_exits(sdfg)
+        if exits:
+            # The analysis reads scopes from the cache, which predates the exit states.
+            self.cache_scopes(sdfg)
+        return exits
 
     def offload_host_level_bodies(self, sdfg: SDFG) -> None:
         """Place again inside every nested SDFG that is still host code: each body is its own level.

@@ -977,5 +977,37 @@ def test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet: bool) 
     np.testing.assert_array_equal(took_small, np.full(8, 0.0))
 
 
+def test_the_exit_joining_two_sink_arms_does_not_outlive_the_pass() -> None:
+    """The copy-back follows the join, so the join is spliced out and no empty state is left behind."""
+    sdfg = two_arm_branch_sdfg(arms_meet=False)
+    OtA().apply_pass(sdfg, {})
+
+    empty = [state.label for state in sdfg.states() if state.number_of_nodes() == 0]
+    assert not empty, f"the pass left empty states behind: {empty}"
+
+
+def host_only_two_arm_branch_sdfg() -> dace.SDFG:
+    """A condition on ``A[0]`` picks one of two host tasklets writing ``A[0]``; each arm is a sink."""
+    sdfg = dace.SDFG("host_only_two_arm_branch")
+    sdfg.add_array("A", [4], dace.float64)
+    fill = sdfg.add_state("fill", is_start_block=True)
+    for label, condition, value in (("big", "A[0] > 5.0", "1.0"), ("small", "not (A[0] > 5.0)", "-1.0")):
+        arm = sdfg.add_state(label)
+        write = arm.add_tasklet(label, {}, {"y"}, f"y = {value}")
+        arm.add_edge(write, "y", arm.add_write("A"), None, dace.Memlet("A[0]"))
+        sdfg.add_edge(fill, arm, dace.InterstateEdge(condition=condition))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_host_only_branch_keeps_its_arms_as_the_exits() -> None:
+    """Nothing is copied, so the pass takes the join it added back out and each arm still ends the program."""
+    sdfg = host_only_two_arm_branch_sdfg()
+    OtA().apply_pass(sdfg, {})
+
+    assert sorted(state.label for state in sdfg.sink_nodes()) == ["big", "small"]
+    assert sorted(state.label for state in sdfg.states()) == ["big", "fill", "small"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
