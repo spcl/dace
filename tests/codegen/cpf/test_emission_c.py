@@ -849,6 +849,96 @@ def test_a_cast_carried_through_a_symbolic_expression_renders_as_a_c_cast(ctype)
         assert sym2cpp(expression) == '(%s(x) + 3)' % ctype
 
 
+@dace.program
+def c_complex_scatter(idx: dace.int64[N], val: dace.complex128[N], out: dace.complex128[N]):
+    for i in dace.map[0:N]:
+        out[idx[i]] += val[i]
+
+
+@dace.program
+def c_real_scatter(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[N]):
+    for i in dace.map[0:N]:
+        out[idx[i]] += val[i]
+
+
+def test_a_conflicting_complex_accumulation_takes_a_critical_section_and_a_real_one_stays_atomic():
+    """OpenMP ``atomic`` accepts only real arithmetic scalars; ``double _Complex`` under it does not
+    compile, which refused quantum espresso's exchange kernel. A complex ``+`` accumulation takes the
+    critical section; a real one keeps the atomic."""
+    sdfg, code = render_c(c_complex_scatter, 'cpf_c_complex_scatter')
+    assert '#pragma omp critical (cpf_wcr)' in code and '#pragma omp atomic' not in code, code
+    rng = np.random.default_rng(0)
+    idx = rng.integers(0, 32, size=256).astype(np.int64)
+    val = rng.random(256) + 1j * rng.random(256)
+    out = np.zeros(256, dtype=np.complex128)
+    expected = np.zeros(256, dtype=np.complex128)
+    np.add.at(expected, idx, val)
+    run_c(sdfg, code, {'idx': idx, 'val': val, 'out': out, 'N': 256}, 'cpf_c_complex_scatter')
+    assert_matches({'out': expected}, {'out': out}, 'cpf_c_complex_scatter')
+    _, real_code = render_c(c_real_scatter, 'cpf_c_real_scatter')
+    assert '#pragma omp atomic update\n' in real_code and 'critical (cpf_wcr)' not in real_code, real_code
+
+
+@dace.program
+def c_complex_sum(x: dace.complex128[N], out: dace.complex128[1]):
+    out[0] = np.sum(x)
+
+
+@dace.program
+def c_real_sum(x: dace.float64[N], out: dace.float64[1]):
+    out[0] = np.sum(x)
+
+
+def render_c_array_reductions(program, name: str):
+    """``(sdfg, code)`` for ``program`` rendered as C with array reductions on, as canonicalize sets them."""
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.name = name
+    sdfg.openmp_array_reductions = True
+    rendering = render_sdfg(sdfg, language='c')
+    return rendering.sdfg, rendering.code
+
+
+def test_a_complex_sum_tree_reduces_through_its_own_declared_c_reduction():
+    """C refuses ``declare reduction(+ : double _Complex ...)``: ``double _Complex`` is predeclared
+    arithmetic, so the complex tree reduction did not compile. The combiner takes its own identifier
+    and a C initializer; a real sum keeps OpenMP's built-in ``+``."""
+    sdfg, code = render_c_array_reductions(c_complex_sum, 'cpf_c_complex_sum')
+    assert ('#pragma omp declare reduction(cpf_cadd : double _Complex : omp_out += omp_in) '
+            'initializer(omp_priv = 0)') in code, code
+    assert 'reduction(cpf_cadd:' in code and 'critical' not in code, code
+    rng = np.random.default_rng(0)
+    x = rng.random(1000) + 1j * rng.random(1000)
+    out = np.zeros(1, dtype=np.complex128)
+    run_c(sdfg, code, {'x': x, 'out': out, 'N': 1000}, 'cpf_c_complex_sum')
+    assert_matches({'out': np.array([x.sum()])}, {'out': out}, 'cpf_c_complex_sum')
+    _, real_code = render_c_array_reductions(c_real_sum, 'cpf_c_real_sum')
+    assert 'reduction(+:' in real_code and 'declare reduction' not in real_code, real_code
+
+
+def test_a_map_holding_a_conflicting_accumulation_renders_without_simd():
+    """OpenMP admits no ``critical`` inside a ``simd`` region, and vexx_k's complex scatter reached one
+    through the loop body. That map keeps ``parallel for`` without ``simd``; a conflict-free map keeps it."""
+    _, code = render_c(c_complex_scatter, 'cpf_c_scatter_no_simd')
+    pragmas = [line.strip() for line in code.splitlines() if line.strip().startswith('#pragma omp')]
+    assert '#pragma omp critical (cpf_wcr)' in pragmas, pragmas
+    assert any(p.startswith('#pragma omp parallel for') for p in pragmas), pragmas
+    assert not any('simd' in p for p in pragmas), pragmas
+    _, clean = render_c(c_scale_add, 'cpf_c_scale_add_simd')
+    assert any(line.strip().startswith('#pragma omp parallel for simd') for line in clean.splitlines()), clean
+
+
+def test_a_literal_integer_power_of_an_untyped_symbol_renders_as_a_c_product():
+    """A nested SDFG's symbol mapping can reach the printer as the text ``nh ** 2``, with no type for
+    ``nh``. C spells ``ipow`` as one helper per type, so the rendering refused the whole unit
+    (quantum espresso's exchange kernel); a product needs no type at all."""
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_C):
+        assert sym2cpp('nh**2') == '((nh) * (nh))'
+        assert sym2cpp('nh**2 + 1') == '(((nh) * (nh)) + 1)'
+    # The runtime keeps its ipow; only C needed the product.
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.RUNTIME):
+        assert sym2cpp('nh**2') == '(dace::math::ipow(nh, 2))'
+
+
 def test_the_expression_cache_does_not_serve_cpp_text_to_a_c_rendering():
     """``pyexpr2cpp`` is memoized, so the dialect has to reach its key. Canonicalization prints
     expressions under the RUNTIME dialect long before CPF renders; without the dialect in the key
@@ -898,6 +988,19 @@ def test_a_dace_typed_cast_on_an_interstate_edge_is_spelled_by_the_dialect(diale
     with cpf_lowering.dialect_scope(dialect):
         rendered = unparse_interstate_edge('dace.int64(la) + 1', sdfg)
     assert rendered == ATTRIBUTE_CAST_FORMS[dialect], rendered
+
+
+def test_a_min_over_a_dace_typed_cast_calls_the_helper_typed_for_the_cast():
+    """``min(jmax, dace.int64(all_end[i]))`` on an interstate edge prints its cast as ``(int64_t)(...)``.
+    The C printer resolved no type for that operand, so it could not pick a typed ``cpf_min`` and
+    refused the whole unit (quantum espresso's exchange kernel)."""
+    sdfg = dace.SDFG('cpf_min_over_cast')
+    sdfg.add_symbol('n', dace.int64)
+    sdfg.add_symbol('i', dace.int64)
+    sdfg.add_array('x', [4], dace.int32)
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_C):
+        rendered = unparse_interstate_edge('min(n, dace.int64(x[i]))', sdfg)
+    assert rendered == 'cpf_min_int64(n, ((int64_t)(x[i])))', rendered
 
 
 @dace.program

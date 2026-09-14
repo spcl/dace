@@ -492,6 +492,11 @@ class CPPUnparser:
         if isinstance(node,
                       (ast.Compare, ast.BoolOp)) or (isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not)):
             return 'int32'
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == 'dace'
+                and node.func.attr in _typecast_func_to_cpp and len(node.args) == 1 and not node.keywords):
+            # ``dace.int64(x)`` prints as the C cast ``(int64_t)(x)`` (see ``_Call``), so it has the cast's type.
+            return node.func.attr if cpf_lowering.c_arithmetic(node.func.attr) else None
         operands: List[ast.AST] = []
         if isinstance(node, ast.UnaryOp):
             operands = [node.operand]
@@ -1366,6 +1371,11 @@ class CPPUnparser:
             if power is not None and int(power) == power:
                 negative = power < 0
                 power = int(-power if negative else power)
+                if cpf_lowering.standalone_c() and not negative:
+                    # A literal non-negative power is a product, which C spells without argument types.
+                    operand = '(%s)' % self.render(t.left)
+                    self.write('1' if power == 0 else operand if power == 1 else '(%s)' % ' * '.join([operand] * power))
+                    return
                 base = '1' if power == 0 else runtime_call('dace::math::ipow', [self.render(
                     t.left), str(power)], self.c_argument_types([t.left, ast.Constant(value=power)]))
                 self.write(runtime_call('reciprocal', [base]) if negative else '(%s)' % base)

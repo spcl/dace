@@ -540,20 +540,20 @@ def _contiguous_element_count(desc):
     return acc
 
 
-def _complex_declare_reduction(op_str: str, ctype: str):
-    """``#pragma omp declare reduction`` line for a complex element type, or ``None``.
+def _complex_declare_reduction(op_str: str, ctype: str) -> Optional[Tuple[str, str]]:
+    """``(identifier, declare line)`` of the OpenMP reduction for a complex element type, or ``None``.
 
-    OpenMP has no native reduction over ``std::complex``; only ``+`` / ``*`` get a
-    well-defined identity (0 / 1) and combiner. Everything else returns ``None`` so the
-    caller falls back to the atomic path.
+    OpenMP has no built-in complex reduction, and C refuses a ``declare reduction`` of ``+`` / ``*``
+    over its predeclared ``double _Complex``, so the combiner takes its own identifier and the clause
+    names it. Only ``+`` / ``*`` have an identity (0 / 1); anything else falls back to the atomic path.
     """
-    if op_str == "+":
-        return (f"#pragma omp declare reduction(+ : {ctype} : omp_out += omp_in) "
-                f"initializer(omp_priv = {ctype}(0))")
-    if op_str == "*":
-        return (f"#pragma omp declare reduction(* : {ctype} : omp_out *= omp_in) "
-                f"initializer(omp_priv = {ctype}(1))")
-    return None
+    named = {"+": ("cpf_cadd", "+=", 0), "*": ("cpf_cmul", "*=", 1)}.get(op_str)
+    if named is None:
+        return None
+    identifier, combine, identity = named
+    initial = str(identity) if cpf_lowering.standalone_c() else f"{ctype}({identity})"
+    return identifier, (f"#pragma omp declare reduction({identifier} : {ctype} : omp_out {combine} omp_in) "
+                        f"initializer(omp_priv = {initial})")
 
 
 def nested_sdfg_fingerprint(nsdfg: SDFG) -> Tuple:
@@ -1917,9 +1917,10 @@ class CPUCodeGen(TargetCodeGenerator):
             return hint + standalone_gpu_atomic(self.standalone_wcr_operator(sdfg, memlet, redtype, dtype, target), ptr,
                                                 inname)
         body = self.standalone_wcr(sdfg, memlet, redtype, ptr, inname, dtype, atomic=False)
-        if _REDUCTION_TO_OMP_OP.get(redtype) in self._CPF_ATOMIC_OPS:
+        # OpenMP ``atomic`` takes only real arithmetic scalars; a complex accumulation takes the critical section.
+        if _REDUCTION_TO_OMP_OP.get(redtype) in self._CPF_ATOMIC_OPS and not dtype.is_complex():
             return f'{hint}#pragma omp atomic update\n{body}'
-        # No atomic form for this operator; a critical section is the portable one. The trailing
+        # No atomic form for this operator or type; a critical section is the portable one. The trailing
         # semicolon the caller appends lands after the block, where it is an empty statement.
         return f'{hint}#pragma omp critical (cpf_wcr)\n{{ {body}; }}'
 
@@ -3521,9 +3522,10 @@ class CPUCodeGen(TargetCodeGenerator):
             # + combiner). Off the flag, preserve the exact prior scalar behavior (no dtype
             # special-casing) so a disabled flag is a codegen no-op.
             if sdfg.openmp_array_reductions and desc.dtype in _COMPLEX_TYPES:
-                declare = _complex_declare_reduction(op_str, desc.dtype.ctype)
-                if declare is None:
+                named = _complex_declare_reduction(op_str, desc.dtype.ctype)
+                if named is None:
                     continue
+                op_str, declare = named
 
             key = (op_str, clause_target)
             if key in seen:
@@ -3531,6 +3533,33 @@ class CPUCodeGen(TargetCodeGenerator):
             seen.add(key)
             out.append((op_str, clause_target, oedge.dst.data, declare))
         return out
+
+    def renders_simd(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+        """Whether ``map_entry``'s loop carries ``simd``: ``MarkSIMDMaps`` marked it and, in a standalone
+        unit, no accumulation in its body falls back to ``omp atomic`` / ``omp critical``.
+
+        OpenMP admits no ``critical`` inside a ``simd`` region; vexx_k's complex scatter reaches one
+        through the nested SDFG its loop calls. A write this map tree-reduces is not a fallback.
+        """
+        if not map_entry.map.omp_simd or not cpf_lowering.standalone():
+            return map_entry.map.omp_simd
+        covered = set()
+        if (map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore
+                and emits_tree_reductions(self.experimental_codegen)):
+            covered = {dname for _op, _target, dname, _declare in self._collect_omp_reductions(sdfg, state, map_entry)}
+        scope = state.scope_subgraph(map_entry, include_entry=False, include_exit=True)
+        graphs = [(state, scope.edges())]
+        for node in scope.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                graphs.extend((inner, inner.edges()) for nested in node.sdfg.all_sdfgs_recursive()
+                              for inner in nested.all_states())
+        for graph, edges in graphs:
+            for edge in edges:
+                if edge.data.wcr is None or (graph is state and edge.data.data in covered):
+                    continue
+                if cpp.is_write_conflicted_with_reason(graph, edge, sdfg_schedule=self._toplevel_schedule) is not None:
+                    return False
+        return True
 
     def _map_loop_will_have_openmp_pragma(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry,
                                           loop_idx: int) -> bool:
@@ -3550,7 +3579,7 @@ class CPUCodeGen(TargetCodeGenerator):
             return False
         if loop_idx != len(map_entry.map.range) - 1:
             return False
-        return map_entry.map.omp_simd
+        return self.renders_simd(sdfg, state, map_entry)
 
     def _generate_MapEntry(
         self,
@@ -3661,7 +3690,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # marked one is the innermost. Stamp its verdict onto the pragma the map already has;
             # a covered reduction composes with it, the clause already sanctions reassociation
             # inside the combining op, so vector partials are legal.
-            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.omp_simd:
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and self.renders_simd(sdfg, state_dfg, node):
                 head, sep, rest = map_header.partition(' for')
                 map_header = f'{head}{sep} simd{rest}'
 
@@ -3746,7 +3775,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                          dtypes.ScheduleType.CPU_Persistent)
                 pragma = None
                 if (not will_have_openmp and not node.map.unroll and i == len(node.map.range) - 1
-                        and node.map.schedule == dtypes.ScheduleType.Sequential and node.map.omp_simd):
+                        and node.map.schedule == dtypes.ScheduleType.Sequential
+                        and self.renders_simd(sdfg, state_dfg, node)):
                     pragma = "#pragma omp simd"
                     will_have_openmp = True
 

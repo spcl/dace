@@ -587,9 +587,9 @@ def test_complex_array_wcr_emits_declare_reduction_and_is_correct():
     clause, and is bit-exact at OMP=4."""
     sd = _build_wcr_array_sum(dace.complex128, flag=True)
     _, src = _compile_and_read_src(sd)
-    assert "declare reduction(+ : dace::complex128" in src, \
+    assert "declare reduction(cpf_cadd : dace::complex128" in src, \
         "expected complex declare-reduction directive"
-    assert any("reduction(+:A[0:" in l for l in src.splitlines() if "#pragma omp parallel for" in l)
+    assert any("reduction(cpf_cadd:A[0:" in l for l in src.splitlines() if "#pragma omp parallel for" in l)
 
     rng = np.random.default_rng(3)
     X = (rng.standard_normal((KK, NR, NM)) + 1j * rng.standard_normal((KK, NR, NM)))
@@ -621,7 +621,7 @@ def test_complex_product_declare_uses_identity_one():
     """A complex ``*`` reduction declares identity 1 (not 0)."""
     sd = _build_wcr_array_sum(dace.complex128, flag=True, wcr="lambda a, b: a * b")
     _, src = _compile_and_read_src(sd)
-    assert "declare reduction(* : dace::complex128" in src
+    assert "declare reduction(cpf_cmul : dace::complex128" in src
     assert "initializer(omp_priv = dace::complex128(1))" in src
 
 
