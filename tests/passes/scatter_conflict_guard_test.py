@@ -18,8 +18,10 @@ import pytest
 import dace
 from dace.config import set_temporary
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.scatter_conflict_guard import (GuardScatterConflicts, insert_scatter_guard,
-                                                               scatter_index_domain,
+                                                               names_are_free_symbols, scatter_index_domain,
                                                                scatter_index_is_provably_injective)
 
 N = dace.symbol('N')
@@ -227,6 +229,69 @@ def test_tag_array_is_a_persistent_transient_sized_by_the_scatter_domain():
     assert str(owner.shape[0]) == 'N'  # the scattered array's domain, no runtime max(ip)
     assert owner.lifetime == dace.dtypes.AllocationLifetime.Persistent
     assert owner.storage == dace.dtypes.StorageType.CPU_Heap  # the check is host code everywhere
+
+
+def every_way_a_symbol_is_defined() -> dace.SDFG:
+    """``N`` a plain parameter; ``K`` assigned on an edge, ``M`` inside an if branch, ``i`` a loop variable."""
+    sdfg = dace.SDFG('symbol_definitions')
+    for name in ('N', 'K', 'M', 'i'):
+        sdfg.add_symbol(name, dace.int64)
+    sdfg.add_array('a', [N], dace.float64)
+    first = sdfg.add_state('first', is_start_block=True)
+    second = sdfg.add_state('second')
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'K': 'N'}))
+    pick = ConditionalBlock('pick')
+    sdfg.add_node(pick)
+    sdfg.add_edge(second, pick, dace.InterstateEdge())
+    branch = ControlFlowRegion('then', sdfg=sdfg)
+    head = branch.add_state('head', is_start_block=True)
+    branch.add_edge(head, branch.add_state('tail'), dace.InterstateEdge(assignments={'M': 'K + 1'}))
+    pick.add_branch(CodeBlock('N > 0'), branch)
+    loop = LoopRegion('sweep', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(pick, loop, dace.InterstateEdge())
+    body = loop.add_state('body', is_start_block=True)
+    tasklet = body.add_tasklet('w', {}, {'o'}, 'o = K + M')
+    body.add_edge(tasklet, 'o', body.add_write('a'), None, dace.Memlet('a[i]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('names', [{'N'}, {'K'}, {'M'}, {'i'}, {'a'}, {'undeclared'}, {'N', 'K'}, set()])
+def test_free_symbol_shortcut_agrees_with_the_walk(names):
+    """The tag lifetime hangs on this answer, so it must equal ``names <= sdfg.free_symbols`` for every
+    way a name can be defined -- including an assignment hidden inside a conditional branch."""
+    sdfg = every_way_a_symbol_is_defined()
+    assert names_are_free_symbols(sdfg, names) == (names <= set(sdfg.free_symbols))
+
+
+def count_sdfg_walks(monkeypatch) -> dict:
+    """Count every ``SDFG.free_symbols`` evaluation from here on."""
+    calls = {'walks': 0}
+    inherited = dace.SDFG.free_symbols
+
+    def counted(self):
+        calls['walks'] += 1
+        return inherited.fget(self)
+
+    monkeypatch.setattr(dace.SDFG, 'free_symbols', property(counted))
+    return calls
+
+
+def test_free_symbol_shortcut_answers_a_plain_parameter_without_walking(monkeypatch):
+    sdfg = every_way_a_symbol_is_defined()
+    calls = count_sdfg_walks(monkeypatch)
+    assert names_are_free_symbols(sdfg, {'N'})
+    assert calls['walks'] == 0, 'a declared parameter nothing defines must not cost a whole-SDFG walk'
+
+
+def test_guard_insertion_decides_the_tag_lifetime_without_walking_the_sdfg(monkeypatch):
+    """One walk per guard was 23.7 s of ls3df_scf's scatter stage: 45 guards, each walking the whole SDFG
+    only to learn that the domain ``Lb`` is a parameter."""
+    sdfg = tsvc_vas.to_sdfg(simplify=True)
+    calls = count_sdfg_walks(monkeypatch)
+    insert_scatter_guard(sdfg, 'ip')
+    assert calls['walks'] == 0
+    assert sdfg.arrays['_scatter_guard_owner_ip'].lifetime == dace.dtypes.AllocationLifetime.Persistent
 
 
 def test_generated_guard_has_no_raw_new_and_no_include_in_the_program_body():

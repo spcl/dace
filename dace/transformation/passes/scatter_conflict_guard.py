@@ -426,6 +426,23 @@ def scatter_index_domain(sdfg: SDFG, idx_name: str) -> Optional[symbolic.Symboli
     return symbolic.pystr_to_symbolic('Max(' + ', '.join(sorted(sizes)) + ')')
 
 
+def names_are_free_symbols(sdfg: SDFG, names: Set[str]) -> bool:
+    """``names <= sdfg.free_symbols``, without the whole-SDFG walk when the answer is plainly yes.
+
+    ``free_symbols`` holds every declared symbol and drops only what ``sdfg`` itself defines: array
+    names, constants, interstate-edge assignment targets (conditional branches included) and loop
+    variables. A declared name none of those claims is therefore in it; anything else walks.
+    """
+    if not all(n in sdfg.symbols and n not in sdfg.arrays and n not in sdfg.constants_prop for n in names):
+        return names <= set(sdfg.free_symbols)
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable in names:
+            return names <= set(sdfg.free_symbols)
+        if any(names & edge.data.assignments.keys() for edge in region.edges()):
+            return names <= set(sdfg.free_symbols)
+    return True
+
+
 def _wire_owner_scratch(sdfg: SDFG,
                         idx_name: str,
                         check_state: SDFGState,
@@ -453,7 +470,7 @@ def _wire_owner_scratch(sdfg: SDFG,
     if domain is None:
         return
     lifetime = (dtypes.AllocationLifetime.Persistent
-                if set(symbolic.symlist(domain)) <= set(sdfg.free_symbols) else dtypes.AllocationLifetime.SDFG)
+                if names_are_free_symbols(sdfg, set(symbolic.symlist(domain))) else dtypes.AllocationLifetime.SDFG)
     # int64 DELIBERATELY, and not to be narrowed. The tag holds an index, and an index is kept at
     # 64 bits for safety here even though the array is domain-sized and both passes walk it by
     # ``idx[i]``: a narrower tag wraps, and two writers whose indices agree modulo the tag width
@@ -512,6 +529,6 @@ def _splice_guard_into_cfg(region: SDFG, idx_name: str, check_state: SDFGState, 
 # typically use ``insert_scatter_guard`` directly; callers driving a batch via
 # the Pass pipeline use ``GuardScatterConflicts``.
 __all__ = [
-    'GuardScatterConflicts', 'ScatterIndexSlice', 'build_guard_states', 'insert_scatter_guard', 'scatter_index_domain',
-    'scatter_index_is_provably_injective'
+    'GuardScatterConflicts', 'ScatterIndexSlice', 'build_guard_states', 'insert_scatter_guard',
+    'names_are_free_symbols', 'scatter_index_domain', 'scatter_index_is_provably_injective'
 ]
