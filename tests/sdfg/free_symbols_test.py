@@ -236,6 +236,32 @@ def test_used_array_keeps_symbolic_extent():
     assert 's' in sdfg.arglist()
 
 
+def conditional_block(condition: str, then_assignments: dict,
+                      else_assignments: dict) -> dace.sdfg.state.ConditionalBlock:
+    """``if condition: <then_assignments> else: <else_assignments>``, each arm one interstate edge."""
+    sdfg = dace.SDFG('conditional_symbols')
+    for name in ('best', 'v', 'w'):
+        sdfg.add_symbol(name, dace.float64)
+    block = dace.sdfg.state.ConditionalBlock('if_region', sdfg=sdfg)
+    for arm, (arm_condition, assignments) in enumerate(((condition, then_assignments), (None, else_assignments))):
+        body = dace.sdfg.state.ControlFlowRegion(f'arm_{arm}', sdfg=sdfg, parent=block)
+        first = body.add_state(f'arm_{arm}_first', is_start_block=True)
+        body.add_edge(first, body.add_state(f'arm_{arm}_second'), dace.InterstateEdge(assignments=assignments))
+        block.add_branch(None if arm_condition is None else dace.sdfg.state.CodeBlock(arm_condition), body)
+    sdfg.add_node(block, is_start_block=True)
+    return block
+
+
+def test_a_conditional_keeps_a_symbol_its_condition_reads_before_a_branch_assigns_it():
+    """``if v > best: best = v`` reads ``best`` first; dropping that read hid a running max from LoopToMap."""
+    assert 'best' in conditional_block('v > best', {'best': 'v'}, {}).free_symbols
+
+
+def test_a_conditional_keeps_a_symbol_one_branch_reads_and_a_sibling_branch_assigns():
+    """Only one branch runs, so a read in the else arm cannot see what the then arm assigned."""
+    assert 'best' in conditional_block('v > 0', {'best': 'v'}, {'w': 'best'}).free_symbols
+
+
 def test_non_transient_shape_symbol_stays_in_the_signature():
     """A symbol in a NON-transient shape is part of the ABI and must not depend on code use.
 

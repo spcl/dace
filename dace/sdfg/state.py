@@ -4207,11 +4207,16 @@ class ConditionalBlock(AbstractControlFlowRegion):
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
+        # Only one branch runs, and every condition is tested before it: each starts from the entry set.
+        entry_defined = set(defined_syms)
         for condition, region in self._branches:
+            branch_defined = set(entry_defined)
             if condition is not None:
-                free_syms |= condition.get_free_symbols(defined_syms)
+                condition_syms = condition.get_free_symbols(branch_defined)
+                free_syms |= condition_syms
+                used_before_assignment |= condition_syms
             b_free_symbols, b_defined_symbols, b_used_before_assignment = region._used_symbols_internal(
-                all_symbols, defined_syms, free_syms, used_before_assignment, keep_defined_in_mapping, with_contents)
+                all_symbols, branch_defined, free_syms, used_before_assignment, keep_defined_in_mapping, with_contents)
             free_syms |= b_free_symbols
             defined_syms |= b_defined_symbols
             used_before_assignment |= b_used_before_assignment

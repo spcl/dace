@@ -138,6 +138,30 @@ def test_invariants_survive_the_per_lift_context_rebuild():
     assert block_free_symbols(block, rebuilt) is first
 
 
+@dace.program
+def prefix_max(x: dace.float64[N], out: dace.float64[N]):
+    best = -1.0
+    for i in range(N):
+        v = abs(x[i])
+        if v > best:
+            best = v + 0
+        out[i] = best
+
+
+def test_a_running_max_with_a_conditional_update_stays_a_loop():
+    """``best`` becomes a symbol read by the ``if`` and assigned in its branch; hiding that read made
+    the loop look parallel and the map computed a per-element max, not a prefix max (cegterg)."""
+    sdfg = prefix_max.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert any(isinstance(region, LoopRegion) for region in sdfg.all_control_flow_regions(recursive=True))
+    x = np.random.default_rng(7).standard_normal(N) * 4.0
+    out = np.zeros(N)
+    sdfg(x=x, out=out)
+    assert np.array_equal(out, np.maximum.accumulate(np.maximum(np.abs(x), -1.0)))
+
+
 def test_numerics_survive_the_pass():
     sdfg = three_independent_sweeps.to_sdfg(simplify=True)
     ParallelizeLoops().apply_pass(sdfg, {})
