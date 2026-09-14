@@ -63,6 +63,11 @@ def every_third(x: dace.float64[N], y: dace.float64[N]):
 
 
 @dace.program
+def running_product_past_an_offset(x: dace.int64[N], y: dace.int64[N]):
+    y[2:] = np.cumprod(x[2:])
+
+
+@dace.program
 def running_product(x: dace.int64[N], y: dace.int64[N]):
     y[:] = np.cumprod(x)
 
@@ -200,6 +205,21 @@ def scan_product_case() -> Case:
     })
 
 
+def scan_past_an_offset_case() -> Case:
+    """The scan reads its input through a pointer offset (cp2k's ``(seed + (nlp * i))``), which the typed
+    C function has to type by the array it points into."""
+    x = np.array([1, 2, 1, 2, 2, 1, 3, 1, 2, 1], dtype=np.int64)
+    expected = np.zeros_like(x)
+    expected[2:] = np.cumprod(x[2:])
+    return (running_product_past_an_offset.to_sdfg(simplify=True), ('cpf_scan_incl_product_int64_int64_int64(', ), {
+        'x': x,
+        'y': np.zeros_like(x),
+        'N': x.size
+    }, {
+        'y': expected
+    })
+
+
 def scan_widening_case() -> Case:
     # 300 ones: folded at the int8 input type the rank would wrap at 128.
     src = np.ones(300, dtype=np.int8)
@@ -284,6 +304,7 @@ CASES: Dict[str, Callable[[], Case]] = {
     'maths_float32': maths_case,
     'int_ceil': int_ceil_case,
     'scan_product_int64': scan_product_case,
+    'scan_product_past_an_offset': scan_past_an_offset_case,
     'scan_exclusive_widening': scan_widening_case,
     'scan_max_float64': scan_max_case,
     'scan_min_int32': scan_min_case,

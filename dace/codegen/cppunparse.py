@@ -396,7 +396,11 @@ class CPPUnparser:
 
     def emit_call(self, name: str, arguments) -> None:
         """Write a call to the runtime function ``name`` over the argument AST nodes."""
-        self.write(runtime_call(name, [self.render(node) for node in arguments], self.c_argument_types(arguments)))
+        types = self.c_argument_types(arguments)
+        if types is None and cpf_lowering.standalone() and name.rsplit('::', 1)[-1] in ('conj', 'conjugate'):
+            # Typed in C++ too: a real argument makes the conjugate the identity, not a std::complex.
+            types = tuple(self.c_type(node) for node in arguments)
+        self.write(runtime_call(name, [self.render(node) for node in arguments], types))
 
     def c_typed_funcop(self, op: ast.operator) -> bool:
         """Whether the C dialect prints the operator ``op`` as a typed helper call (``//`` and ``%``)."""

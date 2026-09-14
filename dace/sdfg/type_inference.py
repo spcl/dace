@@ -20,6 +20,10 @@ from typing import Callable, Union
 # Additional function names that can be used to infer types
 KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {
     'abs': lambda arg_types: arg_types[0],
+    # sympy's spellings, which an interstate assignment printed from a symbolic expression carries
+    'Abs': lambda arg_types: arg_types[0],
+    'Min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'Max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'log': lambda arg_types: arg_types[0],
     'min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),

@@ -2663,6 +2663,15 @@ class ProgramVisitor(ExtNodeVisitor):
             self._add_nested_symbols(tasklet)
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
+            # A name the SDFG already declares that no loop of this program minted is a size or closure
+            # symbol, e.g. a captured extent that prints as ``k``. Binding it as the counter would make
+            # every extent that mentions it follow the loop, so the counter gets a fresh name instead.
+            if indices[0] in self.sdfg.symbols and all(str(minted) != indices[0] for minted in self.symbols):
+                fresh = self.sdfg.find_new_symbol(indices[0])
+                renamer = astutils.ASTFindReplace({indices[0]: fresh})
+                node.body = [renamer.visit(stmt) for stmt in node.body]
+                node.orelse = [renamer.visit(stmt) for stmt in node.orelse]
+                indices = [fresh]
             # Create an extra typed symbol for the loop iterate
             sym_name = indices[0]
             # Mint the spelling a reparse produces. SymPy folds assumptions into symbol identity,
