@@ -729,7 +729,7 @@ def ravel_multi_index(pv: ProgramVisitor,
             value = f'({symbolic.symstr(index)})'
         extent = symbolic.symstr(extents[pos])
         if mode == 'wrap':
-            value = f'(({value}) % ({extent}))'
+            value = f'PyMod({value}, {extent})'
         elif mode == 'clip':
             last = symbolic.symstr(symbolic.pystr_to_symbolic(f'({extent}) - 1'))
             value = f'(0 if ({value}) < 0 else (({last}) if ({value}) > ({last}) else ({value})))'
