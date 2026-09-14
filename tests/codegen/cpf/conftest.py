@@ -23,13 +23,18 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pytest
 
 import dace
 from dace import data as dt
+from dace.codegen.cpf import render
+from dace.libraries.standard.nodes import Scan
+from dace.libraries.standard.nodes.scan import ScanOp
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 #: C++ standard CPF output is emitted against. DaCe is >= C++20 everywhere.
 CXX_STANDARD = 'c++20'
@@ -211,6 +216,53 @@ def assert_device_preamble_covers_its_uses(code: str, label: str = 'cpf') -> Non
         assert declaration.search(code) is not None, (
             f'{label}: the unit calls {name} at offset {hit.start()} but never declares it -- the '
             f'device preamble was selected without seeing that use\n{_context(code, hit.start())}')
+
+
+def canonical_gpu_sdfg(program: Any, name: str) -> dace.SDFG:
+    """``program`` canonicalized for the GPU pipeline, before the device move."""
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.name = name
+    canonicalize(sdfg, validate=True, validate_all=False, target='gpu')
+    return sdfg
+
+
+def render_gpu(program: Any, name: str, language: str = 'hip') -> Tuple[dace.SDFG, str]:
+    """``(sdfg, code)`` for a ``@dace.program`` taken through the GPU pipeline and rendered as ``language``.
+
+    The pipeline is the documented order and all three steps matter here: ``canonicalize`` leaves
+    every choice parallel, ``offload_to_gpu`` moves the data and the maps onto the device, and
+    ``finalize_for_target`` is what SELECTS the device library implementations. Rendering a graph
+    that skipped the last step would test the host selection instead.
+    """
+    sdfg = canonical_gpu_sdfg(program, name)
+    offload_to_gpu(sdfg)
+    finalize_for_target(sdfg, 'gpu', validate=True)
+    rendering = render(sdfg, language=language)
+    return rendering.sdfg, rendering.code
+
+
+def device_scan_sdfg(name: str, op: ScanOp, coefficients: bool = False, seed: bool = False) -> dace.SDFG:
+    """A ``Scan`` over DEVICE memory at host level, in the shape ``LoopToScan`` leaves on a GPU
+    graph. ``seed`` puts the entry value in DEVICE memory, which is the case that used to break: a
+    host expansion reads it, and a device-resident scalar cannot be read on the host."""
+    extent = dace.symbol('N')
+    sdfg = dace.SDFG(name)
+    storage = dace.dtypes.StorageType.GPU_Global
+    for array in ('a', 'b') + (('c', ) if coefficients else ()):
+        sdfg.add_array(array, [extent], dace.float64, storage=storage)
+    state = sdfg.add_state()
+    node = Scan('sc', op=op, exclusive=not coefficients and not seed)
+    node.schedule = dace.dtypes.ScheduleType.GPU_Device
+    state.add_node(node)
+    state.add_edge(state.add_read('a'), None, node, '_scan_in', dace.Memlet.from_array('a', sdfg.arrays['a']))
+    state.add_edge(node, '_scan_out', state.add_write('b'), None, dace.Memlet.from_array('b', sdfg.arrays['b']))
+    if coefficients:
+        state.add_edge(state.add_read('c'), None, node, '_scan_coef', dace.Memlet.from_array('c', sdfg.arrays['c']))
+    if seed:
+        sdfg.add_array('s', [1], dace.float64, storage=storage)
+        node.add_in_connector('_scan_init')
+        state.add_edge(state.add_read('s'), None, node, '_scan_init', dace.Memlet('s[0]'))
+    return sdfg
 
 
 def host_compiler(language: str = 'c++') -> str:

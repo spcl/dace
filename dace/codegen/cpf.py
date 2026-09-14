@@ -30,6 +30,7 @@ What CPF refuses, it refuses loudly -- see :func:`prepare`, and the standalone p
 ``framecode``. A rendering that quietly dropped an initializer, a caller-supplied buffer or a GPU
 kernel would still compile and still produce numbers, just not the SDFG's.
 """
+import contextlib
 import copy
 import os
 import re
@@ -584,8 +585,9 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     """
     device = uses_device_code(sdfg)
     if device:
-        raise NotImplementedError('CPF renders one translation unit, but ' + '; '.join(device) +
-                                  ". Render the CPU form of this SDFG, or the 'hip' language for a device one.")
+        raise NotImplementedError(
+            'CPF renders one translation unit, but ' + '; '.join(device) +
+            ". Render the CPU form of this SDFG, or the 'cuda' or 'hip' language for a device one.")
     refuse_runtime_scopes(sdfg)
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
     refuse_by_value_returns(sdfg)
@@ -852,13 +854,14 @@ LANGUAGES: Dict[str, cpf_lowering.Dialect] = {
     'c++': cpf_lowering.Dialect.STANDALONE,
     'c': cpf_lowering.Dialect.STANDALONE_C,
     'hip': cpf_lowering.Dialect.STANDALONE_HIP,
+    'cuda': cpf_lowering.Dialect.STANDALONE_CUDA,
 }
 
 
 def dialect_for(language: str) -> cpf_lowering.Dialect:
     """The dialect ``language`` names.
 
-    :param language: ``'c++'`` or ``'c'``.
+    :param language: a key of :data:`LANGUAGES`.
     :raises ValueError: for any other value, naming what is available.
     """
     try:
@@ -885,13 +888,13 @@ def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STA
     lines += [f'#include {header}' for header in headers]
     if dialect is cpf_lowering.Dialect.STANDALONE_C:
         lines.append(cpf_lowering.C_UNDEF_LINE)
-    if dialect is cpf_lowering.Dialect.STANDALONE_HIP:
+    if dialect in cpf_lowering.DEVICE_DIALECTS:
         lines.append('')
         lines.append('// What dace/dace.h would define for the device side.')
         # code PLUS the definitions: a scan expansion's inline helper is emitted BELOW this block
         # and calls ``gpucub::DeviceScan`` itself, so gating on ``code`` alone dropped the namespace
         # alias out from under it and the unit failed to compile on an undeclared ``gpucub``.
-        lines.append(cpf_lowering.hip_device_preamble(code + '\n'.join(definitions)))
+        lines.append(cpf_lowering.device_preamble(code + '\n'.join(definitions), dialect))
     if definitions:
         lines.append('')
         lines.append('// Functions the DaCe runtime headers would otherwise provide.')
@@ -934,7 +937,7 @@ _C_DECLARED_TYPES = (r'(?:const\s+)?(?:unsigned\s+|signed\s+)?'
 #: What a finished DEVICE rendering must not contain. The state-struct entry is dropped from
 #: :data:`BANNED` because the unit DECLARES that struct, which carries the stream, rather than
 #: borrowing it (:func:`~dace.cpf_lowering.device_entry_prologue`). Every ``DACE_*`` spelling is
-#: written out by :func:`~dace.cpf_lowering.hip_spell_out`, so one surviving is a leak here too.
+#: written out by :func:`~dace.cpf_lowering.device_spell_out`, so one surviving is a leak here too.
 BANNED_DEVICE: Tuple[Tuple[re.Pattern, str],
                      ...] = tuple(entry for entry in BANNED if entry[1] != 'a state-struct dereference')
 
@@ -980,14 +983,19 @@ def verify(code: str, name: str, dialect: cpf_lowering.Dialect = cpf_lowering.Di
 #: Per HOST dialect: the language standard its output is defined against, the source suffix, the
 #: environment variable naming its compiler, and the compilers to try when that is unset.
 #:
-#: The DEVICE dialect is deliberately absent. Its compiler is not the host compiler and is not
-#: installed on every box a host render runs on, so gating it here would turn "hipcc is not
+#: The DEVICE dialects are deliberately absent. Their compiler is not the host compiler and is not
+#: installed on every box a host render runs on, so gating them here would turn "hipcc is not
 #: installed" into "this SDFG cannot be rendered" -- and a gate that quietly skips instead would be
 #: the very shape this one exists to close.
 COMPILE_CHECK_TOOLCHAINS: Dict[cpf_lowering.Dialect, Tuple[str, str, str, Tuple[str, ...]]] = {
     cpf_lowering.Dialect.STANDALONE: ('c++20', '.cpp', 'CXX', ('g++', 'c++')),
     cpf_lowering.Dialect.STANDALONE_C: ('c23', '.c', 'CC', ('gcc', 'cc')),
 }
+
+#: What a ``'cuda'`` unit is built with besides the output flags. ``--expt-relaxed-constexpr`` is what
+#: DaCe's own CUDA build adds (``dace/codegen/CMakeLists.txt``): kernels call the ``constexpr`` index
+#: and runtime helpers, which nvcc otherwise treats as host-only. hipcc needs no such flag.
+CUDA_BUILD_FLAGS: Tuple[str, ...] = ('-std=c++20', '--expt-relaxed-constexpr')
 
 #: What the gate compiles with. ``-fsyntax-only`` because the question is whether the TEXT is a
 #: valid translation unit, not how fast its object code is: it parses, resolves every name and
@@ -1057,6 +1065,18 @@ def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect) -> None:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def device_backend(dialect: cpf_lowering.Dialect) -> contextlib.AbstractContextManager:
+    """Generate for ``dialect``'s own GPU backend (:data:`~dace.cpf_lowering.DEVICE_BACKENDS`), not the machine's.
+
+    :param dialect: the dialect being rendered.
+    :returns: a context pinning ``compiler.cuda.backend`` for a device dialect; a no-op for a host one.
+    """
+    backend = cpf_lowering.DEVICE_BACKENDS.get(dialect)
+    if backend is None:
+        return contextlib.nullcontext()
+    return set_temporary('compiler', 'cuda', 'backend', value=backend)
+
+
 class Rendering(NamedTuple):
     """A rendered SDFG: the C++ text, and the SDFG that text was generated from.
 
@@ -1090,8 +1110,12 @@ def render(sdfg: SDFG,
 
     :param sdfg: the SDFG to render. Not modified -- a copy is prepared and rendered.
     :param validate: validate the SDFG during code generation.
-    :param language: ``'c++'`` (the default, C++20) or ``'c'`` (C23). Both are self-contained: the
-                     result builds with a bare host compiler, no ``-I``, no libdace, no BLAS.
+    :param language: ``'c++'`` (the default, C++20) or ``'c'`` (C23), which build with a bare host
+                     compiler, no ``-I``, no libdace, no BLAS; or a device unit, ``'cuda'`` (nvcc) or
+                     ``'hip'`` (hipcc), which adds only the toolkit's own headers. A device entry has
+                     the ``'c++'`` prototype, takes device pointers for ``GPU_Global`` arrays (the
+                     caller copies to and from the device) and synchronizes the device before it
+                     returns.
     :param order: the entry point's parameter names in the order the caller will pass them, for a
                   caller whose calling convention is fixed elsewhere. ``None`` keeps CPF's own
                   order (``arglist()``: arrays by name, then scalars by name). Must name exactly
@@ -1116,7 +1140,7 @@ def render(sdfg: SDFG,
     # writes ``std::abs`` -- had no way to know which dialect was being rendered and always chose
     # the C++ one, so every argmax over a transformed element failed the C rendering at the
     # self-containment check rather than at anything a caller could act on.
-    with cpf_lowering.dialect_scope(dialect):
+    with cpf_lowering.dialect_scope(dialect), device_backend(dialect):
         # ``prepare`` expands library nodes into loops and tasklets on this throwaway copy; nothing
         # CPF emits reads node.debuginfo, so the inspect.stack() walk behind it is pure overhead. No
         # history either: the first recorded expansion deep-copies the whole copy into ``orig_sdfg``.
@@ -1125,7 +1149,7 @@ def render(sdfg: SDFG,
     # DACE_* environment variables outrank set_temporary, so a shell that pins the CPU generator to
     # ``legacy`` would silently render through the wrong one -- and the legacy generator emits
     # ``dace::CopyND`` and state-struct accesses that no dialect switch can take back. Refuse.
-    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
+    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'), device_backend(dialect):
         selected = Config.get('compiler', 'cpu', 'implementation')
         if selected != 'experimental_readable':
             raise RuntimeError('CPF builds on the readable CPU code generator, but '
@@ -1152,9 +1176,9 @@ def render(sdfg: SDFG,
                     # ``__restrict__`` is the GNU spelling ``Data.as_arg`` emits because C++ has no
                     # ``restrict`` keyword. C does, and it is the one a C23 unit should carry.
                     body = re.sub(r'\b__restrict__\b', 'restrict', body)
-                if dialect is cpf_lowering.Dialect.STANDALONE_HIP:
+                if dialect in cpf_lowering.DEVICE_DIALECTS:
                     # Last, because the passes above match the DaCe spellings the generator wrote.
-                    body = cpf_lowering.hip_spell_out(body)
+                    body = cpf_lowering.device_spell_out(body, dialect)
     code = preamble(body, dialect) + body
     verify(code, sdfg.name, dialect)
     if check_compiles:
@@ -1178,7 +1202,7 @@ def cpf(sdfg: SDFG,
 
     :param sdfg: the SDFG to render.
     :param validate: validate the SDFG during code generation.
-    :param language: ``'c++'`` (the default) or ``'c'``.
+    :param language: ``'c++'`` (the default), ``'c'``, ``'cuda'`` or ``'hip'`` (see :func:`render`).
     :param order: the entry point's parameter names in the caller's own order; ``None`` keeps
                   CPF's (see :func:`render`).
     :param check_compiles: compile the finished unit before returning it (see :func:`render`).

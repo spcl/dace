@@ -404,7 +404,7 @@ def test_an_unknown_language_is_refused():
     """A typo must name what is available rather than silently rendering C++."""
     sdfg = c_scale_add.to_sdfg(simplify=True)
     sdfg.name = 'mprc_bad_language'
-    with pytest.raises(ValueError, match=r"\['c', 'c\+\+', 'hip'\]"):
+    with pytest.raises(ValueError, match=r"\['c', 'c\+\+', 'cuda', 'hip'\]"):
         cpf(sdfg, language='fortran')
 
 

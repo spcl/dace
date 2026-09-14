@@ -26,32 +26,12 @@ import dace
 from dace import cpf_lowering
 from dace.codegen import cpf
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.cpf import render as render_sdfg
 from dace.libraries.standard.nodes import FindFirst, Scan
 from dace.libraries.standard.nodes.scan import ScanOp
-from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-from tests.codegen.cpf.conftest import assert_standalone_device
+from tests.codegen.cpf.conftest import assert_standalone_device, device_scan_sdfg, render_gpu
 
 N = dace.symbol('N')
-
-
-def render_gpu(program, name: str):
-    """``(sdfg, code)`` for a ``@dace.program`` taken through the GPU pipeline and rendered as HIP.
-
-    The pipeline is the documented order and all three steps matter here: ``canonicalize`` leaves
-    every choice parallel, ``offload_to_gpu`` moves the data and the maps onto the device, and
-    ``finalize_for_target`` is what SELECTS the device library implementations this module is
-    about. Rendering a graph that skipped the last step would test the host selection instead.
-    """
-    sdfg = program.to_sdfg(simplify=True)
-    sdfg.name = name
-    canonicalize(sdfg, validate=True, validate_all=False, target='gpu')
-    offload_to_gpu(sdfg)
-    finalize_for_target(sdfg, 'gpu', validate=True)
-    rendering = render_sdfg(sdfg, language='hip')
-    return rendering.sdfg, rendering.code
 
 
 def duplicable_definitions(code: str):
@@ -70,7 +50,7 @@ def test_shared_definitions_are_emitted_once_and_prototypes_are_not_dropped():
     Concatenated into one unit a second copy is a redefinition, so it is dropped.
 
     The other half is the trap. A repeated DECLARATION must NOT be dropped: the frame calls
-    ``__dace_runkernel_*`` and the device object defines it, so the prototype appears in both, and
+    ``__cpf_runkernel_*`` and the device object defines it, so the prototype appears in both, and
     removing the frame's copy would remove the only declaration before the call."""
 
     @dace.program
@@ -85,10 +65,29 @@ def test_shared_definitions_are_emitted_once_and_prototypes_are_not_dropped():
     repeated = sorted({line for line in definitions if definitions.count(line) > 1})
     assert not repeated, f'definition emitted more than once: {repeated}'
 
-    prototypes = re.findall(r'^.*\b__dace_runkernel_\w+\([^;]*\);\s*$', code, re.MULTILINE)
+    prototypes = re.findall(r'^.*\b__cpf_runkernel_\w+\([^;]*\);\s*$', code, re.MULTILINE)
     assert prototypes, 'the device rendering declared no kernel launcher'
     assert len(prototypes) > len(set(prototypes)), ('a launcher prototype must be allowed to repeat -- the frame '
                                                     'declares what the device object defines')
+
+
+def test_the_hip_unit_calls_hip_runtime_functions_whichever_gpu_the_rendering_host_has():
+    """The generator prefixes runtime calls with the configured GPU backend, which defaults to the
+    machine's. Rendered on an NVIDIA host, the HIP unit called ``cudaStreamSynchronize`` and
+    ``cudaLaunchKernel``, which nothing in it declares; the dialect has to pick the backend."""
+
+    @dace.program
+    def fused(a: dace.float64[N], out: dace.float64[N]):
+        for i in dace.map[0:N]:
+            out[i] = (a[i] * a[i] + 1.0) * (a[i] * a[i] - 1.0)
+
+    _, code = render_gpu(fused, 'cpf_hip_backend')
+    assert_standalone_device(code, 'cpf_hip_backend')
+
+    assert '#include <hip/hip_runtime.h>' in code, 'the header that declares the HIP runtime must be included'
+    assert re.search(r'\bhipStreamSynchronize\(gpu_streams\[', code), 'the stream synchronize must be the HIP call'
+    assert re.search(r'\bhipLaunchKernel\(', code), 'the kernel launch must be the HIP call'
+    assert re.findall(r'\bcuda[A-Z]\w*', code) == [], 'a CUDA runtime name is undeclared in a HIP unit'
 
 
 def test_device_reduction_folds_without_a_runtime_functor():
@@ -195,29 +194,6 @@ def test_a_device_library_node_inside_a_kernel_keeps_the_device_code_implementat
     with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_HIP):
         assert not cpf.on_device_at_host_level(node, state)
         assert cpf.renderable_implementations(node, state)[0] != 'CUDA'
-
-
-def device_scan_sdfg(name: str, op: ScanOp, coefficients: bool = False, seed: bool = False) -> dace.SDFG:
-    """A ``Scan`` over DEVICE memory at host level, in the shape ``LoopToScan`` leaves on a GPU
-    graph. ``seed`` puts the entry value in DEVICE memory, which is the case that used to break: a
-    host expansion reads it, and a device-resident scalar cannot be read on the host."""
-    sdfg = dace.SDFG(name)
-    storage = dace.dtypes.StorageType.GPU_Global
-    for array in ('a', 'b') + (('c', ) if coefficients else ()):
-        sdfg.add_array(array, [N], dace.float64, storage=storage)
-    state = sdfg.add_state()
-    node = Scan('sc', op=op, exclusive=not coefficients and not seed)
-    node.schedule = dace.dtypes.ScheduleType.GPU_Device
-    state.add_node(node)
-    state.add_edge(state.add_read('a'), None, node, '_scan_in', dace.Memlet.from_array('a', sdfg.arrays['a']))
-    state.add_edge(node, '_scan_out', state.add_write('b'), None, dace.Memlet.from_array('b', sdfg.arrays['b']))
-    if coefficients:
-        state.add_edge(state.add_read('c'), None, node, '_scan_coef', dace.Memlet.from_array('c', sdfg.arrays['c']))
-    if seed:
-        sdfg.add_array('s', [1], dace.float64, storage=storage)
-        node.add_in_connector('_scan_init')
-        state.add_edge(state.add_read('s'), None, node, '_scan_init', dace.Memlet('s[0]'))
-    return sdfg
 
 
 def test_a_device_scan_renders_the_device_scan_and_its_scratch():

@@ -39,6 +39,8 @@ import functools
 import re
 from typing import Callable, Dict, FrozenSet, List, NamedTuple, Optional, Set, Tuple
 
+from dace.ordered import OrderedSet
+
 
 class Dialect(enum.Enum):
     """Which C++ vocabulary a printer may emit.
@@ -73,6 +75,9 @@ class Dialect(enum.Enum):
     #: that builds the unit, so requiring them adds no dependency a caller did not already have
     #: by choosing to compile for a GPU. What stays banned is ``dace/``, which does not.
     STANDALONE_HIP = 'standalone_hip'
+    #: :attr:`STANDALONE_HIP` for NVIDIA: the same unit through the same device path, built by nvcc.
+    #: Only the spelling tables and the toolkit headers (``cuda_runtime.h``, CUB) differ.
+    STANDALONE_CUDA = 'standalone_cuda'
 
 
 #: The dialect a printer uses when its caller names none. Set only through :func:`dialect_scope`.
@@ -113,11 +118,17 @@ def dialect_scope(dialect: Dialect):
 #: The dialects that emit a self-contained translation unit. Everything CPF refuses -- device
 #: code, a state struct, an external buffer handshake -- it refuses for both of them, so the many
 #: call sites that ask "is this an CPF rendering" ask through :func:`standalone`.
-STANDALONE_DIALECTS = frozenset({Dialect.STANDALONE, Dialect.STANDALONE_C, Dialect.STANDALONE_HIP})
+STANDALONE_DIALECTS = frozenset(
+    {Dialect.STANDALONE, Dialect.STANDALONE_C, Dialect.STANDALONE_HIP, Dialect.STANDALONE_CUDA})
 
 #: The standalone dialects that render DEVICE code. A rendering under one of these admits GPU
 #: storages and schedules, and emits both the host code and the kernels into the one unit.
-DEVICE_DIALECTS = frozenset({Dialect.STANDALONE_HIP})
+DEVICE_DIALECTS = frozenset({Dialect.STANDALONE_HIP, Dialect.STANDALONE_CUDA})
+
+#: The ``compiler.cuda.backend`` each device dialect generates for. The generator prefixes runtime
+#: calls with the backend (``cudaStreamSynchronize``), and the default backend is the machine's, so
+#: a HIP unit rendered on an NVIDIA box called CUDA functions it never declares.
+DEVICE_BACKENDS: Dict[Dialect, str] = {Dialect.STANDALONE_HIP: 'hip', Dialect.STANDALONE_CUDA: 'cuda'}
 
 
 def standalone() -> bool:
@@ -774,6 +785,9 @@ BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>
 #: hipCUB supplies the device scan, reduce and arg-reduce the library nodes expand into.
 HIP_BASE_HEADERS: Tuple[str, ...] = ('<hip/hip_runtime.h>', '<hipcub/hipcub.hpp>')
 
+#: What a CUDA unit adds to :data:`BASE_HEADERS`, on the same footing: both ship with the CUDA toolkit.
+CUDA_BASE_HEADERS: Tuple[str, ...] = ('<cuda_runtime.h>', '<cub/cub.cuh>')
+
 #: What ``dace/dace.h`` supplies that a DEVICE unit still needs, written out inline.
 #:
 #: These are not lowerings -- the generated device code is already correct C++ -- they are the
@@ -791,19 +805,34 @@ HIP_BASE_HEADERS: Tuple[str, ...] = ('<hip/hip_runtime.h>', '<hipcub/hipcub.hpp>
 #: stand unaltered. One stream, because canon offloads onto the default stream
 #: (``max_concurrent_streams = -1``); the array is what the emitted indexing expects.
 #:
-#: This is the part EVERY device unit needs. What only some need is in
-#: :data:`HIP_DEVICE_BLOCKS`, selected the same way the C helpers are -- from the finished text.
-HIP_DEVICE_CORE: str = """\
+#: This is the part EVERY device unit needs, after its backend's :data:`DEVICE_TYPES`. What only
+#: some need is in :data:`HIP_DEVICE_BLOCKS`, selected the same way the C helpers are -- from the
+#: finished text. Calls are written as ``gpu*`` and spelled per backend (:func:`device_spell_out`).
+DEVICE_TYPES: Dict[Dialect, str] = {
+    Dialect.STANDALONE_HIP:
+    """\
 using gpuStream_t = hipStream_t;
 using gpuEvent_t = hipEvent_t;
 using gpuError_t = hipError_t;
 static constexpr gpuError_t gpuSuccess = hipSuccess;
 static constexpr gpuError_t gpuErrorMemoryAllocation = hipErrorOutOfMemory;
+""",
+    Dialect.STANDALONE_CUDA:
+    """\
+using gpuStream_t = cudaStream_t;
+using gpuEvent_t = cudaEvent_t;
+using gpuError_t = cudaError_t;
+static constexpr gpuError_t gpuSuccess = cudaSuccess;
+static constexpr gpuError_t gpuErrorMemoryAllocation = cudaErrorMemoryAllocation;
+""",
+}
+
+DEVICE_CORE: str = """\
 
 //: A failed GPU call ends the program, naming the call site.
 static inline void cpf_gpu_check(gpuError_t status, const char *file = __builtin_FILE(), int line = __builtin_LINE()) {
     if (status != gpuSuccess) {
-        fprintf(stderr, "%s:%d: GPU error %d (%s)\\n", file, line, (int)status, hipGetErrorString(status));
+        fprintf(stderr, "%s:%d: GPU error %d (%s)\\n", file, line, (int)status, gpuGetErrorString(status));
         abort();
     }
 }
@@ -832,7 +861,7 @@ static inline void cpf_kernel_launch_check(gpuError_t err, const char *name, lon
                                            long long bx, long long by, long long bz) {
     if (err != gpuSuccess) {
         fprintf(stderr, "%s launch failed (grid %lld,%lld,%lld block %lld,%lld,%lld): %s\\n", name, gx, gy, gz, bx, by,
-                bz, hipGetErrorString(err));
+                bz, gpuGetErrorString(err));
         abort();
     }
 }
@@ -847,6 +876,21 @@ namespace gpucub = hipcub;
     'struct cpf_cub_multiplies {\n'
     '    template <typename T>\n'
     '    __host__ __device__ T operator()(const T& a, const T& b) const { return a * b; }\n'
+    '};\n',
+    'cpf_cub_plus':
+    'struct cpf_cub_plus {\n'
+    '    template <typename T>\n'
+    '    __host__ __device__ T operator()(const T& a, const T& b) const { return a + b; }\n'
+    '};\n',
+    'cpf_cub_minimum':
+    'struct cpf_cub_minimum {\n'
+    '    template <typename T>\n'
+    '    __host__ __device__ T operator()(const T& a, const T& b) const { return a < b ? a : b; }\n'
+    '};\n',
+    'cpf_cub_maximum':
+    'struct cpf_cub_maximum {\n'
+    '    template <typename T>\n'
+    '    __host__ __device__ T operator()(const T& a, const T& b) const { return a > b ? a : b; }\n'
     '};\n',
     'cpf_gpu_atomic':
     """\
@@ -874,13 +918,26 @@ __device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
 """,
 }
 
-#: Emission order for :data:`HIP_DEVICE_BLOCKS`. A dict preserves insertion order, but the blocks
+#: The CUDA unit's blocks: the same ones, with cub under its CUDA name.
+CUDA_DEVICE_BLOCKS: Dict[str, str] = {
+    **HIP_DEVICE_BLOCKS,
+    'gpucub':
+    '//: The backend cub, under the name the code generator writes -- what gpucub.cuh aliases.\n'
+    'namespace gpucub = cub;\n',
+}
+
+DEVICE_BLOCKS: Dict[Dialect, Dict[str, str]] = {
+    Dialect.STANDALONE_HIP: HIP_DEVICE_BLOCKS,
+    Dialect.STANDALONE_CUDA: CUDA_DEVICE_BLOCKS,
+}
+
+#: Emission order for :data:`DEVICE_BLOCKS`. A dict preserves insertion order, but the blocks
 #: are selected into a set, so the order a unit gets them in has to be stated rather than inherited
 #: from however the set happened to iterate -- two runs of the same SDFG must render byte-identical.
-HIP_DEVICE_BLOCK_ORDER: Tuple[str, ...] = tuple(HIP_DEVICE_BLOCKS)
+DEVICE_BLOCK_ORDER: Tuple[str, ...] = tuple(HIP_DEVICE_BLOCKS)
 
 #: What each block needs in turn.
-HIP_DEVICE_BLOCK_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
+DEVICE_BLOCK_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     'cpf_gpu_atomic': ('gpucub', ),
 }
 
@@ -929,39 +986,71 @@ HIP_SPELLINGS: Dict[str, str] = {
     **GPU_ALIASES,
 }
 
-#: One alternation over :data:`HIP_SPELLINGS`. No replacement contains a key, so one pass is exact.
-HIP_SPELLING_PATTERN: 're.Pattern' = re.compile(r'\b(' + '|'.join(sorted(HIP_SPELLINGS, key=len, reverse=True)) +
-                                                r')\b')
+#: :data:`HIP_SPELLINGS` for the CUDA unit: each ``gpu*`` call as its CUDA function, and the cub
+#: operators as CPF's own functors, because CCCL 3 dropped the ``Sum``/``Min``/``Max`` structs.
+CUDA_SPELLINGS: Dict[str, str] = {
+    **HIP_SPELLINGS,
+    'DACE_CUB_SUM_OP': 'cpf_cub_plus()',
+    'DACE_CUB_MIN_OP': 'cpf_cub_minimum()',
+    'DACE_CUB_MAX_OP': 'cpf_cub_maximum()',
+    **{
+        name: 'cuda' + name[len('gpu'):]
+        for name in GPU_ALIASES
+    },
+}
+
+DEVICE_SPELLINGS: Dict[Dialect, Dict[str, str]] = {
+    Dialect.STANDALONE_HIP: HIP_SPELLINGS,
+    Dialect.STANDALONE_CUDA: CUDA_SPELLINGS,
+}
+
+#: One alternation per dialect over its spellings. No replacement contains a key, so one pass is exact.
+DEVICE_SPELLING_PATTERNS: Dict[Dialect, 're.Pattern'] = {
+    dialect: re.compile(r'\b(' + '|'.join(sorted(spellings, key=len, reverse=True)) + r')\b')
+    for dialect, spellings in DEVICE_SPELLINGS.items()
+}
 
 #: ``DACE_EXPORTED`` names no attribute in a self-contained unit, so it goes with the blank after it.
 HIP_EXPORTED_PATTERN: 're.Pattern' = re.compile(r'\bDACE_EXPORTED\b[ \t]*')
 
+#: The ``__dace_`` prefix of the generator's own launchers and locals (``__dace_runkernel_*``,
+#: ``__dace_current_stream``). ``__dace_init``/``__dace_exit`` keep it: they are a refused
+#: handshake, and :data:`~dace.codegen.cpf.BANNED` has to still see one.
+DACE_PREFIX_PATTERN: 're.Pattern' = re.compile(r'\b__dace_(?!init|exit)')
 
-def hip_spell_out(code: str) -> str:
-    """Write out each :data:`HIP_SPELLINGS` name and drop ``DACE_EXPORTED``, so the unit needs no macro.
 
-    :param code: the emitted device unit, without its preamble.
-    :returns: the unit with every DaCe spelling replaced.
+def device_spell_out(code: str, dialect: Dialect) -> str:
+    """Write out each of ``dialect``'s spellings, drop ``DACE_EXPORTED`` and respell ``__dace_`` as ``__cpf_``.
+
+    :param code: the emitted device unit, or its preamble.
+    :param dialect: the device dialect rendering it (see :data:`DEVICE_SPELLINGS`).
+    :returns: the text with every DaCe spelling replaced.
     """
-    return HIP_SPELLING_PATTERN.sub(lambda match: HIP_SPELLINGS[match.group(1)], HIP_EXPORTED_PATTERN.sub('', code))
+    spellings = DEVICE_SPELLINGS[dialect]
+    code = DACE_PREFIX_PATTERN.sub('__cpf_', HIP_EXPORTED_PATTERN.sub('', code))
+    return DEVICE_SPELLING_PATTERNS[dialect].sub(lambda match: spellings[match.group(1)], code)
 
 
-def hip_device_preamble(code: str) -> str:
-    """:data:`HIP_DEVICE_CORE` plus the blocks ``code`` actually reaches for.
+def device_preamble(code: str, dialect: Dialect) -> str:
+    """``dialect``'s :data:`DEVICE_TYPES` and :data:`DEVICE_CORE`, plus the blocks ``code`` reaches for.
 
-    :param code: the emitted translation unit after :func:`hip_spell_out`, WITHOUT its preamble -- so
-                 a block's own definition never counts as a use of it.
-    :returns: the device preamble, core first and blocks in :data:`HIP_DEVICE_BLOCK_ORDER`.
+    :param code: the emitted translation unit after :func:`device_spell_out`, WITHOUT its preamble --
+                 so a block's own definition never counts as a use of it.
+    :param dialect: the device dialect rendering it.
+    :returns: the device preamble, core first and blocks in :data:`DEVICE_BLOCK_ORDER`, spelled for the backend.
     """
-    needed: Set[str] = set()
-    pending = [name for name in HIP_DEVICE_BLOCKS if re.search(rf'\b{re.escape(name)}\b', code)]
+    blocks = DEVICE_BLOCKS[dialect]
+    needed: OrderedSet[str] = OrderedSet()
+    pending = [name for name in blocks if re.search(rf'\b{re.escape(name)}\b', code)]
     while pending:
         name = pending.pop()
         if name in needed:
             continue
         needed.add(name)
-        pending.extend(dep for dep in HIP_DEVICE_BLOCK_DEPENDENCIES.get(name, ()) if dep not in needed)
-    return '\n'.join([HIP_DEVICE_CORE] + [HIP_DEVICE_BLOCKS[name] for name in HIP_DEVICE_BLOCK_ORDER if name in needed])
+        pending.extend(dep for dep in DEVICE_BLOCK_DEPENDENCIES.get(name, ()) if dep not in needed)
+    return device_spell_out(
+        '\n'.join([DEVICE_TYPES[dialect] + DEVICE_CORE] +
+                  [blocks[name] for name in DEVICE_BLOCK_ORDER if name in needed]), dialect)
 
 
 def device_entry_prologue(state_struct: str) -> str:
@@ -986,7 +1075,7 @@ def device_entry_prologue(state_struct: str) -> str:
     {state_struct} __cpf_state{{&__cpf_context}};
     {state_struct} *__state = &__cpf_state;
     struct __cpf_drain {{
-        ~__cpf_drain() {{ cpf_gpu_check(hipDeviceSynchronize()); }}
+        ~__cpf_drain() {{ cpf_gpu_check(gpuDeviceSynchronize()); }}
     }} __cpf_drain_guard;
 """
 
@@ -2309,7 +2398,7 @@ HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
     'struct cpf_scratch_block {\n'
     '    void *ptr = nullptr;\n'
     '    size_t capacity = 0;\n'
-    '    ~cpf_scratch_block() { if (ptr != nullptr) { (void)hipFree(ptr); } }\n'
+    '    ~cpf_scratch_block() { if (ptr != nullptr) { (void)gpuFree(ptr); } }\n'
     '};\n'
     'template <typename Tag>\n'
     'static inline void *get_scratch(size_t bytes, gpuStream_t stream, gpuError_t *status) {\n'
@@ -2318,14 +2407,14 @@ HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
     '    if (bytes <= block.capacity) return block.ptr;\n'
     '    if (block.ptr != nullptr) {\n'
     '        // In flight work may still be reading the old buffer.\n'
-    '        *status = hipStreamSynchronize(stream);\n'
+    '        *status = gpuStreamSynchronize(stream);\n'
     '        if (*status != gpuSuccess) return nullptr;\n'
-    '        *status = hipFree(block.ptr);\n'
+    '        *status = gpuFree(block.ptr);\n'
     '        block.ptr = nullptr;\n'
     '        block.capacity = 0;\n'
     '        if (*status != gpuSuccess) return nullptr;\n'
     '    }\n'
-    '    *status = hipMalloc(&block.ptr, bytes);\n'
+    '    *status = gpuMalloc(&block.ptr, bytes);\n'
     '    if (*status != gpuSuccess) { block.ptr = nullptr; return nullptr; }\n'
     '    block.capacity = bytes;\n'
     '    return block.ptr;\n'
@@ -2362,20 +2451,20 @@ HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
     '        sizeof(unsigned long long), stream, &status);\n'
     '    if (result == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n'
     '    const unsigned long long sentinel = (unsigned long long)end;\n'
-    '    status = hipMemcpyAsync(result, &sentinel, sizeof(sentinel), hipMemcpyHostToDevice, stream);\n'
+    '    status = gpuMemcpyAsync(result, &sentinel, sizeof(sentinel), gpuMemcpyHostToDevice, stream);\n'
     '    if (status != gpuSuccess) return status;\n'
     '    // ``sentinel`` is a local, so the copy has to be done before this frame goes away.\n'
-    '    status = hipStreamSynchronize(stream);\n'
+    '    status = gpuStreamSynchronize(stream);\n'
     '    if (status != gpuSuccess) return status;\n'
     '    long long blocks = (end - begin + block_threads - 1) / block_threads;\n'
     '    if (blocks > max_blocks) blocks = max_blocks;\n'
     '    find_first_kernel<<<(unsigned)blocks, block_threads, 0, stream>>>(begin, end, pred, result);\n'
-    '    status = hipGetLastError();\n'
+    '    status = gpuGetLastError();\n'
     '    if (status != gpuSuccess) return status;\n'
     '    unsigned long long found = sentinel;\n'
-    '    status = hipMemcpyAsync(&found, result, sizeof(found), hipMemcpyDeviceToHost, stream);\n'
+    '    status = gpuMemcpyAsync(&found, result, sizeof(found), gpuMemcpyDeviceToHost, stream);\n'
     '    if (status != gpuSuccess) return status;\n'
-    '    status = hipStreamSynchronize(stream);\n'
+    '    status = gpuStreamSynchronize(stream);\n'
     '    *out = (long long)found;\n'
     '    return status;\n'
     '}',
@@ -2431,7 +2520,7 @@ HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
     '                                                         op, n, stream);\n'
     '    if (status != gpuSuccess) return status;\n'
     '    // 256-byte alignment for the workspace that follows: cub assumes an allocation at least as\n'
-    '    // aligned as hipMalloc gives, and the maps sit in front of it in the one block.\n'
+    '    // aligned as gpuMalloc gives, and the maps sit in front of it in the one block.\n'
     '    const size_t map_bytes = (((size_t)n * sizeof(M)) + 255u) & ~(size_t)255u;\n'
     '    void *scratch = get_scratch<ScanTag>(map_bytes + cub_bytes, stream, &status);\n'
     '    if (scratch == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n'
@@ -2440,12 +2529,12 @@ HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
     '    const unsigned blocks = (unsigned)((n + block_threads - 1) / block_threads);\n'
     '    cpf_affine_pack_kernel<E, C, D, S><<<blocks, block_threads, 0, stream>>>(coef, delta, maps, seed_ptr,\n'
     '                                                                            seed_val, n);\n'
-    '    status = hipGetLastError();\n'
+    '    status = gpuGetLastError();\n'
     '    if (status != gpuSuccess) return status;\n'
     '    status = gpucub::DeviceScan::InclusiveScan(workspace, cub_bytes, maps, maps, op, n, stream);\n'
     '    if (status != gpuSuccess) return status;\n'
     '    cpf_affine_unpack_kernel<E><<<blocks, block_threads, 0, stream>>>(maps, out, n);\n'
-    '    return hipGetLastError();\n'
+    '    return gpuGetLastError();\n'
     '}',
 }
 
@@ -2477,6 +2566,12 @@ HIP_CTYPE_RENAMES: Dict[str, str] = {
 #: static destruction, so both halves of that handshake are inside the unit.
 DEVICE_PROVIDED_ENVIRONMENTS: FrozenSet[str] = frozenset({'CUDA', 'ScanScratch', 'DetectScratch'})
 
+
+def device_definitions(dialect: Dialect) -> Dict[str, str]:
+    """:data:`HIP_INLINE_DEFINITIONS` with the device ones' ``gpu*`` calls spelled for ``dialect``'s backend."""
+    return {name: device_spell_out(definition, dialect) for name, definition in HIP_INLINE_DEFINITIONS.items()}
+
+
 #: Dialect -> its vocabulary. ``RUNTIME`` has none: a runtime rendering emits ``dace::`` names and
 #: never consults these tables at all, so asking for its bundle is a bug worth a ``KeyError``.
 TABLES: Dict[Dialect, Tables] = {
@@ -2492,8 +2587,13 @@ TABLES: Dict[Dialect, Tables] = {
     # headers, which ship with the compiler that builds the unit, and the device counterparts of
     # the runtime functions a DEVICE library expansion calls (:data:`HIP_INLINE_DEFINITIONS`).
     Dialect.STANDALONE_HIP:
-    _tables(STD_RENAMES, REWRITES, HIP_INLINE_DEFINITIONS, VARIADIC_MINMAX, UNSUPPORTED, HIP_CTYPE_RENAMES,
-            BASE_HEADERS + HIP_BASE_HEADERS, HIP_DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
+    _tables(STD_RENAMES, REWRITES, device_definitions(Dialect.STANDALONE_HIP), VARIADIC_MINMAX, UNSUPPORTED,
+            HIP_CTYPE_RENAMES, BASE_HEADERS + HIP_BASE_HEADERS, HIP_DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
+    # The CUDA unit shares that vocabulary: its device definitions call ``gpu*`` names, spelled per
+    # backend by :func:`device_definitions`, so only the toolkit headers differ.
+    Dialect.STANDALONE_CUDA:
+    _tables(STD_RENAMES, REWRITES, device_definitions(Dialect.STANDALONE_CUDA), VARIADIC_MINMAX, UNSUPPORTED,
+            HIP_CTYPE_RENAMES, BASE_HEADERS + CUDA_BASE_HEADERS, HIP_DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
 }
 
 #: Every runtime function the C dialect knows about, in any lane.
