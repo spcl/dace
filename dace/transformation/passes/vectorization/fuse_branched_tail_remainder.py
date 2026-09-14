@@ -265,12 +265,6 @@ class FuseBranchedTailRemainder(ppl.Pass):
         fused_body = self._build_fused_body(resolver, sd, state, main_entry, main_nsdfg, rem_nsdfg, W, tiled_param,
                                             tail_ub, masked_tail)
 
-        # Every symbol the body still needs from the outer scope (the fused-map param + N + ...) is
-        # passed through by identity -- they all name the same symbol in the enclosing map scope.
-        # Sorted, and the connector DICTS rather than sets: symbol order decides the emitted
-        # declaration order, and a set would both randomise it and drop the connector types.
-        # Added before the old bodies are detached: add_nested_sdfg reads the state's scope tree,
-        # which a map with no body does not have.
         symbol_mapping = {s: symbolic.pystr_to_symbolic(s) for s in sorted(str(s) for s in fused_body.free_symbols)}
         fused_nsdfg = state.add_nested_sdfg(fused_body,
                                             inputs=dict(main_nsdfg.in_connectors),

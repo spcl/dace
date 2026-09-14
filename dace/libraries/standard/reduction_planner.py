@@ -60,7 +60,6 @@ def contiguous_runs(dims: List[int], shape: List[Size], strides: List[Size]) -> 
 def simplify_input(shape, strides, axes):
     # simplifies the input tensor by combining neighboring reduced axes and neighboring non-reduced axes
     # returns new shape, new strides, new axes and also output shape and output strides
-    # Only neighbors that are one run of memory fuse: a pooling window spans rows of its source.
     dimensions_to_combine = contiguous_runs(axes, shape, strides)
 
     num_axes_combined = 0

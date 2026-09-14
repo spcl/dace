@@ -141,7 +141,7 @@ COMPLEX_MATH_ORACLES = {
 
 @pytest.mark.gpu
 def test_complex_math_functions_on_the_gpu_match_numpy():
-    """``dace::math`` forwards to ``std::``, which rejects the device ``thrust::complex``; npbench stockham_fft hit exp."""
+    """``dace::math`` forwards to ``std::``, which has no ``thrust::complex`` overloads."""
     sdfg = complex_math.to_sdfg()
     sdfg.apply_gpu_transformations()
     cuda = '\n'.join(c.clean_code for c in sdfg.generate_code() if c.title == 'CUDA')

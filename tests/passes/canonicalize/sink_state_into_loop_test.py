@@ -31,7 +31,6 @@ def _build(middle_writes_what_loop2_writes: bool = False,
     it would no longer be idempotent.
     """
     sdfg = dace.SDFG("sink_state")
-    # T is an argument: loop1 reads T[0], which a transient would leave uninitialized.
     for name in ("A", "B", "T"):
         sdfg.add_array(name, [N], dace.float64)
     sdfg.add_scalar("S", dace.float64, transient=True)

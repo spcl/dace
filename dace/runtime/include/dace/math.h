@@ -813,8 +813,7 @@ DACE_MATH_UNARY_LP(log, dace::bfloat16)
 #undef DACE_MATH_UNARY_LP
 
 #ifdef DACE_THRUST_COMPLEX
-// ``std::`` has no overload for ``thrust::complex`` (the device complex128/complex64), so the
-// generic forwarders above fail to compile on it. Only functions thrust implements are listed.
+// ``std::`` has no ``thrust::complex`` overloads; only functions thrust implements are listed.
 #define DACE_MATH_THRUST_COMPLEX(NAME)                                            \
   template <typename T>                                                           \
   DACE_CONSTEXPR DACE_HDFI thrust::complex<T> NAME(const thrust::complex<T>& a) { \

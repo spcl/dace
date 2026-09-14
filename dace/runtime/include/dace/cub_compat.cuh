@@ -36,7 +36,6 @@
 #define DACE_CUB_MAX_OP ::gpucub::Max()
 #endif
 
-// ``product`` was never a CUB-provided functor in any version.
 #define DACE_CUB_MUL_OP \
   ::dace::cub::Multiplies {}
 
@@ -87,8 +86,7 @@ struct AbsXf {
   }
 };
 
-/// Binary operators behind ``DACE_CUB_MUL_OP`` / ``MIN_OP`` / ``MAX_OP``. Functors, not lambdas: nvcc
-/// rejects a ``__device__`` lambda unless ``--extended-lambda`` is passed.
+/// Functors, not lambdas: nvcc rejects a ``__device__`` lambda without ``--extended-lambda``.
 struct Multiplies {
   template <typename A, typename B>
   __host__ __device__ __forceinline__ auto operator()(const A& a, const B& b) const {

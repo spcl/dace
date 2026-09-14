@@ -202,9 +202,6 @@ class InlineTaskletConnectors(ppl.Pass):
         if is_in_scope(osdfg, state, node, [dtypes.ScheduleType.SVE_Map]):
             return {}
 
-        # An input read under its own name must keep the value from before the tasklet. Inlined, it names
-        # the element an aliased output writes, so a read after that write sees the new value
-        # (``X[i] = X[i] + 1.0; Y[i] = X[i] * 2.0``) and that input keeps its copy-in.
         candidates = [name for name in in_acc if name not in inout and name in accesses]
         for name in reads_after_aliased_writes(node, candidates, in_acc, out_acc, in_subset, out_subset):
             del accesses[name]
@@ -338,11 +335,7 @@ def reads_after_aliased_writes(node: nodes.Tasklet, candidates: List[str], in_ac
 
 
 def reads_after_write(body: List[ast.stmt], read: str, writers: List[str]) -> bool:
-    """True when a statement of ``body`` may read ``read`` after one of ``writers`` was stored.
-
-    A plain assignment evaluates its value before storing, so it may read and write in one statement; any other
-    statement doing both (a branch, a loop, a walrus) may read after its own write.
-    """
+    """True when a statement of ``body`` may read ``read`` after one of ``writers`` was stored."""
     written = False
     for stmt in body:
         walked = list(ast.walk(stmt))
@@ -355,7 +348,6 @@ def reads_after_write(body: List[ast.stmt], read: str, writers: List[str]) -> bo
 
 
 def stored_name(n: ast.AST) -> Optional[str]:
-    """The name an assignment target ``x`` or ``x[...]`` stores to; None for anything else."""
     if not isinstance(n, (ast.Name, ast.Subscript)) or not isinstance(n.ctx, ast.Store):
         return None
     base = n if isinstance(n, ast.Name) else n.value

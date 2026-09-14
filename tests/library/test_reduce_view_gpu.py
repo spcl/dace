@@ -104,7 +104,6 @@ def test_reduce_strided_view_full_gpu():
 
 @pytest.mark.gpu
 def test_reduce_over_pooling_windows_gpu():
-    """A 2x2 window spans two rows of its source, so its two reduced axes are not one run of memory."""
     x = np.random.rand(2, 8, 8, 3)
     out, _ = run_on_gpu(reduce_pooling_windows, dict(x=x, y=np.zeros((2, 4, 4, 3))))
     assert np.allclose(out['y'], x.reshape(2, 4, 2, 4, 2, 3).max(axis=(2, 4)))

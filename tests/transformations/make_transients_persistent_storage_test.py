@@ -1,9 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Only host heap and device global memory may move into the state struct as ``Persistent``.
-
-Registers, shared (in-kernel) memory and pinned memory have no state-struct allocation: a persistent
-``GPU_Shared`` buffer is declared and never allocated, and the kernel reads a null pointer.
-"""
+"""Only host heap and device global memory may become ``Persistent``."""
 import pytest
 
 import dace

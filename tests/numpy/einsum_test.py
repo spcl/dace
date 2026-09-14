@@ -396,8 +396,7 @@ def test_einsum_dot_node(beta):
 
 
 def test_matrix_vector_einsum_scratch_lives_where_its_output_lives():
-    """The GEMV scratch of ``y = A @ x + y`` is device memory when ``y`` is: a host BLAS call cannot reach
-    in-kernel shared memory, and a Persistent shared buffer is never allocated at all."""
+    """A host BLAS call cannot reach in-kernel shared memory."""
     from dace.libraries.blas.nodes.einsum import Einsum
 
     gpu = dace.dtypes.StorageType.GPU_Global

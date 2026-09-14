@@ -9,7 +9,6 @@ def planned(shape: list, strides: list, axes: list):
 
 
 def test_a_pooling_window_keeps_its_two_reduced_axes_apart():
-    # A 2x2 window of an 8x8x3 image: the two rows it spans are 24 elements apart, not 6.
     schedule = planned([2, 2, 2, 3], [192, 24, 3, 1], [1, 2])
     assert schedule.in_shape == [2, 2, 2, 3]
     assert schedule.axes == [1, 2]

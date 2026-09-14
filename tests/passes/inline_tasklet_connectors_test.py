@@ -122,8 +122,7 @@ def read_after_write_sdfg(name: str, read_index: str, body: str = 'o_x = x_in + 
 
 
 def test_a_read_of_an_element_another_output_writes_keeps_its_copy():
-    """Inlined, ``o_y`` would read the ``X[2i]`` that ``o_x`` just wrote; ``x_in`` stays a connector and ``Y``
-    gets twice the old value."""
+    """Inlined, ``o_y`` would read the ``X[2i]`` that ``o_x`` just wrote."""
     sdfg = read_after_write_sdfg('inline_aliased_read', '2 * i')
     InlineTaskletConnectors().apply_pass(sdfg, {})
     assert 'x_in' in _tasklets(sdfg)[0].code.as_string
@@ -138,7 +137,6 @@ def test_a_read_of_an_element_another_output_writes_keeps_its_copy():
 
 
 def test_a_read_disjoint_from_another_outputs_write_is_inlined():
-    """``x_in`` reads ``X[2i + 1]`` and ``o_x`` writes ``X[2i]``, never the same element, so both are inlined."""
     sdfg = read_after_write_sdfg('inline_disjoint_read', '2 * i + 1')
     InlineTaskletConnectors().apply_pass(sdfg, {})
     body = _tasklets(sdfg)[0].code.as_string
@@ -154,7 +152,6 @@ def test_a_read_disjoint_from_another_outputs_write_is_inlined():
 
 
 def test_a_read_that_precedes_the_aliased_write_is_inlined():
-    """``o_y`` reads ``X[2i]`` before ``o_x`` writes it, so the inlined read still sees the old value."""
     sdfg = read_after_write_sdfg('inline_read_before_write', '2 * i', body='o_y = x_in * 2.0\no_x = x_in + 1.0')
     InlineTaskletConnectors().apply_pass(sdfg, {})
     body = _tasklets(sdfg)[0].code.as_string
@@ -170,7 +167,6 @@ def test_a_read_that_precedes_the_aliased_write_is_inlined():
 
 
 def test_a_read_after_the_aliased_write_inside_one_branch_keeps_its_copy():
-    """Inside one ``if`` statement the write to ``X[2i]`` precedes the read, so ``x_in`` stays a connector."""
     branch = 'if x_in > -1e300:\n    o_x = x_in + 1.0\n    o_y = x_in * 2.0\nelse:\n    o_x = x_in\n    o_y = x_in'
     sdfg = read_after_write_sdfg('inline_branch_read_after_write', '2 * i', body=branch)
     InlineTaskletConnectors().apply_pass(sdfg, {})

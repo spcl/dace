@@ -386,7 +386,6 @@ def test_the_strided_lowering_is_not_limited_to_a_fixed_dtype_set(dtype):
 ],
                          ids=['product', 'min', 'max'])
 def test_a_contiguous_gpu_scan_compiles_and_matches_numpy(op: ScanOp, operator_macro: str, oracle):
-    """Stride 1 hands CUB the operator macro directly; nvcc rejected it while it expanded to a ``__device__`` lambda."""
     import cupy
 
     codes = generate_code(gpu_strided_scan(1, op))

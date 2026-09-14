@@ -8,9 +8,7 @@ read of an earlier output connector (a RAW) is materialised through that output'
 an intermediate access node, preserving the producer-before-consumer order as a real data
 dependence.
 
-A statement assigning a local temp is sliced into every output tasklet that needs it, and
-``split_operations`` then splits each output's expression into single operations. The split is
-refused (the tasklet left intact) when it cannot be proven sound:
+The split is refused (the tasklet left intact) when it cannot be proven sound:
 
 - an **in-place read-modify-write** -- an input connector reads an element that an output
   connector may also write (polybench covariance's finalize normalizes ``cov[i, j]`` in place
@@ -281,8 +279,6 @@ def test_inplace_read_modify_write_refused():
     assert np.array_equal(x_inout, ref)
 
 
-# One output reads and writes its own element (polybench durbin's ``k_init`` on ``beta``), the other reads
-# nothing: no split tasklet reads an element another one writes.
 def build_own_read_modify_write():
     sdfg = dace.SDFG('mo_own_rmw')
     for name in ('A', 'B', 'S'):
@@ -305,8 +301,7 @@ def build_own_read_modify_write():
 
 
 def test_output_updating_its_own_element_in_place_is_split():
-    """``out_b`` updates ``B[i]`` in place and ``out_sum`` reads nothing, so each output gets its own tasklet
-    and the values match the unsplit semantics."""
+    """``out_b`` updates ``B[i]`` in place and ``out_sum`` reads nothing, so each output gets a tasklet."""
     sdfg = build_own_read_modify_write()
     SplitTasklets(split_operations=False).apply_pass(sdfg=sdfg, pipeline_results={})
     sdfg.validate()
@@ -324,8 +319,6 @@ def test_output_updating_its_own_element_in_place_is_split():
     assert np.array_equal(S, np.zeros(m))
 
 
-# One output writes ``X[i]`` and the other reads the same element: after a split the reader could see the new
-# value, so the tasklet stays whole.
 def build_output_read_by_another_output():
     sdfg = dace.SDFG('mo_cross_element_read')
     sdfg.add_array('X', [M], dace.float64)
@@ -341,8 +334,7 @@ def build_output_read_by_another_output():
 
 
 def test_write_to_an_element_another_output_reads_is_refused():
-    """``o_x`` writes the ``X[i]`` that ``o_y`` reads, so the tasklet is left intact and ``Y`` sees the old
-    ``X``."""
+    """``o_x`` writes the ``X[i]`` that ``o_y`` reads, so the tasklet stays whole."""
     sdfg = build_output_read_by_another_output()
     SplitTasklets(split_operations=False).apply_pass(sdfg=sdfg, pipeline_results={})
     sdfg.validate()
@@ -540,7 +532,6 @@ def build_shared_temp():
 
 
 def test_shared_local_temp_is_sliced_into_the_output_reading_it():
-    """A local temp is recomputed in the tasklet of the output needing it, which reads ``o1`` back through ``b``."""
     sdfg = build_shared_temp()
     SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
     sdfg.validate()
@@ -574,7 +565,6 @@ def build_map_state(name: str, arrays: tuple) -> tuple:
 
 
 def build_two_output_map(name: str, code: str, language: dace.dtypes.Language = dace.dtypes.Language.Python):
-    """``o1 -> c[i]`` and ``o2 -> d[i]`` computed by one map-scoped tasklet reading ``a[i]`` and ``b[i]``."""
     sdfg, state, map_entry, map_exit = build_map_state(name, ('a', 'b', 'c', 'd'))
     tasklet = state.add_tasklet('two', {'a_in': None, 'b_in': None}, {'o1': None, 'o2': None}, code, language=language)
     state.add_memlet_path(state.add_read('a'), map_entry, tasklet, dst_conn='a_in', memlet=dace.Memlet('a[i]'))
@@ -597,7 +587,6 @@ def run_two_output_map(sdfg: dace.SDFG) -> tuple:
 
 
 def test_shared_intermediate_is_duplicated_into_each_output():
-    """Both outputs read the intermediate ``t``; each output's tasklet recomputes it rather than reading the other."""
     sdfg, state, map_entry, map_exit = build_map_state('mo_shared_intermediate', ('a', 'b', 'c'))
     tasklet = state.add_tasklet('shared', {'a_in': None}, {
         'o1': None,
@@ -622,7 +611,6 @@ def test_shared_intermediate_is_duplicated_into_each_output():
 
 
 def test_without_operation_split_each_output_keeps_its_expression_whole():
-    """``split_operations=False`` splits per output only: each tasklet holds its output's whole expression."""
     sdfg = build_two_output_map('mo_whole_expressions', 'o1 = a_in * b_in + 1.0\no2 = a_in - b_in')
     SplitTasklets(split_operations=False).apply_pass(sdfg, {})
     sdfg.validate()
@@ -634,7 +622,6 @@ def test_without_operation_split_each_output_keeps_its_expression_whole():
 
 
 def build_mixed_map(name: str) -> dace.SDFG:
-    """A two-output tasklet ``two`` and a single-output multi-operation tasklet ``single`` in one map."""
     sdfg, state, map_entry, map_exit = build_map_state(name, ('a', 'b', 'c', 'd', 'e'))
     two = state.add_tasklet('two', {
         'a_in': None,
@@ -669,7 +656,6 @@ def run_mixed_map(sdfg: dace.SDFG) -> None:
 
 
 def test_default_split_leaves_every_tasklet_with_one_output_and_one_operation():
-    """Both knobs on: the two-output tasklet splits per output and the multi-operation one per operation."""
     sdfg = build_mixed_map('mo_mixed_default')
     SplitTasklets().apply_pass(sdfg, {})
     sdfg.validate()
@@ -680,7 +666,6 @@ def test_default_split_leaves_every_tasklet_with_one_output_and_one_operation():
 
 
 def test_without_operation_split_single_output_tasklets_stay_whole():
-    """``split_operations=False`` splits the two-output tasklet per output and leaves the other body whole."""
     sdfg = build_mixed_map('mo_mixed_outputs_only')
     SplitTasklets(split_operations=False).apply_pass(sdfg, {})
     sdfg.validate()
@@ -689,7 +674,6 @@ def test_without_operation_split_single_output_tasklets_stay_whole():
 
 
 def test_without_multi_output_split_only_single_output_tasklets_are_split():
-    """``split_multi_output=False`` keeps the two-output tasklet whole; the single-output one beside it still splits."""
     sdfg = build_mixed_map('mo_mixed')
     SplitTasklets(split_multi_output=False).apply_pass(sdfg, {})
     sdfg.validate()
@@ -721,7 +705,6 @@ def build_nested_two_output() -> dace.SDFG:
 
 
 def test_multi_output_tasklet_inside_a_nested_sdfg_is_split():
-    """A multi-output tasklet in a map body's nested SDFG is split like one at the top level."""
     sdfg = build_nested_two_output()
     SplitTasklets(split_operations=False).apply_pass(sdfg, {})
     sdfg.validate()
@@ -737,7 +720,7 @@ def test_multi_output_tasklet_inside_a_nested_sdfg_is_split():
 
 
 def test_ordering_edge_orders_every_split_tasklet():
-    """A happens-before edge from the map entry reaches every split tasklet exactly once, the constant one included."""
+    """The constant output's tasklet gets the ordering edge too."""
     sdfg, state, map_entry, map_exit = build_map_state('mo_ordered', ('a', 'b', 'c'))
     tasklet = state.add_tasklet('ordered', {'a_in': None}, {'o1': None, 'o2': None}, 'o1 = a_in * 2.0\no2 = 3.0')
     state.add_memlet_path(state.add_read('a'), map_entry, tasklet, dst_conn='a_in', memlet=dace.Memlet('a[i]'))
@@ -763,7 +746,6 @@ def test_ordering_edge_orders_every_split_tasklet():
 
 
 def test_in_place_write_of_another_element_is_split():
-    """Reading ``a[i - 1]`` while writing ``a[i]`` touches disjoint elements, so the tasklet still splits."""
     sdfg = dace.SDFG('mo_disjoint_in_place')
     for name in ('a', 'b'):
         sdfg.add_array(name, [M], dace.float64)
@@ -797,7 +779,6 @@ def test_in_place_write_of_another_element_is_split():
 
 
 def test_non_python_multi_output_tasklet_is_left_whole():
-    """A C++ tasklet body is not parsed, so its two outputs stay in one tasklet."""
     sdfg = build_two_output_map('mo_cpp_two_output', 'o1 = a_in * b_in + 1.0;\no2 = a_in - b_in;',
                                 dace.dtypes.Language.CPP)
     SplitTasklets().apply_pass(sdfg, {})

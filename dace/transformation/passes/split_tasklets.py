@@ -496,7 +496,6 @@ class OutputPlan:
 
 
 def assignment_targets(statements: List[ast.stmt]) -> Optional[List[str]]:
-    """The assigned name per statement when every statement is ``name = expr``, else ``None``."""
     targets: List[str] = []
     for statement in statements:
         if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
@@ -508,7 +507,6 @@ def assignment_targets(statements: List[ast.stmt]) -> Optional[List[str]]:
 
 
 def names_read(value: ast.expr) -> Dict[str, None]:
-    """Every name ``value`` reads, in AST order."""
     return dict.fromkeys(node.id for node in ast.walk(value) if isinstance(node, ast.Name))
 
 
@@ -529,7 +527,6 @@ def straight_line_body(tasklet: dace.nodes.Tasklet) -> Optional[StraightLineBody
 
 
 def producer_of(targets: List[str], name: str, before: int) -> Optional[int]:
-    """Index of the last statement ahead of ``before`` that assigns ``name``, else ``None``."""
     for index in range(before - 1, -1, -1):
         if targets[index] == name:
             return index
@@ -537,8 +534,7 @@ def producer_of(targets: List[str], name: str, before: int) -> Optional[int]:
 
 
 def backward_slice(body: StraightLineBody, output: str) -> Optional[List[int]]:
-    """Body-ordered statements computing ``output``; stops at another output's final value, ``None`` at an
-    earlier one, which no array holds."""
+    """Body-ordered statements computing ``output``; ``None`` if it reads another output's non-final value."""
     needed: Dict[int, None] = {}
     frontier = [body.defining[output]]
     while frontier:
@@ -575,7 +571,6 @@ def classify_reads(tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: 
 
 def plan_output(tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str,
                 in_edges: Dict[str, Any]) -> Optional[OutputPlan]:
-    """Plan the tasklet computing ``output`` alone, or ``None`` if it reads a value it cannot get."""
     statements = backward_slice(body, output)
     if statements is None:
         return None
@@ -588,7 +583,6 @@ def plan_output(tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str
 
 
 def output_edges(tasklet: dace.nodes.Tasklet, state: dace.SDFGState) -> Optional[Dict[str, Any]]:
-    """The one data edge leaving each output connector; ``None`` on a fan-out or a dataless output."""
     edges: Dict[str, Any] = {}
     for edge in state.out_edges(tasklet):
         if edge.src_conn is None and edge.data.is_empty():
@@ -602,7 +596,6 @@ def output_edges(tasklet: dace.nodes.Tasklet, state: dace.SDFGState) -> Optional
 
 
 def reads_output(by_conn: Dict[str, OutputPlan], consumer: str, producer: str) -> bool:
-    """Whether ``consumer`` reads the value of ``producer``, directly or through other outputs."""
     pending = list(by_conn[consumer].cross_reads)
     seen: OrderedSet = OrderedSet()
     while pending:
@@ -626,7 +619,6 @@ def same_array_writes_are_ordered(plans: List[OutputPlan], out_edges: Dict[str, 
 
 
 def overlaps_a_read(write, reads: Iterable[Any]) -> bool:
-    """Whether ``write`` may touch an element one of ``reads`` reads from the same array."""
     for read in reads:
         if read.data.data != write.data.data:
             continue
@@ -638,8 +630,7 @@ def overlaps_a_read(write, reads: Iterable[Any]) -> bool:
 
 
 def writes_stay_whole(plans: Dict[str, OutputPlan], in_edges: Dict[str, Any], out_edges: Dict[str, Any]) -> bool:
-    """A write whose read / write order a split loses: another output reads the written element, or the write is
-    in place and another output reads its value (covariance). An output reading only its own element splits."""
+    """True if a split loses an order: another output reads the written element or an in-place write's value."""
     for conn, write in out_edges.items():
         others = [plan for plan in plans.values() if plan.out_conn != conn]
         if overlaps_a_read(write, [in_edges[name] for plan in others for name in plan.input_reads]):
@@ -651,7 +642,6 @@ def writes_stay_whole(plans: Dict[str, OutputPlan], in_edges: Dict[str, Any], ou
 
 
 def emission_order(tasklet: dace.nodes.Tasklet, plans: Dict[str, OutputPlan]) -> List[OutputPlan]:
-    """Plans in output connector order, each moved after the outputs it reads."""
     placed: Dict[str, OutputPlan] = {}
     while len(placed) < len(plans):
         for conn in tasklet.out_connectors:
@@ -684,8 +674,7 @@ def plan_output_split(tasklet: dace.nodes.Tasklet, state: dace.SDFGState,
 
 def route_read_output_to_destination(state: dace.SDFGState, label: str, produced: dace.nodes.AccessNode,
                                      out_edge) -> None:
-    """Copy a kept value on to its destination: a same-array copy with ``other_subset`` into an access node,
-    a scalar store tasklet into a map exit, which rejects that copy."""
+    """A same-array copy into an access node; a map exit rejects that copy, so a store tasklet there."""
     if isinstance(out_edge.dst, dace.nodes.AccessNode):
         forward = copy.deepcopy(out_edge.data)
         forward.other_subset = copy.deepcopy(forward.subset)
@@ -701,9 +690,7 @@ def route_read_output_to_destination(state: dace.SDFGState, label: str, produced
 
 def connect_inputs(state: dace.SDFGState, split: dace.nodes.Tasklet, plan: OutputPlan, original_in_edges: List[Any],
                    out_edges: Dict[str, Any], produced: Dict[str, dace.nodes.AccessNode], scope_entry) -> None:
-    """Wire the reads of one split tasklet: ordering edges, entry values, then other outputs' values."""
     in_edges = {edge.dst_conn: edge for edge in original_in_edges if edge.dst_conn is not None}
-    # A happens-before edge into the original orders every split tasklet.
     for edge in original_in_edges:
         if edge.dst_conn is None:
             state.add_edge(edge.src, edge.src_conn, split, None, dace.Memlet())
@@ -729,7 +716,6 @@ def write_output(state: dace.SDFGState, split: dace.nodes.Tasklet, plan: OutputP
 
 
 def chain_islands(state: dace.SDFGState, emitted: List[dace.nodes.Tasklet]) -> None:
-    """Order consecutive split tasklets that sit in separate components of the state."""
     for first, second in zip(emitted, emitted[1:]):
         if second not in nx.weakly_connected_component(state.nx, first):
             state.add_edge(first, None, second, None, dace.Memlet())
@@ -764,10 +750,8 @@ class SplitTasklets(ppl.Pass):
     """
     Splits tasklets into one tasklet per output, then into one tasklet per primitive operation.
 
-    ``split_multi_output``: each output of a straight-line Python tasklet gets the statements it needs; a
-    read of another output goes through that output's array. Unsound splits keep the tasklet whole.
-    ``split_operations``: each single-output body becomes a chain of single-op tasklets. The per-output
-    tasklets come after it, so their bodies are split by the next run.
+    ``split_multi_output`` slices each output of a straight-line Python tasklet; unsound splits stay whole.
+    ``split_operations`` splits single-output bodies into single-op tasklets; per-output ones wait for the next run.
     """
 
     CATEGORY: str = 'Optimization Preparation'
@@ -977,7 +961,6 @@ class SplitTasklets(ppl.Pass):
         for n, g in sdfg.all_nodes_recursive():
             if isinstance(n, dace.nodes.Tasklet):
                 c: CodeBlock = n.code
-                # A multi-output tasklet is ``split_outputs``' to split.
                 if len(n.out_connectors) > 1:
                     continue
 
