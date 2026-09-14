@@ -132,6 +132,17 @@ def _nested_arrays_from_json(obj, context=None):
     return NestedDict({k: dace.serialize.from_json(v, context) for k, v in obj.items()})
 
 
+# ``frontend_metadata`` carries values dace never interprets, so both directions
+# are a plain deep copy -- enough to keep the stored dict and the emitted JSON
+# from aliasing each other.
+def _frontend_metadata_to_json(meta):
+    return copy.deepcopy(meta) if meta else {}
+
+
+def _frontend_metadata_from_json(obj, context=None):
+    return copy.deepcopy(obj) if obj else {}
+
+
 def _replace_dict_keys(d, old, new):
     if old == new:
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
@@ -436,7 +447,11 @@ class InterstateEdge(object):
 
         if replace_keys:
             for name, new_name in repl.items():
-                _replace_dict_keys(self.assignments, name, new_name)
+                # Guard as SDFG.replace_dict does: a non-name replacement (e.g. a symbolic
+                # expression, or a Symbol carrying assumptions that maps a name to itself)
+                # must not become an assignment key -- only rename when new_name is a valid name.
+                if validate_name(new_name):
+                    _replace_dict_keys(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
             vast = ast.parse(v)
@@ -595,6 +610,16 @@ class SDFG(ControlFlowRegion):
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
+    # Opaque, JSON-safe payload a frontend attaches to describe how this SDFG maps back to its
+    # source program (dace-fortran keeps its frozen Fortran signature here).  dace never reads
+    # it; it exists so such a description survives save/load instead of living on an ad-hoc
+    # Python attribute that a serialization round-trip silently drops.
+    frontend_metadata = Property(dtype=dict,
+                                 default={},
+                                 to_json=_frontend_metadata_to_json,
+                                 from_json=_frontend_metadata_from_json,
+                                 desc="Frontend-owned, JSON-serializable metadata; opaque to dace")
+
     build_folder = Property(
         dtype=str,
         default=None,
@@ -640,6 +665,7 @@ class SDFG(ControlFlowRegion):
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self.arg_names = []
+        self.frontend_metadata = {}
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -1461,11 +1487,6 @@ class SDFG(ControlFlowRegion):
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
 
-    def remove_node(self, node: SDFGState):
-        if node is self._cached_start_block:
-            self._cached_start_block = None
-        return super().remove_node(node)
-
     def states(self):
         """ Returns the states in this SDFG, recursing into state scope blocks. """
         return list(self.all_states())
@@ -1617,7 +1638,12 @@ class SDFG(ControlFlowRegion):
 
         # Add global free symbols used in the generated code to scalar arguments
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
-        scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
+        # OMP_MAX_THREADS is resolved by the code generator, never passed in -- see
+        # dtypes.OMP_MAX_THREADS_SYMBOL.
+        scalar_args.update({
+            k: dt.Scalar(self.symbols[k])
+            for k in free_symbols if not k.startswith('__dace') and k != dtypes.OMP_MAX_THREADS_SYMBOL
+        })
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()
@@ -1636,7 +1662,7 @@ class SDFG(ControlFlowRegion):
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         return ", ".join(
             dt.Scalar(self.symbols[k]).as_arg(name=k, with_types=not for_call, for_call=for_call)
-            for k in sorted(free_symbols) if not k.startswith('__dace'))
+            for k in sorted(free_symbols) if not k.startswith('__dace') and k != dtypes.OMP_MAX_THREADS_SYMBOL)
 
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,

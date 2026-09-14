@@ -112,6 +112,28 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
     return f'__state->gpu_context->streams[{stream}]'
 
 
+def emit_gpu_synchronization() -> bool:
+    """Whether the GPU code generators may emit host-side synchronization.
+
+    Reads ``compiler.cuda.emit_synchronization``. ``True`` (the default) is the historical
+    behavior. ``False`` suppresses every host-side sync the backends emit -- stream/device
+    synchronizes and cross-stream event record/wait pairs -- while leaving copies, kernel
+    launches and device-side barriers untouched.
+
+    ``__DACE_NO_SYNC``, dace-fortran's pre-existing contract (pinned before ``import dace`` in
+    its pipeline stages), overrides the config key when set: ``1`` means no sync, ``0`` means
+    sync, matching the polarity callers there already rely on -- the inverse of this config key.
+    An explicit override should win over a config default, so it takes precedence when present;
+    with neither set, synchronization stays on.
+
+    Not cached: tests and harnesses flip the setting between code generations.
+    """
+    envval = os.environ.get('__DACE_NO_SYNC')
+    if envval is not None:
+        return not config._env2bool(envval)
+    return config.Config.get_bool('compiler', 'cuda', 'emit_synchronization')
+
+
 @lru_cache()
 def get_gpu_backend() -> str:
     """

@@ -57,6 +57,32 @@ def test_internal_outarray():
     assert a[1] == 0
 
 
+def test_nested_symbol_dtypes():
+    M = dace.symbol('M', dace.int64)
+    sdfg = dace.SDFG('nested_symbol_dtypes')
+    sdfg.add_symbol('M', dace.int64)
+    sdfg.add_array('A', [M], dace.float64)
+    sdfg.add_array('B', [M], dace.float64)
+    state = sdfg.add_state()
+
+    me, mx = state.add_map('m', dict(j='0:M'))
+    t = state.add_tasklet('doit', {'a'}, {'b'}, 'b = a + j')
+    r = state.add_read('A')
+    w = state.add_write('B')
+    state.add_memlet_path(r, me, t, dst_conn='a', memlet=dace.Memlet('A[j]'))
+    state.add_memlet_path(t, mx, w, src_conn='b', memlet=dace.Memlet('B[j]'))
+
+    nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, [t]))
+    # Scope symbols must keep their parent-defined types (j is an int64 map parameter)
+    assert nsdfg.sdfg.symbols['M'] == dace.int64
+    assert nsdfg.sdfg.symbols['j'] == dace.int64
+
+    a = np.random.rand(10)
+    b = np.zeros(10)
+    sdfg(A=a, B=b, M=10)
+    assert np.allclose(b, a + np.arange(10))
+
+
 def test_symbolic_return():
 
     @dace.program
@@ -199,6 +225,7 @@ def test_nest_cf_simple_if_chain():
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
+    test_nested_symbol_dtypes()
     test_symbolic_return()
     test_nest_cf_simple_for_loop()
     test_nest_cf_simple_while_loop()

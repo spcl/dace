@@ -254,7 +254,23 @@ class _ConfigData(threading.local):
         # NOTE: will only work if a specific key is accessed!
         envvar = 'DACE_' + '_'.join(key_hierarchy)
         if envvar in os.environ:
-            return os.environ[envvar]
+            envval = os.environ[envvar]
+            # An environment variable is always a string, so cast it to the type the schema
+            # declares -- a consumer that compares an int/float entry numerically otherwise
+            # raises TypeError far from the override (DACE_compiler_max_stack_array_size
+            # crashed CPU codegen's stack-vs-heap test on ``Integer > str``).  Entries absent
+            # from the schema have no declared type and stay raw.
+            try:
+                valtype = self.get_metadata(*key_hierarchy)['type']
+            except KeyError:
+                return envval
+            if valtype == 'bool':
+                return _env2bool(envval)
+            if valtype == 'int':
+                return int(envval)
+            if valtype == 'float':
+                return float(envval)
+            return envval
 
         # Traverse the key hierarchy
         current_conf = self._config

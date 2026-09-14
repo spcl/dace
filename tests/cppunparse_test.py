@@ -60,7 +60,7 @@ def test():
     auto result = 0;
     while (((i < woo) && (i > 0))) {
         for (auto j : range(i)) {
-            result += dace::math::pow(dace::math::ifloor(2 / 1), j);
+            result += dace::math::pow(py_floor(2, 1), j);
         }
     }
     return result;
@@ -88,7 +88,7 @@ l = (l + 8);""")
 
     # Operations (augmented assignment)
     success &= _test_py2cpp('l *= 3; l //= 8', """l *= 3;
-l = dace::math::ifloor(l / 8);""")
+l = py_floor(l, 8);""")
 
     success &= _test_pyexpr2cpp('a << 3', '(a << 3)')
 

@@ -2,6 +2,35 @@
 from dace.config import Config, set_temporary, temporary_config
 import threading
 
+import pytest
+
+
+@pytest.mark.parametrize(('key', 'envval', 'expected'), [
+    ('compiler.max_stack_array_size', '0', 0),
+    ('compiler.max_stack_array_size', '65536', 65536),
+    ('compiler.default_data_types', 'C', 'C'),
+    ('debugprint', 'true', True),
+    ('debugprint', '0', False),
+    ('testing.serialization', '1', True),
+])
+def test_env_override_is_cast_to_schema_type(key, envval, expected, monkeypatch):
+    """A ``DACE_*`` override arrives as a string; ``get`` must return the declared type.
+
+    Regression: an int entry left as a string made every numeric comparison on it raise
+    ``TypeError`` far from the override -- ``DACE_compiler_max_stack_array_size`` crashed CPU
+    codegen's stack-vs-heap test on ``Integer > str``.
+    """
+    monkeypatch.setenv('DACE_' + key.replace('.', '_'), envval)
+    value = Config.get(key)
+    assert value == expected
+    assert type(value) is type(expected)
+
+
+def test_env_override_unknown_key_stays_raw(monkeypatch):
+    """A key absent from the schema has no declared type, so the raw string survives."""
+    monkeypatch.setenv('DACE_not_a_real_section_not_a_real_key', '12')
+    assert Config.get('not_a_real_section', 'not_a_real_key') == '12'
+
 
 def test_set_temporary():
     path = ["compiler", "build_type"]

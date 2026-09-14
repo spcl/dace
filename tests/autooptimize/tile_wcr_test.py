@@ -60,6 +60,14 @@ def test_libnode():
         dace.reduce(lambda a, b: a + b, A, output, identity=0)
 
     sdfg = sum.to_sdfg()
+    # This test is about TILING a write-conflict reduction, so it needs the expansion that
+    # actually produces a WCR edge.  Reduce's default dispatches on schedule and lands on the
+    # OpenMP expansion here, which emits a ``reduction()`` clause instead -- nothing for
+    # TileWCR to act on -- so ask for the pure lowering explicitly rather than depending on
+    # whichever one happens to be the default.
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.libraries.standard.nodes.Reduce):
+            n.implementation = 'pure'
     sdfg.expand_library_nodes()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code

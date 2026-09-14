@@ -7,6 +7,21 @@ import dace
 import numpy as np
 
 
+def expand_library_nodes_for_autodiff(sdfg):
+    """Expand all library nodes, but lower any ``Reduce`` through its ``pure`` expansion.
+
+    ``Reduce``'s default ``auto`` expansion dispatches on schedule and lands on the OpenMP
+    lowering for an unscheduled CPU reduce -- a single C++ tasklet carrying a ``reduction()``
+    clause, which autodiff cannot reverse. The ``pure`` expansion is a map + Python tasklet
+    that it can. (The same pin is used in the einsum-lifting tests.)
+    """
+    from dace.libraries.standard.nodes.reduce import Reduce
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Reduce):
+            node.implementation = 'pure'
+    sdfg.expand_library_nodes()
+
+
 def get_data_file(url, directory_name=None) -> str:
     """ Get a data file from ``url``, cache it locally and return the local file path to it.
 

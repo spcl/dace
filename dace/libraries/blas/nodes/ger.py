@@ -1,4 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
+
 from dace.properties import SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation
 from dace.frontend.common import op_repository as oprepo
@@ -12,6 +14,9 @@ import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+
+from dace.libraries.blas import blas_helpers
+from .. import environments
 
 
 @library.expansion
@@ -76,6 +81,108 @@ class ExpandGerPure(ExpandTransformation):
         return nsdfg_node
 
 
+def _ger_strides(node, parent_state, parent_sdfg):
+    """Extract leading-dim strides from ``_A``, ``_x`` and ``_y`` memlets."""
+    sx = sy = lda = None
+    for e in parent_state.in_edges(node):
+        sq = copy.deepcopy(e.data.subset)
+        dims = sq.squeeze()
+        desc = parent_sdfg.arrays[e.data.data]
+        if e.dst_conn == '_A':
+            lda = desc.strides[dims[0]]
+        elif e.dst_conn == '_x':
+            sx = desc.strides[dims[0]]
+        elif e.dst_conn == '_y':
+            sy = desc.strides[dims[0]]
+    return lda, sx, sy
+
+
+@library.expansion
+class ExpandGerOpenBLAS(ExpandTransformation):
+
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        a_desc = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, '_A')).data.data]
+        dtype = a_desc.dtype.base_type
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandGerPure.expansion(node, parent_state, parent_sdfg, **kwargs)
+        lda, sx, sy = _ger_strides(node, parent_state, parent_sdfg)
+        prefix = func.lower()
+        m, n = node.m, node.n
+        alpha = node.alpha
+        # cBLAS ger updates A in place; copy _A into _res first, then call.
+        if dtype in (dace.complex64, dace.complex128):
+            cfunc = prefix + 'gerc'
+        else:
+            cfunc = prefix + 'ger'
+        code = f"""
+        for (int __i = 0; __i < ({m}); ++__i)
+          cblas_{prefix}copy({n}, _A + __i * ({lda}), 1, _res + __i * ({lda}), 1);
+        """
+        if dtype in (dace.complex64, dace.complex128):
+            code += f"""
+            {dtype.ctype} __alpha = {dtype.ctype}({alpha});
+            cblas_{cfunc}(CblasRowMajor, {m}, {n}, &__alpha, _x, {sx}, _y, {sy}, _res, {lda});
+            """
+        else:
+            code += f"cblas_{cfunc}(CblasRowMajor, {m}, {n}, ({dtype.ctype})({alpha}), _x, {sx}, _y, {sy}, _res, {lda});"
+        return dace.sdfg.nodes.Tasklet(node.name,
+                                       node.in_connectors,
+                                       node.out_connectors,
+                                       code,
+                                       language=dace.dtypes.Language.CPP)
+
+
+@library.expansion
+class ExpandGerMKL(ExpandTransformation):
+
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(*args, **kwargs):
+        return ExpandGerOpenBLAS.expansion(*args, **kwargs)
+
+
+@library.expansion
+class ExpandGerCuBLAS(ExpandTransformation):
+
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        a_desc = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, '_A')).data.data]
+        dtype = a_desc.dtype.base_type
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandGerPure.expansion(node, parent_state, parent_sdfg, **kwargs)
+        lda, sx, sy = _ger_strides(node, parent_state, parent_sdfg)
+        m, n = node.m, node.n
+        alpha = node.alpha
+        cfunc = func + 'ger' if dtype not in (dace.complex64, dace.complex128) else func + 'gerc'
+        code = environments.cublas.cuBLAS.handle_setup_code(node)
+        # cuBLAS ger updates A in place; copy _A into _res first, then call.
+        code += f"""
+        {dtype.ctype} __alpha = {dtype.ctype}({alpha});
+        cudaMemcpyAsync(_res, _A, sizeof({dtype.ctype}) * ({m}) * ({lda}),
+                        cudaMemcpyDeviceToDevice, __dace_current_stream);
+        cublas{cfunc}(__dace_cublas_handle, {m}, {n}, &__alpha, _x, {sx}, _y, {sy}, _res, {lda});
+        """
+        return dace.sdfg.nodes.Tasklet(node.name,
+                                       node.in_connectors,
+                                       node.out_connectors,
+                                       code,
+                                       language=dace.dtypes.Language.CPP)
+
+
 @library.node
 class Ger(LibraryNode):
     """
@@ -87,7 +194,12 @@ class Ger(LibraryNode):
     """
 
     # Global properties
-    implementations = {"pure": ExpandGerPure}
+    implementations = {
+        "pure": ExpandGerPure,
+        "OpenBLAS": ExpandGerOpenBLAS,
+        "MKL": ExpandGerMKL,
+        "cuBLAS": ExpandGerCuBLAS,
+    }
     default_implementation = None
 
     # Object fields

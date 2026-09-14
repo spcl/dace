@@ -1,0 +1,82 @@
+name: New Libnodes
+
+# Runner for the library nodes the FaCe branch adds that are NOT on main (standard-library
+# Fortran-intrinsic nodes + the BLAS/LAPACK/FFT extension nodes). Python 3.14, simplification
+# ON but auto-optimization OFF. The MPI extension nodes carry the ``mpi`` marker and run on the
+# MPI-capable heterogeneous runner instead (this is a plain ubuntu runner, no MPI launcher).
+
+on:
+  push:
+    branches: [ FaCe ]
+  pull_request:
+    branches: [ FaCe ]
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
+  UV_NO_EDITABLE: 1 # don't install dace in editable mode
+
+jobs:
+  libnodes:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.14']
+    env:
+      # simplify ON, autoopt OFF.
+      DACE_optimizer_automatic_simplification: '1'
+      DACE_optimizer_autooptimize: '0'
+      NOSTATUSBAR: '1'
+      DACE_testing_serialization: '1'
+      DACE_testing_deserialize_exception: '1'
+      DACE_cache: unique
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        # OpenBLAS/LAPACKE for the BLAS/LAPACK extension nodes, FFTW3 for the FFT backend.
+        sudo apt-get install -y libyaml-dev cmake \
+          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
+
+    - name: Standard nodes
+      run: |
+        uv run --group testing pytest -n auto --tb=short --timeout_method thread --timeout=300 -m "not gpu" \
+          tests/library/allany_node_test.py \
+          tests/library/argminmax_test.py \
+          tests/library/broadcast_test.py \
+          tests/library/copy_node_test.py \
+          tests/library/count_node_test.py \
+          tests/library/cshift_test.py \
+          tests/library/fill_node_test.py \
+          tests/library/merge_node_test.py \
+          tests/library/norm2_test.py \
+          tests/library/matmul_trans_test.py
+
+    - name: FFT nodes
+      run: |
+        uv run --group testing pytest -n 1 --tb=short --timeout_method thread --timeout=300 -m "not gpu" \
+          tests/library/fft_pure_ndim_test.py \
+          tests/library/fft_fftw3_test.py \
+          tests/library/fft_axis_test.py
+
+    - name: BLAS/LAPACK nodes
+      run: |
+        uv run --group testing pytest -n 1 --tb=short --timeout_method thread --timeout=300 \
+          tests/library/blas/blas_extensions_openblas_test.py \
+          tests/library/lapack/lapack_extensions_openblas_test.py

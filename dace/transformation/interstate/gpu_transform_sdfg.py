@@ -381,19 +381,24 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         # NOTE: The outputs of LibraryNodes and Maps that have GPU schedule must be moved to GPU memory.
         # TODO: Also use GPU-shared and GPU-register memory when appropriate.
+        # Data moved to GPU here is registered so Step 8 copies it back for interstate-edge reads.
+        def _move_to_gpu(dname: str):
+            desc = sdfg.arrays[dname]
+            if desc.storage != dtypes.StorageType.GPU_Global:
+                desc.storage = dtypes.StorageType.GPU_Global
+                data_already_on_gpu.setdefault(dname, None)
+
         for state, node in gpu_nodes:
             if isinstance(node, (nodes.LibraryNode)):
                 for e in state.out_edges(node):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
-                        desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.GPU_Global
+                        _move_to_gpu(dst.data)
             elif isinstance(node, nodes.EntryNode):
                 for e in state.out_edges(state.exit_node(node)):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
-                        desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.GPU_Global
+                        _move_to_gpu(dst.data)
             else:
                 raise RuntimeError(
                     f"GPU node of unexpected type. Expected `LibraryNode` or `EntryNode`, found {type(node)}.")
@@ -480,7 +485,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
                         # NOTE: the cloned arrays match too but it's the same storage so we don't care
                         if node.data not in self.host_data:
-                            nodedesc.storage = dtypes.StorageType.GPU_Global
+                            _move_to_gpu(node.data)
 
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))

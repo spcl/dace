@@ -86,7 +86,13 @@ def test_normalize_altered_iter():
     b = s.add_access("B")
     s.add_edge(a, None, b, None, Memlet("A[i] -> B[i]"))
     loop.add_state_after(s, assignments={"i": "i // 2"})
-    sdfg.validate()
+
+    # Mutating the loop variable on an interstate edge inside its own LoopRegion races with the
+    # region's own init_expr / update_expr, and validation now rejects it outright.  The graph is
+    # built deliberately that way here, so assert the rejection rather than expecting it to pass
+    # validation -- normalization must still refuse the loop on its own.
+    with pytest.raises(dace.sdfg.validation.InvalidSDFGError):
+        sdfg.validate()
 
     # Should not apply
     assert loop.normalize() == False

@@ -135,6 +135,19 @@ def validate_control_flow_region(sdfg: 'SDFG',
                     f'variables {also_assigned}, which are also modified in the same '
                     'edge.', sdfg, eid)
 
+        # A LoopRegion's iterator is mutated by the LoopRegion itself (init_expr /
+        # update_expr); an interstate edge inside the body writing to it would race
+        # with that machinery. InvalidSDFGInterstateEdgeError isn't used here since it
+        # looks the edge up via sdfg.edges(), which can't find region-internal edges.
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            if region.loop_variable in edge.data.assignments:
+                raise InvalidSDFGError(
+                    f'Loop iterator "{region.loop_variable}" must not appear on '
+                    f'the LHS of an interstate-edge assignment inside its own '
+                    f'LoopRegion "{region.label}".  The LoopRegion already '
+                    'owns the iterator update via init_expr / update_expr; '
+                    'mutating it elsewhere races with that machinery.', sdfg, None)
+
         # Add edge symbols into defined symbols
         symbols.update(issyms)
 

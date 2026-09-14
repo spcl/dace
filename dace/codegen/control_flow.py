@@ -204,6 +204,20 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
     contains_irreducible = any(region.out_degree(node) > 1
                                for node in region.nodes()) or isinstance(region, UnstructuredControlFlow)
 
+    # A region flagged ``omp_parallel_region`` has its whole body wrapped in one ``omp parallel``.
+    wrap_parallel = getattr(region, 'omp_parallel_region', False) and generate_children_of is None
+    tail_start, single_open = None, False
+    if wrap_parallel:
+        if contains_irreducible:
+            # The body would be emitted with gotos, and branching out of an OpenMP structured block
+            # is invalid. Refuse rather than emit code the compiler may accept and miscompile.
+            raise NotImplementedError(f"Region {region.label} is flagged omp_parallel_region but contains "
+                                      f"irreducible control flow, which lowers to gotos that would branch out "
+                                      f"of the OpenMP structured block")
+        expr += '#pragma omp parallel\n{\n'
+        codegen.in_region_parallel = True
+        tail_start = _first_block_after_last_worksharing(region)
+
     stack = [region.start_block]
     while stack:
         node = stack.pop()
@@ -212,6 +226,16 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
         if node in visited or node is stop:
             continue
         visited.add(node)
+
+        if wrap_parallel and tail_start is not None and node is tail_start:
+            # Everything past the last worksharing loop is the serial tail (velocity: the vcfl
+            # reduce). It must run ONCE, not once per thread: the accumulator is declared inside the
+            # wrapped body and is therefore thread-private, so without ``single`` every thread redoes
+            # the reduction and they all write the copy-out. No explicit barrier is needed to get
+            # here -- no worksharing loop sets ``nowait``, so the last one's implicit barrier has
+            # already synchronised the team -- and ``single`` carries its own barrier on exit.
+            expr += '#pragma omp single\n{\n'
+            single_open = True
 
         expr += '__state_{}_{}:;\n'.format(region.cfg_id, re.sub(r'\s+', '_', node.label))
         if isinstance(node, SDFGState):
@@ -281,4 +305,37 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
 
     expr += f'__state_exit_{region.cfg_id}:;\n'
 
+    if single_open:
+        expr += '}\n'
+    if wrap_parallel:
+        expr += '}\n'
+        codegen.in_region_parallel = False
+
     return expr
+
+
+def _first_block_after_last_worksharing(region: AbstractControlFlowRegion) -> Optional[ControlFlowBlock]:
+    """The first block of ``region``'s serial tail: everything after the last block that holds a
+    CPU_Multicore Map. ``None`` when there is no tail (the last block does worksharing).
+
+    Blocks are taken in execution order along the single-successor chain, which is the only shape
+    this wrapping supports -- an irreducible region is refused before this is ever called.
+    """
+    from dace.sdfg import nodes as _nodes
+
+    order, cur, seen = [], region.start_block, set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        order.append(cur)
+        out = region.out_edges(cur)
+        cur = out[0].dst if len(out) == 1 else None
+
+    last_ws = -1
+    for i, blk in enumerate(order):
+        for n, _ in blk.all_nodes_recursive():
+            if isinstance(n, _nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                last_ws = i
+                break
+    if last_ws < 0 or last_ws + 1 >= len(order):
+        return None
+    return order[last_ws + 1]
