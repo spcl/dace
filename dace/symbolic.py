@@ -112,7 +112,7 @@ _SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(rf'\(\s*(?:(?P<re>{_SERIALIZED_C
 # The ``.`` matches attribute access only (not a numeric decimal point): routing a float
 # literal through ``ast.parse`` would round a near-max value like HUGE up to ``inf``.
 _NEEDS_AST_REWRITE = re.compile(
-    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]')
+    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|%|\.(?![0-9])|[\[]|[\]]')
 
 
 def _is_sympy_number(expr) -> bool:
@@ -514,9 +514,9 @@ class SymExpr(object):
 
     def __floordiv__(self, other):
         if isinstance(other, SymExpr):
-            return SymExpr(self.expr // other.expr, self.approx // other.approx)
+            return SymExpr(int_floor(self.expr, other.expr), int_floor(self.approx, other.approx))
         if isinstance(other, sympy.Expr):
-            return SymExpr(self.expr // other, self.approx // other)
+            return SymExpr(int_floor(self.expr, other), int_floor(self.approx, other))
         return self // pystr_to_symbolic(other)
 
     def __mod__(self, other):
@@ -1093,6 +1093,23 @@ class __int_floor(int_floor):
     pass
 
 
+class CMod(sympy.Function):
+    """ C's truncating modulo, the meaning of ``%`` in an SDFG. """
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number and y != 0:
+            return x - y * sympy.Integer(int(x / y))
+        if x.is_nonnegative and y.is_positive:
+            return sympy.Mod(x, y)
+
+    def _eval_is_integer(self):
+        return self.args[0].is_integer and self.args[1].is_integer
+
+
+MODULO_FUNCTIONS = {'CMod': CMod, 'FtnMod': CMod, 'Mod': sympy.Mod, 'PyMod': sympy.Mod, 'FtnModulo': sympy.Mod}
+
+
 class int_ceil(sympy.Function):
 
     @classmethod
@@ -1407,7 +1424,7 @@ def sympy_intdiv_fix(expr):
     # The properties avoid matching the silly case "ceiling(N/32)" as
     # ceiling of 1/N and 1/32
     a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
+    b = sympy.Wild('b', properties=[lambda k: (k.is_Symbol or k.is_Integer) and k != 1])
     c = sympy.Wild('c')
     d = sympy.Wild('d')
     e = sympy.Wild('e', properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
@@ -1656,6 +1673,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.LShift: '__left_shift',
         ast.RShift: '__right_shift',
         ast.FloorDiv: '__int_floor',
+        ast.Mod: 'CMod',
     }
 
     def visit_UnaryOp(self, node):
@@ -1817,6 +1835,20 @@ def _construct_function_uncached(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
+# Operator-derived ``__``-prefixed variants for ``_SerializedSymbolicParser._functions``.
+# Defined at module level because Python name-mangles identifiers starting with ``__``
+# when they appear textually inside a class body.
+_SERIALIZED_OPERATOR_FUNCTIONS = {
+    '__int_floor': __int_floor,
+    '__bitwise_and': __bitwise_and,
+    '__bitwise_or': __bitwise_or,
+    '__bitwise_xor': __bitwise_xor,
+    '__bitwise_invert': __bitwise_invert,
+    '__left_shift': __left_shift,
+    '__right_shift': __right_shift,
+}
+
+
 class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
@@ -1920,7 +1952,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return _construct_function_uncached(sympy.Mod, a, b, evaluate=False)
+        return _construct_function_uncached(CMod, a, b)
 
     @staticmethod
     def _unary_minus(a):
@@ -1975,7 +2007,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'int_floor': int_floor,
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
-        'Mod': sympy.Mod,
+        **MODULO_FUNCTIONS,
         'fortran_mod': fortran_mod,
         'Attr': Attr,
         'BitwiseAnd': bitwise_and,
@@ -1990,6 +2022,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'RightShift': right_shift,
         'left_shift': left_shift,
         'right_shift': right_shift,
+        **_SERIALIZED_OPERATOR_FUNCTIONS,
     }
     _constants = {
         'True': sympy.true,
@@ -2364,7 +2397,7 @@ _PYSTR2SYM_locals = {
     '__int_floor': __int_floor,
     'int_ceil': int_ceil,
     'IfExpr': IfExpr,
-    'Mod': sympy.Mod,
+    **MODULO_FUNCTIONS,
     'fortran_mod': fortran_mod,
     'int32': int32,
     'int64': int64,
@@ -2537,7 +2570,25 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return '((%s) if (%s) else (%s))' % (tval, cond, fval)
         return super()._print_Function(expr)
 
+    def _print_ceiling(self, expr):
+        if not self.cpp_mode:
+            return super()._print_Function(expr)
+        # A known-integer argument has nothing to round up, so it stands on its own and
+        # keeps its integer type. Neither C++ spelling works here: libm ``ceil`` widens
+        # to ``double``, and the runtime's ``ceiling`` (math.h) has only ``int``, ``float``
+        # and ``double`` overloads, so any wider integer type makes the call ambiguous.
+        if expr.args[0].is_integer:
+            return self._print(expr.args[0])
+        return 'ceil(%s)' % self._print(expr.args[0])
+
     def _print_Mod(self, expr):
+        # Floored; ``%`` is C's and agrees only on a nonnegative dividend and a positive divisor.
+        dividend, divisor = expr.args
+        if dividend.is_nonnegative and divisor.is_positive:
+            return '((%s) %% (%s))' % (self._print(dividend), self._print(divisor))
+        return '%s(%s, %s)' % ('py_mod' if self.cpp_mode else 'Mod', self._print(dividend), self._print(divisor))
+
+    def _print_CMod(self, expr):
         return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
 
     def _print_Equality(self, expr):

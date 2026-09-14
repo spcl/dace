@@ -93,6 +93,27 @@ def test_dump_gpu_synchronizes():
     assert all('DeviceSynchronize' in chunk for chunk in before_each_save), code
 
 
+def test_dump_no_report():
+    """Data instrumentation (Save/RestoreProvider) never writes to __state->report, so the
+    performance report struct and its save calls must not appear when it's the only
+    instrumentation in use.
+    """
+
+    @dace.program
+    def tester(A: dace.float64[20, 20]):
+        tmp = A + 1
+        return tmp + 5
+
+    sdfg = tester.to_sdfg(simplify=True)
+    _instrument(sdfg, dace.DataInstrumentationType.Save)
+
+    for each_invocation in (True, False):
+        with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=each_invocation):
+            code = sdfg.generate_code()[0].clean_code
+        assert 'dace::perf::Report report;' not in code
+        assert '__state->report' not in code
+
+
 @pytest.mark.datainstrument
 def test_restore():
 
@@ -412,6 +433,7 @@ if __name__ == '__main__':
     test_symbol_dump_conditional()
     test_dump_gpu()
     test_dump_gpu_synchronizes()
+    test_dump_no_report()
     test_restore()
     test_symbol_restore()
     test_restore_gpu()

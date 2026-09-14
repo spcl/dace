@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 import dace
+from dace import symbolic
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.libraries.standard.nodes.copy.common import _make_expansion_sdfg, cuda2d_pitch_params
 
 import pytest
@@ -17,9 +19,18 @@ import numpy as np
 
 @dataclass
 class _ArraySpec:
-    """Per-side array spec for :func:`_make_copy_sdfg`. ``strides``/``total_size`` default to
-    DaCe's packed-C layout; ``subset`` defaults to the full per-dim range; ``name`` defaults to
-    ``src``/``dst`` from position; ``dtype`` defers to the helper's ``dtype`` argument."""
+    """Per-side array spec for :func:`_make_copy_sdfg`.
+
+    :param shape: array shape.
+    :param storage: storage type.
+    :param strides: explicit strides; ``None`` keeps DaCe's packed-C default.
+    :param total_size: explicit buffer total size; only consulted when ``strides`` is set
+        (defaults to ``prod(shape)``).
+    :param transient: transient-array flag.
+    :param subset: memlet subset string; defaults to the full per-dim range.
+    :param name: SDFG-visible array name; defaults to ``src`` / ``dst`` from position.
+    :param dtype: element type; ``None`` defers to the helper's ``dtype`` argument.
+    """
     shape: Sequence[int]
     storage: dace.dtypes.StorageType
     strides: Optional[Sequence[int]] = None
@@ -37,8 +48,16 @@ def _make_copy_sdfg(src: _ArraySpec,
                     name: str = "copy_sdfg",
                     libnode_name: str = "cp",
                     dtype: dace.dtypes.typeclass = dace.float64) -> Tuple[dace.SDFG, CopyLibraryNode]:
-    """One-state SDFG copying ``src`` -> ``dst`` via a single ``CopyLibraryNode`` -> ``(sdfg,
-    libnode)``. ``implementation=None`` keeps ``'Auto'``."""
+    """One-state SDFG copying ``src`` -> ``dst`` via a single ``CopyLibraryNode``.
+
+    :param src: source-side array spec.
+    :param dst: destination-side array spec.
+    :param implementation: pinned ``CopyLibraryNode.implementation`` (``None`` keeps ``'Auto'``).
+    :param name: SDFG name.
+    :param libnode_name: libnode label.
+    :param dtype: fallback dtype when a spec leaves ``dtype=None``.
+    :returns: ``(sdfg, libnode)``.
+    """
     sdfg, src_name, dst_name, src_acc, dst_acc, src_subset, dst_subset = _make_copy_skeleton(src, dst, name, dtype)
     libnode = CopyLibraryNode(name=libnode_name)
     if implementation is not None:
@@ -1925,6 +1944,116 @@ def test_shared_to_global_uses_the_block_collective_helper():
     sdfg.expand_library_nodes()
     bodies = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
     assert any('dace::SharedToGlobal1D<' in b for b in bodies), bodies
+
+
+def test_symbolic_extent_expansions_keep_their_ranges_symbolic():
+    """A copy / fill whose extent is a symbolic POWER must expand.
+
+    ``sym2cpp(R ** K)`` is ``dace::math::ipow(R, K)``; rendering an extent through it and handing the
+    text back to the range parser splits the qualified name on ':' and raises
+    ``SyntaxError: Invalid range``. Both expansions must therefore build their map ranges and memlet
+    subsets from the symbolic expression, never from a rendered string. Reproduces the npbench
+    ``stockham_fft`` expansion failure.
+    """
+    R, K = dace.symbol('R'), dace.symbol('K')
+    extent = R**K
+
+    sdfg = dace.SDFG('symbolic_extent_copy')
+    sdfg.add_array('src', [extent], dace.float64)
+    sdfg.add_array('dst', [extent], dace.float64)
+    state = sdfg.add_state('main')
+    libnode = CopyLibraryNode('cpy')
+    libnode.implementation = 'MappedTasklet'
+    state.add_node(libnode)
+    state.add_edge(state.add_access('src'), None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                   dace.Memlet(f'src[0:{extent}]'))
+    state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access('dst'), None,
+                   dace.Memlet(f'dst[0:{extent}]'))
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+
+    fill_sdfg = dace.SDFG('symbolic_extent_fill')
+    fill_sdfg.add_array('out', [extent], dace.float64)
+    fill_state = fill_sdfg.add_state('main')
+    fill = FillLibraryNode('zero')
+    fill.implementation = 'pure'
+    fill_state.add_node(fill)
+    fill_state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, fill_state.add_access('out'), None,
+                        dace.Memlet(f'out[0:{extent}]'))
+    fill_sdfg.expand_library_nodes()
+    fill_sdfg.validate()
+
+    for expanded in (sdfg, fill_sdfg):
+        entries = [n for n, _ in expanded.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+        assert entries, f'{expanded.name}: no map emitted'
+        for entry in entries:
+            for _, end, _ in entry.map.range:
+                # The extent survives as a symbolic expression over R and K (possibly wrapped in a
+                # ceiling by the element count), not as a C++ rendering of it.
+                assert '::' not in str(end), f'{expanded.name}: C++ spelling leaked into a map range: {end}'
+                assert {str(s) for s in symbolic.pystr_to_symbolic(str(end)).free_symbols} == {'R', 'K'}, \
+                    f'{expanded.name}: extent lost its symbols: {end}'
+        for st in expanded.all_states():
+            for e in st.edges():
+                if e.data is not None and not e.data.is_empty() and e.data.subset is not None:
+                    assert '::' not in str(e.data.subset), \
+                        f'{expanded.name}: C++ spelling leaked into a memlet subset: {e.data.subset}'
+
+
+def _make_in_kernel_copy_sdfg(src_storage: dace.dtypes.StorageType,
+                              dst_storage: dace.dtypes.StorageType) -> Tuple[dace.SDFG, CopyLibraryNode]:
+    """A multi-element ``CopyLibraryNode`` sitting inside a ``GPU_Device`` map."""
+    sdfg = dace.SDFG("in_kernel_copy")
+    sdfg.add_array("src", [4, 8], dace.float64, storage=src_storage)
+    sdfg.add_array("dst", [4, 8], dace.float64, storage=dst_storage)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("kern", dict(i="0:4"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    libnode = CopyLibraryNode(name="cp")
+    state.add_memlet_path(state.add_read("src"),
+                          entry,
+                          libnode,
+                          dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+                          memlet=dace.memlet.Memlet("src[0:4, 0:8]"))
+    state.add_memlet_path(libnode,
+                          exit_,
+                          state.add_write("dst"),
+                          src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.memlet.Memlet("dst[0:4, 0:8]"))
+    return sdfg, libnode
+
+
+def test_in_kernel_cross_boundary_copy_is_refused_by_selection():
+    """Device code can neither address host memory nor issue a Memcpy, so no implementation fits.
+
+    Auto used to answer ``MappedTasklet`` for every in-kernel multi-element copy, boundary
+    unchecked; the expansion then rejected it and pointed at ``MemcpyCUDA1D``, which device code
+    cannot issue either. The refusal belongs where the choice is made, and it has to name the
+    kernel, because moving the copy out of it is the fix.
+    """
+    sdfg, libnode = _make_in_kernel_copy_sdfg(dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.start_state
+    with pytest.raises(ValueError, match="inside a kernel"):
+        select_copy_implementation(libnode, state)
+
+
+def test_in_kernel_device_to_device_copy_still_maps():
+    """The refusal is only for the boundary -- an in-kernel device copy has nothing else to be."""
+    sdfg, libnode = _make_in_kernel_copy_sdfg(dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Global)
+    assert select_copy_implementation(libnode, sdfg.start_state) == "MappedTasklet"
+
+
+def test_a_host_level_cross_boundary_copy_never_falls_back_to_a_mapped_tasklet():
+    """``Register`` is outside the storage set the CUDA branch tested, so it reached the fallback.
+
+    At host level a ``Register`` endpoint IS host memory, so the copy crosses the boundary and has
+    to be a ``cudaMemcpy`` -- a mapped tasklet cannot dereference the device side, and answering
+    with one only moves the failure into the expansion.
+    """
+    sdfg, libnode = _make_copy_sdfg(
+        _ArraySpec(shape=(4, 8), storage=dace.dtypes.StorageType.Register, transient=True),
+        _ArraySpec(shape=(4, 8), storage=dace.dtypes.StorageType.GPU_Global, transient=True),
+    )
+    assert select_copy_implementation(libnode, sdfg.start_state) == "MemcpyCUDA1D"
 
 
 if __name__ == "__main__":

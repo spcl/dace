@@ -263,8 +263,9 @@ def test_opaque_scalar_is_not_arrayized():
 
 
 def test_passes_expose_property_options():
-    assert set(
-        ConvertLengthOneArraysToScalars.__properties__) == {"recursive", "preserve_abi", "filter", "single_element"}
+    assert set(ConvertLengthOneArraysToScalars.__properties__) == {
+        "recursive", "preserve_abi", "filter", "single_element", "skip_gpu_outputs"
+    }
     assert set(ConvertScalarsToLengthOneArrays.__properties__) == {"recursive", "preserve_abi", "filter"}
     for cls in (ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays):
         inst = cls(recursive=False, preserve_abi=True)
@@ -481,7 +482,114 @@ def test_library_node_operand_is_not_scalarized():
     for name in ("t", "f", "mask", "out"):
         assert isinstance(sdfg.arrays[name], dd.Array), f"{name} feeds a library node and must stay an Array"
     assert not [n for n in sdfg.arrays if n.startswith("scal_")], "a library-node operand was staged"
+def _scatter_sdfg(tmp_is_scalar: bool) -> dace.SDFG:
+    """``for i: A[(i+1) % 2] = B[i]`` staged through a single-value transient. The copy edge names the
+    TRANSIENT, so the destination index lives in ``other_subset``."""
+    sdfg = dace.SDFG("len1_other_subset_survives")
+    st = sdfg.add_state("s")
+    sdfg.add_array("A", [2], dace.int32)
+    sdfg.add_array("B", [2], dace.int32)
+    if tmp_is_scalar:
+        sdfg.add_scalar("tmp", dace.int32, transient=True)
+    else:
+        sdfg.add_array("tmp", [1], dace.int32, transient=True)
+    me, mx = st.add_map("m", {"i": "0:2"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    me.add_in_connector("IN_B")
+    me.add_out_connector("OUT_B")
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    st.add_edge(st.add_read("B"), None, me, "IN_B", dace.Memlet("B[0:2]"))
+    tmp = st.add_access("tmp")
+    st.add_edge(me, "OUT_B", tmp, None, dace.Memlet("B[i]"))
+    wa = st.add_access("A")
+    st.add_edge(tmp, None, wa, None, dace.Memlet("tmp[0] -> [((i+1)%2)]"))
+    st.add_edge(wa, None, mx, "IN_A", dace.Memlet("A[0:2]"))
+    st.add_edge(mx, "OUT_A", st.add_access("A"), None, dace.Memlet("A[0:2]"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("inverse", [False, True])
+def test_other_subset_of_untouched_side_survives(inverse):
+    """The rewritten side of a copy edge says NOTHING about the other side. Dropping the untouched
+    side's ``other_subset`` silently redirects every write to element 0 -- a scatter turns into a
+    single overwrite, with no validation error to catch it."""
+    sdfg = _scatter_sdfg(tmp_is_scalar=inverse)
+    if inverse:
+        ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
+    else:
+        ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    st = sdfg.states()[0]
+    copy = next(e for e in st.edges() if e.data.data == "tmp" and e.data.other_subset is not None)
+    assert str(copy.data.other_subset) != "0"
+    sdfg.validate()
+
+    a = np.zeros(2, np.int32)
+    b = np.array([11, 22], np.int32)
+    sdfg(A=a, B=b)
+    assert a[0] == b[1] and a[1] == b[0]
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_arrayize_rewrites_interstate_edge_assignment():
+    """A scalar named on an interstate-edge assignment becomes ``name[0]`` once it is a length-1 array.
+
+    Leaving the bare name there reads the array itself where a value is expected -- a silent
+    miscompile rather than a validation error.
+    """
+    sdfg = dace.SDFG('arrayize_iedge')
+    sdfg.add_scalar('arr', dace.float64, transient=True)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_symbol('a', dace.float64)
+
+    s0 = sdfg.add_state('s0', is_start_block=True)
+    t = s0.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    s0.add_edge(t, 'o', s0.add_write('arr'), None, dace.Memlet('arr'))
+    s1 = sdfg.add_state('s1')
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={'a': 'arr'}))
+    t2 = s1.add_tasklet('r', {}, {'o'}, 'o = a')
+    s1.add_edge(t2, 'o', s1.add_write('out'), None, dace.Memlet('out[0]'))
+
+    ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
+
+    assert isinstance(sdfg.arrays['arr'], dace.data.Array)
+    assignments = [dict(e.data.assignments) for e in sdfg.all_interstate_edges()]
+    assert assignments == [{'a': 'arr[0]'}], assignments
+    sdfg.validate()
+
+
+def test_arrayize_rewrites_conditional_guard_after_branch_removal():
+    """A ConditionalBlock guard is rewritten even once its branch entries have become tuples.
+
+    ``add_branch`` appends a list but ``remove_branch`` rebuilds the entries as tuples, so a pass
+    that reassigns ``branch[0]`` crashes on any conditional a branch was ever removed from.
+    """
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+
+    sdfg = dace.SDFG('cond_after_removal')
+    sdfg.add_scalar('arr', dace.float64, transient=True)
+    sdfg.add_array('out', [1], dace.float64)
+    s0 = sdfg.add_state('s0', is_start_block=True)
+    t = s0.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    s0.add_edge(t, 'o', s0.add_write('arr'), None, dace.Memlet('arr'))
+
+    cond = ConditionalBlock('cb')
+    sdfg.add_node(cond)
+    sdfg.add_edge(s0, cond, dace.InterstateEdge())
+    keep = ControlFlowRegion('keep', sdfg=sdfg)
+    drop = ControlFlowRegion('drop', sdfg=sdfg)
+    cond.add_branch(CodeBlock('arr > 0'), keep)
+    cond.add_branch(CodeBlock('arr < 0'), drop)
+    bs = keep.add_state('bs', is_start_block=True)
+    t2 = bs.add_tasklet('r', {}, {'o'}, 'o = 1.0')
+    bs.add_edge(t2, 'o', bs.add_write('out'), None, dace.Memlet('out[0]'))
+    cond.remove_branch(drop)
+
+    ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
+
+    assert isinstance(sdfg.arrays['arr'], dace.data.Array)
+    assert 'arr[0]' in cond.branches[0][0].as_string, cond.branches[0][0].as_string

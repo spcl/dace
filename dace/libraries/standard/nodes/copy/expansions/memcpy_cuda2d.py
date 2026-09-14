@@ -8,6 +8,7 @@ from dace import library, nodes
 from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard import environments
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, collapse_shape_and_strides)
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.standard.nodes.copy.common import (_memcpy_kind, cuda2d_pitch_params, INPUT_CONNECTOR_NAME,
                                                        OUTPUT_CONNECTOR_NAME)
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     pass
 
 
-@library.expansion
+@library.register_expansion(CopyLibraryNode, 'MemcpyCUDA2D')
 class ExpandMemcpyCUDA2D(ExpandTransformation):
     """2D strided copy via ``cudaMemcpy2DAsync`` between any GPU_Global/host storage combination:
     row-major contiguous rows, column-major contiguous columns, or outer stride a multiple of

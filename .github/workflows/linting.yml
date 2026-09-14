@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main, ci-fix ]
 
+env:
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
+  UV_NO_EDITABLE: 1 # don't install dace in editable mode
+
 jobs:
   linting:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
@@ -16,15 +21,19 @@ jobs:
     - name: Check repository
       uses: actions/checkout@v7
 
-    - name: Setup Python 3.10
-      uses: actions/setup-python@v6
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
       with:
         python-version: '3.10'
-        cache: 'pip'
+        enable-cache: true
+        pyproject-file: pyproject.toml
+        cache-dependency-glob: pyproject.toml
 
-    - name: Install linting tools
-      run: pip install .[linting]
+    # In one place we should check that `pyproject.toml` and `uv.lock` are up-to-date.
+    # This place is as good any other. We un-freeze to lock file to do so.
+    - name: Check that uv.lock is up-to-date
+      run: UV_FROZEN=0 uv lock --check
 
     - name: Run linting tools
       id: lint
-      run: pre-commit run --show-diff-on-failure --color=always --all-files
+      run: uv run --only-group=linting pre-commit run --show-diff-on-failure --color=always --all-files

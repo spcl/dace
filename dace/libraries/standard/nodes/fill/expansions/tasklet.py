@@ -5,15 +5,16 @@ from typing import TYPE_CHECKING
 import dace
 from dace import library, nodes
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.libraries.standard.nodes.fill.common import OUTPUT_CONNECTOR_NAME, python_literal
+from dace.libraries.standard.nodes.fill.common import OUTPUT_CONNECTOR_NAME, VALUE_CONNECTOR_NAME, python_literal
+from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 
 if TYPE_CHECKING:
-    from dace.libraries.standard.nodes.fill.node import FillLibraryNode
+    pass
 
 
-@library.expansion
+@library.register_expansion(FillLibraryNode, 'tasklet')
 class ExpandTasklet(ExpandTransformation):
     environments = []
 
@@ -30,8 +31,16 @@ class ExpandTasklet(ExpandTransformation):
             raise ValueError(f"Tasklet expansion cannot fill GPU-resident storage ({out.storage}) for "
                              f"'{out_name}' from host scope; use the 'CUDA' Fill expansion instead.")
 
+        value_info = node.value_descriptor(parent_state)
+        if value_info is not None:
+            inputs = {VALUE_CONNECTOR_NAME: value_info[1].dtype}
+            value_expr = VALUE_CONNECTOR_NAME
+        else:
+            inputs = {}
+            value_expr = python_literal(node.value, out.dtype)
+
         return nodes.Tasklet(node.name,
-                             inputs={},
+                             inputs=inputs,
                              outputs={OUTPUT_CONNECTOR_NAME: out.dtype},
-                             code=f"{OUTPUT_CONNECTOR_NAME} = {python_literal(node.value, out.dtype)}",
+                             code=f"{OUTPUT_CONNECTOR_NAME} = {value_expr}",
                              language=dace.Language.Python)

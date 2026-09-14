@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import dace
 from dace import library, nodes, dtypes
+from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.sdfg.scope import is_in_scope
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.standard.nodes.copy.common import (_build_shmem_collective_copy_code, INPUT_CONNECTOR_NAME,
@@ -14,12 +15,13 @@ if TYPE_CHECKING:
     pass
 
 
-@library.expansion
+@library.register_expansion(CopyLibraryNode, 'SharedMemoryCollective')
 class ExpandSharedMemoryCollective(ExpandTransformation):
-    """Block-collective Shared <-> Shared/Global copy: a single Tasklet emitting
-    ``dace::CopyND<...>::Copy + __syncthreads()``, with ``_in``/``_out`` connectors matching the
-    libnode's directly (no NSDFG wrapper -- the parent kernel's ``__shared__`` array binds
-    straight in, no scope-id name mangling).
+    """Block-collective Shared <-> Shared/Global copy.
+
+    A static 1-D transfer uses ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D``; other shapes
+    fall back to ``dace::CopyND<...>::Copy(...)`` with optional ``__syncthreads()`` barriers
+    (enabled by the node's ``sync`` property, default True).
 
     Caller must place this outside any enclosing ``GPU_ThreadBlock`` map -- this expansion *is*
     the thread-block-level operation. Shared <-> Register goes through ``MappedTasklet`` instead

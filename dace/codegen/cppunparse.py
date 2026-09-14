@@ -851,14 +851,17 @@ class CPPUnparser:
         "Sub": "-",
         "Mult": "*",
         "Div": "/",
-        "Mod": "%",
         "LShift": "<<",
         "RShift": ">>",
         "BitOr": "|",
         "BitXor": "^",
-        "BitAnd": "&"
+        "BitAnd": "&",
+        "Mod": "%"
     }
-    funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
+    funcops = {
+        "FloorDiv": (",", "py_floor"),
+        "MatMult": (",", "dace::gemm"),
+    }
 
     def _BinOp(self, t):
         # Operations that require a function call
@@ -985,6 +988,13 @@ class CPPUnparser:
         "And": ast.And,
         "Or": ast.Or,
     }
+    modulo_calls = {
+        "CMod": "c_mod",
+        "FtnMod": "ftn_mod",
+        "Mod": "py_mod",
+        "PyMod": "py_mod",
+        "FtnModulo": "ftn_modulo",
+    }
 
     # Sympy-side names that lower to a differently-named C++ call: numeric casts (kind coercions
     # emitted by the Fortran frontend) and complex-component accessors.
@@ -1023,7 +1033,10 @@ class CPPUnparser:
                 self.dispatch(ast.BoolOp(op=op, values=t.args))
                 return
 
-        self.dispatch(t.func)
+        if isinstance(t.func, ast.Name) and t.func.id in self.modulo_calls:
+            self.write(self.modulo_calls[t.func.id])
+        else:
+            self.dispatch(t.func)
         self.write("(")
         comma = False
         for e in t.args:

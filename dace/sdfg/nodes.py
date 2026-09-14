@@ -582,25 +582,6 @@ class Tasklet(CodeNode):
             return self.label
 
 
-@make_properties
-class RTLTasklet(Tasklet):
-    """ A specialized tasklet, which is a functional computation procedure
-        that can only access external data specified using connectors.
-
-        This tasklet is specialized for tasklets implemented in System Verilog
-        in that it adds support for adding metadata about the IP cores in use.
-    """
-    # TODO to be replaced when enums have embedded properties
-    ip_cores = DictProperty(key_type=str, value_type=dict, desc="A set of IP cores used by the tasklet.")
-
-    @property
-    def __jsontype__(self):
-        return 'Tasklet'
-
-    def add_ip_core(self, module_name, name, vendor, version, params):
-        self.ip_cores[module_name] = {'name': name, 'vendor': vendor, 'version': version, 'params': params}
-
-
 # ------------------------------------------------------------------------------
 
 
@@ -1118,6 +1099,13 @@ class Map(object):
                            serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
+
+    allow_chiplet_threadblock_distribution = Property(
+        dtype=bool,
+        default=True,
+        desc="Allow the thread-blocks of this kernel to be distributed over the chiplets of the GPU "
+        "(see the `compiler.cuda.chiplet_number` configuration entry)",
+        serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock))
 
     def __init__(self,
                  label,

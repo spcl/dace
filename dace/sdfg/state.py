@@ -1717,27 +1717,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, set) or isinstance(outputs, set):
-            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
+        if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
+            warnings.warn("Using sets for connectors is discouraged as it leads to indeterministic behavior.")
         if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
         if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         tasklet = nd.Tasklet(
-            name,
-            inputs,
-            outputs,
-            code,
-            language,
-            state_fields=state_fields,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
-            location=location,
-            side_effects=side_effects,
-            debuginfo=debuginfo,
-        ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
             name,
             inputs,
             outputs,
@@ -1797,8 +1784,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, set) or isinstance(outputs, set):
-            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
+        if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
+            warnings.warn("Using sets for connectors is discouraged as it leads to indeterministic behavior.")
         if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
         if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):

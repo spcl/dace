@@ -34,40 +34,21 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 ``Scalar`` data on the SDFG signature binds to a plain Python ``int`` / ``float`` whereas a length-1
 ``Array`` needs a 1-element numpy buffer.
 """
+import ast
 import itertools
 import re
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import dace
-from dace import Memlet, properties, subsets
+from dace import Memlet, dtypes, properties, subsets
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
-def _rewrite_refs(expr: str, rename: Dict[str, str]) -> str:
-    """Rewrite references to rewritten descriptors in a source ``expr``.
-
-    For each ``old -> new`` in ``rename``, collapse ``old[0]`` to ``new`` (the redundant length-1
-    accessor) and rename a bare ``old`` to ``new``. Only a token not preceded by a word character or
-    ``.`` is matched, so a literal ``[0]`` on a different descriptor whose name merely ends in ``old``
-    (``bar[0]`` vs rewritten ``ar``) keeps its subscript. When ``old == new`` (an in-place rewrite)
-    this only strips the ``[0]``.
-
-    :param expr: source expression to rewrite.
-    :param rename: mapping from each rewritten descriptor's old name to its new name.
-    :returns: ``expr`` with each ``old[0]`` / ``old`` rewritten to ``new``.
-    """
-    for old, new in rename.items():
-        expr = re.sub(rf'(?<![\w.]){re.escape(old)}\[0\]', new, expr)
-        if old != new:
-            expr = re.sub(rf'(?<![\w.]){re.escape(old)}\b', new, expr)
-    return expr
-
-
-#: A bare identifier, not preceded by a word character or ``.`` -- the same anchoring ``_rewrite_refs``
-#: uses, so what counts as a reference here is exactly what gets rewritten there.
+#: A bare identifier, not preceded by a word character or ``.``. A superset of what
+#: :func:`rewrite_refs` rewrites, so no rewritten reference is missed as a read.
 _IDENT_RE = re.compile(r'(?<![\w.])([A-Za-z_]\w*)')
 
 #: Rewrites one source-text slot; see :func:`rewrite_code_slots`.
@@ -128,6 +109,121 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
                     node.symbol_mapping[key] = rewritten
 
 
+class ScalarRefRewriter(ast.NodeTransformer):
+    """Collapse ``old[0]`` to ``new`` and rename a bare ``old`` to ``new``.
+
+    :param rename: Mapping from each rewritten descriptor's old name to its new name.
+    """
+
+    def __init__(self, rename: Dict[str, str]):
+        self.rename = rename
+
+    def visit_Subscript(self, node: ast.Subscript):
+        index = node.slice.value if isinstance(node.slice, ast.Index) else node.slice
+        if (isinstance(node.value, ast.Name) and node.value.id in self.rename and isinstance(index, ast.Constant)
+                and index.value == 0):
+            return ast.copy_location(ast.Name(id=self.rename[node.value.id], ctx=node.ctx), node)
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name):
+        if node.id in self.rename:
+            return ast.copy_location(ast.Name(id=self.rename[node.id], ctx=node.ctx), node)
+        return node
+
+
+class ElementRefRewriter(ast.NodeTransformer):
+    """Inverse of :class:`ScalarRefRewriter`: point a bare ``old`` at ``new[0]``.
+
+    :param rename: Mapping from each rewritten descriptor's old name to its new name.
+    """
+
+    def __init__(self, rename: Dict[str, str]):
+        self.rename = rename
+
+    def visit_Subscript(self, node: ast.Subscript):
+        # An already-subscripted reference is only renamed; its index is rewritten on its own.
+        if isinstance(node.value, ast.Name) and node.value.id in self.rename:
+            node.slice = self.visit(node.slice)
+            node.value = ast.Name(id=self.rename[node.value.id], ctx=node.value.ctx)
+            return node
+        return self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name):
+        if node.id not in self.rename:
+            return node
+        element = ast.Subscript(value=ast.Name(id=self.rename[node.id], ctx=ast.Load()),
+                                slice=ast.Constant(value=0),
+                                ctx=node.ctx)
+        return ast.fix_missing_locations(ast.copy_location(element, node))
+
+
+def _rewrite_with(expr: str, rewriter: ast.NodeTransformer) -> str:
+    """Apply ``rewriter`` to ``expr`` parsed as Python.
+
+    :param expr: Source expression to rewrite; text that does not parse is returned unchanged.
+    :param rewriter: Transformer to apply to the parsed tree.
+    :returns: The rewritten source.
+    """
+    try:
+        tree = ast.parse(expr)
+    except SyntaxError:
+        return expr
+    # ``ast.unparse``, not ``astutils.unparse``: the latter parenthesizes every binary operation,
+    # which would rewrite slots this pass did not touch.
+    return ast.unparse(rewriter.visit(tree))
+
+
+def rewrite_refs(expr: str, rename: Dict[str, str]) -> str:
+    """Collapse each rewritten descriptor's redundant ``old[0]`` accessor and rename it to ``new``.
+
+    An attribute (``obj.old``) is never a descriptor reference, and a name inside a string literal is
+    not code; the AST distinguishes both. When ``old == new`` this only strips the ``[0]``.
+
+    :param expr: Source expression to rewrite.
+    :param rename: Mapping from each rewritten descriptor's old name to its new name.
+    :returns: ``expr`` with each ``old[0]`` / ``old`` rewritten to ``new``.
+    """
+    return _rewrite_with(expr, ScalarRefRewriter(rename))
+
+
+def rewrite_refs_to_element(expr: str, rename: Dict[str, str]) -> str:
+    """Inverse of :func:`rewrite_refs`: point a bare reference at element 0 of a now-length-1 array.
+
+    :param expr: Source expression to rewrite.
+    :param rename: Mapping from each rewritten descriptor's old name to its new name.
+    :returns: ``expr`` with each bare ``old`` rewritten to ``new[0]``.
+    """
+    return _rewrite_with(expr, ElementRefRewriter(rename))
+
+
+def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename: Dict[str, str]) -> None:
+    """Re-point one edge's memlet at the rewritten descriptors, collapsing each rewritten side's subset
+    to the single element ``0``.
+
+    A memlet names only ONE side of a copy edge (``data`` / ``subset``); the opposite side's index
+    lives in ``other_subset``. The two sides are rewritten INDEPENDENTLY here -- the named side being
+    a rewritten descriptor says nothing about the other side, whose index must survive untouched when
+    it is not itself rewritten. Mutating in place (rather than building a replacement ``Memlet`` from
+    a handful of fields) is what keeps ``other_subset`` -- and volume, ``wcr_nonatomic``, ``allow_oob``
+    and the cached src/dst orientation -- from being silently dropped.
+
+    :param edge: edge whose memlet is rewritten in place.
+    :param rename: mapping from each rewritten descriptor's old name to its new name.
+    """
+    mem = edge.data
+    # An empty memlet is a pure ORDERING edge -- it names no descriptor and must survive untouched.
+    if mem is None or mem.is_empty() or mem.data is None:
+        return
+    if mem.data in rename:
+        mem.data = rename[mem.data]
+        mem.subset = subsets.Range.from_string('0')
+    # The other side collapses only when IT is a rewritten descriptor, else validation rejects the rank.
+    if mem.other_subset is not None and any(
+            isinstance(n, nodes.AccessNode) and n.data in rename.values() and n.data != mem.data
+            for n in (edge.src, edge.dst)):
+        mem.other_subset = subsets.Range.from_string('0')
+
+
 def _control_flow_reads(sdfg: SDFG) -> Set[str]:
     """Descriptor names ``sdfg`` reads from control flow: gate conditions, loop bounds, assignment RHS.
 
@@ -144,7 +240,7 @@ def _control_flow_reads(sdfg: SDFG) -> Set[str]:
     return names
 
 
-def _descriptor_is_read(sdfg: SDFG, name: str, cf_reads: Set[str]) -> bool:
+def descriptor_is_read(sdfg: SDFG, name: str, cf_reads: Set[str]) -> bool:
     """True if ``name`` is read anywhere in ``sdfg``, through dataflow or through control flow."""
     if name in cf_reads:
         return True
@@ -155,7 +251,7 @@ def _descriptor_is_read(sdfg: SDFG, name: str, cf_reads: Set[str]) -> bool:
     return False
 
 
-def _descriptor_is_written(sdfg: SDFG, name: str) -> bool:
+def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has an in-edge)."""
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -225,6 +321,9 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         nested-SDFG transient recursion.
     :param single_element: Also rewrite a higher-rank single-element array (every dim == 1, e.g. a
         ``(1, 1)`` map-fusion scratch buffer), not just a rank-1 length-1 array.
+    :param skip_gpu_outputs: If ``True``, length-1 arrays that are outputs of a GPU-scheduled map are
+        left as arrays. This is useful right before CPU codegen, where scalarizing a GPU kernel output
+        would force an expensive round-trip through the host scalar ABI.
     """
 
     recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
@@ -246,17 +345,21 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         default=False,
         desc="Also rewrite a higher-rank single-element array (every dim == 1, e.g. a (1, 1) map-fusion "
         "scratch buffer), not just a rank-1 length-1 array.")
+    skip_gpu_outputs = properties.Property(
+        dtype=bool, default=False, desc="Leave length-1 arrays that are outputs of GPU-scheduled maps as arrays.")
 
     def __init__(self,
                  recursive: bool = True,
                  preserve_abi: bool = False,
                  filter: 'Optional[Set[str]]' = None,
-                 single_element: bool = False):
+                 single_element: bool = False,
+                 skip_gpu_outputs: bool = False):
         super().__init__()
         self.recursive = recursive
         self.preserve_abi = preserve_abi
         self.filter = None if filter is None else frozenset(filter)
         self.single_element = single_element
+        self.skip_gpu_outputs = skip_gpu_outputs
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Symbols | ppl.Modifies.States
@@ -302,17 +405,27 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                     if isinstance(nb, nodes.LibraryNode):
                         blocked.add(node.data)
                         break
-                    if isinstance(nb, nodes.Tasklet) and nb.language != dace.dtypes.Language.Python:
+                    if isinstance(nb, nodes.Tasklet) and nb.language != dtypes.Language.Python:
                         blocked.add(node.data)
                         break
-                    if isinstance(nb, nodes.MapEntry) and nb.map.schedule in dace.dtypes.GPU_SCHEDULES:
+                    if isinstance(nb, nodes.MapEntry) and nb.map.schedule in dtypes.GPU_SCHEDULES:
                         # Block arrays that feed the map entry (node -> MapEntry) or that live inside the
                         # map body and receive an input from the entry (MapEntry -> node).
                         blocked.add(node.data)
                         break
-                    if isinstance(nb, nodes.MapExit) and nb.map.schedule in dace.dtypes.GPU_SCHEDULES:
-                        # Block only partials that feed the map exit from inside the body (node -> MapExit).
-                        # A MapExit -> outside edge is a normal output and may be scalarized.
+                    if isinstance(nb, nodes.MapExit) and nb.map.schedule in dtypes.GPU_SCHEDULES:
+                        # Partial WCR outputs from inside the map body (node -> MapExit) are always
+                        # blocked because the code generator cannot emit them as a scalar collective.
+                        if edge.src is node:
+                            blocked.add(node.data)
+                            break
+                        # Normal MapExit -> outside outputs are allowed by default, but the caller may
+                        # opt out: scalarizing a non-transient GPU kernel output forces a host scalar ABI
+                        # round-trip. Transient outputs are scalarized and widened back by the GPU-scalar
+                        # promotion pass when they live in device memory.
+                        if self.skip_gpu_outputs and edge.dst is node and not arr.transient:
+                            blocked.add(node.data)
+                            break
                         if edge.src is node:
                             blocked.add(node.data)
                             break
@@ -322,7 +435,10 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                      apply_filter: bool) -> bool:
         """Whether a descriptor is a length-1 (or, with ``single_element``, all-ones) array we may
         rewrite: not a View / view source / opaque, and passing the filter."""
-        if not isinstance(arr, dace.data.Array) or isinstance(arr, dace.data.View):
+        # ``ArrayReference`` derives from ``Array``, so it reaches here like any other array. Rewriting
+        # one to a transient Scalar destroys the pointer alias and sends writes to a local instead --
+        # the same reason ``View`` is excluded, and a silent miscompile rather than a validation error.
+        if not isinstance(arr, dace.data.Array) or isinstance(arr, (dace.data.View, dace.data.Reference)):
             return False
         if arr_name in blocked:
             return False
@@ -370,8 +486,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                                 find_new_name=False)
                 rename[arr_name] = arr_name
             elif stage_nontransients:
-                is_read = _descriptor_is_read(sdfg, arr_name, cf_reads)
-                is_written = _descriptor_is_written(sdfg, arr_name)
+                is_read = descriptor_is_read(sdfg, arr_name, cf_reads)
+                is_written = descriptor_is_written(sdfg, arr_name)
                 # An unreferenced signature array has nothing to stage, and one already staged would
                 # only gain a second copy hop -- skipping both keeps re-application a true no-op.
                 if not (is_read or is_written) or _already_staged(sdfg, arr_name):
@@ -396,20 +512,9 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
                     node.data = rename[node.data]
             for edge in state.edges():
-                mem = edge.data
-                if mem is None or mem.data is None:
-                    continue
-                if mem.data in rename:
-                    edge.data = Memlet(data=rename[mem.data], subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
-                    continue
-                # A copy edge names only ONE side; the opposite is ``other_subset``. When THAT side is
-                # a rewritten descriptor, its subset collapses too, else validation rejects the rank.
-                if mem.other_subset is not None and any(
-                        isinstance(n, nodes.AccessNode) and n.data in rename.values() and n.data != mem.data
-                        for n in (edge.src, edge.dst)):
-                    mem.other_subset = subsets.Range.from_string('0')
+                repoint_memlet_to_element(edge, rename)
 
-        rewrite_code_slots(sdfg, lambda src: _rewrite_refs(src, rename))
+        rewrite_code_slots(sdfg, lambda text: rewrite_refs(text, rename))
 
         # Wire copy-in / copy-out for the staged non-transients. One shared start/sink state holds all.
         if staged:
@@ -525,8 +630,8 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                                find_new_name=False)
                 rename[name] = name
             elif stage_nontransients:
-                is_read = _descriptor_is_read(sdfg, name, cf_reads)
-                is_written = _descriptor_is_written(sdfg, name)
+                is_read = descriptor_is_read(sdfg, name, cf_reads)
+                is_written = descriptor_is_written(sdfg, name)
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
                 # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.
@@ -547,10 +652,10 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
                     node.data = rename[node.data]
             for edge in state.edges():
-                mem = edge.data
-                if mem is None or mem.data is None or mem.data not in rename:
-                    continue
-                edge.data = Memlet(data=rename[mem.data], subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
+                repoint_memlet_to_element(edge, rename)
+
+        # A bare textual reference now names an Array, so it must index element 0 to stay a value.
+        rewrite_code_slots(sdfg, lambda text: rewrite_refs_to_element(text, rename))
 
         if staged:
             copyin = _copyin_state(sdfg) if any(r for _, _, r, _ in staged) else None

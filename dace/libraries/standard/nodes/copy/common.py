@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple, TYPE_CHECKING
 
 import dace
-from dace import data, nodes, dtypes, symbolic
+from dace import data, nodes, dtypes, subsets, symbolic
 from dace.codegen.common import sym2cpp, get_gpu_backend, emit_gpu_synchronization
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES,
                                             collapse_shape_and_strides)
@@ -58,7 +58,7 @@ def _copy_waives_volume_check(copy_node: "CopyLibraryNode", parent_state: dace.S
 
     ``SDFGState.validate`` (``validation.py``) skips its own equal-volume check on such an edge, and
     plain copy-edge codegen sizes the transfer from the source subset. A lifted ``CopyLibraryNode``
-    must honour the same waiver, else an SDFG that is legal as a direct copy edge stops expanding.
+    must honor the same waiver, else an SDFG that is legal as a direct copy edge stops expanding.
     """
     return any(e.data.allow_oob for e in parent_state.all_edges(copy_node) if not e.data.is_empty())
 
@@ -217,7 +217,10 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
                              f"{tuple(in_shape)} vs dst {tuple(out_shape)}. Per-dim permutations are not "
                              f"supported -- use a Transpose libnode. Reshapes must change rank.")
         map_params = [f"__i{i}" for i in range(len(in_shape))]
-        map_rng = {i: f"0:{sym2cpp(s)}" for i, s in zip(map_params, in_shape)}
+        # Symbolic bounds, never a rendered string: ``sym2cpp`` spells a symbolic extent as C++
+        # (``dace::math::ipow(R, K)``), and the range parser splits on ':', so the qualified name
+        # comes back as four bogus tokens.
+        map_rng = {i: (0, s - 1, 1) for i, s in zip(map_params, in_shape)}
         access_expr = ','.join(map_params)
         inputs = {inner_in: dace.memlet.Memlet(f"{ctx.inp_name}[{access_expr}]")}
         outputs = {inner_out: dace.memlet.Memlet(f"{ctx.out_name}[{access_expr}]")}
@@ -251,16 +254,14 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
         total = functools.reduce(operator.mul, in_shape, 1)
         b_i_name = "__b_i"
         b_i = symbolic.symbol(b_i_name)
-        map_rng = {b_i_name: f"0:{sym2cpp(total)}"}
+        map_rng = {b_i_name: (0, total - 1, 1)}
 
         def _side_access(arr_name, shape):
-            if len(shape) == 1:
-                return f"{arr_name}[{b_i_name}]"
-            idx = _delinearized_index(b_i, shape, layout)
-            return f"{arr_name}[{','.join(sym2cpp(e) for e in idx)}]"
+            idx = [b_i] if len(shape) == 1 else _delinearized_index(b_i, shape, layout)
+            return dace.memlet.Memlet(data=arr_name, subset=subsets.Range([(e, e, 1) for e in idx]))
 
-        inputs = {inner_in: dace.memlet.Memlet(_side_access(ctx.inp_name, in_shape))}
-        outputs = {inner_out: dace.memlet.Memlet(_side_access(ctx.out_name, out_shape))}
+        inputs = {inner_in: _side_access(ctx.inp_name, in_shape)}
+        outputs = {inner_out: _side_access(ctx.out_name, out_shape)}
 
     _, map_entry, _ = ctx.state.add_mapped_tasklet(f"{node.label}_tasklet",
                                                    map_rng,
@@ -410,7 +411,7 @@ def _build_shmem_collective_copy_code(node: "CopyLibraryNode", parent_state: dac
             stride_args.append(dst_stride_strs[d])
 
     all_args = [in_conn, out_conn] + stride_args
-    # ``CopyND`` makes every thread copy the whole region, so a shared SOURCE is read across thread
-    # boundaries and needs the block's writes to have landed first.
-    preamble = "__syncthreads();\n" if inp.storage == dtypes.StorageType.GPU_Shared else ""
-    return f"{preamble}{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n__syncthreads();"
+    # Synchronize if moving to/from shared memory collectively, and the sync flag is set (default on)
+    sync_barrier = "__syncthreads();\n" if node.sync and (inp.storage == dtypes.StorageType.GPU_Shared
+                                                          or out.storage == dtypes.StorageType.GPU_Shared) else ""
+    return f"{sync_barrier}{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n{sync_barrier}"
