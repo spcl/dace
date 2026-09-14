@@ -5,7 +5,7 @@ import ast
 from copy import deepcopy as dc
 import itertools
 from dace import graphlib as nx
-from typing import Callable, Dict, Iterable, List, Set, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 from functools import reduce
 import operator
 import copy
@@ -22,6 +22,23 @@ from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
 from dace.ordered import OrderedSet
+
+
+def remove_emptied_map_scopes(state: SDFGState, entry: Optional[nodes.Node]) -> None:
+    """Remove ``entry``'s map, then each enclosing map, while nothing lies between its entry and its exit.
+
+    Inlining a node-less nested SDFG out of nested maps leaves such a scope. With no path from the entry to the
+    exit every later scope walk fails, so the scope dict cannot be used here: the exit is matched by its map and
+    the enclosing entry is read off the incoming edges.
+    """
+    while isinstance(entry, nodes.MapEntry) and entry in state.nodes() and state.out_degree(entry) == 0:
+        exit_node = next(node for node in state.nodes() if isinstance(node, nodes.MapExit) and node.map is entry.map)
+        if state.in_degree(exit_node) != 0:
+            return
+        parent = next((edge.src for edge in state.in_edges(entry) if isinstance(edge.src, nodes.MapEntry)), None)
+        state.remove_node(entry)
+        state.remove_node(exit_node)
+        entry = parent
 
 
 @make_properties
@@ -699,6 +716,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Remove nested SDFG node
         state.remove_node(nsdfg_node)
+        # A node-less body leaves its enclosing maps with nothing between entry and exit
+        remove_emptied_map_scopes(state, nsdfg_scope_entry)
 
         # Remove newly-generated isolated nodes if exist
         for dnode in state.data_nodes():
