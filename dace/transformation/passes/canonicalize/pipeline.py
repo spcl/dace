@@ -25,6 +25,8 @@ from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
+from dace.transformation.passes.canonicalize.require_structured_control_flow import RequireStructuredControlFlow
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTranspose
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
@@ -834,7 +836,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # views are preserved (see ``RemoveViews._is_library_node_operand``), so BLAS/MatMul
     # expansions still see their squeezed 2-D operands. The later ``_structural_cleanup``
     # RemoveViews calls only have to mop up views the transforms (re)introduce.
-    s += [('clean', RemoveViews())]
+    # Every stage assumes structured control flow: raise it first, and stop if anything stays unstructured.
+    s += [('clean', ControlFlowRaising()), ('clean', RequireStructuredControlFlow()), ('clean', RemoveViews())]
 
     # loop_to_symm (semantic lift, BEFORE normalize_reduction): the hand-written
     # symmetric matrix-multiply nest (polybench symm) is recognised on its raw
