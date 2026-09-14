@@ -578,6 +578,74 @@ def test_break_in_conditional(simplify: bool):
     _roundtrip_and_compare(sdfg, tn.BreakNode, simplify, dict(A=np.zeros(10), N=4), dict(A=np.zeros(10), N=20))
 
 
+def _state_machine_if_else() -> dace.SDFG:
+    """
+    Creates an SDFG with an if/else that is expressed through conditional inter-state edges.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [2], dace.float64)
+    guard = sdfg.add_state('guard', is_start_block=True)
+    then_state = sdfg.add_state('then_state')
+    else_state = sdfg.add_state('else_state')
+    merge = sdfg.add_state('merge')
+    _write_tasklet(then_state, 'out = 1', {}, 'A[0]')
+    _write_tasklet(else_state, 'out = 2', {}, 'A[0]')
+    _write_tasklet(merge, 'out = inp + 10', {'inp': 'A[0]'}, 'A[1]')
+    sdfg.add_edge(guard, then_state, dace.InterstateEdge('N > 0'))
+    sdfg.add_edge(guard, else_state, dace.InterstateEdge('N <= 0'))
+    sdfg.add_edge(then_state, merge, dace.InterstateEdge())
+    sdfg.add_edge(else_state, merge, dace.InterstateEdge())
+    return sdfg
+
+
+@pytest.mark.parametrize('simplify', (False, True))
+def test_state_machine_if_else(simplify: bool):
+    sdfg = _state_machine_if_else()
+    _roundtrip_and_compare(sdfg, tn.GBlock, simplify, dict(A=np.zeros(2), N=1), dict(A=np.zeros(2), N=-1))
+
+
+@pytest.mark.parametrize('simplify', (False, True))
+def test_state_machine_loop(simplify: bool):
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('i', dace.int64)
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [10], dace.float64)
+    init = sdfg.add_state('init', is_start_block=True)
+    guard = sdfg.add_state('guard')
+    body = sdfg.add_state('body')
+    after = sdfg.add_state('after')
+    _write_tasklet(body, 'out = i', {}, 'A[i]')
+    _write_tasklet(after, 'out = i + 100', {}, 'A[9]')
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={'i': '0'}))
+    sdfg.add_edge(guard, body, dace.InterstateEdge('i < N'))
+    sdfg.add_edge(guard, after, dace.InterstateEdge('i >= N'))
+    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+
+    new_sdfg = _roundtrip_and_compare(sdfg, tn.GBlock, simplify, dict(A=np.zeros(10), N=5), dict(A=np.zeros(10), N=0))
+
+    # The loop can be raised again after the conversion
+    if not simplify:
+        dace.sdfg.utils.inline_control_flow_regions(new_sdfg)
+        FixedPointPipeline([ControlFlowRaising()]).apply_pass(new_sdfg, {})
+        assert any(isinstance(block, LoopRegion) for block in new_sdfg.all_control_flow_blocks(recursive=True))
+
+
+@pytest.mark.parametrize('simplify', (False, True))
+def test_state_machine_in_loop(simplify: bool):
+    loop = LoopRegion('loop', 'i < 4', 'i', 'i = 0', 'i = i + 1')
+    sdfg = _inverted_loop_sdfg('tester', loop)
+    sdfg.add_symbol('N', dace.int64)
+    body = loop.start_block
+    guard = loop.add_state('guard', is_start_block=True)
+    skip = loop.add_state('skip')
+    _write_tasklet(skip, 'out = 100', {}, 'A[9]')
+    loop.add_edge(guard, body, dace.InterstateEdge('i != N'))
+    loop.add_edge(guard, skip, dace.InterstateEdge('i == N'))
+
+    _roundtrip_and_compare(sdfg, tn.GBlock, simplify, dict(A=np.zeros(10), N=2), dict(A=np.zeros(10), N=7))
+
+
 if __name__ == '__main__':
     test_implicit_inline_and_constants()
     test_name_propagation()
@@ -600,4 +668,7 @@ if __name__ == '__main__':
             for in_loop in (False, True):
                 test_nested_sdfg_return(in_map, in_loop, simplify)
         test_break_in_conditional(simplify)
+        test_state_machine_if_else(simplify)
+        test_state_machine_loop(simplify)
+        test_state_machine_in_loop(simplify)
     test_transients_and_nested_sdfg()

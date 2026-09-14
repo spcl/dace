@@ -12,7 +12,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, LoopRegion, ReturnBlock,
-                             SDFGState)
+                             SDFGState, UnstructuredControlFlow)
 from dace.sdfg.analysis.schedule_tree import passes as stpasses, treenodes as tn
 from dace.sdfg import propagation
 
@@ -196,7 +196,103 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         assert not self._interstate_symbols, "Expected empty list of symbols to add."
 
     def visit_GBlock(self, node: tn.GBlock, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        """
+        Converts a general block into an unstructured control flow region. Every label starts a new state, gotos to
+        labels of this block become (conditional) inter-state edges, and falling off the end of a labeled segment exits
+        the region.
+        """
+        before_state = self._current_state
+        assert before_state is not None
+        cf_region = before_state.parent_graph
+
+        region = UnstructuredControlFlow(f"gblock_{id(node)}", sdfg=sdfg)
+        cf_region.add_node(region, ensure_unique_name=True)
+        _insert_and_split_assignments(before_state, region, assignments=self._pending_interstate_assignments())
+
+        # Split children into labeled segments, the first of which is the entry of the region
+        segments: list[tuple[str | None, list[tn.ScheduleTreeNode]]] = [(None, [])]
+        for child in node.children:
+            if isinstance(child, tn.StateLabel):
+                segments.append((child.name, []))
+            else:
+                segments[-1][1].append(child)
+        for _, children in segments:
+            # State boundaries before labels only mark the (already given) state transition
+            while children and isinstance(children[-1], tn.StateBoundaryNode):
+                children.pop()
+        if not segments[0][1] and len(segments) > 1:
+            segments.pop(0)
+        labels = {name for name, _ in segments if name is not None}
+        states = [
+            region.add_state(f"gblock_{name or 'entry'}", is_start_block=(i == 0))
+            for i, (name, _) in enumerate(segments)
+        ]
+        label_states = {name: state for (name, _), state in zip(segments, states) if name is not None}
+
+        # Inter-state edges are added after all segments were converted, since gotos may jump forward
+        jumps: list[tuple[SDFGState, str, str | None, dict[str, str]]] = []
+
+        for (_, children), state in zip(segments, states):
+            self._current_state = state
+            conditions: list[str] = []  # Conditions of the preceding gotos out of the current state
+
+            def fall_through_condition() -> str | None:
+                return ' and '.join(f'(not ({c}))' for c in conditions) if conditions else None
+
+            def continue_after_conditions() -> None:
+                # Statements after conditional gotos only run if none of the conditions hold
+                if conditions:
+                    continuation = region.add_state("gblock_continuation")
+                    region.add_edge(self._current_state, continuation, InterstateEdge(fall_through_condition()))
+                    self._current_state = continuation
+                    conditions.clear()
+
+            for index, child in enumerate(children):
+                is_goto = isinstance(child, tn.GotoNode) and child.target in labels
+                is_conditional_goto = (isinstance(child, tn.StateIfScope) and len(child.children) == 1
+                                       and isinstance(child.children[0], tn.GotoNode)
+                                       and child.children[0].target in labels)
+
+                if isinstance(child, tn.StateBoundaryNode):
+                    # State boundaries before transitions would add unconditional transitions to the current state
+                    following = next((c for c in children[index + 1:] if not isinstance(c, tn.StateBoundaryNode)), None)
+                    if isinstance(following, (tn.GotoNode, tn.StateIfScope)):
+                        continue
+                elif is_goto:
+                    jumps.append((self._current_state, child.target, fall_through_condition(),
+                                  self._pending_interstate_assignments()))
+                    break  # The rest of the segment is unreachable
+                elif is_conditional_goto:
+                    if self._interstate_symbols:
+                        # Assignments happen before evaluating the condition, i.e., in a transition before
+                        continue_after_conditions()
+                        self._current_state = _insert_and_split_assignments(
+                            self._current_state,
+                            label="gblock_assignments",
+                            assignments=self._pending_interstate_assignments())
+                    jumps.append((self._current_state, child.children[0].target, child.condition.as_string, {}))
+                    conditions.append(child.condition.as_string)
+                    continue
+
+                continue_after_conditions()
+                self.visit(child, sdfg=sdfg)
+            else:
+                # Falling off the end of the segment exits the region, after pending assignments
+                if self._interstate_symbols:
+                    exit_state = region.add_state("gblock_exit")
+                    region.add_edge(
+                        self._current_state, exit_state,
+                        InterstateEdge(fall_through_condition(), assignments=self._pending_interstate_assignments()))
+
+        for source, target, condition, assignments in jumps:
+            region.add_edge(source, label_states[target], InterstateEdge(condition=condition, assignments=assignments))
+
+        # Remove segments that no goto jumps to
+        reachable = set(region.bfs_nodes(region.start_block))
+        for block in [block for block in region.nodes() if block not in reachable]:
+            region.remove_node(block)
+
+        self._current_state = _insert_and_split_assignments(region, label="gblock_after")
 
     def visit_StateLabel(self, node: tn.StateLabel, sdfg: SDFG) -> None:
         # Outside of general blocks, labels only mark the target of forward gotos, which are lowered by

@@ -9,7 +9,7 @@ from typing import List, Optional, Set, Tuple
 
 def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
     """
-    Removes unused and duplicate labels from the schedule tree.
+    Removes unused and duplicate labels from the schedule tree. Labels in general blocks are only removed if duplicate.
 
     :param stree: The schedule tree to remove labels from.
     """
@@ -30,7 +30,8 @@ def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
             self.labels_seen = set()
 
         def visit_StateLabel(self, node: tn.StateLabel):
-            if node.name not in self.labels_to_keep:
+            # Labels in general blocks separate their blocks, even if no goto jumps to them
+            if node.name not in self.labels_to_keep and not isinstance(node.parent, tn.GBlock):
                 return None
             if node.name in self.labels_seen:
                 return None
