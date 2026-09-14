@@ -482,6 +482,8 @@ def test_library_node_operand_is_not_scalarized():
     for name in ("t", "f", "mask", "out"):
         assert isinstance(sdfg.arrays[name], dd.Array), f"{name} feeds a library node and must stay an Array"
     assert not [n for n in sdfg.arrays if n.startswith("scal_")], "a library-node operand was staged"
+
+
 def _scatter_sdfg(tmp_is_scalar: bool) -> dace.SDFG:
     """``for i: A[(i+1) % 2] = B[i]`` staged through a single-value transient. The copy edge names the
     TRANSIENT, so the destination index lives in ``other_subset``."""

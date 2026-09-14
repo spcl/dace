@@ -46,7 +46,6 @@ from dace.sdfg import SDFG, SDFGState, InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 
-
 #: A bare identifier, not preceded by a word character or ``.``. A superset of what
 #: :func:`rewrite_refs` rewrites, so no rewritten reference is missed as a read.
 _IDENT_RE = re.compile(r'(?<![\w.])([A-Za-z_]\w*)')

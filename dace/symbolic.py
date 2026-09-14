@@ -1213,20 +1213,6 @@ class IfExpr(sympy.Function):
             return False
 
 
-class fortran_mod(sympy.Function):
-    """Floored modulus (Fortran ``MODULO``): sign of ``b``, unlike sympy's ``Mod``
-    which lowers to C's truncating ``%``. Kept distinct from ``Mod`` so it survives
-    simplification and prints as the self-contained floored form in C++."""
-
-    @classmethod
-    def eval(cls, x, y):
-        if x.is_Number and y.is_Number:
-            return x - y * sympy.floor(x / y)
-
-    def _eval_is_integer(self):
-        return self.args[0].is_integer and self.args[1].is_integer
-
-
 class int32(sympy.Function):
     """Explicit ``INTEGER(4)`` typecast in a symbolic expression (interstate edge /
     memlet subset), where ``dace.int32(x)`` is not sympy-parseable as an attribute
@@ -2008,7 +1994,6 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
         **MODULO_FUNCTIONS,
-        'fortran_mod': fortran_mod,
         'Attr': Attr,
         'BitwiseAnd': bitwise_and,
         'BitwiseOr': bitwise_or,
@@ -2398,7 +2383,6 @@ _PYSTR2SYM_locals = {
     'int_ceil': int_ceil,
     'IfExpr': IfExpr,
     **MODULO_FUNCTIONS,
-    'fortran_mod': fortran_mod,
     'int32': int32,
     'int64': int64,
     'float32': float32,
@@ -2517,12 +2501,6 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f'{expr.func}[{indices}]'
         if self.cpp_mode and str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
-        # Self-contained floored-modulus form (pure ``%`` operators, no qualified call:
-        # those don't resolve in the memlet-subset codegen context).
-        if self.cpp_mode and str(expr.func) == 'fortran_mod':
-            a = self._print(expr.args[0])
-            b = self._print(expr.args[1])
-            return '((((%s) %% (%s)) + (%s)) %% (%s))' % (a, b, b, b)
         if self.cpp_mode and str(expr.func) in _TYPECAST_CPP:
             return '%s(%s)' % (_TYPECAST_CPP[str(expr.func)], self._print(expr.args[0]))
         if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):

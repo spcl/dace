@@ -292,19 +292,6 @@ static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& d
     return py_mod(numerator, denominator);
 }
 
-// ``floor_mod(a, b)`` — Fortran ``MODULO``: floored-quotient remainder
-// (same sign as the divisor).  Matches Python's ``%`` on both ints and
-// floats — distinct from C++ ``%``, which truncates on signed ints.
-// Templated so a single ``floor_mod(a, b)`` call covers ``int32`` /
-// ``int64`` / ``float`` / ``double`` operands without the frontend
-// having to hint the operand type.  Fortran ``MOD`` (truncated) lowers
-// directly to ``arith.remsi`` for ints / ``std::fmod`` for floats and
-// doesn't need a helper.
-template<typename T>
-static DACE_CONSTEXPR DACE_HDFI T floor_mod(const T& numerator, const T& denominator) {
-    return py_mod(numerator, denominator);
-}
-
 // ``logical_left_shift(x, n)`` / ``logical_right_shift(x, n)`` — Fortran
 // ``ISHFT`` building blocks.  flang lowers ``ISHFT`` to ``arith.shli`` for a
 // left shift and ``arith.shrui`` for a right shift, where the right shift is

@@ -44,9 +44,8 @@ class ExpandCShiftPure(ExpandTransformation):
         in_subs = []
         for d in range(rank):
             if d == dim_zero:
-                # ``fortran_mod`` is FLOORED, unlike sympy ``Mod`` which lowers to C ``%`` and
-                # truncates -- breaking negative shifts (matches Fortran MODULO/CSHIFT wrap).
-                in_subs.append(f"fortran_mod(__i{d} + ({shift}), {n})")
+                # Floored (Fortran MODULO), so a negative shift wraps into range; ``%`` truncates.
+                in_subs.append(f"FtnModulo(__i{d} + ({shift}), {n})")
             else:
                 in_subs.append(f"__i{d}")
         in_sub = ", ".join(in_subs)

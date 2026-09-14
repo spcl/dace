@@ -3,7 +3,7 @@
 
 The lib node's ``pure`` expansion lowers ``CSHIFT(arr, shift [, dim])``
 to a single Map whose source memlet subset rotates the chosen axis
-(``fortran_mod(__i + shift, n)``), so the tasklet body is just
+(``FtnModulo(__i + shift, n)``), so the tasklet body is just
 ``__out = __in``.  These tests exercise many shape / shift / dim
 combinations of the construction path, verify the pure expansion's
 numerics against ``numpy.roll``, and pin the loud-fail contract when
@@ -124,7 +124,7 @@ def test_cshift_pure_expansion_requires_shift():
 @pytest.mark.parametrize("shift", [2, -1, 0, 1, 4])
 def test_cshift_pure_expansion_computes_circular_shift(shift):
     """``CSHIFT(arr, s)`` rotates LEFT by ``s`` (== ``np.roll(arr, -s)``);
-    the floored ``fortran_mod`` keeps a negative shift in range."""
+    the floored ``FtnModulo`` keeps a negative shift in range."""
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
     sdfg = _build((5, ), dace.float64, dim=1, shift=shift)
     sdfg.expand_library_nodes()
@@ -132,6 +132,22 @@ def test_cshift_pure_expansion_computes_circular_shift(shift):
     out = np.zeros(5, dtype=np.float64)
     sdfg(v=arr.copy(), out=out)
     np.testing.assert_allclose(out, np.roll(arr, -shift))
+
+
+def test_cshift_pure_expansion_wraps_through_a_floored_modulo():
+    """The rotated read index is Fortran ``MODULO`` (floored), never ``%``: a truncating wrap sends a
+    negative shift's first read to index -1, an out-of-bounds read a numeric check can miss."""
+    sdfg = _build((5, ), dace.float64, dim=1, shift=-1)
+
+    sdfg.expand_library_nodes()
+
+    floored = dace.symbolic.MODULO_FUNCTIONS["FtnModulo"]
+    indices = [
+        dace.symbolic.pystr_to_symbolic(begin) for edge, _ in sdfg.all_edges_recursive()
+        if isinstance(edge.data, dace.Memlet) and edge.data.data == "_x" for begin, _, _ in edge.data.subset.ranges
+    ]
+    assert any(index.has(floored) for index in indices), indices
+    assert not any(index.has(dace.symbolic.CMod) for index in indices), indices
 
 
 @pytest.mark.parametrize("dim,shift", [(1, 1), (2, 1), (1, -1), (2, 2)])

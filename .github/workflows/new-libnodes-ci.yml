@@ -45,8 +45,7 @@ jobs:
         # OpenBLAS/LAPACKE for the BLAS/LAPACK extension nodes, FFTW3 for the FFT backend.
         sudo apt-get install -y libyaml-dev cmake \
           libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
-        pip install pytest-xdist
-        pip install -e ".[testing]"
+        pip install -e . --group testing
 
     - name: Standard nodes
       run: |
