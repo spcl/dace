@@ -5,58 +5,32 @@ from typing import Callable, Dict, List, Optional, Tuple
 from ordered_set import OrderedSet
 
 from dace import dtypes, data
-from dace.sdfg import nodes, InterstateEdge, SDFG, SDFGState
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
+from dace.sdfg import nodes, SDFG, SDFGState
+from dace.sdfg.state import ControlFlowRegion, ReturnBlock
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.sdfg.utils import get_last_view_node
 from dace import utils
 
-#: Blocks that leave their region by jumping, so they never reach the region's end.
-JUMP_BLOCKS = (ReturnBlock, BreakBlock, ContinueBlock)
 
-
-def join_fall_through_exits(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGState]]:
-    """Join the fall-through sinks of each region on ``sdfg``'s own level into one empty exit state.
-
-    The offloading IR ties only a region's last block, in BFS order, to the region's end, so the
-    copies that end needs would run on that one exit alone.
-
-    :return: every region given an exit, with that exit.
-    """
-    exits: List[Tuple[ControlFlowRegion, SDFGState]] = []
-    for region in list(sdfg.all_control_flow_regions()):
-        # A ConditionalBlock's branches are alternatives, not sinks of one graph.
-        if not isinstance(region, ControlFlowRegion):
-            continue
-        sinks = [block for block in region.sink_nodes() if not isinstance(block, JUMP_BLOCKS)]
-        if len(sinks) < 2:
-            continue
-        exit_state = region.add_state('exit')
-        for sink in sinks:
-            region.add_edge(sink, exit_state, InterstateEdge())
-        exits.append((region, exit_state))
-    return exits
-
-
-def remove_empty_exits(exits: List[Tuple[ControlFlowRegion, SDFGState]]) -> None:
-    """Remove each exit of ``join_fall_through_exits`` still empty, wiring its predecessors to its successor."""
-    for region, exit_state in exits:
-        successors = list(region.out_edges(exit_state))
-        # Copies follow the exit on a plain edge; any other shape stays as it is.
+def remove_empty_return_entries(entries: List[Tuple[ControlFlowRegion, SDFGState]]) -> None:
+    """Remove each entry of ``separate_early_returns`` still empty, wiring its predecessors to its successor."""
+    for region, entry in entries:
+        successors = list(region.out_edges(entry))
+        # Copies follow the entry on a plain edge; any other shape stays as it is.
         plain = len(successors) <= 1 and all(edge.data.is_unconditional() and not edge.data.assignments
                                              for edge in successors)
-        if exit_state.number_of_nodes() > 0 or not plain:
+        if entry.number_of_nodes() > 0 or not plain:
             continue
-        for edge in list(region.in_edges(exit_state)):
+        for edge in list(region.in_edges(entry)):
             for successor in successors:
                 region.add_edge(edge.src, successor.dst, edge.data)
-        region.remove_node(exit_state)
+        region.remove_node(entry)
 
 
 def separate_early_returns(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGState]]:
     """Put an empty state before each return on ``sdfg``'s own level, so its copies run on the return's path alone.
 
-    :return: every region given such a state, with that state; ``remove_empty_exits`` takes them out again.
+    :return: every region given such a state, with that state; ``remove_empty_return_entries`` takes them out again.
     """
     entries: List[Tuple[ControlFlowRegion, SDFGState]] = []
     for region in list(sdfg.all_control_flow_regions()):
@@ -79,16 +53,6 @@ def link_early_returns(IR: OffloadingIRNode) -> None:
     for node in entries:
         if IR.close not in node.next:
             node.append_node(IR.close)
-
-
-def blocks_with_exit_last(cfr: ControlFlowRegion) -> List[ControlFlowBlock]:
-    """``cfr``'s blocks in BFS order, but its fall-through exit last: the IR ties the last block to the region's end."""
-    blocks = list(cfr.bfs_nodes())
-    exits = [block for block in blocks if cfr.out_degree(block) == 0 and not isinstance(block, JUMP_BLOCKS)]
-    if len(exits) == 1:
-        blocks.remove(exits[0])
-        blocks.append(exits[0])
-    return blocks
 
 
 ##################################################

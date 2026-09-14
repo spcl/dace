@@ -94,12 +94,13 @@ class GPUTransformMap(transformation.SingleStateTransformation):
             nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]), full_data=self.fullcopy)
 
         # Avoiding import loops
+        from dace.transformation import pass_pipeline as ppl
         from dace.transformation.passes.offloading import OffloadToAccelerator
 
         # The nested SDFG this just built is a whole program as far as the offloading is concerned,
         # which is the only offloader there is: it decides placement from the control flow and
         # copies where the location changes.
-        OffloadToAccelerator().apply_pass(nsdfg_node.sdfg, {})
+        ppl.Pipeline([OffloadToAccelerator()]).apply_pass(nsdfg_node.sdfg, {})
 
         # Inline back as necessary
         sdfg.simplify()

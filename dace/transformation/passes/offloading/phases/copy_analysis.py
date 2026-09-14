@@ -76,7 +76,7 @@ class CopyAnalysisPhase():
 
     def _parse_to_IR(self, sdfg: SDFG, cfr: ControlFlowRegion, curr_node: OffloadingIRNode) -> OffloadingIRNode:
         block: ControlFlowBlock
-        for block in helpers.blocks_with_exit_last(cfr):
+        for block in cfr.bfs_nodes():
 
             # iterate through all (incoming) interstate edges
             in_edge_arrays = OrderedSet()

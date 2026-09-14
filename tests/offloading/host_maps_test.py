@@ -7,6 +7,7 @@ The numerical companion lives in ``offload_to_accelerator_test.py``.
 import pytest
 
 import dace
+from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.transformation.passes.offloading.host_maps import host_maps
@@ -70,7 +71,7 @@ def test_without_host_maps_the_outer_map_is_the_kernel():
     """
     sdfg = zekinh_sdfg()
     outer = outer_map_label(sdfg)
-    OffloadToAccelerator().apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
 
     schedules = map_schedules(sdfg)
     assert schedules[outer] == dace.ScheduleType.GPU_Device
@@ -83,7 +84,7 @@ def test_a_named_host_map_keeps_the_host_and_its_body_becomes_the_kernel():
     """The ICON shape: ``jb`` launches, so it stays host and ``jk``/``jc`` become the kernels."""
     sdfg = zekinh_sdfg()
     outer = outer_map_label(sdfg)
-    OffloadToAccelerator(host_maps=[outer]).apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator(host_maps=[outer])]).apply_pass(sdfg, {})
 
     schedules = map_schedules(sdfg)
     assert schedules[outer] != dace.ScheduleType.GPU_Device, schedules
@@ -95,11 +96,11 @@ def test_a_map_entry_object_pins_the_same_map_as_its_label():
     """``host_maps`` takes the node as readily as its name, and the two agree."""
     by_label = zekinh_sdfg()
     outer = outer_map_label(by_label)
-    OffloadToAccelerator(host_maps=[outer]).apply_pass(by_label, {})
+    ppl.Pipeline([OffloadToAccelerator(host_maps=[outer])]).apply_pass(by_label, {})
 
     by_node = zekinh_sdfg()
     entry = next(n for n, p in by_node.all_nodes_recursive() if isinstance(n, nodes.MapEntry) and n.map.label == outer)
-    OffloadToAccelerator(host_maps=[entry]).apply_pass(by_node, {})
+    ppl.Pipeline([OffloadToAccelerator(host_maps=[entry])]).apply_pass(by_node, {})
 
     assert map_schedules(by_label) == map_schedules(by_node)
 
@@ -108,7 +109,7 @@ def test_auto_finds_the_launching_map_that_the_default_offloads():
     """``host_maps=True`` derives the same answer the ICON shape has to be given by hand."""
     sdfg = zekinh_sdfg()
     outer = outer_map_label(sdfg)
-    OffloadToAccelerator(host_maps=True).apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator(host_maps=True)]).apply_pass(sdfg, {})
 
     schedules = map_schedules(sdfg)
     assert schedules[outer] != dace.ScheduleType.GPU_Device, schedules
@@ -135,7 +136,7 @@ def test_auto_declines_a_map_that_does_its_own_work():
                  if isinstance(n, nodes.MapEntry) and p.entry_node(n) is None and 'i' in n.map.params)
     assert host_maps(sdfg, True) == host_maps(sdfg, None), 'a computing map is not auto-detected'
 
-    OffloadToAccelerator(host_maps=True).apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator(host_maps=True)]).apply_pass(sdfg, {})
     assert map_schedules(sdfg)[outer] == dace.ScheduleType.GPU_Device
 
 
@@ -168,7 +169,7 @@ def test_apply_gpu_transformations_forwards_host_maps() -> None:
     """
     through_pass = zekinh_sdfg()
     outer = outer_map_label(through_pass)
-    OffloadToAccelerator(host_maps=[outer]).apply_pass(through_pass, {})
+    ppl.Pipeline([OffloadToAccelerator(host_maps=[outer])]).apply_pass(through_pass, {})
 
     through_method = zekinh_sdfg()
     through_method.apply_gpu_transformations(host_maps=[outer], validate=False, simplify=False)
@@ -210,7 +211,7 @@ def test_a_frontend_callback_is_never_offloaded():
     ]
     assert callbacks, 'the detector must recognise a frontend-generated callback'
 
-    OffloadToAccelerator().apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
 
     for label, schedule in map_schedules(sdfg).items():
@@ -246,7 +247,7 @@ def test_a_map_around_a_callback_stays_on_the_host():
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     assert entry in host_maps(sdfg, None), 'a map around a callback is host code without being named'
 
-    OffloadToAccelerator().apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
     assert map_schedules(sdfg)['over_i'] != dace.ScheduleType.GPU_Device
 
@@ -275,7 +276,7 @@ def test_a_sequential_scan_in_a_loop_region_is_not_offloaded():
     body.add_edge(step, 'o', body.add_write('out'), None, dace.Memlet('out[k]'))
     sdfg.validate()
 
-    OffloadToAccelerator().apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
 
     maps = [n.map.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
