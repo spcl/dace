@@ -750,7 +750,10 @@ def make_transients_persistent(sdfg: SDFG,
                 if all(symbolic.equal(s, 1) is True for s in desc.shape):
                     not_persistent.add(dnode.data)
                     continue
-                if desc.storage == dtypes.StorageType.Register:
+                # Only host heap and device global memory have a state-struct allocation; ``Default`` is
+                # resolved below by where its access node sits.
+                if desc.storage not in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global,
+                                        dtypes.StorageType.Default):
                     not_persistent.add(dnode.data)
                     continue
                 # Only convert arrays where the size depends on SDFG parameters
@@ -761,12 +764,16 @@ def make_transients_persistent(sdfg: SDFG,
                 except AttributeError:  # total_size is an integer / has no free symbols
                     pass
 
-                # Only convert arrays with top-level access nodes
+                # Only convert arrays with top-level access nodes. Outside every map ``Default`` resolves to
+                # ``SCOPEDEFAULT_STORAGE[None]`` (CPU_Heap); inside one it takes the map's scope storage.
                 if xfh.get_parent_map(state, dnode) is not None:
                     if toplevel_only:
                         not_persistent.add(dnode.data)
                         continue
                     elif desc.lifetime == dtypes.AllocationLifetime.Scope:
+                        not_persistent.add(dnode.data)
+                        continue
+                    elif desc.storage == dtypes.StorageType.Default:
                         not_persistent.add(dnode.data)
                         continue
 
