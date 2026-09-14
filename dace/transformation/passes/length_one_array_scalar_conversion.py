@@ -279,6 +279,26 @@ def staging_access_summary(sdfg: SDFG, stage_nontransients: bool) -> Tuple[Set[s
     return read, written, gpu_written
 
 
+#: Label prefixes of the states staging creates; ``add_state`` uniquifies, so match by prefix.
+STAGING_STATE_PREFIXES = ('stage_copyin', 'stage_copyout')
+
+
+def restaging_skips(sdfg: SDFG, read: Set[str], written: Set[str]) -> OrderedSet[str]:
+    """Signature names staging leaves alone: unreferenced ones, and ones only earlier staging states reference.
+
+    Staging keeps the signature array, so without the second group a re-run finds it eligible again and
+    chains another copy hop onto the first.
+    """
+    in_staging: OrderedSet[str] = OrderedSet()
+    elsewhere: OrderedSet[str] = OrderedSet()
+    for state in sdfg.all_states():
+        names = in_staging if state.label.startswith(STAGING_STATE_PREFIXES) else elsewhere
+        names.update(node.data for node in state.data_nodes())
+    staged_only = in_staging - elsewhere
+    return OrderedSet(name for name, desc in sdfg.arrays.items()
+                      if not desc.transient and (name in staged_only or (name not in read and name not in written)))
+
+
 def _copyin_state(sdfg: SDFG) -> SDFGState:
     """A new start state to hold copy-IN edges (prepended before the current start)."""
     return sdfg.add_state_before(sdfg.start_state, 'stage_copyin', is_start_block=True)
@@ -459,6 +479,8 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         # Hoisted: the loop below only calls ``remove_data`` / ``add_scalar``; the state rewrite is
         # after it, so no access node moves and these name sets cannot go stale.
         is_read_set, is_written_set, gpu_written_set = staging_access_summary(sdfg, stage_nontransients)
+        # Re-staging an already staged signature array would chain a second copy hop onto the first.
+        blocked.update(restaging_skips(sdfg, is_read_set, is_written_set))
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
