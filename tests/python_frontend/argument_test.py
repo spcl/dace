@@ -50,7 +50,40 @@ def test_missing_arguments_2_regression():
         tester()
 
 
+def test_nested_call_with_too_small_argument():
+
+    @dace.program
+    def callee(a: dace.float64[10]):
+        a += 1
+
+    @dace.program
+    def caller(a: dace.float64[5, 10]):
+        for i in range(5):
+            callee(a[:, i])
+
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='declared with 10 elements'):
+        caller.to_sdfg(simplify=False)
+
+
+def test_nested_call_with_reshaped_argument():
+
+    @dace.program
+    def callee(a: dace.float64[20]):
+        a += 1
+
+    @dace.program
+    def caller(a: dace.float64[5, 4]):
+        callee(a.reshape((20, )))
+
+    A = np.random.rand(5, 4)
+    expected = A + 1
+    caller(A)
+    assert np.allclose(A, expected)
+
+
 if __name__ == '__main__':
     test_extra_args()
     test_missing_arguments_regression()
     test_missing_arguments_2_regression()
+    test_nested_call_with_too_small_argument()
+    test_nested_call_with_reshaped_argument()
