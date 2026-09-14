@@ -23,7 +23,6 @@ ABSTRACT_NODE_TYPES = {tn.ScheduleTreeNode, tn.ScheduleTreeScope, tn.ControlFlow
 
 #: Node types whose conversion to an SDFG is not yet supported, mapped to the reason
 UNSUPPORTED_NODE_TYPES = {
-    tn.ConsumeScope: 'Consume scopes are not yet converted to SDFGs',
     tn.NView: 'Nested SDFG views are only applied inside nested SDFGs created for map scopes',
     tn.NViewEnd: 'Nested SDFG views are only applied inside nested SDFGs created for map scopes',
 }
@@ -184,7 +183,8 @@ def _consume() -> tn.ScheduleTreeRoot:
     state = sdfg.add_state()
     entry, exit_node = state.add_consume('consume', ('p', '4'))
     tasklet = state.add_tasklet('pop', {'inp'}, {'out'}, 'out = inp')
-    state.add_memlet_path(state.add_read('S'), entry, tasklet, dst_conn='inp', memlet=dace.Memlet('S'))
+    state.add_edge(state.add_read('S'), None, entry, 'IN_stream', dace.Memlet('S'))
+    state.add_edge(entry, 'OUT_stream', tasklet, 'inp', dace.Memlet('S'))
     state.add_memlet_path(tasklet, exit_node, state.add_write('A'), src_conn='out', memlet=dace.Memlet('A[0]'))
     return sdfg.as_schedule_tree()
 

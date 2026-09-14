@@ -354,6 +354,26 @@ def test_gblock_labels():
     assert gotos == {'other', 'loop'}
 
 
+def test_consume_stream_input():
+    """
+    The consumed stream of a consume scope is given as a dynamic scope input.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_stream('S', dace.int32, transient=True)
+    sdfg.add_array('A', [1], dace.int32)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_consume('cons', ('p', '1'))
+    tasklet = state.add_tasklet('pop', {'inp'}, {'out'}, 'out = inp')
+    state.add_edge(state.add_read('S'), None, entry, 'IN_stream', dace.Memlet('S[0]'))
+    state.add_edge(entry, 'OUT_stream', tasklet, 'inp', dace.Memlet('S[0]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('A'), src_conn='out', memlet=dace.Memlet('A[0]'))
+
+    stree = as_schedule_tree(sdfg)
+    assert [type(n) for n in stree.children] == [tn.DynScopeCopyNode, tn.ConsumeScope]
+    assert stree.children[0].target == 'IN_stream'
+    assert stree.children[0].memlet.data == 'S'
+
+
 if __name__ == '__main__':
     test_for_in_map_in_for()
     test_libnode()
@@ -368,3 +388,4 @@ if __name__ == '__main__':
     test_multiview()
     test_nested_sdfg_return_labels()
     test_gblock_labels()
+    test_consume_stream_input()

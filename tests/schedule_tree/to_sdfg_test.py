@@ -1552,6 +1552,33 @@ def test_gblock_goto_to_loop() -> None:
     assert np.allclose(a, [0, 1, 2, 3, 4, 0, 0, 0, 0, 0])
 
 
+def test_state_boundaries_read_modify_write() -> None:
+    # A node that reads and writes the same data does not race with itself
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map('map_i', 'i', sbs.Range.from_string('0:20'))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet('increment', {'inp'}, {'out'}, 'out = inp + 1'),
+                                   {'inp': dace.Memlet('A[i]')}, {'out': dace.Memlet('A[i]')})
+                ],
+            ),
+        ],
+    )
+
+    stree = t2s._insert_state_boundaries_to_tree(stree)
+    assert not any(isinstance(n, tn.StateBoundaryNode) for n in stree.preorder_traversal())
+
+    sdfg = stree.as_sdfg(simplify=False)
+    assert nodes.NestedSDFG not in _node_types(sdfg)
+    a = np.random.rand(20)
+    expected = a + 1
+    sdfg(A=a)
+    assert np.allclose(a, expected)
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -1619,3 +1646,4 @@ if __name__ == '__main__':
     test_gblock_conditional_gotos(3)
     test_gblock_conditional_gotos(0)
     test_gblock_goto_to_loop()
+    test_state_boundaries_read_modify_write()

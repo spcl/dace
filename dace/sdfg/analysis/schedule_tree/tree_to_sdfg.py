@@ -7,7 +7,7 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Final, Sequence
 
-from dace import subsets, symbolic
+from dace import data, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
@@ -119,6 +119,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._dynamic_scope_inputs: list[tn.DynScopeCopyNode] = []
         """Dynamic scope inputs (e.g., dynamic map ranges) of the next dataflow scope."""
+
+        self._consume_streams: dict[int, str] = {}
+        """Mapping of id(ConsumeEntry) -> name of the stream it consumes."""
 
         # state management
         self._state_stack: list[SDFGState] = []
@@ -559,13 +562,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._pending_interstate_assignments():
             raise NotImplementedError("TODO: update edge with new assignments")
 
-    def _insert_nested_sdfg(self, node: tn.ScheduleTreeScope, sdfg: SDFG) -> None:
+    def _insert_nested_sdfg(self, node: tn.ScheduleTreeScope, sdfg: SDFG, scope_body: bool) -> None:
         """
-        Converts the children of a scope into a nested SDFG and connects it in the current state, either within the
-        surrounding map scope or directly to the accessed data containers.
+        Converts the children of a scope into a nested SDFG and connects it in the current state.
 
         :param node: The scope whose children form the body of the nested SDFG.
         :param sdfg: The SDFG that is currently being built.
+        :param scope_body: True if the nested SDFG is the entire body of the surrounding dataflow scope, in which case
+                           it is connected directly to the pass-through connectors of the scope. Otherwise, it is
+                           connected to the accessed data containers like any other node.
         """
         dataflow_stack_size = len(self._dataflow_stack)
         state_stack_size = len(self._state_stack)
@@ -608,7 +613,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             outputs={name: None
                      for name in connectors["outputs"]},
         )
-        if self._dataflow_stack and isinstance(self._dataflow_stack[-1][0], nodes.EntryNode):
+        if scope_body:
             self._connect_nested_sdfg_in_map(nsdfg, inner_sdfg)
         else:
             self._connect_nested_sdfg(nsdfg, inner_sdfg, sdfg)
@@ -697,24 +702,125 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         for name in nsdfg.out_connectors:
             self._connect_output(nsdfg, name, name, memlet(name), sdfg)
 
-    def visit__NestedSDFGScope(self, node: _NestedSDFGScope, sdfg: SDFG) -> None:
-        self._insert_nested_sdfg(node, sdfg)
+        # Within a dataflow scope, connect the nested SDFG to the scope even if it has no inputs or outputs
+        scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
+        if isinstance(scope_node, nodes.EntryNode):
+            if not nsdfg.in_connectors:
+                self._current_state.add_nedge(scope_node, nsdfg, Memlet())
+            if not nsdfg.out_connectors:
+                to_connect[f"nested_sdfg_{id(nsdfg)}"] = (nsdfg, Memlet())
 
-        # Start a new state such that subsequent accesses do not share access nodes with the nested SDFG's outputs
-        self._current_state = _insert_and_split_assignments(self._current_state,
-                                                            label="nested_sdfg_after",
-                                                            assignments=self._pending_interstate_assignments())
+    def visit__NestedSDFGScope(self, node: _NestedSDFGScope, sdfg: SDFG) -> None:
+        self._insert_nested_sdfg(node, sdfg, scope_body=False)
+
+        # Start a new state such that subsequent accesses do not share access nodes with the nested SDFG's outputs.
+        # Within dataflow scopes, nested SDFG scopes span the rest of the scope.
+        if not (self._dataflow_stack and isinstance(self._dataflow_stack[-1][0], nodes.EntryNode)):
+            self._current_state = _insert_and_split_assignments(self._current_state,
+                                                                label="nested_sdfg_after",
+                                                                assignments=self._pending_interstate_assignments())
 
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
+        self._visit_dataflow_scope(node, nodes.MapEntry(node.node.map), nodes.MapExit(node.node.map), sdfg)
+
+    def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
+        entry = nodes.ConsumeEntry(node.node.consume)
+        exit_node = nodes.ConsumeExit(node.node.consume)
+
+        # The consumed stream is given as a dynamic scope input to the entry's stream connector
+        stream_inputs = [inp for inp in self._dynamic_scope_inputs if inp.target == 'IN_stream']
+        if stream_inputs:
+            self._consume_streams[id(entry)] = stream_inputs[-1].memlet.data
+        else:
+            stream = self._consumed_stream(node)
+            self._consume_streams[id(entry)] = stream
+            self._dynamic_scope_inputs.append(
+                tn.DynScopeCopyNode(target='IN_stream',
+                                    memlet=Memlet.from_array(stream, self._ctx.root.containers[stream])))
+
+        # Code generation supports only one read of the consumed element, and it cannot be passed into nested SDFGs
+        stream = self._consume_streams[id(entry)]
+        has_boundaries = any(isinstance(child, tn.StateBoundaryNode) for child in node.children)
+        if has_boundaries or len(_reads_of(node, stream)) > 1:
+            self._hoist_consumed_element(node, stream, sdfg, nest=has_boundaries)
+
+        self._visit_dataflow_scope(node, entry, exit_node, sdfg)
+
+    def _hoist_consumed_element(self, node: tn.ConsumeScope, stream: str, sdfg: SDFG, nest: bool) -> None:
+        """
+        Copies the consumed element into a new scalar at the beginning of a consume scope, and replaces reads of the
+        stream in the scope with reads of that scalar. Operates in-place.
+
+        Within a consume scope, reading the consumed stream provides the current element. Code generation only supports
+        one such read, and the element cannot be passed into a nested SDFG under the name of the stream (which is still
+        used to push into it).
+
+        :param node: The consume scope.
+        :param stream: The name of the consumed stream.
+        :param sdfg: The SDFG that is currently being built.
+        :param nest: If True, the rest of the scope is converted into a nested SDFG (e.g., due to state boundaries).
+        """
+        if node.node.consume.chunksize != 1:
+            raise NotImplementedError("Consume scopes with chunks that read the element more than once or require "
+                                      "multiple states are not supported.")
+
+        # The element is registered in the top-level SDFG, from which nested SDFGs obtain their descriptors
+        root_sdfg = sdfg
+        while root_sdfg.parent is not None:
+            root_sdfg = root_sdfg.parent.sdfg
+        containers = self._ctx.root.containers
+        element = data.find_new_name(f"__{stream}_element", set(containers.keys()) | set(root_sdfg.arrays.keys()))
+        containers[element] = data.Scalar(containers[stream].dtype, transient=True)
+        root_sdfg.add_datadesc(element, containers[element].clone())
+
+        body = list(node.children)
+        for child in body:
+            _rename_reads(child, stream, element)
+        pop = tn.CopyNode(target=element, memlet=Memlet(f"{stream}[0]"))
+        pop.parent = node
+        if nest:
+            node.children = [pop, _NestedSDFGScope(children=body, parent=node)]
+        else:
+            node.children = [pop] + body
+
+    def _consumed_stream(self, node: tn.ConsumeScope) -> str:
+        """
+        Returns the stream a consume scope pops from, if it is not given as a dynamic scope input: the only stream
+        read by the code nodes directly in the scope.
+
+        :param node: The consume scope.
+        :return: The name of the consumed stream container.
+        """
+        streams = {
+            memlet.data
+            for child in node.children if isinstance(child, (tn.TaskletNode, tn.LibraryCall))
+            for memlet in child.input_memlets() if isinstance(self._ctx.root.containers.get(memlet.data), data.Stream)
+        }
+        if len(streams) != 1:
+            raise ValueError(f"Cannot determine the consumed stream of '{node.as_string().splitlines()[0].strip()}' "
+                             f"(candidates: {sorted(streams)}).")
+        return next(iter(streams))
+
+    def _visit_dataflow_scope(self, node: tn.DataflowScope, entry: nodes.EntryNode, exit_node: nodes.ExitNode,
+                              sdfg: SDFG) -> None:
+        """
+        Converts a dataflow scope (map or consume) with the given entry and exit nodes. Inputs and outputs of the scope
+        are connected through pass-through connectors on the entry and exit nodes.
+
+        :param node: The dataflow scope to convert.
+        :param entry: The entry node of the scope.
+        :param exit_node: The exit node of the scope.
+        :param sdfg: The SDFG that is currently being built.
+        """
         dataflow_stack_size = len(self._dataflow_stack)
         cache_state = self._current_state
+        map_entry = entry
 
-        # map entry
-        # ---------
-        map_entry = nodes.MapEntry(node.node.map)
+        # scope entry
+        # -----------
         self._current_state.add_node(map_entry)
 
-        # connect dynamic map range inputs, which are read outside of the map
+        # connect dynamic scope inputs (e.g., map ranges), which are read outside of the scope
         for dynamic_input in self._dynamic_scope_inputs:
             map_entry.add_in_connector(dynamic_input.target)
             source, source_conn = self._read_source(dynamic_input.memlet.data, sdfg)
@@ -734,7 +840,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             with _TreeScope(node, self._ctx, self._current_state):
                 self.visit(node.children[-1], sdfg=sdfg)
         elif any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
-            self._insert_nested_sdfg(node, sdfg)
+            self._insert_nested_sdfg(node, sdfg, scope_body=True)
         else:
             with _TreeScope(node, self._ctx, self._current_state):
                 self.visit(node.children, sdfg=sdfg)
@@ -750,9 +856,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         outer_map_entry, outer_to_connect = self._dataflow_stack[-1] if dataflow_stack_size else (None, None)
 
         # connect potential input connectors on map_entry
+        connected = {e.dst_conn for e in self._current_state.in_edges(map_entry)}
         for connector in map_entry.in_connectors:
-            if not connector.startswith(PREFIX_PASSTHROUGH_IN):
-                continue  # dynamic map range inputs are already connected
+            if not connector.startswith(PREFIX_PASSTHROUGH_IN) or connector in connected:
+                continue  # dynamic scope inputs are already connected
             memlet_data = connector.removeprefix(PREFIX_PASSTHROUGH_IN)
 
             # connect to local access node (if available)
@@ -823,9 +930,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if isinstance(outer_map_entry, nodes.EntryNode) and self._current_state.out_degree(outer_map_entry) < 1:
             self._current_state.add_nedge(outer_map_entry, map_entry, Memlet())
 
-        # map_exit
-        # --------
-        map_exit = nodes.MapExit(node.node.map)
+        # scope exit
+        # ----------
+        map_exit = exit_node
         self._current_state.add_node(map_exit)
 
         # connect writes to map_exit node
@@ -911,9 +1018,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         #      map_exit.
         assert len(self._current_state.in_edges(map_exit)) > 0
 
-    def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
-
     def _local_access_cache(self) -> dict[str, nodes.AccessNode]:
         """Returns the access node cache of the current state and tree scope."""
         cache_key = (self._current_state, id(self._ctx.current_scope))
@@ -942,7 +1046,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if name in cache:
             return cache[name], None
 
-        if isinstance(scope_node, nodes.MapEntry):
+        if isinstance(scope_node, nodes.ConsumeEntry) and self._consume_streams.get(id(scope_node)) == name:
+            # the consumed stream provides the current element
+            return scope_node, 'OUT_stream'
+
+        if isinstance(scope_node, nodes.EntryNode):
             # get it from outside the map
             connector_name = f"{PREFIX_PASSTHROUGH_OUT}{name}"
             if connector_name not in scope_node.out_connectors:
@@ -1009,7 +1117,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         access_node = cache[name]
         self._current_state.add_memlet_path(src, access_node, src_conn=src_conn, memlet=memlet)
 
-        if isinstance(scope_node, nodes.MapEntry):
+        if isinstance(scope_node, nodes.EntryNode):
             # copy the memlet since we already used it in the memlet path above
             if memlet.data == name:
                 to_connect[name] = (access_node, copy.deepcopy(memlet))
@@ -1088,14 +1196,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._current_state.add_edge(source, source_conn, code_node, name, memlet)
 
         # Add empty memlet if this code node is a source node
-        if isinstance(scope_node, nodes.MapEntry) and not in_memlets:
+        if isinstance(scope_node, nodes.EntryNode) and not in_memlets:
             self._current_state.add_nedge(scope_node, code_node, Memlet())
 
         for name, memlet in outputs:
             self._connect_output(code_node, name, memlet.data, memlet, sdfg)
 
         # Add empty memlet if this code node is a sink node
-        if isinstance(scope_node, nodes.MapEntry) and not out_memlets:
+        if isinstance(scope_node, nodes.EntryNode) and not out_memlets:
             to_connect[f"tasklet_{id(code_node)}"] = (code_node, Memlet())
 
     def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
@@ -1106,7 +1214,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def visit_CopyNode(self, node: tn.CopyNode, sdfg: SDFG) -> None:
         source, source_conn = self._read_source(node.memlet.data, sdfg)
-        self._connect_output(source, source_conn, node.target, node.memlet, sdfg)
+        memlet = node.memlet
+        target_desc = self._ctx.root.containers.get(node.target)
+        if isinstance(target_desc, data.Stream) and memlet.data != node.target:
+            # Code generation pushes into streams only if the copy is described on the stream
+            memlet = Memlet(data=node.target,
+                            subset=copy.deepcopy(memlet.other_subset)
+                            if memlet.other_subset is not None else subsets.Range.from_array(target_desc),
+                            other_subset=copy.deepcopy(memlet.subset))
+        self._connect_output(source, source_conn, node.target, memlet, sdfg)
 
     def visit_DynScopeCopyNode(self, node: tn.DynScopeCopyNode, sdfg: SDFG) -> None:
         # Connected to the entry node of the following dataflow scope, see ``visit_MapScope``
@@ -1223,6 +1339,45 @@ def from_schedule_tree(
     propagation.propagate_memlets_sdfg(result)
 
     return result
+
+
+def _reads_of(node: tn.ScheduleTreeNode, name: str) -> list[Memlet]:
+    """Returns the memlets that read the given data container in a node and its descendants (one per connector)."""
+    result = []
+    for n in node.preorder_traversal():
+        if isinstance(n, (tn.TaskletNode, tn.LibraryCall)):
+            memlets = n.in_memlets.values() if isinstance(n.in_memlets, dict) else n.in_memlets
+            result.extend(memlet for memlet in memlets if memlet.data == name)
+        elif isinstance(n, (tn.CopyNode, tn.DynScopeCopyNode, tn.RefSetNode)) and n.memlet.data == name:
+            result.append(n.memlet)
+    return result
+
+
+def _rename_reads(node: tn.ScheduleTreeNode, old: str, new: str) -> None:
+    """
+    Replaces reads of a data container in a node and its descendants with reads of another container. Memlets are
+    replaced rather than modified, since they may be shared with other nodes.
+
+    :param node: The node to operate on.
+    :param old: The name of the container to replace.
+    :param new: The name of the container to read instead.
+    """
+
+    def renamed(memlet: Memlet) -> Memlet:
+        if memlet.data != old:
+            return memlet
+        result = copy.deepcopy(memlet)
+        result.data = new
+        return result
+
+    for n in node.preorder_traversal():
+        if isinstance(n, (tn.TaskletNode, tn.LibraryCall)):
+            if isinstance(n.in_memlets, dict):
+                n.in_memlets = {connector: renamed(memlet) for connector, memlet in n.in_memlets.items()}
+            else:
+                n.in_memlets = type(n.in_memlets)(renamed(memlet) for memlet in n.in_memlets)
+        elif isinstance(n, (tn.CopyNode, tn.DynScopeCopyNode, tn.RefSetNode)):
+            n.memlet = renamed(n.memlet)
 
 
 def _ancestors(node: tn.ScheduleTreeNode) -> list[tn.ScheduleTreeScope]:
@@ -1385,7 +1540,7 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
     # Hack: "backprop-insert" state boundaries from nested SDFGs
     class NestedSDFGStateBoundaryInserter(tn.ScheduleNodeTransformer):
 
-        def visit_MapScope(self, scope: tn.MapScope):
+        def visit_MapScope(self, scope: tn.DataflowScope):
             visited = self.generic_visit(scope)
             if any([isinstance(child, tn.StateBoundaryNode) for child in scope.children]):
                 # We can assume that map nodes are at least contained in the root scope.
@@ -1400,6 +1555,8 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
 
                 return [tn.StateBoundaryNode(), visited]
             return visited
+
+        visit_ConsumeScope = visit_MapScope
 
     stree = NestedSDFGStateBoundaryInserter().visit(stree)
 
@@ -1490,8 +1647,12 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
             parents.clear()
             continue
 
+        def unordered_reads(o: Memlet) -> bool:
+            """Returns True if another node read the output before, but is not guaranteed to run before this node."""
+            return any(r is not n and id(r) not in parents[id(n)] for r in reads[o])
+
         # Write after write or potential write/write data race, insert state boundary
-        if any(o in writes and (o not in reads or any(id(r) not in parents for r in reads[o])) for o in outputs):
+        if any(o in writes and (o not in reads or unordered_reads(o)) for o in outputs):
             boundaries_to_insert.append(i)
             reads.clear()
             writes.clear()
@@ -1500,7 +1661,7 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
 
         # Potential read/write data race: if any read is not in the parents of this node, it might
         # be performed in parallel
-        if any(o in reads and any(id(r) not in parents for r in reads[o]) for o in outputs):
+        if any(o in reads and unordered_reads(o) for o in outputs):
             boundaries_to_insert.append(i)
             reads.clear()
             writes.clear()
