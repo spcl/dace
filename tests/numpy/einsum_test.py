@@ -395,6 +395,34 @@ def test_einsum_dot_node(beta):
     assert np.allclose(r[0], 2.0 * np.dot(x, y) + beta * prior), f'got {r[0]}'
 
 
+def test_matrix_vector_einsum_scratch_lives_where_its_output_lives():
+    """The GEMV scratch of ``y = A @ x + y`` is device memory when ``y`` is: a host BLAS call cannot reach
+    in-kernel shared memory, and a Persistent shared buffer is never allocated at all."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    gpu = dace.dtypes.StorageType.GPU_Global
+    sdfg = dace.SDFG('matrix_vector_einsum')
+    sdfg.add_array('A', (5, 5), dace.float64, storage=gpu)
+    sdfg.add_array('x', (5, ), dace.float64, storage=gpu)
+    sdfg.add_array('y', (5, ), dace.float64, storage=gpu)
+    state = sdfg.add_state()
+    enode = Einsum('einsum')
+    enode.einsum_str = 'ij,j->i'
+    enode.beta = 1.0
+    enode.in_connectors = {'a': None, 'b': None}
+    enode.out_connectors = {'out': None}
+    state.add_node(enode)
+    state.add_edge(state.add_read('A'), None, enode, 'a', dace.Memlet('A'))
+    state.add_edge(state.add_read('x'), None, enode, 'b', dace.Memlet('x'))
+    state.add_edge(enode, 'out', state.add_write('y'), None, dace.Memlet('y'))
+
+    enode.expand(sdfg, state)
+
+    scratch = [desc for _, name, desc in sdfg.arrays_recursive() if name.endswith('_gemv')]
+    assert len(scratch) == 1, 'the matrix-vector einsum did not lower to GEMV plus a beta fold'
+    assert scratch[0].storage == gpu
+
+
 def test_einsum_shape_check_equalizes_symbols():
     """One symbol name can reach the shape check as several sympy instances -- a descriptor a layout
     pass rebuilt against one parsed from a string -- which compare unequal by identity. The einsum

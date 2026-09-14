@@ -421,9 +421,12 @@ def _create_einsum_internal(sdfg: SDFG,
             beta_nz = not symbolic.equal_valued(0, beta)
             gemv_dst, gemv_desc = (c, sdfg.arrays[output])
             if beta_nz:
+                # Same storage as the output: a Default buffer resolves to in-kernel shared memory,
+                # which the host-launched BLAS call cannot reach.
                 buf_name, buf_desc = sdfg.add_transient('%s_gemv' % output,
                                                         output_shape,
                                                         sdfg.arrays[output].dtype,
+                                                        storage=sdfg.arrays[output].storage,
                                                         find_new_name=True)
                 state.remove_node(c)  # output is produced by the fold map below, not GEMV
                 gemv_dst, gemv_desc = (state.add_access(buf_name), buf_desc)
