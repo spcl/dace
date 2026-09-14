@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation import pass_pipeline as ppl
 from dace import dtypes
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation.auto.auto_optimize import set_fast_implementations
@@ -93,7 +94,7 @@ def test_the_fallback_arm_owns_its_copies():
     """The sequential arm round-trips through the host; the parallel arm and the enclosing region
     stay clear of it."""
     sdfg = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
-    OffloadToAccelerator().apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
 
     guard = guard_block(sdfg)
@@ -122,7 +123,7 @@ def test_the_fallback_copies_in_before_it_runs_and_out_after():
     after the loop feeds it whatever the device buffer held, and a copy-out scheduled before it
     publishes a stale result."""
     sdfg = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
-    OffloadToAccelerator().apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
 
     sequential = next(region for _c, region in guard_block(sdfg).branches if any(
         isinstance(b, LoopRegion) for b in region.all_control_flow_blocks()))
@@ -192,7 +193,7 @@ def test_an_offloaded_scan_gets_its_device_lowering():
     scans = [n for n, _ in sdfg.all_nodes_recursive() if type(n).__name__ == 'Scan']
     assert scans, 's126 no longer canonicalizes to a Scan; the check below would be vacuous'
 
-    OffloadToAccelerator().apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
     sdfg.validate()
 
@@ -374,7 +375,7 @@ def two_host_tasklets_beside_a_kernel_then_an_interstate_read() -> dace.SDFG:
 def test_fusing_the_wrappers_does_not_validate_before_the_copies_exist():
     """CloudSC's ``pap``: the wrapper fusion validated a graph whose interstate edge still read ``B``."""
     sdfg = two_host_tasklets_beside_a_kernel_then_an_interstate_read()
-    OffloadToAccelerator().apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
 
     mixed = next(state for state in sdfg.states() if state.label == 'mixed')
@@ -393,7 +394,7 @@ def test_fusing_the_wrappers_does_not_validate_before_the_copies_exist():
 def test_the_fused_wrappers_compute_what_the_host_tasklets_computed():
     import cupy  # GPU-only dependency; a CPU collection of this file must not need it
     sdfg = two_host_tasklets_beside_a_kernel_then_an_interstate_read()
-    OffloadToAccelerator().apply_pass(sdfg, {})
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     host_a = np.random.default_rng(7).random(16)
     arrays = {
         'A': cupy.asarray(host_a),

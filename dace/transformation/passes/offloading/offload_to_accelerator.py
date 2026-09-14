@@ -18,16 +18,16 @@ from dace.sdfg import nodes, SDFG, InterstateEdge
 from dace.sdfg.state import (SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock,
                              BreakBlock, ControlFlowBlock, AbstractControlFlowRegion)
 from dace.sdfg.scope import is_devicelevel_gpu
-from dace.sdfg.utils import get_last_view_node
+from dace.sdfg.utils import get_last_view_node, require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.dataflow import TrivialMapElimination
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                            ConvertScalarsToLengthOneArrays)
-from dace.transformation.passes.offloading.offloading_helpers import (blocks_with_exit_last, join_fall_through_exits,
-                                                                      link_early_returns, remove_empty_exits,
+from dace.transformation.passes.offloading.offloading_helpers import (link_early_returns, remove_empty_return_entries,
                                                                       separate_early_returns)
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.offloading.taskloop import taskloop_maps
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps
 
@@ -215,8 +215,8 @@ class OffloadToAccelerator(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    #def depends_on(self) -> OrderedSet[Union[Type['Pass'], 'Pass']]:
-    #    return OrderedSet()
+    def depends_on(self) -> OrderedSet[type[ppl.Pass]]:
+        return OrderedSet([ControlFlowRaising])
 
     #def report(self, pass_retval: Any) -> Optional[str]:
     #    """
@@ -237,6 +237,9 @@ class OffloadToAccelerator(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: Some object if pass was applied, or None if nothing changed.
         """
+
+        # The copy analysis reads each region as a line of blocks; callers run ControlFlowRaising first (depends_on).
+        require_structured_control_flow(sdfg, 'OffloadToAccelerator')
 
         self.taskloop_heuristics = Config.get_bool('optimizer', 'gpu_taskloop_heuristics')
         self.cache_scopes(sdfg)
@@ -602,7 +605,7 @@ class OffloadToAccelerator(ppl.Pass):
         # ``preserve_abi`` stages a transient beside it and copies, so the array itself is still an
         # array on the next scan and would be requested again for ever (TSVC s332's ``result``).
         attempted: OrderedSet[str] = OrderedSet()
-        exits = self.join_exits_and_refresh_scopes(sdfg)
+        entries = self.separate_returns_and_refresh_scopes(sdfg)
 
         for _ in range(3):
             # step 2: copy analysis -> IR stores analysis results
@@ -688,15 +691,15 @@ class OffloadToAccelerator(ppl.Pass):
 
         # step 4: insert copies based on IR
         self.eval_IR(sdfg, sdfgIR)
-        remove_empty_exits(exits)
+        remove_empty_return_entries(entries)
 
-    def join_exits_and_refresh_scopes(self, sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
-        """Join each region's fall-through sinks into one exit and give each return an entry: every way out copies."""
-        exits = join_fall_through_exits(sdfg) + separate_early_returns(sdfg)
-        if exits:
-            # The analysis reads scopes from the cache, which predates the exit states.
+    def separate_returns_and_refresh_scopes(self, sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFGState]]:
+        """Give each return its own entry state, so the copy-backs an early return needs run on its path."""
+        entries = separate_early_returns(sdfg)
+        if entries:
+            # The analysis reads scopes from the cache, which predates the entry states.
             self.cache_scopes(sdfg)
-        return exits
+        return entries
 
     def offload_host_level_bodies(self, sdfg: SDFG) -> None:
         """Place again inside every nested SDFG that is still host code: each body is its own level.
@@ -1441,7 +1444,7 @@ class OffloadToAccelerator(ppl.Pass):
     def _parse_to_IR(self, sdfg: SDFG, cfr: ControlFlowRegion, curr_node: OffloadingIRNode) -> OffloadingIRNode:
         # NOTE to self: ControlFlowRegion inherits from ControlFlowBlock
         block: ControlFlowBlock
-        for block in blocks_with_exit_last(cfr):
+        for block in cfr.bfs_nodes():
 
             # iterate through all (incoming) interstate edges
             in_edge_arrays = OrderedSet()

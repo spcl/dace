@@ -3285,9 +3285,12 @@ class SDFG(ControlFlowRegion):
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
+        from dace.transformation import pass_pipeline as ppl
         from dace.transformation.passes.offloading import OffloadToAccelerator
 
-        placed = OffloadToAccelerator(host_maps=host_maps).apply_pass(self, {})
+        # The pipeline runs ControlFlowRaising first, which the offloading depends on.
+        results = ppl.Pipeline([OffloadToAccelerator(host_maps=host_maps)]).apply_pass(self, {}) or {}
+        placed = results.get(OffloadToAccelerator.__name__)
         # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
         # unfused, so a caller that asked for a simplified graph has to get one.
         if simplify:

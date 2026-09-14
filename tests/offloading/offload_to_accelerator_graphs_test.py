@@ -4,8 +4,10 @@ import pytest
 import networkx as nx
 import numpy as np
 import dace
+from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion, ReturnBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, LoopRegion, ReturnBlock
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.dataflow import GPUTransformMap
 from dace.transformation.optimizer import Optimizer
 from dace.transformation.passes.offloading import offloading_helpers as helpers
@@ -388,7 +390,7 @@ def run_numerical_offloading_test(sdfg, param_dict: dict, result_array1, result_
     sdfg(**input1)
 
     # offload sdfg (in place)
-    OtA().apply_pass(sdfg, {})
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
     sdfg.validate()
 
     # compile and run offloaded sdfg (part may be on GPU, necessary copies were added)
@@ -735,7 +737,7 @@ def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array()
     companion test covers the case where a host writer forces one to exist.
     """
     sdfg = device_map_state_sdfg(host_writer_between=False)
-    OtA().apply_pass(sdfg, {})
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
     order = states_in_execution_order(sdfg)
     device_at = [index for index, state in enumerate(order) if holds_device_map(state)]
@@ -751,7 +753,7 @@ def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array()
 def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():
     """The hoist is only free where the array is untouched -- a host writer keeps the copy below it."""
     sdfg = device_map_state_sdfg(host_writer_between=True)
-    OtA().apply_pass(sdfg, {})
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
     order = states_in_execution_order(sdfg)
     labels = [state.label for state in order]
@@ -803,7 +805,7 @@ def test_a_never_written_input_is_not_copied_back_to_the_host():
     refuses.
     """
     sdfg = read_only_input_sdfg()
-    OtA().apply_pass(sdfg, {})
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
     states = list(sdfg.states())
     labels = [state.label for state in states]
@@ -818,7 +820,7 @@ def test_a_never_written_input_is_not_copied_back_to_the_host():
 def test_a_container_nothing_touches_is_left_where_it_started():
     """An array no state reads or writes is not staged, not copied, and grows no twin."""
     sdfg = read_only_input_sdfg()
-    OtA().apply_pass(sdfg, {})
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
     assert "C_gpu" not in sdfg.arrays, f"an untouched array was given a device twin: {sorted(sdfg.arrays)}"
     assert sdfg.arrays["C"].storage == dace.StorageType.Default, \
@@ -891,7 +893,7 @@ def test_a_view_of_a_staged_container_is_staged_with_it():
     from a kernel in one state and from host code in another.
     """
     sdfg = view_on_both_sides_sdfg()
-    OtA().apply_pass(sdfg, {})
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
     sdfg.validate()
 
     views = {name: desc for name, desc in sdfg.arrays.items() if isinstance(desc, dace.data.View)}
@@ -943,24 +945,42 @@ def two_arm_branch_sdfg(arms_meet: bool, big_arm_padding: int = 0) -> dace.SDFG:
     return sdfg
 
 
+def exits_not_writing_after(sdfg: dace.SDFG, block: ControlFlowBlock, name: str) -> list:
+    """The top-level ways out of ``sdfg`` on which no state writes ``name`` after ``block``."""
+    stale = []
+    for sink in sdfg.sink_nodes():
+        for path in nx.all_simple_paths(sdfg.nx, sdfg.start_block, sink):
+            later = path[path.index(block) + 1:]
+            if not any(isinstance(step, dace.SDFGState) and writes_container(step, name) for step in later):
+                stale.append([step.label for step in path])
+    return stale
+
+
+def empty_states_offloading_adds(sdfg: dace.SDFG) -> list:
+    """Offload ``sdfg`` and name the empty states left behind that raising its control flow alone does not leave."""
+    raised = deepcopy(sdfg)
+    ControlFlowRaising().apply_pass(raised, {})
+    empty_after_raising = [state.label for state in raised.all_states() if state.number_of_nodes() == 0]
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
+    return [
+        state.label for state in sdfg.all_states()
+        if state.number_of_nodes() == 0 and state.label not in empty_after_raising
+    ]
+
+
+@pytest.mark.parametrize("big_arm_padding", [0, 2], ids=["even_arms", "uneven_arms"])
 @pytest.mark.parametrize("arms_meet", [False, True], ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
-def test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet: bool) -> None:
-    """Each way out of the program restores ``A``, not only the exit the IR visited last.
+def test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet: bool, big_arm_padding: int) -> None:
+    """Both arms write ``A`` on the device, so every way out of the program copies ``A`` back after the branch."""
+    sdfg = two_arm_branch_sdfg(arms_meet, big_arm_padding)
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
-    With one sink per arm, the copy-back landed after ``small`` alone and the ``big`` arm returned
-    the caller's array untouched.
-    """
-    sdfg = two_arm_branch_sdfg(arms_meet)
-    OtA().apply_pass(sdfg, {})
-
-    labels = [state.label for state in sdfg.states()]
-    arms = [state for state in sdfg.states() if state.label in ("big", "small")]
+    labels = [state.label for state in sdfg.all_states()]
+    arms = [state for state in sdfg.all_states() if state.label in ("big", "small")]
     assert len(arms) == 2 and all(holds_device_map(arm) for arm in arms), f"an arm was not offloaded: {labels}"
-    paths = [path for sink in sdfg.sink_nodes() for path in nx.all_simple_paths(sdfg.nx, sdfg.start_block, sink)]
-    assert len(paths) == 2, f"expected one way out per arm, got {[[s.label for s in p] for p in paths]}"
-    stale_exits = [[state.label for state in path] for path in paths
-                   if not any(writes_container(state, "A") for state in path)]
-    assert not stale_exits, f"these exits never copy A back to the host: {stale_exits}"
+    branch = next(block for block in sdfg.nodes() if isinstance(block, ConditionalBlock))
+    stale_exits = exits_not_writing_after(sdfg, branch, "A")
+    assert not stale_exits, f"these exits never copy A back to the host after the branch: {stale_exits}"
 
 
 @pytest.mark.gpu
@@ -968,7 +988,7 @@ def test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet: 
 def test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet: bool) -> None:
     """3.0 doubles to 6.0 and takes ``big`` (+1 -> 7.0); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""
     sdfg = two_arm_branch_sdfg(arms_meet)
-    OtA().apply_pass(sdfg, {})
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
     sdfg.validate()
     compiled = sdfg.compile()
 
@@ -981,26 +1001,18 @@ def test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet: bool) 
     np.testing.assert_array_equal(took_small, np.full(8, 0.0))
 
 
-def test_the_exit_joining_two_sink_arms_does_not_outlive_the_pass() -> None:
-    """The copy-back follows the join, so the join is spliced out and no empty state is left behind."""
-    sdfg = two_arm_branch_sdfg(arms_meet=False)
-    OtA().apply_pass(sdfg, {})
+@pytest.mark.parametrize("build", [
+    lambda: two_arm_branch_sdfg(arms_meet=False),
+    lambda: early_return_sdfg(return_after_arm=True),
+],
+                         ids=["device_branch", "early_return"])
+def test_offloading_leaves_no_empty_states_of_its_own(build) -> None:
+    """The states the pass adds to place copies are spliced out again when no copy lands after them."""
+    sdfg = build()
 
-    empty = [state.label for state in sdfg.states() if state.number_of_nodes() == 0]
-    assert not empty, f"the pass left empty states behind: {empty}"
+    added = empty_states_offloading_adds(sdfg)
 
-
-@pytest.mark.parametrize("arms_meet", [False, True], ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
-def test_the_short_arm_of_an_uneven_device_branch_copies_the_written_array_back(arms_meet: bool) -> None:
-    """BFS reaches the exit through ``small`` before the end of the long ``big`` arm; both ways out still restore ``A``."""
-    sdfg = two_arm_branch_sdfg(arms_meet, big_arm_padding=2)
-    OtA().apply_pass(sdfg, {})
-
-    paths = [path for sink in sdfg.sink_nodes() for path in nx.all_simple_paths(sdfg.nx, sdfg.start_block, sink)]
-    assert len(paths) == 2, f"expected one way out per arm, got {[[s.label for s in p] for p in paths]}"
-    stale_exits = [[state.label for state in path] for path in paths
-                   if not any(writes_container(state, "A") for state in path)]
-    assert not stale_exits, f"these exits never copy A back to the host: {stale_exits}"
+    assert not added, f"the pass left empty states behind: {added}"
 
 
 def host_only_two_arm_branch_sdfg() -> dace.SDFG:
@@ -1017,13 +1029,16 @@ def host_only_two_arm_branch_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def test_a_host_only_branch_keeps_its_arms_as_the_exits() -> None:
-    """Nothing is copied, so the pass takes the join it added back out and each arm still ends the program."""
+def test_a_host_only_branch_gets_no_blocks_from_offloading() -> None:
+    """Nothing lives on the device, so the pass adds no copy to the raised branch."""
     sdfg = host_only_two_arm_branch_sdfg()
-    OtA().apply_pass(sdfg, {})
+    raised = deepcopy(sdfg)
+    ControlFlowRaising().apply_pass(raised, {})
 
-    assert sorted(state.label for state in sdfg.sink_nodes()) == ["big", "small"]
-    assert sorted(state.label for state in sdfg.states()) == ["big", "fill", "small"]
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
+
+    assert sorted(block.label for block in sdfg.all_control_flow_blocks(recursive=True)) == sorted(
+        block.label for block in raised.all_control_flow_blocks(recursive=True))
 
 
 def early_return_sdfg(return_after_arm: bool) -> dace.SDFG:
@@ -1067,16 +1082,20 @@ def early_return_sdfg(return_after_arm: bool) -> dace.SDFG:
 
 @pytest.mark.parametrize("return_after_arm", [True, False], ids=["return_after_a_device_arm", "return_on_the_branch"])
 def test_an_early_return_copies_the_written_array_back_first(return_after_arm: bool) -> None:
-    """The return leaves the program, so ``A`` must reach the host on the way to it, not only at the end."""
+    """The return leaves the program, so the last write of ``A`` on the way to it is the copy back to the host."""
     sdfg = early_return_sdfg(return_after_arm)
-    OtA().apply_pass(sdfg, {})
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
 
-    early = next(block for block in sdfg.nodes() if isinstance(block, ReturnBlock))
-    paths = list(nx.all_simple_paths(sdfg.nx, sdfg.start_block, early))
-    assert paths, "the return is no longer reachable"
-    stale = [[block.label for block in path] for path in paths
-             if not any(writes_container(block, "A") for block in path if isinstance(block, dace.SDFGState))]
-    assert not stale, f"these paths return without copying A back to the host: {stale}"
+    early = next(block for block in sdfg.all_control_flow_blocks(recursive=True) if isinstance(block, ReturnBlock))
+    arm = early.parent_graph
+    branch = arm.parent_graph
+    way_in = nx.shortest_path(sdfg.nx, sdfg.start_block, branch) + nx.shortest_path(arm.nx, arm.start_block, early)
+    writers = [
+        block for block in way_in
+        if isinstance(block, dace.SDFGState) and (writes_container(block, "A") or writes_container(block, "A_gpu"))
+    ]
+    assert writers and writes_container(writers[-1], "A"), (
+        f"the last write of A before the return is not the copy to the host: {[block.label for block in writers]}")
 
 
 @pytest.mark.gpu
@@ -1084,7 +1103,7 @@ def test_an_early_return_copies_the_written_array_back_first(return_after_arm: b
 def test_an_early_return_hands_back_the_device_result(return_after_arm: bool) -> None:
     """3.0 doubles to 6.0 and returns (+1 -> 7.0 after ``big``); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""
     sdfg = early_return_sdfg(return_after_arm)
-    OtA().apply_pass(sdfg, {})
+    ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
     sdfg.validate()
     compiled = sdfg.compile()
 
@@ -1097,13 +1116,28 @@ def test_an_early_return_hands_back_the_device_result(return_after_arm: bool) ->
     np.testing.assert_array_equal(fell_through, np.full(8, 0.0))
 
 
-def test_the_state_before_an_early_return_does_not_outlive_the_pass() -> None:
-    """The copy-back follows the state the pass puts before the return; nothing empty is left behind."""
-    sdfg = early_return_sdfg(return_after_arm=True)
-    OtA().apply_pass(sdfg, {})
+def branch_into_a_sibling_arm_sdfg() -> dace.SDFG:
+    """A three-way branch on ``n`` whose first arm can jump into the third arm, which no ConditionalBlock expresses."""
+    sdfg = dace.SDFG("branch_into_a_sibling_arm")
+    sdfg.add_symbol("n", dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    first, second, third, end = (sdfg.add_state(label) for label in ("first", "second", "third", "end"))
+    sdfg.add_edge(start, first, dace.InterstateEdge(condition="n > 1"))
+    sdfg.add_edge(start, second, dace.InterstateEdge(condition="n == 1"))
+    sdfg.add_edge(start, third, dace.InterstateEdge(condition="n < 1"))
+    sdfg.add_edge(first, third, dace.InterstateEdge(condition="n > 5"))
+    sdfg.add_edge(first, end, dace.InterstateEdge(condition="n <= 5"))
+    sdfg.add_edge(second, end, dace.InterstateEdge())
+    sdfg.add_edge(third, end, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
 
-    empty = [state.label for state in sdfg.states() if state.number_of_nodes() == 0]
-    assert not empty, f"the pass left empty states behind: {empty}"
+
+def test_offloading_refuses_control_flow_that_raising_leaves_unstructured() -> None:
+    sut = branch_into_a_sibling_arm_sdfg()
+
+    with pytest.raises(NotImplementedError, match=r"OffloadToAccelerator requires structured control flow.*'start'"):
+        ppl.Pipeline([OtA()]).apply_pass(sut, {})
 
 
 if __name__ == "__main__":
