@@ -4375,6 +4375,29 @@ class ProgramVisitor(ExtNodeVisitor):
                 outputs[arrname] = dace.Memlet.from_array(new_arrname, newarr)
                 rets.append(new_arrname)
 
+        # A callee cannot be given fewer elements than it declares (differently-shaped arguments are allowed)
+        size_mapping = {
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+            for k, v in (mapping or {}).items() if isinstance(v, (str, int, sympy.Basic))
+        }
+        for a, m in itertools.chain(inputs.items(), outputs.items()):
+            if not isinstance(m, Memlet) or a not in sdfg.arrays or a.startswith('__return'):
+                continue
+            inner_desc = sdfg.arrays[a]
+            if not isinstance(inner_desc, data.Array) or inner_desc.transient:
+                continue
+            inner_size = sympy.Integer(1)
+            for s in inner_desc.shape:
+                inner_size *= symbolic.pystr_to_symbolic(s)
+            if size_mapping:
+                inner_size = inner_size.subs(size_mapping, simultaneous=True)
+            outer_size = symbolic.pystr_to_symbolic(m.subset.num_elements())
+            if (inner_size > outer_size) == True:
+                raise DaceSyntaxError(
+                    self, node, f'Argument "{a}" in call to "{funcname}" is declared with {inner_size} elements '
+                    f'(shape {tuple(inner_desc.shape)}), but the given argument only has {outer_size} elements '
+                    f'(shape {tuple(self.sdfg.arrays[m.data].shape)})')
+
         # Update strides
         inv_mapping = {v: k for k, v in mapping.items() if symbolic.issymbolic(v) or isinstance(v, str)}
         for a, m in itertools.chain(inputs.items(), outputs.items()):
