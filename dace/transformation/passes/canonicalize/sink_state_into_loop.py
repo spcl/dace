@@ -128,7 +128,7 @@ class SinkStateIntoLoop(ppl.Pass):
         if start is None or end is None or stride is None:
             return False
         span = symbolic.simplify(end - start) if stride > 0 else symbolic.simplify(start - end)
-        return sympy.simplify(span >= 0) == sympy.true
+        return symbolic.simplify(span >= 0) == sympy.true
 
 
 __all__ = ['SinkStateIntoLoop']

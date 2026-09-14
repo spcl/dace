@@ -82,7 +82,7 @@ def _tile_extent(max_elem, min_elem):
     """
     if isinstance(max_elem, sympy.Min):
         for arg in max_elem.args:
-            diff = sympy.simplify(arg - min_elem)
+            diff = dace.symbolic.simplify(arg - min_elem)
             if diff.is_Integer and diff >= 0:
                 return diff + 1
     return max_elem + 1 - min_elem

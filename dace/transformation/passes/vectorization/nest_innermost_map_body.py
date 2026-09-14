@@ -82,7 +82,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             return False
         trip = symbolic.simplify(ub - lb + 1)
         try:
-            if bool((trip % self.vector_width).simplify() == 0):
+            if bool(symbolic.simplify(trip % self.vector_width) == 0):
                 return True
         except Exception:
             pass
