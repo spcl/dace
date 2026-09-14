@@ -237,9 +237,9 @@ def _probing_for_gpu_backend() -> str:
     # Probe the system for the GPU backend. Called by ``get_gpu_backend()`` when
     # the backend is unset, not directly; the cached result never changes.
     def _try_execute(cmd: str) -> bool:
-        process = subprocess.Popen(cmd.split(' '), stderr=subprocess.STDOUT, stdout=subprocess.PIPE, shell=True)
-        errcode = process.wait()
-        return errcode == 0
+        # The output is never read: an unread pipe leaks its file and can block a chatty process.
+        completed = subprocess.run(cmd.split(' '), stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, shell=True)
+        return completed.returncode == 0
 
     # Test 1: Test for existence of *-smi
     if _try_execute('nvidia-smi'):
