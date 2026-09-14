@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``all_nodes_between`` discards its whole walk when the region holds a sink.
 
-The docstring now says so, and these pin it. The behaviour is easy to read as "omit the dead-ending
+The docstring now says so, and these pin it. The behavior is easy to read as "omit the dead-ending
 node" and it is not: a single node with no out-edges empties the result even when every other node
 reached ``end``. A predicate written over that result then reports "nothing found" without having
 inspected anything, which is how a scope gate comes to approve a body it never looked at.
