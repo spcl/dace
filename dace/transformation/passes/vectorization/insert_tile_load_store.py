@@ -21,6 +21,7 @@ from dace import data, dtypes, properties, subsets
 from dace.libraries.tileops import TileLoad, TileStore
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import has_one_marker
@@ -692,85 +693,103 @@ class InsertTileLoadStore(ppl.Pass):
             # aren't all already-bridged reads, leave the AN alone (unknown shape -- stay safe).
             if pre_stage_out_edges and not all(isinstance(e.dst, (TileLoad, TileStore)) for e in pre_stage_out_edges):
                 continue
+            # Several writes can land on ONE AN at distinct elements (``zsolqa[1, 4, i]`` and
+            # ``zsolqa[4, 1, i]``). One TileStore per AN would store every producer at the first
+            # edge's subset, so group by AN-side subset -- the same contract as the read phase.
+            write_groups: Dict[str, list] = {}
             try:
-                wsubset = an_side_subset(pre_stage_in_edges[0], an, inner_sdfg, inner_state)
+                for e in pre_stage_in_edges:
+                    write_groups.setdefault(str(an_side_subset(e, an, inner_sdfg, inner_state)), []).append(e)
             except Exception:  # noqa: BLE001
                 continue
-            wrecord = classify_tile_access(wsubset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
-            if not wrecord.per_dim_kind:
-                continue
-            refuse_linearized_multi_var_dim(wrecord, an.data, wsubset, iter_vars)
-            wkinds = set(wrecord.per_dim_kind)
-            if wkinds == {PerDimKind.CONSTANT}:
-                continue  # Loop-invariant write stays as direct producer -> AN copy (design 3.6).
-            if PerDimKind.GATHER in wkinds:
-                # SCATTER: build per-lane idx tile(s) as TILE LIB NODES + TileStore with gather_dims.
-                scatter_source_dims = tuple(k for k, kind in enumerate(wrecord.per_dim_kind)
-                                            if kind == PerDimKind.GATHER)
-                idx_sources_w: Dict[int, AccessNode] = {}
-                for k in scatter_source_dims:
-                    begin_str = str(wsubset.ranges[k][0])
-                    # Build the per-lane scatter index as TILE LIB NODES (same
-                    # (W_d if dep else ONE) tile as the gather side). No CPP fallback.
-                    idx_an = self._stage_index_via_tileops(inner_state,
-                                                           inner_sdfg,
-                                                           iter_vars,
-                                                           begin_str,
-                                                           name_hint=f"_idx_scatter_{an.data}_{k}",
-                                                           mask_an=self._mask_an(inner_state, mask_name))
-                    if idx_an is None:
-                        raise NotImplementedError(
-                            f"InsertTileLoadStore: could not build a tile-op scatter index for "
-                            f"{begin_str!r} (write of '{an.data}' dest dim {k}, iter_vars={iter_vars}). "
-                            f"The CPP per-lane materialiser was removed (user 2026-06-14: no CPP index "
-                            f"tasklets); this index shape needs a tile-op lowering path.")
-                    idx_sources_w[k] = idx_an
-                # Dest base: scatter dims span full extent (per-lane idx gives position);
-                # NON-scatter dims keep their per-tile begin so base carries the
-                # linear/constant offset (mixed scatter+linear, e.g. ``zratio[jo-1,
-                # _for_it_88]``). See the read-gather note.
-                _wgset = set(scatter_source_dims)
-                _wparts = [(f"0:{s}" if d in _wgset else str(wsubset.ranges[d][0])) for d, s in enumerate(desc.shape)]
-                dst_subset_memlet = Memlet(data=an.data, subset=", ".join(_wparts))
-                # Per-tile-dim lane stride + dest-dim mapping (see read-gather note): each tile
-                # dim maps to the dest dim its iter-var indexes so scatter adds the per-lane
-                # offset for LINEAR tile dims under any layout (Fortran ``zratio[_for_it_88,
-                # jo-1]`` -- tile dim0).
-                _w_strides, _w_repl, _w_dst_dims = self._pad_to_tile_dims(
-                    wrecord, iter_vars, src_arr_strides=tuple(desc.strides) if desc.strides else None)
-                bridge_name, _ = stage_tile_store(inner_state,
-                                                  an,
-                                                  widths=tuple(self.widths),
-                                                  dst_subset=dst_subset_memlet,
-                                                  name_hint=f"{an.data}_scatter_out",
-                                                  dim_strides=_w_strides,
-                                                  dst_dims=_w_dst_dims,
-                                                  gather_dims=scatter_source_dims,
-                                                  idx_sources=idx_sources_w,
-                                                  mask_an=self._mask_an(inner_state, mask_name))
-                self._rewire_producers_to_bridge(inner_state, an, bridge_name, pre_stage_in_edges)
-                staged += 1
-                continue
-            # Structured tile store: LINEAR / AFFINE / REPLICATE / MODULAR.
-            dst_subset_memlet = Memlet.from_memlet(pre_stage_in_edges[0].data)
-            dst_arr_strides = tuple(desc.strides) if desc.strides else None
-            # Per-tile-dim coefficient + dest-dim basis, derived together (see structured-read
-            # note): each tile dim writes along the array dim its iter-var indexes, so Fortran
-            # ``C[i, j]`` strides ``(1, M)`` strides the ``i``-tile by 1 (dim-0 stride), not by
-            # ``M``; diagonal ``C[i, i]`` uses the combined byte stride vs its unit-stride
-            # indexed dim.
-            dim_strides_w, _, _s_dst_dims = self._pad_to_tile_dims(wrecord, iter_vars, src_arr_strides=dst_arr_strides)
-            bridge_name, _ = stage_tile_store(inner_state,
-                                              an,
-                                              widths=tuple(self.widths),
-                                              dst_subset=dst_subset_memlet,
-                                              name_hint=f"{an.data}_tile_out",
-                                              dim_strides=dim_strides_w,
-                                              dst_dims=_s_dst_dims,
-                                              mask_an=self._mask_an(inner_state, mask_name))
-            self._rewire_producers_to_bridge(inner_state, an, bridge_name, pre_stage_in_edges)
-            staged += 1
+            for w_edges in write_groups.values():
+                staged += self.stage_write_group(inner_state, inner_sdfg, an, w_edges, iter_vars, mask_name)
         return staged
+
+    def stage_write_group(self, inner_state: SDFGState, inner_sdfg: SDFG, an: AccessNode,
+                          w_edges: List[MultiConnectorEdge], iter_vars: Tuple[str,
+                                                                              ...], mask_name: Optional[str]) -> int:
+        """Stage the writes into ``an`` that share one AN-side subset through one TileStore.
+
+        :return: 1 if a TileStore was staged, 0 if the group stays a direct write.
+        """
+        desc = inner_sdfg.arrays[an.data]
+        wsubset = an_side_subset(w_edges[0], an, inner_sdfg, inner_state)
+        wrecord = classify_tile_access(wsubset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
+        if not wrecord.per_dim_kind:
+            return 0
+        refuse_linearized_multi_var_dim(wrecord, an.data, wsubset, iter_vars)
+        wkinds = set(wrecord.per_dim_kind)
+        if wkinds == {PerDimKind.CONSTANT}:
+            return 0  # Loop-invariant write stays as direct producer -> AN copy (design 3.6).
+        if PerDimKind.GATHER in wkinds:
+            # SCATTER: build per-lane idx tile(s) as TILE LIB NODES + TileStore with gather_dims.
+            scatter_source_dims = tuple(k for k, kind in enumerate(wrecord.per_dim_kind) if kind == PerDimKind.GATHER)
+            idx_sources_w: Dict[int, AccessNode] = {}
+            for k in scatter_source_dims:
+                begin_str = str(wsubset.ranges[k][0])
+                # Build the per-lane scatter index as TILE LIB NODES (same
+                # (W_d if dep else ONE) tile as the gather side). No CPP fallback.
+                idx_an = self._stage_index_via_tileops(inner_state,
+                                                       inner_sdfg,
+                                                       iter_vars,
+                                                       begin_str,
+                                                       name_hint=f"_idx_scatter_{an.data}_{k}",
+                                                       mask_an=self._mask_an(inner_state, mask_name))
+                if idx_an is None:
+                    raise NotImplementedError(
+                        f"InsertTileLoadStore: could not build a tile-op scatter index for "
+                        f"{begin_str!r} (write of '{an.data}' dest dim {k}, iter_vars={iter_vars}). "
+                        f"The CPP per-lane materialiser was removed (user 2026-06-14: no CPP index "
+                        f"tasklets); this index shape needs a tile-op lowering path.")
+                idx_sources_w[k] = idx_an
+            # Dest base: scatter dims span full extent (per-lane idx gives position);
+            # NON-scatter dims keep their per-tile begin so base carries the
+            # linear/constant offset (mixed scatter+linear, e.g. ``zratio[jo-1,
+            # _for_it_88]``). See the read-gather note.
+            scatter_dim_set = set(scatter_source_dims)
+            dest_parts = [(f"0:{s}" if d in scatter_dim_set else str(wsubset.ranges[d][0]))
+                          for d, s in enumerate(desc.shape)]
+            dst_subset_memlet = Memlet(data=an.data, subset=", ".join(dest_parts))
+            # Per-tile-dim lane stride + dest-dim mapping (see read-gather note): each tile
+            # dim maps to the dest dim its iter-var indexes so scatter adds the per-lane
+            # offset for LINEAR tile dims under any layout (Fortran ``zratio[_for_it_88,
+            # jo-1]`` -- tile dim0).
+            scatter_strides, scatter_replacements, scatter_dst_dims = self._pad_to_tile_dims(
+                wrecord, iter_vars, src_arr_strides=tuple(desc.strides) if desc.strides else None)
+            bridge_name, scatter_store = stage_tile_store(inner_state,
+                                                          an,
+                                                          widths=tuple(self.widths),
+                                                          dst_subset=dst_subset_memlet,
+                                                          name_hint=f"{an.data}_scatter_out",
+                                                          dim_strides=scatter_strides,
+                                                          dst_dims=scatter_dst_dims,
+                                                          gather_dims=scatter_source_dims,
+                                                          idx_sources=idx_sources_w,
+                                                          mask_an=self._mask_an(inner_state, mask_name))
+            self._rewire_producers_to_bridge(inner_state, an, bridge_name, w_edges)
+            return 1
+        # Structured tile store: LINEAR / AFFINE / REPLICATE / MODULAR.
+        dst_subset_memlet = Memlet.from_memlet(w_edges[0].data)
+        dst_arr_strides = tuple(desc.strides) if desc.strides else None
+        # Per-tile-dim coefficient + dest-dim basis, derived together (see structured-read
+        # note): each tile dim writes along the array dim its iter-var indexes, so Fortran
+        # ``C[i, j]`` strides ``(1, M)`` strides the ``i``-tile by 1 (dim-0 stride), not by
+        # ``M``; diagonal ``C[i, i]`` uses the combined byte stride vs its unit-stride
+        # indexed dim.
+        dim_strides_w, structured_replacements, store_dst_dims = self._pad_to_tile_dims(wrecord,
+                                                                                        iter_vars,
+                                                                                        src_arr_strides=dst_arr_strides)
+        bridge_name, structured_store = stage_tile_store(inner_state,
+                                                         an,
+                                                         widths=tuple(self.widths),
+                                                         dst_subset=dst_subset_memlet,
+                                                         name_hint=f"{an.data}_tile_out",
+                                                         dim_strides=dim_strides_w,
+                                                         dst_dims=store_dst_dims,
+                                                         mask_an=self._mask_an(inner_state, mask_name))
+        self._rewire_producers_to_bridge(inner_state, an, bridge_name, w_edges)
+        return 1
 
     def _pad_to_tile_dims(self, record, iter_vars: Tuple[str, ...], src_arr_strides=None):
         """Pad classifier's per-source-dim arrays (``dim_strides``, ``replicate_factor_per_dim``)

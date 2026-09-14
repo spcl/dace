@@ -13,6 +13,8 @@ on simple Python kernels. Each test confirms:
 * CONSTANT (loop-invariant) edges stay direct -- no lib node, no Python
   assignment tasklet inserted.
 """
+import numpy as np
+
 import dace
 from dace import data as dt
 from dace.libraries.tileops import TileLoad, TileStore
@@ -207,3 +209,53 @@ def test_resize_scalar_chain_preserves_ordering_edge():
     assert isinstance(inner_sdfg.arrays["s1"], dt.Array)  # s1 did get widened to (4,)
     edge = state.edges_between(s1_an, sink_an)[0]
     assert edge.data.is_empty(), "the ordering edge must stay empty, not gain a bogus subset"
+
+
+def zsolqa_updates_into_one_access_node():
+    """``A[0, 4, i:i+8] = B`` and ``A[4, 0, i:i+8] = C`` land on ONE access node of ``A``: the tiled form of
+    CloudSC's ``zsolqa[0, 4, i - 1]`` / ``zsolqa[4, 0, i - 1]`` updates as they reach this pass."""
+    sdfg = dace.SDFG("zsolqa_updates_into_one_access_node")
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_array("A", [5, 5, 8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_array("C", [8], dace.float64)
+    state = sdfg.add_state("s")
+    target = state.add_access("A")
+    for source, element in (("B", "0, 4"), ("C", "4, 0")):
+        copy = dace.Memlet(f"A[{element}, i:i+8]")
+        copy.other_subset = dace.subsets.Range.from_string("0:8")
+        state.add_edge(state.add_access(source), None, target, None, copy)
+    return sdfg, state
+
+
+def test_writes_to_two_elements_of_one_access_node_get_one_store_each():
+    """Each write keeps its own element: one TileStore per written element, fed only by that element's source."""
+    sdfg, state = zsolqa_updates_into_one_access_node()
+
+    staged = InsertTileLoadStore(widths=(8, ))._stage_writes_in_state(state, sdfg, ("i", ), None)
+
+    assert staged == 2
+    written = {}
+    for store in [n for n in state.nodes() if isinstance(n, TileStore)]:
+        bridge = next(e.src for e in state.in_edges(store) if e.dst_conn == "_src")
+        sources = [e.src.data for e in state.in_edges(bridge)]
+        elements = [str(e.data.subset) for e in state.out_edges(store)]
+        written[tuple(elements)] = sources
+    assert written == {("0, 4, i:i + 8", ): ["B"], ("4, 0, i:i + 8", ): ["C"]}
+
+
+def test_writes_to_two_elements_of_one_access_node_both_reach_the_array():
+    """Numbers: after staging and running, ``A[0, 4]`` holds ``B``, ``A[4, 0]`` holds ``C``, the rest is untouched."""
+    sdfg, state = zsolqa_updates_into_one_access_node()
+    InsertTileLoadStore(widths=(8, ))._stage_writes_in_state(state, sdfg, ("i", ), None)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    rng = np.random.default_rng(0)
+    B, C = rng.random(8), rng.random(8)
+    A = np.full((5, 5, 8), 7.0)
+
+    sdfg(A=A, B=B, C=C, i=0)
+
+    expected = np.full((5, 5, 8), 7.0)
+    expected[0, 4], expected[4, 0] = B, C
+    np.testing.assert_array_equal(A, expected)
