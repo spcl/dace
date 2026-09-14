@@ -7,6 +7,7 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
 from dace.transformation.passes import (ParallelizePipeline, parallelize, BestEffortLoopPeeling, ShortLoopUnroll)
+from dace.transformation.passes.parallelization_prep import loop_body_census
 
 M, N = (dace.symbol(s) for s in ('M', 'N'))
 
@@ -126,6 +127,51 @@ def test_parallelize_unrolls_short_constant_loop():
     A = np.random.default_rng(4).random(5)
     B = np.zeros(1)
     sdfg(A=A, B=B)
+    assert np.allclose(B[0], A.sum())
+
+
+def test_short_loop_unroll_leaves_a_loop_rolled_when_its_body_holds_a_map():
+    """A map body is already parallel; sw4_rhs4sg's unrolls cloned map bodies from 7541 to 87343 nodes that
+    every later canonicalize stage walked."""
+
+    @dace.program
+    def rows(A: dace.float64[4, N], B: dace.float64[4, N]):
+        for j in range(4):
+            B[j, :] = A[j, :] * 2.0
+
+    sdfg = rows.to_sdfg(simplify=True)
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    assert len(loops) == 1 and loop_body_census(loops[0])[1], 'the fixture must be a short loop over a map body'
+    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) is None
+    assert _num_loops(sdfg) == 1
+
+    A = np.random.default_rng(6).random((4, 3))
+    B = np.zeros((4, 3))
+    sdfg(A=A, B=B, N=3)
+    assert np.allclose(B, A * 2.0)
+
+
+def test_short_loop_unroll_leaves_a_loop_rolled_when_its_body_exceeds_the_tasklet_budget():
+    """A large body multiplies by every trip; the budget bounds what one unroll may clone."""
+
+    @dace.program
+    def short_reduce(A: dace.float64[5], B: dace.float64[1]):
+        acc = 0.0
+        for j in range(5):
+            acc += A[j]
+        B[0] = acc
+
+    bounded = short_reduce.to_sdfg(simplify=True)
+    assert ShortLoopUnroll(unroll_limit=8, unroll_tasklet_budget=0).apply_pass(bounded, {}) is None
+    assert _num_loops(bounded) == 1  # at least one tasklet > a zero budget -> left rolled, graph untouched
+
+    within = short_reduce.to_sdfg(simplify=True)
+    ShortLoopUnroll(unroll_limit=8, unroll_tasklet_budget=100).apply_pass(within, {})
+    assert _num_loops(within) == 0  # a small map-free body still unrolls
+
+    A = np.random.default_rng(5).random(5)
+    B = np.zeros(1)
+    bounded(A=A, B=B)
     assert np.allclose(B[0], A.sum())
 
 

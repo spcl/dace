@@ -133,6 +133,15 @@ required:
                             Fully unroll constant-trip loops with at most this many
                             iterations (0 disables). Seeds ``ShortLoopUnroll.unroll_limit``.
 
+                    unroll_tasklet_budget:
+                        type: int
+                        default: 100
+                        title: Short-loop unroll tasklet budget
+                        description: >
+                            Leave a constant-trip loop rolled when its body holds a map or more
+                            than this many tasklets (nested SDFGs included). Inner loops do not
+                            block it. Seeds ``ShortLoopUnroll.unroll_tasklet_budget``.
+
                     peel_limit:
                         type: int
                         default: 8

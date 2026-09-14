@@ -20,13 +20,13 @@ imports pull in).
 """
 import ast
 import copy
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 import sympy
 
 from dace import properties, symbolic
 from dace.config import Config
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState,
                              enclosing_region_symbols)
 from dace.transformation import pass_pipeline as ppl
@@ -34,6 +34,7 @@ from dace.transformation import pass_pipeline as ppl
 #: Default trip-count threshold below which a constant-trip loop is unrolled
 #: (``optimizer.canonicalization.unroll_limit``).
 DEFAULT_UNROLL_LIMIT = Config.get('optimizer', 'canonicalization', 'unroll_limit')
+DEFAULT_UNROLL_TASKLET_BUDGET = Config.get('optimizer', 'canonicalization', 'unroll_tasklet_budget')
 #: Default maximum number of iterations peeled (per side) when searching for a
 #: peel that unblocks parallelization (``optimizer.canonicalization.peel_limit``).
 DEFAULT_PEEL_LIMIT = Config.get('optimizer', 'canonicalization', 'peel_limit')
@@ -282,6 +283,21 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
     return fused
 
 
+def loop_body_census(loop: LoopRegion) -> Tuple[int, bool]:
+    """(tasklets, holds a map) over every state ``loop`` holds, nested SDFGs included; stops at the first map."""
+    tasklets = 0
+    states = list(loop.all_states())
+    while states:
+        for node in states.pop().nodes():
+            if isinstance(node, nodes.MapEntry):
+                return tasklets, True
+            if isinstance(node, nodes.Tasklet):
+                tasklets += 1
+            elif isinstance(node, nodes.NestedSDFG):
+                states.extend(node.sdfg.all_states())
+    return tasklets, False
+
+
 @properties.make_properties
 class ShortLoopUnroll(ppl.Pass):
     """Fully unroll every constant-trip loop with at most ``unroll_limit`` iterations.
@@ -290,7 +306,12 @@ class ShortLoopUnroll(ppl.Pass):
     after each unroll -- scoped to just the touched region, not the whole SDFG. So an enclosing loop
     deepcopies an already-compacted, loop-free body instead of a fan-out of one-state-per-iterate
     sub-loops: far less deepcopy volume and no intermediate blow-up (measured 6.5x faster on CloudSC vs
-    unroll-then-global-fuse), so it is unconditional."""
+    unroll-then-global-fuse), so it is unconditional.
+
+    A loop whose body holds a map, or more than ``unroll_tasklet_budget`` tasklets, stays rolled for
+    LoopToMap. A map body is already parallel: sw4_rhs4sg's unrolls cloned map bodies from 7541 to 87343
+    nodes that every later canonicalize stage walked. Inner loops do not block an unroll; CloudSC's species
+    loops hold symbolic inner loops, and at most 80 tasklets."""
 
     CATEGORY: str = 'Optimization Preparation'
 
@@ -299,8 +320,16 @@ class ShortLoopUnroll(ppl.Pass):
         default=DEFAULT_UNROLL_LIMIT,
         desc='Fully unroll constant-trip loops with at most this many iterations (0 disables).')
 
-    def __init__(self, unroll_limit: int = DEFAULT_UNROLL_LIMIT):
+    unroll_tasklet_budget = properties.Property(
+        dtype=int,
+        default=DEFAULT_UNROLL_TASKLET_BUDGET,
+        desc='Leave a loop rolled when its body holds a map or more than this many tasklets.')
+
+    def __init__(self,
+                 unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+                 unroll_tasklet_budget: int = DEFAULT_UNROLL_TASKLET_BUDGET):
         self.unroll_limit = unroll_limit
+        self.unroll_tasklet_budget = unroll_tasklet_budget
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -350,6 +379,9 @@ class ShortLoopUnroll(ppl.Pass):
                 trip = trips[loop]
                 if trip is None or trip > self.unroll_limit:
                     continue
+                tasklets, holds_map = loop_body_census(loop)
+                if holds_map or tasklets > self.unroll_tasklet_budget:
+                    continue  # a map body is already parallel, a large body clones too much; leave for LoopToMap
                 if _unfusable_branchy_body(loop):
                     continue  # would clone a branchy body local fusion cannot re-merge; leave for LoopToMap
                 parent = loop.parent_graph
