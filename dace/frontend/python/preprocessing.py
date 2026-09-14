@@ -1588,16 +1588,19 @@ class MPIResolver(ast.NodeTransformer):
 
 
 class ModuloConverter(ast.NodeTransformer):
-    """ Converts a % b expressions to (a + b) % b for C/C++ compatibility. """
+    """ Spells Python's ``a % b`` as ``PyMod(a, b)``. A bare ``%`` in an SDFG is C's modulo, which truncates, while
+        Python's floors (see :ref:`division-modulo`), so every tasklet, memlet and condition built from the program
+        keeps Python's semantics. String formatting (``'%d' % x``) is left alone. """
 
-    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
-        if isinstance(node.op, ast.Mod):
-            left = self.generic_visit(node.left)
-            right = self.generic_visit(node.right)
-            newleft = ast.copy_location(ast.BinOp(left=left, op=ast.Add(), right=astutils.copy_tree(right)), left)
-            node.left = newleft
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        node = self.generic_visit(node)
+        if not isinstance(node.op, ast.Mod):
             return node
-        return self.generic_visit(node)
+        if isinstance(node.left, ast.JoinedStr) or (isinstance(node.left, ast.Constant)
+                                                    and isinstance(node.left.value, str)):
+            return node
+        call = ast.Call(func=ast.Name(id='PyMod', ctx=ast.Load()), args=[node.left, node.right], keywords=[])
+        return ast.copy_location(call, node)
 
 
 def preprocess_dace_program(f: Callable[..., Any],
@@ -1645,7 +1648,6 @@ def preprocess_dace_program(f: Callable[..., Any],
     # Guard the availability check only, so a genuine error inside the visitor still surfaces.
     if mpi4py_is_usable():
         src_ast = MPIResolver(global_vars).visit(src_ast)
-    src_ast = ModuloConverter().visit(src_ast)
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
@@ -1704,6 +1706,9 @@ def preprocess_dace_program(f: Callable[..., Any],
                 print(f'VERBOSE: Failed to preprocess (pass #{pass_num}) the following program:')
                 print(astutils.unparse(src_ast))
             raise
+
+    # After constant folding, which evaluates a constant ``%`` with Python's own semantics.
+    src_ast = ModuloConverter().visit(src_ast)
 
     try:
         ctr = CallTreeResolver(closure_resolver.closure, resolved)

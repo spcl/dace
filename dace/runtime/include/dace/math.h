@@ -56,36 +56,6 @@ DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& 
     return (a > max(ts...)) ? a : max(ts...);
 }
 
-template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
-    return value % modulus;
-}
-
-// Fortran implements MOD for floating-point values as well
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Mod_float(const T& value, const T& modulus) {
-    return value - static_cast<int>(value / modulus) * modulus;
-}
-
-// Fortran implementation of MODULO
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Modulo(const T& value, const T& modulus) {
-    // Fortran implementation for integers - find R such that value = Q * modulus + R
-    // However, R must be in [0, modulus)
-    // To achieve that, we need to cast the division to floats.
-    // Example: -17, 3 must produce 1 and not -2.
-    // If we don't use cast, the floor is called on -5, producing wrong value.
-    // Instead, we need to have floor(-5.6... ) to ensure it produces -6.
-    // Similarly, 17, -3 must produce -1 and not 2.
-    // This means that the default solution works if value and modulus have the same sign.
-    return value - floor(static_cast<float>(value) / modulus) * modulus;
-}
-
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Modulo_float(const T& value, const T& modulus) {
-    return value - floor(value / modulus) * modulus;
-}
-
 // Implement to support a match with Fortran's intrinsic EXPONENT
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
@@ -281,14 +251,34 @@ static DACE_CONSTEXPR DACE_HDFI auto py_mod(const T1& numerator, const T2& denom
     return py_mod<T>((T)numerator, (T)denominator);
 }
 
-// Computes C/C++ modulus (operator % and fmod)
+// C modulus (``CMod``, a tasklet's ``%``): the quotient truncates toward zero, so the remainder takes the
+// dividend's sign (``c_mod(-7, 3) == -1``). ``%`` on integers, ``fmod`` on floating point, which has no ``%``.
 template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
+static DACE_CONSTEXPR DACE_HDFI T c_mod(const T& numerator, const T& denominator) {
     return numerator % denominator;
 }
-template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T c_mod(const T& numerator, const T& denominator) {
     return (T)std::fmod(numerator, denominator);
+}
+// Mixed-operand-type overload, as for py_mod above.
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto c_mod(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return c_mod<T>((T)numerator, (T)denominator);
+}
+
+// Fortran ``MOD`` (``FtnMod``), also ``AMOD`` / ``DMOD``: ``A - INT(A / P) * P``, the C modulus.
+template<typename T1, typename T2>
+static DACE_CONSTEXPR DACE_HDFI auto ftn_mod(const T1& numerator, const T2& denominator) -> decltype(c_mod(numerator, denominator)) {
+    return c_mod(numerator, denominator);
+}
+
+// Fortran ``MODULO`` (``FtnModulo``): ``A - FLOOR(A / P) * P``, the remainder takes the divisor's sign
+// (``ftn_modulo(-7, 3) == 2``), which is Python's ``%``.
+template<typename T1, typename T2>
+static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& denominator) -> decltype(py_mod(numerator, denominator)) {
+    return py_mod(numerator, denominator);
 }
 
 // Computes C/C++ divmod (std::div)

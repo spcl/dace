@@ -855,18 +855,15 @@ class CPPUnparser:
         "RShift": ">>",
         "BitOr": "|",
         "BitXor": "^",
-        "BitAnd": "&"
+        "BitAnd": "&",
+        "Mod": "%"
     }
-    # ``//`` and ``%`` are Python's, hence numpy's: the quotient rounds toward negative infinity and
-    # the remainder therefore takes the divisor's sign (``-32 // 7 == -5``, ``-32 % 7 == 3``). C
-    # rounds toward zero and gives the remainder the dividend's sign, so neither can be written
-    # infix. ``ifloor(a / b)`` was wrong on integers, where ``a / b`` has already truncated and
-    # flooring an integer changes nothing; a bare ``%`` was wrong the same way on integers and does
-    # not compile at all on floats, which C has no ``%`` for. ``py_floor`` / ``py_mod`` dispatch on
-    # the operand type and answer for every one of them.
+    # ``//`` is Python's floor division, which C cannot write infix: C's ``/`` truncates toward zero
+    # (``-32 // 7`` is ``-5``, C gives ``-4``), and ``ifloor(a / b)`` floors a quotient that has already
+    # truncated on integers. ``py_floor`` dispatches on the operand type. A tasklet's ``%`` is C's and
+    # stays infix; a frontend that means another modulo calls it by name (see :ref:`division-modulo`).
     funcops = {
         "FloorDiv": (",", "py_floor"),
-        "Mod": (",", "py_mod"),
         "MatMult": (",", "dace::gemm"),
     }
 
@@ -995,6 +992,15 @@ class CPPUnparser:
         "And": ast.And,
         "Or": ast.Or,
     }
+    # The modulo functions a frontend spells by name, and their runtime helpers (see :ref:`division-modulo`).
+    # ``Mod`` is SymPy's floored modulo, printed by name when it does not agree with C's ``%``.
+    modulo_calls = {
+        "CMod": "c_mod",
+        "FtnMod": "ftn_mod",
+        "Mod": "py_mod",
+        "PyMod": "py_mod",
+        "FtnModulo": "ftn_modulo",
+    }
 
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
@@ -1011,7 +1017,10 @@ class CPPUnparser:
                 self.dispatch(ast.BoolOp(op=op, values=t.args))
                 return
 
-        self.dispatch(t.func)
+        if isinstance(t.func, ast.Name) and t.func.id in self.modulo_calls:
+            self.write(self.modulo_calls[t.func.id])
+        else:
+            self.dispatch(t.func)
         self.write("(")
         comma = False
         for e in t.args:

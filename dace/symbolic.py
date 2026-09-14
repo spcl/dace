@@ -111,7 +111,7 @@ _SERIALIZED_TYPED_COMPLEX_CONSTANT = re.compile(rf'\(\s*(?:(?P<re>{_SERIALIZED_C
 # The ``.`` matches attribute access only (not a numeric decimal point): routing a float
 # literal through ``ast.parse`` would round a near-max value like HUGE up to ``inf``.
 _NEEDS_AST_REWRITE = re.compile(
-    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]')
+    r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|%|\.(?![0-9])|[\[]|[\]]')
 
 
 def _is_sympy_number(expr) -> bool:
@@ -1083,6 +1083,28 @@ class __int_floor(int_floor):
     pass
 
 
+class CMod(sympy.Function):
+    """ C's modulo, which ``%`` means everywhere in an SDFG: the quotient truncates toward zero, so the remainder
+        takes the dividend's sign (``CMod(-7, 3) == -1``). SymPy's ``Mod`` is the floored modulo
+        (``Mod(-7, 3) == 2``); the two agree on a nonnegative dividend and a positive divisor, where ``CMod`` becomes
+        ``Mod``. See :ref:`division-modulo`. """
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number and y != 0:
+            return x - y * sympy.Integer(int(x / y))
+        if x.is_nonnegative and y.is_positive:
+            return sympy.Mod(x, y)
+
+    def _eval_is_integer(self):
+        return self.args[0].is_integer and self.args[1].is_integer
+
+
+#: Frontend modulo spellings (see :ref:`division-modulo`): Fortran ``MOD`` truncates like C, Python's ``%`` and
+#: Fortran ``MODULO`` floor like SymPy's ``Mod``.
+MODULO_FUNCTIONS = {'CMod': CMod, 'FtnMod': CMod, 'Mod': sympy.Mod, 'PyMod': sympy.Mod, 'FtnModulo': sympy.Mod}
+
+
 class int_ceil(sympy.Function):
 
     @classmethod
@@ -1590,6 +1612,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.LShift: '__left_shift',
         ast.RShift: '__right_shift',
         ast.FloorDiv: '__int_floor',
+        ast.Mod: 'CMod',
     }
 
     def visit_UnaryOp(self, node):
@@ -1841,7 +1864,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return _construct_function_uncached(sympy.Mod, a, b, evaluate=False)
+        return _construct_function_uncached(CMod, a, b)
 
     @staticmethod
     def _unary_minus(a):
@@ -1896,7 +1919,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'int_floor': int_floor,
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
-        'Mod': sympy.Mod,
+        **MODULO_FUNCTIONS,
         'Attr': Attr,
         'BitwiseAnd': bitwise_and,
         'BitwiseOr': bitwise_or,
@@ -2269,7 +2292,7 @@ _PYSTR2SYM_locals = {
     '__int_floor': __int_floor,
     'int_ceil': int_ceil,
     'IfExpr': IfExpr,
-    'Mod': sympy.Mod,
+    **MODULO_FUNCTIONS,
     'Attr': Attr,
     'Subscript': Subscript,
     'id': sympy.Symbol('id'),
@@ -2421,6 +2444,14 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
+        # SymPy's floored Mod. ``%`` is C's (CMod) and agrees with it only on a nonnegative dividend and a positive
+        # divisor; printed as ``%`` anywhere else it would read back, and run, with the other rounding.
+        dividend, divisor = expr.args
+        if dividend.is_nonnegative and divisor.is_positive:
+            return '((%s) %% (%s))' % (self._print(dividend), self._print(divisor))
+        return '%s(%s, %s)' % ('py_mod' if self.cpp_mode else 'Mod', self._print(dividend), self._print(divisor))
+
+    def _print_CMod(self, expr):
         return '((%s) %% (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
 
     def _print_Equality(self, expr):

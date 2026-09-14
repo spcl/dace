@@ -390,7 +390,7 @@ def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
 
     if list(out_shape) == [1]:
         tasklet = state.add_tasklet('_%s_' % operator, {'__in1', '__in2'}, {'__out'},
-                                    '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+                                    binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]))
         n1 = state.add_read(left_operand)
         n2 = state.add_read(right_operand)
         n3 = state.add_write(out_operand)
@@ -403,7 +403,7 @@ def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
                                      '__in1': Memlet.simple(left_operand, left_idx),
                                      '__in2': Memlet.simple(right_operand, right_idx)
                                  },
-                                 '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+                                 binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
                                  {'__out': Memlet.simple(out_operand, out_idx)},
                                  external_edges=True)
 
@@ -458,7 +458,7 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
             inp_conn = {'__in2'}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet('_%s_' % operator, inp_conn, {'__out'},
-                                    '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+                                    binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]))
         n3 = state.add_write(out_operand)
         if left_arr:
             state.add_edge(n1, None, tasklet, '__in1', Memlet.from_array(left_operand, left_arr))
@@ -473,7 +473,7 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
         state.add_mapped_tasklet("_%s_" % operator,
                                  all_idx_dict,
                                  inp_memlets,
-                                 '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+                                 binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
                                  {'__out': Memlet.simple(out_operand, out_idx)},
                                  external_edges=True)
 
@@ -528,7 +528,7 @@ def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left
             inp_conn = {'__in2'}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet('_%s_' % operator, inp_conn, {'__out'},
-                                    '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+                                    binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]))
         n3 = state.add_write(out_operand)
         if left_arr:
             state.add_edge(n1, None, tasklet, '__in1', Memlet.from_array(left_operand, left_arr))
@@ -543,7 +543,7 @@ def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left
         state.add_mapped_tasklet("_%s_" % operator,
                                  all_idx_dict,
                                  inp_memlets,
-                                 '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+                                 binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]),
                                  {'__out': Memlet.simple(out_operand, out_idx)},
                                  external_edges=True)
 
@@ -582,7 +582,7 @@ def _scalar_scalar_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, 
                                             find_new_name=True)
 
     tasklet = state.add_tasklet('_%s_' % operator, {'__in1', '__in2'}, {'__out'},
-                                '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+                                binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]))
     n1 = state.add_read(left_operand)
     n2 = state.add_read(right_operand)
     n3 = state.add_write(out_operand)
@@ -631,7 +631,7 @@ def _scalar_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, l
         inp_conn = {'__in2'}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet('_%s_' % operator, inp_conn, {'__out'},
-                                '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+                                binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]))
     n3 = state.add_write(out_operand)
     if left_scal:
         state.add_edge(n1, None, tasklet, '__in1', Memlet.from_array(left_operand, left_scal))
@@ -684,7 +684,7 @@ def _scalar_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, lef
         inp_conn = {'__in2'}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet('_%s_' % operator, inp_conn, {'__out'},
-                                '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
+                                binop_tasklet_code(tasklet_args[0], opcode, tasklet_args[1]))
     n3 = state.add_write(out_operand)
     if left_scal:
         state.add_edge(n1, None, tasklet, '__in1', Memlet.from_array(left_operand, left_scal))
@@ -693,6 +693,14 @@ def _scalar_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, lef
     state.add_edge(tasklet, '__out', n3, None, Memlet.from_array(out_operand, out_scal))
 
     return out_operand
+
+
+def binop_tasklet_code(left: str, opcode: str, right: str) -> str:
+    """ The tasklet computing ``left <opcode> right``. Python's ``%`` floors, while a tasklet's ``%`` is C's, so it
+        becomes ``PyMod`` (see :ref:`division-modulo`). """
+    if opcode == '%':
+        return f'__out = PyMod({left}, {right})'
+    return f'__out = {left} {opcode} {right}'
 
 
 _pyop2symtype = {
