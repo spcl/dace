@@ -1190,10 +1190,11 @@ def test_iec_keeps_the_ordering_edge_on_the_node_that_writes():
     assert c_write in ordered_after, "the copy that now writes tmp_A is not ordered after the write it followed"
 
 
-def test_copy_is_left_implicit_when_another_edge_writes_the_same_region():
+def test_copy_competing_with_another_write_is_lifted_ahead_of_it():
     """Nothing orders two writes to one region that reach a node on separate edges. Plain copy-edge
     codegen emits the copy when its SOURCE access node is visited, so it lands before the tasklet
-    that supersedes it; lifting it to a node would re-sort it after and flip which write survives."""
+    that supersedes it. As a node the copy is sorted afresh and could land after, flipping which
+    write survives, so the lift must carry a happens-before edge onto the tasklet."""
     sdfg = dace.SDFG("competing_writer")
     sdfg.add_array("A", [4], dace.float64)
     sdfg.add_array("B", [4], dace.float64)
@@ -1209,7 +1210,17 @@ def test_copy_is_left_implicit_when_another_edge_writes_the_same_region():
     InsertExplicitCopies().apply_pass(sdfg, {})
 
     lifted = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
-    assert not lifted, "a copy competing with another write to B was lifted"
+    assert len(lifted) == 1, "the copy competing with another write to B was not lifted"
+    ordered = [e for e in state.out_edges(lifted[0]) if e.dst is tasklet and e.data.is_empty()]
+    assert ordered, "the lifted copy is not ordered ahead of the tasklet that supersedes it"
+    sdfg.validate()
+
+    A = np.arange(4, dtype=np.float64) + 1.0
+    B = np.zeros(4, dtype=np.float64)
+    sdfg(A=A, B=B)
+    expected = A.copy()
+    expected[0] = A[0] + 1.0
+    np.testing.assert_array_equal(B, expected)
 
 
 def test_zero_element_copy_is_not_lifted():

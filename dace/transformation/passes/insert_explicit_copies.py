@@ -1,12 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances."""
 import copy
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from dace import data, dtypes, nodes, properties, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutils
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
@@ -36,30 +38,125 @@ def _derive_matching_dst_subset(src_subset: subsets.Range, dst_desc: data.Data) 
     return src_subset
 
 
-def _competing_writer(state: SDFGState, target: nodes.Node, edge, name: str, subset: subsets.Subset) -> bool:
-    """True if another edge into ``target`` writes a region of ``name`` that may overlap ``subset``.
+#: ``(position, rank)``: where plain codegen emits a write within one state (see :class:`DispatchOrder`).
+EmissionKey = Tuple[int, int]
 
-    Nothing in the graph orders two writes to the same region that reach a node on separate edges:
-    plain copy-edge codegen emits a copy when its SOURCE access node is visited, so the copy lands
-    before every other consumer of that node. Lifting the copy to a node of its own re-sorts it
-    against the competing write, which silently swaps which value survives (measured on npbench
-    ``vadv``: a dead ``dcol`` write moved after the tasklet that supersedes it). Where the order
-    cannot be shown to be irrelevant, leave the copy implicit.
 
-    :param state: the state holding ``target``.
-    :param target: the node the copy writes through (access node, or map exit when staging out).
-    :param edge: the copy edge itself, excluded from the scan.
-    :param name: data name the copy writes.
-    :param subset: region the copy writes.
-    :returns: ``True`` when a possibly-overlapping competing write exists.
+class DispatchOrder:
+    """The order plain codegen emits one state's writes in, taken before any copy is lifted.
+
+    ``dispatch_subgraph`` walks a DFS topological order and emits a map scope at its entry. An
+    implicit copy has no node of its own: a copy out of an access node is emitted during that node's
+    visit, in out-edge order, and a stage-in copy during the visit of the access node it fills, ahead
+    of that node's out-edges. So a key's rank is 0 for a node, positive for a copy out of an access
+    node and negative for a stage-in copy.
     """
-    for other in state.in_edges(target):
-        if other is edge or other.data.is_empty() or other.data.data != name:
-            continue
-        other_subset = other.data.get_dst_subset(other, state) or other.data.subset
-        if subsets.intersects(other_subset, subset) is not False:
-            return True
-    return False
+
+    __slots__ = ('position', 'rank')
+
+    def __init__(self, state: SDFGState) -> None:
+        sources = [node for node in state.nodes() if state.in_degree(node) == 0]
+        walk = sdutils.dfs_topological_sort(state, sources)
+        self.position: Dict[nodes.Node, int] = {node: index for index, node in enumerate(walk)}
+        self.rank: Dict[MultiConnectorEdge, int] = {}
+        for node in state.data_nodes():
+            for index, edge in enumerate(state.out_edges(node)):
+                self.rank[edge] = index + 1
+            in_edges = state.in_edges(node)
+            for index, edge in enumerate(in_edges):
+                if isinstance(edge.src, nodes.MapEntry):
+                    self.rank[edge] = index - len(in_edges)
+
+    def node_key(self, node: nodes.Node) -> EmissionKey:
+        """Key of a node's own emission."""
+        return self.position[node], 0
+
+    def copy_key(self, edge: MultiConnectorEdge) -> EmissionKey:
+        """Key of an implicit copy edge, emitted while its access node is visited."""
+        visited = edge.dst if isinstance(edge.src, nodes.MapEntry) else edge.src
+        return self.position[visited], self.rank.get(edge, 0)
+
+
+@dataclass(slots=True)
+class LiftedCopy:
+    """A copy the pass gave a node of its own, with the region it writes and its emission key.
+
+    :ivar node: the inserted copy node.
+    :ivar target: node the copy writes through (access node, or map exit when staging out).
+    :ivar name: data name the copy writes.
+    :ivar subset: region the copy writes.
+    :ivar key: where plain codegen emitted the copy before it was lifted.
+    """
+    node: CopyLibraryNode
+    target: nodes.Node
+    name: str
+    subset: subsets.Subset
+    key: EmissionKey
+
+
+def writer_anchor(state: SDFGState, edge: MultiConnectorEdge, order: DispatchOrder,
+                  lifted: Dict[nodes.Node, EmissionKey]) -> Optional[Tuple[EmissionKey, nodes.Node, nodes.Node]]:
+    """Emission key of a write reaching a node, with the nodes a happens-before edge attaches to.
+
+    :param state: the state holding ``edge``.
+    :param edge: the write.
+    :param order: the state's emission order before lifting.
+    :param lifted: emission key of every copy node lifted in this state.
+    :returns: ``(key, tail, head)``: an edge leaving ``tail`` runs after the write, an edge entering
+              ``head`` runs before it. ``None`` for a stage-in copy left implicit, which has no node.
+    """
+    src = edge.src
+    if src in lifted:
+        return lifted[src], src, src
+    if isinstance(src, nodes.MapEntry):
+        return None
+    if isinstance(src, nodes.MapExit):
+        entry = state.entry_node(src)
+        return order.node_key(entry), src, entry
+    if isinstance(src, nodes.AccessNode):
+        return order.copy_key(edge), src, src
+    return order.node_key(src), src, src
+
+
+def add_ordering_edge(state: SDFGState, before: nodes.Node, after: nodes.Node) -> None:
+    """Add the happens-before edge ``before -> after``, unless an edge already orders the pair or
+    ``after`` already reaches ``before`` (the edge would close a cycle)."""
+    if any(edge.dst is after for edge in state.out_edges(before)):
+        return
+    if any(node is before for node in state.bfs_nodes(after)):
+        return
+    state.add_nedge(before, after, Memlet())
+
+
+def order_competing_writes(state: SDFGState, lifted: List[LiftedCopy], order: DispatchOrder) -> None:
+    """Pin each lifted copy against every other write to its region with a happens-before edge.
+
+    Nothing in the graph orders two writes to one region that reach a node on separate edges, so
+    their order is the order plain codegen emitted them in. A lifted copy is sorted afresh as a node,
+    which silently swaps which value survives (measured on npbench ``vadv``: a dead ``dcol`` write
+    moved after the tasklet that supersedes it). The edge keeps the emission order.
+
+    :param state: the state the copies were lifted in.
+    :param lifted: the copies lifted in ``state``.
+    :param order: the state's emission order before lifting.
+    """
+    keys = {lift.node: lift.key for lift in lifted}
+    for lift in lifted:
+        for other in state.in_edges(lift.target):
+            if other.src is lift.node or other.data.is_empty() or other.data.data != lift.name:
+                continue
+            other_subset = other.data.get_dst_subset(other, state) or other.data.subset
+            if subsets.intersects(other_subset, lift.subset) is False:
+                continue
+            anchor = writer_anchor(state, other, order, keys)
+            if anchor is None:
+                continue
+            key, tail, head = anchor
+            if key < lift.key:
+                add_ordering_edge(state, tail, lift.node)
+            elif key > lift.key and other.src not in keys:
+                # A later lifted copy draws this edge itself, from its own side.
+                add_ordering_edge(state, lift.node, head)
 
 
 def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: nodes.Node) -> None:
@@ -92,6 +189,9 @@ class InsertExplicitCopies(ppl.Pass):
     - ``AccessNode -> (MapEntry)+ -> AccessNode`` (stage-in) -- libnode placed inside the innermost map
       scope, wired to the MapEntry output connector.
     - ``AccessNode -> (MapExit)+ -> AccessNode`` (stage-out) -- symmetric, wired to the outermost MapExit.
+
+    A lifted copy that shares a region with another write to the same node is ordered against it
+    (:func:`order_competing_writes`).
     """
 
     # Storages whose copies CopyLibraryNode can lower. Other storages
@@ -119,19 +219,23 @@ class InsertExplicitCopies(ppl.Pass):
         count = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
-                count += self._replace_direct_copies(state)
-                count += self._replace_map_staging_copies(state)
+                order = DispatchOrder(state)
+                lifted = self._replace_direct_copies(state, order)
+                lifted.extend(self._replace_map_staging_copies(state, order))
+                order_competing_writes(state, lifted, order)
+                count += len(lifted)
         return count if count > 0 else None
 
-    def _replace_direct_copies(self, state: SDFGState) -> int:
+    def _replace_direct_copies(self, state: SDFGState, order: DispatchOrder) -> List[LiftedCopy]:
         """Replace direct ``AccessNode -> AccessNode`` edges with ``CopyLibraryNode`` instances.
 
         :param state: The state to scan for direct copy edges (owning SDFG is ``state.sdfg``).
-        :returns: The number of copy nodes inserted in ``state``.
+        :param order: the state's emission order before lifting.
+        :returns: The copies lifted in ``state``.
         """
         sdfg = state.sdfg
         edges = list(state.edges())
-        count = 0
+        lifted: List[LiftedCopy] = []
         for edge in edges:
             if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
                 continue
@@ -195,9 +299,6 @@ class InsertExplicitCopies(ppl.Pass):
             if symbolic.equal(src_subset.num_elements(), 0, is_length=False) is True:
                 continue
 
-            if _competing_writer(state, dst_node, edge, dst_name, dst_subset):
-                continue
-
             in_memlet = Memlet(data=src_name, subset=copy.deepcopy(src_subset))
             in_memlet.dynamic = memlet.dynamic
             out_memlet = Memlet(data=dst_name, subset=copy.deepcopy(dst_subset))
@@ -213,62 +314,66 @@ class InsertExplicitCopies(ppl.Pass):
             # (``on_copy_begin``); as a node the copy needs its own setting to stay measured.
             libnode.instrument = state.instrument
 
+            key = order.copy_key(edge)
             state.remove_edge(edge)
             state.add_node(libnode)
             state.add_edge(src_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, in_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst_node, None, out_memlet)
             _carry_write_ordering(state, dst_node, libnode)
-            count += 1
+            lifted.append(LiftedCopy(libnode, dst_node, dst_name, dst_subset, key))
 
-        return count
+        return lifted
 
-    def _replace_map_staging_copies(self, state: SDFGState) -> int:
+    def _replace_map_staging_copies(self, state: SDFGState, order: DispatchOrder) -> List[LiftedCopy]:
         """Lift stage-in / stage-out copies through ``MapEntry`` / ``MapExit`` to ``CopyLibraryNode``.
 
         The libnode sits inside the map scope; chained MapEntries / MapExits are followed via
         ``memlet_path``.
 
         :param state: The state to scan (owning SDFG is ``state.sdfg``).
-        :returns: Number of libnodes inserted.
+        :param order: the state's emission order before lifting.
+        :returns: The copies lifted in ``state``.
         """
-        count = 0
+        lifted: List[LiftedCopy] = []
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry):
-                for edge in list(state.out_edges(node)):
-                    if self._lift_staging_edge(state, edge, stage_in=True):
-                        count += 1
+                candidates, stage_in = list(state.out_edges(node)), True
             elif isinstance(node, nodes.MapExit):
-                for edge in list(state.in_edges(node)):
-                    if self._lift_staging_edge(state, edge, stage_in=False):
-                        count += 1
-        return count
+                candidates, stage_in = list(state.in_edges(node)), False
+            else:
+                continue
+            for edge in candidates:
+                lift = self._lift_staging_edge(state, edge, stage_in, order)
+                if lift is not None:
+                    lifted.append(lift)
+        return lifted
 
-    def _lift_staging_edge(self, state: SDFGState, edge, stage_in: bool) -> bool:
+    def _lift_staging_edge(self, state: SDFGState, edge, stage_in: bool, order: DispatchOrder) -> Optional[LiftedCopy]:
         """Lift one stage-in (``stage_in=True``) or stage-out copy edge to a libnode.
 
-        :returns: True iff the edge was lifted.
+        :returns: the lifted copy, or ``None`` if the edge was left as it is.
         """
         sdfg = state.sdfg
         # Inner side: edge.dst for stage-in, edge.src for stage-out.
         inner_node = edge.dst if stage_in else edge.src
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
-            return False
+            return None
         # A reference-set edge binds a POINTER rather than moving data; lifting it would drop the
         # ``set`` connector and leave the Reference unbound.
         if edge.dst_conn == 'set':
-            return False
+            return None
         inner_desc = sdfg.arrays[inner_node.data]
         if isinstance(inner_desc, data.View):
-            return False
+            return None
         find_outer = sdutils.find_input_arraynode if stage_in else sdutils.find_output_arraynode
         try:
             outer = find_outer(state, edge)
         except RuntimeError:
-            return False
+            return None
         outer_desc = sdfg.arrays[outer.data]
-        if (outer_desc.storage not in self._STANDARD_STORAGES or inner_desc.storage not in self._STANDARD_STORAGES
-                or outer_desc.dtype != inner_desc.dtype):
-            return False
+        # A dtype change is fine: the copy node's selector lowers a converting copy to a casting tasklet.
+        if outer_desc.storage not in self._STANDARD_STORAGES or inner_desc.storage not in self._STANDARD_STORAGES:
+            return None
         # A WCR edge isn't a copy -- it's a reduction (e.g. AccumulateTransient's tile merge back
         # into the real output), and the memcpy expansions store unconditionally, so lifting one
         # turns the accumulate into an overwrite. A host single-element stage-out is the exception:
@@ -280,7 +385,7 @@ class InsertExplicitCopies(ppl.Pass):
                         and all(sbs is None or sbs.num_elements_exact() == 1
                                 for sbs in (edge.data.subset, edge.data.other_subset)))
             if not liftable:
-                return False
+                return None
 
         outer_memlet = edge.data
         # The memlet may be dst-relative (subset in ``other_subset``); resolve it in the
@@ -289,8 +394,6 @@ class InsertExplicitCopies(ppl.Pass):
             outer_subset = outer_memlet.get_src_subset(edge, state) or outer_memlet.subset
         else:
             outer_subset = outer_memlet.get_dst_subset(edge, state) or outer_memlet.subset
-            if _competing_writer(state, edge.dst, edge, outer.data, outer_subset):
-                return False
         outer_side_memlet = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
         outer_side_memlet.dynamic = outer_memlet.dynamic
         outer_side_memlet.wcr = outer_memlet.wcr
@@ -303,8 +406,7 @@ class InsertExplicitCopies(ppl.Pass):
             inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
         else:
             inner_subset = copy.deepcopy(inner_subset)
-        if stage_in and _competing_writer(state, inner_node, edge, inner_node.data, inner_subset):
-            return False
+        key = order.copy_key(edge)
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
         label = (f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}")
         libnode = CopyLibraryNode(name=label)
@@ -317,12 +419,14 @@ class InsertExplicitCopies(ppl.Pass):
             _carry_write_ordering(state, inner_node, libnode)
             boundary_conn = 'IN_' + edge.src_conn[len('OUT_'):]
             boundary_edges = list(state.in_edges_by_connector(map_node, boundary_conn))
+            lift = LiftedCopy(libnode, inner_node, inner_node.data, inner_subset, key)
         else:
             map_node = edge.dst
             state.add_edge(inner_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, inner_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, map_node, edge.dst_conn, outer_side_memlet)
             boundary_conn = 'OUT_' + edge.dst_conn[len('IN_'):]
             boundary_edges = list(state.out_edges_by_connector(map_node, boundary_conn))
+            lift = LiftedCopy(libnode, map_node, outer.data, outer_subset, key)
         state.remove_edge(edge)
 
         # The scope-boundary edge on this connector may still carry a memlet whose ``.data``
@@ -334,4 +438,4 @@ class InsertExplicitCopies(ppl.Pass):
         for bedge in boundary_edges:
             if bedge.data.data != outer.data:
                 bedge.data = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
-        return True
+        return lift
