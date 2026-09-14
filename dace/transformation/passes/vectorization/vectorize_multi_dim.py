@@ -58,7 +58,6 @@ from dace.transformation.passes.vectorization.nest_innermost_map_body import (
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     SameWriteSetIfElseToITECFG, )
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
-from dace.transformation.passes.vectorization.flatten_branches import FlattenBranches
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import (CastScalarIteLiteralArms,
                                                                                  ResolveMixedDtypeBinops)
@@ -967,7 +966,6 @@ class VectorizeMultiDim(ppl.Pipeline):
             # being unsoundly force-eliminated (user directive: no permissive in the vectorizer
             # beyond the LoopToMap scatter knob).
             passes += [
-                FlattenBranches(),
                 SameWriteSetIfElseToITECFG(),
                 BranchNormalization(),
                 LowerITEToFpFactor(),
@@ -989,7 +987,6 @@ class VectorizeMultiDim(ppl.Pipeline):
             # the tiler to widen around -- npbench ``azimint_naive`` counting every lane.
             passes += [
                 LowerInterstateConditionalAssignmentsToTasklets(),
-                FlattenBranches(),
                 SameWriteSetIfElseToITECFG(),
                 BranchNormalization(),
             ]

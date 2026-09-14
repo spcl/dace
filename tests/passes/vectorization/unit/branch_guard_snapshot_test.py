@@ -28,7 +28,6 @@ from dace.transformation.passes.parallelize import parallelize
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
-from dace.transformation.passes.vectorization.flatten_branches import FlattenBranches
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import SameWriteSetIfElseToITECFG
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeCPUMultiDim
 
@@ -69,7 +68,7 @@ def branch_lowered(tag):
     sdfg = both_arms_nested.to_sdfg(simplify=True)
     sdfg.name = tag
     parallelize(sdfg, validate=True, validate_all=False)
-    for cleaner in (FlattenBranches(), SameWriteSetIfElseToITECFG(), BranchNormalization()):
+    for cleaner in (SameWriteSetIfElseToITECFG(), BranchNormalization()):
         cleaner.apply_pass(sdfg, {})
     return sdfg
 

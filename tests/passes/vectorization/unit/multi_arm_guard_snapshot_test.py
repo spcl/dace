@@ -17,14 +17,13 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
-from dace.transformation.passes.vectorization.flatten_branches import FlattenBranches
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import SameWriteSetIfElseToITECFG
 
 LENGTH = 61
 
 
 def lower_branches(sdfg: dace.SDFG) -> None:
-    for lowering in (FlattenBranches(), SameWriteSetIfElseToITECFG(), BranchNormalization()):
+    for lowering in (SameWriteSetIfElseToITECFG(), BranchNormalization()):
         lowering.apply_pass(sdfg, {})
 
 
@@ -102,7 +101,7 @@ def array_guard_reference(a: np.ndarray, b: np.ndarray) -> None:
 def test_every_flattened_guard_reads_a_snapshot_taken_before_the_arms():
     sdfg, body = array_guard_program()
 
-    FlattenBranches().apply_pass(sdfg, {})
+    BranchNormalization().flatten_multi_arm_blocks(sdfg)
 
     blocks = [block for block in body.all_control_flow_blocks() if isinstance(block, ConditionalBlock)]
     assert len(blocks) == 3 and all(len(block.branches) == 1 for block in blocks)
@@ -127,6 +126,23 @@ def test_array_guard_chain_keeps_first_match_semantics_when_an_arm_mutates_a_lat
 
     lower_branches(sdfg)
 
+    sdfg.validate()
+    got_a, got_b = a.copy(), b.copy()
+    sdfg(a=got_a, b=got_b)
+    np.testing.assert_array_equal(got_a, want_a)
+    np.testing.assert_array_equal(got_b, want_b)
+
+
+def test_branch_normalization_alone_keeps_first_match_semantics_when_an_arm_mutates_a_later_guard():
+    rng = np.random.default_rng(13)
+    a, b = rng.uniform(-1.0, 1.0, LENGTH), rng.uniform(-1.0, 1.0, LENGTH)
+    want_a, want_b = a.copy(), b.copy()
+    array_guard_reference(want_a, want_b)
+    sdfg, body = array_guard_program()
+
+    BranchNormalization().apply_pass(sdfg, {})
+
+    assert not [block for block in body.all_control_flow_blocks() if isinstance(block, ConditionalBlock)]
     sdfg.validate()
     got_a, got_b = a.copy(), b.copy()
     sdfg(a=got_a, b=got_b)

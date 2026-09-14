@@ -4,11 +4,14 @@
 Runs after ``SameWriteSetIfElseToITECFG`` (handles identical-write arms).
 Single-arm ``if`` -> ``arr = ITE(cond, expr, arr)``; disjoint two-arm ``if/else``
 -> split into two sequential single-arm conditionals + re-normalize;
+``>=3`` arms or ``if/elif`` without ``else`` -> a chain of single-arm blocks, arm ``k``
+guarded by ``not c0 and ... and ck`` (first-match semantics);
 overlapping-but-not-identical write sets unsupported (``NotImplementedError``).
 No ``ConditionalBlock`` remains afterwards.
 """
 import copy
 
+from collections.abc import Callable
 from typing import Any
 
 import dace
@@ -27,6 +30,20 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg 
     SameWriteSetIfElseToITECFG, arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
 from dace.ordered import OrderedSet
+
+
+def rewrite_blocks_to_fixpoint(sdfg: dace.SDFG, rewrite: Callable[[ConditionalBlock], bool]) -> int:
+    """Apply ``rewrite`` to every ``ConditionalBlock`` until a sweep changes nothing; returns the rewrite count."""
+    rewritten = 0
+    progress = True
+    while progress:
+        progress = False
+        for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
+            for block in list(cfg.nodes()):
+                if isinstance(block, ConditionalBlock) and rewrite(block):
+                    rewritten += 1
+                    progress = True
+    return rewritten
 
 
 def upward_exposed_reads(state: dace.SDFGState) -> OrderedSet[str]:
@@ -175,18 +192,7 @@ class BranchNormalization(ppl.Pass):
         :param sdfg: SDFG to transform in place.
         :returns: number of rewrites, or ``None`` if none.
         """
-        rewritten = 0
-        # Fixed point: a two-arm split creates pairs needing another cycle.
-        progress = True
-        while progress:
-            progress = False
-            for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
-                for block in list(cfg.nodes()):
-                    if not isinstance(block, ConditionalBlock):
-                        continue
-                    if self._try_rewrite(sdfg, block):
-                        rewritten += 1
-                        progress = True
+        rewritten = rewrite_blocks_to_fixpoint(sdfg, lambda block: self._try_rewrite(sdfg, block))
 
         # Audit touched states.
         for state in sdfg.all_states():
@@ -201,6 +207,8 @@ class BranchNormalization(ppl.Pass):
         :param cb: the conditional block to attempt.
         :returns: ``True`` if a rewrite was applied.
         """
+        if self.is_multi_arm(cb) and self.flatten_multi_arm_block(cb):
+            return True
         # Hoist branch-invariant symbol bindings (frontend ``__sym_z1 = z1`` alias
         # state) out of arms first -> "empty-assign -> compute" arm reduces to its
         # one substantive state for the single-state ITE path. Branch-variant
@@ -220,9 +228,9 @@ class BranchNormalization(ppl.Pass):
             if cond0 is not None and cond1 is None:
                 # Asymmetric arms (differing state counts, or not both single
                 # substantive states) can't use the symmetric single-state path.
-                # Serialize via ``_serialize_two_arm``; later cycles normalize each.
+                # Serialize via ``serialize_two_arm``; later cycles normalize each.
                 if self._arms_are_asymmetric(body0, body1):
-                    return self._serialize_two_arm(cb, cond0, body0, body1)
+                    return self.serialize_two_arm(cb, cond0, body0, body1)
                 # Disjoint two-arm: split into two single-arm conditionals; next
                 # cycle handles each.
                 return self._split_two_arm_disjoint(sdfg, cb, cond0, body0, body1)
@@ -518,8 +526,62 @@ class BranchNormalization(ppl.Pass):
         for drop in drops:
             lifter._drop_interstate_symbol(drop[0], drop[1], drop[2])
 
-    def _serialize_two_arm(self, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
-                           body1: ControlFlowRegion) -> bool:
+    @staticmethod
+    def is_multi_arm(cb: ConditionalBlock) -> bool:
+        """``>=3`` branches, or ``if/elif`` with no ``else``: the shapes the one- and two-arm rewrites refuse."""
+        branches = cb.branches
+        if len(branches) >= 3:
+            return True
+        return len(branches) == 2 and branches[0][0] is not None and branches[1][0] is not None
+
+    def flatten_multi_arm_blocks(self, sdfg: dace.SDFG) -> int:
+        """Flatten every multi-arm ``ConditionalBlock`` into single-arm blocks; returns the count."""
+        return rewrite_blocks_to_fixpoint(sdfg, lambda cb: self.is_multi_arm(cb) and self.flatten_multi_arm_block(cb))
+
+    def flatten_multi_arm_block(self, cb: ConditionalBlock) -> bool:
+        """Replace ``cb`` with single-arm blocks guarded by ``not c0 and ... and ck``, snapshotting guards an arm
+        writes; ``False`` with nothing changed when a guard cannot be snapshotted."""
+        lifter = SameWriteSetIfElseToITECFG()
+        guards = self.freeze_guards(cb, lifter)
+        if guards is None:
+            return False
+        parent = cb.parent_graph
+        arms: list[tuple[CodeBlock | None, ControlFlowRegion]] = list(cb.branches)
+        for arm in arms:
+            cb.remove_branch(arm[1])
+
+        prior_negations: list[str] = []
+        chain: list[ConditionalBlock] = []
+        guard_texts = iter(guards)
+        for index, (cond, body) in enumerate(arms):
+            guard = None if cond is None else next(guard_texts)
+            terms = list(prior_negations)
+            if guard is not None:
+                terms.append(f"({guard})")
+            link = ConditionalBlock(label=f"{cb.label}_flat{index}", sdfg=parent.sdfg, parent=parent)
+            link.add_branch(CodeBlock(" and ".join(terms) if terms else "True"), body)
+            parent.add_node(link)
+            chain.append(link)
+            if guard is not None:
+                prior_negations.append(f"(not ({guard}))")
+        self.splice_chain(parent, cb, chain)
+        self.release_guard_symbols(lifter)
+        return True
+
+    @staticmethod
+    def splice_chain(parent: ControlFlowRegion, cb: ConditionalBlock, chain: list[ConditionalBlock]) -> None:
+        """Put ``chain`` in place of ``cb``: ``cb``'s in-edges enter the first block, its out-edges leave the last."""
+        for edge in list(parent.in_edges(cb)):
+            parent.add_edge(edge.src, chain[0], edge.data)
+        for first, second in zip(chain, chain[1:]):
+            parent.add_edge(first, second, dace.InterstateEdge())
+        for edge in list(parent.out_edges(cb)):
+            parent.add_edge(chain[-1], edge.dst, edge.data)
+        parent.remove_node(cb)
+        parent.reset_cfg_list()
+
+    def serialize_two_arm(self, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
+                          body1: ControlFlowRegion) -> bool:
         """Serialize ``if c: A else: B`` into ``if c: A`` then ``if not c: B``.
 
         Mostly a CFG rewrite: ``cb`` keeps the if-arm; a new negated single-arm
@@ -809,7 +871,7 @@ class BranchNormalization(ppl.Pass):
         # Split into two single-arm conditionals: else-body -> new ``if not cond0: body1``
         # block after ``cb`` (now if-arm only); later cycles rewrite each single-arm form.
         # Same serialization the asymmetric-arm path uses, guard snapshot included.
-        return self._serialize_two_arm(cb, cond0, body0, body1)
+        return self.serialize_two_arm(cb, cond0, body0, body1)
 
     def _collect_write_subsets(self, state: dace.SDFGState) -> dict[str, subsets.Range] | None:
         from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets

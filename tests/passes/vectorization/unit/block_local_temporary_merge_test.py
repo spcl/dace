@@ -20,7 +20,6 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.flatten_branches import FlattenBranches
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
     LowerInterstateConditionalAssignmentsToTasklets)
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import SameWriteSetIfElseToITECFG
@@ -57,7 +56,7 @@ def canonical_sdfg(name: str) -> dace.SDFG:
 def test_branch_lowering_merges_only_writes_that_outlive_their_block():
     sdfg = canonical_sdfg("block_local_temporary_lowering")
 
-    for lowering in (LowerInterstateConditionalAssignmentsToTasklets(), FlattenBranches(), SameWriteSetIfElseToITECFG(),
+    for lowering in (LowerInterstateConditionalAssignmentsToTasklets(), SameWriteSetIfElseToITECFG(),
                      BranchNormalization()):
         lowering.apply_pass(sdfg, {})
 

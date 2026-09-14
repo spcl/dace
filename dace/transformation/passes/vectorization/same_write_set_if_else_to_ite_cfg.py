@@ -518,11 +518,12 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # they're invisible to the match check.
         from dace.transformation.passes.vectorization.branch_normalization import (  # avoid import cycle
             BranchNormalization, )
-        _bn = BranchNormalization()
+        normalizer = BranchNormalization()
+        flattened = normalizer.flatten_multi_arm_blocks(sdfg)
         for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
             for block in list(cfg.nodes()):
                 if isinstance(block, ConditionalBlock):
-                    _bn._hoist_branch_invariant_assignments(block)
+                    normalizer._hoist_branch_invariant_assignments(block)
         rewritten = 0
         for cfg in list(sdfg.all_control_flow_regions(recursive=True)):
             for block in list(cfg.nodes()):
@@ -532,7 +533,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                     continue
                 self._rewrite(sdfg, block)
                 rewritten += 1
-        return rewritten or None
+        return (flattened + rewritten) or None
 
     def _matches(self, cb: ConditionalBlock) -> bool:
         """Whether ``cb`` is a rewritable conditional block.
