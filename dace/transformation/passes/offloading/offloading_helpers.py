@@ -6,7 +6,7 @@ from ordered_set import OrderedSet
 
 from dace import dtypes, data
 from dace.sdfg import nodes, InterstateEdge, SDFG, SDFGState
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, ReturnBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.sdfg.utils import get_last_view_node
 from dace import utils
@@ -51,6 +51,44 @@ def remove_empty_exits(exits: List[Tuple[ControlFlowRegion, SDFGState]]) -> None
             for successor in successors:
                 region.add_edge(edge.src, successor.dst, edge.data)
         region.remove_node(exit_state)
+
+
+def separate_early_returns(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGState]]:
+    """Put an empty state before each return on ``sdfg``'s own level, so its copies run on the return's path alone.
+
+    :return: every region given such a state, with that state; ``remove_empty_exits`` takes them out again.
+    """
+    entries: List[Tuple[ControlFlowRegion, SDFGState]] = []
+    for region in list(sdfg.all_control_flow_regions()):
+        for block in [block for block in region.nodes() if isinstance(block, ReturnBlock)]:
+            entry = region.add_state_before(block, 'return_entry', is_start_block=block is region.start_block)
+            entries.append((region, entry))
+    return entries
+
+
+def link_early_returns(IR: OffloadingIRNode) -> None:
+    """Tie each state leading into a return to the level's end, whose copy-backs the return must run first."""
+    entries: List[OffloadingIRNode] = []
+
+    def collect(node: OffloadingIRNode) -> None:
+        if node.type == OffloadingIRNode.STATE and isinstance(node.block, SDFGState) and any(
+                isinstance(edge.dst, ReturnBlock) for edge in node.block.parent_graph.out_edges(node.block)):
+            entries.append(node)
+
+    traverse_IR(IR, collect)
+    for node in entries:
+        if IR.close not in node.next:
+            node.append_node(IR.close)
+
+
+def blocks_with_exit_last(cfr: ControlFlowRegion) -> List[ControlFlowBlock]:
+    """``cfr``'s blocks in BFS order, but its fall-through exit last: the IR ties the last block to the region's end."""
+    blocks = list(cfr.bfs_nodes())
+    exits = [block for block in blocks if cfr.out_degree(block) == 0 and not isinstance(block, JUMP_BLOCKS)]
+    if len(exits) == 1:
+        blocks.remove(exits[0])
+        blocks.append(exits[0])
+    return blocks
 
 
 ##################################################

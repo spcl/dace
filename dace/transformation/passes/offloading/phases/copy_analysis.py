@@ -57,6 +57,7 @@ class CopyAnalysisPhase():
 
         # finish graph: tie the final node together with the inital close node
         end.append_node(IR.close)
+        helpers.link_early_returns(IR)
         IR.close.gpu_set = initially_on_gpu
         IR.close.cpu_set = initially_on_cpu  # arrays end up where they started
 
@@ -75,7 +76,7 @@ class CopyAnalysisPhase():
 
     def _parse_to_IR(self, sdfg: SDFG, cfr: ControlFlowRegion, curr_node: OffloadingIRNode) -> OffloadingIRNode:
         block: ControlFlowBlock
-        for block in cfr.bfs_nodes():
+        for block in helpers.blocks_with_exit_last(cfr):
 
             # iterate through all (incoming) interstate edges
             in_edge_arrays = OrderedSet()

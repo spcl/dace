@@ -16,7 +16,7 @@ from dace.transformation.passes.offloading.phases.copy_insertion import CopyInse
 from dace.transformation.passes.offloading.phases.single_element_copy_optimization import SingleElementCopyOptimization
 from dace.transformation.passes.offloading.offloading_helpers import (get_sdfg_scope_dict, join_fall_through_exits,
                                                                       register_kernel_local_transients,
-                                                                      remove_empty_exits)
+                                                                      remove_empty_exits, separate_early_returns)
 
 from typing import Any, Dict, Optional
 
@@ -74,7 +74,7 @@ class OffloadToAccelerator(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
         # The IR ties only a region's last block to its end; one exit per region puts its copies on every path.
-        exits = join_fall_through_exits(sdfg)
+        exits = join_fall_through_exits(sdfg) + separate_early_returns(sdfg)
         cached_scopes = get_sdfg_scope_dict(sdfg)  # cache the result of an expensive operation
 
         # Which maps stay on the host, so that what they launch becomes the kernels.
