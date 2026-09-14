@@ -435,6 +435,55 @@ def test_control_flow_only_gate_gets_a_copyin():
     sdfg.validate()
 
 
+def test_interstate_condition_is_repointed():
+    """An interstate-edge CONDITION referencing a staged array must be rewritten alongside the
+    assignments; leaving it naming ``x[0]`` keeps two spellings of one value in the same SDFG."""
+    sdfg = dace.SDFG("cond_len1")
+    sdfg.add_array("flag", (1, ), dace.bool_)
+    sdfg.add_array("y", (4, ), dace.float64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("compute")
+    s2 = sdfg.add_state("end")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(condition="flag[0]"))
+    sdfg.add_edge(s0, s2, dace.InterstateEdge(condition="not flag[0]"))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    tasklet = s1.add_tasklet("set1", {}, {"out": None}, "out = 1.0")
+    s1.add_edge(tasklet, "out", s1.add_write("y"), None, dace.Memlet("y[0]"))
+    sdfg.validate()
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    conditions = " ".join(e.data.condition.as_string for e in sdfg.all_interstate_edges())
+    assert "flag[0]" not in conditions, f"condition still reads the signature array: {conditions}"
+    assert "scal_flag" in conditions, f"condition was not repointed at the staged scalar: {conditions}"
+    sdfg.validate()
+
+
+def test_library_node_operand_is_not_scalarized():
+    """A length-1 array feeding an UNEXPANDED library node stays an ``Array``: the node's expansion
+    emits its own code against a pointer operand, which a ``Scalar`` cannot satisfy."""
+    from dace.libraries.standard.nodes import MergeLibraryNode
+    sdfg = dace.SDFG("len1_libnode")
+    st = sdfg.add_state("s")
+    sdfg.add_array("t", [1], dace.float64)
+    sdfg.add_array("f", [1], dace.float64)
+    sdfg.add_array("mask", [1], dace.int32)
+    sdfg.add_array("out", [1], dace.float64)
+    node = MergeLibraryNode("merge_main")
+    st.add_node(node)
+    st.add_edge(st.add_access("t"), None, node, MergeLibraryNode.TRUE_CONNECTOR_NAME, dace.Memlet("t[0:1]"))
+    st.add_edge(st.add_access("f"), None, node, MergeLibraryNode.FALSE_CONNECTOR_NAME, dace.Memlet("f[0:1]"))
+    st.add_edge(st.add_access("mask"), None, node, MergeLibraryNode.MASK_CONNECTOR_NAME, dace.Memlet("mask[0:1]"))
+    st.add_edge(node, MergeLibraryNode.OUTPUT_CONNECTOR_NAME, st.add_access("out"), None, dace.Memlet("out[0:1]"))
+    sdfg.validate()
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    for name in ("t", "f", "mask", "out"):
+        assert isinstance(sdfg.arrays[name], dd.Array), f"{name} feeds a library node and must stay an Array"
+    assert not [n for n in sdfg.arrays if n.startswith("scal_")], "a library-node operand was staged"
+
+
 def _scatter_sdfg(tmp_is_scalar: bool) -> dace.SDFG:
     """``for i: A[(i+1) % 2] = B[i]`` staged through a single-value transient. The copy edge names the
     TRANSIENT, so the destination index lives in ``other_subset``."""
