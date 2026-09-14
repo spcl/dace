@@ -194,17 +194,6 @@ class InlineTaskletConnectors(ppl.Pass):
             else:
                 accesses[name] = in_acc.get(name, out_acc.get(name))
 
-        # An input read under its own name must keep the value from before the tasklet. Once another
-        # output writing an element it may alias names the array too, a later read sees the new value
-        # (``X[i] = X[i] + 1.0; Y[i] = X[i] * 2.0``), so that input keeps its copy-in.
-        for name in in_acc:
-            if name in inout or name not in accesses:
-                continue
-            if any(out_acc[other][0] == in_acc[name][0]
-                   and subsets.intersects(in_subset[name], out_subset[other]) is not False for other in out_acc
-                   if other != name):
-                del accesses[name]
-
         # Only Python bodies are rewritten. A C++/other body is emitted verbatim (no subscript
         # flattening), so an inlined ``A[i, j]`` would become a comma-operator bug -- keep it classic.
         if node.language != dtypes.Language.Python:
@@ -212,6 +201,13 @@ class InlineTaskletConnectors(ppl.Pass):
         # The SVE generator unparses its tasklets itself and types every name through the connectors.
         if is_in_scope(osdfg, state, node, [dtypes.ScheduleType.SVE_Map]):
             return {}
+
+        # An input read under its own name must keep the value from before the tasklet. Inlined, it names
+        # the element an aliased output writes, so a read after that write sees the new value
+        # (``X[i] = X[i] + 1.0; Y[i] = X[i] * 2.0``) and that input keeps its copy-in.
+        candidates = [name for name in in_acc if name not in inout and name in accesses]
+        for name in reads_after_aliased_writes(node, candidates, in_acc, out_acc, in_subset, out_subset):
+            del accesses[name]
         return accesses
 
     def _apply_plan(self, node: nodes.Tasklet, accesses: Dict[str, Tuple[str, List[str]]]) -> bool:
@@ -318,6 +314,58 @@ def _rebound_names(tree: ast.AST) -> Set[str]:
             for gen in n.generators:
                 names.update(t.id for t in ast.walk(gen.target) if isinstance(t, ast.Name))
     return names
+
+
+def aliased_writers(name: str, in_acc: Dict[str, Tuple[str, List[str]]], out_acc: Dict[str, Tuple[str, List[str]]],
+                    in_subset: Dict[str, subsets.Subset], out_subset: Dict[str, subsets.Subset]) -> List[str]:
+    """The outputs other than input ``name`` that write an element of its container it may read."""
+    return [
+        other for other in out_acc if other != name and out_acc[other][0] == in_acc[name][0]
+        and subsets.intersects(in_subset[name], out_subset[other]) is not False
+    ]
+
+
+def reads_after_aliased_writes(node: nodes.Tasklet, candidates: List[str], in_acc: Dict[str, Tuple[str, List[str]]],
+                               out_acc: Dict[str, Tuple[str, List[str]]], in_subset: Dict[str, subsets.Subset],
+                               out_subset: Dict[str, subsets.Subset]) -> List[str]:
+    """The ``candidates`` inputs a statement of ``node`` may read after an output writing an aliased element."""
+    aliased = {name: aliased_writers(name, in_acc, out_acc, in_subset, out_subset) for name in candidates}
+    aliased = {name: writers for name, writers in aliased.items() if writers}
+    if not aliased:
+        return []
+    body = ast.parse(node.code.as_string).body
+    return [name for name, writers in aliased.items() if reads_after_write(body, name, writers)]
+
+
+def reads_after_write(body: List[ast.stmt], read: str, writers: List[str]) -> bool:
+    """True when a statement of ``body`` may read ``read`` after one of ``writers`` was stored.
+
+    A plain assignment evaluates its value before storing, so it may read and write in one statement; any other
+    statement doing both (a branch, a loop, a walrus) may read after its own write.
+    """
+    written = False
+    for stmt in body:
+        walked = list(ast.walk(stmt))
+        reads = any(isinstance(n, ast.Name) and n.id == read for n in walked)
+        stores = any(stored_name(n) in writers for n in walked)
+        if reads and (written or (stores and not evaluates_before_storing(stmt, walked))):
+            return True
+        written = written or stores
+    return False
+
+
+def stored_name(n: ast.AST) -> Optional[str]:
+    """The name an assignment target ``x`` or ``x[...]`` stores to; None for anything else."""
+    if not isinstance(n, (ast.Name, ast.Subscript)) or not isinstance(n.ctx, ast.Store):
+        return None
+    base = n if isinstance(n, ast.Name) else n.value
+    return base.id if isinstance(base, ast.Name) else None
+
+
+def evaluates_before_storing(stmt: ast.stmt, walked: List[ast.AST]) -> bool:
+    """A plain assignment evaluates its whole value first; a walrus inside it stores early."""
+    return isinstance(
+        stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign)) and not any(isinstance(n, ast.NamedExpr) for n in walked)
 
 
 class _ConnectorInliner(ast.NodeTransformer):
