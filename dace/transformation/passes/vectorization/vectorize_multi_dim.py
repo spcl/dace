@@ -40,13 +40,10 @@ from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
-from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
-from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.utils.pass_invariants import (
     no_conditional_interstate_assign_on_widened_data, no_lane_collapsing_nested_sdfgs, no_wcr_in_map_body,
     no_wcr_inside_nested_sdfgs, no_widened_scalar_tasklets)
-from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
@@ -74,35 +71,29 @@ from dace.transformation.passes.vectorization.widen_accesses import WidenAccesse
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
     PowerOperatorExpansion,
     RemoveMathCall,
-    RewriteModuloToPyMod,
-    StripPowerExponentCast,
 )
 from dace.transformation.passes.canonicalize.pipeline import (IvSubstitutionFissionFixpoint, StructuralCleanup,
                                                               disable_openmp_sections)
-from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (SetSymbolNonnegativeAssumptions,
                                                                                 insert_assumption_guards)
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
-from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
-from dace.transformation.passes.normalize_wcr import NormalizeWCR
-from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
-from dace.transformation.passes.vectorization.predicate_masked_reduction import PredicateMaskedReduction
-from dace.transformation.passes.vectorization.reduction_scalar_local_prep import PrepareReductionForWidening
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
 # Walker-primary pipeline. The walker (InsertTileLoadStore + PreparePerLaneIndices) stages tile
 # transients and emits the TileLoad / TileStore / TileMaskGen boundary; ConvertTaskletsToTileOps
 # then rewrites the raw tasklets between staged tiles into TileBinop / TileITE / TileReduce.
 from dace.transformation.dataflow import MapCollapse, MapFission, WCRToAugAssign
-from dace.transformation.dataflow.lift_einsum import LiftEinsum
+from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
+from dace.transformation.passes.vectorization.reduction_scalar_local_prep import PrepareReductionForWidening
+from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
+from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusionExtended
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated, collapse_multigraph_to_nx
-from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import (NormalizeMaskedWriteTasklets,
-                                                                                      NormalizeTernaryTasklets)
+from dace.transformation.passes.pattern_matching import collapse_multigraph_to_nx
+from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
 from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA,
                                           TileReduce, TileStore, TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
@@ -539,23 +530,21 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
         return bound
 
 
-class _RunWCRToAugAssign(ppl.Pass):
-    """Pipeline-embedded re-run of :class:`WCRToAugAssign` after the trivial-assign
-    cleaning, so NO write-conflict resolution survives into the body NSDFG before tiling.
+class AssertNoNestedSDFGWCR(ppl.Pass):
+    """Vectorizer-entry guard: no write-conflict resolution survives inside a body NSDFG.
 
-    The tile path assumes no inner WCR (design 3.5: WCR lives only at the outer
-    ``AN → MapExit`` boundary, lifted to ``TileReduce``). Canonicalisation lowers in-place
-    ``a[i] = a[i] + b[i]`` to an AN→AN WCR copy ``b → [_out=_in] → _wcr_priv -(+=)→ a``;
-    ``BypassTrivialAssignTasklets`` cleans the trivial copy while CARRYING the WCR, and this
-    re-run converts the surviving ``b -(+=)→ a`` to an explicit RMW tasklet, leaving the
-    body WCR-free. Placed after the cleaning so a WCR the cleaning exposes — or that
-    ``LoopToMap`` minted after the earlier ``WCRToAugAssign`` — is still eliminated.
+    The tile path assumes no inner WCR (design 3.5: WCR lives only at the outer ``AN → MapExit``
+    boundary, lifted to ``TileReduce``); the tile emitters would silently drop one. The allowed
+    scalar-reduction-out form sits on the NSDFG → MapExit edge in the PARENT state, so it is not
+    flagged. A surviving WCR (an in-place RMW whose write is not provably lane-injective) is an
+    un-tileable shape: raise :class:`VectorizeUnsupported` so the orchestrator restores the kernel
+    un-tiled rather than crash. Read-only.
     """
 
     CATEGORY: str = "Vectorization Preparation"
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
+        return ppl.Modifies.Nothing
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
@@ -564,17 +553,10 @@ class _RunWCRToAugAssign(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        applied = sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
-        # Post/pre-condition: no WCR survives inside any body NSDFG (the tile emitters would
-        # silently drop it). The allowed scalar-reduction-out form is on the NSDFG → MapExit
-        # edge in the PARENT state, outside the nested SDFG, so it is not flagged. A WCR that
-        # ``WCRToAugAssign`` could NOT convert (an in-place RMW whose write is not provably
-        # lane-injective) is an un-tileable shape -> refuse this kernel cleanly (the orchestrator
-        # restores it un-tiled) rather than crash.
         violation = no_wcr_inside_nested_sdfgs(sdfg)
         if violation is not None:
             raise VectorizeUnsupported(f"unresolved WCR inside the body NSDFG before tiling: {violation}")
-        return applied or None
+        return None
 
 
 class _AssertNoBodyWCR(ppl.Pass):
@@ -925,12 +907,9 @@ class VectorizeMultiDim(ppl.Pipeline):
         # Front passes (target-agnostic normalization):
         #   * ConvertLengthOneArraysToScalars — length-1 arrays → true Scalars so the per-tile
         #     classifier sees CONSTANT-only sources as the Scalar operand kind (6.2).
-        #   * NormalizeWCRSource — every WCR sink sourced by an AccessNode (design 3.5 locks WCR
-        #     to the outside-NSDFG AN → MapExit boundary; inner state has none after staging).
         #   * BypassTrivialAssignTasklets — design 3.6: every staged copy is a direct AN → AN edge,
         #     no ``_out = _in`` tasklet. Early so the classifier / staging see clean edges.
         passes = [
-            RewriteModuloToPyMod(),
             # An interstate edge that assigns a symbol FROM array data (``b_index = b[i]``) hides a
             # per-lane read behind a name no map parameter appears in. Give it back its data flow
             # here, BEFORE anything classifies operands: ``ConvertTaskletsToTileOps`` would
@@ -939,11 +918,9 @@ class VectorizeMultiDim(ppl.Pipeline):
             # CloudSC's 974 classified maps un-tiled.
             DemoteDataReadingInterstateSymbols(),
             ConvertLengthOneArraysToScalars(recursive=True),
-            NormalizeWCRSource(),
             BypassTrivialAssignTasklets(),
-            # Strip any WCR the cleaning exposed or LoopToMap minted — the tile path must
-            # see NO inner-NSDFG WCR (design 3.5).
-            _RunWCRToAugAssign(),
+            # The tile path must see NO inner-NSDFG WCR (design 3.5).
+            AssertNoNestedSDFGWCR(),
         ]
         if branch_mode == "fp_factor":
             # FP-factor branch lowering (K=1, pairs with scalar_postamble): canonicalise
@@ -1007,9 +984,8 @@ class VectorizeMultiDim(ppl.Pipeline):
         #     arithmetic) so the tile emitter can classify each.
         #   * RemoveMathCall — drop the ``math.`` prefix so ``math.exp``/``log`` match
         #     TileUnop's ``exp``/``log``.
-        # (``WCRToAugAssign``, ``LoopToMap``, ``RefineNestedAccess``, ``MapCollapse`` run in
-        # ``apply_pass``. ``InlineSDFGs`` is intentionally NOT run — it would flatten the
-        # body NSDFGs the walker traverses.)
+        # (``InlineSDFGs`` is intentionally NOT run — it would flatten the body NSDFGs the walker
+        # traverses.)
         passes += [
             # dtype casts (``dace.float64(x)`` ...) are NOT stripped: kept as 1-input cast
             # tasklets, split by ``SplitTasklets`` (so the feeding integer arithmetic stays
@@ -1022,12 +998,6 @@ class VectorizeMultiDim(ppl.Pipeline):
             # codegen where the global RelaxIntegerPowers relaxes the SIZE powers (``2**s`` in
             # stockham-FFT strides).
             SetSymbolNonnegativeAssumptions(),
-            # Strip the frontend's redundant float cast on a power exponent
-            # (``base ** float64(N)`` -> ``base ** N``): value-preserving, and it exposes the
-            # integer exponent so the tile emitter can classify the power as ``ipow``. ``**`` is
-            # kept as ``**`` (NOT expanded to ``pow`` / a product): the tile emitter decides
-            # ``pow`` vs ``ipow`` per operand at emission time from the exponent.
-            StripPowerExponentCast(),
             # Expand a LITERAL-integer-exponent power in a tasklet body to repeated multiplies
             # (``x**2`` -> ``x*x``). ``**`` / ``pow`` / ``ipow`` carry NO ISA character
             # (``tileops/_dispatch.py:51-56``), so a ``TileBinop`` holding one falls back to the
@@ -1099,10 +1069,6 @@ class VectorizeMultiDim(ppl.Pipeline):
         # tiled bodies; scalar-tail scopes stay step-1 loops keeping the valid bare-if. So it
         # MUST run AFTER the remainder split.
         passes.append(NormalizeMaskedWriteTasklets())
-        # A ternary that IS the whole body collapses to one SSA line, so SplitTasklets declines it
-        # and the raw ternary survives -- only the ITE() spelling reaches _detect_ite for a Symbol
-        # or literal arm.
-        passes.append(NormalizeTernaryTasklets())
         if fuse_multiply_add:
             # ``a*b + c`` -> ``fma(a, b, c)`` on the split single-op tasklets, BEFORE the body is
             # nested + tiled, so the converter later lowers it to a single ``TileFMA`` (a native
@@ -1115,14 +1081,6 @@ class VectorizeMultiDim(ppl.Pipeline):
         # step strides to W but no per-tile body is produced → silently wrong numerics.
         # ``nest_provably_divisible=True`` disables the legacy single-dim divisibility skip.
         passes.append(NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True, tiled_dims=len(widths_t)))
-        # Nesting a flat ``acc = sum(A)`` body pulls the accumulator WCR inside the body
-        # NSDFG. ``NormalizeWCR`` (canonicalize's shared reduction-normalize, reused since the
-        # vectorizer can run WITHOUT canonicalize) rewrites it to the boundary shape: the body
-        # outputs the ADDEND (widens to a tile the walker folds via ``TileReduce``), and the
-        # reduction lives on the protected ``NSDFG → _nnr_out ─[wcr:op]→ MapExit → acc`` chain.
-        # The scalar-across-tiles residual is backend-emitted (CPU ``reduction(op:var)`` /
-        # GPU block-reduce + one atomic per block) — no product buffer, no ``Reduce`` libnode.
-        passes.append(NormalizeWCR())
         # Vectorizer-entry precondition: the just-nested region carries no loose WCR (in-place
         # RMW must already be an explicit aug-assign; genuine reductions are lifted). Asserts
         # BOTH checkers (flat-body + inside-NSDFG) so no stray WCR reaches the tile emitters.
@@ -1136,17 +1094,10 @@ class VectorizeMultiDim(ppl.Pipeline):
         # After this, no global access node mediates intermediate computation — every
         # non-transient is a boundary source or sink.
         passes.append(StageGlobalArrayThroughScalars())
-        # Index-subset propagation (user direction): the frontend promotes a computed index
-        # ``i + offset`` to a scalar then symbol ``__sym`` used in the subset (``A[__sym]``),
-        # hiding the iter-var from the classifier. Undo it so the subset reads ``A[i + offset]``
-        # directly and widens to a dense load. Order: SymbolPropagation (``__sym`` → the
-        # scalar) → PropagateIndexSubsets (scalar → i+offset, crossing the defining tasklet;
-        # leaves data-dependent gather indices) → RemoveUnusedSymbols (sweep dead symbols).
-        passes += [
-            SymbolPropagation(),
-            PropagateIndexSubsets(),
-            RemoveUnusedSymbols(),
-        ]
+        # The frontend promotes a computed index to a symbol used in the subset (``A[__sym]``),
+        # hiding the iter-var from the classifier; propagate the symbol's definition back in
+        # (PropagateIndexSubsets: test_index_subset_propagation::test_iplusoffset_kernel_emits_no_gather).
+        passes += [SymbolPropagation(), PropagateIndexSubsets()]
         # Conceptual order (user 2026-06-09):
         #   MarkTileDims              (tag the outer map with TileDimSpec)
         #   StrideMapByTileWidths     (map step 1 → W; iter_var now means "tile start")
@@ -1193,12 +1144,8 @@ class VectorizeMultiDim(ppl.Pipeline):
             # connectors, so the kernel cannot be emitted -- refuse it instead of shipping a body
             # that would compile against a pointer (or not compile at all).
             _AssertTileOpsLowered(widths=widths_t),
-            # A ternary blend's literal/Symbol arm survives here only in a tasklet that STAYS
-            # scalar (every tile-bound one was just claimed by ConvertTaskletsToTileOps above,
-            # whose TileITE casts a Symbol arm on its own) -- e.g. the untiled remainder of a
-            # branched split. Cast it now so codegen's generic Python-tasklet translation, which
-            # has no casting logic of its own, never emits a bare literal against a differently
-            # typed sibling arm.
+            # Type a literal/Symbol ITE arm left in a scalar tasklet (e.g. a branched remainder) so
+            # codegen never emits a bare literal (fp16_ite_literal_arm_cudatest, branched_tail_remainder_cudatest).
             CastScalarIteLiteralArms(),
         ]
         # Branched (GPU-only) post-transform: after the tile emitters lowered the ``__tile_main``
@@ -1225,14 +1172,8 @@ class VectorizeMultiDim(ppl.Pipeline):
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Run the prep + emit pipeline, then expand lib nodes + audit.
 
-        The K-dim tile is taken over the last ``K`` params of one innermost map. A realistic
-        kernel (``@dace.program`` → ``LoopToMap`` → ``simplify``) leaves perfectly-nested
-        single-param maps (``for i: for j:`` → ``i`` map wrapping ``j`` map). We collapse
-        those into one multi-param map first: for K≥2 the tile then spans K dims; for K==1
-        the merged ``(i, j)`` map iterates outer dims and ``MarkTileDims`` tiles only the
-        innermost param (last-``K`` slice). ``MapCollapse`` fires only on a perfectly-nested
-        same-schedule pair, so a sequential/carried-dep inner loop (a ``LoopRegion``, not a
-        map) is left alone.
+        The K-dim tile is taken over the last ``K`` params of one innermost map of the canonical
+        input (see the class docstring for the input contract).
 
         :param sdfg: SDFG to transform in place.
         :param pipeline_results: Carry-in from any enclosing pipeline.
@@ -1255,16 +1196,6 @@ class VectorizeMultiDim(ppl.Pipeline):
         # and the symbol/state cleanup behind it, which the tiler cannot proceed without and which
         # a caller running a bare ``LoopToMap`` + ``simplify`` never performs.
         prepare_for_vectorization(sdfg)
-        # Always simplify first (user direction): callers may hand us an un-simplified SDFG
-        # (``to_sdfg(simplify=False)``) with FunctionCallRegions / redundant states / un-inlined
-        # wrappers. Up-front simplify gives every downstream pass a canonical flat-state body;
-        # already-simplified inputs are a near no-op.
-        # Skip ``ArrayElimination`` (mirrors canonicalize's terminal SimplifyPass): it eliminates
-        # an anti-dependence SNAPSHOT copy (``a_split_snap = a``, read as ``a_split_snap[i+1]`` while
-        # ``a`` is updated in place) as a "redundant" array, redirecting the read back to ``a`` --
-        # which destroys the anti-dep break and miscompiles (e.g. s212 ``b[i]+=a[i+1]*d[i]``). The
-        # only cost of skipping it is a dead transient left uncleaned, which the tiler ignores.
-        sdfg.simplify(validate_all=self._validate_all, skip={'ArrayElimination'})
         # Infer connector types + assign default schedules/storage at the START of vectorization
         # (user 2026-07-10). This gives every map a concrete schedule -- ``Sequential`` vs
         # ``CPU_Multicore`` vs ``GPU_Device`` -- BEFORE the tile pipeline, so a downstream pass that
@@ -1273,118 +1204,48 @@ class VectorizeMultiDim(ppl.Pipeline):
         # can tile ANY schedule (CPU_Multicore / GPU_Device / Sequential) uniformly. Idempotent and
         # re-run after the reduction lifts mint new library nodes (see ``_finalize_lifted_library_nodes``).
         self._assign_default_schedules(sdfg)
-        # Fold every frontend reshape / flatten ``View`` (e.g. ``C_0`` viewing ``C[0:XN, 0:YN]``
-        # as flat ``C[0:XN*YN]``) into a direct access. Runs UNCONDITIONALLY -- the multi-dim
-        # corpus enters via ``base_pipeline`` (simplify + LoopToMap + MapFusion), NOT canonicalize,
-        # so no earlier ``RemoveViews`` ran; and even a canonicalized input is re-cleaned cheaply.
-        # A surviving ``View`` gets deep-copied inward as a NestedSDFG connector descriptor by
-        # ``NestInnermostMapBodyIntoNSDFG`` / ``ExpandNestedSDFGInputs`` -- a connector ``View`` has
-        # no viewing edge in the body, so ``validate()`` rejects it ("Ambiguous or invalid edge
-        # to/from a View access node"). Removing views here dissolves that at the root.
-        RemoveViews().apply_pass(sdfg, {})
-        # Fold any non-unit map step into the index (``a[i]`` under ``0:N:2`` → ``a[2*k]``
-        # under ``0:int_floor(N-1,2)+1:1``) so the tiler — which requires unit-step maps
-        # (``MarkTileDims`` / ``LiftMapReductionToReduce`` bail on ``step != 1``) — sees a
-        # dense map whose strided index its ``dim_strides`` machinery vectorizes unchanged.
-        # Before the reduction lifts below (they need a unit-step map to size the product
-        # buffer). Value-preserving; no-op on unit-step maps.
+        # Rewrite an in-NSDFG reduction to the boundary shape the walker folds via ``TileReduce``; with
+        # the ``WCRToAugAssign`` below this is what a non-canonical ``dace.map`` reduction still needs
+        # (reduction_via_map_test::test_masked_reduce_via_map).
+        # MarkTileDims requires unit-step maps; fold a non-unit step into the index (canonical TSVC
+        # s111 / s122 / s172 still arrive strided: tsvc_canonicalize_vectorize_corpus_test).
         NormalizeStridedMaps().apply_pass(sdfg, {})
-        # Scalar-localize an array-slot WCR reduction (``s[3] += a[i]*b[i]`` -- a map-exit WCR into
-        # one element of a multi-element array) into a private scalar accumulator + init + writeback
-        # so the widener folds it to per-lane partials + a ``TileReduce``. Without this the array
-        # slot has no scalar VARIABLE to give K per-lane copies of, the ``no loose WCR in the map
-        # body`` precondition fires, and the vectorizer bails. Runs after NormalizeStridedMaps
-        # (needs unit-step maps) and BEFORE PredicateMaskedReduction / NormalizeWCR (so it sees the
-        # clean top-level ``tasklet -[wcr]-> MapExit -> arr[c]`` shape). No-op on scalar / length-1
-        # accumulators (already widenable), non-associative WCRs, and non-reduction shapes.
+        # Scalar-localize an array-slot WCR (``s[3] += a[i]*b[i]``) so the widener can fold it
+        # (reduction_scalar_local_prep_test::test_array_slot_dot_widens_with_or_without_the_prep).
         PrepareReductionForWidening().apply_pass(sdfg, {})
-        # Predicate a masked reduction (``if mask: acc op= f``) into an unconditional
-        # select-addend reduction (``acc op= ITE(mask, f, identity)``) while the mask is
-        # still a ConditionalBlock in the CFG. Must run BEFORE NormalizeWCR (which buries
-        # the reduction across the nsdfg boundary) and before WCRToAugAssign / the reduction
-        # lifts (which refuse or cannot fold a WCR trapped inside a conditional). Bit-exact:
-        # the false lanes contribute the op identity. No-op on unmasked kernels.
-        PredicateMaskedReduction().apply_pass(sdfg, {})
-        # Normalize masked in-nsdfg write-only WCR reductions FIRST, on the frontend shape,
-        # before any WCR-consuming lift below. The frontend emits ``if mask: acc += x`` (in a
-        # ``dc.map``) as a WCR edge INSIDE a body NestedSDFG writing a write-only connector;
-        # left as-is, ``WCRToAugAssign`` severs it (reads the write-only seed) and
-        # ``MapFusionVertical`` double-counts it. ``NormalizeWCR`` (canonicalize's shared
-        # reduction-normalize, the ONLY one — the vectorizer-private ``NormalizeMapReduction``
-        # is retired) rewrites both masked and unmasked in-nsdfg reductions to the
-        # seeded-body-local + ``_nnr_out ─[wcr:op]→ MapExit → acc`` boundary shape the walker
-        # folds via ``TileReduce``. Idempotent + no-op on non-reduction kernels.
         NormalizeWCR().apply_pass(sdfg, {})
         # The pure-WCR boundary reduction (``acc = sum(A)`` — scalar ``CR:op`` at MapExit, no
         # carry-in read) is kept as a map-exit WCR (not lifted to a buffer + ``Reduce``) so
         # codegen lowers it directly (CPU ``reduction(op:var)``; GPU block-reduce + one atomic
         # per block); ``LiftMapReductionToReduce(pure_wcr_only=True)`` is the opt-in buffer form.
-        # ``vectorized`` selects the CPU horizontal-SIMD fold for the RMW lift below; the GPU
-        # path lifts UN-vectorized so a lifted RMW ``Reduce`` stays device-selectable.
+        # ``vectorized`` selects the CPU horizontal-SIMD fold; the GPU path lifts UN-vectorized so
+        # a lifted ``Reduce`` stays device-selectable.
         reduce_vectorized = self._device != DeviceType.GPU
-        # Materialise nested pure-WCR reductions NOW, while the WCR is intact -- before
-        # ``WCRToAugAssign`` (866) rewrites/mangles the boundary edge the pure-WCR recogniser
-        # needs, and before the fission/einsum prep. A body-NSDFG map may fold SEVERAL
-        # independent scalar accumulators (azimint ``s += a[j]; cnt += 1``); each is lifted in
-        # place to a product buffer + WCR-free ``Reduce``, so no in-NSDFG WCR survives and no
-        # fission (which would duplicate a shared body read out of map-param scope) is needed.
-        # The later ``nested_only`` call (below) catches reductions whose map the vectorizer's
-        # own ``LoopToMap`` mints after this point.
+        # Materialise nested pure-WCR reductions while the WCR is intact. A body-NSDFG map may fold
+        # SEVERAL independent scalar accumulators (azimint ``s += a[j]; cnt += 1``); each is lifted
+        # in place to a product buffer + WCR-free ``Reduce``, so no in-NSDFG WCR survives.
         from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
         LiftMapReductionToReduce(vectorized=reduce_vectorized,
                                  pure_wcr_only=True,
                                  nested_only=True,
                                  wcr_free_output=True).apply_pass(sdfg, {})
-        # Prep for the einsum / reduction lifts: fission fused compute so each contraction /
-        # reduction is a single-output map the lifts can match. A fused multi-output tasklet
-        # (gesummv's ``ot = A[i,j]*x[j]; oy = B[i,j]*x[j]``) blocks MapFission (one component)
-        # and LiftEinsum (two contractions); after a per-output SplitTasklets, MapFission yields clean
-        # single-contraction maps. BEFORE WCRToAugAssign so the reduction WCR stays intact.
-        SplitTasklets(split_operations=False, validate=False).apply_pass(sdfg, {})
-        sdfg.apply_transformations_repeated(_MultiOutputReductionMapFission, permissive=False, validate=False)
-        # Lift tensor-contraction maps (matmul / matvec ``c(+)[i,j] = alpha*a[i,k]*b[k,j]``,
-        # ``ij,j->i``, ...) to ``Einsum`` nodes BEFORE ``WCRToAugAssign`` rewrites the
-        # contraction's WCR into an in-place RMW ``LiftEinsum`` can no longer match. A
-        # contraction is not a per-lane broadcast, so it can't tile as an elementwise op;
-        # lifting removes the map (and its WCR) from the tile path, and the node carries its
-        # own fast (BLAS / ``pure``) expansion, selected in ``_finalize_lifted_library_nodes``.
-        # No-op on non-contraction kernels (``LiftEinsum`` needs ≥2 tensor operands).
-        PatternMatchAndApplyRepeated([LiftEinsum(contraction_only=True)]).apply_pass(sdfg, {})
-        # WCRToAugAssign converts every WCR memlet that isn't a recognised reduction into an
-        # in-place RMW tasklet. Recognised tile-path reductions land as ``tile → scalar
-        # -[wcr]→ sink`` and are left for TileReduce; everything else converts so no stray
-        # WCR survives into the body.
+        # Kept although canonical input never needs them: tests feed un-canonicalized kernels.
+        # WCRToAugAssign converts the WCR that NormalizeWCR leaves private to the body; ParallelizeLoops
+        # turns a bare ``for`` loop into a map (test_gather_emit, test_strided_gather_scatter::test_scatter_store).
         sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
-        # ParallelizeLoops lifts the data-parallel `for` loops to Maps.
-        self._refine_loop_to_map_bodies(sdfg)
-        # Inline wrapper NSDFGs + collapse adjacent perfectly-nested single-param maps so the K-dim
-        # tile spans K genuine map dims.
+        # Non-permissive by default: a permissive LoopToMap would parallelize an unproven scatter.
+        ParallelizeLoops(permissive=self._loop_to_map_permissive).apply_pass(sdfg, {})
+        # Inline wrapper NSDFGs + collapse adjacent single-param maps so a K-dim tile spans K map dims
+        # (test_nest_innermost_map_body::test_k2_broadcast_tile_k1_tail_stays_valid_through_nest).
         normalize_loop_nests(sdfg)
-        # Re-infer schedules: the maps LoopToMap just minted (e.g. atax ``tmp[i] = sum_j``, gesummv)
-        # were created with ``ScheduleType.Default``; the start-of-pass inference could not see them.
-        # A downstream schedule-dependent pass (``PrivatizeSequentialMapReductionAccumulator``) must
-        # distinguish a sequential from a parallel reduction on THESE maps, so re-assign concrete
-        # schedules here rather than leaving Default until finalize. Idempotent on already-set maps.
+        # Re-infer schedules: the reduction lift above mints maps with ``ScheduleType.Default``, and a
+        # schedule-dependent pass (``PrivatizeSequentialMapReductionAccumulator``) must see a concrete
+        # one. Idempotent on already-set maps.
         self._assign_default_schedules(sdfg)
-        # Lift a loop-carried scalar reduction over an innermost map (acc threaded through
-        # entry/exit via an associative op) to a product-fill map + a ``Reduce`` node with the
-        # "vectorized" implementation (ExpandReduceVectorized: horizontal_reduce_<op> + scalar
-        # tail). The product-fill map is ordinary elementwise dataflow the tiler strides; the
-        # Reduce carries its own fold, so no remainder-map split is needed. No-op on
-        # non-reductions.
-        from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
+        # Reductions over the maps ParallelizeLoops just minted (a no-op on canonical input): a loop-carried
+        # scalar reduction lifts to a product-fill map + ``Reduce``, and a nested pure-WCR one gets a
+        # WCR-free read-back, so no loose in-NSDFG WCR reaches the tiler.
         LiftMapReductionToReduce(vectorized=reduce_vectorized, rmw_only=True).apply_pass(sdfg, {})
-        # A pure-WCR reduction (``acc = sum_j ...``, no carry-in) trapped INSIDE a body NSDFG
-        # -- the outer loop was parallelised by ``LoopToMap`` (atax ``tmp[i] = sum_j A[i,j]*x[j]``
-        # consumed in-body; trmm/symm/gramschmidt scalar folds) -- cannot keep its map-exit WCR:
-        # that boundary lands inside the nested SDFG, and the multi-dim invariant forbids any loose
-        # in-NSDFG WCR (the tile emitter silently drops it). The top-level ``rmw_only`` call above
-        # deliberately leaves such reductions as a boundary WCR, correct ONLY when the boundary is
-        # at top level. So materialise every remaining nested pure-WCR reduction to a product-fill
-        # map + ``Reduce`` with a WCR-FREE explicit ``acc = acc <op> fold`` read-back: no WCR
-        # survives, the product-fill map is ordinary elementwise dataflow the tiler strides, and
-        # the read-back reproduces the original ``acc (op)= ...`` for any prior ``acc``. No-op at
-        # top level (``nested_only``) and on non-reductions.
         LiftMapReductionToReduce(vectorized=reduce_vectorized,
                                  pure_wcr_only=True,
                                  nested_only=True,
@@ -1432,26 +1293,11 @@ class VectorizeMultiDim(ppl.Pipeline):
         # lowers a real GPU reduction, not the host pure fallback. No-op with no non-tile node.
         self._finalize_lifted_library_nodes(sdfg)
         # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()`` to the caller
-        # (SDFG returns with tile lib nodes present). The per-lane-symbol audit (design 10.6)
-        # only runs after expansion (it walks lowered tasklets), so skip it on the deferred path.
+        # (SDFG returns with tile lib nodes present).
         if self._expand_tile_nodes:
             sdfg.expand_library_nodes(predicate=_expandable_during_vectorization)
-            # Sweep per-lane SDFG symbols the gather lowering emitted as named intermediates
-            # but now unused post-expansion. ``RemoveUnusedPerLaneSymbols`` supersedes the
-            # legacy ``ClearPerLaneIndexSymbols`` hard-fail audit — per-lane symbols are
-            # intentional in the gather lowering (user 2026-06-10), and the survivors are
-            # populate-tasklet references the audit can't tell from accidental leaks.
-            RemoveUnusedPerLaneSymbols().apply_pass(sdfg, {})
-        # Runtime nonnegativity guard (Piece 3 of the symbol-canonicalization contract, mirrors
-        # canonicalize's terminal ``AssumeSymbolConstraints``): ``SetSymbolNonnegativeAssumptions``
-        # (line ~493) made every signed-integer free symbol ``nonnegative=True`` at COMPILE time so
-        # the tile emitter's offset/size reasoning (``x ** N`` -> ipow, full-tile store size
-        # ``end - begin + W``) is sound; that assumption is only valid if the caller actually passes
-        # ``s >= 0``. Prepend one dominating start state whose per-symbol ``std::abort`` aborts
-        # on a negative value so the contract is CHECKED at the boundary, not silently assumed. Emit
-        # LAST -- after expansion + the per-lane audit -- so nothing reshapes the start block after
-        # (the same "runs last" rule the canonicalize guard follows to avoid orphaning its state).
-        # No-op when the SDFG has no signed-integer free symbols (fixed-size kernels).
+        # Runtime check of the nonnegativity SetSymbolNonnegativeAssumptions assumed. parallelize() input has
+        # no guard yet; on canonical input the existing guard makes this a no-op.
         insert_assumption_guards(sdfg)
         # Exit sweep + postcondition: passes above mint nested SDFGs (Nest, LoopToMap, lib-node
         # expansion) that take the property default, which follows the global config.
@@ -1507,36 +1353,6 @@ class VectorizeMultiDim(ppl.Pipeline):
         re-run after a pass mints new maps (LoopToMap) or library nodes."""
         from dace.sdfg import infer_types
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
-
-    def _refine_loop_to_map_bodies(self, sdfg: dace.SDFG) -> None:
-        """Parallelise data-parallel loops with ``ParallelizeLoops``.
-
-        ``RefineNestedAccess`` is intentionally NOT run here (see body): under the
-        staging-first design it is redundant (``ExpandNestedSDFGInputs`` re-widens the
-        boundary memlets) and harmful (it rewrites per-lane gather indices ``idx[i] → idx[0]``).
-
-        :param sdfg: SDFG to transform in place.
-        """
-        pre = {id(n) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
-        # DEFAULT non-permissive (``_loop_to_map_permissive`` defaults False): permissive
-        # ``LoopToMap`` would parallelise a scatter FOR-loop (``a[idx[i]] = ...`` -- a write the
-        # iter var does not provably index uniquely) on an unchecked assumption the index is
-        # injective, an unsound auto-parallelisation. In production a genuine data-parallel
-        # scatter must arrive already a ``Map`` (the frontend ``dace.map``, where the author
-        # asserts injectivity); the tile path then lowers it via gather/scatter tile ops (see
-        # ``kernels/test_forced_scatter_gather_scatter.py``). The knob stays honored so a
-        # dedicated scatter/gather tile-lowering test can opt in (``loop_to_map_permissive=True``)
-        # to force its for-loop scatter into a Map and exercise the tile path directly.
-        ParallelizeLoops(permissive=self._loop_to_map_permissive).apply_pass(sdfg, {})
-        # ``RefineNestedAccess`` is skipped on the K-dim path (user 2026-06-10 audit): under
-        # the staging-first design it is redundant and harmful:
-        # * It narrows ``LoopToMap``'s whole-array memlets (``e[0:N]``) to per-iter (``e[i]``),
-        #   which ``ExpandNestedSDFGInputs`` (next) widens straight back.
-        # * Worse, it substitutes parent-Map iter-vars into body-NSDFG interstate assignments,
-        #   rewriting the canonical gather/scatter ``__sym = idx[i]`` to ``__sym = idx[0]`` and
-        #   destroying the per-lane index semantics the materialiser's inline lift depends on.
-        # The downstream pipeline handles whole-array boundary memlets natively via
-        # ExpandNestedSDFGInputs + the staging chain.
 
     def _finalize_lifted_library_nodes(self, sdfg: dace.SDFG) -> None:
         """Select native BLAS implementations for any NON-tile library node lifted during
