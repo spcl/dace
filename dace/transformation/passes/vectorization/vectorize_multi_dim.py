@@ -102,7 +102,6 @@ from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, Sta
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated, collapse_multigraph_to_nx
-from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import (NormalizeMaskedWriteTasklets,
                                                                                       NormalizeTernaryTasklets)
 from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE, TileLoad, TileMaskGen, TileMMA,
@@ -251,7 +250,7 @@ class _MultiOutputReductionMapFission(MapFission):
 
     Fissions a fused multi-output reduction map — e.g. gesummv ``tmp(+)= A[i,j]*x[j]; y(+)=
     B[i,j]*x[j]`` (two matvecs in one map, split to single-output tasklets by
-    :class:`SplitMultiOutputTasklets`) — into one single-contraction map per output so
+    :class:`SplitTasklets` with ``split_operations=False``) — into one single-contraction map per output so
     ``LiftEinsum``/reduction-lift match each. Gate ≥2 distinct WCR outputs: plain
     :class:`MapFission` would fragment a single-output elementwise chain (arc_distance) into per-op
     maps, undoing base ``MapFusion`` + tripping a copy-scope codegen bug.
@@ -1345,10 +1344,10 @@ class VectorizeMultiDim(ppl.Pipeline):
         # Prep for the einsum / reduction lifts: fission fused compute so each contraction /
         # reduction is a single-output map the lifts can match. A fused multi-output tasklet
         # (gesummv's ``ot = A[i,j]*x[j]; oy = B[i,j]*x[j]``) blocks MapFission (one component)
-        # and LiftEinsum (two contractions). SplitMultiOutputTasklets → one single-output
-        # tasklet per output; MapFission then separates the components into clean
+        # and LiftEinsum (two contractions). SplitTasklets' per-output split → one single-output
+        # tasklet per output, bodies left whole; MapFission then separates the components into clean
         # single-contraction maps. BEFORE WCRToAugAssign so the reduction WCR stays intact.
-        SplitMultiOutputTasklets().apply_pass(sdfg, {})
+        SplitTasklets(split_operations=False, validate=False).apply_pass(sdfg, {})
         sdfg.apply_transformations_repeated(_MultiOutputReductionMapFission, permissive=False, validate=False)
         # Lift tensor-contraction maps (matmul / matvec ``c(+)[i,j] = alpha*a[i,k]*b[k,j]``,
         # ``ij,j->i``, ...) to ``Einsum`` nodes BEFORE ``WCRToAugAssign`` rewrites the
