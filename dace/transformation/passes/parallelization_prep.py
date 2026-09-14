@@ -1150,19 +1150,6 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         specialize_loop_under_condition(loop, condition, parallelize, sdfg)
 
-    def _inner_loop_variables(self, loop: LoopRegion) -> set:
-        """Iterator names bound by a ``LoopRegion`` nested strictly inside ``loop``.
-
-        A split point that names one of these is not loop-invariant at ``loop``'s level: it is only
-        defined per-iteration deeper in the nest, so embedding it in ``loop``'s segment bounds is
-        out of scope. The reference stays hidden while the inner loop shares the name (the symbol
-        table still ``defines`` it), then leaks the instant ``UniqueLoopIterators`` gives that inner
-        loop a fresh unique name -- exactly the durbin ``_loop_it_1`` codegen failure."""
-        return {
-            r.loop_variable
-            for r in loop.all_control_flow_regions() if r is not loop and isinstance(r, LoopRegion) and r.loop_variable
-        }
-
     def _best_split_for(self, loop: LoopRegion, sdfg: SDFG):
         """``(x, middle_singleton)`` for the index-set split that unblocks the most maps for
         ``loop`` (probed on an isolated copy), or ``None`` if splitting does not help or the loop
@@ -1171,7 +1158,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         The mode travels with the point because the two candidate families want different splits: a
         guard true for ONE iteration wants that iteration carved out (``middle_singleton``), a guard
         true over a RUN wants the two-way split that keeps the run whole."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.interstate.loop_to_map import LoopToMap, loop_varying_symbols
         # Cheap structural gate FIRST: a loop with no ``if i == x`` equality guard and no
         # broadcast-conflict split point has no split candidate, so a split can never unblock it --
         # skip the can_be_applied probe AND the isolate-and-search (behaviour-identical: both paths
@@ -1186,15 +1173,14 @@ class BestEffortLoopPeeling(ppl.Pass):
                 candidates.append(x)
         two_way = {x for x in self.range_guard_split_points(loop) if x not in candidates}
         candidates += sorted(two_way, key=str)
-        # A split point is baked into ``loop``'s segment bounds (see :meth:`_split_loop_at`), so it
-        # must be in scope at ``loop``'s own level. Drop any candidate naming an iterator an INNER
-        # loop binds -- a value that varies per inner iteration is undefined where the outer segments
-        # test it (durbin's broadcast conflict ``y[k] == y[i]`` solves to ``x = i``, the inner loop
-        # variable). Splitting there embeds the inner name into the outer bounds, valid only by
-        # accident until ``UniqueLoopIterators`` renames the inner loop and the reference dangles as a
-        # free symbol (``SDFG.arglist`` -> ``KeyError``). See :meth:`_inner_loop_variables`.
-        inner = self._inner_loop_variables(loop)
-        candidates = [x for x in candidates if inner.isdisjoint(str(s) for s in x.free_symbols)]
+        # A split point is baked into ``loop``'s segment bounds (see :meth:`_split_loop_at`), which
+        # re-read it every iteration, so it must hold one value for the whole loop. Drop any candidate
+        # naming a symbol that changes while the loop runs: an inner iterator (durbin's ``y[k] ==
+        # y[i]`` solves to ``x = i``, which dangles once ``UniqueLoopIterators`` renames the inner
+        # loop) or a symbol the body assigns (cegterg's ``vc[:, j] = vc[:, idx]`` with ``idx =
+        # unconv[j]`` solves to ``x = idx``, and the segments then skip or repeat iterations).
+        varying = loop_varying_symbols(loop)
+        candidates = [x for x in candidates if varying.isdisjoint(str(s) for s in x.free_symbols)]
         if not candidates:
             return None
         try:
