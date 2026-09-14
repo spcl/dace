@@ -1743,7 +1743,9 @@ class BackwardPassGenerator:
                             backward_dst_node = node
                             break
 
-                memlet.data = backward_dst_node.data
+                # A memlet that names the other end of the edge (e.g., a copy into the destination) keeps its container
+                if fwd_memlet.data == dest_node.data:
+                    memlet.data = backward_dst_node.data
 
                 # We also need to Add an empty edge from the cleared node to where the data will be used
                 tmp_clear_node_out_edges = backward_state.out_edges(backward_dst_node)
@@ -1797,9 +1799,9 @@ class BackwardPassGenerator:
                 # Get the source access node in the path
                 source_access_node = list(path)[0].src
                 if isinstance(source_access_node, nodes.AccessNode):
-                    # Check if this is a zeroed out node
-                    in_values = any(source_access_node in values for values in self.zeroed_out.values())
-                    if source_access_node.data != memlet.data and in_values:
+                    # Only memlets that name the gradient a zeroed-out copy stands in for follow it to the copy
+                    if any(source_access_node in copies and original.data == memlet.data
+                           for original, copies in self.zeroed_out.items()):
                         memlet.data = source_access_node.data
             self.set_wcr_if_needed(backward_state=backward_state,
                                    backward_node=self.reverse_map[forward_node],
