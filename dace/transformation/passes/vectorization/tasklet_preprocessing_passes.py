@@ -328,7 +328,7 @@ def _strip_power_exponent_cast(src: str) -> str:
 
 
 #: Floored modulo spellings renamed to ``py_mod``; a bare ``%`` is C's and stays.
-FLOORED_MODULO_NAMES = frozenset({'Mod', 'PyMod', 'FtnModulo', 'ftn_modulo', 'floor_mod'})
+FLOORED_MODULO_NAMES = frozenset({'Mod', 'PyMod', 'FtnModulo', 'ftn_modulo'})
 
 
 class ModuloToPyModExpander(ast.NodeTransformer):

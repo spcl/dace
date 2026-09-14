@@ -285,7 +285,7 @@ REWRITES: Dict[str, Tuple[int, str]] = {
 #: argument's type, uses an argument more than once, dispatches on integral-vs-floating, or writes
 #: through out-parameters.
 #:
-#: ``py_mod``/``floor_mod``/``ftn_modulo`` floor (``py_mod(-1, 5) == 4``); ``c_mod``/``ftn_mod`` truncate (``-1``).
+#: ``py_mod``/``ftn_modulo`` floor (``py_mod(-1, 5) == 4``); ``c_mod``/``ftn_mod`` truncate (``-1``).
 #:
 #: ``sign`` and ``heaviside`` are here rather than in :data:`REWRITES` for a dtype reason. The
 #: runtime's ``sign`` is ``T((T(0) < x) - (x < T(0)))``: the comparisons yield ``bool``, their
@@ -616,11 +616,6 @@ INLINE_DEFINITIONS: Dict[str, str] = {
     '    py_divmod(static_cast<R>(numerator), static_cast<R>(denominator), quotient, remainder);\n'
     '    return remainder;\n'
     '}',
-    'floor_mod':
-    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
-    'static constexpr inline R floor_mod(const T& numerator, const U& denominator) {\n'
-    '    return py_mod(numerator, denominator);\n'
-    '}',
     'c_mod':
     'template <typename T, typename U, typename R = std::conditional_t<std::is_integral_v<T> && std::is_integral_v<U>, decltype(std::declval<T>() / std::declval<U>()), decltype(std::fmod(std::declval<T>(), std::declval<U>()))>>\n'
     'static constexpr inline R c_mod(const T& numerator, const U& denominator) {\n'
@@ -733,7 +728,6 @@ DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
     'find_first_index': ('find_first_chunk', ),
     'py_floor': ('py_divmod', ),
     'py_mod': ('py_divmod', ),
-    'floor_mod': ('py_mod', ),
     'ftn_mod': ('c_mod', ),
     'ftn_modulo': ('py_mod', ),
 }
@@ -750,7 +744,6 @@ DEFINITION_HEADERS: Dict[str, Tuple[str, ...]] = {
     'py_floor': ('<utility>', ),
     'py_mod': ('<utility>', ),
     'py_divmod': ('<limits>', '<type_traits>'),
-    'floor_mod': ('<utility>', ),
     'c_mod': ('<type_traits>', '<utility>'),
     'ftn_mod': ('<utility>', ),
     'ftn_modulo': ('<utility>', ),
@@ -1757,8 +1750,6 @@ C_TYPED_HELPER_SPECS: Dict[str, Tuple[Tuple[Tuple[str, str], ...], Tuple[Tuple[T
     ((('{T}', 'numerator'), ('{T}', 'denominator')), ((C_ARITHMETIC_DTYPES, '{T}', C_DIVMOD_HALF_BODY % 'quotient'), )),
     'py_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')), ((C_ARITHMETIC_DTYPES, '{T}',
                                                                  C_DIVMOD_HALF_BODY % 'remainder'), )),
-    'floor_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')),
-                  ((C_ARITHMETIC_DTYPES, '{T}', 'return cpf_py_mod_{t}(numerator, denominator);'), )),
     'c_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')),
               ((C_SIGNED_DTYPES, '{T}', 'return numerator % denominator;'),
                (C_FLOATING_DTYPES, '{T}', 'return fmod{f}(numerator, denominator);'))),

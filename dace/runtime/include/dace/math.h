@@ -345,12 +345,6 @@ static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& d
     return py_mod(numerator, denominator);
 }
 
-// floor_mod(a, b) -- Fortran MODULO as the Fortran bridge spells it: the floored remainder, ftn_modulo.
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T floor_mod(const T& numerator, const T& denominator) {
-  return ftn_modulo(numerator, denominator);
-}
-
 // Computes C/C++ divmod (std::div)
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {

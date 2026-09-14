@@ -86,7 +86,7 @@ CASES = [
     ('py_mod', ('1.0e300', '7.0'), '1.0'),
     ('py_floor', ('7', '0'), '0'),
     ('py_mod', ('-7', '0'), '0'),
-    ('floor_mod', ('-1', '5'), '4'),
+    ('ftn_modulo', ('-1', '5'), '4'),
     ('c_mod', ('-1', '5'), '-1'),
     ('c_mod', ('-1.0', '5.0'), '-1.0'),
     # sympy's ``Mod`` is floored; ``c_mod`` above is the truncating remainder.
@@ -359,7 +359,8 @@ def test_definitions_are_emitted_callees_first():
 
 def test_dependency_closure_pulls_transitive_callees():
     """Asking for one helper brings everything it reaches."""
-    assert cpf_lowering.required_definitions({'floor_mod'}, Dialect.STANDALONE) == {'floor_mod', 'py_mod', 'py_divmod'}
+    assert cpf_lowering.required_definitions({'ftn_modulo'},
+                                             Dialect.STANDALONE) == {'ftn_modulo', 'py_mod', 'py_divmod'}
 
 
 @pytest.mark.parametrize('dialect', DIALECTS, ids=DIALECT_IDS)
@@ -415,14 +416,12 @@ CONSTEXPR_PROBES = {
     'static_assert(py_floor(-7, 3) == -3);',
     'py_mod':
     'static_assert(py_mod(-1, 5) == 4);',
-    'floor_mod':
-    'static_assert(floor_mod(-1, 5) == 4);',
     'c_mod':
     'static_assert(c_mod(-1, 5) == -1);',
     'ftn_mod':
     'static_assert(ftn_mod(-1, 5) == -1);',
     'ftn_modulo':
-    'static_assert(ftn_modulo(-17, 3) == 1);',
+    'static_assert(ftn_modulo(-17, 3) == 1);\nstatic_assert(ftn_modulo(-1, 5) == 4);',
     'cpp_divmod':
     'constexpr long cpp_divmod_probe() { long q = 0, r = 0; cpp_divmod(-7L, 3L, q, r); return q; }\n'
     'static_assert(cpp_divmod_probe() == -2);',
@@ -508,7 +507,7 @@ RETURN_TYPES = [
     ('py_floor(7, 2.0)', 'double'),
     ('py_floor(static_cast<int64_t>(-7), 2)', 'int64_t'),
     ('py_mod(-1.0f, 5.0f)', 'float'),
-    ('floor_mod(static_cast<int16_t>(-1), static_cast<int16_t>(5))', 'int'),
+    ('ftn_modulo(static_cast<int16_t>(-1), static_cast<int16_t>(5))', 'int'),
     ('ftn_modulo(static_cast<int64_t>(-1), 5)', 'int64_t'),
     ('c_mod(-1, 5)', 'int'),
     ('c_mod(1, 2.0f)', 'double'),

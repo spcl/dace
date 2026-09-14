@@ -38,7 +38,7 @@ DEFAULT_UNROLL_LIMIT = Config.get('optimizer', 'canonicalization', 'unroll_limit
 #: peel that unblocks parallelization (``optimizer.canonicalization.peel_limit``).
 DEFAULT_PEEL_LIMIT = Config.get('optimizer', 'canonicalization', 'peel_limit')
 #: Modulo spellings the peel rewrite folds; ``CMod`` only over a nonnegative band.
-_MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'floor_mod', 'ftn_modulo', 'CMod'})
+_MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'ftn_modulo', 'CMod'})
 #: "not built yet", distinct from a built-but-absent value.
 _UNBUILT = object()
 

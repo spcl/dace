@@ -85,9 +85,8 @@ BANNED_PATTERNS = (
 UNQUALIFIED_RUNTIME_FUNCTIONS = frozenset({
     'Abs', 'Max', 'Min', 'ITE', 'ROUND', 'iround', 'ceiling', 'int_ceil', 'int_floor', 'int_floor_ni', 'reciprocal',
     'sign', 'sgn', 'sign_numpy_2', 'heaviside', 'Mod', 'py_mod', 'c_mod', 'ftn_mod', 'ftn_modulo', 'py_floor',
-    'py_divmod', 'cpp_divmod', 'floor_mod', 'deg2rad', 'rad2deg', 'np_float_pow', 'np_frexp', 'np_modf', 'bitwise_and',
-    'bitwise_or', 'bitwise_xor', 'bitwise_invert', 'left_shift', 'right_shift', 'logical_left_shift',
-    'logical_right_shift'
+    'py_divmod', 'cpp_divmod', 'deg2rad', 'rad2deg', 'np_float_pow', 'np_frexp', 'np_modf', 'bitwise_and', 'bitwise_or',
+    'bitwise_xor', 'bitwise_invert', 'left_shift', 'right_shift', 'logical_left_shift', 'logical_right_shift'
 })
 
 #: A call to one of the above: the name at a word boundary, not already namespace-qualified, and

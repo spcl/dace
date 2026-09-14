@@ -14,6 +14,7 @@ from dace.subsets import Range
 from dace.transformation.passes.vectorization.utils.tile_access import (
     PerDimKind,
     TileAccessKind,
+    _detect_modular_factor,
     classify_tile_access,
 )
 
@@ -335,6 +336,30 @@ def test_replicate_float_divisor_refused():
     # _detect_replicate_factor should refuse a float divisor.
     expr = sympy.Function("int_floor")(sympy.Symbol("i"), sympy.Float(2.5))
     assert _detect_replicate_factor(expr, "i") is None
+
+
+@pytest.mark.parametrize("index", ["i % 5", "(2*i + 1) % 5", "FtnMod(i, 5)"])
+def test_c_modulo_with_an_unknown_sign_dividend_falls_back_to_gather(index):
+    """C's ``%`` of a dividend that may be negative stays ``CMod``: not the modular pattern, gathered per lane."""
+    expr = symbolic.pystr_to_symbolic(index)
+    assert isinstance(expr, symbolic.CMod)
+    assert _detect_modular_factor(expr, "i") is None
+    ta = classify_tile_access(_R((index, index)), iter_vars=("i", ))
+    assert ta.per_dim_kind == (PerDimKind.GATHER, )
+    assert ta.kind == TileAccessKind.GATHER
+    assert ta.dim_iter_var == (None, )
+    assert ta.dim_strides == (None, )
+
+
+def test_c_modulo_with_a_nonnegative_dividend_folds_to_the_modular_pattern():
+    """With a nonnegative dividend C's ``%`` equals the floored one, so ``CMod`` folds to ``Mod`` and is detected
+    as modular. The modular dim is still recorded GATHER: no tile-aligned modular load exists."""
+    expr = symbolic.CMod(symbolic.symbol("nonneg_i", nonnegative=True), 5)
+    assert isinstance(expr, symbolic.MODULO_FUNCTIONS["Mod"])
+    assert _detect_modular_factor(expr, "nonneg_i") == 5
+    ta = classify_tile_access(Range([(expr, expr, 1)]), iter_vars=("nonneg_i", ))
+    assert ta.per_dim_kind == (PerDimKind.GATHER, )
+    assert ta.kind == TileAccessKind.GATHER
 
 
 if __name__ == "__main__":

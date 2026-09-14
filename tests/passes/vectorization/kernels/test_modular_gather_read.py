@@ -15,6 +15,7 @@ import numpy
 import pytest
 
 import dace
+from dace.transformation.passes.vectorization.utils.tasklets import LANE_ID_MATERIALISER_PREFIX
 from tests.passes.vectorization.helpers.harness import S, X, Y, run_vectorization_test
 
 pytestmark = pytest.mark.tile_nodes
@@ -107,3 +108,50 @@ def test_square_gather_read_1d(branch_mode, remainder_strategy):
         branch_mode=branch_mode,
         remainder_strategy=remainder_strategy,
     )
+
+
+def cmod_gather_read_sdfg() -> dace.SDFG:
+    """``out[i] = a[i % S]`` built directly, so the index keeps C's ``%`` instead of the frontend's ``PyMod``."""
+    sdfg = dace.SDFG("cmod_gather_read_1d")
+    sdfg.add_array("out", [X], dace.float64)
+    sdfg.add_array("a", [S], dace.float64)
+    state = sdfg.add_state("body")
+    state.add_mapped_tasklet("copy",
+                             map_ranges={"i": "0:X"},
+                             inputs={"inp": dace.Memlet("a[i % S]")},
+                             code="o = inp",
+                             outputs={"o": dace.Memlet("out[i]")},
+                             external_edges=True)
+    return sdfg
+
+
+@pytest.mark.parametrize("remainder_strategy", ["scalar", "masked"])
+@pytest.mark.parametrize("branch_mode", ["merge", "fp_factor"])
+def test_cmod_gather_read_1d(branch_mode, remainder_strategy):
+    """A truncating ``CMod`` index whose dividend sign is unknown gathers per lane like the floored one."""
+    sdfg = cmod_gather_read_sdfg()
+    index = next(e.data.subset for e in sdfg.states()[0].edges() if isinstance(e.dst, dace.nodes.Tasklet))
+    assert isinstance(index.min_element()[0], dace.symbolic.CMod)
+    xv, sv = 60, 3
+    vectorized = run_vectorization_test(
+        dace_func=sdfg,
+        arrays={
+            "out": numpy.zeros(xv),
+            "a": numpy.random.random(sv)
+        },
+        params={
+            "X": xv,
+            "S": sv
+        },
+        vector_width=8,
+        sdfg_name="cmod_gather_read_1d",
+        from_sdfg=True,
+        branch_mode=branch_mode,
+        remainder_strategy=remainder_strategy,
+    )
+    lane_index_code = [
+        node.code.as_string for node, _ in vectorized.all_nodes_recursive()
+        if isinstance(node, dace.nodes.Tasklet) and node.label.startswith(LANE_ID_MATERIALISER_PREFIX)
+    ]
+    assert lane_index_code, "the CMod index was not gathered through a per-lane index tile"
+    assert not any("py_mod" in code for code in lane_index_code), lane_index_code
