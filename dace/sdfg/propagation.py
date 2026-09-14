@@ -1307,10 +1307,24 @@ def reshaped_across_boundary(inner: data.Data, outer_subset: subsets.Subset,
     outer = outer_subset.size()
     if len(inner.shape) != len(outer):
         return False
-    mapping = {pystr_to_symbolic(name): pystr_to_symbolic(value) for name, value in symbol_mapping.items()}
-    return any(
-        symbolic.equal(sympy.sympify(pystr_to_symbolic(extent)).subs(mapping, simultaneous=True), size) is False
-        for extent, size in zip(inner.shape, outer))
+    return extents_provably_differ(tuple(inner.shape), tuple(outer), tuple(symbol_mapping.items()))
+
+
+@functools.lru_cache(maxsize=16384, typed=True)
+def extents_provably_differ(inner: 'tuple[symbolic.SymbolicType, ...]', outer: 'tuple[symbolic.SymbolicType, ...]',
+                            mapping_items: 'tuple[tuple[str, symbolic.SymbolicType], ...]') -> bool:
+    """Whether some inner extent, renamed through the symbol mapping, provably differs from its outer size.
+
+    Pure in its arguments, so memoized: whole-SDFG propagation re-asks the same nested connectors after every
+    lift. An extent identical to its size after renaming skips ``symbolic.equal``, whose assumption solver
+    dominated ScatterToGuardedMaps on ls3df_scf, and whose verdict for identical expressions is never False.
+    """
+    mapping = {pystr_to_symbolic(name): pystr_to_symbolic(value) for name, value in mapping_items}
+    for extent, size in zip(inner, outer):
+        renamed = sympy.sympify(pystr_to_symbolic(extent)).subs(mapping, simultaneous=True)
+        if renamed != size and symbolic.equal(renamed, size) is False:
+            return True
+    return False
 
 
 def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG',
