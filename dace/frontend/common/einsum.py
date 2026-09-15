@@ -5,6 +5,7 @@ from string import ascii_letters
 from typing import Dict, List, Optional
 
 import numpy as np
+import sympy
 
 import dace
 from dace import dtypes, subsets, symbolic
@@ -162,14 +163,24 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     import dace.libraries.blas as blas  # Avoid import loop
 
     libnode = blas.MatMul('einsum_gemm')
-    libnode.alpha = alpha
-    libnode.beta = beta
+    libnode.alpha = plain_coefficient(alpha)
+    libnode.beta = plain_coefficient(beta)
     state.add_node(libnode)
     state.add_edge(gX, None, libnode, '_a', Memlet.from_array(gX.data, xarr))
     state.add_edge(gY, None, libnode, '_b', Memlet.from_array(gY.data, yarr))
     state.add_edge(libnode, '_c', gZ, None, Memlet.from_array(gZ.data, zarr))
 
     return sdfg
+
+
+def plain_coefficient(value):
+    """``value`` as a Python number when it is a SymPy constant. MatMul/Gemm keep ``alpha``/``beta`` in untyped
+    properties, which serialize a SymPy number as its text and reload it as a ``str`` no expansion can compare."""
+    if isinstance(value, sympy.Integer):
+        return int(value)
+    if isinstance(value, sympy.Float):
+        return float(value)
+    return value
 
 
 def create_einsum_sdfg(sdfg: SDFG,
