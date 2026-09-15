@@ -10,6 +10,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.transformation.passes.length_one_array_scalar_conversion import (descriptor_access_summary,
+                                                                           descriptor_is_written)
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 
@@ -48,6 +50,31 @@ def test_read_only_signature_scalar_is_left_by_value():
     state.add_edge(state.add_access('alpha'), None, tasklet, 's', dace.Memlet('alpha[0]'))
     state.add_edge(tasklet, 'o', state.add_access('b'), None, dace.Memlet('b[0]'))
 
+    assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) is None
+    assert isinstance(sdfg.arrays['alpha'], dace.data.Scalar)
+    assert 'double alpha' in sdfg.signature()
+
+
+def test_a_signature_scalar_reached_only_by_an_ordering_edge_is_left_by_value():
+    """An empty-memlet in-edge orders a node after another and moves no data. Counting it as a write made CPF
+    pass channel_flow's read-only ``dx``/``dy``/``rho`` by pointer while the native ABI passes them by value."""
+    sdfg = dace.SDFG('scalar_ordered')
+    sdfg.add_array('a', [20], dace.float64)
+    sdfg.add_array('b', [20], dace.float64)
+    sdfg.add_scalar('alpha', dace.float64, transient=False)
+    state = sdfg.add_state()
+    fill = state.add_tasklet('fill', {}, {'o': dace.float64}, 'o = 0.0')
+    filled = state.add_access('b')
+    state.add_edge(fill, 'o', filled, None, dace.Memlet('b[0]'))
+    alpha = state.add_access('alpha')
+    state.add_edge(filled, None, alpha, None, dace.Memlet())
+    tasklet = state.add_tasklet('scale', {'i': dace.float64, 's': dace.float64}, {'o': dace.float64}, 'o = i * s')
+    state.add_edge(state.add_access('a'), None, tasklet, 'i', dace.Memlet('a[0]'))
+    state.add_edge(alpha, None, tasklet, 's', dace.Memlet('alpha[0]'))
+    state.add_edge(tasklet, 'o', state.add_access('b'), None, dace.Memlet('b[1]'))
+
+    assert not descriptor_is_written(sdfg, 'alpha')
+    assert 'alpha' not in descriptor_access_summary(sdfg)[1]
     assert PromoteScalarOutputsToArrays().apply_pass(sdfg, {}) is None
     assert isinstance(sdfg.arrays['alpha'], dace.data.Scalar)
     assert 'double alpha' in sdfg.signature()

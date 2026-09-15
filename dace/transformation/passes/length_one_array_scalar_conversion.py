@@ -241,10 +241,14 @@ def control_flow_reads(sdfg: SDFG) -> OrderedSet[str]:
 
 
 def descriptor_is_written(sdfg: SDFG, name: str) -> bool:
-    """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has an in-edge)."""
+    """True if ``name`` is written anywhere in ``sdfg`` (some AccessNode of it has a non-empty in-edge).
+
+    An empty-memlet in-edge only orders the node after its source and moves no data.
+    """
     for state in sdfg.all_states():
         for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == name and state.in_degree(node) > 0:
+            if isinstance(node, nodes.AccessNode) and node.data == name and any(not edge.data.is_empty()
+                                                                                for edge in state.in_edges(node)):
                 return True
     return False
 
@@ -262,7 +266,7 @@ def descriptor_access_summary(sdfg: SDFG) -> Tuple[Set[str], Set[str], Set[str]]
             if state.out_degree(node) > 0:
                 read.add(node.data)
             in_edges = state.in_edges(node)
-            if in_edges:
+            if any(not e.data.is_empty() for e in in_edges):
                 written.add(node.data)
                 if any(
                         isinstance(e.src, nodes.MapExit) and e.src.map.schedule in dtypes.GPU_SCHEDULES
