@@ -59,6 +59,32 @@ def test_cholesky_pure_refuses_a_slice_of_a_higher_rank_array():
         sdfg.expand_library_nodes()
 
 
+@pytest.mark.parametrize("lower", [True, False])
+def test_cholesky_pure_conjugates_a_complex_hermitian_factor(lower):
+    """A complex Hermitian matrix factors as ``L L^H`` (upper ``U = L^H``); the pure expansion multiplied
+    ``L[i,k] * L[j,k]`` without the conjugate, which left an imaginary diagonal and broke cegterg's
+    generalized eigen-solve."""
+    size = 4
+    sdfg = dace.SDFG(f"linalg_cholesky_pure_complex_{'lower' if lower else 'upper'}")
+    sdfg.add_array("xin", [size, size], dace.complex128)
+    sdfg.add_array("xout", [size, size], dace.complex128)
+    state = sdfg.add_state("dataflow")
+    node = Cholesky("cholesky", lower=lower)
+    node.implementation = "pure"
+    state.add_memlet_path(state.add_read("xin"), node, dst_conn="_a", memlet=Memlet.simple("xin", "0:4, 0:4"))
+    state.add_memlet_path(node, state.add_write("xout"), src_conn="_b", memlet=Memlet.simple("xout", "0:4, 0:4"))
+
+    rng = np.random.default_rng(5)
+    X = rng.standard_normal((size, size)) + 1j * rng.standard_normal((size, size))
+    A = X @ X.conj().T + size * np.eye(size)
+    B = np.zeros((size, size), dtype=np.complex128)
+    sdfg(xin=A.copy(), xout=B)
+
+    L = np.linalg.cholesky(A)
+    np.testing.assert_allclose(B, L if lower else L.conj().T, rtol=1e-12, atol=1e-12)
+    np.testing.assert_array_equal(np.imag(np.diag(B)), 0.0)
+
+
 @pytest.mark.parametrize("implementation, dtype, storage", [
     pytest.param("pure", dace.float32, dace.StorageType.Default),
     pytest.param("pure", dace.float64, dace.StorageType.Default),

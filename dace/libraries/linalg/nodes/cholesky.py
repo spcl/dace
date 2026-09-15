@@ -2,6 +2,8 @@
 import copy
 import math
 
+import numpy as np
+
 import dace.library
 from dace.codegen import common
 import dace.properties
@@ -137,18 +139,19 @@ class ExpandCholeskyPure(ExpandTransformation):
             for j in range(n):
                 diagonal = _a[j, j]
                 for k in range(j):
-                    diagonal = diagonal - factor[j, k] * factor[j, k]
-                factor[j, j] = math.sqrt(diagonal)
+                    diagonal = diagonal - factor[j, k] * np.conj(factor[j, k])
+                # A Hermitian positive-definite pivot is real; its rounding residue must not reach the factor.
+                factor[j, j] = math.sqrt(np.real(diagonal))
                 for i in range(j + 1, n):
                     off = _a[i, j]
                     for k in range(j):
-                        off = off - factor[i, k] * factor[j, k]
+                        off = off - factor[i, k] * np.conj(factor[j, k])
                     factor[i, j] = off / factor[j, j]
             # ``factor`` is always the LOWER triangle; ``lower=False`` asks for the upper one, which
-            # is its transpose (A = L L^T = U^T U), so the orientation is a copy and not a second
-            # factorization.
+            # is its conjugate transpose (A = L L^H = U^H U), so the orientation is a copy and not a
+            # second factorization. The conjugate is the identity on a real dtype.
             for i, j in dace.map[0:n, 0:n]:
-                _b[i, j] = factor[i, j] if lower else factor[j, i]
+                _b[i, j] = factor[i, j] if lower else np.conj(factor[j, i])
 
         nsdfg = cholesky_pure.to_sdfg(simplify=True)
         # See ``restride``: a connector may be a strided slice of a bigger array, and a contiguous
