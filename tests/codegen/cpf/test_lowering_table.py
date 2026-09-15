@@ -41,6 +41,9 @@ CASES = [
     ('Abs', ('-3.5', ), '3.5'),
     # numpy's conjugate of a real is the real; C++'s std::conj of one is a std::complex.
     ('conj', ('-2.5', ), '-2.5'),
+    # ``np.real`` of a real pivot (the pure Cholesky expansion) printed as ``(x).real()``, which a double has not.
+    ('re', ('-2.5', ), '-2.5'),
+    ('im', ('-2.5', ), '0.0'),
     ('ceiling', ('2.25', ), '3.0'),
     ('floor', ('2.75', ), '2.0'),
     ('ROUND', ('2.5', ), '3.0'),

@@ -266,10 +266,10 @@ STD_RENAMES: Dict[str, str] = {
 #: ``Mod`` is SymPy's floored modulo, so it is ``py_mod``.
 REWRITES: Dict[str, Tuple[int, str]] = {
     'reciprocal': (1, '(1 / ({0}))'),
-    # A complex's components. The runtime helpers forward to ``.real()`` / ``.imag()`` on the
-    # underlying ``std::complex``, which standalone output can call directly.
-    're': (1, '(({0}).real())'),
-    'im': (1, '(({0}).imag())'),
+    # A complex's components. The runtime helpers also take a real (``.real()`` on a ``double`` does not
+    # compile); ``std::real`` / ``std::imag`` have that overload.
+    're': (1, '(std::real({0}))'),
+    'im': (1, '(std::imag({0}))'),
     'iround': (1, '(static_cast<int>(std::round({0})))'),
     'ITE': (3, '(({0}) ? ({1}) : ({2}))'),
     'IfExpr': (3, '(({0}) ? ({1}) : ({2}))'),
