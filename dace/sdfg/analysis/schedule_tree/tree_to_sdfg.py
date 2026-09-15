@@ -87,8 +87,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         boundary_behavior: StateBoundaryBehavior = StateBoundaryBehavior.STATE_TRANSITION,
         max_nested_sdfg: int = 1000,
     ) -> None:
-        if boundary_behavior != StateBoundaryBehavior.STATE_TRANSITION:
-            raise NotImplementedError("Only STATE_TRANSITION is currently supported as StateBoundaryBehavior.")
+        self._boundary_behavior = boundary_behavior
+        """How state boundaries that do not require a state transition are converted."""
+
+        self._barriers: list[tuple[SDFGState, set[nodes.Node]]] = []
+        """State boundaries converted into happens-before edges: the state and the nodes that precede the boundary."""
+
+        self._frozen_access_nodes: set[int] = set()
+        """IDs of access nodes before such a state boundary, which must not be written to after it."""
 
         self._ctx: _Context
         """Context information like tree root and current scope."""
@@ -1007,7 +1013,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             # only re-use cached write-only nodes, e.g. don't create a cycle for
             # map i=0:20:
             #  A[i] = tasklet(A[i])
-            if name not in access_cache or self._current_state.out_degree(access_cache[name]) > 0:
+            if (name not in access_cache or self._current_state.out_degree(access_cache[name]) > 0
+                    or id(access_cache[name]) in self._frozen_access_nodes):
                 # cache write access into access_cache
                 write_access_node = self._current_state.add_write(name)
                 access_cache[name] = write_access_node
@@ -1123,7 +1130,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # only re-use cached write-only nodes, e.g. don't create a cycle for
         # A[1] = tasklet(A[1]) or A[1] = copy A[0]
-        if name not in cache or cache[name] is src or self._current_state.out_degree(cache[name]) > 0:
+        if (name not in cache or cache[name] is src or self._current_state.out_degree(cache[name]) > 0
+                or id(cache[name]) in self._frozen_access_nodes):
             # cache write access node
             write_access_node = self._current_state.add_write(name)
             cache[name] = write_access_node
@@ -1309,6 +1317,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._local_access_cache()[node.target] = ref_access
 
     def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
+        # Boundaries that do not precede control flow or perform assignments may be expressed within the state
+        if (self._boundary_behavior == StateBoundaryBehavior.EMPTY_MEMLET and not node.due_to_control_flow
+                and not self._interstate_symbols):
+            self._add_barrier()
+            return
+
         # When creating a state boundary, include all inter-state assignments that precede it.
         pending = self._pending_interstate_assignments()
 
@@ -1317,6 +1331,45 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._current_state,
             assignments=pending,
         )
+
+    def _add_barrier(self) -> None:
+        """
+        Converts a state boundary into happens-before relations within the current state: every node added after this
+        point executes after all nodes that already exist. The empty memlet edges are added in ``connect_barriers``,
+        once all nodes are known.
+        """
+        state = self._current_state
+        self._barriers.append((state, set(state.nodes())))
+
+        # Writes after the boundary must use new access nodes, otherwise they would precede the nodes they follow
+        self._frozen_access_nodes.update(id(n) for n in state.nodes() if isinstance(n, nodes.AccessNode))
+
+    def connect_barriers(self) -> None:
+        """
+        Adds empty memlet edges for state boundaries that were converted into happens-before relations, from every
+        top-level sink before a boundary to every top-level source after it. Scopes are represented by their exit node
+        as a sink and by their entry node as a source.
+        """
+        # Later boundaries first, such that nodes after a later boundary are no longer sources for an earlier one
+        for state, before in reversed(self._barriers):
+            scope_dict = state.scope_dict()
+            top_level = {n for n in state.nodes() if scope_dict[n] is None}
+            top_level |= {state.exit_node(n) for n in top_level if isinstance(n, nodes.EntryNode)}
+            preceding = top_level & before
+            following = top_level - before
+
+            sinks = [
+                n for n in preceding
+                if not isinstance(n, nodes.EntryNode) and not any(e.dst in preceding for e in state.out_edges(n))
+            ]
+            sources = [
+                n for n in following
+                if not isinstance(n, nodes.ExitNode) and not any(e.src in following for e in state.in_edges(n))
+            ]
+            for sink in sinks:
+                for source in sources:
+                    if not state.edges_between(sink, source):
+                        state.add_nedge(sink, source, Memlet())
 
     def _flush_pending_assignments(self, label: str) -> None:
         """
@@ -1375,10 +1428,12 @@ def from_schedule_tree(
     _nest_nview_regions(stree)
 
     # Insert artificial state boundaries after WAW, before label, etc.
-    stree = _insert_state_boundaries_to_tree(stree)
+    stree = _insert_state_boundaries_to_tree(stree, state_boundary_behavior)
 
     # Traverse tree and incrementally build SDFG, finally propagate memlets
-    _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs).visit(stree, sdfg=result)
+    converter = _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs)
+    converter.visit(stree, sdfg=result)
+    converter.connect_barriers()
 
     # Memlet directions (src/dst subsets) are determined when edges are added. Scope pass-through edges are
     # connected later than the edges inside the scope, so re-initialize them before propagation.
@@ -1586,7 +1641,10 @@ def _gotos_to(node: tn.ScheduleTreeNode, target: str | None) -> list[tn.GotoNode
     return [n for n in node.preorder_traversal() if isinstance(n, tn.GotoNode) and n.target == target]
 
 
-def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTreeRoot:
+def _insert_state_boundaries_to_tree(
+    stree: tn.ScheduleTreeRoot,
+    boundary_behavior: StateBoundaryBehavior = StateBoundaryBehavior.STATE_TRANSITION,
+) -> tn.ScheduleTreeRoot:
     """
     Inserts StateBoundaryNode objects into a schedule tree where more than one SDFG state would be necessary.
     Operates in-place on the given schedule tree.
@@ -1598,6 +1656,9 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
       * otherwise before a state label (which means a state transition could occur, e.g., in a gblock)
 
     :param stree: The schedule tree to operate on.
+    :param boundary_behavior: The behavior of the conversion upon state boundaries. With
+                              ``StateBoundaryBehavior.EMPTY_MEMLET``, boundaries that must start a new state (e.g.,
+                              before nested SDFGs) are marked as due to control flow.
     """
 
     # Simple boundary node inserter for control flow blocks and state labels
@@ -1652,7 +1713,8 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
                 if node_index > 0 and isinstance(scope.parent.children[node_index - 1], tn.StateBoundaryNode):
                     return visited
 
-                return [tn.StateBoundaryNode(), visited]
+                # The nested SDFG starts a new state, even if other boundaries are converted within states
+                return [tn.StateBoundaryNode(boundary_behavior == StateBoundaryBehavior.EMPTY_MEMLET), visited]
             return visited
 
         visit_ConsumeScope = visit_MapScope
@@ -1725,47 +1787,43 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, view
         inputs = _view_source_memlets(n.input_memlets(), scope_views)
         outputs = _view_source_memlets(n.output_memlets(), scope_views)
 
-        # Register reads
-        for inp in inputs:
-            if inp not in reads:
-                reads[inp] = [n]
-            else:
-                reads[inp].append(n)
+        def register_reads() -> None:
+            for inp in inputs:
+                if inp not in reads:
+                    reads[inp] = [n]
+                else:
+                    reads[inp].append(n)
 
-            # Transitively add parents
-            if inp in writes:
-                for parent in writes[inp]:
-                    parents[id(n)].add(id(parent))
-                    parents[id(n)].update(parents[id(parent)])
-
-        # Inter-state assignment nodes with reads necessitate a state transition if they were written to.
-        if isinstance(n, tn.AssignNode) and any(inp in writes for inp in inputs):
-            boundaries_to_insert.append(i)
-            reads.clear()
-            writes.clear()
-            parents.clear()
-            continue
+                # Transitively add parents
+                if inp in writes:
+                    for parent in writes[inp]:
+                        parents[id(n)].add(id(parent))
+                        parents[id(n)].update(parents[id(parent)])
 
         def unordered_reads(o: Memlet) -> bool:
             """Returns True if another node read the output before, but is not guaranteed to run before this node."""
             return any(r is not n and id(r) not in parents[id(n)] for r in reads[o])
 
+        register_reads()
+
+        # Inter-state assignment nodes with reads necessitate a state transition if they were written to.
+        needs_boundary = isinstance(n, tn.AssignNode) and any(inp in writes for inp in inputs)
+
         # Write after write or potential write/write data race, insert state boundary
-        if any(o in writes and (o not in reads or unordered_reads(o)) for o in outputs):
-            boundaries_to_insert.append(i)
-            reads.clear()
-            writes.clear()
-            parents.clear()
-            continue
+        needs_boundary = needs_boundary or any(o in writes and (o not in reads or unordered_reads(o)) for o in outputs)
 
         # Potential read/write data race: if any read is not in the parents of this node, it might
         # be performed in parallel
-        if any(o in reads and unordered_reads(o) for o in outputs):
+        needs_boundary = needs_boundary or any(o in reads and unordered_reads(o) for o in outputs)
+
+        if needs_boundary:
             boundaries_to_insert.append(i)
             reads.clear()
             writes.clear()
             parents.clear()
-            continue
+
+            # This node is the first one after the boundary
+            register_reads()
 
         # Register writes after all hazards have been tested for
         for out in outputs:

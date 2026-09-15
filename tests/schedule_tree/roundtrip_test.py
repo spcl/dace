@@ -6,28 +6,37 @@ import dace
 import numpy as np
 import pytest
 
-from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
 from dace.properties import CodeBlock
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, NamedRegion, ReturnBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
-def _roundtrip(sdfg: dace.SDFG, expected_node_type: type, simplify: bool) -> dace.SDFG:
+def _roundtrip(
+        sdfg: dace.SDFG,
+        expected_node_type: type,
+        simplify: bool,
+        state_boundary_behavior: t2s.StateBoundaryBehavior = t2s.StateBoundaryBehavior.STATE_TRANSITION) -> dace.SDFG:
     """
     Converts an SDFG to a schedule tree and back, ensuring the tree contains a node of the given type.
     """
     stree = sdfg.as_schedule_tree()
     assert any(type(node) is expected_node_type for node in stree.preorder_traversal())
-    return stree.as_sdfg(simplify=simplify)
+    return stree.as_sdfg(simplify=simplify, state_boundary_behavior=state_boundary_behavior)
 
 
-def _roundtrip_and_compare(sdfg: dace.SDFG, expected_node_type: type, simplify: bool, *arguments: dict) -> dace.SDFG:
+def _roundtrip_and_compare(
+        sdfg: dace.SDFG,
+        expected_node_type: type,
+        simplify: bool,
+        *arguments: dict,
+        state_boundary_behavior: t2s.StateBoundaryBehavior = t2s.StateBoundaryBehavior.STATE_TRANSITION) -> dace.SDFG:
     """
     Converts an SDFG to a schedule tree and back, ensuring the tree contains a node of the given type, and that both
     SDFGs compute the same outputs and return values for each of the given argument sets (on copies of the arrays).
     """
-    new_sdfg = _roundtrip(sdfg, expected_node_type, simplify)
+    new_sdfg = _roundtrip(sdfg, expected_node_type, simplify, state_boundary_behavior)
     new_sdfg.name = f'{sdfg.name}_roundtrip'  # Avoid overwriting the compiled original SDFG
     compiled = sdfg.compile()
     new_compiled = new_sdfg.compile()
@@ -915,6 +924,71 @@ def test_sdfg_metadata():
     assert a[0] == 6 and b[0] == 7
 
 
+def _waw_program_sdfg() -> dace.SDFG:
+
+    @dace.program
+    def tester(A: dace.float64[10], B: dace.float64[10]):
+        A[0] = 1
+        B[1] = A[0] + A[2]
+        A[0] = B[1] * 2
+        A[2] = A[0] + 1
+        for i in dace.map[0:10]:
+            B[i] = A[i] + 1
+        A[:] = B
+
+    return tester.to_sdfg(simplify=False)
+
+
+def _state_machine_nested_waw() -> dace.SDFG:
+    """
+    Creates an SDFG with an if/else expressed through conditional inter-state edges, where one branch calls a nested
+    SDFG that writes to the same element twice in separate states.
+    """
+    sdfg = _state_machine_if_else()
+    inner = dace.SDFG('inner')
+    inner.add_array('X', [2], dace.float64)
+    first = inner.add_state('first', is_start_block=True)
+    _write_tasklet(first, 'out = inp + 5', {'inp': 'X[1]'}, 'X[0]')
+    second = inner.add_state_after(first, 'second')
+    _write_tasklet(second, 'out = inp * 3', {'inp': 'X[1]'}, 'X[0]')
+    then_state = next(state for state in sdfg.states() if state.label == 'then_state')
+    nsdfg = then_state.add_nested_sdfg(inner, {'X'}, {'X'})
+    then_state.add_edge(then_state.add_read('A'), None, nsdfg, 'X', dace.Memlet('A[0:2]'))
+    then_state.add_edge(nsdfg, 'X', then_state.add_write('A'), None, dace.Memlet('A[0:2]'))
+    # The original write of the branch happens before the nested SDFG
+    for edge in list(then_state.edges()):
+        if edge.dst_conn is None and edge.src_conn == 'out':
+            then_state.remove_edge(edge)
+            then_state.add_edge(edge.src, 'out', edge.dst, None, edge.data)
+            then_state.add_nedge(edge.dst, nsdfg, dace.Memlet())
+    return sdfg
+
+
+#: SDFGs (with a node type their schedule tree contains) and arguments, for converting state boundaries into empty
+#: memlets. Some cases contain no boundaries within states, but test that control flow is unaffected by the behavior.
+_EMPTY_MEMLET_ROUNDTRIPS = {
+    'waw_program': (_waw_program_sdfg, tn.MapScope, [dict(A=np.random.rand(10), B=np.random.rand(10))]),
+    'nested_return_in_map_loop': (lambda: _nested_return_sdfg(True, True), tn.StateLabel,
+                                  [dict(A=np.random.rand(10), B=np.zeros(10), N=n) for n in (0, 2, 10)]),
+    'consume_body': (lambda: _consume_body_sdfg(True, True, True), tn.ConsumeScope,
+                     [dict(V=np.arange(4, dtype=np.int32), R=np.zeros(1, np.int32))]),
+    'state_machine': (_state_machine_if_else, tn.GBlock, [dict(A=np.zeros(2), N=n) for n in (1, -1)]),
+    'state_machine_nested_waw':
+    (_state_machine_nested_waw, tn.GBlock, [dict(A=np.random.rand(2), N=n) for n in (1, -1)]),
+    'nview_in_loop': (lambda: _nview_sdfg(True), tn.NView, [dict(A=np.random.rand(4, 5, 10))]),
+}
+
+
+@pytest.mark.parametrize('name', _EMPTY_MEMLET_ROUNDTRIPS.keys())
+def test_roundtrip_empty_memlet_boundaries(name: str):
+    factory, node_type, arguments = _EMPTY_MEMLET_ROUNDTRIPS[name]
+    _roundtrip_and_compare(factory(),
+                           node_type,
+                           False,
+                           *arguments,
+                           state_boundary_behavior=t2s.StateBoundaryBehavior.EMPTY_MEMLET)
+
+
 if __name__ == '__main__':
     test_implicit_inline_and_constants()
     test_name_propagation()
@@ -954,3 +1028,5 @@ if __name__ == '__main__':
     test_transients_and_nested_sdfg()
     test_named_region()
     test_sdfg_metadata()
+    for name in _EMPTY_MEMLET_ROUNDTRIPS:
+        test_roundtrip_empty_memlet_boundaries(name)
