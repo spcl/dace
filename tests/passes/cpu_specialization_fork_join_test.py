@@ -24,7 +24,8 @@ from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.cpu_specialization import SequentializeUnprofitableParallelScopes, SpecializeCpuTransfers
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import min_work_per_region
 
@@ -140,6 +141,82 @@ def test_map_re_entered_by_symbolic_loop_stays_parallel():
     sdfg = one_map_sdfg('map_in_long_loop', [N], ['0:N'], loop_end='N')
     assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
     assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Default
+
+
+def guarded_sdfg(name, extent, in_conditional):
+    """One map over ``0:extent``, optionally inside an ``if``; ``k`` is assigned FROM DATA.
+
+    A symbol an interstate edge reads out of an array is not an SDFG parameter, so nothing about
+    the trip count is known before the call -- the shape the cost model has to decide at run time.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('counts', [1], dace.int64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+
+    body = ControlFlowRegion('body', sdfg=sdfg)
+    map_state(body, sdfg, 'body', [f'0:{extent}'])
+    if in_conditional:
+        branch = ConditionalBlock('guard')
+        branch.add_branch(CodeBlock('k > 0'), body)
+        sdfg.add_node(branch)
+        target = branch
+    else:
+        sdfg.add_node(body)
+        target = body
+    sdfg.add_edge(entry, target, dace.InterstateEdge(assignments={'k': 'counts[0]'}))
+    sdfg.validate()
+    return sdfg
+
+
+def test_map_inside_a_conditional_is_decided():
+    """A ConditionalBlock is not a ControlFlowRegion, so its branches need their own descent.
+
+    Without it every map an ``if`` guards was invisible to the cost model -- amg_setup puts its
+    whole body under one, and its three stream-compaction loops kept a region per row.
+    """
+    sdfg = dace.SDFG('small_map_under_if')
+    sdfg.add_array('a', [BELOW_BREAK_EVEN], dace.float64)
+    body = ControlFlowRegion('body', sdfg=sdfg)
+    map_state(body, sdfg, 'body', [f'0:{BELOW_BREAK_EVEN}'])
+    branch = ConditionalBlock('guard')
+    branch.add_branch(CodeBlock('N > 0'), body)
+    sdfg.add_node(branch, is_start_block=True)
+    sdfg.validate()
+
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    assert schedules(sdfg)['body_map'] == dtypes.ScheduleType.Sequential
+
+
+def test_data_dependent_extent_keeps_its_map_and_carries_a_runtime_guard():
+    """A count the program computes is decided per call, not guessed at compile time."""
+    sdfg = guarded_sdfg('data_dependent_extent', 'k', in_conditional=False)
+    with pinned_break_even():
+        assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) == 1
+    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert entry.map.schedule == dtypes.ScheduleType.Default
+    assert entry.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
+
+
+def test_the_runtime_guard_reaches_the_pragma_and_keeps_the_simd_clause():
+    """The clause names ``parallel``, so the single-thread side still vectorizes."""
+    sdfg = guarded_sdfg('guard_in_pragma', 'k', in_conditional=True)
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+        code = sdfg.generate_code()[0].clean_code
+    assert f'if(parallel: ((k)) >= {PINNED_MIN_WORK_PER_REGION})' in code or (
+        f'if(parallel: (k) >= {PINNED_MIN_WORK_PER_REGION})' in code)
+    assert 'omp parallel for' in code
+
+
+def test_parameter_extent_carries_no_runtime_guard():
+    """A count written in the SDFG's own parameters keeps today's unguarded parallel form."""
+    sdfg = one_map_sdfg('symbolic_param_extent', [N], ['0:N'])
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert entry.map.omp_min_parallel_iterations == 0
 
 
 def test_triangular_map_in_loop_stays_parallel():

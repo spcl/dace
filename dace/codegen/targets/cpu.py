@@ -3720,6 +3720,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 head, sep, rest = map_header.partition(' for')
                 map_header = f'{head}{sep} simd{rest}'
 
+            # The fork/join cost model, evaluated at run time. The modifier scopes the clause to
+            # ``parallel`` alone, so a combined ``parallel for simd`` keeps vectorizing on the
+            # single-thread side instead of losing its simd clause with the team.
+            if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore and not in_persistent
+                    and node.map.omp_min_parallel_iterations > 0):
+                trip = sym2cpp(node.map.range.num_elements())
+                map_header += f' if(parallel: ({trip}) >= {node.map.omp_min_parallel_iterations})'
+
             # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
             # target data name so the nested WCR write's covered-check (``memlet.data in
             # frame``) skips the now-redundant atomic and accumulates into the private copy.
