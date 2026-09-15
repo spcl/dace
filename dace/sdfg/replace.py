@@ -213,6 +213,48 @@ def replace_in_codeblock(codeblock: properties.CodeBlock,
             afr.visit(stmt)
 
 
+def replace_list_property_item(item: Any, element_type: type, repl: Dict[str, str],
+                               symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType]) -> Any:
+    """
+    Applies a replacement to a single element of a ``ListProperty``.
+
+    List properties do not only hold symbolic expressions (e.g., booleans, C declarations, or arbitrary
+    objects), so the replacement is dispatched on the declared element type.
+
+    :param item: The list element to replace in.
+    :param element_type: The list property's declared element type.
+    :param repl: Mapping from names to replacements.
+    :param symrepl: Symbolic version of ``repl``.
+    :return: The replaced element, or ``item`` itself if nothing applies.
+    """
+    # ``bool`` is a subclass of ``int``, so check the value and not only the declared type
+    if isinstance(item, bool) or element_type is bool:
+        return item
+
+    if element_type is str:
+        # String lists hold names (e.g., ``Map.params``): replace whole identifiers only
+        if not isinstance(item, str) or item not in repl:
+            return item
+        new_name = str(repl[item])
+        return new_name if new_name.isidentifier() else item
+
+    is_symbolic_type = (element_type is symbolic.SymExpr
+                        or (isinstance(element_type, type) and issubclass(element_type, sp.Basic)))
+    if element_type in (int, float) or is_symbolic_type:
+        try:
+            newitem = symbolic.pystr_to_symbolic(str(item)).subs(symrepl)
+        except (AttributeError, TypeError, ValueError, SyntaxError, sp.SympifyError):
+            return item
+        if element_type in (int, float):
+            try:
+                return element_type(newitem)
+            except (AttributeError, TypeError, ValueError):
+                return item
+        return newitem
+
+    return item
+
+
 def replace_properties_dict(node: Any,
                             repl: Dict[str, str],
                             symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
@@ -256,6 +298,10 @@ def replace_properties_dict(node: Any,
                 if not isinstance(sym_mapping, sp.Basic):
                     sym_mapping = symbolic.pystr_to_symbolic(str(sym_mapping))
                 propval[symname] = _internal_replace(sym_mapping, symrepl)
+        elif isinstance(propclass, properties.ListProperty):
+            newval = [replace_list_property_item(item, propclass.element_type, repl, symrepl) for item in propval]
+            if any(new is not old for new, old in zip(newval, propval)):
+                setattr(node, pname, newval)
 
 
 def replace_properties(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str,
