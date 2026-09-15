@@ -201,5 +201,47 @@ def test_a_later_loop_rebinding_the_iterator_is_not_a_read_of_its_exit_value():
     assert str(edge.data.subset) == 'i + 1'
 
 
+@dace.program
+def count_trips(out: dace.float64[1]):
+    na = 0
+    for _ in range(6):
+        na += 1
+    out[0] = na
+
+
+@dace.program
+def count_trips_until_negative(a: dace.float64[N], out: dace.float64[1]):
+    na = 0
+    for _ in range(6):
+        na += 1
+        if a[na - 1] < 0.0:
+            break
+    out[0] = na
+
+
+def test_a_counter_exit_value_counts_each_trip_once():
+    """The exit value is ``seed + step * trips`` with the PRE-loop seed; read after the loop, the counter
+    already holds its exit value, and adding the trips to it again counted every trip twice (ls3df_scf)."""
+    sdfg = count_trips.to_sdfg(simplify=True)
+    assert MaterializeLoopExitSymbols().apply_pass(sdfg, {}) == 1
+    out = np.zeros(1)
+
+    sdfg(out=out)
+
+    assert out[0] == 6, out
+
+
+def test_a_loop_left_by_break_keeps_its_counted_exit_value():
+    """A break makes the trip count data-dependent, so the closed form over the full range is not the exit
+    value; materialising it grew a post-loop extent past its allocation (ls3df_scf's Lanczos ``na``)."""
+    sdfg = count_trips_until_negative.to_sdfg(simplify=True)
+    assert MaterializeLoopExitSymbols().apply_pass(sdfg, {}) is None
+    out = np.zeros(1)
+
+    sdfg(a=np.array([1.0, 2.0, -3.0, 4.0, 5.0, 6.0]), out=out, N=6)
+
+    assert out[0] == 3, out
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

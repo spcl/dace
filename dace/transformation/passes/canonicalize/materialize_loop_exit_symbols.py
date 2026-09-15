@@ -366,6 +366,9 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         parent = loop.parent_graph
         if parent is None:
             return 0
+        # A break or continue makes the trip count data-dependent, so no closed form is the exit value.
+        if loop_analysis.loop_jumps(loop):
+            return 0
 
         # IV symbols updated by body interstate-edge assignments (``k = k + step``).
         iv_symbols = dict(_detect_iv_symbols(loop, sdfg, sdfg_free_symbols))
@@ -398,12 +401,8 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             # Check this symbol is actually READ in the post-loop region.
             if not _is_read_in(sym_name, post_blocks, parent, state_reads, edge_texts):
                 continue
-            # The closed form's seed is the symbol's *pre-loop* value, which is
-            # always the symbol's own name here (``k`` for body-symbol pattern,
-            # the iterator's init expression is folded into the trip count for
-            # the iterator pattern -- but both express it as ``sym + step * N``
-            # when ``sym`` carries the seed, which it does for body symbols and
-            # for the iterator immediately before each iteration starts).
+            # The seed is the pre-loop value: a body symbol's own name, read on an edge BEFORE the loop (after
+            # it the name already holds the exit value), or the iterator's init expression.
             seed = sym_name
             if sym_name == loop.loop_variable:
                 init = loop_analysis.get_init_assignment(loop)
@@ -418,16 +417,12 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             new_name = f"{POST_PREFIX}{sym_name}_{next_id}"
             next_id += 1
             sdfg.add_symbol(new_name, dtype)
-            # Splice a post-loop state right after ``loop`` that assigns
-            # ``new_name = closed_form`` on its in-edge. Existing out-edges
-            # from ``loop`` cascade through the new state unchanged.
-            anchor = parent.add_state_after(loop, f"_loop_exit_{sym_name}_{next_id - 1}")
-            for e in parent.in_edges(anchor):
-                if e.src is loop:
-                    e.data.assignments[new_name] = closed
-                    break
-            _rewrite_post_loop_readers(parent, dict.fromkeys(b for b in post_blocks if b is not anchor), sym_name,
-                                       new_name, sdfg)
+            # Assign ``new_name = closed_form`` on a new edge into ``loop``, where the seed is still in scope.
+            parent.add_state_before(loop,
+                                    f"_loop_exit_{sym_name}_{next_id - 1}",
+                                    is_start_block=parent.start_block is loop,
+                                    assignments={new_name: closed})
+            _rewrite_post_loop_readers(parent, post_blocks, sym_name, new_name, sdfg)
             count += 1
             state_reads.clear()  # the rewrite changed what these very blocks read
             edge_texts.clear()
