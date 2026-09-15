@@ -639,6 +639,41 @@ def test_tsvc2_s431_like_inner_loop_aw_read_blocks_hoist():
     _run_and_check(sdfg, py_ref, a=np.array([1.0, 2.0, 3.0, 4.0]), b=np.array([0.5, 0.5, 0.5, 0.5]), N=4, K=3)
 
 
+def test_an_inner_loop_reading_a_body_array_only_on_an_interstate_edge_is_not_hoisted():
+    """ls3df_scf's argmax loop reads ``abs(U)`` only in interstate assignments. With those reads uncounted the loop
+    looked invariant, was hoisted above the state that computes the array, and scanned uninitialized memory."""
+    sdfg = dace.SDFG("licm_interstate_edge_read")
+    sdfg.add_array("t", [1], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_symbol("K", dace.int64)
+    outer = LoopRegion("outer", "nl < K", "nl", "nl = 0", "nl = nl + 1")
+    sdfg.add_node(outer, is_start_block=True)
+    compute = outer.add_state("compute", is_start_block=True)
+    make = compute.add_tasklet("make", {}, {"y"}, "y = nl + 1.0")
+    compute.add_edge(make, "y", compute.add_write("t"), None, mm.Memlet("t[0]"))
+    inner = LoopRegion("inner", "i < N", "i", "i = 0", "i = i + 1")
+    outer.add_node(inner)
+    outer.add_edge(compute, inner, dace.InterstateEdge())
+    read = inner.add_state("read", is_start_block=True)
+    store = inner.add_state("store")
+    inner.add_edge(read, store, dace.InterstateEdge(assignments={"best": "t[0]"}))
+    put = store.add_tasklet("put", {}, {"y"}, "y = best")
+    store.add_edge(put, "y", store.add_write("out"), None, mm.Memlet("out[i]"))
+
+    LoopInvariantCodeMotion().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert any(n is inner for n in outer.nodes()), "the inner loop was hoisted out of the loop that computes t"
+
+    def py_ref(t, out, N, K):
+        for nl in range(K):
+            t[0] = nl + 1.0
+            for i in range(N):
+                out[i] = t[0]
+
+    _run_and_check(sdfg, py_ref, t=np.zeros(1), out=np.zeros(4), N=4, K=3)
+
+
 def test_tsvc2_s452_like_loop_body_uses_index_blocks_hoist():
     """TSVC2 s452: `for nl: for i: a[i] = b[i] + c[i] * (i + 1)`.
 

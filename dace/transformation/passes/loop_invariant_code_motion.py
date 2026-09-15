@@ -288,6 +288,16 @@ def _region_rw_sets(region: Any) -> Tuple[Set[str], Set[str]]:
                     writes.add(n.data)
                 if s.out_degree(n) > 0:
                     reads.add(n.data)
+        # A container read only on an interstate edge or a loop header is still read: missing it hoisted ls3df's
+        # argmax loop above the state that computes the array it scans.
+        arrays = region.sdfg.arrays
+        for edge in region.all_interstate_edges():
+            reads.update(name for name in edge.data.free_symbols if name in arrays)
+        for sub in region.all_control_flow_regions():
+            if isinstance(sub, LoopRegion):
+                for code in (sub.loop_condition, sub.init_statement, sub.update_statement):
+                    if code is not None:
+                        reads.update(name for name in code.get_free_symbols() if name in arrays)
     return reads, writes
 
 
