@@ -827,3 +827,68 @@ def test_a_difference_over_the_mask_point_subset_axis_cancels():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+N_GUARD = dace.symbol('N_GUARD', dtype=dace.int64)
+
+
+@dace.program
+def nested_guard_append(a: dace.float64[N_GUARD], out: dace.int64[N_GUARD], cnt: dace.int64[1]):
+    pos = 0
+    for k in range(N_GUARD):
+        if k != 3:
+            if a[k] > 0.5:
+                out[pos] = k
+                pos = pos + 1
+    cnt[0] = pos
+
+
+def test_a_cursor_bump_under_a_nested_guard_is_not_lifted():
+    """The mask only encodes the guard the bump sits in directly. amg_setup's strength graph bumped its cursor
+    under a second ``if``, so the lifted mask counted every off-diagonal entry and ``level_n`` came out wrong."""
+    sdfg = build(nested_guard_append)
+    assert not lifted(sdfg)
+
+    rng = np.random.default_rng(3)
+    for n in (1, 4, 16, 64):
+        a = rng.random(n)
+        want = np.zeros(n, dtype=np.int64)
+        want_cnt = 0
+        for k in range(n):
+            if k != 3 and a[k] > 0.5:
+                want[want_cnt] = k
+                want_cnt += 1
+        got = np.zeros(n, dtype=np.int64)
+        got_cnt = np.zeros(1, dtype=np.int64)
+        sdfg(a=a.copy(), out=got, cnt=got_cnt, N_GUARD=n)
+        assert int(got_cnt[0]) == want_cnt
+        assert np.array_equal(got[:want_cnt], want[:want_cnt])
+
+
+N_ITER = dace.symbol('N_ITER', dtype=dace.int64)
+
+
+@dace.program
+def iterator_guard_append(a: dace.float64[N_ITER], out: dace.float64[N_ITER], cnt: dace.int64[1]):
+    pos = 0
+    for k in range(N_ITER):
+        if k != 3:
+            out[pos] = a[k]
+            pos = pos + 1
+    cnt[0] = pos
+
+
+def test_a_guard_on_the_compacted_iterator_names_the_renamed_iterator_in_its_mask():
+    """Each phase copy renames the iterator, so a mask built from the matched guard text read the original
+    iterator, which no longer exists in the mask loop: the SDFG failed to build with a KeyError."""
+    sdfg = build(iterator_guard_append)
+    assert lifted(sdfg)
+
+    rng = np.random.default_rng(4)
+    for n in (1, 4, 16, 64):
+        a = rng.random(n)
+        want = np.delete(a, 3) if n > 3 else a
+        got = np.zeros(n)
+        got_cnt = np.zeros(1, dtype=np.int64)
+        sdfg(a=a.copy(), out=got, cnt=got_cnt, N_ITER=n)
+        assert int(got_cnt[0]) == want.size
+        assert np.array_equal(got[:want.size], want)

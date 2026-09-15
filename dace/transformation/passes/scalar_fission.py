@@ -403,6 +403,13 @@ class ScalarFission(ppl.Pass):
             if loop is None:
                 return False
             loops.add(loop)
+        # A nested loop's last value is live out into its enclosing loop, so nested groups are not closed.
+        for loop in loops:
+            outer = self._innermost_loop(loop)
+            while outer is not None:
+                if outer in loops:
+                    return False
+                outer = self._innermost_loop(outer)
         return all(self._no_upward_exposed_use(loop, name, defined_on_entry=False) for loop in loops)
 
     @staticmethod

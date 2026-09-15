@@ -902,3 +902,24 @@ def test_a_versioned_staging_copy_keeps_its_boundary_memlet_on_the_outer_contain
     out = np.zeros(8, dtype=np.float64)
     sdfg(A=out)
     assert np.allclose(out, 2.0 + np.arange(8)), f'got {out}'
+
+
+@dace.program
+def inner_loop_last_value(out: dace.float64[3]):
+    for lv in range(3):
+        rho = 0.0
+        for it in range(4):
+            rho = it + 1.0
+        out[lv] = rho
+
+
+def test_a_scalar_live_out_of_an_inner_loop_keeps_its_last_value():
+    """A scalar reset in an outer loop, updated in an inner loop and read after it is one value across both
+    loops. Privatizing it per innermost loop bound the read to the reset, which zeroed amg_setup's ``rho``."""
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    sdfg = inner_loop_last_value.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    out = np.zeros(3)
+    sdfg(out=out)
+    assert np.array_equal(out, np.full(3, 4.0)), out

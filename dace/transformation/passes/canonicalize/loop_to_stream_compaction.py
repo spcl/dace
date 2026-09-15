@@ -432,7 +432,10 @@ class LoopToStreamCompaction(ppl.Pass):
         """Find the unique ``c = c + K`` interstate assignment; it must live inside ``branch``."""
         assigned: Dict[str, int] = {}
         bumps: List[Tuple[str, symbolic.SymbolicType, bool]] = []
-        branch_edges = {id(e) for e in branch.all_interstate_edges(recursive=False)}
+        # all_interstate_edges descends into nested guards and loops; only an unconditional edge on the
+        # branch's own single path runs exactly once per taken iteration, which is what the mask models.
+        on_path = self.body_chain(branch) is not None
+        branch_edges = {id(e) for e in branch.edges() if on_path and e.data.is_unconditional()}
         for edge in loop.all_interstate_edges(recursive=False):
             inside = id(edge) in branch_edges
             for name, rhs in edge.data.assignments.items():
@@ -754,6 +757,8 @@ class LoopToStreamCompaction(ppl.Pass):
         loops, guard = self.clone_path(m, root)
         for loop, dtype in zip(loops, iterator_dtypes):
             self.rename_iterator(loop, m.sdfg, loop.label, dtype)
+        # The clone's guard carries the renamed iterators; ``m.cond_str`` still names the original ones.
+        cond_str = guard.branches[0][0].as_string.strip()
         inner = loops[-1]
         store = inner.add_state(root.label + '_store', is_start_block=inner.start_block is guard)
         for edge in list(inner.in_edges(guard)):
@@ -762,7 +767,7 @@ class LoopToStreamCompaction(ppl.Pass):
         for block in [b for b in inner.nodes() if b is not store and self.reaches(inner, guard, b)]:
             inner.remove_node(block)
         index = self.nest_index(m.levels, loops, iterator_dtypes)
-        tasklet = store.add_tasklet(root.label + '_mask', {}, {'__out'}, f'__out = ({m.cond_str})')
+        tasklet = store.add_tasklet(root.label + '_mask', {}, {'__out'}, f'__out = ({cond_str})')
         write = store.add_write(mask_name)
         store.add_edge(tasklet, '__out', write, None, mm.Memlet(data=mask_name, subset=self.point_subset(index)))
 
