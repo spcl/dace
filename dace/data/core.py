@@ -161,8 +161,7 @@ class Data:
     def ctype(self):
         return self.dtype.ctype
 
-    @property
-    def total_elements(self):
+    def num_elements(self):
         """ The number of elements in this data descriptor, i.e., the product of its shape. Unlike ``total_size``,
         this does not include any pre- or post-padding. """
         return _prod(self.shape)
@@ -292,8 +291,7 @@ class Scalar(Data):
     def total_size(self):
         return 1
 
-    @property
-    def total_elements(self):
+    def num_elements(self):
         return 1
 
     @property
@@ -382,7 +380,7 @@ class Array(Data):
          the first element, e.g., in the case of halo or "ghost cells" in stencils).
        * The ``total_size`` property determines how large the total allocation size is. Normally, it is the product of
          the ``shape`` elements, but if pre- or post-padding is involved it may be larger. The number of elements
-         without padding is available as ``total_elements``.
+         without padding is available from ``num_elements()``.
        * ``alignment`` serves as an alignment _hint_ that might or might not be honored, depending on the backend and
          selected standard. A value of ``0``, the default, indicates "default alignment", a negative value indicates
          no alignment requirements.
