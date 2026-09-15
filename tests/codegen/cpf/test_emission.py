@@ -584,6 +584,31 @@ def test_an_indirection_in_an_outlined_body_reads_a_const_parameter_once_qualifi
 
 
 @pytest.mark.parametrize('language', ('c++', 'c'))
+def test_a_complex_matrix_vector_product_renders_its_coefficient_in_the_element_type(language):
+    """The pure GEMV expansion multiplied by the bare integer alpha, and C++ has no operator* for int and
+    std::complex: vexx_k's complex matrix-vector products left its C++ form uncompilable."""
+
+    @dace.program
+    def complex_matvec(A: dace.complex128[6, 4], x: dace.complex128[4], y: dace.complex128[6]):
+        y[:] = A @ x
+
+    sdfg = complex_matvec.to_sdfg(simplify=True)
+    sdfg.name = 'cpf_complex_matvec_' + ('cpp' if language == 'c++' else 'c')
+    rendering = render_sdfg(sdfg, language=language)
+    assert_standalone(rendering.code, sdfg.name, language=language)
+
+    A = np.random.rand(6, 4) + 1j * np.random.rand(6, 4)
+    x = np.random.rand(4) + 1j * np.random.rand(4)
+    y = np.zeros(6, dtype=np.complex128)
+    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {
+        'A': A,
+        'x': x,
+        'y': y
+    })
+    assert np.allclose(y, A @ x), y - A @ x
+
+
+@pytest.mark.parametrize('language', ('c++', 'c'))
 def test_cholesky_renders_as_loops_with_no_library(language):
     """``np.linalg.cholesky`` reaches a library node that only vendor BLAS implements.
 
