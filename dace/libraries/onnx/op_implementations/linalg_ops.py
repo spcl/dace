@@ -21,6 +21,23 @@ from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 from dace import config
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
+
+
+def _as_plain_array(desc):
+    """Return ``desc`` as a plain ``Array`` when it is a ``View``.
+
+    These pure expansions copy the op's connector descriptors onto the boundary
+    of a freshly created nested SDFG. A boundary descriptor must never be a
+    ``View``: inside the expansion there is no array for it to alias, so
+    ``get_view_edge`` cannot resolve it and validation fails with "Ambiguous or
+    invalid edge to/from a View access node" (seen for a MatMul/Gemm whose
+    output edge is a reshaped view, e.g. in HF-decoder *backward* graphs). Any
+    view semantics live in the parent graph; the boundary only needs the
+    shape/strides/dtype/storage that ``as_array`` preserves.
+    """
+    return desc.as_array() if isinstance(desc, dace.data.View) else desc
+
+
 from dace.libraries.onnx.op_implementations.utils import in_desc_with_name, op_implementation, out_desc_with_name
 from dace.frontend.common import create_einsum_sdfg
 
@@ -122,9 +139,9 @@ class PureMatMul(ONNXForward):
         nstate.add_node(einsum_node)
         einsum_node.add_in_connector("Inputs__0")
         einsum_node.add_in_connector("Inputs__1")
-        nsdfg.add_datadesc("A", copy.deepcopy(A_desc))
-        nsdfg.add_datadesc("B", copy.deepcopy(B_desc))
-        nsdfg.add_datadesc("Y", copy.deepcopy(Y_desc))
+        nsdfg.add_datadesc("A", _as_plain_array(copy.deepcopy(A_desc)))
+        nsdfg.add_datadesc("B", _as_plain_array(copy.deepcopy(B_desc)))
+        nsdfg.add_datadesc("Y", _as_plain_array(copy.deepcopy(Y_desc)))
         nsdfg.arrays["A"].transient = False
         nsdfg.arrays["B"].transient = False
         nsdfg.arrays["Y"].transient = False
@@ -156,11 +173,11 @@ class PureEinsum(ONNXForward):
         nstate = nsdfg.add_state()
 
         for e in node.iter_inputs_in_onnx_order(state):
-            desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, e.dst_conn))
+            desc = _as_plain_array(copy.deepcopy(in_desc_with_name(node, state, sdfg, e.dst_conn)))
             desc.transient = False
             nsdfg.add_datadesc(e.dst_conn, desc)
         for e in node.iter_outputs_in_onnx_order(state):
-            desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, e.src_conn))
+            desc = _as_plain_array(copy.deepcopy(out_desc_with_name(node, state, sdfg, e.src_conn)))
             desc.transient = False
             nsdfg.add_datadesc(e.src_conn, desc)
 
@@ -278,9 +295,9 @@ class PureGemm(ONNXForward):
         nstate.add_node(einsum_node)
         einsum_node.add_in_connector("Inputs__0")
         einsum_node.add_in_connector("Inputs__1")
-        nsdfg.add_datadesc("A", copy.deepcopy(A_desc))
-        nsdfg.add_datadesc("B", copy.deepcopy(B_desc))
-        nsdfg.add_datadesc("Y", copy.deepcopy(Y_desc))
+        nsdfg.add_datadesc("A", _as_plain_array(copy.deepcopy(A_desc)))
+        nsdfg.add_datadesc("B", _as_plain_array(copy.deepcopy(B_desc)))
+        nsdfg.add_datadesc("Y", _as_plain_array(copy.deepcopy(Y_desc)))
         nsdfg.arrays["A"].transient = False
         nsdfg.arrays["B"].transient = False
         nsdfg.arrays["Y"].transient = False
@@ -297,11 +314,11 @@ class PureGemm(ONNXForward):
         # Create arrays according to alpha and beta
         if node.alpha != 1 or node.beta != 0:
             Ytmp_desc = out_desc_with_name(node, state, sdfg, "Y")
-            nsdfg.add_datadesc(f"Ytmp_{uid}", copy.deepcopy(Ytmp_desc))
+            nsdfg.add_datadesc(f"Ytmp_{uid}", _as_plain_array(copy.deepcopy(Ytmp_desc)))
             nsdfg.arrays[f"Ytmp_{uid}"].transient = True
         if node.beta != 0:
             beta_desc = out_desc_with_name(node, state, sdfg, "Y")
-            nsdfg.add_datadesc(f"scaled_{uid}", copy.deepcopy(beta_desc))
+            nsdfg.add_datadesc(f"scaled_{uid}", _as_plain_array(copy.deepcopy(beta_desc)))
             nsdfg.arrays[f"scaled_{uid}"].transient = True
 
         nstate.add_edge(nstate.add_read("A"), None, einsum_node, "Inputs__0", nsdfg.make_array_memlet("A"))
@@ -327,7 +344,7 @@ class PureGemm(ONNXForward):
         # Multiply by beta: scal_result, "C" -> "Y"
         if node.beta != 0:
             C_desc = in_desc_with_name(node, state, sdfg, "C")
-            nsdfg.add_datadesc("C", copy.deepcopy(C_desc))
+            nsdfg.add_datadesc("C", _as_plain_array(copy.deepcopy(C_desc)))
             nsdfg.arrays["C"].transient = False
             scal_result_node = next(n for n in nstate.sink_nodes()
                                     if isinstance(n, dace.nodes.AccessNode) and n.data == scal_result)

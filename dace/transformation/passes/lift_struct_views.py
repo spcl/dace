@@ -352,7 +352,9 @@ class LiftStructViews(ppl.Pass):
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Tasklets | ppl.Modifies.Memlets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.Tasklets & ppl.Modifies.Memlets
+        # OR, not AND: distinct flag bits AND together to ``Nothing``, which made this constantly
+        # False. Any one of the three can introduce a struct view that needs lifting.
+        return bool(modified & (ppl.Modifies.AccessNodes | ppl.Modifies.Tasklets | ppl.Modifies.Memlets))
 
     def depends_on(self):
         return []

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.libraries.linalg.nodes.cholesky import SOLVER_BLAS
 import dace.libraries.lapack as lapack
 import dace.libraries.linalg as linalg
 import numpy as np
@@ -42,9 +43,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         xin = state.add_access("xt" + suffix)
         xout = state.add_access("xt" + suffix)
         transpose_in = linalg.Transpose("transpose_in", dtype=dtype)
-        transpose_in.implementation = "cuBLAS"
+        transpose_in.implementation = SOLVER_BLAS[implementation]
         transpose_out = linalg.Transpose("transpose_out", dtype=dtype)
-        transpose_out.implementation = "cuBLAS"
+        transpose_out.implementation = SOLVER_BLAS[implementation]
         state.add_nedge(xhi, xi, Memlet.from_array(*xhost_arr))
         state.add_nedge(xo, xho, Memlet.from_array(*xhost_arr))
         state.add_memlet_path(xi, transpose_in, dst_conn='_inp', memlet=Memlet.from_array(*x_arr))
@@ -79,6 +80,8 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
     pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
     pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    pytest.param("rocSOLVER", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    pytest.param("rocSOLVER", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
 ])
 def test_potrf(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
@@ -100,6 +103,27 @@ def test_potrf(implementation, dtype, storage):
     else:
         raise NotImplementedError
     assert (np.linalg.norm(cholesky_ref - np.tril(A)) / np.linalg.norm(cholesky_ref)) < rtol
+
+
+N_COMPLEX = dace.symbol('N_COMPLEX', dtype=dace.int64)
+
+
+@dace.program
+def complex_cholesky(a: dace.complex128[N_COMPLEX, N_COMPLEX], out: dace.complex128[N_COMPLEX, N_COMPLEX]):
+    out[:] = np.linalg.cholesky(a)
+
+
+@pytest.mark.lapack
+def test_a_complex_cholesky_compiles_against_lapacke_and_matches_numpy():
+    """LAPACKE's complex routines take ``lapack_complex_double*``, which C++ does not convert from
+    ``dace::complex128*``: cegterg's complex Cholesky failed to compile without the cast."""
+    rng = np.random.default_rng(0)
+    m = rng.random((4, 4)) + 1j * rng.random((4, 4))
+    a = m @ m.conj().T + 4 * np.eye(4)
+    out = np.zeros((4, 4), dtype=np.complex128)
+    complex_cholesky(a=a.copy(), out=out, N_COMPLEX=4)
+    want = np.linalg.cholesky(a)
+    assert np.allclose(out, want, rtol=1e-12, atol=1e-12), out - want
 
 
 ###############################################################################

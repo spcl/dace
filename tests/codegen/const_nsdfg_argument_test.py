@@ -22,6 +22,12 @@ def _signature(inner: dace.SDFG, in_conns, out_conns, wirings) -> str:
     state = sdfg.add_state('main')
     entry, exit_ = state.add_map('m', dict(i='0:16'))
     nsdfg = state.add_nested_sdfg(inner, dict.fromkeys(in_conns), dict.fromkeys(out_conns))
+    # The question is what qualifiers the nested SDFG's PARAMETERS carry, so it has to survive as a
+    # function of its own. Extended's default generator inlines a host nested SDFG, which leaves no
+    # parameter list to inspect and nothing for the regex below to match; ``no_inline`` keeps the
+    # boundary under either generator, so the property is checked on both rather than on whichever
+    # one the configuration happens to select.
+    nsdfg.no_inline = True
     for conn, oname, sub, is_input in wirings:
         access = state.add_access(oname)
         if is_input:
@@ -102,6 +108,7 @@ def test_a_read_view_of_a_const_input_is_emitted_const():
     state = sdfg.add_state('main')
     entry, exit_ = state.add_map('m', dict(i='0:16'))
     nsdfg = state.add_nested_sdfg(inner, {'a': None}, {'b': None})
+    nsdfg.no_inline = True  # the view has to stay inside a nested SDFG to be emitted as one
     state.add_memlet_path(state.add_access('A'), entry, nsdfg, dst_conn='a', memlet=dace.Memlet('A[i, 0:8]'))
     state.add_memlet_path(nsdfg, exit_, state.add_access('B'), src_conn='b', memlet=dace.Memlet('B[i, 0:8]'))
     code = '\n'.join(o.code for o in sdfg.generate_code())

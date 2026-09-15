@@ -2,6 +2,7 @@
 """ Contains classes and functions that implement the map-reduce-fusion
     transformation. """
 
+from dace import data as dt
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -44,6 +45,17 @@ class MapReduceFusion(pm.SingleStateTransformation):
         in_array = self.in_array
         reduce_node = self.reduce
         tasklet = self.tasklet
+        out_array = self.out_array
+
+        # `shared_transients()` below only ever reports transients, so a non-transient `in_array`
+        # passes every remaining check and silently loses the producer this fusion deletes.
+        if not sdfg.arrays[in_array.data].transient:
+            return False
+
+        # The init state below cannot write a View: the edge binding it to the viewed data lives in
+        # this state, and its subset may name symbols that only this state's scopes define.
+        if reduce_node.identity is not None and not self.no_init and isinstance(sdfg.arrays[out_array.data], dt.View):
+            return False
 
         # Make sure that the array is only accessed by the map and the reduce
         if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
@@ -51,7 +63,14 @@ class MapReduceFusion(pm.SingleStateTransformation):
         if any([dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)]):
             return False
 
-        tmem = next(e for e in graph.edges_between(tasklet, tmap_exit) if e.data.data == in_array.data).data
+        # ``apply`` rewrites whichever in-edge of the exit carries the intermediate, and does not care
+        # which node produced it -- so this check has to look at the same edge set. Reading only the
+        # matched tasklet's edges instead raises a bare StopIteration whenever the map body holds a
+        # second tasklet that writes somewhere else and the matcher binds THAT one, which npbench
+        # nbody does six times per build.
+        tmem = next((e.data for e in graph.in_edges(tmap_exit) if e.data.data == in_array.data), None)
+        if tmem is None:
+            return False
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states

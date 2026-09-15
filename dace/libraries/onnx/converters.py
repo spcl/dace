@@ -106,7 +106,7 @@ def convert_onnx_proto(attribute):
     raise NotImplementedError("No conversion implemented for {} (type {})".format(attribute, type(attribute)))
 
 
-@functools.cache
+@functools.lru_cache(maxsize=None, typed=True)
 def attribute_proto_converters() -> Dict[int, Callable]:
     """Maps ONNX AttributeProto type enums to the function extracting their value."""
     inv_map = {}
@@ -164,7 +164,7 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
 }
 
 
-@functools.cache
+@functools.lru_cache(maxsize=None, typed=True)
 def typeclass_to_onnx_tensor_type_map() -> Dict[typeclass, int]:
     return {v: getattr(onnx.TensorProto.DataType, k.upper()) for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
 
@@ -173,7 +173,7 @@ def typeclass_to_onnx_tensor_type_int(dtype: typeclass) -> int:
     return typeclass_to_onnx_tensor_type_map()[dtype]
 
 
-@functools.cache
+@functools.lru_cache(maxsize=None, typed=True)
 def onnx_tensor_type_to_typeclass_map() -> Dict[int, typeclass]:
     return {
         v: ONNX_DTYPES_TO_DACE_TYPE_CLASS[k.lower()]
@@ -193,7 +193,7 @@ def onnx_tensor_type_to_typeclass(elem_type: int) -> typeclass:
     return inv_map[elem_type]
 
 
-@functools.cache
+@functools.lru_cache(maxsize=None, typed=True)
 def typeclass_to_onnx_str_map() -> Dict[typeclass, str]:
     return {v: k for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
 

@@ -1,0 +1,3177 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""How CPF spells the functions the DaCe runtime headers normally provide.
+
+CPF (canonical parallel form) emits C++ -- or C23, which is the same semantics in a language
+with no templates and no overloading -- that builds against a bare host compiler: no
+``-I dace/runtime/include``, no ``libdace``. Every function the ordinary code generators reach for
+therefore has to be re-expressed, and there are four ways to do it:
+
+``STD_RENAMES``
+    The C++ standard library has the same function under a different name. A pure rename.
+
+``REWRITES``
+    No standard function exists, but the operation is a short expression over its arguments. The
+    call site is replaced by that expression, so nothing has to be declared.
+
+``INLINE_DEFINITIONS``
+    Neither of the above: the operation needs a real function (it is recursive, generic over
+    signedness, or simply too long to inline at every use). CPF emits the definition once, at the
+    top of the translation unit, and only for the helpers that translation unit actually calls.
+
+``C_REWRITTEN_IN_NATIVE_CODE``
+    C only: the C answer needs a type or a predicate only the CALL SITE has, so the call site is
+    rewritten. The scans, the scan identities and the duplicate check need the element types the
+    call site names, and each becomes a call to a function typed for them; the find-first takes a
+    predicate, which is a C++ lambda and in C becomes a function of its own. Every entry here is a
+    C++ helper whose C answer is a rewrite rather than a definition, which is what lets the anti-rot
+    tests still demand an answer for each one.
+
+This module is deliberately a LEAF: it imports nothing from ``dace``. ``dace.symbolic`` (which
+imports no code generator) and ``dace.codegen.cppunparse`` both consume it, and a shared table is
+what keeps the two printers from drifting -- the same expression reaching C++ through a memlet
+subset and through a tasklet body must produce the same text.
+
+Names absent from all three tables are NOT silently passed through: see :func:`lowering_for`.
+"""
+import contextlib
+import enum
+import functools
+import re
+from typing import Callable, Dict, FrozenSet, List, NamedTuple, Optional, Set, Tuple
+
+from dace.ordered import OrderedSet
+
+
+class Dialect(enum.Enum):
+    """Which C++ vocabulary a printer may emit.
+
+    An enum rather than a boolean, for two reasons that both cost correctness otherwise.
+
+    The printers below are memoized (``symstr`` and ``_sym2cpp`` are both ``lru_cache``d), so the
+    dialect MUST reach the cache key: a mode read from configuration inside a printer would let a
+    ``RUNTIME`` call warm the cache and a later ``STANDALONE`` call read that entry back, emitting
+    ``dace::math::pow`` into a translation unit that never includes the header. Passing the dialect
+    as an argument is what puts it in the key.
+
+    And a boolean fourth argument sits next to ``cpp_mode``, which is also a boolean: transposing
+    the two at one call site is a silent behaviour change that no type checker would see. A
+    ``Dialect`` cannot be mistaken for ``cpp_mode``.
+    """
+    #: The DaCe runtime headers are available; emit ``dace::`` names as usual.
+    RUNTIME = 'runtime'
+    #: No DaCe headers; emit only the C++ standard library and CPF's own inline definitions.
+    STANDALONE = 'standalone'
+    #: No DaCe headers and no C++ either: one C23 translation unit. The C standard library is not
+    #: type-generic and has no templates, so a helper is a set of typed ``static inline`` functions
+    #: (see :data:`C_INLINE_DEFINITIONS`). The printer resolves the argument types and calls the one
+    #: for their type by name; the unit defines no macro.
+    STANDALONE_C = 'standalone_c'
+    #: No DaCe headers, one HIP translation unit holding both the host code and the kernels.
+    #: C++ like :attr:`STANDALONE`, so every host-side helper and lowering it has applies here
+    #: too; what it adds is the device vocabulary.
+    #:
+    #: The unit may include the ROCm toolkit's own headers -- ``hip_runtime.h`` and hipCUB --
+    #: on the same footing as ``<math.h>`` and OpenMP on the host: they ship WITH the compiler
+    #: that builds the unit, so requiring them adds no dependency a caller did not already have
+    #: by choosing to compile for a GPU. What stays banned is ``dace/``, which does not.
+    STANDALONE_HIP = 'standalone_hip'
+    #: :attr:`STANDALONE_HIP` for NVIDIA: the same unit through the same device path, built by nvcc.
+    #: Only the spelling tables and the toolkit headers (``cuda_runtime.h``, CUB) differ.
+    STANDALONE_CUDA = 'standalone_cuda'
+
+
+#: The dialect a printer uses when its caller names none. Set only through :func:`dialect_scope`.
+#:
+#: An AMBIENT default exists because the dialect has to reach hundreds of ``sym2cpp`` call sites --
+#: every memlet subset, every allocation extent, every loop bound -- spread over the code
+#: generators. Threading a parameter through all of them would be a large diff whose every line is
+#: identical, and one missed site emits a ``dace::`` name into a standalone unit.
+#:
+#: This does NOT reintroduce the memoization hazard the :class:`Dialect` docstring describes. The
+#: ambient value is resolved by the OUTERMOST wrapper (``sym2cpp``, ``symstr``) and passed to the
+#: memoized inner function as an ordinary argument, so it is still part of the cache key. Nothing
+#: inside a cached function reads it.
+_active_dialect: Dialect = Dialect.RUNTIME
+
+
+def active_dialect() -> Dialect:
+    """The dialect currently in force (see :func:`dialect_scope`)."""
+    return _active_dialect
+
+
+@contextlib.contextmanager
+def dialect_scope(dialect: Dialect):
+    """Make ``dialect`` the ambient default for the duration of the block.
+
+    Restores the previous value on the way out, exception or not -- a code generation that raises
+    must not leave every later ``sym2cpp`` in the process emitting standalone text.
+    """
+    global _active_dialect
+    previous = _active_dialect
+    _active_dialect = dialect
+    try:
+        yield dialect
+    finally:
+        _active_dialect = previous
+
+
+#: The dialects that emit a self-contained translation unit. Everything CPF refuses -- device
+#: code, a state struct, an external buffer handshake -- it refuses for both of them, so the many
+#: call sites that ask "is this an CPF rendering" ask through :func:`standalone`.
+STANDALONE_DIALECTS = frozenset(
+    {Dialect.STANDALONE, Dialect.STANDALONE_C, Dialect.STANDALONE_HIP, Dialect.STANDALONE_CUDA})
+
+#: The standalone dialects that render DEVICE code. A rendering under one of these admits GPU
+#: storages and schedules, and emits both the host code and the kernels into the one unit.
+DEVICE_DIALECTS = frozenset({Dialect.STANDALONE_HIP, Dialect.STANDALONE_CUDA})
+
+#: The ``compiler.cuda.backend`` each device dialect generates for. The generator prefixes runtime
+#: calls with the backend (``cudaStreamSynchronize``), and the default backend is the machine's, so
+#: a HIP unit rendered on an NVIDIA box called CUDA functions it never declares.
+DEVICE_BACKENDS: Dict[Dialect, str] = {Dialect.STANDALONE_HIP: 'hip', Dialect.STANDALONE_CUDA: 'cuda'}
+
+
+def standalone() -> bool:
+    """Whether the ambient dialect renders a self-contained unit, C++ or C."""
+    return _active_dialect in STANDALONE_DIALECTS
+
+
+def device() -> bool:
+    """Whether the ambient dialect renders device code into the standalone unit."""
+    return _active_dialect in DEVICE_DIALECTS
+
+
+def standalone_c() -> bool:
+    """Whether the ambient dialect is :attr:`Dialect.STANDALONE_C`.
+
+    Separate from :func:`standalone` because the two answer different questions: "may I name a
+    DaCe runtime symbol" (no, for both) versus "may I write C++" (no, only for this one).
+    """
+    return _active_dialect is Dialect.STANDALONE_C
+
+
+#: Node GUID -> ``(origin GUID, description)`` of the library node it came from, for the rendering
+#: in progress. Set only through :func:`provenance_scope`.
+#:
+#: A pure expansion replaces ``Gemm`` with a loop nest, and the loop nest does not say it was a
+#: matrix product. CPF restores that: the description is recorded when the node is expanded and
+#: written as a comment where the expansion's code is emitted. Keyed by GUID rather than by node
+#: object because the code generator runs its own lowering (inlining, copy lifting) between the
+#: expansion and the emission.
+#:
+#: Ambient for the same reason the dialect is: the emission points are inside the code generators,
+#: several call layers below anything that knows an expansion happened. Nothing memoized reads it.
+_provenance: Dict[str, Tuple[str, str]] = {}
+
+
+def describe(guid: str) -> Optional[Tuple[str, str]]:
+    """``(origin, description)`` for the library node that produced ``guid``, if CPF recorded one.
+
+    ``origin`` is the GUID of the library node itself. The emitter dedupes on it rather than on the
+    description text: two separate ``Gemm`` nodes in one program are two things worth commenting,
+    while the forty tasklets of one expansion are one.
+    """
+    return _provenance.get(guid)
+
+
+def hint_comment(hint: Optional[str], indent: str = '') -> str:
+    """Render a ``specialization_hint`` as a comment block, or ``''`` when there is none.
+
+    A no-op outside a standalone rendering: the hint is a note to whoever reads the maximally
+    parallel form -- a specializing pass, or a person -- and the ordinary build has a target
+    already, so emitting it there would be noise in code nobody reads.
+
+    Multi-line hints stay multi-line. The alternatives a hint describes are per-device and do not
+    read as one sentence: ``CPU: ... / GPU: ...`` is the shape, one line each.
+    """
+    if not hint or not standalone():
+        return ''
+    return ''.join(f'{indent}// {line}\n' for line in str(hint).splitlines() if line.strip())
+
+
+@contextlib.contextmanager
+def provenance_scope(provenance: Dict[str, Tuple[str, str]]):
+    """Make ``provenance`` the ambient GUID -> description map for the duration of the block."""
+    global _provenance
+    previous = _provenance
+    _provenance = provenance
+    try:
+        yield provenance
+    finally:
+        _provenance = previous
+
+
+#: Runtime function -> the ``std`` function with identical semantics and arity.
+#:
+#: ``ROUND`` is here rather than in :data:`REWRITES` because the runtime's ``ROUND`` is literally
+#: ``return round(value);`` -- both round half away from zero, so the rename is exact.
+STD_RENAMES: Dict[str, str] = {
+    'Abs': 'std::abs',
+    'abs': 'std::abs',
+    'ceiling': 'std::ceil',
+    'ceil': 'std::ceil',
+    'floor': 'std::floor',
+    'ROUND': 'std::round',
+    'round': 'std::round',
+    'conj': 'std::conj',
+    'exp2': 'std::exp2',
+    'expm1': 'std::expm1',
+    'log1p': 'std::log1p',
+    'log2': 'std::log2',
+    'frexp': 'std::frexp',
+    'ldexp': 'std::ldexp',
+    'ilogb': 'std::ilogb',
+    'isfinite': 'std::isfinite',
+    'isinf': 'std::isinf',
+    'isnan': 'std::isnan',
+    'signbit': 'std::signbit',
+    'gcd': 'std::gcd',
+    'lcm': 'std::lcm',
+    'sin': 'std::sin',
+    'cos': 'std::cos',
+    'tan': 'std::tan',
+    'asin': 'std::asin',
+    'acos': 'std::acos',
+    'atan': 'std::atan',
+    'atan2': 'std::atan2',
+    'sinh': 'std::sinh',
+    'cosh': 'std::cosh',
+    'tanh': 'std::tanh',
+    'exp': 'std::exp',
+    'fabs': 'std::fabs',
+    'log': 'std::log',
+    'log10': 'std::log10',
+    'sqrt': 'std::sqrt',
+    'cbrt': 'std::cbrt',
+    'pow': 'std::pow',
+    'fma': 'std::fma',
+    'erf': 'std::erf',
+    'erfc': 'std::erfc',
+    'tgamma': 'std::tgamma',
+    'lgamma': 'std::lgamma',
+    'trunc': 'std::trunc',
+    'hypot': 'std::hypot',
+}
+
+#: Runtime function -> ``(arity, format string over the printed arguments)``.
+#:
+#: Every replacement parenthesizes each argument and the whole result: these strings are spliced
+#: into a larger expression, and an unparenthesized ``a - b`` would rebind against a neighbouring
+#: operator. Each argument appears EXACTLY ONCE -- a template repeating ``{0}`` would duplicate
+#: whatever expression the caller printed, and anything needing its argument twice, or needing to
+#: name its argument's type, is an inline definition instead (see :data:`INLINE_DEFINITIONS`).
+#:
+#: ``reciprocal`` keeps the runtime's integer-division behaviour for an integer argument: the
+#: runtime is ``T(1) / a``, which for ``T = int`` truncates exactly as ``1 / (a)`` does here.
+#: ``Mod`` is SymPy's floored modulo, so it is ``py_mod``.
+REWRITES: Dict[str, Tuple[int, str]] = {
+    'reciprocal': (1, '(1 / ({0}))'),
+    # A complex's components. The runtime helpers also take a real (``.real()`` on a ``double`` does not
+    # compile); ``std::real`` / ``std::imag`` have that overload.
+    're': (1, '(std::real({0}))'),
+    'im': (1, '(std::imag({0}))'),
+    'iround': (1, '(static_cast<int>(std::round({0})))'),
+    'ITE': (3, '(({0}) ? ({1}) : ({2}))'),
+    'IfExpr': (3, '(({0}) ? ({1}) : ({2}))'),
+    'deg2rad': (1, '(({0}) * 0.017453292519943295)'),
+    'rad2deg': (1, '(({0}) * 57.29577951308232)'),
+    'left_shift': (2, '(({0}) << ({1}))'),
+    'right_shift': (2, '(({0}) >> ({1}))'),
+    'bitwise_and': (2, '(({0}) & ({1}))'),
+    'bitwise_or': (2, '(({0}) | ({1}))'),
+    'bitwise_xor': (2, '(({0}) ^ ({1}))'),
+    'bitwise_invert': (1, '(~({0}))'),
+    'int_floor': (2, '(({0}) / ({1}))'),
+    # sympy's ``Mod`` is floored, so it is ``py_mod`` and never C's truncating ``%``.
+    'Mod': (2, 'py_mod({0}, {1})'),
+    'np_float_pow': (2, '(std::pow(static_cast<double>({0}), static_cast<double>({1})))'),
+}
+
+#: Runtime function -> the C++ definition CPF emits for it.
+#:
+#: Emitted only when the translation unit calls the helper (see :func:`definitions_for`), so a
+#: kernel that never rounds up never carries an ``int_ceil``. Each is ``static`` so several CPF
+#: translation units can be compiled together, and templated so it works for whatever width the
+#: index arithmetic settled on. A helper needs a definition rather than a rewrite when it names its
+#: argument's type, uses an argument more than once, dispatches on integral-vs-floating, or writes
+#: through out-parameters.
+#:
+#: ``py_mod``/``ftn_modulo`` floor (``py_mod(-1, 5) == 4``); ``c_mod``/``ftn_mod`` truncate (``-1``).
+#:
+#: ``sign`` and ``heaviside`` are here rather than in :data:`REWRITES` for a dtype reason. The
+#: runtime's ``sign`` is ``T((T(0) < x) - (x < T(0)))``: the comparisons yield ``bool``, their
+#: difference is ``int``, and the cast back to ``T`` is what keeps ``sign(2.5)`` a ``double``.
+#: Written as a textual rewrite the cast has no ``T`` to name, so the result would decay to ``int``
+#: and a following ``sign(x) / 2`` would silently become integer division.
+#:
+#: ``cpp_divmod``, ``py_divmod``, ``np_modf`` and ``np_frexp`` return ``void`` and write through
+#: reference out-parameters -- they are statements, not expressions, so they only ever needed a
+#: definition.
+#:
+#: Every definition that CAN be evaluated at compile time is ``constexpr`` (never ``consteval``,
+#: which would forbid the runtime calls that are the normal case). ``np_modf`` and ``np_frexp`` are
+#: not: each reaches a standard function that is not ``constexpr``
+#: before C++23 for every instantiation. Marking those ``constexpr`` anyway is ill-formed with no
+#: diagnostic required, and it LOOKS fine -- GCC folds ``std::floor`` as a builtin and accepts it,
+#: while clang rejects the same code. Measured, not assumed; see the constexpr probes in
+#: ``tests/codegen/cpf/test_lowering_table.py``.
+INLINE_DEFINITIONS: Dict[str, str] = {
+    'cpf_max':
+    'template <typename T>\n'
+    'static constexpr inline T cpf_max(const T& value) {\n'
+    '    return value;\n'
+    '}\n'
+    'template <typename T, typename... Ts>\n'
+    'static constexpr inline typename std::common_type<T, Ts...>::type cpf_max(const T& a, const Ts&... rest) {\n'
+    '    return (a < cpf_max(rest...)) ? cpf_max(rest...) : a;\n'
+    '}',
+    'cpf_min':
+    'template <typename T>\n'
+    'static constexpr inline T cpf_min(const T& value) {\n'
+    '    return value;\n'
+    '}\n'
+    'template <typename T, typename... Ts>\n'
+    'static constexpr inline typename std::common_type<T, Ts...>::type cpf_min(const T& a, const Ts&... rest) {\n'
+    '    return (cpf_min(rest...) < a) ? cpf_min(rest...) : a;\n'
+    '}',
+    'sign':
+    'template <typename T>\n'
+    'static constexpr inline T sign(const T& value) {\n'
+    '    return T((T(0) < value) - (value < T(0)));\n'
+    '}',
+    'sgn':
+    'template <typename T>\n'
+    'static constexpr inline T sgn(const T& value) {\n'
+    '    return T((T(0) < value) - (value < T(0)));\n'
+    '}',
+    'sign_numpy_2':
+    'template <typename T>\n'
+    'static constexpr inline T sign_numpy_2(const T& value) {\n'
+    '    return T((T(0) < value) - (value < T(0)));\n'
+    '}\n'
+    'template <typename T>\n'
+    'static inline std::complex<T> sign_numpy_2(const std::complex<T>& value) {\n'
+    '    return (value.real() != 0 && value.imag() != 0) ? value / std::abs(value) : std::complex<T>(0, 0);\n'
+    '}',
+    'heaviside':
+    'template <typename T>\n'
+    'static constexpr inline T heaviside(const T& value, const T& at_zero) {\n'
+    '    return (value < T(0)) ? T(0) : ((value > T(0)) ? T(1) : at_zero);\n'
+    '}\n'
+    'template <typename T>\n'
+    'static constexpr inline T heaviside(const T& value) {\n'
+    '    return (value > T(0)) ? T(1) : T(0);\n'
+    '}',
+    # ``ifloor`` is the UNARY floor-to-integer the tasklet printer emits for a floor division
+    # (``dace::math::ifloor(a / b)``), not the binary ``int_floor``. Integral input is already
+    # floored, so the runtime returns it unchanged -- and that identity case is why this is a
+    # definition and not a rewrite: ``(int)std::floor(x)`` on an int64 would truncate it to 32 bits.
+    'ifloor':
+    'template <typename T>\n'
+    'static constexpr inline std::conditional_t<std::is_integral_v<T>, T, int> ifloor(const T& value) {\n'
+    '    if constexpr (std::is_integral_v<T>) {\n'
+    '        return value;\n'
+    '    } else {\n'
+    '        return static_cast<int>(std::floor(value));\n'
+    '    }\n'
+    '}',
+    # prefix scans
+    # The DaCe runtime provides these in ``dace/scan.hpp``, one function per (op, inclusive) pair
+    # because an OpenMP reduction identifier cannot be a template parameter -- the operator has to
+    # be spelled into the clause. CPF reproduces them rather than rewriting a scan into a
+    # sequential loop: the ``inscan`` form IS the parallel one, and a rendering that quietly
+    # serialized every prefix sum would not be a canonical parallel form.
+    'min_identity':
+    'template <typename T>\n'
+    'static inline T min_identity() {\n'
+    '    return std::numeric_limits<T>::has_infinity ? T(std::numeric_limits<T>::infinity())\n'
+    '                                                : std::numeric_limits<T>::max();\n'
+    '}',
+    'max_identity':
+    'template <typename T>\n'
+    'static inline T max_identity() {\n'
+    '    return std::numeric_limits<T>::has_infinity ? T(-std::numeric_limits<T>::infinity())\n'
+    '                                                : std::numeric_limits<T>::lowest();\n'
+    '}',
+    'scan_incl_sum':
+    'template <typename It, typename OutIt, typename T>\n'
+    'static inline void scan_incl_sum(It f, OutIt o, long lo, long hi, T seed) {\n'
+    '    T acc = seed;\n'
+    '    #pragma omp simd reduction(inscan, +:acc)\n'
+    '    for (long i = lo; i < hi; ++i) {\n'
+    '        acc = acc + f[i];\n'
+    '        #pragma omp scan inclusive(acc)\n'
+    '        o[i] = acc;\n'
+    '    }\n'
+    '}',
+    'scan_incl_product':
+    'template <typename It, typename OutIt, typename T>\n'
+    'static inline void scan_incl_product(It f, OutIt o, long lo, long hi, T seed) {\n'
+    '    T acc = seed;\n'
+    '    #pragma omp simd reduction(inscan, *:acc)\n'
+    '    for (long i = lo; i < hi; ++i) {\n'
+    '        acc = acc * f[i];\n'
+    '        #pragma omp scan inclusive(acc)\n'
+    '        o[i] = acc;\n'
+    '    }\n'
+    '}',
+    'scan_incl_min':
+    'template <typename It, typename OutIt, typename T>\n'
+    'static inline void scan_incl_min(It f, OutIt o, long lo, long hi, T seed) {\n'
+    '    T acc = seed;\n'
+    '    #pragma omp simd reduction(inscan, min:acc)\n'
+    '    for (long i = lo; i < hi; ++i) {\n'
+    '        acc = cpf_min(acc, static_cast<T>(f[i]));\n'
+    '        #pragma omp scan inclusive(acc)\n'
+    '        o[i] = acc;\n'
+    '    }\n'
+    '}',
+    'scan_incl_max':
+    'template <typename It, typename OutIt, typename T>\n'
+    'static inline void scan_incl_max(It f, OutIt o, long lo, long hi, T seed) {\n'
+    '    T acc = seed;\n'
+    '    #pragma omp simd reduction(inscan, max:acc)\n'
+    '    for (long i = lo; i < hi; ++i) {\n'
+    '        acc = cpf_max(acc, static_cast<T>(f[i]));\n'
+    '        #pragma omp scan inclusive(acc)\n'
+    '        o[i] = acc;\n'
+    '    }\n'
+    '}',
+    # The exclusive form runs its two phases the other way round: the ``scan`` directive splits the
+    # body into an input phase and a scan phase, and for ``exclusive`` the SCAN phase is the one
+    # before the directive. Written the inclusive way round it still compiles and stores the seed
+    # into every element, so these mirror ``dace/scan.hpp`` statement for statement.
+    'scan_excl_sum':
+    'template <typename It, typename OutIt, typename T>\n'
+    'static inline void scan_excl_sum(It f, OutIt o, long lo, long hi, T seed) {\n'
+    '    T acc = seed;\n'
+    '    #pragma omp simd reduction(inscan, +:acc)\n'
+    '    for (long i = lo; i < hi; ++i) {\n'
+    '        o[i] = acc;\n'
+    '        #pragma omp scan exclusive(acc)\n'
+    '        acc = acc + f[i];\n'
+    '    }\n'
+    '}',
+    'scan_excl_product':
+    'template <typename It, typename OutIt, typename T>\n'
+    'static inline void scan_excl_product(It f, OutIt o, long lo, long hi, T seed) {\n'
+    '    T acc = seed;\n'
+    '    #pragma omp simd reduction(inscan, *:acc)\n'
+    '    for (long i = lo; i < hi; ++i) {\n'
+    '        o[i] = acc;\n'
+    '        #pragma omp scan exclusive(acc)\n'
+    '        acc = acc * f[i];\n'
+    '    }\n'
+    '}',
+    'scan_excl_min':
+    'template <typename It, typename OutIt, typename T>\n'
+    'static inline void scan_excl_min(It f, OutIt o, long lo, long hi, T seed) {\n'
+    '    T acc = seed;\n'
+    '    #pragma omp simd reduction(inscan, min:acc)\n'
+    '    for (long i = lo; i < hi; ++i) {\n'
+    '        o[i] = acc;\n'
+    '        #pragma omp scan exclusive(acc)\n'
+    '        acc = cpf_min(acc, static_cast<T>(f[i]));\n'
+    '    }\n'
+    '}',
+    'scan_excl_max':
+    'template <typename It, typename OutIt, typename T>\n'
+    'static inline void scan_excl_max(It f, OutIt o, long lo, long hi, T seed) {\n'
+    '    T acc = seed;\n'
+    '    #pragma omp simd reduction(inscan, max:acc)\n'
+    '    for (long i = lo; i < hi; ++i) {\n'
+    '        o[i] = acc;\n'
+    '        #pragma omp scan exclusive(acc)\n'
+    '        acc = cpf_max(acc, static_cast<T>(f[i]));\n'
+    '    }\n'
+    '}',
+    # find-first
+    # An early-exit loop lifts to a ``FindFirst`` library node whose expansion calls the runtime's
+    # short-circuiting parallel search. CPF emits that search rather than unrolling it back into a
+    # sequential scan, for the same reason it emits the inscan form of a prefix sum: the cancelling
+    # parallel shape IS the rendering, and serializing it would answer a different question.
+    'find_first_chunk':
+    '#ifdef _OPENMP\n'
+    '#include <omp.h>\n'
+    '#endif\n'
+    'static inline long long find_first_chunk(long long span, bool parallel) {\n'
+    '    // Grows as sqrt(span): too big a chunk scans past the answer on one thread, too small a\n'
+    '    // one pays dispatch on chunks the answer makes dead. The floor binds below ~64k elements.\n'
+    '    constexpr double chunk_scale = 8.0;\n'
+    '    constexpr long long chunks_per_thread = 4;\n'
+    '    long long chunk = (long long)(chunk_scale * std::sqrt((double)span));\n'
+    '    long long threads = 1;\n'
+    '#ifdef _OPENMP\n'
+    '    if (parallel) threads = (long long)omp_get_max_threads();\n'
+    '#endif\n'
+    '    long long ceiling = span / (chunks_per_thread * threads);\n'
+    '    if (ceiling < 1) ceiling = 1;\n'
+    '    if (chunk > ceiling) chunk = ceiling;\n'
+    '    if (chunk < 1) chunk = 1;\n'
+    '    return chunk;\n'
+    '}',
+    'find_first_index':
+    'template <typename Pred>\n'
+    'static inline long long find_first_index(long long begin, long long end, Pred pred, bool parallel) {\n'
+    '    // The answer is a min-reduction and is exact; the hint is shared and races by design --\n'
+    '    // every value it takes is a real firing index, so a lost update costs pruning, never\n'
+    '    // correctness. Folding the two into one word is exactly that lost-update bug.\n'
+    '    constexpr long long simd_block = 64;\n'
+    '    if (begin >= end) return end;\n'
+    '    const long long span = end - begin;\n'
+    '    const long long chunk = find_first_chunk(span, parallel);\n'
+    '    const long long nchunks = (span + chunk - 1) / chunk;\n'
+    '    long long best = end;\n'
+    '    long long hint = end;\n'
+    '    #pragma omp parallel for schedule(dynamic, 1) if (parallel : parallel) reduction(min : best)\n'
+    '    for (long long c = 0; c < nchunks; ++c) {\n'
+    '        long long seen;\n'
+    '        #pragma omp atomic read\n'
+    '        seen = hint;\n'
+    '        const long long lo = begin + c * chunk;\n'
+    '        if (lo >= seen) continue;\n'
+    '        long long hi = lo + chunk;\n'
+    '        if (hi > end) hi = end;\n'
+    '        if (hi > seen) hi = seen;\n'
+    '        long long found = end;\n'
+    '        for (long long b = lo; b < hi; b += simd_block) {\n'
+    '            long long be = b + simd_block;\n'
+    '            if (be > hi) be = hi;\n'
+    '            long long block = end;\n'
+    '            // A vectorized loop cannot break, so the block is the early-exit granularity.\n'
+    '            #pragma omp simd reduction(min : block)\n'
+    '            for (long long i = b; i < be; ++i) {\n'
+    '                const long long v = pred(i) ? i : end;\n'
+    '                block = v < block ? v : block;\n'
+    '            }\n'
+    '            if (block < end) { found = block; break; }\n'
+    '        }\n'
+    '        if (found < end) {\n'
+    '            if (found < best) best = found;\n'
+    '            long long cur;\n'
+    '            #pragma omp atomic read\n'
+    '            cur = hint;\n'
+    '            if (found < cur) {\n'
+    '                #pragma omp atomic write\n'
+    '                hint = found;\n'
+    '            }\n'
+    '        }\n'
+    '    }\n'
+    '    return best;\n'
+    '}',
+    'detect_collision':
+    '// Tagged-write + verify, the two-pass duplicate detection the scatter guard runs. Pass 1\n'
+    '// writes owner[idx[i]] = i; pass 2 ORs owner[idx[i]] != i. A slot only one writer won reads\n'
+    '// back a different i, so the OR trips. Pass 2 reads only slots pass 1 wrote, so the tag\n'
+    '// buffer needs no initialization and none between calls. Values outside [0, capacity) are\n'
+    '// skipped: the guarded scatter never writes those slots, so they can neither collide nor\n'
+    '// mask a collision.\n'
+    'template <typename T, typename TagT>\n'
+    'static inline long long detect_collision(const T *idx, long long n, TagT *owner, long long capacity,\n'
+    '                                         bool parallel) {\n'
+    '    long long c = 0;\n'
+    '    #pragma omp parallel for if (parallel : parallel)\n'
+    '    for (long long i = 0; i < n; ++i) {\n'
+    '        const long long v = (long long)idx[i];\n'
+    '        if (v >= 0 && v < capacity) owner[v] = (TagT)i;\n'
+    '    }\n'
+    '    #pragma omp parallel for simd if (parallel : parallel) reduction(| : c)\n'
+    '    for (long long i = 0; i < n; ++i) {\n'
+    '        const long long v = (long long)idx[i];\n'
+    '        if (v >= 0 && v < capacity) c |= ((long long)owner[v] != i) ? 1LL : 0LL;\n'
+    '    }\n'
+    '    return c;\n'
+    '}\n'
+    '// The same check sizing its own tag buffer from max(idx). A failed allocation reports a\n'
+    '// collision, which is the answer that is never unsafe: the guard then takes its sequential\n'
+    '// path instead of parallelizing a scatter nothing proved conflict-free.\n'
+    'template <typename T>\n'
+    'static inline long long detect_collision(const T *idx, long long n, bool parallel) {\n'
+    '    long long mx = 0;\n'
+    '    #pragma omp parallel for simd if (parallel : parallel) reduction(max : mx)\n'
+    '    for (long long i = 0; i < n; ++i) {\n'
+    '        const long long v = (long long)idx[i];\n'
+    '        mx = v > mx ? v : mx;\n'
+    '    }\n'
+    '    long long *owner = (long long *)malloc((size_t)(mx + 1) * sizeof(long long));\n'
+    '    if (owner == nullptr) return 1;\n'
+    '    const long long c = detect_collision(idx, n, owner, mx + 1, parallel);\n'
+    '    free(owner);\n'
+    '    return c;\n'
+    '}',
+    'int_ceil':
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
+    'static constexpr inline R int_ceil(const T& numerator, const U& denominator) {\n'
+    '    return (numerator + denominator - 1) / denominator;\n'
+    '}',
+    'int_floor_ni':
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
+    'static constexpr inline R int_floor_ni(const T& numerator, const U& denominator) {\n'
+    '    R quotient = numerator / denominator;\n'
+    '    R remainder = numerator % denominator;\n'
+    '    return quotient - ((remainder != 0) && ((remainder < 0) != (denominator < 0)));\n'
+    '}',
+    'py_floor':
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
+    'static constexpr inline R py_floor(const T& numerator, const U& denominator) {\n'
+    '    R quotient = 0;\n'
+    '    R remainder = 0;\n'
+    '    py_divmod(static_cast<R>(numerator), static_cast<R>(denominator), quotient, remainder);\n'
+    '    return quotient;\n'
+    '}',
+    'py_mod':
+    'template <typename T, typename U, typename R = decltype(std::declval<T>() / std::declval<U>())>\n'
+    'static constexpr inline R py_mod(const T& numerator, const U& denominator) {\n'
+    '    R quotient = 0;\n'
+    '    R remainder = 0;\n'
+    '    py_divmod(static_cast<R>(numerator), static_cast<R>(denominator), quotient, remainder);\n'
+    '    return remainder;\n'
+    '}',
+    'c_mod':
+    'template <typename T, typename U, typename R = std::conditional_t<std::is_integral_v<T> && std::is_integral_v<U>, decltype(std::declval<T>() / std::declval<U>()), decltype(std::fmod(std::declval<T>(), std::declval<U>()))>>\n'
+    'static constexpr inline R c_mod(const T& numerator, const U& denominator) {\n'
+    '    if constexpr (std::is_integral_v<T> && std::is_integral_v<U>) {\n'
+    '        return numerator % denominator;\n'
+    '    } else {\n'
+    '        return std::fmod(numerator, denominator);\n'
+    '    }\n'
+    '}',
+    'ftn_mod':
+    'template <typename T, typename U, typename R = decltype(c_mod(std::declval<T>(), std::declval<U>()))>\n'
+    'static constexpr inline R ftn_mod(const T& numerator, const U& denominator) {\n'
+    '    return c_mod(numerator, denominator);\n'
+    '}',
+    'ftn_modulo':
+    'template <typename T, typename U, typename R = decltype(py_mod(std::declval<T>(), std::declval<U>()))>\n'
+    'static constexpr inline R ftn_modulo(const T& numerator, const U& denominator) {\n'
+    '    return py_mod(numerator, denominator);\n'
+    '}',
+    'cpp_divmod':
+    'template <typename T>\n'
+    'static constexpr inline void cpp_divmod(const T& numerator, const T& denominator, T& quotient,\n'
+    '                                        T& remainder) {\n'
+    '    quotient = static_cast<T>(numerator / denominator);\n'
+    '    remainder = static_cast<T>(numerator % denominator);\n'
+    '}',
+    'py_divmod':
+    'template <typename T>\n'
+    'static constexpr inline void py_divmod(const T& numerator, const T& denominator, T& quotient,\n'
+    '                                       T& remainder) {\n'
+    '    if constexpr (std::is_floating_point_v<T>) {\n'
+    '        const T ratio = numerator / denominator;\n'
+    '        remainder = std::fmod(numerator, denominator);\n'
+    '        if (denominator == 0) {\n'
+    '            quotient = ratio;\n'
+    '            return;\n'
+    '        }\n'
+    '        quotient = (numerator - remainder) / denominator;\n'
+    '        if (remainder == 0) {\n'
+    '            remainder = std::copysign(static_cast<T>(0), denominator);\n'
+    '        } else if ((denominator < 0) != (remainder < 0)) {\n'
+    '            remainder += denominator;\n'
+    '            quotient -= 1;\n'
+    '        }\n'
+    '        if (quotient == 0) {\n'
+    '            quotient = std::copysign(static_cast<T>(0), ratio);\n'
+    '        } else {\n'
+    '            const T floored = std::floor(quotient);\n'
+    '            quotient = quotient - floored > static_cast<T>(0.5) ? floored + 1 : floored;\n'
+    '        }\n'
+    '    } else if (denominator == 0) {\n'
+    '        quotient = 0;\n'
+    '        remainder = 0;\n'
+    '    } else if (numerator == std::numeric_limits<T>::min() && denominator == static_cast<T>(-1)) {\n'
+    '        quotient = numerator;\n'
+    '        remainder = 0;\n'
+    '    } else {\n'
+    '        quotient = static_cast<T>(numerator / denominator);\n'
+    '        remainder = static_cast<T>(numerator % denominator);\n'
+    '        if (remainder != 0 && ((remainder < 0) != (denominator < 0))) {\n'
+    '            quotient = static_cast<T>(quotient - 1);\n'
+    '            remainder = static_cast<T>(remainder + denominator);\n'
+    '        }\n'
+    '    }\n'
+    '}',
+    'np_modf':
+    'template <typename T>\n'
+    'static inline void np_modf(const T& value, T& integral, T& fractional) {\n'
+    '    if constexpr (std::is_integral_v<T>) {\n'
+    '        integral = value;\n'
+    '        fractional = T(0);\n'
+    '    } else {\n'
+    '        fractional = std::modf(value, &integral);\n'
+    '    }\n'
+    '}',
+    'np_frexp':
+    'template <typename T>\n'
+    'static inline void np_frexp(const T& value, T& mantissa, int& exponent) {\n'
+    '    mantissa = std::frexp(value, &exponent);\n'
+    '}',
+    'ipow':
+    'template <typename T, typename U>\n'
+    'static constexpr inline T ipow(T base, U exponent) {\n'
+    '    T result = 1;\n'
+    '    while (exponent > 0) {\n'
+    '        if (exponent & 1) { result *= base; }\n'
+    '        base *= base;\n'
+    '        exponent >>= 1;\n'
+    '    }\n'
+    '    return result;\n'
+    '}',
+    'logical_left_shift':
+    'template <typename T, typename U>\n'
+    'static constexpr inline T logical_left_shift(const T& value, const U& amount) {\n'
+    '    return static_cast<T>(static_cast<std::make_unsigned_t<T>>(value) << amount);\n'
+    '}',
+    'logical_right_shift':
+    'template <typename T, typename U>\n'
+    'static constexpr inline T logical_right_shift(const T& value, const U& amount) {\n'
+    '    return static_cast<T>(static_cast<std::make_unsigned_t<T>>(value) >> amount);\n'
+    '}',
+}
+
+#: Definitions each definition calls. Emission is dependency-first (see :func:`definitions_for`).
+DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
+    'scan_incl_min': ('min_identity', 'cpf_min'),
+    'scan_incl_max': ('max_identity', 'cpf_max'),
+    'scan_excl_min': ('min_identity', 'cpf_min'),
+    'scan_excl_max': ('max_identity', 'cpf_max'),
+    'find_first_index': ('find_first_chunk', ),
+    'py_floor': ('py_divmod', ),
+    'py_mod': ('py_divmod', ),
+    'ftn_mod': ('c_mod', ),
+    'ftn_modulo': ('py_mod', ),
+}
+
+#: System headers each inline definition needs, beyond :data:`BASE_HEADERS`.
+DEFINITION_HEADERS: Dict[str, Tuple[str, ...]] = {
+    'ifloor': ('<type_traits>', ),
+    'min_identity': ('<limits>', ),
+    'max_identity': ('<limits>', ),
+    'logical_left_shift': ('<type_traits>', ),
+    'logical_right_shift': ('<type_traits>', ),
+    'int_ceil': ('<utility>', ),
+    'int_floor_ni': ('<utility>', ),
+    'py_floor': ('<utility>', ),
+    'py_mod': ('<utility>', ),
+    'py_divmod': ('<limits>', '<type_traits>'),
+    'c_mod': ('<type_traits>', '<utility>'),
+    'ftn_mod': ('<utility>', ),
+    'ftn_modulo': ('<utility>', ),
+    'np_modf': ('<type_traits>', ),
+}
+
+#: ``Max``/``Min`` are variadic in the runtime, which ``std::max``/``std::min`` are not: those are
+#: binary or take an ``initializer_list``. The ORDER now matches (a later argument wins only by
+#: comparing strictly better), so the difference is arity and mixed-type promotion, but CPF still
+#: emits the runtime's own definition (see :data:`INLINE_DEFINITIONS`) so the two cannot drift.
+VARIADIC_MINMAX: Dict[str, str] = {'Max': 'cpf_max', 'Min': 'cpf_min', 'max': 'cpf_max', 'min': 'cpf_min'}
+
+#: Headers CPF always includes: the exact-width integer types and the maths every kernel may reach,
+#: plus the two the readable generator's own allocations need -- ``<new>`` for the aligned
+#: ``operator new[](std::align_val_t)`` it allocates heap transients with, and ``<type_traits>``
+#: for the ``std::is_trivially_destructible`` static assertion it pairs with the matching delete.
+#: ``<cstdlib>`` is for ``std::abort``, which canonicalization writes into the assumption-guard
+#: tasklet (``if ((N < 0)) { std::abort(); }``) -- a body no printer sees, so nothing else would
+#: pull the declaration in. ``<cassert>`` is the same case one level down: code generation guards
+#: every map with a non-unit step by ``assert((step) > 0 && "...")``, which it writes directly into
+#: the stream rather than through a printer, so no call-site table can discover it.
+BASE_HEADERS: Tuple[str, ...] = ('<cstdint>', '<cmath>', '<cstring>', '<cstdlib>', '<algorithm>', '<cassert>',
+                                 '<complex>', '<numeric>', '<new>', '<type_traits>')
+
+#: What a HIP unit adds to :data:`BASE_HEADERS`. Both ship with the ROCm toolkit, so a unit that
+#: includes them needs nothing a caller compiling for an AMD GPU does not already have -- the same
+#: standing OpenMP has on the host side, and the reason they are not what CPF exists to avoid.
+#: hipCUB supplies the device scan, reduce and arg-reduce the library nodes expand into.
+HIP_BASE_HEADERS: Tuple[str, ...] = ('<hip/hip_runtime.h>', '<hipcub/hipcub.hpp>')
+
+#: What a CUDA unit adds to :data:`BASE_HEADERS`, on the same footing: both ship with the CUDA toolkit.
+CUDA_BASE_HEADERS: Tuple[str, ...] = ('<cuda_runtime.h>', '<cub/cub.cuh>')
+
+#: What ``dace/dace.h`` supplies that a DEVICE unit still needs, written out inline.
+#:
+#: These are not lowerings -- the generated device code is already correct C++ -- they are the
+#: handful of declarations the header provides and the unit therefore has to provide for itself:
+#: the backend-neutral ``gpu*`` types the code generator emits so one text serves CUDA and HIP, and
+#: an error check. The header's MACROS are not reproduced: :func:`hip_spell_out` writes each one out
+#: where the generated code uses it. Everything else the header would have brought (the reduction
+#: functors, the copy templates, the runtime context) is lowered or replaced.
+#:
+#: ``cpf_gpu_check`` takes the call site from ``__builtin_FILE()`` / ``__builtin_LINE()`` default
+#: arguments, which both hipcc and the host compilers evaluate at the caller.
+#:
+#: ``cpf_gpu_context`` is the replacement for ``dace::cuda::Context``: the generated frame reaches
+#: it as ``__state->gpu_context->streams``, so keeping that SHAPE is what lets the device code
+#: stand unaltered. One stream, because canon offloads onto the default stream
+#: (``max_concurrent_streams = -1``); the array is what the emitted indexing expects.
+#:
+#: This is the part EVERY device unit needs, after its backend's :data:`DEVICE_TYPES`. What only
+#: some need is in :data:`HIP_DEVICE_BLOCKS`, selected the same way the C helpers are -- from the
+#: finished text. Calls are written as ``gpu*`` and spelled per backend (:func:`device_spell_out`).
+DEVICE_TYPES: Dict[Dialect, str] = {
+    Dialect.STANDALONE_HIP:
+    """\
+using gpuStream_t = hipStream_t;
+using gpuEvent_t = hipEvent_t;
+using gpuError_t = hipError_t;
+static constexpr gpuError_t gpuSuccess = hipSuccess;
+static constexpr gpuError_t gpuErrorMemoryAllocation = hipErrorOutOfMemory;
+""",
+    Dialect.STANDALONE_CUDA:
+    """\
+using gpuStream_t = cudaStream_t;
+using gpuEvent_t = cudaEvent_t;
+using gpuError_t = cudaError_t;
+static constexpr gpuError_t gpuSuccess = cudaSuccess;
+static constexpr gpuError_t gpuErrorMemoryAllocation = cudaErrorMemoryAllocation;
+""",
+}
+
+DEVICE_CORE: str = """\
+
+//: A failed GPU call ends the program, naming the call site.
+static inline void cpf_gpu_check(gpuError_t status, const char *file = __builtin_FILE(), int line = __builtin_LINE()) {
+    if (status != gpuSuccess) {
+        fprintf(stderr, "%s:%d: GPU error %d (%s)\\n", file, line, (int)status, gpuGetErrorString(status));
+        abort();
+    }
+}
+
+//: The one stream canon offloads onto, in the shape the generated frame indexes.
+struct cpf_gpu_context {
+    gpuStream_t streams[1];
+    gpuEvent_t events[1];
+    gpuError_t lasterror;
+};
+"""
+
+#: Device preamble blocks only SOME units need, keyed by the identifier that pulls each one in.
+#:
+#: Same principle as :func:`helpers_used`, and for the same reason: what a unit needs is a property
+#: of the finished text, not of the SDFG. Emitting the lot unconditionally cost every GPU form the
+#: 30-line atomic template and the cub aliases whether or not it reduced anything -- measured over
+#: the 40-kernel corpus, the atomic block was dead in 33 of 40 and the cub aliases in 32, about 40
+#: lines of a 200-line form. The form is read by an agent under a token budget, so text it has no
+#: use for is not free.
+HIP_DEVICE_BLOCKS: Dict[str, str] = {
+    'cpf_kernel_launch_check':
+    """\
+//: A failed kernel launch ends the program, naming the kernel and its launch geometry.
+static inline void cpf_kernel_launch_check(gpuError_t err, const char *name, long long gx, long long gy, long long gz,
+                                           long long bx, long long by, long long bz) {
+    if (err != gpuSuccess) {
+        fprintf(stderr, "%s launch failed (grid %lld,%lld,%lld block %lld,%lld,%lld): %s\\n", name, gx, gy, gz, bx, by,
+                bz, gpuGetErrorString(err));
+        abort();
+    }
+}
+""",
+    'gpucub':
+    """\
+//: The backend cub, under the name the code generator writes -- what gpucub.cuh aliases. hipCUB
+//: keeps the functor structs CCCL 3 dropped, and a unit built by hipcc is never built against CCCL.
+namespace gpucub = hipcub;
+""",
+    'cpf_cub_multiplies':
+    'struct cpf_cub_multiplies {\n'
+    '    template <typename T>\n'
+    '    __host__ __device__ T operator()(const T& a, const T& b) const { return a * b; }\n'
+    '};\n',
+    'cpf_cub_plus':
+    'struct cpf_cub_plus {\n'
+    '    template <typename T>\n'
+    '    __host__ __device__ T operator()(const T& a, const T& b) const { return a + b; }\n'
+    '};\n',
+    'cpf_cub_minimum':
+    'struct cpf_cub_minimum {\n'
+    '    template <typename T>\n'
+    '    __host__ __device__ T operator()(const T& a, const T& b) const { return a < b ? a : b; }\n'
+    '};\n',
+    'cpf_cub_maximum':
+    'struct cpf_cub_maximum {\n'
+    '    template <typename T>\n'
+    '    __host__ __device__ T operator()(const T& a, const T& b) const { return a > b ? a : b; }\n'
+    '};\n',
+    'cpf_gpu_atomic':
+    """\
+//: A conflicting accumulation, applied atomically under any binary operator.
+//:
+//: HIP spells only a few operator/type pairs as an intrinsic (atomicAdd on the arithmetic types,
+//: atomicMin/atomicMax on the integers), and an SDFG's write-conflict resolution is any of nine
+//: reductions over any element type, so one CAS loop covers the set where a table of intrinsics
+//: would leave holes. On a tree-reduced accumulator this runs ONCE PER BLOCK, after
+//: gpucub::BlockReduce has folded the block's partials, so the loop is off the per-element path.
+template <typename T, typename V, typename Op>
+__device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
+    using cpf_atomic_word =
+        typename std::conditional<sizeof(T) == sizeof(unsigned int), unsigned int, unsigned long long>::type;
+    static_assert(sizeof(T) == sizeof(cpf_atomic_word), "no atomic word as wide as the accumulator");
+    cpf_atomic_word *word = reinterpret_cast<cpf_atomic_word *>(address);
+    cpf_atomic_word old = *word;
+    cpf_atomic_word assumed;
+    do {
+        assumed = old;
+        T updated = op(__builtin_bit_cast(T, assumed), static_cast<T>(value));
+        old = atomicCAS(word, assumed, __builtin_bit_cast(cpf_atomic_word, updated));
+    } while (assumed != old);
+}
+""",
+}
+
+#: The CUDA unit's blocks: the same ones, with cub under its CUDA name.
+CUDA_DEVICE_BLOCKS: Dict[str, str] = {
+    **HIP_DEVICE_BLOCKS,
+    'gpucub':
+    '//: The backend cub, under the name the code generator writes -- what gpucub.cuh aliases.\n'
+    'namespace gpucub = cub;\n',
+}
+
+DEVICE_BLOCKS: Dict[Dialect, Dict[str, str]] = {
+    Dialect.STANDALONE_HIP: HIP_DEVICE_BLOCKS,
+    Dialect.STANDALONE_CUDA: CUDA_DEVICE_BLOCKS,
+}
+
+#: Emission order for :data:`DEVICE_BLOCKS`. A dict preserves insertion order, but the blocks
+#: are selected into a set, so the order a unit gets them in has to be stated rather than inherited
+#: from however the set happened to iterate -- two runs of the same SDFG must render byte-identical.
+DEVICE_BLOCK_ORDER: Tuple[str, ...] = tuple(HIP_DEVICE_BLOCKS)
+
+#: What each block needs in turn.
+DEVICE_BLOCK_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
+    'cpf_gpu_atomic': ('gpucub', ),
+}
+
+#: Backend-neutral ``gpu*`` calls the CUDA/HIP code generator emits, and the HIP function each one
+#: is. ``dace/dace.h`` aliases these through its own compatibility header; a self-contained unit
+#: calls the HIP function by its own name (:func:`hip_spell_out`).
+#:
+#: The generator can emit all of these, so a table missing one leaves an undeclared name in the
+#: unit -- ``tsvc_2_s323`` failed on ``gpuMemcpyDeviceToHost`` that way.
+GPU_ALIASES: Dict[str, str] = {
+    'gpuDeviceSynchronize': 'hipDeviceSynchronize',
+    'gpuEventSynchronize': 'hipEventSynchronize',
+    'gpuFree': 'hipFree',
+    'gpuFreeAsync': 'hipFreeAsync',
+    'gpuFreeHost': 'hipHostFree',
+    'gpuGetErrorString': 'hipGetErrorString',
+    'gpuGetLastError': 'hipGetLastError',
+    'gpuLaunchKernel': 'hipLaunchKernel',
+    'gpuMalloc': 'hipMalloc',
+    'gpuMallocAsync': 'hipMallocAsync',
+    'gpuMallocHost': 'hipHostMalloc',
+    'gpuMemcpy': 'hipMemcpy',
+    'gpuMemcpyAsync': 'hipMemcpyAsync',
+    'gpuMemcpyDeviceToDevice': 'hipMemcpyDeviceToDevice',
+    'gpuMemcpyDeviceToHost': 'hipMemcpyDeviceToHost',
+    'gpuMemcpyHostToDevice': 'hipMemcpyHostToDevice',
+    'gpuMemset': 'hipMemset',
+    'gpuMemsetAsync': 'hipMemsetAsync',
+    'gpuPeekAtLastError': 'hipPeekAtLastError',
+    'gpuStreamSynchronize': 'hipStreamSynchronize',
+}
+
+#: Every DaCe spelling the generated device code carries, written out where it is used: the
+#: attribute aliases as their attributes, the error checks as CPF's own functions, the cub operator
+#: names as the functor each one names, and each ``gpu*`` call as its HIP function.
+HIP_SPELLINGS: Dict[str, str] = {
+    'DACE_HDFI': '__host__ __device__ __forceinline__',
+    'DACE_HFI': '__host__ __forceinline__',
+    'DACE_DFI': '__device__ __forceinline__',
+    'DACE_GPU_CHECK': 'cpf_gpu_check',
+    'DACE_KERNEL_LAUNCH_CHECK': 'cpf_kernel_launch_check',
+    'DACE_CUB_SUM_OP': '::gpucub::Sum()',
+    'DACE_CUB_MIN_OP': '::gpucub::Min()',
+    'DACE_CUB_MAX_OP': '::gpucub::Max()',
+    'DACE_CUB_MUL_OP': 'cpf_cub_multiplies()',
+    **GPU_ALIASES,
+}
+
+#: :data:`HIP_SPELLINGS` for the CUDA unit: each ``gpu*`` call as its CUDA function, and the cub
+#: operators as CPF's own functors, because CCCL 3 dropped the ``Sum``/``Min``/``Max`` structs.
+CUDA_SPELLINGS: Dict[str, str] = {
+    **HIP_SPELLINGS,
+    'DACE_CUB_SUM_OP': 'cpf_cub_plus()',
+    'DACE_CUB_MIN_OP': 'cpf_cub_minimum()',
+    'DACE_CUB_MAX_OP': 'cpf_cub_maximum()',
+    **{
+        name: 'cuda' + name[len('gpu'):]
+        for name in GPU_ALIASES
+    },
+}
+
+DEVICE_SPELLINGS: Dict[Dialect, Dict[str, str]] = {
+    Dialect.STANDALONE_HIP: HIP_SPELLINGS,
+    Dialect.STANDALONE_CUDA: CUDA_SPELLINGS,
+}
+
+#: One alternation per dialect over its spellings. No replacement contains a key, so one pass is exact.
+DEVICE_SPELLING_PATTERNS: Dict[Dialect, 're.Pattern'] = {
+    dialect: re.compile(r'\b(' + '|'.join(sorted(spellings, key=len, reverse=True)) + r')\b')
+    for dialect, spellings in DEVICE_SPELLINGS.items()
+}
+
+#: ``DACE_EXPORTED`` names no attribute in a self-contained unit, so it goes with the blank after it.
+HIP_EXPORTED_PATTERN: 're.Pattern' = re.compile(r'\bDACE_EXPORTED\b[ \t]*')
+
+#: The ``__dace_`` prefix of the generator's own launchers and locals (``__dace_runkernel_*``,
+#: ``__dace_current_stream``). ``__dace_init``/``__dace_exit`` keep it: they are a refused
+#: handshake, and :data:`~dace.codegen.cpf.BANNED` has to still see one.
+DACE_PREFIX_PATTERN: 're.Pattern' = re.compile(r'\b__dace_(?!init|exit)')
+
+
+def device_spell_out(code: str, dialect: Dialect) -> str:
+    """Write out each of ``dialect``'s spellings, drop ``DACE_EXPORTED`` and respell ``__dace_`` as ``__cpf_``.
+
+    :param code: the emitted device unit, or its preamble.
+    :param dialect: the device dialect rendering it (see :data:`DEVICE_SPELLINGS`).
+    :returns: the text with every DaCe spelling replaced.
+    """
+    spellings = DEVICE_SPELLINGS[dialect]
+    code = DACE_PREFIX_PATTERN.sub('__cpf_', HIP_EXPORTED_PATTERN.sub('', code))
+    return DEVICE_SPELLING_PATTERNS[dialect].sub(lambda match: spellings[match.group(1)], code)
+
+
+def device_preamble(code: str, dialect: Dialect) -> str:
+    """``dialect``'s :data:`DEVICE_TYPES` and :data:`DEVICE_CORE`, plus the blocks ``code`` reaches for.
+
+    :param code: the emitted translation unit after :func:`device_spell_out`, WITHOUT its preamble --
+                 so a block's own definition never counts as a use of it.
+    :param dialect: the device dialect rendering it.
+    :returns: the device preamble, core first and blocks in :data:`DEVICE_BLOCK_ORDER`, spelled for the backend.
+    """
+    blocks = DEVICE_BLOCKS[dialect]
+    needed: OrderedSet[str] = OrderedSet()
+    pending = [name for name in blocks if re.search(rf'\b{re.escape(name)}\b', code)]
+    while pending:
+        name = pending.pop()
+        if name in needed:
+            continue
+        needed.add(name)
+        pending.extend(dep for dep in DEVICE_BLOCK_DEPENDENCIES.get(name, ()) if dep not in needed)
+    return device_spell_out(
+        '\n'.join([DEVICE_TYPES[dialect] + DEVICE_CORE] +
+                  [blocks[name] for name in DEVICE_BLOCK_ORDER if name in needed]), dialect)
+
+
+def device_entry_prologue(state_struct: str) -> str:
+    """The device setup CPF's single entry function opens with.
+
+    An ordinary build does this in ``__dace_init_<name>`` and undoes it in ``__dace_exit_<name>``,
+    both taking the state pointer the caller kept between invocations. CPF has one entry point and
+    no handshake, so the context is a LOCAL: created here, destroyed by the scope guard on the way
+    out, whichever way the function leaves.
+
+    The stream is the default one, which is what canon offloads onto
+    (``compiler.cuda.max_concurrent_streams = -1``), so there is nothing to create and nothing to
+    destroy -- only the device to select and the work to drain.
+
+    :param state_struct: the mangled state struct name the generated body dereferences.
+    :returns: the prologue lines, indented one level.
+    """
+    return f"""\
+    // The device handshake, which a single entry point has nowhere else to put.
+    cpf_gpu_context __cpf_context{{}};
+    __cpf_context.streams[0] = nullptr;
+    {state_struct} __cpf_state{{&__cpf_context}};
+    {state_struct} *__state = &__cpf_state;
+    struct __cpf_drain {{
+        ~__cpf_drain() {{ cpf_gpu_check(gpuDeviceSynchronize()); }}
+    }} __cpf_drain_guard;
+"""
+
+
+#: Runtime functions CPF deliberately does NOT lower, and why. Reaching one is a refusal, not a
+#: pass-through: the name is declared by a DaCe header CPF does not include, so passing it through
+#: would produce a translation unit that does not build.
+UNSUPPORTED: Dict[str, str] = {}
+
+#: Math functions a RUNTIME-dialect printer must qualify as ``dace::math::``, rather than leave
+#: bare for unqualified lookup to resolve.
+#:
+#: A bare ``sqrt(x)`` binds to ``std::sqrt``, whose ``float`` / ``double`` / ``long double``
+#: overloads are all equally good for a 16-bit float: ``dace::float16`` IS CUDA's ``half``, and its
+#: many non-explicit conversion operators each reach a different overload through a different
+#: conversion, so nvcc calls the call ambiguous and rejects the translation unit. Each name here
+#: carries a non-template ``dace::float16`` / ``dace::bfloat16`` overload in ``dace/math.h``, an
+#: exact type match that wins outright -- qualifying the call is what reaches it. A math name with
+#: no such overload (``sin``, ``cos``, ...) is deliberately absent: qualifying it would move the
+#: same ambiguity one frame down, into ``dace::math``'s own template body.
+#:
+#: Shared because the SAME expression reaches C++ through two printers -- a tasklet body through
+#: ``cppunparse``, a memlet subset or interstate assignment through ``dace.symbolic`` -- and a name
+#: qualified by only one of them builds in one place and is ambiguous in the other. This table has
+#: nothing to say about the standalone dialects, which resolve these names through
+#: :data:`STD_RENAMES` before any of this applies.
+RUNTIME_QUALIFIED_MATH: Dict[str, str] = {
+    'fma': 'dace::math::fma',
+    'sqrt': 'dace::math::sqrt',
+    'exp': 'dace::math::exp',
+    'log': 'dace::math::log',
+}
+
+#: Every runtime function this module knows about, in any lane.
+KNOWN: Set[str] = (set(STD_RENAMES) | set(REWRITES) | set(INLINE_DEFINITIONS) | set(VARIADIC_MINMAX) | set(UNSUPPORTED))
+
+#: ``dace::``-namespaced C++ type -> the standalone spelling. Most DaCe ctypes are already plain
+#: (``float64`` is ``double``, ``int32`` is ``int32_t``), so only these few ever leak.
+CTYPE_RENAMES: Dict[str, str] = {
+    'dace::bool_': 'bool',
+    'dace::uint': 'uint32_t',
+    'dace::uint8': 'uint8_t',
+    'dace::uint16': 'uint16_t',
+    'dace::uint32': 'uint32_t',
+    'dace::uint64': 'uint64_t',
+    'dace::int8': 'int8_t',
+    'dace::int16': 'int16_t',
+    'dace::int32': 'int32_t',
+    'dace::int64': 'int64_t',
+    'dace::float32': 'float',
+    'dace::float64': 'double',
+    'dace::complex64': 'std::complex<float>',
+    'dace::complex128': 'std::complex<double>',
+}
+
+#: Types with no portable standalone spelling. ``float16``/``bfloat16``/fp8 exist in DaCe only as
+#: the CUDA and ROCm vendor types, or as an emulation the runtime headers carry -- neither is
+#: reachable from a translation unit that includes nothing but the standard library.
+UNSUPPORTED_CTYPES: Dict[str, str] = {
+    'dace::float16': 'no portable C++ half type; use float32 or keep the DaCe runtime',
+    'dace::bfloat16': 'no portable C++ bfloat16 type; use float32 or keep the DaCe runtime',
+    'dace::float8_e4m3fn': 'no portable C++ fp8 type',
+    'dace::float8_e5m2': 'no portable C++ fp8 type',
+}
+
+
+def ctype_for(ctype: str, dialect: Optional[Dialect] = None) -> str:
+    """The standalone spelling of a type name.
+
+    :param ctype: the type as the ordinary generators spell it.
+    :param dialect: which standalone dialect to spell it for; ambient when omitted.
+    :returns: the standalone spelling, or ``ctype`` unchanged when it is already plain.
+    :raises NotImplementedError: if the type has no standalone spelling at all.
+    """
+    if ctype in UNSUPPORTED_CTYPES:
+        raise NotImplementedError(f'CPF cannot emit the type {ctype!r}: {UNSUPPORTED_CTYPES[ctype]}.')
+    return tables_for(dialect).ctype_renames.get(ctype, ctype)
+
+
+def variadic_minmax(name: str,
+                    arguments: Tuple[str, ...],
+                    dialect: Optional[Dialect] = None,
+                    types: Optional[Tuple[Optional[str], ...]] = None) -> Optional[str]:
+    """Spell a variadic ``Max``/``Min`` for ``dialect``.
+
+    The runtime's ``Max`` takes any number of arguments, and so does the C++ dialect's own
+    ``cpf_max`` template, so that one is called with the arguments as they stand. C has neither a
+    template nor overloading, so the C dialect NESTS the typed binary helper instead -- left to
+    right, which is the association the recursive template has too (see :func:`c_minmax_call`).
+
+    :param name: the runtime function name.
+    :param arguments: already-printed argument expressions.
+    :param dialect: which standalone dialect to spell it for; ambient when omitted.
+    :param types: the dace type name of each argument. Read only by the C dialect.
+    :returns: the expression, or ``None`` if ``name`` is not a min/max.
+    """
+    resolved = dialect if dialect is not None else _active_dialect
+    target = tables_for(resolved).variadic_minmax.get(name)
+    if target is None:
+        return None
+    if len(arguments) == 1:
+        return '(%s)' % arguments[0]
+    if resolved is Dialect.STANDALONE_C:
+        return c_minmax_call(target, arguments, types)
+    if len(arguments) == 2:
+        return '%s(%s, %s)' % (target, arguments[0], arguments[1])
+    return '%s(%s)' % (target, ', '.join(arguments))
+
+
+def needs_definition(name: str, dialect: Optional[Dialect] = None) -> bool:
+    """Whether CPF calls ``name`` unchanged and emits a definition for it."""
+    return name in tables_for(dialect).inline_definitions
+
+
+def lowering_for(name: str,
+                 arguments: Tuple[str, ...],
+                 dialect: Optional[Dialect] = None,
+                 types: Optional[Tuple[Optional[str], ...]] = None) -> Optional[str]:
+    """The CPF spelling of a call to ``name`` with ``arguments`` already printed.
+
+    :param name: the runtime function name as the ordinary generators would emit it.
+    :param arguments: already-printed argument expressions.
+    :param types: the dace type name of each argument where the printer resolved it. The C dialect
+                  names a typed helper after them; the C++ dialect never reads them.
+    :returns: the C++ expression, or ``None`` if ``name`` needs no rewriting -- either it is not a
+              runtime function at all, or it is one CPF emits a definition for and calls unchanged
+              (:func:`needs_definition` separates those two).
+    :raises ValueError: if ``name`` is a known rewrite but the argument count does not match, which
+                        means the caller and this table disagree about the function's shape.
+    :raises NotImplementedError: if ``name`` is a runtime function CPF cannot express (see
+                                 :data:`UNSUPPORTED`).
+    """
+    # numpy's conjugate of a real is that real; ``std::conj`` of one is a ``std::complex``.
+    if (name in ('conj', 'conjugate') and types is not None and len(types) == 1 and types[0] is not None
+            and not types[0].startswith('complex')):
+        return '(%s)' % arguments[0]
+    tables = tables_for(dialect)
+    if name in tables.unsupported:
+        raise NotImplementedError(f'CPF cannot lower {name!r}: {tables.unsupported[name]}.')
+    if (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C:
+        if name in C_TYPED_MATH:
+            return '%s(%s)' % (c_math_function(name, types), ', '.join(arguments))
+        if name == 'iround':
+            return '((int)%s(%s))' % (c_math_function('round', types), ', '.join(arguments))
+        # ``Mod`` is sympy's floored modulus: the same typed helper as ``py_mod``.
+        spec = c_helper_spec('py_mod' if name == 'Mod' else name, len(arguments))
+        if spec is not None:
+            return c_helper_call(spec, arguments, types)
+    variadic = variadic_minmax(name, arguments, dialect, types)
+    if variadic is not None:
+        return variadic
+    if name in tables.rewrites:
+        arity, template = tables.rewrites[name]
+        if len(arguments) != arity:
+            raise ValueError(f'CPF lowering of {name!r} expects {arity} arguments, got {len(arguments)}')
+        return template.format(*arguments)
+    if name in tables.std_renames:
+        return '%s(%s)' % (tables.std_renames[name], ', '.join(arguments))
+    return None
+
+
+#: A ``dace::``-qualified name in hand-written C++ (a native tasklet body, a library expansion's
+#: code), with the trailing identifier captured. Matches a type and a function alike -- the
+#: distinction is made by which table the identifier is found in.
+_QUALIFIED_NAME = re.compile(r'(?:::)?\bdace::(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)\b')
+
+
+def rewrite_ctypes(code: str, dialect: Optional[Dialect] = None) -> str:
+    """Spell every DaCe ctype in ``code`` the standalone way.
+
+    Type names reach the emitted text from places no expression printer sees -- the entry
+    signature, transient declarations, casts -- so this runs over the finished unit as well as over
+    hand-written tasklet bodies. Purely a rename, from the same table
+    (:data:`CTYPE_RENAMES` / :data:`C_CTYPE_RENAMES`) both callers share, so a container's type and
+    a tasklet's cast cannot be spelled differently.
+
+    The rename itself is one alternation over every ``ctype_renames`` key
+    (:attr:`~Tables.ctype_pattern`, built once per dialect at import time) rather than one
+    ``re.sub`` per entry: every entry is a distinct literal name that cannot appear in another
+    entry's REPLACEMENT text (none of ``bool``, ``uint32_t``, ``std::complex<float>``, ... contains
+    a ``dace::``-qualified name), so the entries never interacted and folding them into one pass
+    changes nothing they could produce. The refusal check stays its own small loop, in TABLE
+    order, so two unsupported types in one unit are still reported in the same order as before.
+
+    :param code: emitted text, of any size.
+    :param dialect: which standalone dialect emitted it; ambient when omitted.
+    :returns: the text with DaCe type names replaced.
+    :raises NotImplementedError: if the text names a type with no standalone spelling.
+    """
+    tables = tables_for(dialect)
+    if '::' not in code:
+        return code
+    for qualified, reason in UNSUPPORTED_CTYPES.items():
+        if re.search(r'(?:::)?\b%s\b' % re.escape(qualified), code):
+            raise NotImplementedError(f'CPF cannot emit the type {qualified!r}: {reason}')
+    return tables.ctype_pattern.sub(lambda match: tables.ctype_renames[match.group(1)], code)
+
+
+class NativeSite:
+    """What the C rewrite of one hand-written body knows about the place it is emitted.
+
+    ``names`` maps each identifier in scope -- container, connector, symbol -- to ``(dace type,
+    pointer)``, which types the helpers the body calls. ``label`` is unique per site and names the
+    functions a find-first becomes; ``functions`` collects those for the caller to emit at file scope.
+    """
+    __slots__ = ('names', 'label', 'functions')
+
+    def __init__(self, names: Dict[str, Tuple[str, bool]], label: str) -> None:
+        self.names: Dict[str, Tuple[str, bool]] = names
+        self.label: str = label
+        self.functions: List[str] = []
+
+
+def rewrite_native_code(code: str, dialect: Optional[Dialect] = None, site: Optional[NativeSite] = None) -> str:
+    """Rewrite the ``dace::`` names in a hand-written C++ body to their standalone spellings.
+
+    Native tasklet bodies never reach the expression printers -- they are emitted verbatim -- so
+    this is the only point at which a library expansion's own C++ can be re-spelled. Which is
+    needed for the real cases: the ``Scan`` expansion calls ``::dace::scan::detail::scan_incl_sum``
+    and the ``FindFirst`` expansion calls ``dace::find_first_index``, and CPF emits both functions
+    itself rather than serializing a prefix sum or a cancelling search into a sequential loop.
+
+    In C the same pass also rewrites the call shapes whose C function depends on the call site --
+    the scans, the sort and the scatter guard's duplicate check are named for the element types
+    ``site`` gives their arrays, the scan identities become constants, and the find-first over a
+    lambda predicate becomes a function of its own (:func:`c_scan`, :func:`c_sort`,
+    :func:`c_detect_collision`, :func:`c_scan_identities`, :func:`c_find_first`) -- and re-spells
+    the ``std::`` names a body wrote directly (:func:`c_native_renames`).
+
+    Textual by necessity, and deliberately conservative: only the qualified name is rewritten, only
+    when the identifier is one CPF knows, and never with knowledge of the arguments. A
+    ``dace::`` name with no standalone spelling is LEFT ALONE, so it reaches
+    ``dace.codegen.cpf.verify`` and is reported against the construct that emitted it -- a silent
+    partial rewrite would be worse than none.
+
+    :param code: the C++ body as the expansion wrote it.
+    :param dialect: which standalone dialect to rewrite for; ambient when omitted.
+    :returns: the body with the names CPF can spell rewritten.
+    :raises NotImplementedError: if the body names a type or function this dialect cannot express.
+    """
+    tables = tables_for(dialect)
+    code = rewrite_ctypes(code, dialect)
+    c_dialect = (dialect if dialect is not None else _active_dialect) is Dialect.STANDALONE_C
+
+    if c_dialect:
+        # A C++ standard header (``<algorithm>``) names nothing in C; the unit's C headers come from its preamble.
+        code = C_CXX_INCLUDE.sub('', code)
+        # The scan reads its seed's type from the identity call, so it runs before the identities.
+        code = c_sort(c_detect_collision(c_scan(code, site), site), site)
+        code = c_native_renames(c_copy(c_numeric_limits(c_scan_identities(code))))
+
+    def replace(match: 're.Match') -> str:
+        name = match.group(1)
+        if name in tables.unsupported:
+            raise NotImplementedError(f'CPF cannot lower {name!r}: {tables.unsupported[name]}.')
+        if name in tables.inline_definitions:
+            return name  # CPF emits this one's definition at the top of the unit
+        if name in tables.std_renames:
+            return tables.std_renames[name]
+        return match.group(0)  # unknown: left for verify() to report
+
+    code = _QUALIFIED_NAME.sub(replace, code)
+    if c_dialect:
+        # Last, so the predicate the search function takes is C already.
+        code = c_find_first(c_cast_native_code(code), site)
+    return code
+
+
+def helpers_used(code: str, dialect: Optional[Dialect] = None) -> Set[str]:
+    """Which inline-definition helpers ``code`` calls.
+
+    Recovered from the finished text rather than accumulated while printing, for two reasons. The
+    symbolic printer is reached through memoized entry points, so per-printer state does not
+    survive a cache hit and would under-report. And a translation unit is written by several
+    emitters -- memlet subsets, tasklet bodies, loop bounds -- so scanning the result is the only
+    place that sees all of them at once.
+
+    :param code: the emitted translation unit, or any fragment of it.
+    :param dialect: which standalone dialect emitted it; ambient when omitted.
+    :returns: the helper names called, for :func:`definitions_for`.
+    """
+    return {match.group(1) for match in tables_for(dialect).helper_call.finditer(code)}
+
+
+def required_definitions(names: Set[str], dialect: Optional[Dialect] = None) -> Set[str]:
+    """Close ``names`` over :data:`DEFINITION_DEPENDENCIES`.
+
+    ``py_mod`` calls ``py_floor``, which calls ``int_floor_ni``: a unit that mentions only the
+    first still has to carry all three.
+
+    :param names: every function name the emitted code calls.
+    :param dialect: which standalone dialect emitted them; ambient when omitted.
+    :returns: every definition the unit needs, callers and callees alike.
+    """
+    tables = tables_for(dialect)
+    needed: Set[str] = set()
+    pending = [name for name in names if definition_of(tables, name) is not None]
+    while pending:
+        name = pending.pop()
+        if name in needed:
+            continue
+        needed.add(name)
+        pending.extend(dependency for dependency in definition_of(tables, name)[1] if dependency not in needed)
+    return needed
+
+
+def definition_of(tables: 'Tables', name: str) -> Optional[Tuple[str, Tuple[str, ...]]]:
+    """``(definition, dependencies)`` of a helper ``tables`` defines by name or as a typed instantiation,
+    or ``None`` when it defines no such helper."""
+    if name in tables.inline_definitions:
+        return tables.inline_definitions[name], tables.definition_dependencies.get(name, ())
+    return tables.instances(name)
+
+
+def definitions_for(names: Set[str], dialect: Optional[Dialect] = None) -> Tuple[str, ...]:
+    """The inline definitions a translation unit calling ``names`` has to carry, callees first.
+
+    C++ needs a function declared before it is called, so the order is a topological one over
+    :data:`DEFINITION_DEPENDENCIES` rather than alphabetical -- emitting ``py_mod`` before
+    ``py_floor`` would not compile. Ties break on the name, so the same input always produces
+    byte-identical output.
+
+    :param names: every function name the emitted code calls.
+    :param dialect: which standalone dialect emitted them; ambient when omitted.
+    :returns: the definitions to place at the top of the translation unit.
+    :raises ValueError: if the dependencies contain a cycle, which no valid ordering satisfies.
+    """
+    tables = tables_for(dialect)
+    needed = required_definitions(names, dialect)
+    definitions = {name: definition_of(tables, name) for name in needed}
+    emitted: List[str] = []
+    placed: Set[str] = set()
+    while len(placed) < len(needed):
+        ready = sorted(name for name in needed - placed
+                       if all(dependency in placed for dependency in definitions[name][1] if dependency in needed))
+        if not ready:
+            raise ValueError(f'CPF inline definitions have a dependency cycle among {sorted(needed - placed)}')
+        for name in ready:
+            emitted.append(definitions[name][0])
+            placed.add(name)
+    return tuple(emitted)
+
+
+def headers_for(names: Set[str], dialect: Optional[Dialect] = None) -> Tuple[str, ...]:
+    """The system headers a translation unit calling ``names`` has to include, in a stable order.
+
+    Closed over the dependencies too: a unit calling only ``py_mod`` still ends up with
+    ``py_floor``'s body, and that is what needs ``<type_traits>``.
+
+    :param names: every function name the emitted code calls.
+    :param dialect: which standalone dialect emitted them; ambient when omitted.
+    :returns: the include list, base headers first.
+    """
+    tables = tables_for(dialect)
+    extra: Set[str] = set()
+    for name in required_definitions(names, dialect) | set(names):
+        extra.update(tables.definition_headers.get(name, ()))
+    return tables.base_headers + tuple(sorted(extra - set(tables.base_headers)))
+
+
+# The C dialect
+#
+# C23 has no templates, no function overloading and no ``constexpr`` on functions, and its maths
+# library is not type-generic: ``sqrt(x)`` on a ``float`` promotes to ``double`` and rounds twice,
+# which ``std::sqrt(float)`` does not. ``<tgmath.h>`` would fix the second problem and create a
+# worse one -- its macros are named ``exp``, ``pow``, ``log``, ``round``, which is exactly the set
+# of names a scientific SDFG gives its containers.
+#
+# So the printer resolves the argument types and names the function for them -- ``sqrtf`` for a
+# ``float``, ``cpf_max_int64`` for two ``int64_t``. A helper that owns a loop is one typed
+# ``static inline`` function per type combination a call site instantiates (see :func:`c_instance`).
+# The unit defines no macro.
+
+#: dace type name -> the C type a helper the printers call BY NAME is instantiated at. The printer
+#: resolves its argument types and names the helper for the type C's own conversions give them, so
+#: the call is a plain function call and no dispatch macro is emitted.
+C_HELPER_TYPES: Dict[str, str] = {
+    'int32': 'int32_t',
+    'int64': 'int64_t',
+    'uint32': 'uint32_t',
+    'uint64': 'uint64_t',
+    'float32': 'float',
+    'float64': 'double',
+}
+
+#: Integer types narrower than ``int``, which C promotes to ``int`` before any arithmetic.
+C_INTEGER_PROMOTIONS: Dict[str, str] = {
+    'bool': 'int32',
+    'bool_': 'int32',
+    'int8': 'int32',
+    'int16': 'int32',
+    'uint8': 'int32',
+    'uint16': 'int32',
+}
+
+#: ``(conversion rank, signed)`` of each promoted integer type on an LP64 target.
+C_INTEGER_RANKS: Dict[str, Tuple[int, bool]] = {
+    'int32': (1, True),
+    'uint32': (1, False),
+    'int64': (2, True),
+    'uint64': (2, False),
+}
+
+#: ``(rank of the real type, complex)`` of each floating type.
+C_FLOATING_RANKS: Dict[str, Tuple[int, bool]] = {
+    'float32': (1, False),
+    'float64': (2, False),
+    'complex64': (1, True),
+    'complex128': (2, True),
+}
+C_FLOATING_BY_RANK: Dict[Tuple[int, bool], str] = {rank: name for name, rank in C_FLOATING_RANKS.items()}
+
+
+def c_arithmetic(name: str) -> bool:
+    """Whether ``name`` is a dace type :func:`c_common_type` can convert."""
+    return name in C_INTEGER_PROMOTIONS or name in C_INTEGER_RANKS or name in C_FLOATING_RANKS
+
+
+def c_symbol_type(name: str) -> str:
+    """The type the C dialect picks a helper by for a SYMBOL of dace type ``name``.
+
+    Every signed integer is taken at ``int64``. A symbol's recorded width is not the width the unit
+    declares it with: one parsed from text carries ``DEFAULT_SYMBOL_TYPE``, and a nested function
+    takes as ``int64_t`` a symbol its caller declares ``int``. A helper instantiated at the recorded
+    width could narrow an ``int64_t`` value; widening a signed integer changes no value a narrower
+    helper returns without overflowing.
+    """
+    return 'int64' if name in C_INTEGER_PROMOTIONS or name in ('int32', 'int64') else name
+
+
+def c_integer_conversion(first: str, second: str) -> str:
+    """The usual arithmetic conversion of two promoted integer types (C11 6.3.1.8) on LP64."""
+    (first_rank, first_signed), (second_rank, second_signed) = C_INTEGER_RANKS[first], C_INTEGER_RANKS[second]
+    if first_signed == second_signed:
+        return first if first_rank >= second_rank else second
+    signed, unsigned = (first, second) if first_signed else (second, first)
+    # Only a strictly wider signed type represents every value of the unsigned one.
+    return signed if C_INTEGER_RANKS[signed][0] > C_INTEGER_RANKS[unsigned][0] else unsigned
+
+
+def c_common_type(types: Tuple[str, ...]) -> str:
+    """The type of ``(a0) + (a1) + ...`` in C for operands of the dace types ``types``.
+
+    This is the type a ``_Generic`` selection on the sum of the arguments picks at compile time,
+    computed at print time so the printer can name the typed helper directly.
+
+    :param types: dace type names (``'int64'``, ``'float32'``), at least one.
+    :returns: the dace type name of the result.
+    :raises NotImplementedError: for a type with no C arithmetic spelling here.
+    """
+    promoted = [C_INTEGER_PROMOTIONS.get(name, name) for name in types]
+    unknown = sorted({name for name in promoted if name not in C_INTEGER_RANKS and name not in C_FLOATING_RANKS})
+    if unknown or not promoted:
+        raise NotImplementedError(f'CPF cannot type C arithmetic over {list(types)}: {unknown} has no C spelling here')
+    floating = [C_FLOATING_RANKS[name] for name in promoted if name in C_FLOATING_RANKS]
+    if floating:
+        return C_FLOATING_BY_RANK[(max(rank for rank, _ in floating), any(is_complex for _, is_complex in floating))]
+    result = promoted[0]
+    for other in promoted[1:]:
+        result = c_integer_conversion(result, other)
+    return result
+
+
+def c_minmax_call(stem: str, arguments: Tuple[str, ...], types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """A C ``Max``/``Min`` over two or more arguments, as nested calls to the typed binary helper.
+
+    Nested left to right, and each call is instantiated at the type C's conversions give its two
+    operands, the type C's usual arithmetic conversions give ``(a) + (b)``.
+
+    :param stem: ``'cpf_max'`` or ``'cpf_min'``.
+    :param arguments: already-printed argument expressions.
+    :param types: the dace type name of each argument, as the printer resolved it.
+    :returns: the nested call.
+    :raises NotImplementedError: if an argument type is unknown or has no ordering.
+    """
+    if types is None or len(types) != len(arguments) or any(dtype is None for dtype in types):
+        raise NotImplementedError(f'CPF cannot pick the C {stem} helper for ({", ".join(arguments)}): the printer '
+                                  f'resolved the argument types as {types}')
+    nested, nested_type = arguments[0], types[0]
+    for argument, argument_type in zip(arguments[1:], types[1:]):
+        nested_type = c_common_type((nested_type, argument_type))
+        if nested_type not in C_HELPER_TYPES:
+            raise NotImplementedError(f'CPF cannot order {nested_type} values for {stem}: the type has no ordering')
+        nested = '%s_%s(%s, %s)' % (stem, nested_type, nested, argument)
+    return nested
+
+
+#: ``(runtime name, C base name, family, arity)`` for every :data:`STD_RENAMES` entry that has a C
+#: counterpart. The family names the set of functions the argument type picks between:
+#:
+#: ``real``
+#:     ``<base>f`` for ``float``, ``<base>l`` for ``long double``, ``<base>`` otherwise -- which is
+#:     also what an integer argument gets, matching ``std::sqrt(int) -> double``.
+#: ``abs``
+#:     the integer, floating and complex absolute values, which C spells with five different names.
+#: ``complex``
+#:     ``conjf`` / ``conj`` / ``conjl``.
+#: ``elementary``
+#:     ``real``, plus the ``<complex.h>`` counterpart (``cexp``, ``cpow``) for a complex argument, which
+#:     the ``real`` association would silently convert to its real part.
+#:
+#: Arity 1 is picked by the PROMOTED argument type, so a ``short`` or an ``int8_t`` takes the ``int``
+#: function. Arity 2 and 3 are picked by the type C's conversions give the arguments together, which
+#: is the type the call converts them to anyway -- except ``frexp`` and ``ldexp``, whose second
+#: argument is an ``int`` exponent, so the first argument alone picks (``first2`` arity 2).
+C_MATH_SPEC: Tuple[Tuple[str, str, str, object], ...] = (
+    ('Abs', 'abs', 'abs', 1),
+    ('abs', 'abs', 'abs', 1),
+    ('ceiling', 'ceil', 'real', 1),
+    ('ceil', 'ceil', 'real', 1),
+    ('floor', 'floor', 'real', 1),
+    ('ROUND', 'round', 'real', 1),
+    ('round', 'round', 'real', 1),
+    ('conj', 'conj', 'complex', 1),
+    ('exp2', 'exp2', 'real', 1),
+    ('expm1', 'expm1', 'real', 1),
+    ('log1p', 'log1p', 'real', 1),
+    ('log2', 'log2', 'real', 1),
+    ('frexp', 'frexp', 'real', 'first2'),
+    ('ldexp', 'ldexp', 'real', 'first2'),
+    ('ilogb', 'ilogb', 'real', 1),
+    ('sin', 'sin', 'elementary', 1),
+    ('cos', 'cos', 'elementary', 1),
+    ('tan', 'tan', 'elementary', 1),
+    ('asin', 'asin', 'elementary', 1),
+    ('acos', 'acos', 'elementary', 1),
+    ('atan', 'atan', 'elementary', 1),
+    ('atan2', 'atan2', 'real', 2),
+    ('sinh', 'sinh', 'elementary', 1),
+    ('cosh', 'cosh', 'elementary', 1),
+    ('tanh', 'tanh', 'elementary', 1),
+    ('exp', 'exp', 'elementary', 1),
+    ('fabs', 'fabs', 'real', 1),
+    ('log', 'log', 'elementary', 1),
+    ('log10', 'log10', 'real', 1),
+    ('sqrt', 'sqrt', 'elementary', 1),
+    ('cbrt', 'cbrt', 'real', 1),
+    ('pow', 'pow', 'elementary', 2),
+    ('fma', 'fma', 'real', 3),
+    ('erf', 'erf', 'real', 1),
+    ('erfc', 'erfc', 'real', 1),
+    ('tgamma', 'tgamma', 'real', 1),
+    ('lgamma', 'lgamma', 'real', 1),
+    ('trunc', 'trunc', 'real', 1),
+    ('hypot', 'hypot', 'real', 2),
+)
+
+#: Runtime maths C already spells type-generically, as a ``<math.h>`` MACRO. Wrapping these in an
+#: ``cpf_`` dispatch would be wrong as well as pointless: there is no ``isnanf`` to dispatch TO.
+C_TYPE_GENERIC_MATH: Dict[str, str] = {
+    'isfinite': 'isfinite',
+    'isinf': 'isinf',
+    'isnan': 'isnan',
+    'signbit': 'signbit',
+}
+
+#: The ``<math.h>`` / ``<complex.h>`` function each family names for the type that picks it, with
+#: ``{base}`` the function's base name. The printer names the function itself, so a call reaches the
+#: function a type-generic call on its argument type would select.
+C_MATH_FUNCTIONS: Dict[str, Dict[str, str]] = {
+    'real': {
+        'float32': '{base}f'
+    },
+    'abs': {
+        'int32': 'abs',
+        'int64': 'labs',
+        'float32': 'fabsf',
+        'float64': 'fabs',
+        'complex64': 'cabsf',
+        'complex128': 'cabs'
+    },
+    'elementary': {
+        'float32': '{base}f',
+        'complex64': 'c{base}f',
+        'complex128': 'c{base}'
+    },
+    'complex': {
+        'complex64': '{base}f'
+    },
+    # A real argument has no imaginary part to read, and C's ``creal``/``cimag`` accept one, so the
+    # double function keeps working for a complex-valued expression that folded to a real type.
+    'complex_component': {
+        'complex64': '{base}f'
+    },
+}
+
+#: The function a family names for every other type: the ``double`` one, which an integer argument
+#: converts to, and ``fabs`` for an unsigned integer's absolute value.
+C_MATH_DEFAULTS: Dict[str, str] = {
+    'real': '{base}',
+    'abs': 'fabs',
+    'elementary': '{base}',
+    'complex': '{base}',
+    'complex_component': '{base}',
+}
+
+#: Runtime function -> its C spelling, for the names C spells the same for every argument type.
+C_STD_RENAMES: Dict[str, str] = dict(C_TYPE_GENERIC_MATH)
+
+#: Runtime function -> ``(C base name, family, arity)`` for every maths call C names by argument
+#: type. ``re`` / ``im`` are the component accessors :data:`REWRITES` spells as member calls in C++.
+C_TYPED_MATH: Dict[str, Tuple[str, str, object]] = {
+    runtime: (base, family, arity)
+    for runtime, base, family, arity in C_MATH_SPEC
+}
+C_TYPED_MATH.update({'re': ('creal', 'complex_component', 1), 'im': ('cimag', 'complex_component', 1)})
+
+
+def c_math_dispatch(name: str, types: Optional[Tuple[Optional[str], ...]]) -> Tuple[str, str, str]:
+    """``(C base name, family, the type that picks the function)`` for a call to ``name``.
+
+    :raises NotImplementedError: if an argument type is unknown or has no C arithmetic spelling.
+    """
+    base, family, arity = C_TYPED_MATH[name]
+    count = 2 if arity == 'first2' else arity
+    if types is None or len(types) != count or any(dtype is None for dtype in types):
+        raise NotImplementedError(f'CPF cannot pick the C function for {name}: the printer resolved the argument '
+                                  f'types as {types}')
+    return base, family, c_common_type(types[:1] if count == 1 or arity == 'first2' else types)
+
+
+def c_math_function(name: str, types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """The C function a call to ``name`` over arguments of ``types`` names: ``sqrtf``, ``cexp``, ``labs``."""
+    base, family, picking = c_math_dispatch(name, types)
+    return C_MATH_FUNCTIONS[family].get(picking, C_MATH_DEFAULTS[family]).replace('{base}', base)
+
+
+def c_math_result_type(name: str, types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """The dace type name of what the function :func:`c_math_function` names returns."""
+    base, family, picking = c_math_dispatch(name, types)
+    if base == 'ilogb':
+        return 'int32'
+    if family == 'abs':
+        return {
+            'int32': 'int32',
+            'int64': 'int64',
+            'float32': 'float32',
+            'complex64': 'float32'
+        }.get(picking, 'float64')
+    if family == 'elementary' and picking in ('float32', 'complex64', 'complex128'):
+        return picking
+    if family == 'complex':
+        return 'complex64' if picking == 'complex64' else 'complex128'
+    if family == 'complex_component':
+        return 'float32' if picking == 'complex64' else 'float64'
+    return 'float32' if picking == 'float32' else 'float64'
+
+
+#: ``Max``/``Min`` in C. Not the ``<stdlib.h>`` integer ``max``, which does not exist: CPF emits its
+#: own typed pair (see :data:`C_TYPED_MINMAX_DEFINITIONS`).
+C_VARIADIC_MINMAX: Dict[str, str] = {'Max': 'cpf_max', 'Min': 'cpf_min', 'max': 'cpf_max', 'min': 'cpf_min'}
+
+#: :data:`REWRITES` in C. The component accessors and ``iround`` call a maths function whose C name
+#: depends on the argument type, so :func:`lowering_for` answers them; ``np_float_pow`` converts both
+#: operands to ``double``, which names ``pow`` outright.
+C_REWRITES: Dict[str, Tuple[int, str]] = {
+    name: rewrite
+    for name, rewrite in REWRITES.items() if name not in C_TYPED_MATH and name != 'iround'
+}
+C_REWRITES['np_float_pow'] = (2, '(pow((double)({0}), (double)({1})))')
+
+#: The scalar types a cast can name once it has been through a SYMBOLIC expression. Sympy carries
+#: an unknown function by name, so ``static_cast<int64_t>(i)`` comes back out as ``int64_t(i)`` --
+#: a C++ functional cast, which C does not have. The expression printers are the only place that
+#: spelling can be answered: the text is built from the sympy tree, never from a hand-written body
+#: that :func:`c_cast_native_code` could reach.
+#:
+#: A closed list of the types with a C spelling. The ``dace::`` widths are deliberately absent, so
+#: a cast to one is left for ``dace.codegen.cpf.verify`` to report against the construct that wrote
+#: it rather than silently cast to something else.
+C_SYMBOLIC_CAST_TYPES: Tuple[str, ...] = ('bool', 'char', 'short', 'int', 'long', 'long long', 'unsigned int',
+                                          'unsigned long', 'unsigned long long', 'float', 'double', 'long double',
+                                          'int8_t', 'int16_t', 'int32_t', 'int64_t', 'uint8_t', 'uint16_t', 'uint32_t',
+                                          'uint64_t', 'size_t')
+C_REWRITES.update({name: (1, '((%s)({0}))' % name) for name in C_SYMBOLIC_CAST_TYPES})
+
+#: ``dace::``-namespaced C++ type -> its C spelling. Only the two complex types differ from the C++
+#: dialect's table: C spells a complex ``float _Complex`` rather than ``std::complex<float>``.
+C_CTYPE_RENAMES: Dict[str, str] = dict(CTYPE_RENAMES)
+C_CTYPE_RENAMES.update({
+    'dace::complex64': 'float _Complex',
+    'dace::complex128': 'double _Complex',
+    'std::complex<float>': 'float _Complex',
+    'std::complex<double>': 'double _Complex',
+})
+
+#: ``b`` wins only by comparing STRICTLY better, so a tie -- and a comparison false because an
+#: operand is NaN -- keeps ``a``. Same rule as the runtime's ``max``/``min``, which is what these
+#: stand in for.
+C_MINMAX_CONDITIONS: Tuple[Tuple[str, str], ...] = (('cpf_max', 'a < b'), ('cpf_min', 'b < a'))
+
+#: ``cpf_max_<type>`` / ``cpf_min_<type>``: what a printed ``Max``/``Min`` calls by name (see
+#: :func:`c_minmax_call`).
+C_TYPED_MINMAX_DEFINITIONS: Dict[str, str] = {
+    '%s_%s' % (stem, name):
+    'static inline %s %s_%s(%s a, %s b) { return (%s) ? b : a; }' % (ctype, stem, name, ctype, ctype, condition)
+    for stem, condition in C_MINMAX_CONDITIONS
+    for name, ctype in C_HELPER_TYPES.items()
+}
+
+#: ``dace::`` complex type -> the C function that builds one of its values from two components. C has
+#: no functional cast, and ``re + im * I`` evaluates, so a NaN or infinite component would propagate.
+C_COMPLEX_BUILDERS: Dict[str, str] = {'dace::complex64': 'cpf_complex64', 'dace::complex128': 'cpf_complex128'}
+
+#: The C form of every :data:`INLINE_DEFINITIONS` entry a printer calls by name, plus the two
+#: ``<numeric>`` functions C has no counterpart for at all (``gcd`` / ``lcm``, which are a rename in
+#: C++ and a definition here). The helpers a native body calls with a loop of their own are typed
+#: per instantiation instead (:func:`c_instance`). An out-parameter helper takes the address of the
+#: lvalue the call names (:func:`c_helper_call`).
+C_INLINE_DEFINITIONS: Dict[str, str] = dict(C_TYPED_MINMAX_DEFINITIONS)
+# C11 6.2.5p13: a complex has the representation of a two-element array of its real type.
+C_INLINE_DEFINITIONS.update({
+    builder: ('static inline %s _Complex %s(%s re, %s im) { union { %s _Complex value; %s parts[2]; } z = '
+              '{.parts = {re, im}}; return z.value; }' % ((real, builder) + (real, ) * 4))
+    for real, builder in (('float', 'cpf_complex64'), ('double', 'cpf_complex128'))
+})
+
+#: The dace types a typed helper is instantiated at, grouped the way a helper's bodies differ.
+C_SIGNED_DTYPES: Tuple[str, ...] = ('int32', 'int64')
+C_FLOATING_DTYPES: Tuple[str, ...] = ('float32', 'float64')
+C_ARITHMETIC_DTYPES: Tuple[str, ...] = C_SIGNED_DTYPES + C_FLOATING_DTYPES
+C_COMPLEX_DTYPES: Tuple[str, ...] = ('complex64', 'complex128')
+
+#: The C spelling of each complex dace type a typed helper is instantiated at.
+C_COMPLEX_HELPER_TYPES: Dict[str, str] = {'complex64': 'float _Complex', 'complex128': 'double _Complex'}
+
+#: The unsigned C type of each signed dace type's width, which a logical shift shifts through.
+C_UNSIGNED_OF: Dict[str, str] = {'int32': 'uint32_t', 'int64': 'uint64_t'}
+
+#: The ``<math.h>`` / ``<complex.h>`` suffix of each dace type whose body calls a maths function.
+C_DTYPE_LIBM_SUFFIXES: Dict[str, str] = {'float32': 'f', 'complex64': 'f'}
+
+#: A real value's sign in its own type. The comparisons are ``int``; the cast back is what keeps the
+#: sign of a ``double`` a ``double``, so a following ``/ 2`` does not become integer division.
+C_SIGN_BODY = 'return ({T})((({T})0 < value) - (value < ({T})0));'
+
+#: ``//`` and ``%`` are the two halves of ``py_divmod``, so the three cannot disagree about a sign,
+#: a zero divisor or an infinity. ``%s`` names the half returned.
+C_DIVMOD_HALF_BODY = (
+    '{T} quotient;\n{T} remainder;\ncpf_py_divmod_{t}(numerator, denominator, &quotient, &remainder);\n'
+    'return %s;')
+
+#: Runtime helper -> ``(parameters, (types, return type, body) groups)``.
+#:
+#: A call picks its helper by the type C's conversions give the arguments of the ``{T}`` parameters.
+#: ``ipow``'s exponent and a shift's amount are counts and an out-parameter receives a result, so
+#: none of those picks; a ``{T} *`` parameter is passed the address of the lvalue the call names. A
+#: helper exists only for the types its groups list, so an argument of any other type is refused at
+#: print time. In a body ``{T}`` is the C type, ``{t}`` the dace type a sibling helper is named for,
+#: ``{f}`` the ``<math.h>`` suffix and ``{U}`` the unsigned type of the same width.
+C_TYPED_HELPER_SPECS: Dict[str, Tuple[Tuple[Tuple[str, str], ...], Tuple[Tuple[Tuple[str, ...], str, str], ...]]] = {
+    'int_ceil': ((('{T}', 'numerator'), ('{T}', 'denominator')),
+                 ((C_SIGNED_DTYPES, '{T}', 'return (numerator + denominator - 1) / denominator;'), )),
+    # Floored on the argument type itself, never a promoted one: the correction reads the sign of the
+    # remainder, which a floating or unsigned instantiation would not have.
+    'int_floor_ni': ((('{T}', 'numerator'), ('{T}', 'denominator')),
+                     ((C_SIGNED_DTYPES, '{T}', '{T} quotient = numerator / denominator;\n'
+                       '{T} remainder = numerator % denominator;\n'
+                       'return quotient - ((remainder != 0) && ((remainder < 0) != (denominator < 0)));'), )),
+    'py_floor':
+    ((('{T}', 'numerator'), ('{T}', 'denominator')), ((C_ARITHMETIC_DTYPES, '{T}', C_DIVMOD_HALF_BODY % 'quotient'), )),
+    'py_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')), ((C_ARITHMETIC_DTYPES, '{T}',
+                                                                 C_DIVMOD_HALF_BODY % 'remainder'), )),
+    'c_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')),
+              ((C_SIGNED_DTYPES, '{T}', 'return numerator % denominator;'),
+               (C_FLOATING_DTYPES, '{T}', 'return fmod{f}(numerator, denominator);'))),
+    'ftn_mod': ((('{T}', 'numerator'), ('{T}', 'denominator')), ((C_ARITHMETIC_DTYPES, '{T}',
+                                                                  'return cpf_c_mod_{t}(numerator, denominator);'), )),
+    'ftn_modulo': ((('{T}', 'numerator'), ('{T}', 'denominator')),
+                   ((C_ARITHMETIC_DTYPES, '{T}', 'return cpf_py_mod_{t}(numerator, denominator);'), )),
+    'ipow': ((('{T}', 'base'), ('long long', 'exponent')),
+             ((C_ARITHMETIC_DTYPES, '{T}',
+               '{T} result = 1;\nwhile (exponent > 0) {\n    if (exponent & 1) { result *= base; }\n'
+               '    base *= base;\n    exponent >>= 1;\n}\nreturn result;'), )),
+    'logical_left_shift':
+    ((('{T}', 'value'), ('int', 'amount')), ((C_SIGNED_DTYPES, '{T}', 'return ({T})(({U})(value) << amount);'), )),
+    'logical_right_shift':
+    ((('{T}', 'value'), ('int', 'amount')), ((C_SIGNED_DTYPES, '{T}', 'return ({T})(({U})(value) >> amount);'), )),
+    'gcd': ((('{T}', 'a'), ('{T}', 'b')), ((C_SIGNED_DTYPES, '{T}',
+                                            '{T} x = a < 0 ? -a : a;\n{T} y = b < 0 ? -b : b;\nwhile (y != 0) {\n'
+                                            '    {T} t = x % y;\n    x = y;\n    y = t;\n}\nreturn x;'), )),
+    'lcm':
+    ((('{T}', 'a'), ('{T}', 'b')), ((C_SIGNED_DTYPES, '{T}',
+                                     '{T} divisor = cpf_gcd_{t}(a, b);\n{T} product;\nif (divisor == 0) { return 0; }\n'
+                                     'product = (a / divisor) * b;\nreturn product < 0 ? -product : product;'), )),
+    'sign': ((('{T}', 'value'), ), ((C_ARITHMETIC_DTYPES, '{T}', C_SIGN_BODY), )),
+    'sgn': ((('{T}', 'value'), ), ((C_ARITHMETIC_DTYPES, '{T}', C_SIGN_BODY), )),
+    'sign_numpy_2': ((('{T}', 'value'), ),
+                     ((C_ARITHMETIC_DTYPES, '{T}', C_SIGN_BODY),
+                      (C_COMPLEX_DTYPES, '{T}',
+                       'return (creal{f}(value) != 0 && cimag{f}(value) != 0) ? value / cabs{f}(value) : 0;'))),
+    # Integral input is already floored, so it comes back unchanged -- narrowing an int64 through
+    # ``(int)floor(...)`` would truncate it to 32 bits.
+    'ifloor': ((('{T}', 'value'), ), ((C_SIGNED_DTYPES, '{T}', 'return value;'), (C_FLOATING_DTYPES, 'int',
+                                                                                  'return (int)floor{f}(value);'))),
+    'cpp_divmod': ((('{T}', 'numerator'), ('{T}', 'denominator'), ('{T} *', 'quotient'), ('{T} *', 'remainder')),
+                   ((C_SIGNED_DTYPES, 'void', '*quotient = ({T})(numerator / denominator);\n'
+                     '*remainder = ({T})(numerator % denominator);'), )),
+    # ``x / -1`` is ``-x`` with remainder 0, negated through the unsigned type so ``MIN / -1`` wraps
+    # to ``MIN`` instead of trapping; ``x / 0`` is 0 remainder 0. Both are numpy's answers.
+    'py_divmod': ((('{T}', 'numerator'), ('{T}', 'denominator'), ('{T} *', 'quotient'), ('{T} *', 'remainder')),
+                  ((C_SIGNED_DTYPES, 'void', 'if (denominator == 0) {\n'
+                    '    *quotient = 0;\n'
+                    '    *remainder = 0;\n'
+                    '} else if (denominator == -1) {\n'
+                    '    *quotient = ({T})(({U})0 - ({U})numerator);\n'
+                    '    *remainder = 0;\n'
+                    '} else {\n'
+                    '    *quotient = numerator / denominator;\n'
+                    '    *remainder = numerator % denominator;\n'
+                    '    if (*remainder != 0 && ((*remainder < 0) != (denominator < 0))) {\n'
+                    '        *quotient -= 1;\n'
+                    '        *remainder += denominator;\n'
+                    '    }\n'
+                    '}'), (C_FLOATING_DTYPES, 'void', '{T} ratio = numerator / denominator;\n'
+                           '*remainder = fmod{f}(numerator, denominator);\n'
+                           'if (denominator == 0) {\n'
+                           '    *quotient = ratio;\n'
+                           '    return;\n'
+                           '}\n'
+                           '*quotient = (numerator - *remainder) / denominator;\n'
+                           'if (*remainder == 0) {\n'
+                           '    *remainder = copysign{f}(({T})0, denominator);\n'
+                           '} else if ((denominator < 0) != (*remainder < 0)) {\n'
+                           '    *remainder += denominator;\n'
+                           '    *quotient -= 1;\n'
+                           '}\n'
+                           'if (*quotient == 0) {\n'
+                           '    *quotient = copysign{f}(({T})0, ratio);\n'
+                           '} else {\n'
+                           '    {T} floored = floor{f}(*quotient);\n'
+                           '    *quotient = *quotient - floored > ({T})0.5 ? floored + 1 : floored;\n'
+                           '}'))),
+    'np_modf': ((('{T}', 'value'), ('{T} *', 'integral'), ('{T} *', 'fractional')),
+                ((C_SIGNED_DTYPES, 'void', '*integral = value;\n*fractional = 0;'),
+                 (C_FLOATING_DTYPES, 'void', '*fractional = modf{f}(value, integral);'))),
+    'np_frexp': ((('{T}', 'value'), ('{T} *', 'mantissa'), ('int *', 'exponent')),
+                 ((C_FLOATING_DTYPES, 'void', '*mantissa = frexp{f}(value, exponent);'), )),
+}
+
+# ``heaviside`` has two arities, which one C function cannot have: each is its own helper, and the
+# call's argument count picks between them at print time.
+C_TYPED_HELPER_SPECS.update({
+    'heaviside_1':
+    ((('{T}', 'value'), ), ((C_ARITHMETIC_DTYPES, '{T}', 'return (value > ({T})0) ? ({T})1 : ({T})0;'), )),
+    'heaviside_2':
+    ((('{T}', 'value'), ('{T}', 'at_zero')),
+     ((C_ARITHMETIC_DTYPES, '{T}', 'return (value < ({T})0) ? ({T})0 : ((value > ({T})0) ? ({T})1 : at_zero);'), )),
+})
+
+#: Runtime helper -> argument count -> the :data:`C_TYPED_HELPER_SPECS` entry for that arity.
+C_HELPER_ARITIES: Dict[str, Dict[int, str]] = {'heaviside': {1: 'heaviside_1', 2: 'heaviside_2'}}
+
+
+def c_typed_helpers() -> Tuple[Dict[str, str], Dict[str, Tuple[str, ...]], Dict[str, Tuple[str, ...]], Dict[str, str]]:
+    """``(definitions, dependencies, types per helper, result types)`` for :data:`C_TYPED_HELPER_SPECS`.
+
+    Each instantiation is one ``static inline`` function named ``cpf_<helper>_<dace type>``, which is
+    what a printer that resolved its argument types calls. A ``void`` helper has no result type.
+    """
+    definitions: Dict[str, str] = {}
+    dependencies: Dict[str, Tuple[str, ...]] = {}
+    available: Dict[str, Tuple[str, ...]] = {}
+    results: Dict[str, str] = {}
+    for name, (parameters, groups) in C_TYPED_HELPER_SPECS.items():
+        for group_types, returns, body in groups:
+            for dtype in group_types:
+                ctype = C_HELPER_TYPES.get(dtype) or C_COMPLEX_HELPER_TYPES[dtype]
+                helper = 'cpf_%s_%s' % (name, dtype)
+                filled = (body.replace('{T}', ctype).replace('{t}', dtype).replace(
+                    '{f}', C_DTYPE_LIBM_SUFFIXES.get(dtype, '')).replace('{U}', C_UNSIGNED_OF.get(dtype, '')))
+                declared = ', '.join(ptype.replace('{T}', ctype) + ' ' + pname for ptype, pname in parameters)
+                statements = '\n'.join('    ' + line if line.strip() else line for line in filled.split('\n'))
+                definitions[helper] = 'static inline %s %s(%s) {\n%s\n}' % (returns.replace(
+                    '{T}', ctype), helper, declared, statements)
+                dependencies[helper] = tuple(re.findall(r'\b(cpf_\w+)\(', filled))
+                available[name] = available.get(name, ()) + (dtype, )
+                if returns != 'void':
+                    results[helper] = dtype if returns == '{T}' else {'int': 'int32'}[returns]
+    return definitions, dependencies, available, results
+
+
+C_TYPED_HELPER_DEFINITIONS, C_TYPED_HELPER_DEPENDENCIES, C_TYPED_HELPER_TYPES, C_TYPED_HELPER_RETURNS = c_typed_helpers(
+)
+C_INLINE_DEFINITIONS.update(C_TYPED_HELPER_DEFINITIONS)
+
+#: Typed helper name -> the dace type its call evaluates to, for a printer typing a nested call.
+C_TYPED_HELPER_RESULTS: Dict[str, str] = {
+    **{
+        helper: helper.rsplit('_', 1)[1]
+        for helper in C_TYPED_MINMAX_DEFINITIONS
+    },
+    **C_TYPED_HELPER_RETURNS
+}
+
+
+def c_helper_spec(name: str, count: int) -> Optional[str]:
+    """The :data:`C_TYPED_HELPER_SPECS` entry a call to ``name`` with ``count`` arguments names, or ``None``.
+
+    :raises NotImplementedError: for an arity a split helper has no entry for.
+    """
+    if name in C_HELPER_ARITIES:
+        if count not in C_HELPER_ARITIES[name]:
+            raise NotImplementedError(f'CPF has no C {name} taking {count} arguments; it takes '
+                                      f'{sorted(C_HELPER_ARITIES[name])}')
+        return C_HELPER_ARITIES[name][count]
+    return name if name in C_TYPED_HELPER_SPECS else None
+
+
+def c_helper_operand_types(name: str, types: Optional[Tuple[Optional[str],
+                                                            ...]]) -> Optional[Tuple[Optional[str], ...]]:
+    """The types of the arguments that pick ``name``'s helper, or ``None`` when the count is wrong."""
+    parameters = C_TYPED_HELPER_SPECS[name][0]
+    if types is None or len(types) != len(parameters):
+        return None
+    return tuple(dtype for (ptype, _), dtype in zip(parameters, types) if ptype == '{T}')
+
+
+def c_helper_dispatch(name: str, types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """The dace type the typed helper ``name`` is instantiated at for arguments of ``types``.
+
+    :raises NotImplementedError: if a picking argument's type is unknown, or no helper takes the type.
+    """
+    operands = c_helper_operand_types(name, types)
+    if operands is None or any(dtype is None for dtype in operands):
+        raise NotImplementedError(f'CPF cannot pick the C {name} helper: the printer resolved the argument types '
+                                  f'as {types}')
+    dtype = c_common_type(operands)
+    if dtype not in C_TYPED_HELPER_TYPES[name]:
+        raise NotImplementedError(f'CPF has no C {name} for {dtype} arguments; it takes {C_TYPED_HELPER_TYPES[name]}')
+    return dtype
+
+
+def c_helper_result_type(name: str, types: Optional[Tuple[Optional[str], ...]]) -> Optional[str]:
+    """The dace type a call to ``name`` evaluates to, or ``None`` if its operand types are unknown.
+
+    :raises NotImplementedError: if no helper takes the operands' type (see :func:`c_helper_dispatch`).
+    """
+    operands = c_helper_operand_types(name, types)
+    if operands is None or any(dtype is None for dtype in operands):
+        return None
+    return C_TYPED_HELPER_RESULTS.get('cpf_%s_%s' % (name, c_helper_dispatch(name, types)))
+
+
+def c_helper_call(name: str, arguments: Tuple[str, ...], types: Optional[Tuple[Optional[str], ...]]) -> str:
+    """The call to the typed helper :func:`c_helper_dispatch` picks for ``name``; an out-parameter is
+    passed the address of the lvalue the call site names."""
+    dtype = c_helper_dispatch(name, types)
+    passed = ('&(%s)' % argument if ptype.endswith('*') else argument
+              for (ptype, _), argument in zip(C_TYPED_HELPER_SPECS[name][0], arguments))
+    return 'cpf_%s_%s(%s)' % (name, dtype, ', '.join(passed))
+
+
+#: dace type name -> its C spelling, for every scalar a typed instantiation can be made at.
+C_SCALAR_SPELLINGS: Dict[str, str] = {
+    'bool': 'bool',
+    'int8': 'int8_t',
+    'int16': 'int16_t',
+    'int32': 'int32_t',
+    'int64': 'int64_t',
+    'uint8': 'uint8_t',
+    'uint16': 'uint16_t',
+    'uint32': 'uint32_t',
+    'uint64': 'uint64_t',
+    'float32': 'float',
+    'float64': 'double',
+    'complex64': 'float _Complex',
+    'complex128': 'double _Complex',
+}
+
+#: Prefix-scan operation -> ``(OpenMP reduction identifier, accumulator update)``. ``min`` / ``max``
+#: cast the input to the accumulator's type ``{T}`` so the comparison happens where the fold does,
+#: and keep ``acc`` on a tie or a NaN, the rule of :data:`C_MINMAX_CONDITIONS`.
+C_SCAN_OPERATIONS: Dict[str, Tuple[str, str]] = {
+    'sum': ('+', 'acc + f[i]'),
+    'product': ('*', 'acc * f[i]'),
+    'min': ('min', '(({T})f[i] < acc) ? ({T})f[i] : acc'),
+    'max': ('max', '(acc < ({T})f[i]) ? ({T})f[i] : acc'),
+}
+
+
+def c_scan_definition(name: str, kind: str, operation: str, source: str, target: str, accumulator: str) -> str:
+    """One prefix scan as a C function over its three independent types.
+
+    Input, output and accumulator types are independent, which is why the C++ form is a template over
+    ``<It, OutIt, T>``: the compaction a prefix sum exists for scans an ``int8_t`` 0/1 mask into
+    ``int64_t`` ranks. The accumulator takes the SEED's type, never the input's -- folded at ``int8_t``
+    the mask wraps at 128 -- and is a non-const local, so a ``const`` seed still gives OpenMP a
+    reduction variable it can write.
+
+    :param name: the instantiation's name.
+    :param kind: ``'incl'`` or ``'excl'``. The ``scan`` directive splits the body into an input phase
+                 and a scan phase, and ``exclusive`` names them the other way round.
+    :param operation: a :data:`C_SCAN_OPERATIONS` key.
+    :param source: the input element's dace type.
+    :param target: the output element's dace type.
+    :param accumulator: the seed's dace type.
+    :returns: the definition.
+    :raises NotImplementedError: for a min or max over a complex accumulator, which has no order.
+    """
+    clause, step = C_SCAN_OPERATIONS[operation]
+    if operation in ('min', 'max') and accumulator in C_COMPLEX_DTYPES:
+        raise NotImplementedError(f'CPF cannot render a {operation} scan over {accumulator}: the type has no order')
+    ctype = C_SCALAR_SPELLINGS[accumulator]
+    update = '        acc = %s;' % step.replace('{T}', ctype)
+    store = '        o[i] = acc;'
+    phases = (update, store) if kind == 'incl' else (store, update)
+    return '\n'.join((
+        'static inline void %s(const %s *f, %s *o, long lo, long hi, %s seed) {' %
+        (name, C_SCALAR_SPELLINGS[source], C_SCALAR_SPELLINGS[target], ctype),
+        '    %s acc = seed;' % ctype,
+        '    #pragma omp simd reduction(inscan, %s:acc)' % clause,
+        '    for (long i = lo; i < hi; ++i) {',
+        phases[0],
+        '        #pragma omp scan %s(acc)' % ('inclusive' if kind == 'incl' else 'exclusive'),
+        phases[1],
+        '    }',
+        '}',
+    ))
+
+
+def c_detect_collision_definition(name: str, index: str, tag: str) -> str:
+    """The scatter guard's duplicate check as a C function, typed for its index and tag arrays.
+
+    :param name: the instantiation's name.
+    :param index: the index array's dace element type.
+    :param tag: the tag array's dace element type.
+    :returns: the definition.
+    """
+    return '\n'.join((
+        '// Tagged-write + verify: pass 1 writes owner[idx[i]] = i, pass 2 ORs owner[idx[i]] != i. A slot',
+        '// only one writer won reads back a different i. Indices outside [0, capacity) are skipped: the',
+        '// guarded scatter never writes those slots.',
+        'static inline long long %s(const %s *idx, long long n, %s *owner, long long capacity, bool parallel) {' %
+        (name, C_SCALAR_SPELLINGS[index], C_SCALAR_SPELLINGS[tag]),
+        '    long long c = 0;',
+        '    #pragma omp parallel for if (parallel : parallel)',
+        '    for (long long i = 0; i < n; ++i) {',
+        '        const long long v = (long long)idx[i];',
+        '        if (v >= 0 && v < capacity) owner[v] = (%s)i;' % C_SCALAR_SPELLINGS[tag],
+        '    }',
+        '    #pragma omp parallel for simd if (parallel : parallel) reduction(| : c)',
+        '    for (long long i = 0; i < n; ++i) {',
+        '        const long long v = (long long)idx[i];',
+        '        if (v >= 0 && v < capacity) c |= ((long long)owner[v] != i) ? 1LL : 0LL;',
+        '    }',
+        '    return c;',
+        '}',
+    ))
+
+
+def c_detect_collision_sized_definition(name: str, index: str, tagged: str) -> str:
+    """The duplicate check sizing its own ``int64_t`` tag buffer from ``max(idx)``.
+
+    A failed allocation reports a collision, the answer that is never unsafe: the guard then takes its
+    sequential path.
+
+    :param name: the instantiation's name.
+    :param index: the index array's dace element type.
+    :param tagged: the tag-array instantiation it calls.
+    :returns: the definition.
+    """
+    return '\n'.join((
+        'static inline long long %s(const %s *idx, long long n, bool parallel) {' % (name, C_SCALAR_SPELLINGS[index]),
+        '    long long mx = 0;',
+        '    #pragma omp parallel for simd if (parallel : parallel) reduction(max : mx)',
+        '    for (long long i = 0; i < n; ++i) {',
+        '        const long long v = (long long)idx[i];',
+        '        mx = v > mx ? v : mx;',
+        '    }',
+        '    int64_t *owner = (int64_t *)malloc((size_t)(mx + 1) * sizeof(int64_t));',
+        '    if (owner == NULL) return 1;',
+        '    const long long c = %s(idx, n, owner, mx + 1, parallel);' % tagged,
+        '    free(owner);',
+        '    return c;',
+        '}',
+    ))
+
+
+def c_sort_definition(name: str, element: str) -> str:
+    """``std::sort`` over a contiguous range as a C function: heapsort in the total order ``<`` gives.
+
+    Heapsort rather than ``qsort``: the comparison stays inline and typed, where ``qsort`` pays an
+    indirect call per comparison. Same O(n log n) bound.
+
+    :param name: the instantiation's name.
+    :param element: the range's dace element type.
+    :returns: the definition.
+    :raises NotImplementedError: for a complex element, which ``<`` does not order.
+    """
+    if element in C_COMPLEX_DTYPES:
+        raise NotImplementedError(f'CPF cannot sort {element} values in C: the type has no order')
+    ctype = C_SCALAR_SPELLINGS[element]
+    return '\n'.join((
+        'static inline void %s(%s *first, %s *last) {' % (name, ctype, ctype),
+        '    const long long len = (long long)(last - first);',
+        '    long long start = len / 2;',
+        '    long long end = len;',
+        '    while (end > 1) {',
+        '        %s tmp;' % ctype,
+        '        long long root;',
+        '        long long child;',
+        '        if (start > 0) {',
+        '            --start;',
+        '        } else {',
+        '            --end;',
+        '            tmp = first[0];',
+        '            first[0] = first[end];',
+        '            first[end] = tmp;',
+        '        }',
+        '        root = start;',
+        '        while ((child = 2 * root + 1) < end) {',
+        '            if (child + 1 < end && first[child] < first[child + 1]) ++child;',
+        '            if (!(first[root] < first[child])) break;',
+        '            tmp = first[root];',
+        '            first[root] = first[child];',
+        '            first[child] = tmp;',
+        '            root = child;',
+        '        }',
+        '    }',
+        '}',
+    ))
+
+
+#: One alternation over the dace types :data:`C_SCALAR_SPELLINGS` spells, longest first.
+C_DTYPE_ALTERNATION: str = '|'.join(sorted(C_SCALAR_SPELLINGS, key=len, reverse=True))
+
+#: The name of a typed instantiation: its family, then one dace type per type parameter
+#: (``cpf_scan_incl_sum_int8_int64_int64``). No group captures, so it can join another alternation.
+C_INSTANCE_NAMES: str = (r'cpf_(?:scan_(?:incl|excl)_(?:sum|product|min|max)|detect_collision_sized|detect_collision'
+                         r'|sort)(?:_(?:%s))+' % C_DTYPE_ALTERNATION)
+
+#: :data:`C_INSTANCE_NAMES` with the family, the scan's kind and operation, and the type list captured.
+C_INSTANCE_NAME: 're.Pattern' = re.compile(r'cpf_(scan_(incl|excl)_(sum|product|min|max)|detect_collision_sized'
+                                           r'|detect_collision|sort)((?:_(?:%s))+)' % C_DTYPE_ALTERNATION)
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def c_instance(name: str) -> Optional[Tuple[str, Tuple[str, ...]]]:
+    """``(definition, dependencies)`` of the typed C instantiation ``name``, or ``None`` for any other name.
+
+    A helper that owns a loop is one function per type combination a call site uses, and its name
+    carries the combination, so the definition is recovered from the finished text exactly as
+    :func:`helpers_used` recovers every other helper.
+
+    :raises NotImplementedError: for a combination the family cannot order.
+    """
+    match = C_INSTANCE_NAME.fullmatch(name)
+    if match is None:
+        return None
+    family, kind, operation = match.group(1), match.group(2), match.group(3)
+    types = tuple(match.group(4)[1:].split('_'))
+    if kind is not None and len(types) == 3:
+        return c_scan_definition(name, kind, operation, types[0], types[1], types[2]), ()
+    if family == 'detect_collision' and len(types) == 2:
+        return c_detect_collision_definition(name, types[0], types[1]), ()
+    if family == 'detect_collision_sized' and len(types) == 1:
+        tagged = 'cpf_detect_collision_%s_int64' % types[0]
+        return c_detect_collision_sized_definition(name, types[0], tagged), (tagged, )
+    if family == 'sort' and len(types) == 1:
+        return c_sort_definition(name, types[0]), ()
+    return None
+
+
+def no_instances(name: str) -> Optional[Tuple[str, Tuple[str, ...]]]:
+    """The C++ dialects name no typed instantiation: their templates instantiate themselves."""
+    return None
+
+
+#: The chunk sizer, identical to the C++ one: it takes one concrete type, so it is a plain function
+#: in both dialects.
+C_INLINE_DEFINITIONS['find_first_chunk'] = (
+    '#ifdef _OPENMP\n'
+    '#include <omp.h>\n'
+    '#endif\n'
+    'static inline long long find_first_chunk(long long span, bool parallel) {\n'
+    '    const double chunk_scale = 8.0;\n'
+    '    const long long chunks_per_thread = 4;\n'
+    '    long long chunk = (long long)(chunk_scale * sqrt((double)span));\n'
+    '    long long threads = 1;\n'
+    '    long long ceiling;\n'
+    '#ifdef _OPENMP\n'
+    '    if (parallel) threads = (long long)omp_get_max_threads();\n'
+    '#endif\n'
+    '    ceiling = span / (chunks_per_thread * threads);\n'
+    '    if (ceiling < 1) ceiling = 1;\n'
+    '    if (chunk > ceiling) chunk = ceiling;\n'
+    '    if (chunk < 1) chunk = 1;\n'
+    '    return chunk;\n'
+    '}')
+
+#: Definitions each C definition calls, so a callee is defined before its caller.
+C_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
+    helper: calls
+    for helper, calls in C_TYPED_HELPER_DEPENDENCIES.items() if calls
+}
+
+#: What the C dialect refuses, and why. Empty: every construct CPF reaches has a C spelling.
+C_UNSUPPORTED: Dict[str, str] = {}
+
+#: Helpers C answers with a REWRITE of the CALL SITE rather than a definition or a refusal -- a
+#: third lane, and the only one, so the anti-rot tests can still insist every C++ helper is
+#: accounted for. Each needs something only the call site knows: the scan's neutral elements and
+#: the scan itself need the element types the call site names (:func:`c_scan_identities`,
+#: :func:`c_scan`), the duplicate check needs its arrays' types (:func:`c_detect_collision`), and
+#: the find-first takes a predicate, which in C++ is a lambda and in C becomes a function of its own
+#: over the names the predicate reads (:func:`c_find_first`).
+C_REWRITTEN_IN_NATIVE_CODE: FrozenSet[str] = frozenset(
+    {'min_identity', 'max_identity', 'find_first_index', 'detect_collision'}
+    | {'scan_%s_%s' % (kind, operation)
+       for kind in ('incl', 'excl')
+       for operation in C_SCAN_OPERATIONS})
+
+#: Headers CPF's C output always includes. ``<stdbool.h>`` is deliberately absent: ``bool`` /
+#: ``true`` / ``false`` are C23 keywords. ``<tgmath.h>`` is deliberately absent too -- see the
+#: section header above.
+C_BASE_HEADERS: Tuple[str, ...] = ('<stdint.h>', '<math.h>', '<limits.h>', '<float.h>', '<stdlib.h>', '<string.h>',
+                                   '<assert.h>', '<complex.h>')
+
+#: ``<complex.h>`` defines ``I``, and ``I`` is a plausible loop-index name in scientific code. The
+#: macro is removed immediately after the include; complex literals are built with :data:`C_COMPLEX_BUILDERS`.
+C_UNDEF_LINE: str = '#undef I  // <complex.h> defines I, which an SDFG may use as a container name'
+
+
+class Tables(NamedTuple):
+    """One dialect's complete lowering vocabulary.
+
+    Bundled rather than looked up table by table so a new dialect cannot be half-added: every
+    consumer takes the bundle, so a missing member is a construction error here instead of a
+    ``dace::`` name reaching the output through the one table nobody remapped.
+    """
+    #: Runtime function -> the standard-library function with identical semantics.
+    std_renames: Dict[str, str]
+    #: Runtime function -> ``(arity, format string over the printed arguments)``.
+    rewrites: Dict[str, Tuple[int, str]]
+    #: Function name -> the definition CPF emits for it.
+    inline_definitions: Dict[str, str]
+    #: ``Max``/``Min`` -> the binary function they nest into.
+    variadic_minmax: Dict[str, str]
+    #: Function name -> why this dialect cannot express it.
+    unsupported: Dict[str, str]
+    #: ``dace::``-namespaced type -> its plain spelling.
+    ctype_renames: Dict[str, str]
+    #: One alternation over every ``ctype_renames`` key, longest first so a prefix
+    #: (``dace::uint``) cannot pre-empt a longer name (``dace::uint64``) -- the trailing ``\b``
+    #: already prevents that, this only keeps the intent explicit. Lets :func:`rewrite_ctypes`
+    #: rename every ctype in one pass instead of one pass per table entry.
+    ctype_pattern: 're.Pattern'
+    #: Headers every unit includes.
+    base_headers: Tuple[str, ...]
+    #: Definition -> the definitions it calls.
+    definition_dependencies: Dict[str, Tuple[str, ...]]
+    #: Definition -> the headers its body needs, beyond ``base_headers``.
+    definition_headers: Dict[str, Tuple[str, ...]]
+    #: A call to one of ``inline_definitions`` in already-emitted code.
+    helper_call: 're.Pattern'
+    #: Every name this dialect knows, in any lane.
+    known: Set[str]
+    #: Typed instantiation name -> ``(definition, dependencies)``, or ``None`` for any other name.
+    instances: Callable[[str], Optional[Tuple[str, Tuple[str, ...]]]]
+
+
+#: An OPTIONAL explicit template-argument list between a helper's name and its call parentheses
+#: (``get_scratch<ScanTag>(...)``). Deliberately narrow -- no parentheses, no nesting, one line --
+#: so a comparison chain (``a < b && c > (d)``) cannot read as one.
+_EXPLICIT_TEMPLATE_ARGUMENTS = r'(?:<[^<>();{}\n]*>\s*)?'
+
+
+def _tables(std_renames,
+            rewrites,
+            inline_definitions,
+            minmax,
+            unsupported,
+            ctype_renames,
+            base_headers,
+            dependencies,
+            definition_headers,
+            typed: FrozenSet[str] = frozenset(),
+            instances: Callable[[str], Optional[Tuple[str, Tuple[str, ...]]]] = no_instances,
+            instance_names: str = '') -> Tables:
+    ctype_names = sorted(ctype_renames, key=len, reverse=True)
+    helper_names = '|'.join(
+        sorted(inline_definitions, key=len, reverse=True) + ([instance_names] if instance_names else []))
+    return Tables(std_renames=std_renames,
+                  rewrites=rewrites,
+                  inline_definitions=inline_definitions,
+                  variadic_minmax=minmax,
+                  unsupported=unsupported,
+                  ctype_renames=ctype_renames,
+                  ctype_pattern=re.compile(r'(?:::)?\b(' + '|'.join(re.escape(name) for name in ctype_names) + r')\b'),
+                  base_headers=base_headers,
+                  definition_dependencies=dependencies,
+                  definition_headers=definition_headers,
+                  helper_call=re.compile(r'(?<![\w:.])(' + helper_names + r')\s*' + _EXPLICIT_TEMPLATE_ARGUMENTS +
+                                         r'\('),
+                  known=(set(std_renames) | set(rewrites) | set(inline_definitions) | set(minmax) | set(unsupported)
+                         | set(typed)),
+                  instances=instances)
+
+
+#: What a DEVICE unit adds to :data:`INLINE_DEFINITIONS`: the runtime functions a device library
+#: expansion calls, written out the same way the host ones are. Device-only, so they are NOT in the
+#: shared table -- every body here holds a kernel launch or ``__global__``, which a host compiler
+#: cannot parse.
+#:
+#: They are reached the same way too. A ``FindFirst`` or ``Scan`` on a device graph expands to a
+#: HOST tasklet plus a wrapper in the device unit, and the wrapper calls one of these; CPF's own
+#: definition stands in for the runtime header the wrapper would otherwise include, exactly as
+#: ``find_first_index`` and ``scan_incl_sum`` stand in for ``dace/scan.hpp`` on the host.
+HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
+    'get_scratch':
+    '//: The CUB scratch pool, as much of it as one entry point can hold: one buffer per tag,\n'
+    '//: allocated on first use and grown, never shrunk, so a repeated call pays no allocation.\n'
+    '//: The runtime pre-allocates and releases it from the entry points a repeated invocation\n'
+    '//: shares; one self-contained call has neither, so the buffer owns itself and frees at\n'
+    '//: static destruction. It is also not keyed by stream, as the runtime pool is: a CPF unit\n'
+    '//: issues every launch on the one stream (see cpf_gpu_context), so its calls are ordered.\n'
+    'struct ScanTag {};\n'
+    'struct DetectFlagTag {};\n'
+    'struct cpf_scratch_block {\n'
+    '    void *ptr = nullptr;\n'
+    '    size_t capacity = 0;\n'
+    '    ~cpf_scratch_block() { if (ptr != nullptr) { (void)gpuFree(ptr); } }\n'
+    '};\n'
+    'template <typename Tag>\n'
+    'static inline void *get_scratch(size_t bytes, gpuStream_t stream, gpuError_t *status) {\n'
+    '    static cpf_scratch_block block;\n'
+    '    *status = gpuSuccess;\n'
+    '    if (bytes <= block.capacity) return block.ptr;\n'
+    '    if (block.ptr != nullptr) {\n'
+    '        // In flight work may still be reading the old buffer.\n'
+    '        *status = gpuStreamSynchronize(stream);\n'
+    '        if (*status != gpuSuccess) return nullptr;\n'
+    '        *status = gpuFree(block.ptr);\n'
+    '        block.ptr = nullptr;\n'
+    '        block.capacity = 0;\n'
+    '        if (*status != gpuSuccess) return nullptr;\n'
+    '    }\n'
+    '    *status = gpuMalloc(&block.ptr, bytes);\n'
+    '    if (*status != gpuSuccess) { block.ptr = nullptr; return nullptr; }\n'
+    '    block.capacity = bytes;\n'
+    '    return block.ptr;\n'
+    '}',
+    'find_first_index_device':
+    '//: The device find-first: the smallest index in [begin, end) at which ``pred`` fires, or\n'
+    '//: ``end``. The answer is an atomic min over the firing indices and is exact; the read of it\n'
+    '//: at the top of each step races by design, and every value it can take is a real firing\n'
+    '//: index, so a stale one costs pruning and never correctness.\n'
+    '//:\n'
+    '//: ``pred`` is a FUNCTOR and not a lambda so no caller needs --extended-lambda: the\n'
+    '//: expansion appends the struct to the device code beside the wrapper that instantiates it.\n'
+    'template <typename Pred>\n'
+    '__global__ void find_first_kernel(long long begin, long long end, Pred pred,\n'
+    '                                  unsigned long long *result) {\n'
+    '    const long long stride = (long long)gridDim.x * (long long)blockDim.x;\n'
+    '    long long i = begin + (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n'
+    '    for (; i < end; i += stride) {\n'
+    '        // Every index below this thread\'s next one is another thread\'s, so the first hit it\n'
+    '        // finds walking upwards is the smallest it can contribute: it is done either way.\n'
+    '        if (i >= (long long)*(volatile unsigned long long *)result) return;\n'
+    '        if (pred(i)) { atomicMin(result, (unsigned long long)i); return; }\n'
+    '    }\n'
+    '}\n'
+    'template <typename Pred>\n'
+    'static inline gpuError_t find_first_index_device(long long begin, long long end, Pred pred, long long *out,\n'
+    '                                                gpuStream_t stream) {\n'
+    '    constexpr int block_threads = 256;\n'
+    '    constexpr long long max_blocks = 1024;\n'
+    '    *out = end;\n'
+    '    if (begin >= end) return gpuSuccess;\n'
+    '    gpuError_t status = gpuSuccess;\n'
+    '    unsigned long long *result = (unsigned long long *)get_scratch<DetectFlagTag>(\n'
+    '        sizeof(unsigned long long), stream, &status);\n'
+    '    if (result == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n'
+    '    const unsigned long long sentinel = (unsigned long long)end;\n'
+    '    status = gpuMemcpyAsync(result, &sentinel, sizeof(sentinel), gpuMemcpyHostToDevice, stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    // ``sentinel`` is a local, so the copy has to be done before this frame goes away.\n'
+    '    status = gpuStreamSynchronize(stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    long long blocks = (end - begin + block_threads - 1) / block_threads;\n'
+    '    if (blocks > max_blocks) blocks = max_blocks;\n'
+    '    find_first_kernel<<<(unsigned)blocks, block_threads, 0, stream>>>(begin, end, pred, result);\n'
+    '    status = gpuGetLastError();\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    unsigned long long found = sentinel;\n'
+    '    status = gpuMemcpyAsync(&found, result, sizeof(found), gpuMemcpyDeviceToHost, stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    status = gpuStreamSynchronize(stream);\n'
+    '    *out = (long long)found;\n'
+    '    return status;\n'
+    '}',
+    'inclusive_affine':
+    '//: The first-order linear recurrence out[k] = c[k]*out[k-1] + d[k], entered at out[-1] = seed.\n'
+    '//: The carry is the affine MAP x -> a*x + b rather than a value, and map composition is\n'
+    '//: associative, so a plain prefix scan over the maps computes the recurrence.\n'
+    '//:\n'
+    '//: The seed is folded into element 0 rather than handed to cub as an init value, and that is\n'
+    '//: numerically load-bearing: element 0 comes out as the CONSTANT map {0, c[0]*seed + d[0]},\n'
+    '//: so every prefix including it carries a == 0 and the coefficient product never spans more\n'
+    '//: than one composed segment -- which is what keeps it off the overflow the closed form hits.\n'
+    'template <typename E>\n'
+    'struct cpf_affine_map { E a; E b; };\n'
+    'template <typename E>\n'
+    'struct cpf_affine_compose {\n'
+    '    __device__ __forceinline__ cpf_affine_map<E> operator()(const cpf_affine_map<E> &x,\n'
+    '                                                            const cpf_affine_map<E> &y) const {\n'
+    '        return cpf_affine_map<E>{y.a * x.a, y.a * x.b + y.b};\n'
+    '    }\n'
+    '};\n'
+    'template <typename E, typename C, typename D, typename S>\n'
+    '__global__ void cpf_affine_pack_kernel(const C *__restrict__ c, const D *__restrict__ d,\n'
+    '                                       cpf_affine_map<E> *__restrict__ m, const S *__restrict__ seed_ptr,\n'
+    '                                       E seed_val, long long n) {\n'
+    '    const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n'
+    '    if (k >= n) return;\n'
+    '    const E ck = (E)c[k];\n'
+    '    const E dk = (E)d[k];\n'
+    '    // A device-resident seed arrives as a pointer; a host-readable one by value.\n'
+    '    if (k == 0) {\n'
+    '        const E s = (seed_ptr != nullptr) ? (E)(*seed_ptr) : seed_val;\n'
+    '        m[0] = cpf_affine_map<E>{(E)0, ck * s + dk};\n'
+    '    } else {\n'
+    '        m[k] = cpf_affine_map<E>{ck, dk};\n'
+    '    }\n'
+    '}\n'
+    'template <typename E>\n'
+    '__global__ void cpf_affine_unpack_kernel(const cpf_affine_map<E> *__restrict__ m, E *__restrict__ out,\n'
+    '                                         long long n) {\n'
+    '    const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n'
+    '    if (k < n) out[k] = m[k].b;  // every composed prefix is constant, so b IS the value\n'
+    '}\n'
+    'template <typename E, typename C, typename D, typename S>\n'
+    'static inline gpuError_t inclusive_affine(const C *coef, const D *delta, const S *seed_ptr, E seed_val,\n'
+    '                                          E *out, long long n, gpuStream_t stream) {\n'
+    '    using M = cpf_affine_map<E>;\n'
+    '    constexpr int block_threads = 256;\n'
+    '    if (n <= 0) return gpuSuccess;\n'
+    '    cpf_affine_compose<E> op;\n'
+    '    size_t cub_bytes = 0;\n'
+    '    gpuError_t status = gpucub::DeviceScan::InclusiveScan(nullptr, cub_bytes, (M *)nullptr, (M *)nullptr,\n'
+    '                                                         op, n, stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    // 256-byte alignment for the workspace that follows: cub assumes an allocation at least as\n'
+    '    // aligned as gpuMalloc gives, and the maps sit in front of it in the one block.\n'
+    '    const size_t map_bytes = (((size_t)n * sizeof(M)) + 255u) & ~(size_t)255u;\n'
+    '    void *scratch = get_scratch<ScanTag>(map_bytes + cub_bytes, stream, &status);\n'
+    '    if (scratch == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n'
+    '    M *maps = (M *)scratch;\n'
+    '    void *workspace = (char *)scratch + map_bytes;\n'
+    '    const unsigned blocks = (unsigned)((n + block_threads - 1) / block_threads);\n'
+    '    cpf_affine_pack_kernel<E, C, D, S><<<blocks, block_threads, 0, stream>>>(coef, delta, maps, seed_ptr,\n'
+    '                                                                            seed_val, n);\n'
+    '    status = gpuGetLastError();\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    status = gpucub::DeviceScan::InclusiveScan(workspace, cub_bytes, maps, maps, op, n, stream);\n'
+    '    if (status != gpuSuccess) return status;\n'
+    '    cpf_affine_unpack_kernel<E><<<blocks, block_threads, 0, stream>>>(maps, out, n);\n'
+    '    return gpuGetLastError();\n'
+    '}',
+}
+
+HIP_INLINE_DEFINITIONS: Dict[str, str] = {**INLINE_DEFINITIONS, **HIP_DEVICE_INLINE_DEFINITIONS}
+
+HIP_DEFINITION_DEPENDENCIES: Dict[str, Tuple[str, ...]] = {
+    **DEFINITION_DEPENDENCIES,
+    'find_first_index_device': ('get_scratch', ),
+    'inclusive_affine': ('get_scratch', ),
+}
+
+#: The CUB scratch pool's tag types, which reach the text as template ARGUMENTS rather than as
+#: calls. Renamed here, with the type table, because that is what runs over the whole unit -- a
+#: name table entry would need a call to fire on.
+HIP_CTYPE_RENAMES: Dict[str, str] = {
+    **CTYPE_RENAMES,
+    'dace::cub::ScanTag': 'ScanTag',
+    'dace::cub::DetectFlagTag': 'DetectFlagTag',
+}
+
+#: Environments a DEVICE rendering supplies for itself, so that
+#: ``framecode.generate_standalone_footer`` does not refuse them. Everything else with code to run
+#: or a library to link is still refused: a single entry point has nowhere to run an initializer.
+#:
+#: ``CUDA`` declares the toolkit as a CMake package. A device dialect is BUILT by that toolkit's
+#: compiler, so the package is there by construction, and there is nothing to find and nothing to
+#: link. ``ScanScratch`` and ``DetectScratch`` pre-allocate and release the CUB scratch pool;
+#: :data:`HIP_DEVICE_INLINE_DEFINITIONS`'s ``get_scratch`` allocates on first use and frees at
+#: static destruction, so both halves of that handshake are inside the unit.
+DEVICE_PROVIDED_ENVIRONMENTS: FrozenSet[str] = frozenset({'CUDA', 'ScanScratch', 'DetectScratch'})
+
+
+def device_definitions(dialect: Dialect) -> Dict[str, str]:
+    """:data:`HIP_INLINE_DEFINITIONS` with the device ones' ``gpu*`` calls spelled for ``dialect``'s backend."""
+    return {name: device_spell_out(definition, dialect) for name, definition in HIP_INLINE_DEFINITIONS.items()}
+
+
+#: Dialect -> its vocabulary. ``RUNTIME`` has none: a runtime rendering emits ``dace::`` names and
+#: never consults these tables at all, so asking for its bundle is a bug worth a ``KeyError``.
+TABLES: Dict[Dialect, Tables] = {
+    Dialect.STANDALONE:
+    _tables(STD_RENAMES, REWRITES, INLINE_DEFINITIONS, VARIADIC_MINMAX, UNSUPPORTED, CTYPE_RENAMES, BASE_HEADERS,
+            DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
+    Dialect.STANDALONE_C:
+    _tables(C_STD_RENAMES, C_REWRITES, C_INLINE_DEFINITIONS, C_VARIADIC_MINMAX, C_UNSUPPORTED, C_CTYPE_RENAMES,
+            C_BASE_HEADERS, C_DEFINITION_DEPENDENCIES, {},
+            frozenset(C_TYPED_MATH) | frozenset(C_TYPED_HELPER_SPECS) | {'iround', 'heaviside'}, c_instance,
+            C_INSTANCE_NAMES),
+    # The HIP unit is C++, so it takes the C++ vocabulary and adds to it: the ROCm toolkit's own
+    # headers, which ship with the compiler that builds the unit, and the device counterparts of
+    # the runtime functions a DEVICE library expansion calls (:data:`HIP_INLINE_DEFINITIONS`).
+    Dialect.STANDALONE_HIP:
+    _tables(STD_RENAMES, REWRITES, device_definitions(Dialect.STANDALONE_HIP), VARIADIC_MINMAX, UNSUPPORTED,
+            HIP_CTYPE_RENAMES, BASE_HEADERS + HIP_BASE_HEADERS, HIP_DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
+    # The CUDA unit shares that vocabulary: its device definitions call ``gpu*`` names, spelled per
+    # backend by :func:`device_definitions`, so only the toolkit headers differ.
+    Dialect.STANDALONE_CUDA:
+    _tables(STD_RENAMES, REWRITES, device_definitions(Dialect.STANDALONE_CUDA), VARIADIC_MINMAX, UNSUPPORTED,
+            HIP_CTYPE_RENAMES, BASE_HEADERS + CUDA_BASE_HEADERS, HIP_DEFINITION_DEPENDENCIES, DEFINITION_HEADERS),
+}
+
+#: Every runtime function the C dialect knows about, in any lane.
+C_KNOWN: Set[str] = TABLES[Dialect.STANDALONE_C].known
+
+
+def tables_for(dialect: Optional[Dialect] = None) -> Tables:
+    """The lowering vocabulary of ``dialect``, or of the ambient dialect when none is given.
+
+    :raises ValueError: for :attr:`Dialect.RUNTIME`, which has no vocabulary at all -- a runtime
+                        rendering emits ``dace::`` names and never consults these tables, so
+                        reaching here under it means the caller forgot a :func:`dialect_scope`.
+    """
+    resolved = dialect if dialect is not None else _active_dialect
+    if resolved not in TABLES:
+        raise ValueError(f'{resolved} has no CPF lowering tables; the standalone dialects are '
+                         f'{sorted(d.value for d in TABLES)}. Name one, or run inside a dialect_scope.')
+    return TABLES[resolved]
+
+
+#: Plain scalar type spellings a library expansion may write a FUNCTIONAL cast with
+#: (``double(0)``, the ``Scan`` expansion's seed). C has no functional cast, so these become
+#: ordinary cast expressions. Anchored on a closed list of type names rather than on "identifier
+#: followed by ``(``", which would rewrite every call in the body.
+C_CAST_TYPES: Tuple[str,
+                    ...] = ('long double', 'unsigned long long', 'unsigned long', 'unsigned int', 'unsigned char',
+                            'long long', 'double', 'float', 'bool', 'char', 'short', 'int', 'long', 'int8_t', 'int16_t',
+                            'int32_t', 'int64_t', 'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t', 'size_t')
+
+_C_STATIC_CAST = re.compile(r'\bstatic_cast\s*<\s*([^<>;{}]+?)\s*>\s*\(')
+_C_FUNCTIONAL_CAST = re.compile(r'(?<![\w:.])(' + '|'.join(C_CAST_TYPES) + r')\s*\(')
+
+#: The scan's min / max neutral element per element type, as a C constant expression. Mirrors
+#: ``dace::scan::min_identity`` / ``max_identity``: infinity where the type has one, otherwise the
+#: extreme value. The C++ version is one function template; C needs the type spelled out, and the
+#: call site already spells it (``min_identity<double>()``), so a constant is enough and no
+#: definition has to be emitted.
+C_SCAN_IDENTITIES: Dict[str, Tuple[str, str]] = {
+    'int': ('INT_MAX', 'INT_MIN'),
+    'long': ('LONG_MAX', 'LONG_MIN'),
+    'long long': ('LLONG_MAX', 'LLONG_MIN'),
+    'float': ('INFINITY', '-INFINITY'),
+    'double': ('INFINITY', '-INFINITY'),
+    'long double': ('INFINITY', '-INFINITY'),
+}
+
+#: ``min_identity<double>()`` as a hand-written expansion writes it, qualified or not.
+_C_IDENTITY_CALL = re.compile(r'(?:::)?(?:\w+::)*\b(min|max)_identity\s*<\s*([A-Za-z_][A-Za-z_ ]*?)\s*>\s*\(\s*\)')
+
+
+def c_scan_identities(code: str) -> str:
+    """Replace every ``min_identity<T>()`` / ``max_identity<T>()`` with its C constant.
+
+    Must run BEFORE the qualified-name rewrite: the name carries an explicit template argument, so
+    it is not an ordinary call the name table could map.
+
+    :param code: the C++ body, with its ctypes already renamed.
+    :returns: the body with the identities spelled as C.
+    :raises NotImplementedError: on an element type with no ordered extreme (complex).
+    """
+
+    def replace(match: 're.Match') -> str:
+        kind, ctype = match.group(1), match.group(2)
+        identities = C_SCAN_IDENTITIES.get(ctype)
+        if identities is None:
+            raise NotImplementedError(f'CPF cannot spell the scan {kind} identity for {ctype!r}: it has no ordered '
+                                      'extreme value, so only sum and product scans are defined for it.')
+        return identities[0] if kind == 'min' else identities[1]
+
+    return _C_IDENTITY_CALL.sub(replace, code)
+
+
+#: ``target = dace::find_first_index((begin), (end), [&](long long __i) -> bool { return (pred); },
+#: parallel);`` -- the one statement ``ExpandFindFirstPure`` and ``ExpandFindFirstOpenMP`` write.
+#: Anchored on the whole statement, target included. The bounds are captured as ONE group and spliced
+#: through unread: the expansion parenthesizes each of them, so they arrive as two call arguments
+#: however many commas the extents contain.
+_C_FIND_FIRST_CALL = re.compile(
+    r'([^;{}\n]+?)\s*=\s*(?:::)?(?:[A-Za-z_]\w*::)*find_first_index\s*\(\s*'
+    r'(.+?),\s*\[&\]\s*\(\s*long long\s+([A-Za-z_]\w*)\s*\)\s*->\s*bool\s*\{\s*return\s+(.+?)\s*;\s*\}'
+    r'\s*,\s*([A-Za-z_]\w*)\s*\)\s*;', re.S)
+
+#: An identifier a predicate READS: not a member after ``.`` or ``->``, and not a called function.
+C_READ_IDENTIFIER: 're.Pattern' = re.compile(r'(?<![\w.])(?<!->)([A-Za-z_]\w*)\b(?!\s*\()')
+
+
+def c_find_first_definition(name: str, index: str, predicate: str, parameters: Tuple[str, ...]) -> str:
+    """The cancelling parallel search as a C function over one predicate.
+
+    The answer is a min-reduction and is exact; the hint is shared and races by design -- every value
+    it takes is a real firing index, so a lost update costs pruning, never correctness.
+
+    :param name: the function's name.
+    :param index: the index name the predicate subscripts with.
+    :param predicate: the predicate in C, parenthesized.
+    :param parameters: the declarations of the names the predicate reads.
+    :returns: the definition.
+    """
+    return '\n'.join((
+        'static inline long long %s(long long cpf_ff_begin, long long cpf_ff_end, bool cpf_ff_parallel%s) {' %
+        (name, ''.join(', ' + parameter for parameter in parameters)),
+        '    const long long cpf_ff_simd = 64;',
+        '    long long cpf_ff_best = cpf_ff_end;',
+        '    long long cpf_ff_hint = cpf_ff_end;',
+        '    if (cpf_ff_begin >= cpf_ff_end) return cpf_ff_end;',
+        '    const long long cpf_ff_span = cpf_ff_end - cpf_ff_begin;',
+        '    const long long cpf_ff_chunk = find_first_chunk(cpf_ff_span, cpf_ff_parallel);',
+        '    const long long cpf_ff_chunks = (cpf_ff_span + cpf_ff_chunk - 1) / cpf_ff_chunk;',
+        '    #pragma omp parallel for schedule(dynamic, 1) if (parallel : cpf_ff_parallel) '
+        'reduction(min : cpf_ff_best)',
+        '    for (long long cpf_ff_c = 0; cpf_ff_c < cpf_ff_chunks; ++cpf_ff_c) {',
+        '        const long long cpf_ff_from = cpf_ff_begin + cpf_ff_c * cpf_ff_chunk;',
+        '        long long cpf_ff_seen;',
+        '        #pragma omp atomic read',
+        '        cpf_ff_seen = cpf_ff_hint;',
+        '        if (cpf_ff_from >= cpf_ff_seen) continue;',
+        '        long long cpf_ff_hi = cpf_ff_from + cpf_ff_chunk;',
+        '        if (cpf_ff_hi > cpf_ff_end) cpf_ff_hi = cpf_ff_end;',
+        '        if (cpf_ff_hi > cpf_ff_seen) cpf_ff_hi = cpf_ff_seen;',
+        '        long long cpf_ff_found = cpf_ff_end;',
+        '        for (long long cpf_ff_b = cpf_ff_from; cpf_ff_b < cpf_ff_hi; cpf_ff_b += cpf_ff_simd) {',
+        '            long long cpf_ff_to = cpf_ff_b + cpf_ff_simd;',
+        '            long long cpf_ff_block = cpf_ff_end;',
+        '            if (cpf_ff_to > cpf_ff_hi) cpf_ff_to = cpf_ff_hi;',
+        '            // A vectorized loop cannot break, so the block is the early-exit granularity.',
+        '            #pragma omp simd reduction(min : cpf_ff_block)',
+        '            for (long long %s = cpf_ff_b; %s < cpf_ff_to; ++%s) {' % (index, index, index),
+        '                const long long cpf_ff_v = %s ? %s : cpf_ff_end;' % (predicate, index),
+        '                cpf_ff_block = cpf_ff_v < cpf_ff_block ? cpf_ff_v : cpf_ff_block;',
+        '            }',
+        '            if (cpf_ff_block < cpf_ff_end) {',
+        '                cpf_ff_found = cpf_ff_block;',
+        '                break;',
+        '            }',
+        '        }',
+        '        if (cpf_ff_found < cpf_ff_end) {',
+        '            long long cpf_ff_cur;',
+        '            if (cpf_ff_found < cpf_ff_best) cpf_ff_best = cpf_ff_found;',
+        '            #pragma omp atomic read',
+        '            cpf_ff_cur = cpf_ff_hint;',
+        '            if (cpf_ff_found < cpf_ff_cur) {',
+        '                #pragma omp atomic write',
+        '                cpf_ff_hint = cpf_ff_found;',
+        '            }',
+        '        }',
+        '    }',
+        '    return cpf_ff_best;',
+        '}',
+    ))
+
+
+def c_find_first(code: str, site: Optional[NativeSite]) -> str:
+    """Rewrite a ``find_first_index`` call over a C++ lambda into a call to a search function of its own.
+
+    C has no lambda and no way to hand a capturing predicate to a function, so the predicate is pasted
+    into a function the site defines, and each name it reads that the site types becomes a parameter.
+    Deliberately narrow: it matches the exact statement the two CPU expansions write, and anything else
+    is left alone for ``dace.codegen.cpf.verify`` to report as an unlowered ``dace::`` name.
+
+    :param code: the body, C already apart from the search.
+    :param site: the typed names at the call site; its ``functions`` receives the search function.
+    :returns: the body with the search spelled as C.
+    :raises NotImplementedError: at a site that types no names, or for a read name C cannot spell.
+    """
+
+    def replace(match: 're.Match') -> str:
+        if site is None:
+            raise NotImplementedError('CPF cannot render a find-first in C where no names are typed: the search '
+                                      'function could not declare what its predicate reads')
+        index, predicate = match.group(3), match.group(4).strip()
+        if not (predicate.startswith('(') and c_encloses(predicate, 0)):
+            predicate = '(%s)' % predicate
+        read = sorted(({hit.group(1) for hit in C_READ_IDENTIFIER.finditer(predicate)} & set(site.names)) - {index})
+        parameters: List[str] = []
+        for name in read:
+            dtype, pointer = site.names[name]
+            if dtype not in C_SCALAR_SPELLINGS:
+                raise NotImplementedError(f'CPF cannot pass {name!r} to a C find-first: {dtype} has no C spelling here')
+            parameters.append(('const %s *%s' if pointer else '%s %s') % (C_SCALAR_SPELLINGS[dtype], name))
+        function = 'cpf_find_first_%s' % site.label + ('_%d' % len(site.functions) if site.functions else '')
+        site.functions.append(c_find_first_definition(function, index, predicate, tuple(parameters)))
+        return '%s = %s(%s, %s%s);' % (match.group(1).strip(), function, match.group(2).strip(), match.group(5),
+                                       ''.join(', ' + name for name in read))
+
+    return _C_FIND_FIRST_CALL.sub(replace, code)
+
+
+#: A ``std::`` name that reaches the emitted text WITHOUT passing an expression printer -- a
+#: library expansion's hand-written C++ body, or a pass that writes one. Neither lowering lane sees
+#: those, and in C a ``std::`` name is not a name at all, so this is the table that answers them.
+#:
+#: Only the type-generic maths (``std::isnan`` ...) is derived from the printer tables. Every other
+#: ``std::`` maths function is overloaded on its argument type, which a hand-written body does not
+#: name, so it is left for ``dace.codegen.cpf.verify`` to report: renamed onto the ``double``
+#: function it would compute a ``float`` argument at the wrong precision.
+#:
+#: The rest are the names with no printer entry at all. ``std::abort`` is the assumption guard:
+#: canonicalization traps a violated symbol assumption with ``if ((N < 0)) { std::abort(); }`` and
+#: DEDUPS its own guards by searching tasklet bodies for that literal text, so the spelling is
+#: fixed at the source. The ``mem*`` trio and ``std::size_t`` are spelled the same in C once the
+#: namespace goes. ``std::sort`` becomes the heapsort typed for its range (:func:`c_sort`), and
+#: ``std::copy`` the ``memmove`` it performs (:func:`c_copy`).
+C_NATIVE_RENAMES: Dict[str, str] = {
+    cpp: C_STD_RENAMES[runtime]
+    for runtime, cpp in STD_RENAMES.items() if cpp.startswith('std::') and runtime in C_STD_RENAMES
+}
+C_NATIVE_RENAMES.update({
+    'std::abort': 'abort',
+    'std::memcpy': 'memcpy',
+    'std::memmove': 'memmove',
+    'std::memset': 'memset',
+    'std::size_t': 'size_t',
+})
+
+#: One alternation over every :data:`C_NATIVE_RENAMES` key, longest first. Every key is a distinct
+#: literal ``std::`` name and no replacement value contains ``std::``, so the tens of sequential
+#: passes this used to be never interacted -- folding them into one pass over the original text
+#: changes nothing they could produce.
+_C_NATIVE_RENAME_PATTERN = re.compile(r'(?:::)?\b(' + '|'.join(
+    re.escape(name) for name in sorted(C_NATIVE_RENAMES, key=len, reverse=True)) + r')\b')
+
+#: An ``#include`` of a C++ standard header, which is named without an extension. A native body writes
+#: one for the algorithm it calls (``<algorithm>`` for ``std::sort``); C has no such header.
+C_CXX_INCLUDE: 're.Pattern' = re.compile(r'^[ \t]*#[ \t]*include[ \t]*<[A-Za-z_]\w*>[ \t]*\n?', re.M)
+
+#: ``std::min<T>(`` / ``std::max<T>(``, as an expansion that knows its element type writes them.
+C_TYPED_MINMAX_CALL = re.compile(r'(?:::)?\bstd::(min|max)\s*<\s*([A-Za-z_][\w ]*?)\s*>\s*\(')
+
+#: C scalar spelling -> dace type name, for an element type an expansion wrote as a template argument.
+C_CTYPE_DTYPES: Dict[str, str] = {
+    'bool': 'bool',
+    'char': 'int8',
+    'int8_t': 'int8',
+    'short': 'int16',
+    'int16_t': 'int16',
+    'int': 'int32',
+    'int32_t': 'int32',
+    'long': 'int64',
+    'long long': 'int64',
+    'int64_t': 'int64',
+    'uint8_t': 'uint8',
+    'uint16_t': 'uint16',
+    'unsigned int': 'uint32',
+    'uint32_t': 'uint32',
+    'unsigned long': 'uint64',
+    'unsigned long long': 'uint64',
+    'uint64_t': 'uint64',
+    'size_t': 'uint64',
+    'float': 'float32',
+    'double': 'float64',
+}
+
+
+def c_typed_minmax(match: 're.Match') -> str:
+    """The typed C helper call that opens in place of a ``std::min<T>(`` / ``std::max<T>(``."""
+    operation, ctype = match.group(1), match.group(2)
+    if ctype not in C_CTYPE_DTYPES:
+        raise NotImplementedError(f'CPF cannot spell std::{operation}<{ctype}> in C: no C helper takes that type')
+    return 'cpf_%s_%s(' % (operation, c_common_type((C_CTYPE_DTYPES[ctype], )))
+
+
+#: The opening of a ``std::copy`` call, qualified or not.
+C_COPY_CALL = re.compile(r'(?:::)?\bstd::copy\s*\(')
+
+
+def c_copy(code: str) -> str:
+    """Spell each ``std::copy(first, last, out)`` as the ``memmove`` it performs.
+
+    The expansions that write it copy a contiguous range of a trivially copyable element type, and
+    nothing CPF renders reads the output end the C++ call returns. A call whose arguments do not split
+    into three is left alone, so ``dace.codegen.cpf.verify`` reports it by name.
+
+    :param code: the body as the expansion wrote it.
+    :returns: the body with every such copy as a ``memmove``.
+    """
+
+    def rewrite(match: 're.Match', arguments: Tuple[str, ...]) -> Optional[str]:
+        if len(arguments) != 3:
+            return None
+        first, last, out = arguments
+        return 'memmove((%s), (%s), (size_t)((%s) - (%s)) * sizeof(*(%s)))' % (out, first, last, first, first)
+
+    return c_rewrite_calls(code, C_COPY_CALL, rewrite)
+
+
+def c_rewrite_calls(code: str, opening: 're.Pattern', rewrite: Callable[['re.Match', Tuple[str, ...]],
+                                                                        Optional[str]]) -> str:
+    """Replace each call ``opening`` finds by ``rewrite(match, arguments)``; ``None`` leaves the call alone.
+
+    :param code: the body.
+    :param opening: matches a call up to and including its ``(``.
+    :param rewrite: the replacement for one call, given its arguments split on top-level commas.
+    :returns: the body with each rewritten call replaced.
+    """
+    pieces: List[str] = []
+    position = 0
+    for match in opening.finditer(code):
+        if match.start() < position:
+            continue
+        depth, end = 1, match.end()
+        while end < len(code) and depth:
+            depth += {'(': 1, ')': -1}.get(code[end], 0)
+            end += 1
+        arguments = c_call_arguments(code[match.end():end - 1]) if depth == 0 else None
+        replacement = rewrite(match, arguments) if arguments is not None else None
+        if replacement is None:
+            continue
+        pieces.append(code[position:match.start()])
+        pieces.append(replacement)
+        position = end
+    return ''.join(pieces) + code[position:]
+
+
+def c_encloses(text: str, start: int) -> bool:
+    """Whether the bracket opening at ``text[start]`` closes at the last character of ``text``."""
+    depth = 0
+    for position in range(start, len(text)):
+        depth += {'(': 1, '[': 1, ')': -1, ']': -1}.get(text[position], 0)
+        if depth == 0:
+            return position == len(text) - 1
+    return False
+
+
+#: C type spelling -> dace type name, for the type a cast or a scan identity spells.
+C_SPELLED_DTYPES: Dict[str, str] = {
+    **C_CTYPE_DTYPES,
+    **{
+        spelling: dtype
+        for dtype, spelling in C_SCALAR_SPELLINGS.items()
+    }
+}
+
+#: One alternation over :data:`C_SPELLED_DTYPES`, longest first.
+C_TYPE_SPELLING: str = '|'.join(re.escape(name) for name in sorted(C_SPELLED_DTYPES, key=len, reverse=True))
+
+#: The opening of a value that spells its own type: a scan identity, ``static_cast<T>(``, ``(T)(`` or
+#: ``T(``. Each alternative captures the type.
+C_SPELLED_VALUE: 're.Pattern' = re.compile(
+    r'(?:(?:::)?(?:\w+::)*(?:min|max)_identity\s*<\s*(%s)\s*>|static_cast\s*<\s*(%s)'
+    r'\s*>|\(\s*(%s)\s*\)|(%s))\s*\(' % ((C_TYPE_SPELLING, ) * 4))
+
+#: The opening of a subscript of a named array.
+C_SUBSCRIPTED: 're.Pattern' = re.compile(r'([A-Za-z_]\w*)\s*\[')
+
+
+def c_native_array_dtype(argument: str, site: Optional[NativeSite], call: str) -> str:
+    """The element type of the array ``argument`` names, as ``site`` types it.
+
+    :raises NotImplementedError: if the argument is not a typed array in scope at the site.
+    """
+    # An offset into an array, ``(A + (N * i))``, points at the same element type as ``A`` itself.
+    text = argument.strip()
+    while text.startswith('(') and c_encloses(text, 0):
+        text = text[1:-1].strip()
+    offset = re.match(r'([A-Za-z_]\w*)\s*\+', text)
+    name = offset.group(1) if offset is not None else text
+    entry = site.names.get(name) if site is not None else None
+    if entry is None or not entry[1] or entry[0] not in C_SCALAR_SPELLINGS:
+        where = 'no names are typed at this site' if site is None else 'it is not a typed array in scope'
+        raise NotImplementedError(f'CPF cannot type the array {argument!r} that {call} takes in C: {where}')
+    return entry[0]
+
+
+def c_native_value_dtype(argument: str, site: Optional[NativeSite], call: str) -> str:
+    """The type of the scalar ``argument``: a typed name, an element of a typed array, or a value whose
+    cast or scan identity spells its type.
+
+    :raises NotImplementedError: for any other expression.
+    """
+    text = argument.strip()
+    names = site.names if site is not None else {}
+    entry = names.get(text)
+    if entry is not None and not entry[1] and entry[0] in C_SCALAR_SPELLINGS:
+        return entry[0]
+    subscripted = C_SUBSCRIPTED.match(text)
+    array = names.get(subscripted.group(1)) if subscripted is not None else None
+    if array is not None and array[1] and array[0] in C_SCALAR_SPELLINGS and c_encloses(text, subscripted.end() - 1):
+        return array[0]
+    spelled = C_SPELLED_VALUE.match(text)
+    if spelled is not None and c_encloses(text, spelled.end() - 1):
+        return C_SPELLED_DTYPES[next(group for group in spelled.groups() if group is not None)]
+    raise NotImplementedError(f'CPF cannot type the value {argument!r} that {call} takes in C: it is neither a '
+                              'typed name nor a value that spells its type')
+
+
+def c_instance_call(name: str, arguments: Tuple[str, ...]) -> str:
+    """A call to the typed instantiation ``name``. The instantiation is built here, so a type combination
+    it cannot take is refused at the call site that asked for it."""
+    c_instance(name)
+    return '%s(%s)' % (name, ', '.join(arguments))
+
+
+#: The opening of a ``std::sort`` call, qualified or not.
+C_SORT_CALL: 're.Pattern' = re.compile(r'(?:::)?\bstd::sort\s*\(')
+
+#: The opening of a prefix-scan call as the ``Scan`` expansion writes it, qualified or not.
+C_SCAN_CALL: 're.Pattern' = re.compile(r'(?:::)?(?:[A-Za-z_]\w*::)*\bscan_(incl|excl)_(sum|product|min|max)\s*\(')
+
+
+def c_sort(code: str, site: Optional[NativeSite]) -> str:
+    """Spell each ``std::sort(first, last)`` as a call to the heapsort typed for the range's element.
+
+    :param code: the body as the expansion wrote it.
+    :param site: the typed names at the call site.
+    :returns: the body with every sort as a typed call.
+    :raises NotImplementedError: if the element type is unknown or has no order.
+    """
+
+    def rewrite(match: 're.Match', arguments: Tuple[str, ...]) -> Optional[str]:
+        if len(arguments) != 2:
+            return None
+        return c_instance_call('cpf_sort_%s' % c_native_array_dtype(arguments[0], site, 'std::sort'), arguments)
+
+    return c_rewrite_calls(code, C_SORT_CALL, rewrite)
+
+
+def c_scan(code: str, site: Optional[NativeSite]) -> str:
+    """Spell each prefix-scan call as a call to the scan typed for its input, its output and its seed.
+
+    :param code: the body as the expansion wrote it.
+    :param site: the typed names at the call site.
+    :returns: the body with every scan as a typed call.
+    :raises NotImplementedError: if a type is unknown, or the operation has no order over the seed's type.
+    """
+
+    def rewrite(match: 're.Match', arguments: Tuple[str, ...]) -> Optional[str]:
+        if len(arguments) != 5:
+            return None
+        call = 'scan_%s_%s' % (match.group(1), match.group(2))
+        types = (c_native_array_dtype(arguments[0], site,
+                                      call), c_native_array_dtype(arguments[1], site,
+                                                                  call), c_native_value_dtype(arguments[4], site, call))
+        return c_instance_call('cpf_%s_%s' % (call, '_'.join(types)), arguments)
+
+    return c_rewrite_calls(code, C_SCAN_CALL, rewrite)
+
+
+def c_native_renames(code: str) -> str:
+    """Spell the ``std::`` names a hand-written body carries the C way.
+
+    ``std::min<T>`` / ``std::max<T>`` become the typed helper for ``T``. An untyped ``std::min``
+    names no type to pick a helper by, so it is left for ``dace.codegen.cpf.verify`` to report.
+
+    :param code: the body as the expansion or pass wrote it.
+    :returns: the body with each :data:`C_NATIVE_RENAMES` name replaced.
+    """
+    if 'std::' not in code:
+        return code
+    code = C_TYPED_MINMAX_CALL.sub(c_typed_minmax, code)
+    return _C_NATIVE_RENAME_PATTERN.sub(lambda match: C_NATIVE_RENAMES[match.group(1)], code)
+
+
+#: ``std::numeric_limits<T>::max()`` / ``::lowest()`` per element type, as C constants. The two
+#: reduction seeds a tile reduction writes, and the only two members CPF sees. C has no class
+#: template to ask, so the constant is spelled here from ``<limits.h>`` and ``<float.h>``;
+#: ``lowest()`` is the most negative FINITE value, which for a float type is ``-<T>_MAX`` and NOT
+#: ``<T>_MIN`` (that one is the smallest positive normal).
+C_NUMERIC_LIMITS: Dict[str, Tuple[str, str]] = {
+    'int': ('INT_MAX', 'INT_MIN'),
+    'unsigned int': ('UINT_MAX', '0'),
+    'long': ('LONG_MAX', 'LONG_MIN'),
+    'unsigned long': ('ULONG_MAX', '0'),
+    'long long': ('LLONG_MAX', 'LLONG_MIN'),
+    'unsigned long long': ('ULLONG_MAX', '0'),
+    'float': ('FLT_MAX', '-FLT_MAX'),
+    'double': ('DBL_MAX', '-DBL_MAX'),
+    'long double': ('LDBL_MAX', '-LDBL_MAX'),
+}
+
+#: ``std::numeric_limits<double>::lowest()`` as an expansion writes it, qualified or not.
+_C_NUMERIC_LIMIT_CALL = re.compile(r'(?:::)?(?:\w+::)*\bnumeric_limits\s*<\s*([A-Za-z_][A-Za-z_ ]*?)\s*>\s*'
+                                   r'::\s*(max|lowest)\s*\(\s*\)')
+
+
+def c_numeric_limits(code: str) -> str:
+    """Replace every ``numeric_limits<T>::max()`` / ``::lowest()`` with its C constant.
+
+    Must run BEFORE the qualified-name rewrite: the name carries an explicit template argument and
+    a member call, so it is not an ordinary call the name table could map. Any other member is left
+    alone and reaches ``dace.codegen.cpf.verify``, which reports it against the node that wrote it.
+
+    :param code: the C++ body, with its ctypes already renamed.
+    :returns: the body with the two extremes spelled as C.
+    :raises NotImplementedError: on an element type with no C constant for its extremes.
+    """
+
+    def replace(match: 're.Match') -> str:
+        ctype, member = match.group(1).strip(), match.group(2)
+        extremes = C_NUMERIC_LIMITS.get(ctype)
+        if extremes is None:
+            raise NotImplementedError(f'CPF cannot spell numeric_limits<{ctype}>::{member}() in C: the type has no '
+                                      'standard constant for its extremes.')
+        return extremes[0] if member == 'max' else extremes[1]
+
+    return _C_NUMERIC_LIMIT_CALL.sub(replace, code)
+
+
+#: ``target = dace::detect_collision(idx, (n)[, owner, (capacity)], parallel);`` -- the one
+#: statement the two ``ScatterConflictCheck`` CPU expansions write. The arguments are split by
+#: :func:`c_call_arguments` rather than by the pattern, so an argument carrying a comma inside
+#: parentheses cannot split the call.
+_C_DETECT_COLLISION_CALL = re.compile(r'([^;{}\n]+?)\s*=\s*(?:::)?(?:[A-Za-z_]\w*::)*detect_collision\s*\((.*?)\)\s*;',
+                                      re.S)
+
+
+def c_call_arguments(printed: str) -> Optional[Tuple[str, ...]]:
+    """Split one call's printed argument list on its TOP-LEVEL commas.
+
+    :param printed: the text between a call's outermost parentheses.
+    :returns: the arguments, or ``None`` if the brackets do not balance -- which means the pattern
+              that produced ``printed`` stopped inside a nested call, and the caller must leave the
+              text alone.
+    """
+    arguments: List[str] = []
+    depth = 0
+    current = []
+    for character in printed:
+        if character in '([':
+            depth += 1
+        elif character in ')]':
+            depth -= 1
+            if depth < 0:
+                return None
+        if character == ',' and depth == 0:
+            arguments.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(character)
+    if depth != 0:
+        return None
+    arguments.append(''.join(current).strip())
+    return tuple(arguments)
+
+
+def c_detect_collision(code: str, site: Optional[NativeSite]) -> str:
+    """Rewrite a ``detect_collision`` call into a call to the C function typed for its arrays.
+
+    C cannot spell the C++ overload pair as a call: the index and tag element types are template
+    parameters and the two arities are two functions. The call site knows both -- five arguments
+    means a tag array the caller wired, three means the function sizes one of its own -- and ``site``
+    types the arrays.
+
+    Must run BEFORE the qualified-name rewrite, which would otherwise leave the C++ call shape in
+    place with only its namespace stripped. A call of any other arity is LEFT ALONE, so it reaches
+    ``dace.codegen.cpf.verify`` and is reported against the node that emitted it.
+
+    :param code: the C++ body, with its ctypes already renamed.
+    :param site: the typed names at the call site.
+    :returns: the body with the check spelled as C.
+    :raises NotImplementedError: if an array's element type is unknown at the site.
+    """
+
+    def replace(match: 're.Match') -> str:
+        arguments = c_call_arguments(match.group(2))
+        if arguments is None:
+            return match.group(0)
+        target = match.group(1).strip()
+        if len(arguments) == 5:
+            name = 'cpf_detect_collision_%s_%s' % (c_native_array_dtype(
+                arguments[0], site, 'detect_collision'), c_native_array_dtype(arguments[2], site, 'detect_collision'))
+        elif len(arguments) == 3:
+            name = 'cpf_detect_collision_sized_%s' % c_native_array_dtype(arguments[0], site, 'detect_collision')
+        else:
+            return match.group(0)
+        return '%s = %s;' % (target, c_instance_call(name, arguments))
+
+    return _C_DETECT_COLLISION_CALL.sub(replace, code)
+
+
+def c_cast_native_code(code: str) -> str:
+    """Rewrite the C++ casts in a hand-written body to C casts.
+
+    Native tasklet bodies are emitted verbatim, so this is the only point at which a library
+    expansion's own C++ can be re-spelled. The two forms that actually appear are the ``Scan``
+    expansion's ``static_cast<long>(n)`` length and its ``double(0)`` seed.
+
+    :param code: the body, after :func:`rewrite_native_code` has re-spelled its ``dace::`` names.
+    :returns: the body with both cast forms written as ``(type)(...)``.
+    """
+    code = _C_STATIC_CAST.sub(lambda match: '(%s)(' % match.group(1), code)
+    return _C_FUNCTIONAL_CAST.sub(lambda match: '(%s)(' % match.group(1), code)

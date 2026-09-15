@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-import networkx as nx
 from dace.sdfg.utils import *
+import networkx as nx
 
 
 class GraphSearchSpace(object):

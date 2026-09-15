@@ -1,16 +1,43 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import properties, symbolic
+from dace.libraries.blas.blas_helpers import matrix_view
 from copy import deepcopy as dc
 from typing import Any, Dict
 import warnings
 from math import prod
+from dace.ordered import OrderedSet
+
+
+def _matrix_subset_size(subset):
+    """
+    Returns an operand's size in the matrix view ``SpecializeMatMul`` matched on.
+
+    :param subset: The subset of the memlet accessing the operand.
+    :return: The size in the matrix view.
+    """
+    return matrix_view(subset)[0]
+
+
+def _matrix_operand(operand):
+    """
+    Returns a GEMM operand as ``(edge, descriptor, shape, strides)`` in its matrix view, applying
+    the rule of :func:`_matrix_subset_size` so shape and strides come from the same view.
+
+    :param operand: One of the three tuples returned by :func:`_get_matmul_operands`.
+    :return: The edge, outer descriptor, and 2D shape and strides.
+    """
+    edge, desc, size, strides, squeezed_size, squeezed_strides = operand
+    if len(size) == 2:
+        return edge, desc, size, strides
+    return edge, desc, squeezed_size, squeezed_strides
 
 
 def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_out="_c"):
     """Returns the matrix multiplication input edges, arrays, and shape."""
     res_lhs = None
     res_rhs = None
+    res_out = None
     for edge in state.all_edges(node):
         if edge.dst_conn in [name_lhs, name_rhs]:
             size = edge.data.subset.size()
@@ -137,8 +164,11 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     from dace.codegen.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape, astride, _, _), (_, _, bshape, bstride, _, _), (_, _, cshape, cstride, _,
-                                                                   _) = _get_matmul_operands(node, state, sdfg)
+    # M/N/K and the leading dimensions come from the matrix view the dispatcher matched.
+    adata, bdata, cdata = _get_matmul_operands(node, state, sdfg)
+    _, _, ashape, astride = _matrix_operand(adata)
+    _, _, bshape, bstride = _matrix_operand(bdata)
+    _, _, cshape, cstride = _matrix_operand(cdata)
 
     if node.transA:
         ashape = list(reversed(ashape))
@@ -217,7 +247,13 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                 else:
                     warnings.warn("Unsupported WCR in output of MatMul "
                                   "library node: {}".format(c[0].data.wcr))
-            gemm = Gemm(node.name + 'gemm', location=node.location, alpha=node.alpha, beta=beta, cin=cin)
+            gemm = Gemm(node.name + 'gemm',
+                        location=node.location,
+                        alpha=node.alpha,
+                        beta=beta,
+                        cin=cin,
+                        transA=getattr(node, 'transA', False),
+                        transB=getattr(node, 'transB', False))
             return gemm
         elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
             # Batched matrix multiplication with broadcasting support
@@ -225,21 +261,30 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
             result = BatchedMatMul(node.name + 'bmm', location=node.location)
         elif len(size_a) == 2 and len(size_b) == 1:
-            # Matrix and vector -> GEMV
+            # Matrix and vector -> GEMV.  ``transA`` flows through:
+            # Fortran ``MATMUL(TRANSPOSE(A), v)`` arrives with the
+            # node's ``transA=True`` flag, A is read as the
+            # un-transposed (k, m) box, and Gemv treats it as A^T
+            # via the BLAS transpose flag.
             from dace.libraries.blas.nodes.gemv import Gemv
             # Rename inputs to match dot naming
             a[0].dst_conn = "_A"
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
-            result = Gemv(node.name + 'gemv', location=node.location)
+            result = Gemv(node.name + 'gemv', location=node.location, transA=getattr(node, 'transA', False))
         elif len(size_a) == 1 and len(size_b) == 2:
-            # Vector and matrix -> GEMV with transposed matrix
+            # Vector and matrix -> GEMV with transposed matrix.
+            # ``node.transA`` flipping the second operand
+            # corresponds to ``v @ A^T``; XOR with the implicit
+            # vector-side transpose so the BLAS flag carries the
+            # net effect.
             from dace.libraries.blas.nodes.gemv import Gemv
             # Rename inputs to match dot naming
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
-            result = Gemv(node.name + 'gemvt', location=node.location, transA=True)
+            net_trans = not bool(getattr(node, 'transB', False))
+            result = Gemv(node.name + 'gemvt', location=node.location, transA=net_trans)
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
@@ -276,8 +321,12 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
     beta = properties.Property(allow_none=False,
                                default=0,
                                desc="A scalar which will be multiplied with C before adding C")
+    transA = properties.Property(dtype=bool, default=False, desc="Whether to transpose A before multiplying")
+    transB = properties.Property(dtype=bool, default=False, desc="Whether to transpose B before multiplying")
 
-    def __init__(self, name, location=None, alpha=1, beta=0):
+    def __init__(self, name, location=None, alpha=1, beta=0, transA=False, transB=False):
         self.alpha = alpha
         self.beta = beta
-        super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})
+        self.transA = bool(transA)
+        self.transB = bool(transB)
+        super().__init__(name, location=location, inputs=OrderedSet(('_a', '_b')), outputs={"_c"})

@@ -29,8 +29,20 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # A 0-D map crashes memlet propagation, so single-element copies use Tasklet/MemcpyCUDA1D.
     single_elt = (in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1)
 
+    # A cast is not a byte move. No memcpy variant -- host, gpuMemcpyAsync or the 2D/ND forms --
+    # can carry one, so a converting copy has to reach a tasklet that performs the conversion.
+    if inp.dtype != out.dtype:
+        # Inside a kernel the host/device boundary does not exist for the operands in hand, the way
+        # the single-element case below already reasons.
+        if not is_devicelevel_gpu(parent_state.sdfg, parent_state, node) and _is_cross_cpu_gpu(
+                inp.storage, out.storage, node, parent_state):
+            raise ValueError(f"CopyLibraryNode '{node.name}' converts {inp.dtype} to {out.dtype} across the "
+                             f"CPU/GPU boundary ({inp.storage} -> {out.storage}). Staging the transfer and "
+                             f"casting on the device is not implemented yet; keep the cast on one side of "
+                             f"the boundary, or pick an implementation explicitly.")
+        return 'Tasklet' if single_elt else 'MappedTasklet'
+
     # GPU_Shared: SharedMemoryCollective, unless thread-level (Register endpoint or in a map).
-    # TODO: replace dace::CopyND with a vectorized 128-bit collective load.
     if inp.storage == dtypes.StorageType.GPU_Shared or out.storage == dtypes.StorageType.GPU_Shared:
         thread_level = (inp.storage == dtypes.StorageType.Register or out.storage == dtypes.StorageType.Register
                         or is_in_scope(parent_state.sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock]))
@@ -40,7 +52,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
 
     # Single-element non-Shared: MemcpyCUDA1D crossing CPU/GPU or GPU<->GPU from host; else Tasklet.
     if single_elt:
-        # Device code cannot issue cudaMemcpyAsync at all, so an in-kernel single-element transfer
+        # Device code cannot issue gpuMemcpyAsync at all, so an in-kernel single-element transfer
         # is a plain assignment whichever storages it spans -- a host scalar reaches the kernel as
         # a by-value argument, and CPU_Pinned is directly device-addressable.
         inside_kernel = is_devicelevel_gpu(parent_state.sdfg, parent_state, node)
@@ -54,7 +66,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
             return 'MemcpyCUDA1D'
         return 'Tasklet'
 
-    # cudaMemcpyAsync can't issue from device code, so in-kernel multi-element copies map instead --
+    # gpuMemcpyAsync can't issue from device code, so in-kernel multi-element copies map instead --
     # but only where the kernel can dereference both ends. Crossing the boundary it cannot: there is
     # no implementation of a host-to-device copy issued from inside a kernel, neither a mapped
     # tasklet nor a Memcpy variant, so the answer is that the copy does not belong in the kernel.
@@ -109,9 +121,9 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
       collapsed rank 2, 2D pitched layout matches    -> ``MemcpyCUDA2D``
       collapsed rank 1, both sides equal length      -> ``MemcpyCUDA2D`` (degenerate ``(1, N)``)
       same-side (no CPU/GPU boundary)                -> ``MappedTasklet`` (per-element loop nest)
-      cross CPU/GPU, same rank, common stride-1 axis -> ``MemcpyCUDANDStrided`` (seq cudaMemcpyAsync/chunk)
-      cross CPU/GPU, no common stride-1 axis         -> raise (no ``cudaMemcpy*`` lowering exists;
-                                                         host can't issue cudaMemcpyAsync for
+      cross CPU/GPU, same rank, common stride-1 axis -> ``MemcpyCUDANDStrided`` (seq gpuMemcpyAsync/chunk)
+      cross CPU/GPU, no common stride-1 axis         -> raise (no ``gpuMemcpy*`` lowering exists;
+                                                         host can't issue gpuMemcpyAsync for
                                                          non-contiguous regions, device code can't
                                                          issue it at all)
 
@@ -149,7 +161,7 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
         return 'MemcpyCUDANDStrided'
 
     raise ValueError(f"CopyLibraryNode '{node.name}' has a strided cross-CPU/GPU copy pattern that "
-                     f"cannot be lowered to a single cudaMemcpy or cudaMemcpy2DAsync and has no "
+                     f"cannot be lowered to a single gpuMemcpy or cudaMemcpy2DAsync and has no "
                      f"common stride-1 axis for chunked memcpy "
                      f"(src_shape={in_shape_collapsed}, src_strides={in_strides_collapsed}, "
                      f"dst_shape={out_shape_collapsed}, dst_strides={out_strides_collapsed}); "

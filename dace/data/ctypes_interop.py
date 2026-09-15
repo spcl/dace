@@ -18,6 +18,30 @@ if TYPE_CHECKING:
     from dace.data import Data
 
 
+def _owns_its_buffer_through_a_proxy(arg: np.ndarray, argtype: 'Data') -> bool:
+    """Whether ``arg`` is the sole occupant of the buffer it reports as its base, laid out the way
+    ``argtype`` declares.
+
+    Reporting a base is not the same thing as being a view DaCe cannot analyze. numpy 2.4 rebuilds
+    a pickled array on top of a shared buffer, so every array that crossed a process boundary --
+    every argument to a test's isolated child, for one -- reports one while covering that buffer
+    whole, in the declared stride pattern, exactly as an owning array would. A sub-array or a
+    transpose fails one of the two: it is smaller than what it looks into, or its strides are not
+    the descriptor's.
+
+    Conservative on anything it cannot settle -- a symbolic stride, a base with no buffer to size
+    -- so the ownership test keeps its answer wherever the layout is not concrete.
+    """
+    try:
+        # ``memoryview``, not ``.nbytes``: the base is an ndarray on numpy 2.4 and a bytes object
+        # on 2.2, and only the buffer protocol sizes both.
+        if arg.nbytes != memoryview(arg.base).nbytes:
+            return False
+        return all(int(declared) == stride // arg.itemsize for declared, stride in zip(argtype.strides, arg.strides))
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
 def make_ctypes_argument(arg: Any,
                          argtype: 'Data',
                          name: Optional[str] = None,
@@ -80,8 +104,18 @@ def make_ctypes_argument(arg: Any,
         if (isinstance(argtype.dtype, dtypes.vector) and argtype.dtype.vtype.as_numpy_dtype() == arg.dtype):
             pass
         else:
+            # Warn and reinterpret-cast.  Auto-casting here is unsafe
+            # for intent(inout) / intent(out) args because the cast
+            # would allocate a fresh buffer that the SDFG writes into,
+            # losing the caller's writeback semantics.  ``ctypes_interop``
+            # cannot see Fortran intents at this layer.  Callers are
+            # expected to match the declared dtype (e.g. ``np.bool_``
+            # for ``bool *`` args).  HLFIR Fortran callers go through
+            # the bindings wrapper which does the cast at a layer that
+            # knows intent and does proper copy-in/copy-out.
             print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {argtype.dtype.type.__name__} array')
-    elif is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments:
+    elif (is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments
+          and not _owns_its_buffer_through_a_proxy(arg, argtype)):
         raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
                         'programs is not allowed in order to retain analyzability. '
                         'Please make a copy with "numpy.copy(...)". If you know what '

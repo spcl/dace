@@ -6,6 +6,27 @@ from dace import dtypes, SDFG, SDFGState, symbolic, properties
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
+from dace.ordered import OrderedSet
+
+
+def connectors_used_by_dataflow(nsdfg: nodes.NestedSDFG) -> bool:
+    """Whether ``SDFGState.read_and_write_sets``' access-node test already reads every input and writes every output."""
+    inputs = nsdfg.in_connectors
+    outputs = nsdfg.out_connectors
+    read: OrderedSet[str] = OrderedSet()
+    written: OrderedSet[str] = OrderedSet()
+    for inner_state in nsdfg.sdfg.all_states():
+        for node in inner_state.data_nodes():
+            name = node.data
+            if (name in inputs and name not in read
+                    and any(not e.data.is_empty() for e in inner_state.out_edges(node))):
+                read.add(name)
+            if (name in outputs and name not in written
+                    and any(not e.data.is_empty() for e in inner_state.in_edges(node))):
+                written.add(name)
+            if len(read) == len(inputs) and len(written) == len(outputs):
+                return True
+    return len(read) == len(inputs) and len(written) == len(outputs)
 
 
 @properties.make_properties
@@ -23,6 +44,9 @@ class PruneConnectors(pm.SingleStateTransformation):
         return [utils.node_path_graph(cls.nsdfg)]
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        # Exact refusal before the full read/write sets, which every probe of every sweep would rebuild.
+        if connectors_used_by_dataflow(self.nsdfg):
+            return False
 
         prune_in, prune_out = self._get_prune_sets(graph)
         if not prune_in and not prune_out:
@@ -58,6 +82,42 @@ class PruneConnectors(pm.SingleStateTransformation):
         for e in state.out_edges(nsdfg):
             if e.data.wcr is not None and e.src_conn in prune_in:
                 prune_in.remove(e.src_conn)
+
+        # Same rule one level in. A WCR write IS an implicit read of its destination
+        # (``a (CR: Sum)= x`` reads ``a``), but ``read_and_write_sets`` is pure dataflow and
+        # reports the container write-only, so the accumulator lands in ``prune_in``. The loop
+        # above only sees a WCR left on the OUTER boundary edge; a body that materialises the
+        # read-modify-write on an INNER edge (tsvc ``vpv``: ``b[i] -> tasklet -> a[i] (CR: Sum)``
+        # inside the map-body NestedSDFG) carries no outer WCR at all, and pruning ``a``'s input
+        # silently drops the accumulated value -- ``a[i] += b[i]`` degrades to ``a[i] = b[i]``.
+        if prune_in:
+            for inner_state in nsdfg.sdfg.states():
+                for e in inner_state.edges():
+                    if e.data is not None and e.data.wcr is not None:
+                        prune_in.discard(e.data.data)
+
+        # A container can also be live SYMBOLICALLY rather than as dataflow: as an index inside a
+        # memlet subset (tsvc_2_5 gather ``src[__tmp_r]``), inside a NODE (a tasklet whose code names
+        # the container after an interstate assignment was folded into it -- ``__out = tmp1 * tmp2``
+        # for an integer explicit-map elementwise kernel -- or a deeper NestedSDFG reading it), or in
+        # an interstate-edge condition or assignment. ``read_and_write_sets`` records only the
+        # container a memlet NAMES, never the symbols in its SUBSET or in node properties, so none of
+        # these reaches it -- and ``SDFG.free_symbols`` does not catch it either, because while the
+        # connector still exists the name is a DESCRIPTOR, not a symbol. It only turns into a free
+        # symbol once ``apply`` removes the data, which is exactly the "Missing symbols on nested
+        # SDFG" the validator then raises (nodes.py:809).
+        if prune_in or prune_out:
+            symbolic_uses: Set[str] = set()
+            for inner_state in nsdfg.sdfg.states():
+                for e in inner_state.edges():
+                    if e.data is not None:
+                        symbolic_uses |= {str(s) for s in e.data.free_symbols}
+                for n in inner_state.nodes():
+                    symbolic_uses |= {str(s) for s in n.free_symbols}
+            for e in nsdfg.sdfg.all_interstate_edges():
+                symbolic_uses |= {str(s) for s in e.data.free_symbols}
+            prune_in -= symbolic_uses
+            prune_out -= symbolic_uses
 
         return prune_in, prune_out
 

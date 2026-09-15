@@ -621,7 +621,9 @@ class Memlet(object):
         if self.data is None:
             return symbolic.pystr_to_symbolic('0')
 
-        param = symbolic.symbol(map.params[dim])
+        # Must be the very instance the subset carries: symbol identity includes the dtype, and one minted
+        # from the bare name would not cancel out in the difference below.
+        param = symbolic.resolve_symbol(map.params[dim], symbolic.symbols_in([self.subset]))
         array = sdfg.arrays[self.data]
 
         # Flatten the subset to a 1D-offset (using the array strides) at some iteration

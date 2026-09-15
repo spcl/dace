@@ -326,3 +326,17 @@ if __name__ == '__main__':
         test_get_binary_name_detects_folder_mode_switch(pathlib.Path(tmp_dir))
     with tempfile.TemporaryDirectory() as tmp_dir:
         test_get_folder_mode_probes_inconsistent_old_style_folder(pathlib.Path(tmp_dir))
+
+
+def test_a_missing_library_is_reported_as_a_missing_file(tmp_path: pathlib.Path):
+    """``get_program_handle`` names the library it could not find.
+
+    The check built its message by concatenating the path onto a string, and ``library_path`` is a
+    ``pathlib.Path`` two lines above -- so the missing-library branch raised ``TypeError: can only
+    concatenate str (not "PosixPath") to str`` instead of the ``FileNotFoundError`` it means. A
+    caller that legitimately probes for a library saw the wrong exception type, and the message
+    that says WHICH library never reached anyone.
+    """
+    missing = tmp_path / "never_built" / "libprogram.so"
+    with pytest.raises(FileNotFoundError, match=re.escape(str(missing))):
+        sdfg_compiler.get_program_handle(missing, _make_test_sdfg())

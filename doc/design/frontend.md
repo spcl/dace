@@ -45,9 +45,8 @@ The Python frontend preprocessing pipeline in `preprocessing.py` includes:
 1. **StructTransformer**: Handles struct initialization
 2. **ModuleResolver**: Resolves imported modules
 3. **MPIResolver**: Handles MPI-specific constructs
-4. **ModuloConverter**: Converts modulo operations
-5. **GlobalResolver**: Resolves global variables outside the function context, as well as performs some type inference
-6. **Multiple passes loop**:
+4. **GlobalResolver**: Resolves global variables outside the function context, as well as performs some type inference
+5. **Multiple passes loop**:
    - **LoopUnroller**: Unrolls loops where possible
    - **ExpressionInliner**: Inlines dace.inline() expressions
    - **ContextManagerInliner**: Handles context managers (`with` scopes)

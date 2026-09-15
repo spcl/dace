@@ -102,9 +102,34 @@ def test_submatrix():
     assert np.allclose(A, expected)
 
 
+def test_promoted_scalar_reaches_a_loop_range():
+    """A scalar promoted to ``__sym_<name>`` by a slice, then read back through the slice's shape.
+
+    Promotion adds the symbol straight to ``sdfg.symbols`` without touching the visitor scope, so a
+    range over the promoted slice's own extent came back as an undefined variable.
+    """
+    N = dc.symbol('N', dtype=dc.int64)
+
+    @dc.program
+    def promoted(rv: dc.float64[N], off: dc.int64[1], out: dc.float64[N]):
+        first_i = int(off[0])
+        last_i = first_i + 4
+        rv_i = rv[first_i:last_i]
+        for k in range(rv_i.shape[0]):
+            out[k] = rv_i[k] * 2.0
+
+    rv = np.arange(8.0, dtype=np.float64)
+    out = np.zeros(8, dtype=np.float64)
+    promoted(rv=rv, off=np.array([2], dtype=np.int64), out=out, N=8)
+    want = np.zeros(8)
+    want[:4] = rv[2:6] * 2.0
+    assert np.allclose(out, want)
+
+
 if __name__ == "__main__":
     test_toplevel_scalar_indirection()
     test_nested_scalar_indirection()
     test_array_element_scalar_indirection()
     test_array_element_scalar_indirection_in_map()
     test_submatrix()
+    test_promoted_scalar_reaches_a_loop_range()

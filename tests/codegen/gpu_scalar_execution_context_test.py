@@ -45,6 +45,7 @@ def _make_program(storage: dace.StorageType, persistent=False):
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # exercises GPUPersistentKernel (GPU_Persistent schedule) -- not supported by experimental codegen
 def test_global_scalar_update():
     sdfg = _make_program(dace.StorageType.GPU_Global, True)
     a = np.random.rand(64)
@@ -55,6 +56,7 @@ def test_global_scalar_update():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # exercises GPUPersistentKernel (GPU_Persistent schedule) -- not supported by experimental codegen
 def test_shared_scalar_update():
     sdfg = _make_program(dace.StorageType.GPU_Shared, persistent=True)
 
@@ -72,6 +74,7 @@ def test_shared_scalar_update():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # parametrized with persistent=True which uses GPU_Persistent schedule
 @pytest.mark.parametrize('persistent', (False, True))
 def test_register_scalar_update(persistent):
     sdfg = _make_program(dace.StorageType.Register, persistent)

@@ -8,7 +8,6 @@ into a fresh transient scalar (copy-in in a new start state, copy-out in a new s
 ``ConvertScalarsToLengthOneArrays`` is the inverse. These are pure-SDFG (no Fortran) tests of the Pass
 classes, covering the staging, ``preserve_abi``, ``filter`` gating and ``opaque``/View exemptions.
 """
-import ctypes
 
 import numpy as np
 
@@ -20,11 +19,6 @@ from dace.transformation.passes import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
 )
-
-try:
-    ctypes.CDLL("libgomp.so.1", ctypes.RTLD_GLOBAL)
-except OSError:
-    pass
 
 
 def _io_sdfg() -> dace.SDFG:
@@ -211,16 +205,16 @@ def test_forward_then_inverse_stays_correct():
     assert _run(sdfg, 3.0) == pytest.approx(6.0)
 
 
-def test_repeated_forward_finds_new_name_and_stays_correct():
-    """Applying the forward pass twice must not collide on the scalar name it created before
-    (``find_new_name``), and stays numerically correct."""
+def test_repeated_forward_is_idempotent_and_stays_correct():
+    """Applying the forward pass twice must be a no-op the second time and stay numerically
+    correct. Staging KEEPS the signature array, so without an already-staged check the array
+    stays eligible forever and each re-run chains another copy hop onto the last."""
     sdfg = _io_sdfg()
     ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
-    before = set(sdfg.arrays)
+    before, before_states = set(sdfg.arrays), len(list(sdfg.all_states()))
     ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
-    fresh = set(sdfg.arrays) - before
-    assert fresh, "second application created no fresh staging scalar"
-    assert all(f.startswith("scal_") for f in fresh)  # uniquified, not a collision
+    assert set(sdfg.arrays) == before, "second application re-staged an already-staged array"
+    assert len(list(sdfg.all_states())) == before_states, "second application added copy states"
     sdfg.validate()
     assert _run(sdfg, 3.0) == pytest.approx(6.0)
 
@@ -398,6 +392,73 @@ def test_other_subset_of_scalarized_side_collapses():
     sdfg.validate()
 
 
+def test_control_flow_only_gate_gets_a_copyin():
+    """A signature length-1 array read ONLY from control flow (an interstate assignment gating the
+    kernel, QE's ``IF (.NOT.okvan) RETURN``). Staging repoints that reference to the scalar, so the
+    scalar needs a copy-in: without one it is declared, read and never written, and an uninitialized
+    stack value decides whether the kernel runs."""
+    sdfg = dace.SDFG("gate_len1")
+    sdfg.add_array("flag", (1, ), dace.bool_)
+    sdfg.add_array("y", (4, ), dace.float64)
+    sdfg.add_symbol("if_cond", dace.int64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    sg = sdfg.add_state("gate")
+    s1 = sdfg.add_state("compute")
+    s2 = sdfg.add_state("end")
+    sdfg.add_edge(s0, sg, dace.InterstateEdge(assignments={"if_cond": "flag[0]"}))
+    sdfg.add_edge(sg, s1, dace.InterstateEdge(condition="if_cond"))
+    sdfg.add_edge(sg, s2, dace.InterstateEdge(condition="not if_cond"))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    tasklet = s1.add_tasklet("set1", {}, {"out": None}, "out = 1.0")
+    s1.add_edge(tasklet, "out", s1.add_write("y"), None, dace.Memlet("y[0]"))
+    sdfg.validate()
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    # preserve_abi keeps the signature array itself.
+    assert "flag" in sdfg.arrays and not sdfg.arrays["flag"].transient
+    staged = [n for n in sdfg.arrays if n.startswith("scal_flag")]
+    assert len(staged) == 1, f"expected the gate to be staged once, got {staged}"
+    scal = staged[0]
+    assert any(scal in e.data.assignments.get("if_cond", "") for e in sdfg.all_interstate_edges()), \
+        "the gate assignment was not repointed at the staged scalar"
+    writers = sum(
+        st.in_degree(nd) for st in sdfg.all_states() for nd in st.nodes()
+        if isinstance(nd, dace.nodes.AccessNode) and nd.data == scal)
+    assert writers > 0, f"{scal} is read from control flow but has no writer: the copy-in was dropped"
+    sdfg.validate()
+
+
+def test_control_flow_only_signature_scalar_gets_a_copyin():
+    """Inverse direction of the gate case: a signature ``Scalar`` read only by an interstate assignment is
+    staged into a length-1 array, and that array needs a copy-in or the gate reads uninitialized memory."""
+    sdfg = dace.SDFG("gate_scalar")
+    sdfg.add_scalar("flag", dace.int64)
+    sdfg.add_array("y", (4, ), dace.float64)
+    sdfg.add_symbol("if_cond", dace.int64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    sg = sdfg.add_state("gate")
+    s1 = sdfg.add_state("compute")
+    sdfg.add_edge(s0, sg, dace.InterstateEdge(assignments={"if_cond": "flag"}))
+    sdfg.add_edge(sg, s1, dace.InterstateEdge(condition="if_cond > 0"))
+    tasklet = s1.add_tasklet("set1", {}, {"out": None}, "out = 1.0")
+    s1.add_edge(tasklet, "out", s1.add_write("y"), None, dace.Memlet("y[0]"))
+    sdfg.validate()
+
+    ConvertScalarsToLengthOneArrays(preserve_abi=True).apply_pass(sdfg, {})
+
+    assert isinstance(sdfg.arrays["flag"], dd.Scalar) and not sdfg.arrays["flag"].transient
+    staged = [n for n in sdfg.arrays if n.startswith("arr_flag")]
+    assert len(staged) == 1, f"expected the gate to be staged once, got {staged}"
+    arr = staged[0]
+    assert any(f"{arr}[0]" in e.data.assignments.get("if_cond", "") for e in sdfg.all_interstate_edges()), \
+        "the gate assignment was not repointed at the staged array"
+    copyins = [(st.label, e.src.data) for st in sdfg.all_states() for e in st.edges()
+               if isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == arr]
+    assert copyins == [("stage_copyin", "flag")], f"{arr} is read from control flow; copy-ins found: {copyins}"
+    sdfg.validate()
+
+
 def _scatter_sdfg(tmp_is_scalar: bool) -> dace.SDFG:
     """``for i: A[(i+1) % 2] = B[i]`` staged through a single-value transient. The copy edge names the
     TRANSIENT, so the destination index lives in ``other_subset``."""
@@ -509,3 +570,39 @@ def test_arrayize_rewrites_conditional_guard_after_branch_removal():
 
     assert isinstance(sdfg.arrays['arr'], dace.data.Array)
     assert 'arr[0]' in cond.branches[0][0].as_string, cond.branches[0][0].as_string
+
+
+def test_staged_scalar_of_a_host_written_device_array_stays_on_the_host():
+    """A staged scalar host code writes must not inherit the array's device storage.
+
+    A fully sequential program (npbench crc16) has no map to offload, so the GPU offload leaves every
+    tasklet on the host while its signature arrays sit in ``GPU_Global``. Staging then produced a
+    ``GPU_Global`` scalar that a host tasklet writes, which validation rejects.
+    """
+    sdfg = dace.SDFG('host_written_device_output')
+    sdfg.add_array('crc', [1], dace.int64, transient=False, storage=dace.StorageType.GPU_Global)
+    st = sdfg.add_state('main')
+    t = st.add_tasklet('w', {}, {'o'}, 'o = 7')
+    st.add_edge(t, 'o', st.add_write('crc'), None, dace.Memlet('crc[0]'))
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    assert isinstance(sdfg.arrays['scal_crc'], dd.Scalar)
+    assert sdfg.arrays['scal_crc'].storage is not dace.StorageType.GPU_Global
+    assert sdfg.arrays['crc'].storage is dace.StorageType.GPU_Global
+    sdfg.validate()
+
+
+def test_staged_scalar_of_a_kernel_written_array_keeps_device_storage():
+    """The other side of the rule: a GPU map writing the array keeps its staged scalar on the device."""
+    sdfg = dace.SDFG('kernel_written_output')
+    sdfg.add_array('res', [1], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
+    st = sdfg.add_state('main')
+    entry, exit_ = st.add_map('k', {'i': '0:1'}, schedule=dace.ScheduleType.GPU_Device)
+    t = st.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    st.add_nedge(entry, t, dace.Memlet())
+    st.add_memlet_path(t, exit_, st.add_write('res'), src_conn='o', memlet=dace.Memlet('res[0]'))
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    assert sdfg.arrays['scal_res'].storage is dace.StorageType.GPU_Global

@@ -10,7 +10,20 @@ import dace
 from dace.library import change_default
 from dace.libraries import blas
 
-MKL_AND_CUBLAS = [pytest.param("cuBLAS", marks=pytest.mark.gpu), pytest.param("MKL", marks=pytest.mark.mkl)]
+MKL_AND_CUBLAS = [
+    pytest.param("cuBLAS",
+                 marks=[
+                     pytest.mark.gpu,
+                     pytest.mark.skipif(not blas.environments.cuBLAS.is_installed(),
+                                        reason='cuBLAS not installed on this machine')
+                 ]),
+    pytest.param("MKL",
+                 marks=[
+                     pytest.mark.mkl,
+                     pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(),
+                                        reason='Intel MKL not installed on this machine')
+                 ]),
+]
 
 
 def test_change_default():
@@ -36,6 +49,7 @@ def assert_used_environment(sdfg, impl):
 
 
 @pytest.mark.mkl
+@pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(), reason='Intel MKL not installed on this machine')
 def test_gemm_fails_storage_mkl():
 
     with change_default(blas, "MKL"):
@@ -133,3 +147,37 @@ def test_4x4(impl):
 
         sdfg(A=A, B=B, C=C)
         assert np.allclose(A @ B, C)
+
+
+def test_einsum_coefficients_survive_a_json_round_trip_of_the_expanded_gemm():
+    """An einsum hands its SymPy ``alpha``/``beta`` to MatMul and Gemm, whose untyped properties saved them as
+    text: a reloaded SDFG (the CPF canonical cache) failed to expand with ``SympifyError: '1.0'``."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.libraries.blas.nodes.gemm import Gemm
+
+    n = 4
+    sdfg = dace.SDFG('einsum_coefficient_round_trip')
+    for name in ('a', 'b', 'c'):
+        sdfg.add_array(name, [n, n], dace.float64)
+    state = sdfg.add_state()
+    node = Einsum('einsum')
+    node.einsum_str = 'ij,jk->ik'
+    node.alpha = 2.0
+    node.beta = 0.0
+    node.add_in_connector('a')
+    node.add_in_connector('b')
+    node.add_out_connector('c')
+    state.add_node(node)
+    for name in ('a', 'b'):
+        state.add_edge(state.add_read(name), None, node, name, dace.Memlet.from_array(name, sdfg.arrays[name]))
+    state.add_edge(node, 'c', state.add_write('c'), None, dace.Memlet.from_array('c', sdfg.arrays['c']))
+    sdfg.expand_library_nodes(recursive=True, predicate=lambda lib: not isinstance(lib, Gemm))
+    assert any(isinstance(lib, Gemm) for lib, _ in sdfg.all_nodes_recursive())
+
+    loaded = dace.SDFG.from_json(sdfg.to_json())
+    loaded.expand_library_nodes()
+
+    rng = np.random.default_rng(0)
+    a, b, c = rng.random((n, n)), rng.random((n, n)), np.zeros((n, n))
+    loaded(a=a, b=b, c=c)
+    assert np.allclose(c, 2.0 * (a @ b)), c

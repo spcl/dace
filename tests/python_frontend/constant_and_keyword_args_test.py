@@ -580,8 +580,7 @@ def test_constant_propagation_with_normal_argument():
     conditional_val_with_access(a, 3)
     assert np.allclose(a, 4)
     conditional_val_with_access(a, 7)  # correct value of `a` should be 8
-    assert np.allclose(
-        a, 4)  # the value of `a` will be set to 4 again since we've substituted `val` with the 3 in the cached SDFG
+    assert np.allclose(a, 8)  # the cached template is not corrupted by the earlier mutation
 
 
 def test_constant_propagation_pass():

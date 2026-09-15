@@ -143,11 +143,11 @@ dace/autodiff/
 │   ├── __init__.py                  # Package exports (46 lines)
 │   ├── dace_nodes.py                # Pure SDFG elements (487 lines)
 │   │   └── DaceNodeBackwardImplementations
-│   │       ├── _reverse_AccessNode()
-│   │       ├── _reverse_Tasklet()
-│   │       ├── _reverse_MapEntry()
-│   │       ├── _reverse_MapExit()
-│   │       └── _reverse_NestedSDFG()
+│   │       ├── reverse_access_node()
+│   │       ├── reverse_tasklet()
+│   │       ├── reverse_map_entry()
+│   │       ├── reverse_map_exit()
+│   │       └── reverse_nested_sdfg()
 │   ├── dace_reduction_nodes.py      # Reduction operations (307 lines)
 │   │   ├── ReverseReduce
 │   │   └── ... (reduction backward implementations)
