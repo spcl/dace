@@ -115,6 +115,85 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
+    @staticmethod
+    def inlinable_shared_connectors(state: SDFGState, sdfg: SDFG, nested_sdfg: nodes.NestedSDFG,
+                                    candidates: Set[str]) -> Set[str]:
+        """
+        Returns the connectors that are both inputs and outputs of the nested SDFG, are bound to the same outer
+        container with the same offsets, and whose inner access nodes can be kept as they are upon inlining. Such
+        access nodes may be read and written in any order, since reads and writes of the connector resolve to the
+        same outer memory after inlining.
+
+        :param state: The state containing the nested SDFG node.
+        :param sdfg: The SDFG containing ``state``.
+        :param nested_sdfg: The nested SDFG node.
+        :param candidates: Names of connectors that are both input and output connectors.
+        :return: The subset of ``candidates`` that fulfill the above conditions.
+        """
+        nstate: SDFGState = nested_sdfg.sdfg.nodes()[0]
+        result = set()
+        for conn in candidates:
+            desc = nested_sdfg.sdfg.arrays[conn]
+            in_edge = next(state.in_edges_by_connector(nested_sdfg, conn))
+            out_edge = next(state.out_edges_by_connector(nested_sdfg, conn))
+            imem, omem = in_edge.data, out_edge.data
+            if imem.is_empty() or omem.is_empty() or imem.data != omem.data:
+                continue
+            if isinstance(sdfg.arrays[imem.data], data.View) or isinstance(desc, (data.View, data.Structure)):
+                continue
+            if imem.other_subset is not None or omem.other_subset is not None:
+                continue
+            # Unsqueezing offsets inner indices by the subset minima and inserts the unit dimensions of the outer
+            # subset. Both must agree for the inner indices to refer to the same outer elements.
+            if len(imem.subset) != len(omem.subset) or imem.subset.min_element() != omem.subset.min_element():
+                continue
+            if [s == 1 for s in imem.subset.size()] != [s == 1 for s in omem.subset.size()]:
+                continue
+            # Inner access nodes must not require reshaping views upon inlining
+            if any(
+                    len(desc.shape) > len(mem.subset)
+                    or not InlineSDFG._check_strides(desc.strides, sdfg.arrays[mem.data].strides, mem, nested_sdfg)
+                    for mem in (imem, omem)):
+                continue
+            # Inner access nodes must not be in a scope or copy from/to other data
+            accesses = [n for n in nstate.data_nodes() if n.data == conn]
+            if not accesses or any(nstate.entry_node(n) is not None for n in accesses):
+                continue
+            if any(
+                    isinstance(neighbor, (nodes.AccessNode, nodes.LibraryNode)) for n in accesses
+                    for neighbor in itertools.chain(nstate.predecessors(n), nstate.successors(n))):
+                continue
+            result.add(conn)
+        return result
+
+    @staticmethod
+    def can_drop_shared_paths(state: SDFGState, nested_sdfg: nodes.NestedSDFG, conn: str, no_source: bool,
+                              no_sink: bool) -> bool:
+        """
+        Checks whether a shared input/output connector (see ``inlinable_shared_connectors``) without a source (or sink) access
+        node in the nested SDFG can be inlined. In that case, the outer input (or output) memlet path of the connector
+        is removed upon inlining and the inner access nodes become access nodes of the outer container. This is only
+        safe if no outer dataflow has to be ordered before (or after) the inlined nodes through that path.
+
+        :param state: The state containing the nested SDFG node.
+        :param nested_sdfg: The nested SDFG node.
+        :param conn: The shared connector name.
+        :param no_source: True if the connector has no valid source access node in the nested SDFG.
+        :param no_sink: True if the connector has no valid sink access node in the nested SDFG.
+        :return: True if the outer paths can be removed, False otherwise.
+        """
+        # Outer producers of the input would otherwise be reconnected into the inlined nodes (or lose their
+        # ordering with them), and outer consumers of the output likewise
+        if no_source:
+            root = state.memlet_path(next(state.in_edges_by_connector(nested_sdfg, conn)))[0].src
+            if not isinstance(root, nodes.AccessNode) or state.in_degree(root) > 0:
+                return False
+        if no_sink:
+            terminal = state.memlet_path(next(state.out_edges_by_connector(nested_sdfg, conn)))[-1].dst
+            if not isinstance(terminal, nodes.AccessNode) or state.out_degree(terminal) > 0:
+                return False
+        return True
+
     def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
@@ -143,6 +222,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if edge.src_conn or not edge.data.is_empty():
                 out_connectors.add(edge.src_conn)
 
+        shared_connectors = self.inlinable_shared_connectors(graph, sdfg, nested_sdfg, in_connectors & out_connectors)
+
         # Ensure output connectors have no additional outputs (if in a scope),
         # and ensure no two connectors are directly connected to each other
         if graph.entry_node(nested_sdfg) is not None:
@@ -150,7 +231,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
             nstate = nested_sdfg.sdfg.node(0)
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
-                    if (node.data in out_connectors and nstate.out_degree(node) > 0
+                    if (node.data in out_connectors and node.data not in shared_connectors
+                            and nstate.out_degree(node) > 0
                             and (node.data not in in_connectors or nstate.in_degree(node) > 0)):
                         return False
                     if (node.data in in_connectors
@@ -196,6 +278,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     rem_inpconns.remove(node.data)
                 if node.data in rem_outconns:
                     rem_outconns.remove(node.data)
+        # A shared connector may lack a source or sink access node, if its outer path can be dropped safely
+        for conn in shared_connectors & ((in_connectors - valid_inpconns) | (out_connectors - valid_outconns)):
+            no_source, no_sink = conn not in valid_inpconns, conn not in valid_outconns
+            if not self.can_drop_shared_paths(graph, nested_sdfg, conn, no_source, no_sink):
+                return False
+            valid_inpconns.add(conn)
+            valid_outconns.add(conn)
         if len(valid_inpconns) != len(in_connectors) or len(valid_outconns) != len(out_connectors):
             return False
         if len(rem_outconns) > 0:
@@ -276,7 +365,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if identifier in unused:
                 path = state.memlet_path(edge)
                 pedge = None
-                for pedge in (reversed(path) if reverse else path):
+                for i, pedge in enumerate(reversed(path) if reverse else path):
                     # If there are no other edges, it is safe to remove
                     if len([e for e in edge_func(pedge) if edge_pred(pedge, e)]) == 1:
                         # Remove connectors as well
@@ -286,6 +375,18 @@ class InlineSDFG(transformation.SingleStateTransformation):
                                 and isinstance(pedge.dst, (nodes.EntryNode, nodes.ExitNode))):
                             state.add_nedge(pedge.src, pedge.dst, Memlet())
                     else:
+                        if i > 0:
+                            # The scope connector on the near side of this edge lost its counterpart in the
+                            # previous step, so the edge must go even though the far side is still in use
+                            state.remove_edge(pedge)
+                            if reverse:
+                                pedge.dst.remove_in_connector(pedge.dst_conn)
+                            else:
+                                pedge.src.remove_out_connector(pedge.src_conn)
+                            if (isinstance(pedge.src, (nodes.EntryNode, nodes.ExitNode))
+                                    and isinstance(pedge.dst, (nodes.EntryNode, nodes.ExitNode))
+                                    and not state.edges_between(pedge.src, pedge.dst)):
+                                state.add_nedge(pedge.src, pedge.dst, Memlet())
                         break
                 else:  # Reached terminus without breaking, remove external node
                     if pedge is not None:

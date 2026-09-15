@@ -5,7 +5,8 @@ from dace.sdfg.state import FunctionCallRegion, NamedRegion
 from dace.transformation.interstate import InlineSDFG, StateFusion, InlineMultistateSDFG
 from dace.libraries import blas
 from dace.library import change_default
-from typing import Tuple, Type, Union, List
+from typing import Optional, Tuple, Type, Union, List
+import copy
 import numpy as np
 import uuid
 import os
@@ -1589,6 +1590,173 @@ def test_inline_into_view_output():
     assert np.allclose(B[1], 0)
 
 
+def make_shared_inout_sdfg(kind: str,
+                           in_map: bool,
+                           outer_context: Optional[str] = None) -> Tuple[dace.SDFG, dace_nodes.NestedSDFG]:
+    """
+    Creates an SDFG with a nested SDFG whose connector ``A`` is both an input and an output bound to the same outer
+    container, and whose (single) state reads and writes ``A`` through the same access node.
+
+    :param kind: The nested dataflow. ``write_then_read`` writes ``A[0]`` and reads it back through one access node,
+                 ``overlapping_subsets`` writes ``A[0:3]`` and then updates ``A[2:4]``, and ``read_then_write`` has
+                 source and sink nodes of ``A`` in addition to one that is both written and read.
+    :param in_map: If True, the nested SDFG is placed in a map over the rows of ``A``.
+    :param outer_context: Optional outer dataflow around the nested SDFG. ``shared_input`` reads the outer input node
+                          of ``A`` elsewhere, ``producer`` writes to it, ``consumer`` reads the outer output node of
+                          ``A``, and ``offset_mismatch`` binds the input and output of ``A`` at different offsets.
+    :return: A tuple of the SDFG and the nested SDFG node.
+    """
+    nsdfg = dace.SDFG(unique_name('shared_inout_nested'))
+    nsdfg.add_array('A', [4], dace.float64)
+    nstate = nsdfg.add_state()
+    inputs, outputs = {'A'}, {'A'}
+    if kind == 'write_then_read':
+        a = nstate.add_access('A')
+        t1 = nstate.add_tasklet('write', {'inp'}, {'out'}, 'out = 2 * inp')
+        t2 = nstate.add_tasklet('read', {'inp'}, {'out'}, 'out = inp + 1')
+        nstate.add_edge(nstate.add_read('x'), None, t1, 'inp', dace.Memlet('x[0]'))
+        nstate.add_edge(t1, 'out', a, None, dace.Memlet('A[0]'))
+        nstate.add_edge(a, None, t2, 'inp', dace.Memlet('A[0]'))
+        nstate.add_edge(t2, 'out', nstate.add_write('y'), None, dace.Memlet('y[0]'))
+        nsdfg.add_array('x', [1], dace.float64)
+        nsdfg.add_array('y', [1], dace.float64)
+        inputs.add('x')
+        outputs.add('y')
+    elif kind == 'overlapping_subsets':
+        nsdfg.add_array('x', [1], dace.float64)
+        a1 = nstate.add_access('A')
+        nstate.add_mapped_tasklet('fill',
+                                  dict(j='0:3'),
+                                  inputs={'inp': dace.Memlet('x[0]')},
+                                  code='out = inp + j',
+                                  outputs={'out': dace.Memlet('A[j]')},
+                                  input_nodes={'x': nstate.add_read('x')},
+                                  output_nodes={'A': a1},
+                                  external_edges=True)
+        nstate.add_mapped_tasklet('update',
+                                  dict(j='2:4'),
+                                  inputs={'inp': dace.Memlet('A[j]')},
+                                  code='out = 2 * inp + 1',
+                                  outputs={'out': dace.Memlet('A[j]')},
+                                  input_nodes={'A': a1},
+                                  output_nodes={'A': nstate.add_write('A')},
+                                  external_edges=True)
+        inputs.add('x')
+    elif kind == 'read_then_write':
+        a0 = nstate.add_read('A')
+        a1 = nstate.add_access('A')
+        t1 = nstate.add_tasklet('first', {'inp'}, {'out'}, 'out = 2 * inp')
+        t2 = nstate.add_tasklet('second', {'inp'}, {'out'}, 'out = inp + 1')
+        nstate.add_edge(a0, None, t1, 'inp', dace.Memlet('A[0]'))
+        nstate.add_edge(t1, 'out', a1, None, dace.Memlet('A[1]'))
+        nstate.add_edge(a1, None, t2, 'inp', dace.Memlet('A[1]'))
+        nstate.add_edge(t2, 'out', nstate.add_write('A'), None, dace.Memlet('A[2]'))
+    else:
+        raise ValueError(kind)
+
+    # The map skips row 0 of A, so that outer dataflow in the context can use it without data races
+    sdfg = dace.SDFG(unique_name(f'shared_inout_{kind}'))
+    columns = 5 if outer_context == 'offset_mismatch' else 4
+    sdfg.add_array('A', [5, columns] if in_map else [columns], dace.float64)
+    sdfg.add_array('B', [5], dace.float64)
+    sdfg.add_array('C', [5], dace.float64)
+    sdfg.add_array('D', [1], dace.float64)
+    state = sdfg.add_state()
+    nested = state.add_nested_sdfg(nsdfg, sorted(inputs), sorted(outputs))
+    row = 'i, ' if in_map else ''
+    index = 'i' if in_map else '1'
+    in_subsets = {'A': f'A[{row}0:4]', 'x': f'B[{index}]'}
+    out_subsets = {'A': f'A[{row}1:5]' if outer_context == 'offset_mismatch' else f'A[{row}0:4]', 'y': f'C[{index}]'}
+    scope = list(state.add_map('rows', dict(i='1:5'))) if in_map else []
+    outer_nodes = {}
+    for conn in sorted(inputs):
+        outer_nodes['in_' + conn] = state.add_read(in_subsets[conn].split('[')[0])
+        state.add_memlet_path(outer_nodes['in_' + conn],
+                              *scope[:1],
+                              nested,
+                              dst_conn=conn,
+                              memlet=dace.Memlet(in_subsets[conn]))
+    for conn in sorted(outputs):
+        outer_nodes['out_' + conn] = state.add_write(out_subsets[conn].split('[')[0])
+        state.add_memlet_path(nested,
+                              *scope[1:],
+                              outer_nodes['out_' + conn],
+                              src_conn=conn,
+                              memlet=dace.Memlet(out_subsets[conn]))
+
+    row0 = '0, ' if in_map else ''
+    if outer_context in ('shared_input', 'consumer'):
+        node = outer_nodes['in_A' if outer_context == 'shared_input' else 'out_A']
+        tasklet = state.add_tasklet('outer_read', {'inp'}, {'out'}, 'out = inp')
+        state.add_edge(node, None, tasklet, 'inp', dace.Memlet(f'A[{row0}3]'))
+        state.add_edge(tasklet, 'out', state.add_write('D'), None, dace.Memlet('D[0]'))
+    elif outer_context == 'producer':
+        tasklet = state.add_tasklet('outer_write', {}, {'out'}, 'out = 7')
+        state.add_edge(tasklet, 'out', outer_nodes['in_A'], None, dace.Memlet(f'A[{row0}3]'))
+    elif outer_context not in (None, 'offset_mismatch'):
+        raise ValueError(outer_context)
+
+    sdfg.validate()
+    return sdfg, nested
+
+
+def check_shared_inout_inlining(sdfg: dace.SDFG, nested: dace_nodes.NestedSDFG) -> None:
+    """
+    Inlines the nested SDFG, ensures nothing remains nested, and compares the results with the original SDFG.
+
+    :param sdfg: The SDFG created by ``make_shared_inout_sdfg``.
+    :param nested: The nested SDFG node to inline.
+    """
+    reference = copy.deepcopy(sdfg)
+    reference.name = unique_name(sdfg.name + '_reference')
+
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
+    sdfg.validate()
+    assert not any(isinstance(node, dace_nodes.NestedSDFG) for node, parent in sdfg.all_nodes_recursive())
+
+    rng = np.random.default_rng(42)
+    arguments = {name: rng.random(desc.shape) for name, desc in sdfg.arrays.items() if not desc.transient}
+    expected = {name: value.copy() for name, value in arguments.items()}
+    reference(**expected)
+    sdfg(**arguments)
+    for name in arguments:
+        assert np.allclose(arguments[name], expected[name]), name
+
+
+@pytest.mark.parametrize('in_map', [False, True])
+@pytest.mark.parametrize('kind', ['write_then_read', 'overlapping_subsets', 'read_then_write'])
+def test_inline_shared_inout_connector(kind: str, in_map: bool):
+    """
+    Tests inlining a nested SDFG whose connector is an input and an output of the same outer container, and whose
+    access node of that container is both written and read.
+    """
+    sdfg, nested = make_shared_inout_sdfg(kind, in_map)
+    check_shared_inout_inlining(sdfg, nested)
+
+
+@pytest.mark.parametrize('in_map', [False, True])
+def test_inline_shared_inout_connector_shared_outer_input(in_map: bool):
+    """
+    Tests inlining a shared input/output connector without a source access node, whose outer input node is also
+    read by other dataflow.
+    """
+    sdfg, nested = make_shared_inout_sdfg('write_then_read', in_map, 'shared_input')
+    check_shared_inout_inlining(sdfg, nested)
+
+
+@pytest.mark.parametrize('in_map', [False, True])
+@pytest.mark.parametrize('outer_context', ['producer', 'consumer', 'offset_mismatch'])
+def test_inline_shared_inout_connector_rejected(outer_context: str, in_map: bool):
+    """
+    Tests that a shared input/output connector without source or sink access nodes is not inlined if its outer
+    input is written or its outer output is read in the same state (which would lose the ordering with the inlined
+    nodes), or if the input and output bind the connector to different offsets.
+    """
+    sdfg, nested = make_shared_inout_sdfg('write_then_read', in_map, outer_context)
+    with pytest.raises(ValueError, match='Transformation cannot be applied'):
+        InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
+
+
 if __name__ == "__main__":
     test()
     # Skipped due to bug that cannot be reproduced outside CI
@@ -1634,3 +1802,12 @@ if __name__ == "__main__":
     test_inline_write_write_conflict()
     test_inline_nested_accessnode()
     test_inline_into_view_output()
+
+    for kind in ['write_then_read', 'overlapping_subsets', 'read_then_write']:
+        for in_map in [False, True]:
+            test_inline_shared_inout_connector(kind=kind, in_map=in_map)
+    for in_map in [False, True]:
+        test_inline_shared_inout_connector_shared_outer_input(in_map=in_map)
+    for outer_context in ['producer', 'consumer', 'offset_mismatch']:
+        for in_map in [False, True]:
+            test_inline_shared_inout_connector_rejected(outer_context=outer_context, in_map=in_map)
