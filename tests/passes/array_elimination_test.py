@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
+import numpy as np
 from dace.sdfg import utils as sdutil
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.array_elimination import ArrayElimination
@@ -402,6 +403,45 @@ def test_slice_view_fold_still_removes_a_safe_view():
     got = np.zeros((8, 4))
     sdfg(inp=inp, out=got)
     assert np.array_equal(got, 2.0 * inp[:, 0:8:2] + 3.0 * inp[:, 1:8:2])
+
+
+def test_folding_a_dead_view_chain_does_not_leave_its_source_isolated():
+    """A state that only views a container through views nothing reads (cp2k_grid_integrate's broadcast gather
+    indices) lost both views to the slice-view fold and kept the container's access node with no edges."""
+    from dace.transformation.passes import analysis as ap
+
+    S = dace.symbol('S')
+    sdfg = dace.SDFG('dead_view_chain')
+    sdfg.add_array('A', [S], dace.int64, transient=True)
+    sdfg.add_array('out', [S], dace.int64)
+    sdfg.add_view('A_view', [1, S], dace.int64)
+    sdfg.add_view('A_view_view', [1, S], dace.int64)
+    init = sdfg.add_state('init')
+    fill = init.add_tasklet('fill', {}, {'o'}, 'o = 1')
+    me, mx = init.add_map('fill_map', dict(i='0:S'))
+    init.add_nedge(me, fill, dace.Memlet())
+    init.add_memlet_path(fill, mx, init.add_write('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
+    dead = sdfg.add_state_after(init, 'dead_views')
+    first_view = dead.add_access('A_view')
+    dead.add_edge(dead.add_read('A'), None, first_view, 'views', dace.Memlet('A[0:S]'))
+    dead.add_edge(first_view, None, dead.add_access('A_view_view'), 'views', dace.Memlet('A_view[0, 0:S]'))
+    use = sdfg.add_state_after(dead, 'use')
+    use.add_nedge(use.add_read('A'), use.add_write('out'), dace.Memlet('A[0:S]'))
+    sdfg.validate()
+
+    results = {
+        ap.StateReachability.__name__: ap.StateReachability().apply_pass(sdfg, {}),
+        ap.FindAccessStates.__name__: ap.FindAccessStates().apply_pass(sdfg, {}),
+    }
+    ArrayElimination().apply_pass(sdfg, results)
+
+    assert all(state.degree(node) > 0 for state in sdfg.all_states() for node in state.nodes()), [
+        (state.label, str(node)) for state in sdfg.all_states() for node in state.nodes() if state.degree(node) == 0
+    ]
+    sdfg.validate()
+    out = np.zeros(4, dtype=np.int64)
+    sdfg(out=out, S=4)
+    assert np.array_equal(out, [1, 1, 1, 1]), out
 
 
 if __name__ == '__main__':

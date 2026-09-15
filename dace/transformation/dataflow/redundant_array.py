@@ -2042,6 +2042,11 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         # Remove view node
         state.remove_node(self.view)
+        # A view nothing reads through (or writes through) held the only edge of the node on its other side, which
+        # would be left isolated.
+        adjacent = view_edge.src if is_src else view_edge.dst
+        if isinstance(adjacent, nodes.AccessNode) and state.degree(adjacent) == 0:
+            state.remove_node(adjacent)
 
     def _offset_subset(self, mapping: Dict[int, int], subset: subsets.Range, edge_subset: subsets.Range):
         """Compose ``edge_subset`` (view space) into ``subset`` (array space) affinely.
