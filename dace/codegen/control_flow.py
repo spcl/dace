@@ -76,6 +76,15 @@ def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
     return expr
 
 
+def _statements(block) -> list:
+    """The statements of a :class:`~dace.properties.CodeBlock` as a list (a loop's init or update block may hold
+    several, e.g. the loop variable plus loop-carried symbols such as address cursors)."""
+    code = block.code
+    if isinstance(code, list):
+        return code
+    return [code]
+
+
 def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState], str], codegen: 'DaCeCodeGenerator',
                          symbols: Dict[str, dtypes.typeclass]) -> str:
     """
@@ -100,18 +109,24 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
         lsyms[loop.loop_variable] = codegen.dispatcher.defined_vars.get(loop.loop_variable)[1]
 
     if loop.init_statement:
-        init = unparse_interstate_edge(loop.init_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
-        init = init.strip(';')
+        inits = [
+            unparse_interstate_edge(stmt, sdfg, codegen=codegen, symbols=lsyms).strip(';')
+            for stmt in _statements(loop.init_statement)
+        ]
     else:
-        init = ''
+        inits = []
 
     if loop.update_statement:
-        update = unparse_interstate_edge(loop.update_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
-        update = update.strip(';')
+        updates = [
+            unparse_interstate_edge(stmt, sdfg, codegen=codegen, symbols=lsyms).strip(';')
+            for stmt in _statements(loop.update_statement)
+        ]
     else:
-        update = ''
+        updates = []
 
     if loop.inverted:
+        init = ';\n'.join(inits)
+        update = ';\n'.join(updates)
         if loop.update_before_condition:
             if init:
                 expr += f'{init};\n'
@@ -133,6 +148,8 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
                 expr += f'{update};\n'
             expr += '}\n'
     else:
+        init = ', '.join(inits)
+        update = ', '.join(updates)
         if loop.unroll:
             if loop.unroll_factor >= 1:
                 expr += f'#pragma unroll {loop.unroll_factor}\n'
