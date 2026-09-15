@@ -105,6 +105,27 @@ def test_potrf(implementation, dtype, storage):
     assert (np.linalg.norm(cholesky_ref - np.tril(A)) / np.linalg.norm(cholesky_ref)) < rtol
 
 
+N_COMPLEX = dace.symbol('N_COMPLEX', dtype=dace.int64)
+
+
+@dace.program
+def complex_cholesky(a: dace.complex128[N_COMPLEX, N_COMPLEX], out: dace.complex128[N_COMPLEX, N_COMPLEX]):
+    out[:] = np.linalg.cholesky(a)
+
+
+@pytest.mark.lapack
+def test_a_complex_cholesky_compiles_against_lapacke_and_matches_numpy():
+    """LAPACKE's complex routines take ``lapack_complex_double*``, which C++ does not convert from
+    ``dace::complex128*``: cegterg's complex Cholesky failed to compile without the cast."""
+    rng = np.random.default_rng(0)
+    m = rng.random((4, 4)) + 1j * rng.random((4, 4))
+    a = m @ m.conj().T + 4 * np.eye(4)
+    out = np.zeros((4, 4), dtype=np.complex128)
+    complex_cholesky(a=a.copy(), out=out, N_COMPLEX=4)
+    want = np.linalg.cholesky(a)
+    assert np.allclose(out, want, rtol=1e-12, atol=1e-12), out - want
+
+
 ###############################################################################
 
 if __name__ == "__main__":

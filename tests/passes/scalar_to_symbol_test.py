@@ -1149,3 +1149,40 @@ def test_only_a_subscripted_connector_is_an_indirection_candidate(language, code
     state.add_edge(tasklet, 'b', state.add_access('B'), None, dace.Memlet('B'))
 
     assert scalar_to_symbol.tasklet_subscripts_a_connector(state, tasklet) is expected
+
+
+N_PICK = dace.symbol('N_PICK', dtype=dace.int64)
+
+
+@dace.program
+def pick_pair(a: dace.int32, b: dace.int32, target: dace.int64, bonus: dace.int64):
+    if a + b == target:
+        return bonus
+    else:
+        return 0
+
+
+@dace.program
+def scalar_arguments_through_a_nested_program(seq: dace.int32[N_PICK], out: dace.int64[N_PICK], target: dace.int64,
+                                              bonus: dace.int64):
+    for i in range(N_PICK - 1):
+        out[i] = pick_pair(seq[i], seq[i + 1], target, bonus)
+
+
+def test_a_promoted_argument_stays_mapped_into_a_nested_sdfg_through_constant_propagation():
+    """The nested mapping named the promoted parent symbol by its text, which ConstantPropagation keeps as a constant:
+    it substituted the name into the body and dropped the mapping (nussinov: missing symbols on nested SDFG)."""
+    from dace.transformation.passes.constant_propagation import ConstantPropagation
+
+    sdfg = scalar_arguments_through_a_nested_program.to_sdfg(simplify=True)
+    assert any(isinstance(n, dace.nodes.NestedSDFG) for n, _ in sdfg.all_nodes_recursive())
+    promote = scalar_to_symbol.ScalarToSymbolPromotion()
+    promote.transients_only = False
+    promote.apply_pass(sdfg, {})
+    ConstantPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    seq = np.array([1, 2, 3, 0, 3], dtype=np.int32)
+    out = np.zeros(5, dtype=np.int64)
+    sdfg(seq=seq, out=out, target=np.int64(3), bonus=np.int64(7), N_PICK=5)
+    assert np.array_equal(out, [7, 0, 7, 7, 0]), out
