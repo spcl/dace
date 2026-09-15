@@ -546,9 +546,13 @@ def test_access_node_inside_map_is_a_leaf():
         and not isinstance(e.src, dace.nodes.AccessNode)
     ][0]
     cur, init, step = _cursor_of(_loops(sdfg)[0], 'A')
-    assert inner.data.data == '__dace_flat_A' and str(inner.data.subset) == f'{cur} + j'
+    cur_sym = dace.symbolic.pystr_to_symbolic(cur)
+    assert inner.data.data == '__dace_flat_A'
+    assert (inner.data.subset.ranges[0][0] - (cur_sym + dace.symbolic.symbol('j'))).expand() == 0
     outer = state.memlet_path(inner)[0]
-    assert outer.src.data == '__dace_flat_A' and str(outer.data.subset) == f'{cur}:{cur} + M'
+    assert outer.src.data == '__dace_flat_A'
+    assert (outer.data.subset.ranges[0][0] - cur_sym).expand() == 0
+    assert (outer.data.subset.ranges[0][1] - (cur_sym + M - 1)).expand() == 0
     assert str(step) == 'M' and str(init) == '0'
     n, m = 5, 7
     A = np.random.default_rng(8).random((n, m)).astype(np.float32)
@@ -632,7 +636,7 @@ def test_stencil3d_window_padded_strides_and_offset():
     # other six carry a positive stride combination that no longer mentions any loop variable.
     ka = cur['k', 'A'][0]
     assert reads.count(ka) == 1
-    assert all(r == ka or (r.lstrip('(').startswith(f'{ka} + ') and '-' not in r) for r in reads)
+    assert all(r == ka or (re.search(rf'\b{ka}\b', r) and '-' not in r) for r in reads)
     assert not any(re.search(r'\b[ijk]\b', r) for r in reads)
     assert _accesses(body, '__dace_flat_B') == [cur['k', 'B'][0]]
     assert _LOOPVAR_MULTIPLY.search(_loop_text(code, 'i')) is None

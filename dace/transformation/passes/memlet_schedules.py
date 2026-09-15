@@ -503,7 +503,7 @@ class _CursorTable:
     def __init__(self, sdfg: SDFG, chain_outer_loops: bool):
         self.sdfg = sdfg
         self.chain = chain_outer_loops
-        self.classes: Dict[Tuple, Tuple[str, sp.Basic]] = {}  #: class key -> (symbol name, anchor)
+        self.classes: Dict[Tuple, Tuple[symbolic.symbol, sp.Basic]] = {}  #: class key -> (cursor symbol, anchor)
         self.used: Set[str] = set(sdfg.symbols.keys())
         self.created = 0
 
@@ -519,11 +519,12 @@ class _CursorTable:
         return (loop.label, array, dtype, share_key, str(step), str(base_wo_v))
 
     def cursor_for(self, loop: LoopRegion, array: str, dtype: dtypes.typeclass, class_base: sp.Basic, anchor: sp.Basic,
-                   share_key: Optional[str]) -> Tuple[str, sp.Basic]:
+                   share_key: Optional[str]) -> Tuple[symbolic.symbol, sp.Basic]:
         """Return (creating if needed) the cursor symbol of ``loop`` that tracks ``class_base`` -- an expression
         affine in the loop variable and free of symbols defined inside the loop body -- together with the
         nest-invariant ``anchor`` the cursor additionally holds (the anchor requested here if the cursor is
         created now, the existing cursor's anchor otherwise; callers add the difference to their immediates).
+        The symbol is the typed DaCe symbol registered in the SDFG; callers use it directly in expressions.
 
         Chaining: the cursor's entry value ``class_base(v_0) + anchor`` is itself an address that may be affine in
         an enclosing loop's variable. Instead of recomputing it at every entry of ``loop`` (a multiply-add per
@@ -563,17 +564,18 @@ class _CursorTable:
                 # The outer cursor absorbs the invariant remainder, so the inner cursor starts exactly at it.
                 # A per-memlet ``share_key`` override applies to the memlet's own cursor only, so outer cursors
                 # are shared by every nest that needs them.
-                outer_name, outer_anchor = self.cursor_for(outer, array, dtype, rest, const, None)
-                init_expr = sp.expand(sp.Symbol(outer_name) + const - outer_anchor)
+                outer_cursor, outer_anchor = self.cursor_for(outer, array, dtype, rest, const, None)
+                init_expr = sp.expand(outer_cursor + const - outer_anchor)
                 break
 
         name = self._name(array, loop)
         self.sdfg.add_symbol(name, dtype)
+        cursor = symbolic.symbol(name, dtype)
         _append_statement(loop, 'init_statement', f'{name} = {_pystr(init_expr)}')
-        _append_statement(loop, 'update_statement', f'{name} = {_pystr(sp.Symbol(name) + step)}')
-        self.classes[key] = (name, anchor)
+        _append_statement(loop, 'update_statement', f'{name} = {_pystr(cursor + step)}')
+        self.classes[key] = (cursor, anchor)
         self.created += 1
-        return name, anchor
+        return cursor, anchor
 
     def _name(self, array: str, loop: LoopRegion) -> str:
         """Deterministic identifier ``__dace_cur_<array>_<loop>`` (suffixed on collision, e.g. when one loop
@@ -737,10 +739,10 @@ def lower_loop_cursors(sdfg: SDFG,
             # Anchor the class at the nest-invariant offset of one member (see _choose_anchor), so that a window's
             # base offset is added once, on loop entry, and each access carries only its small difference.
             anchor = _choose_anchor([_invariant_part(dec.immediate, inner) for _, _, dec in items])
-            name, cursor_anchor = cursors.cursor_for(loop, array, dtypes_of[key], dec0.class_base, anchor,
-                                                     edge0.data.schedule.share_key)
+            cursor, cursor_anchor = cursors.cursor_for(loop, array, dtypes_of[key], dec0.class_base, anchor,
+                                                       edge0.data.schedule.share_key)
             for state, edge, dec in items:
-                _rewrite(state, edge, dec, name, cursor_anchor, refs)
+                _rewrite(state, edge, dec, cursor, cursor_anchor, refs)
                 lowered += 1
     return {'cursors': cursors.created, 'memlets': lowered, 'dropped': dropped}
 
@@ -756,7 +758,7 @@ def _cursor_dtype(sched: LoopCursor, desc: dt.Data, assume_int32: bool) -> dtype
     return dtypes.int32 if (assume_int32 or extent_bytes_int32(desc)) else dtypes.int64
 
 
-def _rewrite(state: SDFGState, edge: MultiConnectorEdge[Memlet], dec: OffsetDecomposition, cursor: str,
+def _rewrite(state: SDFGState, edge: MultiConnectorEdge[Memlet], dec: OffsetDecomposition, cursor: symbolic.symbol,
              cursor_anchor: sp.Basic, refs: _References) -> None:
     """Rewrite one scheduled memlet to address through the cursor: ``flat[cursor + immediate]`` for contiguous
     memlets, a window reference for non-contiguous reads."""
@@ -766,7 +768,7 @@ def _rewrite(state: SDFGState, edge: MultiConnectorEdge[Memlet], dec: OffsetDeco
     desc = state.sdfg.arrays[array]
     root, is_read = _root(state, edge)
     immediate = sp.expand(dec.immediate - cursor_anchor)
-    index = sp.Symbol(cursor) + immediate
+    index = cursor + immediate
     flat = refs.flat_reference(array)
     length = flat_length(desc, old.subset)
     if length is not None:
@@ -786,6 +788,6 @@ def _rewrite(state: SDFGState, edge: MultiConnectorEdge[Memlet], dec: OffsetDeco
                         wcr_nonatomic=old.wcr_nonatomic,
                         allow_oob=old.allow_oob,
                         debuginfo=old.debuginfo)
-    sched.cursor, sched.reference, sched.window, sched.immediate = cursor, flat, window, immediate
+    sched.cursor, sched.reference, sched.window, sched.immediate = cursor.name, flat, window, immediate
     new_memlet.schedule = sched
     _reroute(state, edge, new_root, is_read, new_memlet)
