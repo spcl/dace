@@ -808,7 +808,14 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
             return dst
 
         # Writes through views conflict on the viewed container
-        dst = sdutil.get_last_view_node(dfg, dst) or dst
+        viewed = sdutil.get_last_view_node(dfg, dst)
+        if viewed is None and isinstance(sdfg.arrays[dst.data], data.View):
+            # An inlined nested SDFG leaves the ``views`` edge leaving through the map exit: follow it.
+            view_edge = sdutil.get_view_edge(dfg, dst)
+            if view_edge is not None and view_edge.src is dst:
+                edge = view_edge
+                continue
+        dst = viewed or dst
 
         if dfg.in_degree(dst) > 0:
             for x, y in itertools.combinations(dfg.in_edges(dst), 2):
