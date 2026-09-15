@@ -15,7 +15,7 @@ import pytest
 import dace
 from dace import data as dt, subsets
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.vectorization.utils.injectivity import scatter_write_is_injective
+from dace.transformation.passes.vectorization.utils.injectivity import scatter_write_is_injective, write_subset_is_injective
 from dace.transformation.passes.vectorization.utils.map_predicates import (is_innermost_map, map_body_is_tile_lowerable)
 
 N = dace.symbol('N', dtype=dace.int64, positive=True)
@@ -66,6 +66,31 @@ def test_the_diagonal_scatter_is_admitted_at_one_tile_dim_and_refused_above_it()
     assert map_body_is_tile_lowerable(state, entry, 1) is True
     assert map_body_is_tile_lowerable(state, entry, 2) is False
     assert map_body_is_tile_lowerable(state, entry) is False
+
+
+@pytest.mark.parametrize('typed', [True, False])
+@pytest.mark.parametrize('written,params,injective', [
+    ('i, j', ['i', 'j'], True),
+    ('j, i', ['i', 'j'], True),
+    ('2*i + 1', ['i'], True),
+    ('i', ['i', 'j'], False),
+    ('8*i + j', ['i', 'j'], False),
+])
+def test_a_write_over_several_map_params_is_injective_when_each_param_owns_a_dim(written, params, injective, typed):
+    """A write to ``aa[i, j]`` over a map on ``i, j`` was refused outright (only one param was ever decided), and
+    an ``int64`` iterator never matched its untyped spelling: TSVC s2275 kept a WCR the tile vectorizer refuses."""
+    symbols = {
+        name: dace.symbol(name, dtype=dace.int64) if typed else dace.symbolic.pystr_to_symbolic(name)
+        for name in ('i', 'j')
+    }
+    dims = [
+        dace.symbolic.pystr_to_symbolic(dim.strip()).subs({
+            dace.symbolic.pystr_to_symbolic(n): s
+            for n, s in symbols.items()
+        }) for dim in written.split(',')
+    ]
+    subset = subsets.Range([(dim, dim, 1) for dim in dims])
+    assert write_subset_is_injective(subset, params) is injective
 
 
 if __name__ == '__main__':

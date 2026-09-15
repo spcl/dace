@@ -13,39 +13,40 @@ from dace import subsets, symbolic
 
 
 def write_subset_is_injective(write_subset: subsets.Range, params: list[str]) -> bool:
-    """Write at ``write_subset`` hits a DISTINCT element per distinct enclosing ``params`` value
+    """Write at ``write_subset`` hits a DISTINCT element per distinct tuple of the enclosing ``params``
     -> conflict-free.
 
-    Conservative: only the single-param affine case is decided (the ``a[c*i+d]`` in-place shape).
-    Injective iff some dim is ``c*i+d`` with ``c`` a nonzero numeric constant and no dim is a
-    loop-varying multi-element range. A reduction (``c == 0``) is NOT injective; a symbolic stride
-    (``c`` not provably nonzero) is left to the guarded parallelization passes.
+    Conservative. Every param needs a dedicated single-element dim ``c*p+d`` with ``c`` a nonzero
+    numeric constant and no other param in it: two iterations that differ in any param then differ in
+    that dim. A loop-varying multi-element dim may overlap between iterations and refuses; a dim over
+    several params (``i*N+j``) decides nothing on its own. A reduction (``c == 0``, or a param in no
+    dim) is NOT injective; a symbolic stride (``c`` not provably nonzero) is left to the guarded
+    parallelization passes. Symbols match by name, so an ``int64`` iterator and its untyped spelling
+    are one parameter.
 
     :param write_subset: the written range.
-    :param params: enclosing iteration parameters; anything but a single one is refused.
+    :param params: enclosing iteration parameters.
     :returns: ``True`` only when the write is provably injective.
     """
-    if len(params) != 1:
+    if not params:
         return False
-    p = symbolic.pystr_to_symbolic(params[0])
-    monotone_dim = False
-    for (b, e, _step) in write_subset.ranges:
-        be = symbolic.pystr_to_symbolic(b)
-        en = symbolic.pystr_to_symbolic(e)
-        depends = p in be.free_symbols or p in en.free_symbols
-        if be != en:
+    ranges = equalized_range(write_subset).ranges
+    by_name = {str(sym): sym for rng in ranges for bound in rng for sym in bound.free_symbols}
+    loop_syms = {name: by_name.get(name, symbolic.pystr_to_symbolic(name)) for name in params}
+    covered = set()
+    for (begin, end, _step) in ranges:
+        varying = [name for name, sym in loop_syms.items() if sym in begin.free_symbols or sym in end.free_symbols]
+        if begin != end:
             # Multi-element range: if loop-varying, per-iter windows may overlap -> not injective.
-            if depends:
+            if varying:
                 return False
             continue
-        if depends:
-            slope = sympy.diff(be, p)
-            if slope.is_number and slope != 0:
-                monotone_dim = True
-            else:
-                # Non-affine, or a symbolic slope we cannot prove nonzero.
-                return False
-    return monotone_dim
+        if len(varying) != 1:
+            continue
+        slope = sympy.diff(begin, loop_syms[varying[0]])
+        if slope.is_number and slope != 0:
+            covered.add(varying[0])
+    return covered == set(params)
 
 
 def equalized_range(write_subset: subsets.Range) -> subsets.Range:
