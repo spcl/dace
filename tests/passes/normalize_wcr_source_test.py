@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 
 
@@ -321,6 +322,45 @@ def test_seed_fresh_write_once_accumulator():
     out = np.empty(n)
     sdfg(src=src, out=out)
     assert np.allclose(out, src), f'write-once acc[i] = 0 + src[i]; got {out}'
+
+
+def test_seed_covers_only_the_window_the_reduction_writes():
+    """A fresh accumulator reduced over a per-iteration window was seeded over its whole shape, so a
+    two-slot reduction inside an ``i`` loop paid a full-array fill every iteration (the compound nest
+    after PR #2586 inlined its loop body)."""
+    n = 16
+    sdfg = dace.SDFG('seed_window')
+    sdfg.add_symbol('b', dace.int64)
+    sdfg.add_array('src', [n], dace.float64)
+    sdfg.add_array('out', [2], dace.float64)
+    sdfg.add_transient('acc', [n], dace.float64)
+    st = sdfg.add_state('m')
+    me, mx = st.add_map('m', {'i': 'b:b + 2'})
+    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
+    st.add_memlet_path(st.add_read('src'), me, t, dst_conn='_in', memlet=dace.Memlet('src[i]'))
+    st.add_memlet_path(t,
+                       mx,
+                       st.add_access('acc'),
+                       src_conn='_out',
+                       memlet=dace.Memlet(data='acc', subset='i', wcr='lambda a, b: a + b'))
+    st2 = sdfg.add_state_after(st, 'c')
+    st2.add_nedge(st2.add_read('acc'), st2.add_write('out'), dace.Memlet('acc[b:b + 2]'))
+    propagate_memlets_sdfg(sdfg)
+    sdfg.validate()
+
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    seed_maps = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.params[0].startswith('_wcrseed')
+    ]
+    assert [str(m.map.range) for m in seed_maps] == ['b:b + 2'], [str(m.map.range) for m in seed_maps]
+
+    src = np.random.default_rng(1).uniform(-1.0, 1.0, size=n)
+    out = np.empty(2)
+    sdfg(src=src, out=out, b=5)
+    assert np.allclose(out, src[5:7]), f'acc[b:b + 2] = 0 + src[b:b + 2]; got {out}'
 
 
 def test_seed_spares_top_level_argument():

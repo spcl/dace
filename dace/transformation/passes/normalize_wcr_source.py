@@ -62,7 +62,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy
 
-from dace import SDFG, SDFGState, data, dtypes
+from dace import SDFG, SDFGState, data, dtypes, subsets
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -438,6 +438,23 @@ class NormalizeWCRSource(ppl.Pass):
             return str(int(val))
         return repr(float(val))
 
+    def _written_window(self, sd: SDFG, name: str, state: SDFGState, desc: data.Data) -> subsets.Range:
+        """The slots of ``name`` the reduction in ``state`` writes: the bounding box of its WCR writes into
+        ``name``, or the whole array when a write has no subset or a bound names a symbol ``sd`` does not
+        define. A per-iteration window seeded over the whole array costs the full shape every iteration."""
+        whole = subsets.Range([(0, s - 1, 1) for s in desc.shape])
+        window = None
+        for e in state.edges():
+            if not (isinstance(e.dst, nodes.AccessNode) and e.dst.data == name and e.data.wcr is not None):
+                continue
+            sub = e.data.get_dst_subset(e, state) or e.data.subset
+            if sub is None or len(sub) != len(desc.shape):
+                return whole
+            window = copy.deepcopy(sub) if window is None else subsets.bounding_box_union(window, sub)
+        if window is None or {str(s) for s in window.free_symbols} - set(sd.symbols.keys()):
+            return whole
+        return window
+
     def _seed_accumulator(self, sd: SDFG, name: str, wcr: str, states: Set[SDFGState]) -> bool:
         """Prepend an identity-seed state so the fresh accumulator starts defined before its
         reduction. The seed is an explicit identity-init *tasklet* (not ``setzero``): a
@@ -467,6 +484,7 @@ class NormalizeWCRSource(ppl.Pass):
             seed.add_edge(t, '__out', w, None, Memlet(data=name, subset='0'))
         else:
             me, mx = seed.add_map(name + '_wcr_seed', {f'_wcrseed_i{d}': f'0:{s}' for d, s in enumerate(desc.shape)})
+            me.map.range = self._written_window(sd, name, next(iter(states)), desc)
             t = seed.add_tasklet(name + '_wcr_seed', {}, {'__out'}, f'__out = {lit}')
             idx = ', '.join(f'_wcrseed_i{d}' for d in range(len(desc.shape)))
             seed.add_edge(me, None, t, None, Memlet())
