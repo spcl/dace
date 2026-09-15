@@ -464,6 +464,8 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
                 matcher = _node_matcher
             elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 1:
                 matcher = _edge_matcher
+            elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 0:
+                matcher = _unconnected_pair_matcher
             else:
                 matcher = _subgraph_isomorphism_matcher
 
@@ -489,6 +491,31 @@ def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
     for nid in digraph:
         if node_pred(digraph.nodes[nid], pnode):
             yield {nid: pnid}
+
+
+def _unconnected_pair_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match two pattern nodes that are not connected by an edge.
+
+        Yields the same matches in the same order as ``_subgraph_isomorphism_matcher``, whose
+        subgraph isomorphisms are induced: ordered pairs of distinct nodes that satisfy the node
+        predicate, are not adjacent in either direction and have no self-edge. VF2 runs its
+        feasibility test on every graph node for the second pattern node, once per candidate for
+        the first, which dominates the matching time on large states.
+    """
+    first, second = nxpattern
+    first_pattern_node = nxpattern.nodes[first]
+    second_pattern_node = nxpattern.nodes[second]
+
+    def candidates(pattern_node):
+        return [
+            nid for nid in digraph if node_pred(digraph.nodes[nid], pattern_node) and not digraph.has_edge(nid, nid)
+        ]
+
+    second_candidates = candidates(second_pattern_node)
+    for u in candidates(first_pattern_node):
+        for v in second_candidates:
+            if u != v and not digraph.has_edge(u, v) and not digraph.has_edge(v, u):
+                yield {u: first, v: second}
 
 
 def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):
