@@ -5,6 +5,7 @@ import dace
 import numpy as np
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
@@ -540,3 +541,40 @@ def test_a_scan_seeded_in_the_same_state_keeps_its_accumulator_load():
     sdfg(a=got_a, b=got_b, inc=inc.copy(), gd=gd.copy(), KLEV=klev, KLON=klon)
     assert np.allclose(got_a, ref_a), f'self-seeded scan wrong: max|d|={np.max(np.abs(got_a - ref_a)):.3e}'
     assert np.allclose(got_b, ref_b), f'cross-seeded scan wrong: max|d|={np.max(np.abs(got_b - ref_b)):.3e}'
+
+
+def test_a_privatized_subtraction_on_a_nested_map_exit_chain_reverts():
+    """gramschmidt once its loop body is inlined: ``A[j, i] -= 2 q[j]`` reaches ``A`` as ``priv -(a-b)-> inner exit
+    -(a-b)-> outer exit -(a-b)-> A``. No pattern reached an output two map exits away, so the WCR survived and the
+    multi-dim vectorizer refused the whole kernel over a loose WCR in the body."""
+    M, N = 5, 7
+    sdfg = dace.SDFG('wcr_nested_map_exit_chain')
+    sdfg.add_array('A', [M, N], dace.float64)
+    sdfg.add_array('q', [M], dace.float64)
+    sdfg.add_scalar('priv', dace.float64, transient=True)
+    state = sdfg.add_state()
+    ome, omx = state.add_map('outer', dict(i=f'0:{N}'))
+    ime, imx = state.add_map('inner', dict(j=f'0:{M}'))
+    tasklet = state.add_tasklet('t', {'inp'}, {'out'}, 'out = inp * 2.0')
+    state.add_memlet_path(state.add_read('q'), ome, ime, tasklet, dst_conn='inp', memlet=dace.Memlet('q[j]'))
+    priv = state.add_access('priv')
+    state.add_edge(tasklet, 'out', priv, None, dace.Memlet('priv[0]'))
+    state.add_memlet_path(priv,
+                          imx,
+                          omx,
+                          state.add_write('A'),
+                          memlet=dace.Memlet(data='A', subset='j, i', wcr='lambda a, b: a - b'))
+    propagate_memlets_sdfg(sdfg)
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(WCRToAugAssign) > 0
+    sdfg.validate()
+    stranded = [e for e in state.edges() if e.data.wcr is not None]
+    assert not stranded, [(type(e.src).__name__, type(e.dst).__name__, e.data.wcr) for e in stranded]
+
+    rng = np.random.default_rng(7)
+    A = rng.standard_normal((M, N))
+    q = rng.standard_normal(M)
+    want = A - 2.0 * q[:, None]
+    sdfg(A=A, q=q)
+    assert np.allclose(A, want), np.max(np.abs(A - want))

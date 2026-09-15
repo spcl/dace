@@ -1047,6 +1047,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
     tasklet = transformation.PatternNode(nodes.Tasklet)
     output = transformation.PatternNode(nodes.AccessNode)
     map_exit = transformation.PatternNode(nodes.MapExit)
+    outer_map_exit = transformation.PatternNode(nodes.MapExit)
     inp = transformation.PatternNode(nodes.AccessNode)
     nested = transformation.PatternNode(nodes.NestedSDFG)
 
@@ -1083,6 +1084,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # ``A[:, j] -= Q[:, k] * R[k, j]``). The boundary memlet is over-approximated to the
             # whole array there, so injectivity is decided on the PRECISE inner write subset.
             sdutil.node_path_graph(cls.nested, cls.map_exit, cls.output),
+            # ``AccessNode -[wcr]-> MapExit -> MapExit -> AccessNode``: expr 3 with the output one map further
+            # out (a loop body inlined into a map nest: gramschmidt's ``A[j, i] -= Q[j, k] * R[k, i]``).
+            sdutil.node_path_graph(cls.inp, cls.map_exit, cls.outer_map_exit, cls.output),
         ]
 
     def _matched_wcr_edge(self, graph, expr_index):
@@ -1093,7 +1097,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             edges = graph.edges_between(self.tasklet, self.map_exit)
         elif expr_index == 2:
             edges = graph.edges_between(self.inp, self.output)
-        elif expr_index == 3:
+        elif expr_index in (3, 6):
             edges = graph.edges_between(self.inp, self.map_exit)
         elif expr_index == 4:
             # expr 4: WCR on the OUTER map_exit->output edge (inner tasklet->map_exit WCR-free,
@@ -1203,7 +1207,10 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # has one valid binding per array -- nothing in the path pattern ties it to the container
         # the matched WCR edge writes. Applying a mismatched binding pairs this edge's memlet with
         # the other array's access node (CloudSC's flux band writes four arrays through one exit).
-        if expr_index in (1, 3) and self.output.data != edge.data.data:
+        if expr_index in (1, 3, 6) and self.output.data != edge.data.data:
+            return False
+        # expr 6: the matched outer exit and output must be where THIS connector's path leads.
+        if expr_index == 6 and graph.memlet_path(edge)[-1].dst is not self.output:
             return False
 
         # Overapproximated WCR subset (access may be dynamic) → unsupported. The two
@@ -1367,13 +1374,16 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             state.remove_edge(edge)
         elif self.expr_index == 1:
             edge = state.edges_between(self.tasklet, self.map_exit)[0]
-            map_entry = state.entry_node(self.map_exit)
+            # Outermost first: the read-back enters through every map the write leaves through.
+            entries = [
+                state.entry_node(e.dst) for e in reversed(state.memlet_path(edge)) if isinstance(e.dst, nodes.MapExit)
+            ]
             code = _wcr_augassign_body(edge.data.wcr)
             for e in state.memlet_path(edge):
                 e.data.wcr = None
             in_access = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', OrderedSet(('__in1', '__in2')), {'__out'}, f"__out = {code}")
-            state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
+            state.add_memlet_path(in_access, *entries, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
             connect_through_scalar(state, sdfg, self.tasklet, edge.src_conn, new_tasklet, '__in2',
                                    sdfg.arrays[self.output.data].dtype)
             state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
@@ -1461,13 +1471,16 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # Mirror expr 1 but read incoming operand from ``inp`` (AccessNode) not a tasklet:
             # ``output = output <op> inp``, reading dest back through the map entry, dropping WCR.
             edge = state.edges_between(self.inp, self.map_exit)[0]
-            map_entry = state.entry_node(self.map_exit)
+            # Outermost first: the read-back enters through every map the write leaves through.
+            entries = [
+                state.entry_node(e.dst) for e in reversed(state.memlet_path(edge)) if isinstance(e.dst, nodes.MapExit)
+            ]
             code = _wcr_augassign_body(edge.data.wcr)
             for e in state.memlet_path(edge):
                 e.data.wcr = None
             in_access = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', OrderedSet(('__in1', '__in2')), {'__out'}, f"__out = {code}")
-            state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
+            state.add_memlet_path(in_access, *entries, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in1')
             state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2',
                            Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data]))
             state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
