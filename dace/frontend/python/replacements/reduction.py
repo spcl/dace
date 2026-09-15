@@ -214,9 +214,10 @@ def _count_nonzero(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axi
     from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
 
     nest = NestedCall(pv, sdfg, state)
-    flags = nest(elementwise)("lambda x: 1 if x != 0 else 0", a)
-    # NumPy counts in an integer; the flags carry the operand's dtype, so the cast is the last step.
-    return nest, nest(_ndarray_astype)(nest(_sum)(flags, axis=axis), dtypes.int64)
+    # The flags carry the operand's dtype; summed as bool they saturate at one, so NumPy's integer count is
+    # taken over int64 flags.
+    flags = nest(_ndarray_astype)(nest(elementwise)("lambda x: 1 if x != 0 else 0", a), dtypes.int64)
+    return nest, nest(_sum)(flags, axis=axis)
 
 
 def nan_filled(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, fill: str) -> str:
