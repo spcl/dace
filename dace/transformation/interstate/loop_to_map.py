@@ -3,6 +3,7 @@
 
 from collections import defaultdict
 import copy
+from re import findall
 from dataclasses import dataclass, field
 from itertools import islice
 import sympy as sp
@@ -890,6 +891,42 @@ def build_lift_context(sdfg: SDFG,
                        cfg_ids=cfg_ids)
 
 
+def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion) -> None:
+    """Declare in the lifted body the free symbols whose type the parent SDFG settles without a walk.
+
+    ``add_nested_sdfg`` types every symbol the body leaves undeclared from ``defined_symbols``, a walk
+    over every interstate edge of ``sdfg``, and each lift leaves at least its own iterator undeclared.
+    A symbol is declared here only when that walk provably yields the type used: one no interstate
+    edge assigns and no other loop binds keeps the type the SDFG (or an array extent) declares, and
+    the iterator is typed by its own loop from header names that are all of that kind. Any other free
+    symbol is left for ``add_nested_sdfg`` to type as before.
+    """
+    free = nsdfg.free_symbols - {'NoneSymbol'} - nsdfg.symbols.keys()
+    if not free:
+        return
+    rebound: Set[str] = set()
+    for edge in sdfg.all_interstate_edges():
+        rebound.update(edge.data.assignments.keys())
+    for region in sdfg.all_control_flow_regions(recursive=True):
+        if isinstance(region, LoopRegion) and region is not loop and region.loop_variable:
+            rebound.add(region.loop_variable)
+    table: Dict[str, dtypes.typeclass] = dict(sdfg.symbols)
+    for desc in sdfg.arrays.values():
+        table.update({s.name: s.dtype for s in desc.free_symbols if s.dtype is not None})
+    itervar = loop.loop_variable
+    for name in sorted(free - rebound - {itervar}):
+        if name in table:
+            nsdfg.symbols[name] = table[name]
+    if itervar not in free or itervar in rebound or not loop.init_statement:
+        return
+    header = ' '.join(c.as_string for c in (loop.init_statement, loop.loop_condition, loop.update_statement) if c)
+    if any(name in rebound for name in findall(r'[A-Za-z_]\w*', header) if name != itervar):
+        return
+    itertype = loop.new_symbols(table).get(itervar)
+    if itertype is not None:
+        nsdfg.symbols[itervar] = itertype
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopToMap(xf.MultiStateTransformation):
@@ -1647,6 +1684,7 @@ class LoopToMap(xf.MultiStateTransformation):
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
 
         # Add NestedSDFG node
+        declare_lifted_symbols(nsdfg, sdfg, self.loop)
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
         if sdfg.parent:
             for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
