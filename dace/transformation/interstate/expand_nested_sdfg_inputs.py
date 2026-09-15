@@ -255,7 +255,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
 
     # Remove old array, add new, so occurrences can be safely replaced.
     inner_sdfg: SDFG = nsdfg_node.sdfg
-    inner_shape = inner_sdfg.arrays[inner_name].shape
+    # An output connector can already lack its descriptor; remove_data tolerates that, so the shape lookup does too.
+    inner_shape = inner_sdfg.arrays[inner_name].shape if inner_name in inner_sdfg.arrays else ()
     inner_sdfg.remove_data(inner_name, validate=False)
     copy_desc = copy.deepcopy(desc)
     # A View is a view only next to the data it views: the ``views`` edge stays in the outer state,

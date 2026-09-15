@@ -1,15 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Control flow analyses must stay total on a CFG holding blocks unreachable from its start block.
 
-Unreachability has two causes that produce the *same* graph shape: dead code the frontend emitted,
-which must be tolerated, and a region a transformation severed by mistake, which must not be. No
-analysis local to the CFG can tell them apart, so the analyses are total and codegen -- which knows
-that by then every remaining block has to be emitted -- is what stays loud. Both halves are pinned
-here, because making the analyses total is only safe for as long as the second half holds.
+An unreachable block never runs, whether the frontend emitted it as dead code or a transformation
+severed it, so the analyses are total and ControlFlowRaising deletes such blocks before codegen.
 """
 
 import numpy as np
-import pytest
 
 import dace
 from dace import SDFG
@@ -87,13 +83,9 @@ def test_dead_code_neither_breaks_simplify_nor_changes_the_result():
     assert np.allclose(a, b * 2.0)
 
 
-def test_codegen_still_refuses_to_drop_a_severed_block():
-    """The guard that makes totalizing the analyses safe: codegen must never silently omit a block.
-
-    If this ever starts passing silently, a transformation that disconnects part of a region stops
-    being an error and starts being a wrong program, which is precisely what the analyses can no
-    longer catch on their own.
-    """
+def test_codegen_drops_a_block_no_path_reaches():
+    """ControlFlowRaising runs before codegen and deletes a block unreachable from its region's start block, since
+    that block never runs: its write is neither emitted nor executed."""
     sdfg = SDFG("severed_region")
     sdfg.add_array("a", [1], dace.float64)
 
@@ -111,14 +103,16 @@ def test_codegen_still_refuses_to_drop_a_severed_block():
     # The analyses no longer raise on it ...
     assert cfg_analysis.block_parent_tree(region)[orphan] is None
 
-    # ... so codegen is the one that has to refuse, and it has to say which block went missing.
-    with pytest.raises(RuntimeError, match="Not all states were generated") as excinfo:
-        sdfg.compile()
-    assert "orphan" in str(excinfo.value)
+    # ... and codegen drops it instead of refusing.
+    code = "".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "= 1.0;" in code and "= 2.0;" not in code
+    a = np.zeros(1)
+    sdfg(a=a)
+    assert a[0] == 1.0
 
 
 if __name__ == "__main__":
     test_block_parent_tree_covers_unreachable_blocks()
     test_dominator_analyses_cover_unreachable_blocks()
     test_dead_code_neither_breaks_simplify_nor_changes_the_result()
-    test_codegen_still_refuses_to_drop_a_severed_block()
+    test_codegen_drops_a_block_no_path_reaches()

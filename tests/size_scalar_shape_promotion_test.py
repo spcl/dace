@@ -279,6 +279,24 @@ def test_a_reshape_accepts_the_computed_size_an_allocation_accepts():
     assert np.array_equal(out, expected), out
 
 
+@dace.program
+def reshape_by_a_size_argument(a: dace.float64[N * 4], M: dace.int64, out: dace.float64[N]):
+    b = np.reshape(a, (N, M))
+    for i in range(N):
+        out[i] = b[i, 3]
+
+
+def test_a_reshape_reads_a_size_argument_through_a_symbol():
+    """Every extent is symbolic, so a scalar ARGUMENT used as a reshape extent becomes a symbol like a computed size
+    (npbench's lenet reshapes by its ``C_before_fc1`` argument)."""
+    sdfg = reshape_by_a_size_argument.to_sdfg(simplify=False)
+    assert any(name.startswith('__sym_M') for name in sdfg.symbols), sdfg.symbols
+    a = np.arange(8, dtype=np.float64)
+    out = np.zeros(2)
+    reshape_by_a_size_argument(a, np.int64(4), out, N=2)
+    assert np.array_equal(out, a.reshape(2, 4)[:, 3]), out
+
+
 if __name__ == '__main__':
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
@@ -295,3 +313,4 @@ if __name__ == '__main__':
     test_a_compound_shape_keeps_the_arithmetic_the_slice_bound_keeps()
     test_two_slices_from_one_bound_expression_share_their_symbols()
     test_a_reshape_accepts_the_computed_size_an_allocation_accepts()
+    test_a_reshape_reads_a_size_argument_through_a_symbol()
