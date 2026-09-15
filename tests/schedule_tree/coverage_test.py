@@ -22,9 +22,6 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
 #: Node types that are only used as base classes and never appear in a schedule tree
 ABSTRACT_NODE_TYPES = {tn.ScheduleTreeNode, tn.ScheduleTreeScope, tn.ControlFlowScope, tn.DataflowScope}
 
-#: Node types whose conversion to an SDFG is not yet supported, mapped to the reason
-UNSUPPORTED_NODE_TYPES = {}
-
 
 def _write_tasklet(state: dace.SDFGState, value: str, memlet: str) -> None:
     """
@@ -329,15 +326,9 @@ def _concrete_node_types() -> set[type[tn.ScheduleTreeNode]]:
 
 def test_all_node_types_have_factory():
     assert set(FACTORIES.keys()) == _concrete_node_types()
-    assert set(UNSUPPORTED_NODE_TYPES.keys()) <= _concrete_node_types()
 
 
-@pytest.mark.parametrize('node_type', [
-    pytest.param(node_type,
-                 id=node_type.__name__,
-                 marks=[pytest.mark.xfail(reason=UNSUPPORTED_NODE_TYPES[node_type], strict=True)]
-                 if node_type in UNSUPPORTED_NODE_TYPES else []) for node_type in FACTORIES
-])
+@pytest.mark.parametrize('node_type', FACTORIES.keys(), ids=lambda node_type: node_type.__name__)
 def test_node_type_to_sdfg(node_type: type[tn.ScheduleTreeNode]):
     stree = FACTORIES[node_type]()
     assert any(type(node) is node_type for node in stree.preorder_traversal())
@@ -347,5 +338,4 @@ def test_node_type_to_sdfg(node_type: type[tn.ScheduleTreeNode]):
 if __name__ == '__main__':
     test_all_node_types_have_factory()
     for node_type in FACTORIES:
-        if node_type not in UNSUPPORTED_NODE_TYPES:
-            test_node_type_to_sdfg(node_type)
+        test_node_type_to_sdfg(node_type)
