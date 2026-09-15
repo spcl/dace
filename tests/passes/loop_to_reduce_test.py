@@ -832,6 +832,109 @@ def test_strided_branched_min_folds_only_visited_elements():
                                                    f'got {result[0]}, expected {a[1:n:2].min()}')
 
 
+def _build_interstate_edge_sum_sdfg(start: int, step: int):
+    """``for i in range(start, N, step): accum = accum + B[i]``, drained into ``result[0]``."""
+    sdfg = dace.SDFG(f"interstate_sum_strided_{start}_{step}")
+    sdfg.add_symbol("accum", dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_array("result", [1], dace.float64)
+    pre = sdfg.add_state("pre", is_start_block=True)
+    loop = LoopRegion("loop",
+                      condition_expr="i < N",
+                      loop_var="i",
+                      initialize_expr=f"i = {start}",
+                      update_expr=f"i = i + {step}")
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+    s1 = loop.add_state("s1", is_start_block=True)
+    s2 = loop.add_state("s2")
+    loop.add_edge(s1, s2, dace.InterstateEdge(assignments={"accum": "accum + B[i]"}))
+    post = sdfg.add_state("post")
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    drain = sdfg.add_state("drain")
+    sdfg.add_edge(post, drain, dace.InterstateEdge())
+    t = drain.add_tasklet("drain_t", set(), {"_out"}, "_out = accum")
+    drain.add_edge(t, "_out", drain.add_write("result"), None, mm.Memlet("result[0]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("step", (2, 3))
+def test_a_strided_interstate_edge_sum_reduces_only_the_visited_elements(step):
+    """A step-1 subset folded ``B[1:N]`` for ``range(1, N, step)``: valid SDFG, wrong sum."""
+    start = 1
+    n = 23
+    sdfg = _build_interstate_edge_sum_sdfg(start, step)
+    sdfg.validate()
+    lifted = LoopToReduce(prefer='reduce-libnode').apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+
+    (red, state) = next((nd, g) for nd, g in sdfg.all_nodes_recursive() if isinstance(nd, Reduce))
+    steps = sorted(str(rng[2]) for rng in state.in_edges(red)[0].data.subset.ndrange())
+    assert steps == [str(step)], f'the reduce must read only the stride-{step} slots; got {steps}'
+
+    rng = np.random.default_rng(step * 100 + start)
+    b = rng.standard_normal(n)
+    result = np.zeros(1)
+    sdfg(B=b.copy(), N=n, accum=0.0, result=result)
+    expected = float(b[start:n:step].sum())
+    assert np.isclose(result[0], expected), (f'the lifted strided sum folded elements the loop never visits: '
+                                             f'got {result[0]}, expected {expected}')
+
+
+def _build_conditional_interstate_max_sdfg(start: int, step: int):
+    """``for i in range(start, N, step): if B[i] > accum: accum = B[i]``, drained into ``result[0]``."""
+    sdfg = dace.SDFG(f"interstate_cond_max_strided_{start}_{step}")
+    sdfg.add_symbol("accum", dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_array("result", [1], dace.float64)
+    pre = sdfg.add_state("pre", is_start_block=True)
+    loop = LoopRegion("loop",
+                      condition_expr="i < N",
+                      loop_var="i",
+                      initialize_expr=f"i = {start}",
+                      update_expr=f"i = i + {step}")
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+    cb = ConditionalBlock("cb")
+    loop.add_node(cb, is_start_block=True)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock("B[i] > accum"), branch)
+    s1 = branch.add_state("s1", is_start_block=True)
+    s2 = branch.add_state("s2")
+    branch.add_edge(s1, s2, dace.InterstateEdge(assignments={"accum": "B[i]"}))
+    post = sdfg.add_state("post")
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    drain = sdfg.add_state("drain")
+    sdfg.add_edge(post, drain, dace.InterstateEdge())
+    t = drain.add_tasklet("drain_t", set(), {"_out"}, "_out = accum")
+    drain.add_edge(t, "_out", drain.add_write("result"), None, mm.Memlet("result[0]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("step", (2, 3))
+def test_a_strided_conditional_interstate_edge_max_reduces_only_the_visited_elements(step):
+    """The maximum sits on slots the loop skips, so a step-1 subset returns it instead of the visited maximum."""
+    start = 1
+    n = 23
+    sdfg = _build_conditional_interstate_max_sdfg(start, step)
+    sdfg.validate()
+    lifted = LoopToReduce(prefer='reduce-libnode').apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1
+
+    (red, state) = next((nd, g) for nd, g in sdfg.all_nodes_recursive() if isinstance(nd, Reduce))
+    steps = sorted(str(rng[2]) for rng in state.in_edges(red)[0].data.subset.ndrange())
+    assert steps == [str(step)], f'the reduce must read only the stride-{step} slots; got {steps}'
+
+    b = np.array([float(k) if k in range(start, n, step) else 1000.0 + k for k in range(n)])
+    result = np.zeros(1)
+    sdfg(B=b.copy(), N=n, accum=-1e18, result=result)
+    expected = float(b[start:n:step].max())
+    assert np.isclose(result[0], expected), (f'the lifted strided max folded elements the loop never visits: '
+                                             f'got {result[0]}, expected {expected}')
+
+
 # s4115: gather + sum reduction
 
 

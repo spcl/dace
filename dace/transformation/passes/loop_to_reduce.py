@@ -724,8 +724,8 @@ def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
     return "lambda a, b: max(a, b)" if arr_is_larger else "lambda a, b: min(a, b)"
 
 
-def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start,
-                         end) -> Optional["_Reduction"]:
+def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start, end,
+                         stride) -> Optional["_Reduction"]:
     """Match ``{sym: const}`` conditional-iedge "any"/"all".
 
     Body = ``ConditionalBlock``, one branch, guard ``arr[<subs>] <cmp> C`` (C int),
@@ -799,7 +799,7 @@ def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var
     ranges = []
     for i, a in enumerate(sym_args):
         if i == axis_for_iter:
-            ranges.append((symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1))
+            ranges.append((symbolic.simplify(start + offset), symbolic.simplify(end + offset), stride))
         else:
             ranges.append((a, a, 1))
     return _Reduction(
@@ -1067,7 +1067,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             # (0/1-valued) guard array. Gated on ``permissive``: only sound if the guard
             # array holds only 0/1, which the pass can't verify statically.
             if permissive and isinstance(expr, sympy.Integer) and int(expr) in (0, 1):
-                return _extract_any_pattern(cond, int(expr), target, sdfg, loop_var_sym, start, end)
+                return _extract_any_pattern(cond, int(expr), target, sdfg, loop_var_sym, start, end, stride)
             # Pure copy ``sym = arr[f(i)]`` gated by a max/min comparison.
             if not (isinstance(expr, Subscript) and symbolic.arrays(expr) & sdfg.arrays.keys()):
                 return None
@@ -1096,7 +1096,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             accum=target,
             accum_subset=subsets.Range([(0, 0, 1)]),
             array=array,
-            array_subset=subsets.Range([(symbolic.simplify(start + offset), symbolic.simplify(end + offset), 1)]),
+            array_subset=subsets.Range([(symbolic.simplify(start + offset), symbolic.simplify(end + offset), stride)]),
         )
 
     # Branched min/max pattern (TSVC s314, s316): ``for i: if a[i] > x: x = a[i]``.
