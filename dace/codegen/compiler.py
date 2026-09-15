@@ -663,6 +663,9 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
     if (object_folder / 'FOLDER_MODE').exists():
         with open(object_folder / 'FOLDER_MODE', 'rt') as F:
             folder_mode = F.readline().strip()
+        if probe and folder_mode not in ('development', 'production'):
+            # E.g. empty, because an older DaCe, which does not write it atomically, is still writing it.
+            return None
         return folder_mode
     else:
         # This is to check an old style folder, i.e. a cache folder that was generated

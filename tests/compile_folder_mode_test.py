@@ -308,6 +308,23 @@ def test_get_folder_mode_probes_inconsistent_old_style_folder(tmp_path):
         assert lib_path == _expected_binary_path(build_folder, "some_sdfg", folder_mode, "so")
 
 
+def test_get_folder_mode_probes_unrecognized_folder_mode_file(tmp_path):
+    # A `FOLDER_MODE` file that is empty or names no known mode does not tell the folder mode,
+    #  thus probing must return `None` and `get_binary_name()` must fall back to the configuration.
+    for i, content in enumerate(["", "\n", "unknown_mode"]):
+        build_folder = tmp_path / f"folder_{i}"
+        build_folder.mkdir()
+        (build_folder / "FOLDER_MODE").write_text(content)
+
+        assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
+
+        for folder_mode in ["development", "production"]:
+            with dace.config.temporary_config() as conf:
+                conf.set('compiler', 'build_folder_mode', value=folder_mode)
+                lib_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name="some_sdfg", lib_extension="so")
+            assert lib_path == _expected_binary_path(build_folder, "some_sdfg", folder_mode, "so")
+
+
 def test_folder_mode_file_is_never_observed_incomplete(tmp_path):
     # Another process may probe `FOLDER_MODE` while the folder is generated again, thus
     #  the file is inspected every time the generator opens a file.
@@ -351,5 +368,7 @@ if __name__ == '__main__':
         test_get_binary_name_detects_folder_mode_switch(pathlib.Path(tmp_dir))
     with tempfile.TemporaryDirectory() as tmp_dir:
         test_get_folder_mode_probes_inconsistent_old_style_folder(pathlib.Path(tmp_dir))
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_get_folder_mode_probes_unrecognized_folder_mode_file(pathlib.Path(tmp_dir))
     with tempfile.TemporaryDirectory() as tmp_dir:
         test_folder_mode_file_is_never_observed_incomplete(pathlib.Path(tmp_dir))
