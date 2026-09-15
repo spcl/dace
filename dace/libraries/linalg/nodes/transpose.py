@@ -7,6 +7,7 @@ from dace import symbolic
 from dace.libraries.blas import blas_helpers
 from dace import symbolic
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.blas.environments import openblas
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import scope
@@ -238,6 +239,14 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
             # element type (e.g. an int64 index/count grid) falls back to the native
             # element-wise transpose, matching the differing-type fallback above.
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
+        # ``cblas_?omatcopy`` is an OpenBLAS/MKL EXTENSION, not part of CBLAS. Every gemm in the
+        # graph links against a reference netlib build and this one symbol does not, so the kernel
+        # configures, compiles, and dies at link time -- banded_mmt's canonicalized CPU form was
+        # declined outright for "undefined reference to `cblas_domatcopy'" while its GPU form (a
+        # vendor ``geam``) ran. Ask before committing to the call.
+        if openblas.exports_symbol('cblas_' + func) is False:
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API
         order = 'CblasRowMajor'

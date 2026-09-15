@@ -219,6 +219,35 @@ def _warn_unless_openmp_threaded() -> None:
         stacklevel=2)
 
 
+@functools.lru_cache(maxsize=None, typed=True)
+def exports_symbol(symbol: str) -> bool | None:
+    """Whether the BLAS this build would link exports ``symbol``.
+
+    ``find_package`` mode links whatever the distro's ``libblas``/``libcblas`` alternatives point
+    at, which may be the reference netlib build. Netlib resolves every standard CBLAS entry point
+    and none of the OpenBLAS/MKL EXTENSIONS, so a graph that uses one configures, compiles and
+    then fails at link time on that single symbol -- taking a whole kernel down for a call an
+    expansion could have declined. An expansion that needs an extension asks here first.
+
+    :param symbol: the C symbol name, e.g. ``cblas_domatcopy``.
+    :returns: ``True``/``False`` when a library could be loaded and answered, ``None`` when none
+              could be probed at all (the caller then keeps its default).
+    """
+    probed = False
+    for path in OpenBLAS.cmake_libraries():
+        try:
+            lib = ctypes.CDLL(path)
+        except OSError:
+            continue
+        probed = True
+        try:
+            lib[symbol]
+            return True
+        except AttributeError:
+            continue
+    return False if probed else None
+
+
 @dace.library.environment
 class OpenBLAS:
 
