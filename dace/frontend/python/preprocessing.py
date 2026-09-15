@@ -1690,6 +1690,34 @@ class ModuloConverter(ast.NodeTransformer):
         return ast.copy_location(call, node)
 
 
+def symbol_names(value: Any) -> Set[str]:
+    """Names ``GlobalResolver`` inlines for a closure value: the free symbols of a symbolic value or of a list/tuple of them."""
+    if isinstance(value, (list, tuple)):
+        return set().union(*map(symbol_names, value))
+    if isinstance(value, sympy.Basic):
+        return {str(sym) for sym in value.free_symbols}
+    return set()
+
+
+def rename_locals_shadowing_closure_symbols(src_ast: ast.AST, closure: Dict[str, Any]) -> None:
+    """Give a fresh name to every local that shares its name with a symbol a used closure value inlines to.
+
+    Inlining replaces a captured extent by its symbol's name, so an extent printing as ``k`` would otherwise be
+    read as a local counter ``k`` wherever it lands inside that counter's loop. Renames in place.
+    """
+    names = [node for node in ast.walk(src_ast) if isinstance(node, ast.Name)]
+    local = {node.id for node in names if isinstance(node.ctx, ast.Store)}
+    captured = set().union(*(symbol_names(closure[node.id]) for node in names
+                             if node.id in closure and node.id not in local))
+    taken = local | captured | closure.keys() | {node.id for node in names}
+    renames: Dict[str, str] = {}
+    for name in sorted(local & captured):
+        renames[name] = data.find_new_name(name, taken)
+        taken.add(renames[name])
+    for node in names:
+        node.id = renames.get(node.id, node.id)
+
+
 def preprocess_dace_program(f: Callable[..., Any],
                             argtypes: Dict[str, data.Data],
                             global_vars: Dict[str, Any],
@@ -1739,6 +1767,7 @@ def preprocess_dace_program(f: Callable[..., Any],
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
     resolved = {k: v for k, v in global_vars.items() if k not in (argtypes.keys() - default_args) and k != '_'}
+    rename_locals_shadowing_closure_symbols(src_ast, resolved)
     closure_resolver = GlobalResolver(resolved, resolve_functions, default_args=default_args)
 
     # Append element to call stack and handle max recursion depth

@@ -532,6 +532,22 @@ def test_a_loop_counter_does_not_rebind_a_captured_extent_of_the_same_name():
     assert np.array_equal(out, expected), (out, expected)
 
 
+def test_an_inner_loop_bound_keeps_a_captured_extent_named_like_the_outer_counter():
+    """The pure linalg expansions run ``for k in range(n)`` around ``for i in range(k + 1, n)``; when the
+    caller's extent is itself named ``k``, the inner bound must still read the extent, not the counter."""
+    n = dace.symbol('k')
+
+    @dace.program
+    def strict_lower_counts(out: dace.float64[n]):
+        for k in range(n):
+            for i in range(k + 1, n):
+                out[i] = out[i] + 1
+
+    out = np.zeros(5)
+    strict_lower_counts(out, k=5)
+    assert np.array_equal(out, np.arange(5, dtype=np.float64)), out
+
+
 if __name__ == "__main__":
     test_for_loop()
     test_for_loop_with_break_continue()
