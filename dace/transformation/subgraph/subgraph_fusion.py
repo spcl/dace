@@ -131,6 +131,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # 2.2 topological feasibility:
         if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
             return False
+        # Fusion reroutes every output through an access node; a write leaving through an enclosing map's exit has none.
+        if any(not isinstance(node, nodes.AccessNode) for node in out_nodes):
+            return False
 
         # 2.3 memlet feasibility
         # For each intermediate node, look at whether inner adjacent
