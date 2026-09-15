@@ -1032,6 +1032,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             elif isinstance(self, SubgraphView):
                 if (desc.lifetime != dtypes.AllocationLifetime.Scope):
                     data_args[name] = desc
+                # Views allocate no memory, so their storage does not move them outside the subgraph
+                elif isinstance(desc, dt.View):
+                    continue
                 # Check for allocation constraints that would
                 # enforce array to be allocated outside subgraph
                 elif desc.lifetime == dtypes.AllocationLifetime.Scope:

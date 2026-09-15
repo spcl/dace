@@ -1405,7 +1405,7 @@ class View:
                                    name=viewed_container.name,
                                    storage=viewed_container.storage,
                                    location=viewed_container.location,
-                                   lifetime=viewed_container.lifetime,
+                                   lifetime=dtypes.AllocationLifetime.Scope,
                                    debuginfo=debuginfo)
         elif isinstance(viewed_container, ContainerArray):
             result = ContainerView(stype=cp.deepcopy(viewed_container.stype),
@@ -1416,7 +1416,7 @@ class View:
                                    strides=viewed_container.strides,
                                    offset=viewed_container.offset,
                                    may_alias=viewed_container.may_alias,
-                                   lifetime=viewed_container.lifetime,
+                                   lifetime=dtypes.AllocationLifetime.Scope,
                                    alignment=viewed_container.alignment,
                                    debuginfo=debuginfo,
                                    total_size=viewed_container.total_size,
@@ -1432,7 +1432,7 @@ class View:
                                strides=viewed_container.strides,
                                offset=viewed_container.offset,
                                may_alias=viewed_container.may_alias,
-                               lifetime=viewed_container.lifetime,
+                               lifetime=dtypes.AllocationLifetime.Scope,
                                alignment=viewed_container.alignment,
                                debuginfo=debuginfo,
                                total_size=viewed_container.total_size,
@@ -1497,8 +1497,9 @@ class Reference:
         if debuginfo is not None:
             result.debuginfo = debuginfo
 
-        # References are always transient
+        # References are always transient and bound where they are used
         result.transient = True
+        result.lifetime = dtypes.AllocationLifetime.Scope
         return result
 
 
