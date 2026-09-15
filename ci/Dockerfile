@@ -15,8 +15,37 @@ RUN apt-get update -qq && apt-get install -qq -y \
     iputils-ping \
     curl \
     git \
+    gnupg \
     build-essential && \
     apt-get clean
+
+# HIP's NVIDIA platform: headers over the CUDA toolkit, built by nvcc. Not hip-runtime-nvidia --
+# that metapackage depends on the whole cuda package, and so on a display driver.
+#
+# NOT via apt: repo.radeon.com publishes ``Architectures: amd64`` only, so on this aarch64 image
+# apt cannot satisfy hip-dev/hipcc-nvidia at all ("held broken packages"). What those packages
+# hold, though, is portable -- hip-dev is nothing but headers, CMake files and perl, and hipcc is
+# a compiler driver whose NVIDIA path (src/hipBin_nvidia.h) just assembles an nvcc command line.
+# So unpack the headers straight out of the .deb, and build the driver from its own source for
+# this architecture. The one binary in hipcc-nvidia is x86-64 and is what apt could not have
+# given us anyway.
+ARG ROCM_VERSION=7.2.4
+ARG HIP_DEV_DEB=hip-dev_7.2.53211.70204-93~24.04_amd64.deb
+RUN apt-get update -qq && apt-get install -qq -y cmake && apt-get clean && \
+    curl -fsSL -o /tmp/hip-dev.deb \
+      "https://repo.radeon.com/rocm/apt/${ROCM_VERSION}/pool/main/h/hip-dev/${HIP_DEV_DEB}" && \
+    dpkg-deb -x /tmp/hip-dev.deb / && \
+    rm /tmp/hip-dev.deb && \
+    git clone -q --depth 1 --filter=blob:none --sparse -b "rocm-${ROCM_VERSION}" \
+      https://github.com/ROCm/llvm-project.git /tmp/hipcc-src && \
+    git -C /tmp/hipcc-src sparse-checkout set amd/hipcc && \
+    cmake -S /tmp/hipcc-src/amd/hipcc -B /tmp/hipcc-build \
+      -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="/opt/rocm-${ROCM_VERSION}" && \
+    cmake --build /tmp/hipcc-build -j "$(nproc)" && \
+    cmake --install /tmp/hipcc-build && \
+    rm -rf /tmp/hipcc-src /tmp/hipcc-build && \
+    ln -sfn "/opt/rocm-${ROCM_VERSION}" /opt/rocm
+ENV PATH="/opt/rocm/bin:$PATH"
 
 # Install uv
 ARG UV_VERSION=0.6.12

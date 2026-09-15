@@ -2,7 +2,20 @@
 import dace
 import pytest
 
+from dace.codegen import common
+
 CudaArray = dace.data.Array(dace.float64, [20], storage=dace.StorageType.GPU_Global)
+
+
+def pool_api():
+    """The pooled allocation calls, spelled with the active backend's prefix.
+
+    How many of them the code generator emits is a property of the SDFG, not of the backend, so the
+    counts below hold for CUDA and HIP alike -- only the name changes. Resolved per test rather than
+    at import, since detecting the backend needs a GPU the CPU CI does not have.
+    """
+    backend = common.get_gpu_backend()
+    return f'{backend}MallocAsync', f'{backend}FreeAsync', f'{backend}Free'
 
 
 @pytest.mark.gpu
@@ -28,9 +41,10 @@ def test_memory_pool():
 
     assert sdfg.number_of_nodes() >= 2
 
+    malloc_async, free_async, _ = pool_api()
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 2
-    assert code.count('cudaFreeAsync') == 2
+    assert code.count(malloc_async) == 2
+    assert code.count(free_async) == 2
 
     # Test code
     import cupy as cp
@@ -63,9 +77,10 @@ def test_memory_pool_state():
         if isinstance(me, dace.nodes.MapEntry):
             me.schedule = dace.ScheduleType.GPU_Device
 
+    malloc_async, _, free = pool_api()
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 1
-    assert code.count('cudaFree') == 1
+    assert code.count(malloc_async) == 1
+    assert code.count(free) == 1
 
     # Test code
     import cupy as cp
@@ -101,9 +116,10 @@ def test_memory_pool_tasklet():
         if isinstance(me, dace.nodes.MapEntry):
             me.schedule = dace.ScheduleType.GPU_Device
 
+    malloc_async, free_async, _ = pool_api()
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 1
-    assert code.count('cudaFreeAsync') == 1
+    assert code.count(malloc_async) == 1
+    assert code.count(free_async) == 1
 
     # Test code
     import cupy as cp
@@ -142,9 +158,10 @@ def test_memory_pool_multistate():
         if isinstance(me, dace.nodes.MapEntry):
             me.schedule = dace.ScheduleType.GPU_Device
 
+    malloc_async, free_async, _ = pool_api()
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 1
-    assert code.count('cudaFreeAsync(pooled, __state->gpu_context->streams[0]') == 1
+    assert code.count(malloc_async) == 1
+    assert code.count(free_async + '(pooled, __state->gpu_context->streams[0]') == 1
 
     # Test code
     import cupy as cp
@@ -196,9 +213,10 @@ def test_memory_pool_if_states(cnd):
                               external_edges=True)
 
     sdfg.validate()
+    malloc_async, free_async, _ = pool_api()
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('cudaMallocAsync') == 1
-    assert code.count(f'cudaFreeAsync({tmp}, __state->gpu_context->streams[0]') == 1
+    assert code.count(malloc_async) == 1
+    assert code.count(free_async + f'({tmp}, __state->gpu_context->streams[0]') == 1
 
     # Test code
     import cupy as cp
