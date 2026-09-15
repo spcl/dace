@@ -81,6 +81,84 @@ def _symm_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha:
 
 
 @dace.program
+def symm_sign_flip_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
+                          beta: datatype[1]):
+    """Same access shapes as ``_symm_kernel``, but the finalize step SUBTRACTS the
+    ``temp2`` term instead of adding it."""
+
+    @dace.mapscope
+    def comp_all(j: _[0:N], i: _[0:M]):
+        temp2 = dace.define_local_scalar(datatype)
+
+        @dace.tasklet
+        def reset_tmp():
+            tmp >> temp2
+            tmp = 0
+
+        @dace.map
+        def comp_t2(k: _[0:i]):
+            ialpha << alpha
+            ia << A[i, k]
+            ibi << B[i, j]
+            ibk << B[k, j]
+            oc >> C(1, lambda a, b: a + b)[k, j]
+            ot2 >> temp2(1, lambda a, b: a + b)
+
+            oc = ialpha * ibi * ia
+            ot2 = ibk * ia
+
+        @dace.tasklet
+        def comp_rest():
+            ibeta << beta
+            ib << B[i, j]
+            iadiag << A[i, i]
+            ialpha << alpha
+            it2 << temp2
+            ic << C[i, j]
+            oc >> C[i, j]
+            oc = ibeta * ic + ialpha * ib * iadiag - ialpha * it2
+
+
+@dace.program
+def symm_missing_alpha_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
+                              beta: datatype[1]):
+    """Same access shapes as ``_symm_kernel``, but the triangular WCR term into ``C``
+    drops the ``alpha`` factor."""
+
+    @dace.mapscope
+    def comp_all(j: _[0:N], i: _[0:M]):
+        temp2 = dace.define_local_scalar(datatype)
+
+        @dace.tasklet
+        def reset_tmp():
+            tmp >> temp2
+            tmp = 0
+
+        @dace.map
+        def comp_t2(k: _[0:i]):
+            ialpha << alpha
+            ia << A[i, k]
+            ibi << B[i, j]
+            ibk << B[k, j]
+            oc >> C(1, lambda a, b: a + b)[k, j]
+            ot2 >> temp2(1, lambda a, b: a + b)
+
+            oc = ibi * ia
+            ot2 = ibk * ia
+
+        @dace.tasklet
+        def comp_rest():
+            ibeta << beta
+            ib << B[i, j]
+            iadiag << A[i, i]
+            ialpha << alpha
+            it2 << temp2
+            ic << C[i, j]
+            oc >> C[i, j]
+            oc = ibeta * ic + ialpha * ib * iadiag + ialpha * it2
+
+
+@dace.program
 def _gemm_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N]):
 
     @dace.map
@@ -289,6 +367,57 @@ def test_deviating_slice_nest_is_not_lifted(program, why):
     symmetric operand does not define, and a scratch vector something else reads cannot
     be spliced away with the nest."""
     assert _symm_nodes(_canonicalized(program)) == [], why
+
+
+def map_form_reference(A, B, C, alpha, beta, variant):
+    """Executable reference for one map-form arithmetic variant -- the literal
+    triangular loop nest the kernel is hand-written as (not a closed-form formula),
+    so the check exercises the same computation the SDFG runs."""
+    m, n = C.shape
+    out = C.astype(np.float64).copy()
+    a0, b0 = float(alpha[0]), float(beta[0])
+    for j in range(n):
+        for i in range(m):
+            temp2 = 0.0
+            for k in range(i):
+                wcr_term = B[i, j] * A[i, k] if variant == "missing_alpha" else a0 * B[i, j] * A[i, k]
+                out[k, j] += wcr_term
+                temp2 += B[k, j] * A[i, k]
+            rest = b0 * out[i, j] + a0 * B[i, j] * A[i, i]
+            out[i, j] = rest - a0 * temp2 if variant == "sign_flip" else rest + a0 * temp2
+    return out
+
+
+@pytest.mark.parametrize("program,variant,why", [
+    (symm_sign_flip_kernel, "sign_flip", "the temp2 term is subtracted instead of added"),
+    (symm_missing_alpha_kernel, "missing_alpha", "alpha is dropped from the triangular WCR term"),
+])
+def test_a_nest_with_symm_access_shapes_but_other_arithmetic_is_not_lifted(program, variant, why):
+    """Same NestedSDFG boundary shapes as the real polybench symm nest -- triangular
+    self-scatter onto C, symmetric operand A read on its lower triangle + diagonal,
+    matrix B -- but different arithmetic. A shape-only matcher lifts these anyway: the
+    Symm BLAS node it emits always computes the CORRECT symm formula regardless of
+    what the tasklet actually said, so a wrong lift silently changes the program's
+    result. The nest must stay unlifted and keep computing its own (wrong-for-symm)
+    result."""
+    sdfg = program.to_sdfg(simplify=False)
+    count = LoopToSymm().apply_pass(sdfg, {})
+    assert not count, why
+    assert _symm_nodes(sdfg) == [], why
+
+    m, n = 8, 6
+    rng = np.random.default_rng(3)
+    A = np.tril(rng.random((m, m)))
+    A[np.triu_indices(m, 1)] = -999.0  # garbage in the unreferenced triangle
+    B = rng.random((m, n))
+    C = rng.random((m, n))
+    alpha = np.array([1.5])
+    beta = np.array([1.2])
+    ref = map_form_reference(A, B, C, alpha, beta, variant)
+
+    got = C.copy()
+    sdfg(C=got, A=A.copy(), B=B.copy(), alpha=alpha.copy(), beta=beta.copy(), M=m, N=n)
+    np.testing.assert_allclose(got, ref)
 
 
 if __name__ == "__main__":

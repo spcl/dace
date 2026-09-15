@@ -53,14 +53,17 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import sympy
 
-from dace import SDFG, SDFGState, memlet as mm, subsets, symbolic
+from dace import SDFG, SDFGState, data, dtypes, memlet as mm, subsets, symbolic
+from dace.frontend.operations import detect_reduction_type
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.canonicalize.rank_k_match import (StateValueResolver, equals, expressions_equal,
-                                                                  is_single_element, loop_extent, loop_invariant,
-                                                                  nontransient_written, outer_loop_candidates, reaches,
+from dace.transformation.passes.canonicalize.rank_k_match import (ArrayRead, StateValueResolver, equals,
+                                                                  expressions_equal, is_single_element, loop_extent,
+                                                                  loop_invariant, nontransient_written,
+                                                                  outer_loop_candidates, reaches,
                                                                   replace_loop_with_state, root_sdfg_of,
                                                                   single_body_state, sink_write_subset, written_arrays)
 from dace.transformation.transformation import explicit_cf_compatible
@@ -114,6 +117,217 @@ class SymmMatch:
 
     def __init__(self, a: str, b: str, c: str, alpha: str, beta: str):
         self.a, self.b, self.c, self.alpha, self.beta = a, b, c, alpha, beta
+
+
+#: Canonical role symbols the map-form arithmetic check substitutes into a resolved
+#: expression, so the comparison is pure algebraic form -- not which array name or
+#: connector happened to carry the value.
+ALPHA_ROLE, BETA_ROLE, A_TRI_ROLE, A_DIAG_ROLE, B_PT_ROLE, B_COL_ROLE, C_PT_ROLE, TEMP_ROLE = sympy.symbols(
+    "symm_role_alpha symm_role_beta symm_role_a_tri symm_role_a_diag symm_role_b_pt symm_role_b_col "
+    "symm_role_c_pt symm_role_temp")
+
+#: A resolved sink: the state/SDFG a scalar AccessNode lives in, plus the node itself.
+Sink = Tuple[SDFGState, SDFG, nodes.AccessNode]
+
+#: Bound on NestedSDFG descent while locating a boundary connector's sink, mirroring
+#: rank_k_match's MAX_RESOLVE_DEPTH -- this nest is 2-3 levels deep; more is a bug.
+MAX_NESTED_SDFG_DEPTH = 8
+
+
+def wcr_is_sum(wcr: Optional[str]) -> bool:
+    if not wcr:
+        return False
+    try:
+        return detect_reduction_type(wcr) == dtypes.ReductionType.Sum
+    except Exception:
+        return False
+
+
+def is_scalar_desc(desc: data.Data) -> bool:
+    return not desc.shape or all(str(s) == "1" for s in desc.shape)
+
+
+def inner_nested_sdfg_feeding(state: SDFGState, mx: nodes.MapExit,
+                              out_conn: str) -> Optional[Tuple[nodes.NestedSDFG, str]]:
+    """The NestedSDFG feeding ``mx``'s ``out_conn`` from inside its scope, if any --
+    a MapExit fed directly by a Tasklet is not this matcher's concern (StateValueResolver
+    already walks that case)."""
+    in_conn = "IN_" + out_conn[len("OUT_"):] if out_conn.startswith("OUT_") else out_conn
+    inner = [e for e in state.in_edges(mx) if e.dst_conn == in_conn]
+    if len(inner) == 1 and isinstance(inner[0].src, nodes.NestedSDFG):
+        return inner[0].src, inner[0].src_conn
+    return None
+
+
+def resolve_producer(state: SDFGState, sdfg: SDFG, name: str, depth: int = 0) -> Optional[Sink]:
+    """The (state, sdfg, node) actually holding ``name``'s definition, descending
+    through NestedSDFG hops -- directly, or a NestedSDFG wrapped in a Map scope --
+    until the producer is a plain Tasklet or a MapExit fed by one (both left to
+    StateValueResolver)."""
+    if depth > MAX_NESTED_SDFG_DEPTH:
+        return None
+    found = [n for n in state.data_nodes() if n.data == name and state.in_degree(n) > 0]
+    if len(found) != 1:
+        return None
+    edges = [e for e in state.in_edges(found[0]) if e.data is not None and not e.data.is_empty()]
+    if len(edges) != 1:
+        return None
+    src = edges[0].src
+    if isinstance(src, nodes.NestedSDFG):
+        return find_producer(src.sdfg, edges[0].src_conn, depth + 1)
+    if isinstance(src, nodes.MapExit):
+        inner = inner_nested_sdfg_feeding(state, src, edges[0].src_conn)
+        if inner is not None:
+            nested, conn = inner
+            return find_producer(nested.sdfg, conn, depth + 1)
+    return state, sdfg, found[0]
+
+
+def find_producer(inner: SDFG, name: str, depth: int = 0) -> Optional[Sink]:
+    """``resolve_producer`` searched over every state of ``inner``."""
+    for st in inner.all_states():
+        result = resolve_producer(st, inner, name, depth)
+        if result is not None:
+            return result
+    return None
+
+
+def wcr_sum_write_state(inner: SDFG, name: str) -> Optional[SDFGState]:
+    """The state where ``name`` is written by a single Sum-WCR edge from inside a Map
+    scope, ignoring any unrelated plain write to the same transient (e.g. a
+    zero-initialisation elsewhere)."""
+    for st in inner.all_states():
+        edges = [
+            e for dn in st.data_nodes() if dn.data == name for e in st.in_edges(dn)
+            if e.data is not None and e.data.wcr is not None and st.entry_node(e.src) is not None
+        ]
+        if len(edges) == 1 and wcr_is_sum(edges[0].data.wcr):
+            return st
+    return None
+
+
+def has_plain_read(inner: SDFG, name: str) -> bool:
+    for st in inner.all_states():
+        for dn in st.data_nodes():
+            if dn.data == name:
+                for e in st.out_edges(dn):
+                    if e.data is not None and not e.data.is_empty() and e.data.wcr is None:
+                        return True
+    return False
+
+
+def find_temp_accumulator(inner: SDFG) -> Optional[Tuple[str, Sink]]:
+    """The nest's local scalar accumulator -- a transient summed via WCR inside a
+    Map scope and read plainly elsewhere (``temp2`` of the hand-written symm nest) --
+    as the NAME its plain reader sees (``name``) plus the sink defining its sum,
+    which a MapExit/NestedSDFG hop may have descended past that name."""
+    for name, desc in inner.arrays.items():
+        if not (desc.transient and is_scalar_desc(desc)):
+            continue
+        state = wcr_sum_write_state(inner, name)
+        if state is None or not has_plain_read(inner, name):
+            continue
+        result = resolve_producer(state, inner, name)
+        if result is not None:
+            return name, result
+    return None
+
+
+def classify_read(array: str, subset: subsets.Range, match: SymmMatch, p_row: str, p_col: str) -> Optional[sympy.Expr]:
+    """The canonical role of a read of ``array[subset]``, or None if it fits none of
+    the symm operand shapes at (``p_row``, ``p_col``)."""
+    if array == match.alpha and _is_scalar_point(subset):
+        return ALPHA_ROLE
+    if array == match.beta and _is_scalar_point(subset):
+        return BETA_ROLE
+    ax = _axes(subset)
+    if ax is None:
+        return None
+    if array == match.c and _is_point(ax[0], p_row) and _is_point(ax[1], p_col):
+        return C_PT_ROLE
+    if array == match.a and _is_point(ax[0], p_row) and _is_point(ax[1], p_row):
+        return A_DIAG_ROLE
+    if array == match.a and _is_point(ax[0], p_row) and _is_lower_tri(ax[1], p_row):
+        return A_TRI_ROLE
+    if array == match.b and _is_point(ax[0], p_row) and _is_point(ax[1], p_col):
+        return B_PT_ROLE
+    if array == match.b and _is_lower_tri(ax[0], p_row) and _is_point(ax[1], p_col):
+        return B_COL_ROLE
+    return None
+
+
+def classify_leaf(state: SDFGState, sdfg: SDFG, read: ArrayRead, temp_name: Optional[str], match: SymmMatch, p_row: str,
+                  p_col: str) -> Optional[sympy.Expr]:
+    """Role of one ``StateValueResolver`` leaf read, climbing out through Map/NestedSDFG
+    boundaries (``sdutil.trace_nested_access``) to the real array read, or None if it
+    resolves to none of the known symm operands (the caller then refuses the match)."""
+    if temp_name is not None and read.array == temp_name:
+        return TEMP_ROLE
+    node = next((n for n in state.data_nodes() if n.data == read.array), None)
+    if node is None:
+        return None
+    try:
+        trace = sdutil.trace_nested_access(node, state, sdfg)
+    except Exception:
+        return None
+    if not trace:
+        return None
+    outer_read, outer_memlet = trace[0][0][0], trace[0][1][0]
+    if outer_read is None or outer_memlet is None or outer_memlet.data is None:
+        return None
+    return classify_read(outer_memlet.data, outer_memlet.subset, match, p_row, p_col)
+
+
+def resolve_role_expr(sink: Sink, temp_name: Optional[str], match: SymmMatch, p_row: str, p_col: str,
+                      allow_wcr: bool) -> Optional[sympy.Basic]:
+    """``sink``'s defining value with every leaf read substituted by its canonical role
+    symbol, or None if the value or any leaf cannot be resolved exactly."""
+    state, sdfg, node = sink
+    resolver = StateValueResolver(state)
+    try:
+        value = resolver.value_at(node, [symbolic.pystr_to_symbolic(0)], allow_wcr=allow_wcr)
+    except ValueError:
+        return None
+    substitutions = {}
+    for sym, read in resolver.leaves.items():
+        role = classify_leaf(state, sdfg, read, temp_name, match, p_row, p_col)
+        if role is None:
+            return None
+        substitutions[sym] = role
+    return value.subs(substitutions)
+
+
+def arithmetic_matches(state: SDFGState, nsdfg: nodes.NestedSDFG, match: SymmMatch, p_row: str, p_col: str) -> bool:
+    """Whether the NestedSDFG body actually computes ``C := alpha*A*B + beta*C``
+    with the symm structure -- not just reads/writes it on the right subsets. Any
+    deviation (sign, missing/extra factor, wrong reduction, swapped operand) refuses.
+    """
+    c_tri_conn = c_pt_conn = c_tri_wcr = None
+    for e in state.out_edges(nsdfg):
+        if e.data is None or e.data.data != match.c:
+            continue
+        if e.data.wcr is not None:
+            c_tri_conn, c_tri_wcr = e.src_conn, e.data.wcr
+        else:
+            c_pt_conn = e.src_conn
+    if c_tri_conn is None or c_pt_conn is None or not wcr_is_sum(c_tri_wcr):
+        return False
+
+    temp = find_temp_accumulator(nsdfg.sdfg)
+    wcr_sink = find_producer(nsdfg.sdfg, c_tri_conn)
+    final_sink = find_producer(nsdfg.sdfg, c_pt_conn)
+    if temp is None or wcr_sink is None or final_sink is None:
+        return False
+    temp_name, temp_sink = temp
+
+    c_term = resolve_role_expr(wcr_sink, temp_name, match, p_row, p_col, allow_wcr=True)
+    t_term = resolve_role_expr(temp_sink, temp_name, match, p_row, p_col, allow_wcr=True)
+    f_term = resolve_role_expr(final_sink, temp_name, match, p_row, p_col, allow_wcr=False)
+    if c_term is None or t_term is None or f_term is None:
+        return False
+    return (expressions_equal(c_term, ALPHA_ROLE * A_TRI_ROLE * B_PT_ROLE)
+            and expressions_equal(t_term, A_TRI_ROLE * B_COL_ROLE) and expressions_equal(
+                f_term, BETA_ROLE * C_PT_ROLE + ALPHA_ROLE * B_PT_ROLE * A_DIAG_ROLE + ALPHA_ROLE * TEMP_ROLE))
 
 
 @explicit_cf_compatible
@@ -235,7 +449,10 @@ class LoopToSymm(ppl.Pass):
         alpha, beta = self._order_coeffs(sdfg, nsdfg, scalars)
         if alpha is None:
             return None
-        return SymmMatch(a, b, c, alpha, beta)
+        match = SymmMatch(a, b, c, alpha, beta)
+        if not arithmetic_matches(state, nsdfg, match, p_row, p_col):
+            return None
+        return match
 
     def _find_symmetric(self, ins: Dict[str, List], p_row: str, exclude) -> Optional[str]:
         for name, subs in ins.items():

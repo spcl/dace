@@ -91,8 +91,14 @@ class StateValueResolver:
         self.by_key[key] = sym
         return sym
 
-    def value_at(self, node: nodes.AccessNode, index, depth: int = 0) -> sympy.Basic:
-        """Value stored into AccessNode ``node`` at ``index``."""
+    def value_at(self, node: nodes.AccessNode, index, depth: int = 0, allow_wcr: bool = False) -> sympy.Basic:
+        """Value stored into AccessNode ``node`` at ``index``.
+
+        ``allow_wcr`` resolves a WCR write to the TERM being combined (the reduction
+        itself, not ``prior + term``) -- needed by a caller that already isolated the
+        write as one accumulation step, as opposed to the plain in-place ``+=`` this
+        resolver otherwise assumes a WCR edge means.
+        """
         if depth > MAX_RESOLVE_DEPTH:
             raise ValueError("rank-k resolve: dataflow too deep")
         producers = [e for e in self.state.in_edges(node) if e.data is not None and not e.data.is_empty()]
@@ -101,12 +107,12 @@ class StateValueResolver:
         if len(producers) != 1:
             raise ValueError(f"rank-k resolve: {node.data} has {len(producers)} producers")
         edge = producers[0]
-        if edge.data.wcr is not None:
+        if edge.data.wcr is not None and not allow_wcr:
             raise ValueError(f"rank-k resolve: WCR write into {node.data}")  # accumulate, not a def
         if isinstance(edge.src, nodes.MapExit):
             return self.through_map_exit(edge.src, edge.src_conn, index, depth)
         if isinstance(edge.src, nodes.Tasklet):
-            return self.eval_tasklet(edge.src, {}, depth)
+            return self.eval_tasklet(edge.src, {}, depth, edge.src_conn)
         if isinstance(edge.src, nodes.AccessNode):
             return self.value_at(edge.src, subset_indices(edge.data.subset), depth + 1)
         raise ValueError(f"rank-k resolve: unsupported producer {type(edge.src).__name__}")
@@ -126,15 +132,19 @@ class StateValueResolver:
             if entry is None:
                 raise ValueError("rank-k resolve: tasklet outside a map scope")
             binding = unify(subset_indices(edge.data.subset), index, entry.map.params)
-            return self.eval_tasklet(edge.src, binding, depth)
+            return self.eval_tasklet(edge.src, binding, depth, edge.src_conn)
         raise ValueError("rank-k resolve: no producer into map exit")
 
-    def eval_tasklet(self, tasklet: nodes.Tasklet, binding: Dict[str, object], depth: int) -> sympy.Basic:
-        """Evaluate a single-assignment tasklet, resolving each input connector."""
-        code = (tasklet.code.as_string or "").strip()
-        if code.count("=") != 1:
-            raise ValueError(f"rank-k resolve: not a single assignment: {code!r}")
-        lhs, rhs = (s.strip() for s in code.split("=", 1))
+    def eval_tasklet(self, tasklet: nodes.Tasklet, binding: Dict[str, object], depth: int,
+                     out_conn: str) -> sympy.Basic:
+        """Evaluate ``tasklet``'s assignment to ``out_conn``, resolving each input
+        connector. ``out_conn`` picks the one line that defines it, so a tasklet with
+        several statements (several out connectors) still resolves exactly."""
+        lines = [ln.strip() for ln in (tasklet.code.as_string or "").splitlines() if ln.strip()]
+        matches = [ln for ln in lines if ln.split("=", 1)[0].strip() == out_conn]
+        if len(matches) != 1 or matches[0].count("=") != 1:
+            raise ValueError(f"rank-k resolve: no unique assignment to {out_conn!r}")
+        lhs, rhs = (s.strip() for s in matches[0].split("=", 1))
         if lhs not in tasklet.out_connectors:
             raise ValueError("rank-k resolve: assignment target is not an out connector")
         expr = symbolic.pystr_to_symbolic(rhs)
@@ -153,7 +163,7 @@ class StateValueResolver:
             elif isinstance(edge.src, nodes.AccessNode):
                 value = self.value_at(edge.src, index, depth + 1)
             elif isinstance(edge.src, nodes.Tasklet):
-                value = self.eval_tasklet(edge.src, binding, depth + 1)
+                value = self.eval_tasklet(edge.src, binding, depth + 1, edge.src_conn)
             else:
                 raise ValueError(f"rank-k resolve: unsupported input {type(edge.src).__name__}")
             substitutions[sympy.Symbol(edge.dst_conn)] = value
