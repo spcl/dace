@@ -33,9 +33,10 @@ class ExpandGeqrfOpenBLAS(ExpandTransformation):
         if desc_A.dtype.veclen > 1:
             raise NotImplementedError
         lap = blas_helpers.to_blastype(dt.type).lower()
+        cast = {"c": "(lapack_complex_float*)", "z": "(lapack_complex_double*)"}.get(lap, "")
         code = f"""
         std::memcpy(_aout, _ain, sizeof({dt.ctype}) * ({m}) * ({lda_in}));
-        _res = LAPACKE_{lap}geqrf(LAPACK_ROW_MAJOR, {m}, {n}, _aout, {lda_out}, _tau);
+        _res = LAPACKE_{lap}geqrf(LAPACK_ROW_MAJOR, {m}, {n}, {cast}_aout, {lda_out}, {cast}_tau);
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,

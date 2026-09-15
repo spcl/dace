@@ -32,10 +32,11 @@ class ExpandPotrsOpenBLAS(ExpandTransformation):
         if desc_A.dtype.veclen > 1:
             raise NotImplementedError
         lap = blas_helpers.to_blastype(dt.type).lower()
+        cast = {"c": "(lapack_complex_float*)", "z": "(lapack_complex_double*)"}.get(lap, "")
         uplo = "'L'" if node.lower else "'U'"
         code = f"""
         std::memcpy(_bout, _bin, sizeof({dt.ctype}) * ({n_A}) * ({ldb_in}));
-        _res = LAPACKE_{lap}potrs(LAPACK_ROW_MAJOR, {uplo}, {n_A}, {nrhs}, _a, {lda}, _bout, {ldb_out});
+        _res = LAPACKE_{lap}potrs(LAPACK_ROW_MAJOR, {uplo}, {n_A}, {nrhs}, {cast}_a, {lda}, {cast}_bout, {ldb_out});
         """
         return dace.sdfg.nodes.Tasklet(node.name,
                                        node.in_connectors,
