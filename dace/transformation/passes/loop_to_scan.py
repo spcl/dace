@@ -39,8 +39,9 @@ on any other carried writes to non-transient arrays.
 """
 import ast
 import copy
-from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Set, Tuple, Union
 
+import numpy
 import sympy
 
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
@@ -374,6 +375,7 @@ class LoopToScan(ppl.Pass):
 
         def _lift(par_loop: LoopRegion, par_region: ControlFlowRegion, owner: SDFG):
             par_infos = _match_all(par_loop, owner)
+            par_infos = [info for info in par_infos if _masked_scan_has_known_identity(info, owner)]
             if par_infos and not self.lift_nested_scan:
                 par_infos = [
                     info for info in par_infos
@@ -497,6 +499,7 @@ class LoopToScan(ppl.Pass):
                 # another if/else. Leave it as the original sequential loop.
                 continue
             infos = _match_all(loop, owner, allow_multi_slot=True)
+            infos = [info for info in infos if _masked_scan_has_known_identity(info, owner)]
             if self.target == 'gpu' and residue_classes_too_narrow_for_gpu(infos):
                 # Matched, and deliberately not taken: leave the loop for LoopToMap / the
                 # sequential fallback, which this device measures far faster.
@@ -3112,26 +3115,58 @@ def _masked_update_within(state: SDFGState, loop: LoopRegion) -> bool:
     return False
 
 
-def _identity_for_op(op) -> float:
-    """The identity element for an associative scan op -- writes to a per-iter
-    ``delta_buf[i]`` of this value contribute nothing to the fold.
+def _identity_for_op(op: ScanOp, dtype: dtypes.typeclass) -> Optional[Union[int, float]]:
+    """The identity element for an associative scan op in ``dtype`` -- a
+    per-iter ``delta_buf[i]`` write of this value contributes nothing to the
+    fold. SUM/PRODUCT are dtype-independent (0/1). MIN/MAX match
+    ``::dace::scan::detail::min_identity``/``max_identity`` in the runtime
+    header: +-inf for floating types (their ordered extreme is not a finite
+    value), ``numeric_limits::max``/``lowest`` for integer types. Returns
+    ``None`` when ``dtype`` has no known identity for ``op`` -- callers must
+    refuse the lift rather than guess.
     """
     if op == ScanOp.SUM:
         return 0.0
     if op == ScanOp.PRODUCT:
         return 1.0
-    # MIN / MAX: identity would be +inf / -inf; conditional-branch matches that
-    # use these ops are out of scope for the bare init helper.
-    return 0.0
+    if op not in (ScanOp.MIN, ScanOp.MAX):
+        return None
+    nptype = dtype.as_numpy_dtype()
+    if numpy.issubdtype(nptype, numpy.floating):
+        return float('inf') if op == ScanOp.MIN else float('-inf')
+    if numpy.issubdtype(nptype, numpy.integer):
+        info = numpy.iinfo(nptype)
+        return int(info.max) if op == ScanOp.MIN else int(info.min)
+    return None
 
 
-def _emit_delta_buf_zero_init(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, delta_buf: str, trip: Any, op):
+def _masked_scan_has_known_identity(info: '_Scan', sdfg: SDFG) -> bool:
+    """``True`` unless ``info`` sits in a masked conditional branch whose op has
+    no known identity for its output dtype. A masked branch pre-zeroes
+    ``delta_buf`` for skipped iterations with the op identity
+    (:func:`_emit_delta_buf_zero_init`); an unknown identity means the lift
+    cannot be value-exact, so the match must be dropped and the loop left for
+    the sequential fallback rather than silently folding a wrong value in.
+    """
+    if not _in_conditional_branch(info.body_state):
+        return True
+    return _identity_for_op(info.op, sdfg.arrays[info.out_name].dtype) is not None
+
+
+def _emit_delta_buf_zero_init(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, delta_buf: str, trip: Any, op,
+                              dtype: dtypes.typeclass):
     """Insert a state BEFORE ``loop`` that fills ``delta_buf`` with the op's
-    identity element (0 for SUM, 1 for PRODUCT). The state's single ``Map`` over
+    identity element (0 for SUM, 1 for PRODUCT, dtype's ordered extreme for
+    MIN/MAX -- see :func:`_identity_for_op`). The state's single ``Map`` over
     the trip range writes one element per iteration.
+
+    Callers must have already refused the lift when
+    :func:`_masked_scan_has_known_identity` is ``False`` -- this function
+    trusts that and does not re-check.
     """
     import dace
-    init_val = _identity_for_op(op)
+    init_val = _identity_for_op(op, dtype)
+    assert init_val is not None, 'caller must refuse the lift when the identity is unknown'
     s_init = parent.add_state(loop.label + '_delta_init')
     pre_edges = list(parent.in_edges(loop))
     for e in pre_edges:
@@ -3192,7 +3227,7 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
     # contribute the identity element. Cheap (one Map over the iter range) and
     # only emitted when actually needed.
     if _in_conditional_branch(info.body_state):
-        _emit_delta_buf_zero_init(parent, loop, sdfg, delta_buf, trip, info.op)
+        _emit_delta_buf_zero_init(parent, loop, sdfg, delta_buf, trip, info.op, out_desc.dtype)
 
     _mutate_body_to_delta_buffer(info, delta_buf)
 

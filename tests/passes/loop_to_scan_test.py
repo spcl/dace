@@ -1922,6 +1922,70 @@ def test_masked_conditional_scan_lifts_and_neutralizes_else_branch():
     assert np.allclose(out, exp), f'masked scan diverged: max diff {np.abs(out - exp).max():.2e}'
 
 
+@pytest.mark.parametrize('op', ['min', 'max'])
+def test_a_guarded_running_min_ignores_skipped_elements_instead_of_folding_zero(op):
+    """Masked running min/max (min/max variant of ``test_masked_conditional_scan_lifts_and_
+    neutralizes_else_branch``): ``if mask[i]>0: out[i] = min(out[i-1], delta[i]) else:
+    out[i] = out[i-1]``. A skipped iteration must contribute the op identity (+inf for
+    min, -inf for max), never 0 -- folding 0 clamps an all-positive running min to 0
+    forever after the first masked-out element (the bug this test pins).
+
+    Integer carriers are not covered: ``LoopToScan`` does not match a min/max scan over
+    an int64 carrier at all, masked or not (a separate, pre-existing frontend/matcher
+    shape limitation unrelated to this bug -- verified on both origin/extended and this
+    fix, plain unmasked ``out[i+1] = min(out[i], delta[i])`` over int64 also refuses)."""
+
+    if op == 'min':
+
+        @dace.program
+        def masked_scan(out: dace.float64[N], delta: dace.float64[N], mask: dace.int64[N]):
+            for i in range(1, N):
+                if mask[i] > 0:
+                    out[i] = min(out[i - 1], delta[i])
+                else:
+                    out[i] = out[i - 1]
+    else:
+
+        @dace.program
+        def masked_scan(out: dace.float64[N], delta: dace.float64[N], mask: dace.int64[N]):
+            for i in range(1, N):
+                if mask[i] > 0:
+                    out[i] = max(out[i - 1], delta[i])
+                else:
+                    out[i] = out[i - 1]
+
+    sdfg = masked_scan.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    res = LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1, f'expected one masked min/max scan rewrite; got {res}'
+    assert _scan_ops(sdfg) == [ScanOp.MIN if op == 'min' else ScanOp.MAX]
+
+    n = 32
+    rng = np.random.default_rng(7)
+    mask = (rng.standard_normal(n) > 0.0).astype(np.int64)
+    mask[0] = 1  # seed iteration always active
+    if op == 'min':
+        # All-positive data: a correct running min never sees 0, so folding the masked
+        # slot to 0 instead of +inf is visible as an incorrect downward clamp.
+        delta = rng.uniform(0.1, 5.0, size=n)
+        out = rng.uniform(0.1, 5.0, size=n)
+        out[0] = delta.max() + 1.0
+    else:
+        # All-negative data: a correct running max never sees 0, so folding the masked
+        # slot to 0 instead of -inf is visible as an incorrect upward clamp.
+        delta = rng.uniform(-5.0, -0.1, size=n)
+        out = rng.uniform(-5.0, -0.1, size=n)
+        out[0] = delta.min() - 1.0
+
+    exp = out.copy()
+    fold = min if op == 'min' else max
+    for i in range(1, n):
+        exp[i] = fold(exp[i - 1], delta[i]) if mask[i] > 0 else exp[i - 1]
+    sdfg(out=out, delta=delta, mask=mask, N=n)
+    np.testing.assert_allclose(out, exp, err_msg='masked min/max scan folded a skipped element to 0')
+
+
 def test_masked_scan_with_a_non_hold_sibling_is_refused():
     """The sibling branch here writes a value of its OWN (``out[i] = delta[i]``), not a
     hold of the carrier. The masked rewrite zero-fills the delta buffer for skipped
