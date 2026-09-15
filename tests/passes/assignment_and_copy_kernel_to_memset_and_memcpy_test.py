@@ -1191,5 +1191,32 @@ def test_lifted_memsets_follow_map_order_not_memory_addresses():
     assert orders == [[f"A{k}" for k in range(8)]] * 12, orders
 
 
+def test_a_copy_tasklet_writing_through_a_wcr_is_not_lifted_as_a_copy():
+    """``a[i] = a[i] * c[i]`` lowers to a tasklet copying ``c[i]`` whose write combines through a multiply WCR; the
+    map detector lifted it as a plain copy ``c -> a`` and dropped the old value (TSVC s212 under canonicalize)."""
+    n = 16
+    sdfg = dace.SDFG("wcr_copy_is_not_a_copy")
+    sdfg.add_array("a", [n], dace.float64)
+    sdfg.add_array("c", [n], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet("scale",
+                             dict(i=f"0:{n}"),
+                             dict(__in=dace.Memlet("c[i]")),
+                             "__out = __in",
+                             dict(__out=dace.Memlet("a[i]", wcr="lambda x, y: x * y")),
+                             external_edges=True)
+    sdfg.validate()
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+
+    assert _get_num_memcpy_library_nodes(sdfg) == 0, "a WCR write is not a copy"
+    sdfg.validate()
+    rng = numpy.random.default_rng(0)
+    a0, c = rng.random(n) + 0.5, rng.random(n) + 0.5
+    a = a0.copy()
+    sdfg(a=a, c=c)
+    assert numpy.allclose(a, a0 * c), a - a0 * c
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

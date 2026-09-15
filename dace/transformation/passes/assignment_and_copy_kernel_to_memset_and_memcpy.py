@@ -165,11 +165,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # subset arithmetic, an empty memlet carrying no subset).
             if state.degree(tasklet) != 2:
                 continue
+            # A WCR on the write combines with the old value (``a[i] *= c[i]``), which a copy or memset would drop.
+            if path_candidate[-1].data.wcr is not None:
+                continue
 
             oe = next(
                 state.out_edges_by_connector(path_candidate[-1].dst, path_candidate[-1].dst_conn.replace("IN_",
                                                                                                          "OUT_")))
-            if not isinstance(oe.dst, dace.nodes.AccessNode):
+            if not isinstance(oe.dst, dace.nodes.AccessNode) or oe.data.wcr is not None:
                 continue
 
             out_conn = next(iter(tasklet.out_connectors))
