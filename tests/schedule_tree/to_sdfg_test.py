@@ -6,10 +6,11 @@ import dace
 from dace import data, subsets as sbs
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, SDFGState
 
+import numpy as np
 import pytest
 
 
@@ -454,7 +455,6 @@ def test_create_if_else():
     assert tasklets[0].label == "blub", "Else branch contains Tasklet('blub')"
 
 
-@pytest.mark.xfail(reason="Not yet implemented")
 def test_create_if_elif_else() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
@@ -1120,6 +1120,208 @@ def test_multiple_copy_nodes() -> None:
         assert node.data == "A"
 
 
+def _view_node(target: str, memlet: str, source_desc: data.Data, shape: list[int]) -> tn.ViewNode:
+    """
+    Creates a view node of the given shape that views the subset described by ``memlet``.
+    """
+    view_memlet = dace.Memlet(memlet)
+    return tn.ViewNode(target=target,
+                       source=view_memlet.data,
+                       memlet=view_memlet,
+                       src_desc=source_desc,
+                       view_desc=data.ArrayView(source_desc.dtype, shape, transient=True))
+
+
+def test_state_boundaries_view_alias() -> None:
+    A = data.Array(dace.float64, [20])
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': A,
+            'B': data.ArrayView(dace.float64, [10], transient=True)
+        },
+        children=[
+            _view_node('B', 'A[5:15]', A, [10]),
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('B[0]')}),
+            tn.TaskletNode(nodes.Tasklet('bla2', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[5]')}),
+        ],
+    )
+
+    # The view itself does not write, but the write to A aliases the write to B
+    stree = t2s._insert_state_boundaries_to_tree(stree)
+    assert [tn.ViewNode, tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode] == [type(n) for n in stree.children]
+
+
+def test_create_view() -> None:
+    A = data.Array(dace.float64, [20])
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': A,
+            'B': data.ArrayView(dace.float64, [10], transient=True),
+            'C': data.Array(dace.float64, [1]),
+        },
+        children=[
+            _view_node('B', 'A[5:15]', A, [10]),
+            tn.TaskletNode(nodes.Tasklet('write', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('B[1]')}),
+            tn.TaskletNode(nodes.Tasklet('read', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('B[1]')},
+                           {'out': dace.Memlet('C[0]')}),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+
+    state = sdfg.start_block
+    views = [n for n in state.data_nodes() if n.data == 'B']
+    assert len(views) == 2
+    for view in views:
+        view_edge = sdutils.get_view_edge(state, view)
+        assert view_edge is not None
+        assert view_edge.data.data == 'A'
+        assert 'views' in (view_edge.src_conn, view_edge.dst_conn)
+
+    a = np.random.rand(20)
+    c = np.random.rand(1)
+    sdfg(A=a, C=c)
+    assert a[6] == 1
+    assert c[0] == 2
+
+
+def test_create_view_in_map_with_state_boundary() -> None:
+    A = data.Array(dace.float64, [30])
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': A,
+            'B': data.ArrayView(dace.float64, [20], transient=True),
+            'x': data.Array(dace.float64, [20]),
+        },
+        children=[
+            _view_node('B', 'A[5:25]', A, [20]),
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map('map_i', 'i', sbs.Range.from_string('0:20'))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet('first', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('B[i]')}),
+                    tn.TaskletNode(nodes.Tasklet('second', {}, {'out'}, 'out = i'), {}, {'out': dace.Memlet('B[i]')}),
+                    tn.TaskletNode(nodes.Tasklet('read', {'inp'}, {'out'}, 'out = inp + 1'),
+                                   {'inp': dace.Memlet('B[i]')}, {'out': dace.Memlet('x[i]')}),
+                ],
+            ),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+
+    # The write-after-write in the map body is placed into a nested SDFG, in which the view is re-created
+    nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]
+    assert len(nsdfgs) == 1
+    assert isinstance(nsdfgs[0].sdfg.arrays['B'], data.View)
+    assert 'B' not in nsdfgs[0].in_connectors and 'B' not in nsdfgs[0].out_connectors
+
+    a = np.random.rand(30)
+    x = np.random.rand(20)
+    expected = a.copy()
+    expected[5:25] = np.arange(20)
+    sdfg(A=a, x=x)
+    assert np.allclose(a, expected)
+    assert np.allclose(x, np.arange(20) + 1)
+
+
+def test_create_dynamic_map_range() -> None:
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'bounds': data.Array(dace.int64, [2]),
+            'A': data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.DynScopeCopyNode('begin', dace.Memlet('bounds[0]')),
+            tn.DynScopeCopyNode('end', dace.Memlet('bounds[1]')),
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map('map_i', 'i', sbs.Range.from_string('begin:end'))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet('assign', {}, {'out'}, 'out = i'), {}, {'out': dace.Memlet('A[i]')})
+                ],
+            ),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+
+    map_entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+    assert {'begin', 'end'} <= set(map_entry.in_connectors.keys())
+
+    a = np.zeros(20)
+    sdfg(bounds=np.array([3, 7], dtype=np.int64), A=a)
+    expected = np.zeros(20)
+    expected[3:7] = np.arange(3, 7)
+    assert np.allclose(a, expected)
+
+
+@pytest.mark.parametrize('control_block', ('break', 'continue'))
+def test_create_loop_control_block(control_block: str) -> None:
+    control_node = tn.BreakNode() if control_block == 'break' else tn.ContinueNode()
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [10])},
+        symbols={'i': dace.int64},
+        children=[
+            tn.ForScope(loop=LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1'),
+                        children=[
+                            tn.IfScope(condition=CodeBlock('i == 5'), children=[control_node]),
+                            tn.TaskletNode(nodes.Tasklet('increment', {'inp'}, {'out'}, 'out = inp + 1'),
+                                           {'inp': dace.Memlet('A[i]')}, {'out': dace.Memlet('A[i]')}),
+                        ])
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+
+    block_type = BreakBlock if control_block == 'break' else ContinueBlock
+    assert any(isinstance(n, block_type) for n, _ in sdfg.all_nodes_recursive())
+
+    a = np.zeros(10)
+    sdfg(A=a)
+    expected = np.ones(10)
+    if control_block == 'break':
+        expected[5:] = 0
+    else:
+        expected[5] = 0
+    assert np.allclose(a, expected)
+
+
+@pytest.mark.parametrize('value', (7, 3, -1))
+def test_create_if_elif_else_values(value: int) -> None:
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [1])},
+        symbols={'n': dace.int64},
+        children=[
+            tn.IfScope(
+                condition=CodeBlock('n > 5'),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet('first', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[0]')})
+                ],
+            ),
+            tn.ElifScope(
+                condition=CodeBlock('n > 2'),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet('second', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[0]')})
+                ],
+            ),
+            tn.ElseScope(children=[
+                tn.TaskletNode(nodes.Tasklet('third', {}, {'out'}, 'out = 3'), {}, {'out': dace.Memlet('A[0]')})
+            ]),
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+
+    a = np.zeros(1)
+    sdfg(A=a, n=value)
+    assert a[0] == {7: 1, 3: 2, -1: 3}[value]
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -1164,3 +1366,12 @@ if __name__ == '__main__':
     test_assign_nodes_multiple_force_one_transition()
     test_assign_nodes_avoid_duplicate_boundaries()
     test_multiple_copy_nodes()
+    test_state_boundaries_view_alias()
+    test_create_view()
+    test_create_view_in_map_with_state_boundary()
+    test_create_dynamic_map_range()
+    test_create_loop_control_block('break')
+    test_create_loop_control_block('continue')
+    test_create_if_elif_else_values(7)
+    test_create_if_elif_else_values(3)
+    test_create_if_elif_else_values(-1)
