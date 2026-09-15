@@ -1065,10 +1065,12 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, node_id=self.node_id)
 
     def __str__(self):
+        from dace.sdfg.state import SDFGState  # Avoid import loop
         state = self.sdfg.node(self.state_id)
         locinfo = ''
 
-        if self.node_id is not None:
+        # A control flow block that is not a state has no nodes to index into
+        if self.node_id is not None and isinstance(state, SDFGState):
             from dace.sdfg.nodes import Node
             node: Node = state.node(self.node_id)
             nodestr = f', node {node}'
@@ -1110,9 +1112,11 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, edge_id=self.edge_id)
 
     def __str__(self):
+        from dace.sdfg.state import SDFGState  # Avoid import loop
         state = self.sdfg.node(self.state_id)
 
-        if self.edge_id is not None:
+        # A control flow block that is not a state has no edges to index into
+        if self.edge_id is not None and isinstance(state, SDFGState):
             e = state.edges()[self.edge_id]
             edgestr = ", edge %s (%s:%s -> %s:%s)" % (
                 str(e.data),
