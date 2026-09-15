@@ -643,6 +643,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Root SDFG, kept for get_generated_codeobjects (which runs after frame codegen and has no
         # SDFG argument), mirroring the CUDA target's ``_global_sdfg``.
         self._global_sdfg: SDFG = sdfg
+        # Containers the calling code generator passes to nested SDFGs in addition to their connectors
+        self.extra_nsdfg_args = []
         dispatcher = self._dispatcher
 
         self._locals = cppunparse.CPPLocals()
@@ -2954,6 +2956,28 @@ class CPUCodeGen(TargetCodeGenerator):
                                               uconn,
                                               codegen=self,
                                               conntype=node.out_connectors[uconn]))
+
+        # Transients of the nested SDFG that the frame allocated in an ancestor scope must be passed in
+        for aname, adesc in node.sdfg.arrays.items():
+            if not adesc.transient or adesc.lifetime in (dtypes.AllocationLifetime.Persistent,
+                                                         dtypes.AllocationLifetime.External):
+                continue
+            allocated_in = self._frame.where_allocated.get((node.sdfg, aname))
+            if allocated_in is None or allocated_in is node.sdfg:
+                continue
+            ptrname = cpp.ptr(aname, adesc, node.sdfg, self._frame)
+            if self._dispatcher.defined_vars.has(ptrname):
+                continue
+            # Already passed in by the calling code generator (e.g., in a GPU kernel)
+            if any(ptrname == extra for _, extra, _ in self.calling_codegen.extra_nsdfg_args):
+                continue
+            try:
+                defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, ancestor=1)
+            except KeyError:
+                continue
+            self._dispatcher.defined_vars.add(ptrname, defined_type, ctype, allow_shadowing=True)
+            memlet_references.append((ctype, ptrname, ptrname))
+
         return memlet_references
 
     def _generate_NestedSDFG(
