@@ -252,3 +252,26 @@ def test_transient_return_is_refused():
 
 if __name__ == '__main__':
     pytest.main([__file__])
+
+
+def test_a_read_only_scalar_argument_of_an_inlined_program_stays_by_value():
+    """``np.zeros_like`` in an inlined callee leaves empty ordering edges into every later read. CPF counted them
+    as writes and rendered ``double *s`` against an ABI passing ``double s``; channel_flow's drop-in crashed."""
+    import re
+
+    from dace.codegen.cpf import render
+
+    N = dace.symbol('N', dtype=dace.int64)
+
+    @dace.program
+    def inner(s: dace.float64, a: dace.float64[N], out: dace.float64[N]):
+        b = np.zeros_like(a)
+        b[1:-1] = s * a[1:-1]
+        out[:] = b
+
+    @dace.program
+    def outer(a: dace.float64[N], out: dace.float64[N], s: dace.float64):
+        inner(s, a, out)
+
+    signature = re.search(r'void \w*outer\([^)]*\)', render(outer.to_sdfg(simplify=True), language='c').code).group(0)
+    assert re.search(r'\bdouble s\b', signature), signature
