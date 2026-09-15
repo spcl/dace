@@ -522,6 +522,68 @@ def test_complex_containers_render_in_both_dialects(language):
 
 
 @pytest.mark.parametrize('language', ('c++', 'c'))
+def test_an_indirection_in_an_outlined_body_reads_a_const_parameter_once_qualified(language):
+    """A nested body with control flow renders as its own function whose read-only array parameter is already
+    ``const``; the indirection alias prefixed a second ``const``, which C++ rejects (vexx_k's C++ form)."""
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+
+    N = dace.symbol('N', dtype=dace.int64)
+    inner = dace.SDFG('loop_body')
+    inner.add_symbol('i', dace.int64)
+    inner.add_symbol('okvan', dace.bool_)
+    for name, dtype in (('rho', dace.complex128), ('nl', dace.int32), ('out', dace.complex128)):
+        inner.add_array(name, [N], dtype)
+    cond = ConditionalBlock('if_okvan')
+    inner.add_node(cond, is_start_block=True)
+    branch = ControlFlowRegion('okvan_branch', sdfg=inner)
+    cond.add_branch(CodeBlock('okvan'), branch)
+    state = branch.add_state('gather', is_start_block=True)
+    gather = state.add_tasklet('indirection', {
+        '__arr': dace.pointer(dace.complex128),
+        '__inp0': dace.int32
+    }, {'__out': dace.complex128}, '__out = __arr[__inp0]')
+    state.add_edge(state.add_read('rho'), None, gather, '__arr', dace.Memlet('rho[0:N]'))
+    state.add_edge(state.add_read('nl'), None, gather, '__inp0', dace.Memlet('nl[i]'))
+    state.add_edge(gather, '__out', state.add_write('out'), None, dace.Memlet('out[i]'))
+
+    sdfg = dace.SDFG('cpf_outlined_indirection_' + ('cpp' if language == 'c++' else 'c'))
+    sdfg.add_symbol('okvan', dace.bool_)
+    for name, dtype in (('rho', dace.complex128), ('nl', dace.int32), ('out', dace.complex128)):
+        sdfg.add_array(name, [N], dtype)
+    outer = sdfg.add_state('loop')
+    me, mx = outer.add_map('m', dict(i='0:N'))
+    nested = outer.add_nested_sdfg(inner, {
+        'rho': None,
+        'nl': None
+    }, {'out': None},
+                                   symbol_mapping={
+                                       'N': 'N',
+                                       'i': 'i',
+                                       'okvan': 'okvan'
+                                   })
+    outer.add_memlet_path(outer.add_read('rho'), me, nested, dst_conn='rho', memlet=dace.Memlet('rho[0:N]'))
+    outer.add_memlet_path(outer.add_read('nl'), me, nested, dst_conn='nl', memlet=dace.Memlet('nl[0:N]'))
+    outer.add_memlet_path(nested, mx, outer.add_write('out'), src_conn='out', memlet=dace.Memlet('out[0:N]'))
+
+    rendering = render_sdfg(sdfg, language=language)
+    assert 'const const' not in rendering.code, [l for l in rendering.code.splitlines() if 'const const' in l]
+    assert_standalone(rendering.code, sdfg.name, language=language)
+
+    rho = np.random.rand(8) + 1j * np.random.rand(8)
+    nl = np.array([3, 0, 7, 1, 1, 6, 2, 5], dtype=np.int32)
+    out = np.zeros(8, dtype=np.complex128)
+    call_standalone(build_standalone(rendering.code, sdfg.name, language=language), rendering.sdfg, {
+        'rho': rho,
+        'nl': nl,
+        'out': out,
+        'N': 8,
+        'okvan': True
+    })
+    assert np.allclose(out, rho[nl]), out - rho[nl]
+
+
+@pytest.mark.parametrize('language', ('c++', 'c'))
 def test_cholesky_renders_as_loops_with_no_library(language):
     """``np.linalg.cholesky`` reaches a library node that only vendor BLAS implements.
 
