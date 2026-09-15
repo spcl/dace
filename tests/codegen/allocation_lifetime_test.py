@@ -600,6 +600,46 @@ def test_multisize():
     assert np.allclose(res2, 6)
 
 
+def test_persistent_transient_reallocates_when_its_symbol_changes():
+    """A persistent transient sized by a call-time symbol keeps the FIRST call's extent.
+
+    ``__dace_init`` runs once, so the allocation is sized by whatever symbols the first call
+    carried; a later call with a larger value then writes past it. Observed as a SIGSEGV on the
+    canonicalized examinimd, whose scratch buffers ``make_transients_persistent`` promotes.
+    """
+    sdfg = dace.SDFG('persistent_resize')
+    n = dace.symbol('n', dace.int64)
+    sdfg.add_array('A', [n], dace.float64)
+    sdfg.add_array('B', [n], dace.float64)
+    sdfg.add_transient('scratch', [n],
+                       dace.float64,
+                       storage=dace.StorageType.CPU_Heap,
+                       lifetime=dace.AllocationLifetime.Persistent)
+
+    produce = sdfg.add_state()
+    me, mx = produce.add_map('produce', dict(i='0:n'))
+    doubler = produce.add_tasklet('doubler', {'a'}, {'s'}, 's = a * 2.0')
+    produce.add_memlet_path(produce.add_read('A'), me, doubler, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    produce.add_memlet_path(doubler, mx, produce.add_write('scratch'), src_conn='s', memlet=dace.Memlet('scratch[i]'))
+
+    consume = sdfg.add_state_after(produce)
+    cme, cmx = consume.add_map('consume', dict(i='0:n'))
+    adder = consume.add_tasklet('adder', {'s'}, {'b'}, 'b = s + 1.0')
+    consume.add_memlet_path(consume.add_read('scratch'), cme, adder, dst_conn='s', memlet=dace.Memlet('scratch[i]'))
+    consume.add_memlet_path(adder, cmx, consume.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+
+    assert sdfg.arrays['scratch'].lifetime == dace.AllocationLifetime.Persistent
+    csdfg = sdfg.compile()
+    # Small first, then large enough that the overflow leaves the first allocation's pages.
+    for size in (16, 1 << 20):
+        a = np.arange(size, dtype=np.float64)
+        b = np.zeros(size, dtype=np.float64)
+        csdfg(A=a, B=b, n=size)
+        assert np.allclose(b, a * 2.0 + 1.0)
+
+    del csdfg
+
+
 def test_a_view_does_not_reallocate_the_array_it_views():
     """Viewing a transient in a LATER state must not allocate it a second time.
 
@@ -664,3 +704,4 @@ if __name__ == '__main__':
     # test_branched_allocation('multivalue')
     # test_scope_multisize()
     test_multisize()
+    test_persistent_transient_reallocates_when_its_symbol_changes()

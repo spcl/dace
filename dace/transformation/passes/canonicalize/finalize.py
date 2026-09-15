@@ -31,6 +31,7 @@ from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelis
                                                     move_small_arrays_to_stack, set_fast_implementations)
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
+from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
 from dace.transformation.passes.cpu_specialization.band_carried_loops import BandCarriedLoops
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
@@ -257,6 +258,10 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     vectorized the SDFG) runs to allocate temporaries well. Three steps, mirroring
     ``auto_optimize``'s storage tail:
 
+    0. **Map-body-local transients -> the box they name**
+       (:class:`~dace.transformation.passes.canonicalize.shrink_map_local_transients.
+       ShrinkMapLocalTransients`): a full-extent transient whose every access sits inside one map
+       body is allocated per iteration, on the stack.
     1. **Length-1 transient arrays -> scalars** (:class:`ConvertLengthOneArraysToScalars`, at its
        default -- transient only): a single internal value belongs in a scalar, not a heap array.
        Non-transient length-1 arrays (SDFG-external returns / opaque handles) are left as arrays.
@@ -280,6 +285,11 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     # an OpenMP loop header. This is the seam between the two, so it runs after everything that
     # reads the range and before anything that emits it.
     HoistLoopRangeCalls().apply_pass(sdfg, {})
+    # Before the length-one conversion and before storage inference: a map-body-local transient
+    # that still carries its full extent is allocated per ITERATION, and the scope default storage
+    # inside a parallel map is the stack. Shrinking it to the box it names is what lets both of
+    # those land on a single element instead of an N*N buffer.
+    ShrinkMapLocalTransients().apply_pass(sdfg, {})
     ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     move_small_arrays_to_stack(sdfg)
