@@ -777,7 +777,9 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[node.data].dtype
-                        dst.symbol_mapping[tmp_symname] = symname
+                        # A symbol, not its name: ConstantPropagation keeps a non-symbolic mapping value as a
+                        # constant and substitutes it into the body, leaving the parent's name unmapped there.
+                        dst.symbol_mapping[tmp_symname] = symbolic.pystr_to_symbolic(symname)
                     elif isinstance(dst, nodes.EntryNode) and e.dst_conn and not e.dst_conn.startswith('IN_'):
                         # Dynamic scope input, replace in node
                         replace_properties_dict(dst, {e.dst_conn: symname})
