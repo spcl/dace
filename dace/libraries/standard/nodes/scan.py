@@ -47,7 +47,7 @@ import dace
 from dace import dtypes, library, nodes, symbolic
 from dace.codegen.common import sym2cpp
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.properties import Property, EnumProperty
+from dace.properties import Property, EnumProperty, SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation
 import enum
 
@@ -600,7 +600,7 @@ def _multi_chain_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, p
     """
     dtype = _validate_inputs_and_outputs(node, state, sdfg)[0].dtype
     ctype = dtype.ctype
-    if symbolic.pystr_to_symbolic(sym2cpp(node.stride)) != 1:
+    if not symbolic.equal_valued(1, node.stride):
         raise NotImplementedError("Scan: ``chains > 1`` with ``stride > 1`` is not supported; emit one "
                                   "Scan libnode per strided chain.")
     k = node.chains
@@ -669,7 +669,7 @@ def affine_scan_body(node: "Scan", ctype: str, n_expr: str, parallel: bool) -> s
     :param parallel: emit the blocked runtime call rather than the sequential loop.
     """
     stride_expr = sym2cpp(node.stride)
-    if symbolic.pystr_to_symbolic(stride_expr) != 1:
+    if not symbolic.equal_valued(1, node.stride):
         return strided_affine_scan_body(node, ctype, n_expr, stride_expr, parallel)
     seed = INIT_CONNECTOR_NAME if _has_init(node) else f'static_cast<{ctype}>(0)'
     if parallel:
@@ -821,7 +821,7 @@ class ExpandPure(ExpandTransformation):
         ctype = out_desc.dtype.ctype
         combined = _combine_expr(node.op, ctype, '_acc', f'{INPUT_CONNECTOR_NAME}[_j]')
         stride_expr = sym2cpp(node.stride)
-        is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
+        is_stride_one = symbolic.equal_valued(1, node.stride)
 
         if not is_stride_one:
             refuse_widening(node, in_desc, out_desc, 'stride > 1')
@@ -915,7 +915,7 @@ class ExpandCPU(ExpandTransformation):
         n_expr = _resolve_length(node, state, sdfg)
         suffix = _OP_TO_OMP_SUFFIX[node.op]
         stride_expr = sym2cpp(node.stride)
-        is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
+        is_stride_one = symbolic.equal_valued(1, node.stride)
 
         if not is_stride_one:
             refuse_widening(node, in_desc, out_desc, 'stride > 1')
@@ -1178,7 +1178,7 @@ class ExpandCUDA(ExpandTransformation):
         n_expr = _resolve_length(node, state, sdfg)
         op_cub = _OP_TO_CUB[node.op]
         stride_expr = sym2cpp(node.stride)
-        is_stride_one = (symbolic.pystr_to_symbolic(stride_expr) == 1)
+        is_stride_one = symbolic.equal_valued(1, node.stride)
 
         if not is_stride_one:
             # ``gpucub::DeviceScan`` walks one contiguous sequence and would run past each
@@ -1332,19 +1332,18 @@ class Scan(nodes.LibraryNode):
                       "``reduction(inscan, op: ...)`` clause -- K carry chains, one fork/join, one pass "
                       "over the index space. Unit stride only.")
 
-    stride = Property(dtype=object,
-                      default=1,
-                      allow_none=False,
-                      desc="Per-element stride for the scan recurrence. Default ``1`` is the "
-                      "contiguous case (``out[i+1] = out[i] OP in[i]``). Values ``s > 1`` express "
-                      "``out[i+s] = out[i] OP in[i]``: the ``s`` residue classes mod ``s`` form "
-                      "independent scans. The parallel CPU expansion splits the residue classes "
-                      "across ONE parallel region and walks the strided space in place (no packed "
-                      "copy and no region per class). "
-                      "The expansion emits a runtime ``s > 0`` ``std::abort()`` check; passing a "
-                      "non-positive stride at runtime terminates the program before the scan "
-                      "starts. Exclusive strided scans (``exclusive=True`` with ``stride > 1``) "
-                      "are not yet supported.")
+    stride = SymbolicProperty(default=1,
+                              allow_none=False,
+                              desc="Per-element stride for the scan recurrence. Default ``1`` is the "
+                              "contiguous case (``out[i+1] = out[i] OP in[i]``). Values ``s > 1`` express "
+                              "``out[i+s] = out[i] OP in[i]``: the ``s`` residue classes mod ``s`` form "
+                              "independent scans. The parallel CPU expansion splits the residue classes "
+                              "across ONE parallel region and walks the strided space in place (no packed "
+                              "copy and no region per class). "
+                              "The expansion emits a runtime ``s > 0`` ``std::abort()`` check; passing a "
+                              "non-positive stride at runtime terminates the program before the scan "
+                              "starts. Exclusive strided scans (``exclusive=True`` with ``stride > 1``) "
+                              "are not yet supported.")
 
     implementations = {
         "CPU": ExpandCPU,

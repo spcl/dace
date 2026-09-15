@@ -396,3 +396,30 @@ def test_a_contiguous_gpu_scan_compiles_and_matches_numpy(op: ScanOp, operator_m
     device_out = cupy.zeros(64, dtype=np.float64)
     gpu_strided_scan(1, op).compile()(A=cupy.asarray(host), B=device_out)
     np.testing.assert_allclose(cupy.asnumpy(device_out), oracle(host), rtol=1e-12)
+
+
+@pytest.mark.parametrize('implementation', ['pure', 'CPU'])
+def test_a_symbolic_stride_survives_a_json_round_trip_of_the_scan(implementation: str):
+    """An untyped stride property saved a symbol as the text ``symbol($K, ...)``, which no expansion could parse:
+    a reloaded SDFG (the CPF canonical cache) failed with SyntaxError on scan_strided_sym and versioned_distance_update."""
+    n = 16
+    sdfg = dace.SDFG(f'symbolic_stride_round_trip_{implementation}')
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_array('arr_in', [n], dace.float64)
+    sdfg.add_array('arr_out', [n], dace.float64)
+    state = sdfg.add_state('scan')
+    node = Scan('Scan', op=ScanOp.SUM, exclusive=False)
+    node.stride = dace.symbol('K', dtype=dace.int64)
+    node.implementation = implementation
+    state.add_node(node)
+    state.add_edge(state.add_read('arr_in'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f'arr_in[0:{n}]'))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('arr_out'), None, dace.Memlet(f'arr_out[0:{n}]'))
+
+    loaded = dace.SDFG.from_json(sdfg.to_json())
+    loaded.expand_library_nodes()
+
+    arr_in = np.arange(1, n + 1, dtype=np.float64)
+    arr_out = np.zeros(n)
+    loaded(arr_in=arr_in, arr_out=arr_out, K=3)
+    expected = _residue_class_scan_oracle(arr_in, 3, ScanOp.SUM)
+    assert np.allclose(arr_out, expected), arr_out - expected
