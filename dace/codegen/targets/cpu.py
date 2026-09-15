@@ -2336,7 +2336,9 @@ class CPUCodeGen(TargetCodeGenerator):
                             # library nodes that lower to a POINTER connector reach this (ArgReduce's
                             # OpenMP form is the first CPF renders), which is why it went unnoticed
                             # while every other rendering reached its arrays through memlets.
-                            qualifier = 'const ' if (not output and self.standalone_readonly(sdfg, memlet.data)) else ''
+                            # A read-only parameter of an outlined nested body is already registered ``const``.
+                            readonly = not output and self.standalone_readonly(sdfg, memlet.data)
+                            qualifier = 'const ' if readonly and not ctypedef.startswith('const ') else ''
                             result += "{}{} {}{} = {};".format(qualifier, ctypedef, _restrict, local_name, pruned_expr)
                 else:
                     # Variable number of reads: get a const reference that can

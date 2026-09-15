@@ -7,6 +7,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace import memlet as mm
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
+from dace.libraries.blas.nodes.gemm import _cast_to_dtype_str, _is_complex
 from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
@@ -29,6 +30,13 @@ def zero_extent_may_occur(extent) -> bool:
     except Exception:
         return True
     return not (value.is_number and value > 0)
+
+
+def coefficient_str(value, dtype) -> str:
+    """``value`` spelled in ``dtype`` when it is a number, and as written when it is symbolic."""
+    if symbolic.issymbolic(value) and not symbolic.pystr_to_symbolic(value).is_number:
+        return str(value)
+    return _cast_to_dtype_str(complex(value) if _is_complex(dtype) else value, dtype)
 
 
 @dace.library.expansion
@@ -72,7 +80,11 @@ class ExpandGemvPure(ExpandTransformation):
         _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=storage)
         _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=storage)
 
-        mul_program = "__out = {} * __A * __x".format(node.alpha)
+        # A numeric coefficient takes the element type: C++ has no operator* for int and std::complex.
+        if symbolic.equal_valued(1, node.alpha):
+            mul_program = "__out = __A * __x"
+        else:
+            mul_program = "__out = {} * __A * __x".format(coefficient_str(node.alpha, dtype_a))
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
@@ -113,7 +125,10 @@ class ExpandGemvPure(ExpandTransformation):
                                  external_edges=True,
                                  output_nodes=output_nodes)
 
-        add_program = "__y_out = ({} * __y_in) + __tmp".format(node.beta)
+        if symbolic.equal_valued(1, node.beta):
+            add_program = "__y_out = __y_in + __tmp"
+        else:
+            add_program = "__y_out = ({} * __y_in) + __tmp".format(coefficient_str(node.beta, dtype_y))
 
         memlet_idx = "__i"
 

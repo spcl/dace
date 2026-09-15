@@ -131,9 +131,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         if any(s != 1 for (_, _, s) in node.map.range):
             return []
 
+        # Only ``entry -> body node -> exit`` survives the filter below, so those two-hop paths are read
+        # off the entry's successors directly, in the order a path enumeration would yield them.
+        # Enumerating every simple path of a large map body to find them was this pass's whole cost.
+        exit_node = state.exit_node(node)
         path_candidates = [
-            self._get_edges_from_path(state, p)
-            for p in state.all_simple_paths(node, state.exit_node(node), as_edges=False)
+            self._get_edges_from_path(state, [node, successor, exit_node])
+            for successor in dict.fromkeys(e.dst for e in state.out_edges(node))
+            if successor is not exit_node and any(e.dst is exit_node for e in state.out_edges(successor))
         ]
 
         paths = []
