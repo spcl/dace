@@ -27,6 +27,7 @@ from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
@@ -152,6 +153,36 @@ def test_masked_value_write_matches_numpy(isa, remainder):
     work = A.copy()
     sdfg(A=work, x=x.copy(), m=m.copy(), N=Nval)
     assert np.array_equal(work, ref), f"{work[:6]} != {ref[:6]}"
+
+
+@dace.program
+def overwrite_then_accumulate(total: dace.float64[N], cust: dace.float64[N], acc: dace.float64[N], eps: dace.float64):
+    for jl in range(N):
+        if total[jl] < eps:
+            cust[jl] = 0.0
+        acc[jl] = acc[jl] + cust[jl]
+
+
+def canonical_overwrite_then_accumulate() -> dace.SDFG:
+    sdfg = overwrite_then_accumulate.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    return sdfg
+
+
+def test_a_masked_overwrite_read_again_keeps_the_old_value_on_unwritten_lanes():
+    """CloudSC's ``if zlfinalsum < zepsec: zacust = 0; zsolac = zsolac + zacust``: the accumulate reads the
+    overwritten element, so the lanes the condition leaves unwritten must still see the old value."""
+    sdfg = canonical_overwrite_then_accumulate()
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=HOST_ISA, validate=True)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, canonical_overwrite_then_accumulate())
+    rng = np.random.default_rng(4)
+    Nval = 37
+    total, cust, acc = rng.random(Nval), rng.random(Nval), rng.random(Nval)
+    expected_cust = np.where(total < 0.5, 0.0, cust)
+    expected_acc = acc + expected_cust
+    sdfg(total=total, cust=cust, acc=acc, eps=0.5, N=Nval)
+    assert np.array_equal(cust, expected_cust), f"{cust[:6]} != {expected_cust[:6]}"
+    assert np.array_equal(acc, expected_acc), f"{acc[:6]} != {expected_acc[:6]}"
 
 
 if __name__ == '__main__':

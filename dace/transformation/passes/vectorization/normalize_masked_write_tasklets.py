@@ -107,8 +107,9 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         instruction this pattern is asking for -- and it drops a tile load plus a select.
 
         Only fires when the else operand is a bare in-connector reading the SAME data and subset
-        the output writes (that is what makes it a no-op arm rather than a real blend), and when
-        that connector is not otherwise referenced by the body.
+        the output writes (that is what makes it a no-op arm rather than a real blend), when
+        that connector is not otherwise referenced by the body, and when nothing in the state
+        reads the written element afterwards (that reader needs the old value on unwritten lanes).
 
         :param state: The state holding ``tasklet`` (for its edges).
         :param tasklet: The candidate tasklet.
@@ -126,6 +127,11 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         read, write = in_edges[0].data, out_edges[0].data
         # Same element, or the demotion would drop a genuine read of OTHER data.
         if read.data != write.data or str(read.subset) != str(write.subset):
+            return False
+        # A reader of the written element needs the old value on the lanes ``cond`` leaves unwritten.
+        written = out_edges[0].dst
+        if isinstance(written, nd.AccessNode) and any(
+                not e.data.is_empty() for e in state.out_edges(written) if not isinstance(e.dst, nd.MapExit)):
             return False
 
         tasklet.code = CodeBlock(f"{out_conn} = {CONDITIONAL_WRITE_FUNC}({cond_src}, {value_src})",
