@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Iterator, Literal, Optional
 
 if TYPE_CHECKING:
     from dace import SDFG
+    from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import StateBoundaryBehavior
 
 INDENTATION = '  '
 
@@ -272,7 +273,8 @@ class ScheduleTreeRoot(ScheduleTreeScope):
                 simplify: bool = True,
                 validate_all: bool = False,
                 skip: set[str] | None = None,
-                verbose: bool = False) -> SDFG:
+                verbose: bool = False,
+                state_boundary_behavior: Optional['StateBoundaryBehavior'] = None) -> SDFG:
         """
         Convert this schedule tree representation (back) into an SDFG.
 
@@ -283,11 +285,15 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         :param validate_all: When simplifying, validate all intermediate SDFGs. Unused if simplify is False.
         :param skip: Set of names of simplify passes to skip. Unused if simplify is False.
         :param verbose: Turn on verbose logging of simplify. Unused if simplify is False.
+        :param state_boundary_behavior: How state boundaries (e.g., due to write-after-write) are converted, see
+                                        ``tree_to_sdfg.StateBoundaryBehavior``. Defaults to state transitions.
 
         :return: SDFG version of this schedule tree.
         """
         from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s  # Avoid import loop
-        sdfg = t2s.from_schedule_tree(self)
+        if state_boundary_behavior is None:
+            state_boundary_behavior = t2s.StateBoundaryBehavior.STATE_TRANSITION
+        sdfg = t2s.from_schedule_tree(self, state_boundary_behavior)
 
         if validate:
             sdfg.validate()

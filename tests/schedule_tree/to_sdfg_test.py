@@ -52,6 +52,27 @@ def test_state_boundaries_waw() -> None:
     assert [tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode] == [type(n) for n in stree.children]
 
 
+def test_state_boundaries_waw_chain() -> None:
+    # The node after a boundary is part of the new state, so a subsequent write to the same data needs another boundary
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla2', {'inp'}, {'out'}, 'out = inp'), {'inp': dace.Memlet('A[2]')},
+                           {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla3', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[2]')},
+                           {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    stree = t2s._insert_state_boundaries_to_tree(stree)
+    assert [tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode, tn.StateBoundaryNode,
+            tn.TaskletNode] == [type(n) for n in stree.children]
+
+
 @pytest.mark.parametrize('overlap', (False, True))
 def test_state_boundaries_waw_ranges(overlap: bool) -> None:
     # Manually create a schedule tree
@@ -234,9 +255,220 @@ def test_create_state_boundary_state_transition(control_flow: bool) -> None:
     assert ["start", new_label] == [state.label for state in sdfg.states()]
 
 
-@pytest.mark.xfail(reason="Not yet implemented")
-def test_create_state_boundary_empty_memlet():
-    t2s._StreeToSDFG(boundary_behavior=t2s.StateBoundaryBehavior.EMPTY_MEMLET)
+def _tasklet_node(code: str, inputs: dict[str, str], outputs: dict[str, str]) -> tn.TaskletNode:
+    """
+    Creates a tasklet node with the given code and memlets per connector.
+    """
+    return tn.TaskletNode(nodes.Tasklet('tasklet', set(inputs.keys()), set(outputs.keys()), code), {
+        k: dace.Memlet(v)
+        for k, v in inputs.items()
+    }, {
+        k: dace.Memlet(v)
+        for k, v in outputs.items()
+    })
+
+
+def _map_node(param: str, children: list[tn.ScheduleTreeNode]) -> tn.MapScope:
+    """
+    Creates a map scope over ``0:10``.
+    """
+    return tn.MapScope(node=nodes.MapEntry(nodes.Map(f'map_{param}', [param], sbs.Range.from_string('0:10'))),
+                       children=children)
+
+
+def _boundary_tree_waw() -> tn.ScheduleTreeRoot:
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={'A': data.Array(dace.float64, [10])},
+                               children=[
+                                   _tasklet_node('out = 1', {}, {'out': 'A[1]'}),
+                                   _tasklet_node('out = 2', {}, {'out': 'A[1]'}),
+                               ])
+
+
+def _boundary_tree_read_write_race() -> tn.ScheduleTreeRoot:
+    # The first read must happen before the write, even though the tasklets do not depend on each other
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={
+                                   'A': data.Array(dace.float64, [10]),
+                                   'B': data.Array(dace.float64, [10])
+                               },
+                               children=[
+                                   _tasklet_node('out = inp + 1', {'inp': 'A[1]'}, {'out': 'B[0]'}),
+                                   _tasklet_node('out = inp + 1', {'inp': 'A[1]'}, {'out': 'B[1]'}),
+                                   _tasklet_node('out = inp * 10', {'inp': 'B[0]'}, {'out': 'A[1]'}),
+                                   _tasklet_node('out = inp + 1', {'inp': 'A[1]'}, {'out': 'B[0]'}),
+                               ])
+
+
+def _boundary_tree_maps() -> tn.ScheduleTreeRoot:
+    # Two maps writing the same data, followed by a tasklet reading it
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={
+                                   'A': data.Array(dace.float64, [10]),
+                                   'B': data.Array(dace.float64, [10])
+                               },
+                               children=[
+                                   _map_node('i', [_tasklet_node('out = i', {}, {'out': 'A[i]'})]),
+                                   _map_node('j', [_tasklet_node('out = j * 2', {}, {'out': 'A[j]'})]),
+                                   _tasklet_node('out = inp', {'inp': 'A[3]'}, {'out': 'B[0]'}),
+                               ])
+
+
+def _boundary_tree_copies() -> tn.ScheduleTreeRoot:
+    # A copy overwrites a tasklet's result, and another tasklet reads the copy
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={
+                                   'A': data.Array(dace.float64, [10]),
+                                   'B': data.Array(dace.float64, [10])
+                               },
+                               children=[
+                                   _tasklet_node('out = 5', {}, {'out': 'A[2]'}),
+                                   tn.CopyNode(target='A', memlet=dace.Memlet('B[0:10]')),
+                                   _tasklet_node('out = inp + 1', {'inp': 'A[2]'}, {'out': 'B[2]'}),
+                               ])
+
+
+def _boundary_tree_assignment() -> tn.ScheduleTreeRoot:
+    # The symbol assignment reads the first write, the later write must not be visible to it
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={'A': data.Array(dace.float64, [10])},
+                               symbols={'k': dace.int64},
+                               children=[
+                                   _tasklet_node('out = 5', {}, {'out': 'A[0]'}),
+                                   tn.AssignNode('k', CodeBlock('A[0]'),
+                                                 dace.InterstateEdge(assignments={'k': 'A[0]'})),
+                                   _tasklet_node('out = 1', {}, {'out': 'A[0]'}),
+                                   _tasklet_node('out = k', {}, {'out': 'A[k]'}),
+                               ])
+
+
+def _boundary_tree_in_map() -> tn.ScheduleTreeRoot:
+    # State boundaries in a map require a nested SDFG, whose boundaries are then converted
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={'A': data.Array(dace.float64, [10])},
+                               children=[
+                                   _map_node('i', [
+                                       _tasklet_node('out = 1', {}, {'out': 'A[i]'}),
+                                       _tasklet_node('out = i + 1', {}, {'out': 'A[i]'}),
+                                   ]),
+                               ])
+
+
+def _boundary_tree_control_flow() -> tn.ScheduleTreeRoot:
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={'A': data.Array(dace.float64, [10])},
+                               symbols={'i': dace.int64},
+                               children=[
+                                   _tasklet_node('out = 1', {}, {'out': 'A[0]'}),
+                                   _tasklet_node('out = 2', {}, {'out': 'A[0]'}),
+                                   tn.ForScope(loop=LoopRegion('loop', 'i < 10', 'i', 'i = 1', 'i = i + 1'),
+                                               children=[
+                                                   _tasklet_node('out = inp + i', {'inp': 'A[i - 1]'}, {'out': 'A[i]'}),
+                                                   _tasklet_node('out = inp * 2', {'inp': 'A[i]'}, {'out': 'A[i]'}),
+                                                   _tasklet_node('out = 0', {}, {'out': 'A[i]'}),
+                                                   _tasklet_node('out = inp + 1', {'inp': 'A[i - 1]'}, {'out': 'A[i]'}),
+                                               ]),
+                               ])
+
+
+def _boundary_tree_view() -> tn.ScheduleTreeRoot:
+    # A write to a view aliases a later write to the viewed array
+    A = data.Array(dace.float64, [20])
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={
+                                   'A': A,
+                                   'B': data.ArrayView(dace.float64, [10], transient=True)
+                               },
+                               children=[
+                                   _view_node('B', 'A[5:15]', A, [10]),
+                                   _tasklet_node('out = 1', {}, {'out': 'B[0]'}),
+                                   _tasklet_node('out = inp + 2', {'inp': 'A[4]'}, {'out': 'A[5]'}),
+                                   _tasklet_node('out = inp * 3', {'inp': 'B[0]'}, {'out': 'A[6]'}),
+                               ])
+
+
+#: Schedule trees with state boundaries, mapped to the expected values of ``A``, the expected number of states (in all
+#: SDFGs) when converting boundaries with empty memlets, and whether empty memlet edges are needed for ordering (as
+#: opposed to existing dataflow).
+_BOUNDARY_TREES = {
+    'waw': (_boundary_tree_waw, {
+        1: 2
+    }, 1, True),
+    'read_write_race': (_boundary_tree_read_write_race, {
+        1: 10
+    }, 1, False),
+    'maps': (_boundary_tree_maps, {
+        3: 6,
+        9: 18
+    }, 1, True),
+    'copies': (_boundary_tree_copies, {
+        2: 0
+    }, 1, True),
+    'assignment': (_boundary_tree_assignment, {
+        0: 1,
+        5: 5
+    }, 2, True),
+    'in_map': (_boundary_tree_in_map, {
+        i: i + 1
+        for i in range(10)
+    }, 3, True),
+    'control_flow': (_boundary_tree_control_flow, {
+        0: 2,
+        1: 3,
+        9: 11
+    }, 4, True),
+    'view': (_boundary_tree_view, {
+        5: 2,
+        6: 6
+    }, 1, False),
+}
+
+
+@pytest.mark.parametrize('name', _BOUNDARY_TREES.keys())
+def test_state_boundary_empty_memlet(name: str) -> None:
+    factory, expected_a, expected_states, needs_empty_edges = _BOUNDARY_TREES[name]
+
+    # Both boundary behaviors must compute the same results
+    results = {}
+    states = {}
+    empty_edges = {}
+    for behavior in (t2s.StateBoundaryBehavior.STATE_TRANSITION, t2s.StateBoundaryBehavior.EMPTY_MEMLET):
+        sdfg = factory().as_sdfg(simplify=False, state_boundary_behavior=behavior)
+        sdfg.name = f'tester_{name}_{behavior.name.lower()}'
+        all_states = [state for nested in sdfg.all_sdfgs_recursive() for state in nested.states()]
+        states[behavior] = len(all_states)
+        empty_edges[behavior] = [
+            e for state in all_states for e in state.edges()
+            if e.data.is_empty() and not isinstance(e.src, nodes.EntryNode) and not isinstance(e.dst, nodes.ExitNode)
+        ]
+
+        arrays = {aname: np.zeros(desc.shape) for aname, desc in sdfg.arrays.items() if not desc.transient}
+        sdfg(**arrays)
+        results[behavior] = arrays
+
+    transition = results[t2s.StateBoundaryBehavior.STATE_TRANSITION]
+    empty_memlet = results[t2s.StateBoundaryBehavior.EMPTY_MEMLET]
+    for aname in transition:
+        assert np.allclose(transition[aname], empty_memlet[aname]), f'{aname} differs between boundary behaviors'
+    for index, value in expected_a.items():
+        assert empty_memlet['A'][index] == value
+
+    # Boundaries that do not precede control flow or assignments are converted within states
+    assert states[t2s.StateBoundaryBehavior.EMPTY_MEMLET] == expected_states
+    assert states[t2s.StateBoundaryBehavior.STATE_TRANSITION] > expected_states
+    assert not empty_edges[t2s.StateBoundaryBehavior.STATE_TRANSITION]
+    assert bool(empty_edges[t2s.StateBoundaryBehavior.EMPTY_MEMLET]) == needs_empty_edges
+
+
+def test_state_boundary_empty_memlet_order() -> None:
+    # The write after the boundary is ordered after the first write through an empty memlet edge
+    sdfg = _boundary_tree_waw().as_sdfg(simplify=False, state_boundary_behavior=t2s.StateBoundaryBehavior.EMPTY_MEMLET)
+    state = sdfg.states()[0]
+    writes = [n for n in state.data_nodes() if n.data == 'A']
+    assert len(writes) == 2
+    first, second = sorted(writes, key=lambda n: state.in_edges(n)[0].src.code.as_string)
+    second_tasklet = state.in_edges(second)[0].src
+    assert [e.data.is_empty() for e in state.edges_between(first, second_tasklet)] == [True]
 
 
 def test_create_tasklet_raw() -> None:
@@ -1630,6 +1862,7 @@ def test_trailing_assignment_in_body(scope: str) -> None:
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
+    test_state_boundaries_waw_chain()
     test_state_boundaries_waw_ranges(overlap=False)
     test_state_boundaries_waw_ranges(overlap=True)
     test_state_boundaries_war()
@@ -1641,7 +1874,9 @@ if __name__ == '__main__':
     test_state_boundaries_propagation(boundary=True)
     test_create_state_boundary_state_transition(control_flow=True)
     test_create_state_boundary_state_transition(control_flow=False)
-    # test_create_state_boundary_empty_memlet()
+    for name in _BOUNDARY_TREES:
+        test_state_boundary_empty_memlet(name)
+    test_state_boundary_empty_memlet_order()
     test_create_tasklet_raw()
     test_create_tasklet_waw()
     test_create_tasklet_war()
