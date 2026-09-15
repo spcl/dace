@@ -128,6 +128,12 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         # Same element, or the demotion would drop a genuine read of OTHER data.
         if read.data != write.data or str(read.subset) != str(write.subset):
             return False
+        # The else arm must read the value the body starts from. When an earlier write in this state
+        # already updated the element, the blend is what carries that update: a masked store leaves
+        # the unwritten lanes at the value in memory, which a tiled body has not stored yet.
+        source = state.memlet_path(in_edges[0])[0].src
+        if isinstance(source, nd.AccessNode) and any(not e.data.is_empty() for e in state.in_edges(source)):
+            return False
         # A reader of the written element needs the old value on the lanes ``cond`` leaves unwritten.
         written = out_edges[0].dst
         if isinstance(written, nd.AccessNode) and any(

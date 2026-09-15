@@ -185,5 +185,41 @@ def test_a_masked_overwrite_read_again_keeps_the_old_value_on_unwritten_lanes():
     assert np.array_equal(acc, expected_acc), f"{acc[:6]} != {expected_acc[:6]}"
 
 
+def blend_over_an_element_the_body_already_updated() -> dace.SDFG:
+    """``out[i] = out[i] + 2 x[i]`` into an access node, then ``out[i] = ITE(c[i] < -0.5, 3 x[i], <that node>)``."""
+    sdfg = dace.SDFG('blend_over_an_updated_element')
+    for name in ('c', 'x', 'out'):
+        sdfg.add_array(name, [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:N'))
+    x = state.add_read('x')
+    first = state.add_tasklet('first', {'a', 'o'}, {'r'}, 'r = o + a * 2.0')
+    state.add_memlet_path(x, me, first, dst_conn='a', memlet=dace.Memlet('x[i]'))
+    state.add_memlet_path(state.add_read('out'), me, first, dst_conn='o', memlet=dace.Memlet('out[i]'))
+    updated = state.add_access('out')
+    state.add_edge(first, 'r', updated, None, dace.Memlet('out[i]'))
+    blend = state.add_tasklet('blend', {'_c', '_t', '_e'}, {'_o'}, '_o = ITE(_c, _t, _e)')
+    state.add_memlet_path(state.add_read('c'), me, blend, dst_conn='_c', memlet=dace.Memlet('c[i]'))
+    state.add_memlet_path(x, me, blend, dst_conn='_t', memlet=dace.Memlet('x[i]'))
+    state.add_edge(updated, None, blend, '_e', dace.Memlet('out[i]'))
+    state.add_memlet_path(blend, mx, state.add_write('out'), src_conn='_o', memlet=dace.Memlet('out[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_blend_over_an_element_the_body_already_updated_stays_a_blend():
+    """Two guarded updates of ``out[i]`` in one map body: demoting the second to ``IT(cond, value)`` leaves the
+    unwritten lanes at the value in memory, which a tiled body has not stored the first update into, so the
+    first update vanished on every lane the second condition left unwritten."""
+    sdfg = blend_over_an_element_the_body_already_updated()
+    NormalizeMaskedWriteTasklets().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    blend = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.Tasklet) and n.label == 'blend')
+    assert 'ITE(' in blend.code.as_string, blend.code.as_string
+    state = next(s for s in sdfg.all_states() if blend in s.nodes())
+    assert [e.dst_conn for e in state.in_edges(blend) if e.dst_conn == '_e'] == ['_e']
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-q', '-p', 'no:cacheprovider']))
