@@ -83,6 +83,33 @@ def test_array_full_constant_write():
     assert [n for n in s1.data_nodes() if n.data == 'A'] == []
 
 
+def test_device_storage_array_is_not_promoted_to_a_host_constant():
+    """A constant lives at host file scope, which a GPU kernel cannot read, so a GPU_Global fill keeps its writes."""
+    sdfg = dace.SDFG('array_full_gpu_global')
+    sdfg.add_array('A', [10], dace.float64, transient=True, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('B', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+
+    s1 = sdfg.add_state('init')
+    s1.add_mapped_tasklet('init', dict(i='0:10'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+
+    s2 = sdfg.add_state('use')
+    s2.add_mapped_tasklet('use',
+                          dict(i='0:10'),
+                          dict(inp=dace.Memlet('A[i]')),
+                          'out = inp * 2.0',
+                          dict(out=dace.Memlet('B[i]')),
+                          external_edges=True)
+
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+
+    res = _run(sdfg)
+
+    assert 'A' not in (res or {}).get(sdfg.cfg_id, {})
+    assert 'A' not in sdfg.constants
+    assert len(_tasklets(s1)) == 1
+    assert [n.data for n in s1.data_nodes()] == ['A']
+
+
 def test_array_partial_constant_write():
     """A partially written array (indices 1..8) is zero-filled elsewhere."""
     sdfg = dace.SDFG('array_partial')

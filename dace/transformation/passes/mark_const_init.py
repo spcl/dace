@@ -294,8 +294,10 @@ class MarkConstInit(ppl.Pass):
         # folding its write to a compile-time constant is unsound -- and would leave the descriptor
         # claiming state-struct allocation while its value became a bare constant, which the readable
         # generator's `__state->` access can no longer resolve.
+        # Host-accessible storage only: the constant is emitted at host file scope, which device code cannot read.
         return (isinstance(desc, (dt.Scalar, dt.Array)) and desc.transient
                 and desc.lifetime == dtypes.AllocationLifetime.Scope
+                and dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, desc.storage)
                 and not isinstance(desc, (dt.View, dt.Reference, dt.Stream, dt.Structure, dt.ContainerArray)))
 
     def _symbolic_data_refs(self, sdfg: SDFG) -> Set[str]:
