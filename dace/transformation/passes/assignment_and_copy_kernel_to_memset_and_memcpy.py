@@ -739,6 +739,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 state.add_edge(libnode, None, e.dst, None, Memlet())
 
     def rm_edges(self, state: dace.SDFGState, edges: Iterable[graph.Edge[Memlet]]):
+        edges = list(edges)
+        if not edges:
+            return  # nothing torn down; the orphan sweep runs once per state in apply_pass
         nodes_to_check = OrderedSet()
         for i, e in enumerate(edges):
             assert e in state.edges(), f"{e} not in {state.edges()}"
@@ -760,6 +763,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 if not self._has_passthrough_connectors(n) and state.in_degree(n) == 0:
                     state.remove_node(n)
 
+        self.remove_orphans(state)
+
+    @staticmethod
+    def remove_orphans(state: dace.SDFGState) -> None:
         for n in state.nodes():
             if state.degree(n) == 0:
                 # A connector-less side-effect tasklet (e.g. BreakAntiDependence's
@@ -1017,6 +1024,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         rmed_memcpies = dict()
         rmed_memsets = dict()
+        visited_states: Dict[dace.SDFGState, None] = {}
 
         for (node, state) in map_entries:
             # A node may have been nested away by an earlier iteration's fallback.
@@ -1044,6 +1052,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 rmed_memsets[node] = 0
                 continue
 
+            visited_states[state] = None
             rmed_memcpy = self.remove_memcpy_from_kernel(state, node)
 
             # If the map is only used for 1 memcpy, then it might have been already removed
@@ -1056,6 +1065,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             assert node not in rmed_memcpies
             rmed_memcpies[node] = rmed_memcpy
             rmed_memsets[node] = rmed_memset
+
+        # One orphan sweep per state whose maps were scanned, instead of one per scanned map.
+        for state in visited_states:
+            self.remove_orphans(state)
 
         num_rmed_memcpies = sum(rmed_memcpies.values())
         num_rmed_memsets = sum(rmed_memsets.values())
