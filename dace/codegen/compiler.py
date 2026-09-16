@@ -529,9 +529,9 @@ def configure_and_compile(
     if cmake_link_flags:
         cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
 
-    pch_dir = prepare_precompiled_header(targets)
-    if pch_dir:
-        cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
+    # Always set (even if empty), so a CMake cache cannot keep pointing at a header that no longer exists
+    pch_dir = prepare_precompiled_header(targets) or ''
+    cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
     # What the configure DISCOVERS: the command minus the flags naming this program. ``DACE_FILES``
     # reduces to its target subdirectories, which select the languages and packages CMake enables.
     shape = [c for c in cmake_command if not c.startswith(('-DDACE_SRC_DIR=', '-DDACE_FILES=', '-DDACE_PROGRAM_NAME='))]
