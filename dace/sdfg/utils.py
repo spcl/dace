@@ -1949,11 +1949,7 @@ def _tswds_cf_region(
                     yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
             # Add edge symbols into defined symbols
-            try:
-                issyms = edge.data.new_symbols(sdfg, symbols)
-            except Exception as e:
-                print(f"Error while getting new symbols from edge {edge} in region {region}: {e}")
-                raise Exception(e)
+            issyms = edge.data.new_symbols(sdfg, symbols)
             symbols.update({k: v for k, v in issyms.items() if v is not None})
 
             # Destination
@@ -3059,9 +3055,7 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
     if symbol_str in sdfg.symbols:
         sym_dtype = sdfg.symbols[symbol_str]
     else:
-        print(
-            f"Symbol {symbol_str} not in the symbols of {sdfg.label} ({sdfg.symbols}), setting to default type {default_type}"
-        )
+        warnings.warn(f"Symbol {symbol_str} not in the symbols of {sdfg.label}, using the default type {default_type}")
         sym_dtype = default_type
 
     # If top-level and in free symbols
