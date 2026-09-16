@@ -1234,7 +1234,18 @@ def test_nanobind_interface_symbol_inference_stride_binding():
     S = dace.symbol('S')
     sdfg = dace.SDFG('sym_infer_stride_probe')
     sdfg.add_array('A', [4], dace.float64, strides=[S], total_size=4 * S)
-    sdfg.arg_names = ['A']
+    sdfg.add_array('B', [4], dace.float64)
+    sdfg.arg_names = ['A', 'B']
+    # A must actually be read: since upstream #2529 an unused array no longer
+    # contributes its stride symbols to arglist(), so a stateless probe would
+    # have no S to infer at all.
+    state = sdfg.add_state()
+    state.add_mapped_tasklet('copy',
+                             dict(i='0:4'),
+                             dict(inp=dace.Memlet('A[i]')),
+                             'out = inp',
+                             dict(out=dace.Memlet('B[i]')),
+                             external_edges=True)
 
     code = generate_bindings_code(sdfg)
     assert 'S__opt' in code
