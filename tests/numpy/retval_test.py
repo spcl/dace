@@ -7,9 +7,18 @@ import pytest
 # (it is opt-in via compiler.nanobind_allow_return_override); this test asserts
 # the always-allow ctypes behavior, so it is ctypes-only. The nanobind behavior
 # (both config states) is covered in tests/codegen/nanobind_interface_test.py.
-skip_return_override_on_nanobind = pytest.mark.skipif(
-    dace.Config.get('compiler', 'interface') == 'nanobind',
-    reason='nanobind forbids a caller-provided __return buffer by default (opt-in)')
+@pytest.fixture
+def ctypes_interface(monkeypatch):
+    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
+
+    Under the default ``auto`` these SDFGs would select the nanobind interface,
+    where the asserted behavior differs: nanobind forbids a caller-provided __return buffer by default (opt-in).
+    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
+    is dropped first.
+    """
+    monkeypatch.delenv('DACE_compiler_interface', raising=False)
+    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
+        yield
 
 
 @dace.program
@@ -47,7 +56,7 @@ def test_nested_ret():
     assert np.allclose(result, A * 2 + 1)
 
 
-@skip_return_override_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_return_override():
     A = np.random.rand(20)
     result = np.random.rand(20)

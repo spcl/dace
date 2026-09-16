@@ -4,9 +4,18 @@ import pytest
 
 import dace
 
-skip_arraylike_args_on_nanobind = pytest.mark.skipif(
-    dace.Config.get('compiler', 'interface') == 'nanobind',
-    reason='nanobind ndarray arguments accept numpy/DLPack only (no __array_interface__-style coercion)')
+@pytest.fixture
+def ctypes_interface(monkeypatch):
+    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
+
+    Under the default ``auto`` these SDFGs would select the nanobind interface,
+    where the asserted behavior differs: nanobind ndarray arguments accept numpy/DLPack only (no __array_interface__-style coercion).
+    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
+    is dropped first.
+    """
+    monkeypatch.delenv('DACE_compiler_interface', raising=False)
+    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
+        yield
 
 
 class ArrayWrapper:
@@ -19,7 +28,7 @@ class ArrayWrapper:
         return self.array.__array_interface__
 
 
-@skip_arraylike_args_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_array_interface_input():
 
     @dace.program

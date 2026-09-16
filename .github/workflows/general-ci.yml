@@ -28,9 +28,12 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.10','3.14']
-        # The nanobind leg pins `compiler.interface`; it runs without
-        # simplification because the interface does not influence how SDFGs are
-        # optimized - simplification coverage is the other legs' job.
+        # Every leg runs the default `compiler.interface=auto`, so the
+        # nanobind interface is exercised wherever it applies and ctypes
+        # covers the rest. The 'nanobind' leg (kept under its historical
+        # name) additionally pins the production build-folder mode; it runs
+        # without simplification because the interface does not influence how
+        # SDFGs are optimized - simplification coverage is the other legs' job.
         simplify: [0,1,autoopt,nanobind]
 
     steps:
@@ -68,10 +71,10 @@ jobs:
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
         elif [ "${{ matrix.simplify }}" = "nanobind" ]; then
-            export DACE_compiler_interface=nanobind
+            export DACE_compiler_interface=auto
             export DACE_compiler_build_folder_mode="production"
             export DACE_optimizer_automatic_simplification=0
-            echo "nanobind interface, no simplification"
+            echo "auto interface, production folders, no simplification"
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
@@ -89,10 +92,10 @@ jobs:
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
         elif [ "${{ matrix.simplify }}" = "nanobind" ]; then
-            export DACE_compiler_interface=nanobind
+            export DACE_compiler_interface=auto
             export DACE_compiler_build_folder_mode="production"
             export DACE_optimizer_automatic_simplification=0
-            echo "nanobind interface, no simplification"
+            echo "auto interface, production folders, no simplification"
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
@@ -110,10 +113,10 @@ jobs:
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
         elif [ "${{ matrix.simplify }}" = "nanobind" ]; then
-            export DACE_compiler_interface=nanobind
+            export DACE_compiler_interface=auto
             export DACE_compiler_build_folder_mode="production"
             export DACE_optimizer_automatic_simplification=0
-            echo "nanobind interface, no simplification"
+            echo "auto interface, production folders, no simplification"
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
@@ -130,10 +133,10 @@ jobs:
         # passed its literal value through to the simplification flag, and
         # correcting that would change what an upstream leg tests.
         if [ "${{ matrix.simplify }}" = "nanobind" ]; then
-            export DACE_compiler_interface=nanobind
+            export DACE_compiler_interface=auto
             export DACE_compiler_build_folder_mode="production"
             export DACE_optimizer_automatic_simplification=0
-            echo "nanobind interface, no simplification"
+            echo "auto interface, production folders, no simplification"
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi

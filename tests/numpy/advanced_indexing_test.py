@@ -15,9 +15,18 @@ M = dace.symbol('M')
 # ctypes marshaller it does not coerce a Python list to an array (that would tax
 # the common fast path). The tests below pass a Python list for an array
 # parameter, so they are ctypes-only.
-skip_list_arg_on_nanobind = pytest.mark.skipif(
-    dace.Config.get('compiler', 'interface') == 'nanobind',
-    reason='nanobind requires numpy arrays for array arguments (no list coercion)')
+@pytest.fixture
+def ctypes_interface(monkeypatch):
+    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
+
+    Under the default ``auto`` these SDFGs would select the nanobind interface,
+    where the asserted behavior differs: nanobind requires numpy arrays for array arguments (no list coercion).
+    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
+    is dropped first.
+    """
+    monkeypatch.delenv('DACE_compiler_interface', raising=False)
+    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
+        yield
 
 
 def test_flat():
@@ -140,7 +149,7 @@ def test_multiple_newaxis():
     assert np.allclose(A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :, np.newaxis], res)
 
 
-@skip_list_arg_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_index_intarr_1d():
 
     @dace.program
@@ -271,7 +280,7 @@ def test_index_boolarr_inline():
     assert np.allclose(regression, A)
 
 
-@skip_list_arg_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_out_index_intarr():
 
     @dace.program
@@ -287,7 +296,7 @@ def test_out_index_intarr():
     assert np.allclose(A, ref)
 
 
-@skip_list_arg_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_out_index_intarr_bcast():
 
     @dace.program
@@ -304,7 +313,7 @@ def test_out_index_intarr_bcast():
     assert np.allclose(A, ref)
 
 
-@skip_list_arg_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_out_index_intarr_aug():
 
     @dace.program
@@ -320,7 +329,7 @@ def test_out_index_intarr_aug():
     assert np.allclose(A, ref)
 
 
-@skip_list_arg_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_out_index_intarr_aug_bcast():
 
     @dace.program
@@ -337,7 +346,7 @@ def test_out_index_intarr_aug_bcast():
     assert np.allclose(A, ref)
 
 
-@skip_list_arg_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_out_index_intarr_multidim():
 
     @dace.program
@@ -353,7 +362,7 @@ def test_out_index_intarr_multidim():
     assert np.allclose(A, ref)
 
 
-@skip_list_arg_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_out_index_intarr_multidim_range():
 
     @dace.program

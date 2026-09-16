@@ -10,9 +10,19 @@ from scipy import sparse
 # These two tests pass the pointer array in its ctypes form
 # ((POINTER(c_double) * m)(...)); the nanobind interface accepts the
 # numpy-array-of-pointers form only (no ctypes-array coercion, by choice).
-skip_ctypes_pointer_array_on_nanobind = pytest.mark.skipif(
-    dace.Config.get('compiler', 'interface') == 'nanobind',
-    reason='nanobind takes a numpy array of pointers, not a ctypes pointer array')
+@pytest.fixture
+def ctypes_interface(monkeypatch):
+    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
+
+    Under the default ``auto`` these SDFGs would select the nanobind interface,
+    where the asserted behavior differs: the nanobind interface no longer supports ContainerArray at all; these tests assert the
+    ctypes pointer-array calling form.
+    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
+    is dropped first.
+    """
+    monkeypatch.delenv('DACE_compiler_interface', raising=False)
+    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
+        yield
 
 
 def test_read_struct_array():
@@ -196,7 +206,7 @@ def test_write_struct_array():
         assert np.allclose(A[b], B[b].toarray())
 
 
-@skip_ctypes_pointer_array_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_jagged_container_array():
     N = dace.symbol('N')
     M = dace.symbol('M')
@@ -232,7 +242,7 @@ def test_jagged_container_array():
     assert np.allclose(ref, B[0])
 
 
-@skip_ctypes_pointer_array_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_two_levels():
     N = dace.symbol('N')
     M = dace.symbol('M')

@@ -374,6 +374,59 @@ def test_nanobind_interface_reuse_unchanged_module(nanobind_interface):
     assert c3.sdfg.name == f'{base_name}_0'
 
 
+def test_nanobind_interface_reuse_refused_after_foreign_rebuild(monkeypatch):
+    """A ctypes rebuild of the same (folder, name) identity invalidates the
+    loaded-module reuse: the folder's INTERFACE marker now says ctypes, so a
+    later nanobind compile of the unchanged SDFG must NOT reuse the stale
+    sys.modules entry (loading by marker would even hand back a ctypes
+    object). It renames into its own folder instead. Routine under the
+    ``auto`` default, where ctypes-pinned tests interleave with auto
+    compiles of same-named programs."""
+    import sympy
+
+    from dace import symbolic
+    from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
+    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
+
+    sympy.core.cache.clear_cache()
+    symbolic.deserialize_symbolic.cache_clear()
+
+    monkeypatch.delenv('DACE_compiler_interface', raising=False)
+
+    N = dace.symbol('N')
+
+    @dace.program
+    def axpy_foreign_rebuild(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+        B[:] = alpha * A + B
+
+    sdfg = axpy_foreign_rebuild.to_sdfg()
+    base_name = sdfg.name
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        c1 = sdfg.compile()
+    assert isinstance(c1, NanobindCompiledSDFG)
+
+    # Rebuild the SAME folder on the ctypes interface (flips the marker).
+    with set_temporary('compiler', 'interface', value='ctypes'):
+        c2 = sdfg.compile()
+    assert isinstance(c2, CtypesCompiledSDFG)
+
+    # The unchanged SDFG under nanobind: the loaded module's identity is
+    # taken but its folder no longer holds a nanobind artifact - reuse must
+    # be refused and the compile renamed into its own folder.
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        c3 = sdfg.compile()
+    assert isinstance(c3, NanobindCompiledSDFG)
+    assert c3.sdfg.name == f'{base_name}_0'
+
+    n = 16
+    a = np.random.rand(n)
+    b = np.random.rand(n)
+    expected = 2.0 * a + b
+    c3(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
+    assert np.allclose(b, expected)
+
+
 def test_nanobind_interface_external_nested_sdfg(nanobind_interface):
     """An SDFG that still carries an UNRESOLVED external nested SDFG
     (``NestedSDFG.sdfg is None``; the content is only loaded from

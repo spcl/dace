@@ -2726,9 +2726,17 @@ class SDFG(ControlFlowRegion):
                 n.instrument.name for n, _ in sdfg.all_nodes_recursive() if getattr(n, 'instrument', None) is not None
             ])
             source_hash = f'{sdfg.hash_sdfg()}:{md5(instr_sig.encode("utf-8")).hexdigest()}'
+            # The folder must still hold a nanobind artifact: a ctypes rebuild
+            #  of the same (folder, name) identity - routine under the 'auto'
+            #  default, when ctypes-pinned compiles interleave with auto ones -
+            #  flips the INTERFACE marker, and reusing the stale sys.modules
+            #  entry would hand out a module whose folder now belongs to the
+            #  other interface (loading by marker would even return a ctypes
+            #  object). Refused reuse falls through to the rename loop.
             module = sys.modules.get(compiler.nanobind_qualified_module_name(build_folder, self.name))
             if (module is not None and getattr(module, 'source_sdfg_hash', None) == source_hash
-                    and os.path.isdir(build_folder)):
+                    and os.path.isdir(build_folder)
+                    and compiler.get_program_interface(build_folder) == 'nanobind'):
                 if return_program_handle:
                     sdfg.build_folder = build_folder  # See compile loop below.
                     return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg)

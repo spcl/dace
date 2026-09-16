@@ -3,11 +3,19 @@ import dace
 import numpy as np
 import pytest
 
-skip_sdfg_safe_call_on_nanobind = pytest.mark.skipif(
-    dace.Config.get('compiler', 'interface') == 'nanobind',
-    reason='SDFG.safe_call() is refused on nanobind by design: it hides the compiled object, whose '
-    'collision rename would make post-call queries on the original SDFG unsound; '
-    'use compile() + CompiledSDFG.safe_call() (the *_precompiled variants).')
+@pytest.fixture
+def ctypes_interface(monkeypatch):
+    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
+
+    Under the default ``auto`` these SDFGs would select the nanobind interface,
+    where the asserted behavior differs: SDFG.safe_call() is refused when the resolved interface is nanobind: it hides the compiled
+    object, whose collision rename would make post-call queries on the original SDFG unsound.
+    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
+    is dropped first.
+    """
+    monkeypatch.delenv('DACE_compiler_interface', raising=False)
+    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
+        yield
 
 
 @dace.program
@@ -27,7 +35,7 @@ def write_to_null(A: dace.float64[5], B: dace.float64[5], ub: dace.int64):
 
 
 @pytest.mark.sequential
-@skip_sdfg_safe_call_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_wtn():
     sdfg = write_to_null.to_sdfg()
 
@@ -71,7 +79,7 @@ def test_wtn_precompiled():
 
 
 @pytest.mark.sequential
-@skip_sdfg_safe_call_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_instrumentation():
     sdfg = write_to_null.to_sdfg()
     sdfg.instrument = dace.InstrumentationType.Timer
@@ -103,7 +111,7 @@ def test_instrumentation_precompiled():
 
 
 @pytest.mark.sequential
-@skip_sdfg_safe_call_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_kwargs():
     sdfg = write_to_null.to_sdfg()
 
@@ -125,7 +133,7 @@ def test_kwargs_precompiled():
 
 
 @pytest.mark.sequential
-@skip_sdfg_safe_call_on_nanobind
+@pytest.mark.usefixtures('ctypes_interface')
 def test_symbols():
     N = dace.symbol('N')
 
