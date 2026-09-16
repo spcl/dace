@@ -5,6 +5,7 @@ import dace
 import numpy as np
 from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
+from dace.sdfg.state import sdfg_scope_symbols
 from dace.sdfg.utils import consolidate_edges
 
 import pytest
@@ -471,6 +472,73 @@ def test_consolidate_edges_folds_reads_of_one_written_access_node():
     got = np.zeros(8)
     sdfg(A=ref.copy(), C=got)
     assert np.array_equal(expected, got)
+
+
+def _make_symbolic_two_scope_sdfg() -> dace.SDFG:
+    # Symbolic extents and an interstate assignment: consolidation must leave both alone.
+    N = dace.symbol('N', dtype=dace.int64)
+    sdfg = dace.SDFG('scope_symbol_invariant')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_array('C', [N], dace.float64)
+    sdfg.add_transient('T', [N], dace.float64)
+
+    first = sdfg.add_state(is_start_block=True)
+    entry, exit_node = first.add_map('m1', dict(i='1:N-1'))
+    tasklet = first.add_tasklet('t1', {'l': None, 'm': None, 'r': None}, {'o': None}, 'o = l + m + r')
+    read = first.add_read('A')
+    for conn, index in (('l', 'i - 1'), ('m', 'i'), ('r', 'i + 1')):
+        first.add_memlet_path(read, entry, tasklet, dst_conn=conn, memlet=dace.Memlet(f'A[{index}]'))
+    first.add_memlet_path(tasklet, exit_node, first.add_write('T'), src_conn='o', memlet=dace.Memlet('T[i]'))
+
+    second = sdfg.add_state()
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'offset': '1'}))
+    entry2, exit2 = second.add_map('m2', dict(j='1:N-1'))
+    tasklet2 = second.add_tasklet('t2', {'a': None, 'b': None}, {'o': None}, 'o = a * b')
+    read_t = second.add_read('T')
+    second.add_memlet_path(read_t, entry2, tasklet2, dst_conn='a', memlet=dace.Memlet('T[j]'))
+    second.add_memlet_path(read_t, entry2, tasklet2, dst_conn='b', memlet=dace.Memlet('T[j - 1]'))
+    second.add_memlet_path(tasklet2, exit2, second.add_write('C'), src_conn='o', memlet=dace.Memlet('C[j]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_consolidate_edges_does_not_move_sdfg_scope_symbols():
+    """The symbol table consolidation propagates against is fixed for the whole call.
+
+    consolidate_edges derives sdfg_scope_symbols ONCE and hands the same table to every scope it
+    propagates, which is only sound while consolidation adds no symbol, descriptor or interstate
+    edge. Pin that, or the hoist silently propagates against a stale table.
+    """
+    sdfg = _make_symbolic_two_scope_sdfg()
+    before = dict(sdfg_scope_symbols(sdfg))
+    assert 'N' in before, 'test setup: expected the descriptor extent to reach the table'
+
+    assert consolidate_edges(sdfg) > 0, 'test setup: expected something to consolidate'
+
+    assert dict(sdfg_scope_symbols(sdfg)) == before
+
+
+def test_propagated_memlets_ignore_who_built_the_symbol_table():
+    """A precomputed scope-symbol table propagates to the same subsets as a per-scope rebuild."""
+    from dace.sdfg.propagation import propagate_memlets_scope
+
+    rebuilt = _make_symbolic_two_scope_sdfg()
+    precomputed = _make_symbolic_two_scope_sdfg()
+    table = sdfg_scope_symbols(precomputed)
+
+    for state in rebuilt.states():
+        propagate_memlets_scope(rebuilt, state, state.scope_leaves())
+    for state in precomputed.states():
+        propagate_memlets_scope(precomputed, state, state.scope_leaves(), scope_symbols=table)
+
+    def outer_subsets(sdfg: dace.SDFG) -> list:
+        return [(state.label, edge.data.data, str(edge.data.subset)) for state in sdfg.states()
+                for node in state.nodes() if isinstance(node, (dace_nodes.MapEntry, dace_nodes.MapExit))
+                for edge in state.in_edges(node) + state.out_edges(node) if edge.data.data is not None]
+
+    assert outer_subsets(rebuilt) == outer_subsets(precomputed)
 
 
 if __name__ == '__main__':
