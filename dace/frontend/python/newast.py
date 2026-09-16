@@ -30,7 +30,7 @@ from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
-                             LoopRegion, ControlFlowRegion, NamedRegion)
+                             LoopRegion, ControlFlowRegion, NamedRegion, sdfg_scope_symbols)
 from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_expr_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
@@ -1428,6 +1428,42 @@ class ProgramVisitor(ExtNodeVisitor):
         self.promoted_symbol_values: Dict[symbolic.symbol, Tuple[symbolic.SymbolicType, ControlFlowRegion]] = dict()
         #: Promoted symbols some read may have set to another value.
         self.unproven_symbols: Set[str] = set()
+        #: See :meth:`scope_symbol_table`, which owns these three.
+        self.scope_symbols: Optional[Dict[str, dtypes.typeclass]] = None
+        self.scope_symbols_covered: int = 0
+        self.scope_symbols_declared: Dict[str, dtypes.typeclass] = {}
+
+    def scope_symbol_table(self, sdfg: SDFG) -> Optional[Dict[str, dtypes.typeclass]]:
+        """What :func:`~dace.sdfg.state.sdfg_scope_symbols` answers for ``sdfg`` right now, to hand
+        to a helper that would otherwise build it itself; ``None`` for an SDFG this visitor does not
+        own, which leaves that helper on its own path.
+
+        Asking for it per mapped tasklet walks every descriptor's free symbols again -- 9.3 % of a
+        CloudSC parse. What a statement adds between two tasklets is temporaries, whose extents are
+        the operands' own, so the table is FOLDED FORWARD over the descriptors added since it was
+        built instead. A declared symbol arriving, or the start block gaining a predecessor, rebuilds
+        it outright: ``sdfg_scope_symbols`` folds declarations first and interstate edges last, so a
+        late arrival would otherwise land at the wrong position and take the wrong dtype.
+
+        The returned table is the visitor's own and is never mutated by a reader.
+        """
+        if sdfg is not self.sdfg:
+            return None
+        arrays = sdfg.arrays
+        try:
+            reaches_start = sdfg.in_degree(sdfg.start_state) > 0
+        except ValueError:  # Start block ambiguous while the graph is half built
+            reaches_start = True
+        if (self.scope_symbols is None or reaches_start or self.scope_symbols_covered > len(arrays)
+                or self.scope_symbols_declared != sdfg.symbols):
+            self.scope_symbols = sdfg_scope_symbols(sdfg)
+            self.scope_symbols_declared = dict(sdfg.symbols)
+            self.scope_symbols_covered = len(arrays)
+        elif self.scope_symbols_covered < len(arrays):
+            for desc in itertools.islice(arrays.values(), self.scope_symbols_covered, None):
+                self.scope_symbols.update([(s.name, s.dtype) for s in desc.free_symbols])
+            self.scope_symbols_covered = len(arrays)
+        return self.scope_symbols
 
     @classmethod
     def progress_count(cls) -> int:
@@ -3249,7 +3285,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                              },
                                              tasklet_code, {'__out': out_memlet},
                                              external_edges=True,
-                                             debuginfo=self.current_lineinfo)
+                                             debuginfo=self.current_lineinfo,
+                                             scope_symbols=self.scope_symbol_table(state.sdfg))
 
                 else:
                     op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
@@ -3299,7 +3336,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                          inp_memlet,
                                          tasklet_code, {'__out': memlet},
                                          external_edges=True,
-                                         debuginfo=self.current_lineinfo)
+                                         debuginfo=self.current_lineinfo,
+                                         scope_symbols=self.scope_symbol_table(state.sdfg))
         else:
             if op_subset.num_elements() != 1:
                 raise DaceSyntaxError(self, node, "Incompatible subsets %s and %s" % (target_subset, op_subset))
@@ -3519,7 +3557,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                              },
                                              tasklet_code, {'__out': out_memlet},
                                              external_edges=True,
-                                             debuginfo=self.current_lineinfo)
+                                             debuginfo=self.current_lineinfo,
+                                             scope_symbols=self.scope_symbol_table(state.sdfg))
                 else:
                     op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
                     op2 = state.add_write(wtarget_name, debuginfo=self.current_lineinfo)
@@ -3568,7 +3607,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                          inp_memlets,
                                          tasklet_code, {'__out': out_memlet},
                                          external_edges=True,
-                                         debuginfo=self.current_lineinfo)
+                                         debuginfo=self.current_lineinfo,
+                                         scope_symbols=self.scope_symbol_table(state.sdfg))
         else:
             if op_subset.num_elements() != 1:
                 raise DaceSyntaxError(

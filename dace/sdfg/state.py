@@ -2068,6 +2068,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         input_nodes: Optional[Union[Dict[str, nd.AccessNode], List[nd.AccessNode], Set[nd.AccessNode]]] = None,
         output_nodes: Optional[Union[Dict[str, nd.AccessNode], List[nd.AccessNode], Set[nd.AccessNode]]] = None,
         propagate=True,
+        scope_symbols: Optional[Dict[str, dtypes.typeclass]] = None,
     ) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
@@ -2098,6 +2099,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             :param propagate: If True, computes outer memlets via propagation.
                               False will run faster but the SDFG may not be
                               semantically correct.
+            :param scope_symbols: ``sdfg_scope_symbols(self.sdfg)`` when the caller already holds
+                                  it. Never mutated. Building it here walks every descriptor's
+                                  free symbols, once per mapped tasklet.
             :return: tuple of (tasklet, map_entry, map_exit)
         """
         map_name = name + "_map"
@@ -2161,7 +2165,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             self.add_edge(map_entry, None, tasklet, None, mm.Memlet())
 
         # Every edge below propagates through one scope, so its symbols are derived once.
-        defined_variables = (self.symbols_defined_at(map_entry).keys()
+        defined_variables = (self.symbols_defined_at(map_entry, scope_symbols).keys()
                              | self.sdfg.constants.keys()) if external_edges and propagate else None
 
         if external_edges:

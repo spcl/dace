@@ -1306,7 +1306,8 @@ def _create_subgraph(visitor: ProgramVisitor,
                                  input_memlets,
                                  tasklet_params['code'],
                                  output_memlets,
-                                 external_edges=True)
+                                 external_edges=True,
+                                 scope_symbols=visitor.scope_symbol_table(sdfg))
 
 
 def _flatten_args(args: Sequence[UfuncInput]) -> Sequence[UfuncInput]:
