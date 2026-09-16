@@ -33,8 +33,6 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
         enable-cache: true
-        pyproject-file: pyproject.toml
-        cache-dependency-glob: pyproject.toml
 
     - name: Install dependencies
       shell: bash
