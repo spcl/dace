@@ -62,36 +62,31 @@ def _env2bool(envval):
     return str(envval).lower() in ['true', '1', 'y', 'yes', 'on', 'verbose']
 
 
-def _add_defaults(config, metadata):
-    """ Add defaults to configuration from metadata.
-
-        :return: True if configuration was modified, False otherwise.
+def _coerce_env_value(envval: str, metadata: Dict[str, Any], envvar: str):
     """
-    osname = platform.system()
-    modified = False
-    for k, v in metadata.items():
-        # Recursive call for fields inside the dictionary
-        if v['type'] == 'dict':
-            if k not in config:
-                modified = True
-                config[k] = {}
-            modified |= _add_defaults(config[k], v['required'])
-            continue
-        # Empty list initialization (if no default is specified)
-        elif v['type'] == 'list':
-            if k not in config and 'default' not in v:
-                modified = True
-                config[k] = []
-                continue
-        # Key does not exist in configuration, add default value
-        if k not in config:
-            modified = True
-            # Per-OS default
-            if 'default_' + osname in v:
-                config[k] = v['default_' + osname]
-            else:
-                config[k] = v['default']
-    return modified
+    Coerces an environment variable string to the schema-declared type of a
+    configuration entry.
+
+    :param envval: The raw environment variable value.
+    :param metadata: The schema metadata of the configuration entry.
+    :param envvar: The environment variable name (for diagnostics).
+    :return: The coerced value.
+    :raise ValueError: If the value cannot be coerced to the declared type.
+    """
+    entry_type = metadata['type']
+    if entry_type == 'bool':
+        return _env2bool(envval)
+    if entry_type == 'int':
+        return int(envval)
+    if entry_type == 'float':
+        return float(envval)
+    if entry_type == 'list':
+        result = yaml.load(envval, Loader=yaml.SafeLoader)
+        if not isinstance(result, list):
+            raise ValueError(f'{envvar} does not contain a list: {envval!r}')
+        return result
+    # Strings (and 'any'-typed entries) are kept verbatim
+    return envval
 
 
 class _ConfigData(threading.local):
@@ -112,6 +107,54 @@ class _ConfigData(threading.local):
 
     def cfg_filename(self):
         return self._cfg_filename
+
+    def _add_defaults(self, config, metadata, prefix='DACE'):
+        """ Add defaults to configuration from metadata.
+
+            Where a default is inserted, the environment is consulted first:
+            if ``<prefix>_<key path>`` (e.g. ``DACE_compiler_build_type``) is
+            set, its value — coerced to the schema-declared type — becomes the
+            entry's value instead of the schema default. The environment
+            therefore only influences defaults; values loaded from a
+            configuration file or set through :func:`Config.set` (including
+            :func:`set_temporary` / :func:`temporary_config`) take precedence.
+
+            :param config: The (sub-)configuration dictionary to fill.
+            :param metadata: The schema metadata of ``config``.
+            :param prefix: Environment variable prefix of ``config``'s path.
+            :return: True if configuration was modified, False otherwise.
+        """
+        osname = platform.system()
+        modified = False
+        for k, v in metadata.items():
+            envvar = prefix + '_' + k
+            # Recursive call for fields inside the dictionary
+            if v['type'] == 'dict':
+                if k not in config:
+                    modified = True
+                    config[k] = {}
+                modified |= self._add_defaults(config[k], v['required'], envvar)
+                continue
+            # Key already exists in configuration, nothing to add
+            if k in config:
+                continue
+            modified = True
+            # Environment-provided default
+            if envvar in os.environ:
+                try:
+                    config[k] = _coerce_env_value(os.environ[envvar], v, envvar)
+                    continue
+                except (ValueError, yaml.YAMLError) as ex:
+                    warnings.warn(f'Ignoring environment variable {envvar}: {ex}')
+            # Empty list initialization (if no default is specified)
+            if v['type'] == 'list' and 'default' not in v:
+                config[k] = []
+            # Per-OS default
+            elif 'default_' + osname in v:
+                config[k] = v['default_' + osname]
+            else:
+                config[k] = v['default']
+        return modified
 
     def _initialize(self):
         """Initialize `self`, loads the specified configuration file.
@@ -151,7 +194,7 @@ class _ConfigData(threading.local):
             # None of the files were found, load defaults from metadata
             self._cfg_filename = None
             self._config = {}
-            _add_defaults(self._config, self._config_metadata['required'])
+            self._add_defaults(self._config, self._config_metadata['required'])
 
         # Check for old configurations to update the file
         if 'execution' in self._config and self._cfg_filename:
@@ -170,7 +213,7 @@ class _ConfigData(threading.local):
             self._config = {}
 
         # Add defaults from metadata
-        _add_defaults(self._config, self._config_metadata['required'])
+        self._add_defaults(self._config, self._config_metadata['required'])
 
     def load_schema(self, filename: Optional[str] = None):
         if filename is None:
@@ -195,7 +238,7 @@ class _ConfigData(threading.local):
                     d1[k] = v
 
         merge_dicts(self._config_metadata['required'], new_metadata['required'])
-        _add_defaults(self._config, new_metadata['required'])
+        self._add_defaults(self._config, new_metadata['required'])
 
     def save(self, path: Optional[str] = None, all: bool = False, file: Optional[io.FileIO] = None):
         if path is None and file is None:
@@ -250,12 +293,6 @@ class _ConfigData(threading.local):
         if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
             key_hierarchy = key_hierarchy[0].split('.')
 
-        # Environment variable override
-        # NOTE: will only work if a specific key is accessed!
-        envvar = 'DACE_' + '_'.join(key_hierarchy)
-        if envvar in os.environ:
-            return os.environ[envvar]
-
         # Traverse the key hierarchy
         current_conf = self._config
         for key in key_hierarchy:
@@ -267,6 +304,7 @@ class _ConfigData(threading.local):
         res = self.get(*key_hierarchy)
         if isinstance(res, bool):
             return res
+        # Values loaded from a configuration file may be strings
         return _env2bool(str(res))
 
     def append(self, *key_hierarchy, value, autosave):
@@ -431,7 +469,8 @@ class Config(object):
     def get_bool(*key_hierarchy):
         """ Returns the current value of a given boolean configuration entry.
             This specialization allows more string types to be converted to
-            boolean, e.g., due to environment variable overrides.
+            boolean, e.g., when a configuration file stores the value as a
+            string.
 
             :param key_hierarchy: A tuple of strings leading to the
                                   configuration entry.

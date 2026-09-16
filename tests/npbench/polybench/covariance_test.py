@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
 
-import os
 import dace.dtypes
 import numpy as np
 import dace as dc
@@ -136,10 +135,10 @@ def run_covariance_autodiff():
     np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-5, atol=1e-8)
 
 
-def test_cpu(monkeypatch):
+def test_cpu():
     # Serialization causes issues, we temporarily disable it
-    monkeypatch.setenv("DACE_testing_serialization", "0")
-    run_covariance(dace.dtypes.DeviceType.CPU)
+    with dace.config.set_temporary('testing', 'serialization', value=False):
+        run_covariance(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.gpu
@@ -152,10 +151,8 @@ def test_autodiff():
     pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
-    last_value = os.environ.get('DACE_testing_serialization', '0')
-    os.environ['DACE_testing_serialization'] = '0'
-    run_covariance_autodiff()
-    os.environ['DACE_testing_serialization'] = last_value
+    with dace.config.set_temporary('testing', 'serialization', value=False):
+        run_covariance_autodiff()
 
 
 if __name__ == "__main__":
