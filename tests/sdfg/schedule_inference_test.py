@@ -166,6 +166,26 @@ def test_semi_ambiguous_schedule():
                 assert node.schedule == dace.ScheduleType.GPU_ThreadBlock
 
 
+def test_view_storage_follows_the_container():
+    """ A view addresses the memory of the container behind it, so it lives where that container lives. """
+    sdfg = dace.SDFG('view_storage')
+    sdfg.add_array('A', [8, 8], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('B', [8], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_view('v', [8], dace.float64)
+    state = sdfg.add_state()
+
+    view = state.add_access('v')
+    state.add_edge(state.add_read('A'), None, view, 'views', dace.Memlet('A[1, 0:8]'))
+    entry, exit_node = state.add_map('m', dict(i='0:8'), schedule=dace.ScheduleType.GPU_Device)
+    tasklet = state.add_tasklet('t', {'inp'}, {'out'}, 'out = inp')
+    state.add_memlet_path(view, entry, tasklet, dst_conn='inp', memlet=dace.Memlet('v[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('B'), src_conn='out', memlet=dace.Memlet('B[i]'))
+
+    set_default_schedule_and_storage_types(sdfg, [None])
+
+    assert sdfg.arrays['v'].storage == dace.StorageType.GPU_Global
+
+
 if __name__ == '__main__':
     test_default_schedule_autodetect()
     test_gpu_schedule_autodetect()
@@ -177,3 +197,4 @@ if __name__ == '__main__':
     test_ambiguous_schedule()
     test_ambiguous_schedule_2()
     test_semi_ambiguous_schedule()
+    test_view_storage_follows_the_container()

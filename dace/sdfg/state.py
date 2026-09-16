@@ -62,6 +62,25 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
     return None
 
 
+def _symbols_reassigned_within(sdfg: 'SDFG') -> Set[str]:
+    """
+    Collects the symbols that an SDFG assigns to somewhere inside itself.
+
+    These are the symbols whose value within the SDFG is governed by its own control flow --
+    interstate-edge assignments and the symbols that control flow regions define, such as loop
+    variables -- rather than by whatever a parent maps them to.
+
+    :param sdfg: The SDFG to inspect.
+    :return: The set of symbol names assigned within ``sdfg``.
+    """
+    result: Set[str] = set()
+    for edge in sdfg.all_interstate_edges():
+        result.update(edge.data.assignments.keys())
+    for region in sdfg.all_control_flow_regions():
+        result.update(region.new_symbols(sdfg.symbols).keys())
+    return result
+
+
 def _make_iterators(ndrange):
     # Input can either be a dictionary or a list of pairs
     if isinstance(ndrange, list):
@@ -704,7 +723,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         # Free symbols from nodes
         for n in self.nodes():
             if isinstance(n, nd.EntryNode):
-                new_symbols |= set(n.new_symbols(sdfg, self, {}).keys())
+                new_symbols |= set(map(str, n.new_symbols(sdfg, self, {}).keys()))
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
                 freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
@@ -1671,6 +1690,15 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         for region in reversed(regions):
             symbols.update({k: v for k, v in region.new_symbols(symbols).items() if v is not None})
 
+        # Add symbols defined by the enclosing control flow regions (e.g., loop variables)
+        enclosing = []
+        cfg = self.parent_graph
+        while cfg is not None and cfg is not sdfg:
+            enclosing.append(cfg)
+            cfg = cfg.parent_graph
+        for region in reversed(enclosing):
+            symbols.update({k: v for k, v in region.new_symbols(symbols).items() if v is not None})
+
         # Find scopes this node is situated in
         sdict = self.scope_dict()
         scope_list = []
@@ -1805,6 +1833,33 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.parent_sdfg = self.sdfg
 
             sdfg.update_cfg_list([])
+            # Mapping entries of symbols the nested SDFG does not use (yet) are kept as-is
+            retained_mapping: Dict[str, Any] = {}
+            if symbol_mapping:
+                from dace.sdfg import dealias  # Avoid circular import
+                used = sdfg.free_symbols
+                # A symbol the nested SDFG reassigns cannot be replaced by an expression
+                reassigned = _symbols_reassigned_within(sdfg)
+                # A value naming a parent data container is not a symbol of the parent's scope
+                parent_arrays = self.sdfg.arrays if self.sdfg is not None else {}
+                applied_mapping = {
+                    k: v
+                    for k, v in symbol_mapping.items()
+                    if k in used and not (k in reassigned and not dtypes.validate_name(str(v)))
+                    and not (symbolic.arrays(v) | symbolic.scalars(v, parent_arrays))
+                }
+                retained_mapping = {k: v for k, v in symbol_mapping.items() if k not in applied_mapping}
+
+                if applied_mapping:
+                    dealias.remove_symbol_aliases(sdfg, applied_mapping)
+
+                    symbolic.safe_replace(applied_mapping, lambda m: sdfg.replace_dict(m))
+
+                    # Integrate any internal SDFGs after performing replacements
+                    for state in sdfg.states():
+                        for node in state.nodes():
+                            if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
+                                dealias.integrate_nested_sdfg(node.sdfg)
 
         # Make dictionary of autodetect connector types from set
         if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
@@ -1819,7 +1874,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg,
             inputs,
             outputs,
-            symbol_mapping=symbol_mapping,
+            symbol_mapping=None,
             location=location,
             debuginfo=debuginfo,
             path=external_path,
@@ -1829,28 +1884,18 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if sdfg is not None:
             sdfg.parent_nsdfg_node = s
 
-            # Add "default" undefined symbols if None are given
-            symbols = sdfg.free_symbols
-            if symbol_mapping is None:
-                symbol_mapping = {s: s for s in symbols}
-                s.symbol_mapping = symbol_mapping
-
-            # Validate missing symbols
-            missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
-            if missing_symbols and self.sdfg is not None:
-                # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in defined_symbols}
-                symbol_mapping.update(parent_mapping)
-                s.symbol_mapping = symbol_mapping
-                missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            if missing_symbols:
-                raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
+            # Remaining free symbols are identity-mapped, plus the entries that could not be applied
+            symbol_mapping = {fs: fs for fs in sdfg.free_symbols}
+            symbol_mapping.update(retained_mapping)
+            s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
+            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
+        else:
+            s.symbol_mapping = symbol_mapping or {}
 
         return s
 
@@ -2723,6 +2768,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         from dace.sdfg import propagation as sdprop
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+        sdprop._collect_region_meta_read_candidates(self, candidates)
 
         for block in self.nodes():
             if isinstance(block, SDFGState):
@@ -3682,6 +3728,7 @@ class LoopRegion(ControlFlowRegion):
             return
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+        sdprop._collect_region_meta_read_candidates(self, candidates)
 
         for block in self.nodes():
             if isinstance(block, SDFGState):
@@ -3960,6 +4007,10 @@ class ConditionalBlock(AbstractControlFlowRegion):
         :note: ``border_memlets`` mapping is updated in-place.
         """
         from dace.sdfg import propagation as sdprop
+
+        # Branch conditions are evaluated regardless of which branch is taken.
+        sdprop._merge_meta_read_candidates(self, border_memlets, self.sdfg.arrays)
+
         has_condition = False
 
         for condition, region in self._branches:
