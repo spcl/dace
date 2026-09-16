@@ -91,6 +91,7 @@ from dace.transformation.passes.vectorization.reduction_scalar_local_prep import
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeStridedMaps
 from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusionExtended
+from dace.transformation.passes.canonicalize import prune_and_inline_nested_sdfgs as prune_and_inline
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.pattern_matching import collapse_multigraph_to_nx
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
@@ -781,7 +782,8 @@ def normalize_loop_nests(sdfg: dace.SDFG) -> None:
     1. Inline the wrapper NSDFGs (and any single-state leaf body) via ``InlineSDFG`` /
        ``InlineMultistateSDFG`` so the maps become adjacent. A multi-state body, or one
        with an inout connector (cloudsc ``zqlhs`` RMW / ``vbor`` reused-scalar chains), is
-       left intact for the walker.
+       left intact for the walker -- the candidates are enumerated here rather than handed
+       to the matcher, because ``InlineSDFG`` accepts a shared inout connector.
     2. ``MapCollapse`` the now-adjacent perfectly-nested single-param maps into one
        multi-param map.
 
@@ -791,9 +793,43 @@ def normalize_loop_nests(sdfg: dace.SDFG) -> None:
 
     :param sdfg: SDFG to normalise in place.
     """
-    sdfg.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG], permissive=False, validate=False)
+    inline_loop_nest_wrappers(sdfg)
     sdfg.apply_transformations_repeated(MapCollapse, permissive=False, validate=False)
     _resolve_body_nsdfg_symbol_aliases(sdfg)
+
+
+def inline_loop_nest_wrappers(sdfg: dace.SDFG) -> int:
+    """Inline every body NestedSDFG except the inout-connector ones the tile descent walks.
+
+    ``InlineSDFG`` inlines a nested SDFG that reads and writes one container through a single
+    access node (PR #2586), so handing the whole graph to the matcher now flattens the cloudsc
+    ``zqlhs`` RMW body that :func:`normalize_loop_nests` has to keep. Enumerate the candidates
+    instead and probe only the nodes the descent does not need.
+
+    :param sdfg: SDFG to inline in place.
+    :returns: The number of inlines applied.
+    """
+    probes = [(InlineSDFG(), InlineSDFG.nested_sdfg), (InlineMultistateSDFG(), InlineMultistateSDFG.nested_sdfg)]
+    applied = 0
+    inlined = True
+    while inlined:
+        inlined = False
+        for node, parent in list(sdfg.all_nodes_recursive()):
+            if not isinstance(node, dace.nodes.NestedSDFG) or not isinstance(parent, dace.SDFGState):
+                continue
+            if OrderedSet(node.in_connectors) & OrderedSet(node.out_connectors):
+                continue
+            for xform, pattern_node in probes:
+                if not prune_and_inline.accepts(xform, pattern_node, parent, node):
+                    continue
+                xform.permissive = False
+                xform.apply(parent, parent.sdfg)
+                applied += 1
+                inlined = True
+                break
+            if inlined:
+                break
+    return applied
 
 
 def _resolve_body_nsdfg_symbol_aliases(sdfg: dace.SDFG) -> None:
