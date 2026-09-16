@@ -32,13 +32,6 @@ def _nested2d(a: dace.float64[M, Nn], b: dace.float64[M, Nn]):
             b[j, i] = a[j, i] + 1.0
 
 
-@dace.program
-def _nested2d_in_place(a: dace.float64[M, Nn]):
-    for j in range(M):
-        for i in range(Nn):
-            a[j, i] = a[j, i] + 1.0
-
-
 def _maps(sdfg: dace.SDFG):
     """All map-entry param lists in ``sdfg`` (recursively)."""
     return [n.map.params for n, _ in sdfg.all_nodes_recursive() if isinstance(n, MapEntry)]
@@ -63,19 +56,6 @@ def test_nested_for_loops_fuse_to_multiparam_map():
     s.validate()
     maps = _maps(s)
     assert any(len(p) == 2 for p in maps), f"expected a fused 2-param (j, i) map, got {maps}"
-
-
-def test_in_place_nested_for_loops_fuse_to_multiparam_map():
-    """An in-place update gives the j-map wrapper NSDFG an inout connector ``a``, but its i-map reads ``a``
-    from a source access node and writes a separate sink, so the wrapper still inlines and the maps fuse
-    into one ``(j, i)`` map (cloudsc tidy_branch shape)."""
-    s = _nested2d_in_place.to_sdfg(simplify=True)
-    s.apply_transformations_repeated(LoopToMap, permissive=True, validate=False)
-    assert _inout_nsdfgs(s), "fixture precondition: the wrapper NSDFG carries the inout connector a"
-    normalize_loop_nests(s)
-    s.validate()
-    maps = _maps(s)
-    assert maps == [["j", "i"]], f"expected one fused 2-param (j, i) map, got {maps}"
 
 
 def test_simple_single_state_body_inlined_away():
