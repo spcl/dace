@@ -1418,12 +1418,18 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
     # The explicit new_exit.map fix-up below only repairs the OUTERMOST pair; nested maps need this.
     memo = {}
-    # A transient the scope never writes holds a value from outside it; a replica renaming it would
-    # read a container nothing writes.
-    written_in_scope: OrderedSet[str] = OrderedSet(
-        n.data for n in scope.nodes()
-        if isinstance(n, nodes.AccessNode) and any(e.data is not None and not e.data.is_empty()
-                                                   for e in state.in_edges(n)))
+    # Rename only a scope-lifetime transient local to the scope. One the scope never writes holds a value
+    # from outside it, and one accessed outside it too carries its value across the boundary: a replica
+    # renaming either reads a container nothing writes or writes one nothing reads.
+    scope_nodes = OrderedSet(scope.nodes())
+    scope_local: OrderedSet[str] = OrderedSet(n.data for n in scope_nodes
+                                              if isinstance(n, nodes.AccessNode) and n.desc(sdfg).transient
+                                              and n.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope and any(
+                                                  e.data is not None and not e.data.is_empty()
+                                                  for e in state.in_edges(n)))
+    scope_local -= OrderedSet(n.data for n in state.data_nodes() if n not in scope_nodes)
+    if scope_local:
+        scope_local -= OrderedSet(sdfg.shared_transients(check_toplevel=False))
     for node in scope.nodes():
         node_copy = copy.deepcopy(node, memo)
         if node == scope.entry:
@@ -1431,8 +1437,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
         elif node == exit_node:
             new_exit = node_copy
 
-        if (isinstance(node, nodes.AccessNode) and node.data in written_in_scope
-                and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope and node.desc(sdfg).transient):
+        if isinstance(node, nodes.AccessNode) and node.data in scope_local:
             to_find_new_names.append(node_copy)
         state.add_node(node_copy)
         new_nodes.append(node_copy)
