@@ -39,10 +39,11 @@ def test_external_mem(symbolic):
     # The nanobind interface stores no symbol values between calls (by
     # design), so the workspace queries take them per call; ctypes reuses
     # the values passed to initialize() and accepts no arguments here.
-    ws_args = extra_args if dace.Config.get('compiler', 'interface') == 'nanobind' else {}
-
     # Test workspace size
     csdfg = sdfg.compile()
+    # Keyed off the compiled object, not the config: under 'auto' the config
+    #  value does not say which interface was selected.
+    ws_args = extra_args if hasattr(csdfg, '_handle') else {}
     csdfg.initialize(a, **extra_args)
     sizes = csdfg.get_workspace_sizes(**ws_args)
     assert sizes == {dace.StorageType.CPU_Heap: 20 * 8}
@@ -77,7 +78,8 @@ def test_external_twobuffers():
     csdfg = sdfg.compile()
 
     # See test_external_mem: nanobind takes the symbols per call.
-    ws_args = dict(N=20) if dace.Config.get('compiler', 'interface') == 'nanobind' else {}
+    # See test_external_mem: keyed off the compiled object, not the config.
+    ws_args = dict(N=20) if hasattr(csdfg, '_handle') else {}
 
     # Test workspace size
     a = np.random.rand(20)

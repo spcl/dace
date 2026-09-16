@@ -37,7 +37,9 @@ def private_cache(tmp_path, monkeypatch):
     runs CMake."""
     monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
     with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
-        if dace.Config.get('compiler', 'interface') == 'nanobind':
+        # 'auto' (the default) selects nanobind for these plain probe
+        #  programs, so the archive warmup applies there too.
+        if dace.Config.get('compiler', 'interface') in ('nanobind', 'auto'):
             build_and_check(tmp_path, 'archwarmup')
             shutil.rmtree(os.path.join(str(tmp_path / 'cache'), 'commands'), ignore_errors=True)
         yield
