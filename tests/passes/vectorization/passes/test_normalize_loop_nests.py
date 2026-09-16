@@ -32,6 +32,13 @@ def _nested2d(a: dace.float64[M, Nn], b: dace.float64[M, Nn]):
             b[j, i] = a[j, i] + 1.0
 
 
+@dace.program
+def _nested2d_rmw(a: dace.float64[M, Nn], b: dace.float64[M, Nn]):
+    for j in range(M):
+        for i in range(Nn):
+            b[j, i] = b[j, i] + a[j, i]
+
+
 def _maps(sdfg: dace.SDFG):
     """All map-entry param lists in ``sdfg`` (recursively)."""
     return [n.map.params for n, _ in sdfg.all_nodes_recursive() if isinstance(n, MapEntry)]
@@ -65,6 +72,25 @@ def test_simple_single_state_body_inlined_away():
     s.apply_transformations_repeated(LoopToMap, permissive=True, validate=False)
     normalize_loop_nests(s)
     assert not _nsdfgs(s), f"simple single-state body should inline away; left: {[n.label for n in _nsdfgs(s)]}"
+
+
+def test_rmw_loop_nest_wrapper_with_inout_connector_fuses_to_multiparam_map():
+    """A read-modify-write nest gives every wrapper an inout ``b`` connector read at a source
+    node and written at a separate sink node; the wrappers inline, so the maps fuse to one
+    ``(j, i)`` map and the result stays equal to NumPy."""
+    s = _nested2d_rmw.to_sdfg(simplify=True)
+    s.apply_transformations_repeated(LoopToMap, permissive=True, validate=False)
+    assert _inout_nsdfgs(s), "fixture precondition: inout-connector wrapper NSDFGs"
+    normalize_loop_nests(s)
+    s.validate()
+    assert _maps(s) == [["j", "i"]], f"expected one fused (j, i) map, got {_maps(s)}"
+    assert not _nsdfgs(s), f"wrappers should inline away; left: {[n.label for n in _nsdfgs(s)]}"
+    rng = numpy.random.default_rng(7)
+    a = rng.random((5, 6))
+    b = rng.random((5, 6))
+    expected = b + a
+    s(a=a, b=b, M=5, Nn=6)
+    numpy.testing.assert_allclose(b, expected, rtol=1e-12, atol=1e-12)
 
 
 def test_cloudsc_inout_body_preserved():
