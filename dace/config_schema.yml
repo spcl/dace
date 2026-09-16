@@ -117,14 +117,19 @@ required:
 
             interface:
                 type: str
-                default: ctypes
+                default: auto
                 title: Python interface for compiled SDFGs
                 description: >
                     Selects how a compiled SDFG is loaded and called from Python.
-                    "ctypes" (default) uses the stub-library/ctypes path.
+                    "auto" (default) inspects each SDFG and picks "nanobind"
+                    when that interface supports all of its arguments and
+                    return values, falling back to "ctypes" otherwise.
+                    "ctypes" always uses the stub-library/ctypes path.
                     "nanobind" builds the program as a nanobind extension module,
                     loads it through the import machinery, and marshals arguments
-                    in C++. Requires the ``nanobind`` package.
+                    in C++ (requires the ``nanobind`` package); an SDFG outside
+                    the nanobind interface's scope is then refused at code
+                    generation instead of falling back.
 
             nanobind_name_collision:
                 type: str

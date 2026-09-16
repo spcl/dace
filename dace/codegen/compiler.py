@@ -40,12 +40,44 @@ from dace.codegen.target import make_absolute
 T = TypeVar('T')
 
 
+def resolve_compiler_interface(sdfg=None) -> str:
+    """Decides the concrete Python interface ('ctypes' or 'nanobind') for compiling ``sdfg``.
+
+    This is the single decision point for the ``compiler.interface``
+    configuration: ``SDFG.compile()`` calls it once and passes the decided
+    mode down (``is_loaded()``, :func:`generate_program_folder`), so code
+    generation never re-reads the configuration.
+
+    - ``ctypes``: always the ctypes interface.
+    - ``nanobind``: always the nanobind interface; an SDFG outside its scope
+      is refused fail-fast at code generation (see
+      ``nanobind_bindings.argument_unsupported``), never silently redirected.
+    - ``auto`` (the default): the nanobind interface iff it supports every
+      argument and return value of ``sdfg``
+      (``nanobind_bindings.unsupported_reason``), else the ctypes interface.
+
+    :param sdfg: The SDFG about to be compiled, or ``None`` when there is no
+                 SDFG (raw code objects); ``auto`` then resolves to ``ctypes``,
+                 since without an SDFG no bindings can be generated.
+    :return: ``'ctypes'`` or ``'nanobind'``.
+    """
+    interface = Config.get('compiler', 'interface')
+    if interface not in ('ctypes', 'nanobind', 'auto'):
+        raise ValueError(f'Unknown value for `compiler.interface`: `{interface}`')
+    if interface != 'auto':
+        return interface
+    if sdfg is None:
+        return 'ctypes'
+    return 'nanobind' if nanobind_bindings.unsupported_reason(sdfg) is None else 'ctypes'
+
+
 def generate_program_folder(
     sdfg,
     code_objects: List[CodeObject],
     out_path: str,
     config=None,
     folder_mode: Optional[str] = None,
+    interface: Optional[str] = None,
 ) -> str:
     """Writes all files required to configure and compile the DaCe program into the specified folder.
 
@@ -58,6 +90,11 @@ def generate_program_folder(
     :param out_path: The folder in which the build files should be written.
     :param folder_mode: Select which files should be saved in the program build folder;
                         if not given, ``compiler.build_folder_mode`` is used.
+    :param interface: The DECIDED Python interface for this folder ('ctypes' or
+                      'nanobind', never 'auto') - ``SDFG.compile()`` passes the
+                      value :func:`resolve_compiler_interface` returned. If not
+                      given, it is resolved here from the configuration and
+                      ``sdfg``.
     :return: Path to the program folder.
 
     :note: The ``config`` argument is retained for compatibility and should not be used.
@@ -132,9 +169,12 @@ def generate_program_folder(
 
     # Nanobind interface: emit the bindings source next to the frame code, so
     # it is compiled into the program library (the module *is* the library).
-    interface = Config.get('compiler', 'interface')
+    if interface is None:
+        interface = resolve_compiler_interface(sdfg)
     if interface not in ('ctypes', 'nanobind'):
-        raise ValueError(f'Unknown value for `compiler.interface`: `{interface}`')
+        raise ValueError(f'Unknown value for the decided compiler interface: `{interface}` '
+                         '(expected "ctypes" or "nanobind"; "auto" must be resolved by the caller '
+                         'via resolve_compiler_interface).')
     if sdfg is None:
         # Raw code objects without an SDFG (e.g. helper libraries): no bindings can be
         # generated, so the folder is a plain ctypes-style artifact regardless of the

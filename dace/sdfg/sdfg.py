@@ -2601,11 +2601,14 @@ class SDFG(ControlFlowRegion):
         for k, v in symbols.items():
             self.add_constant(str(k), v)
 
-    def is_loaded(self, folder_mode: Optional[str] = None) -> bool:
+    def is_loaded(self, folder_mode: Optional[str] = None, interface: Optional[str] = None) -> bool:
         """
         Returns True if the SDFG binary is already loaded in the current process.
 
-        :note: What "loaded" means depends on ``compiler.interface``. For ``nanobind``
+        :param interface: The DECIDED Python interface for this SDFG ('ctypes'
+            or 'nanobind'); if not given, it is resolved from the configuration
+            and ``self`` via :func:`~dace.codegen.compiler.resolve_compiler_interface`.
+        :note: What "loaded" means depends on the interface. For ``nanobind``
             this means a ``sys.modules`` registry lookup, the key is constructed using
             :func:`nanobind_qualified_module_name`, see there for more information.
             This means no file system access is performed.
@@ -2622,7 +2625,9 @@ class SDFG(ControlFlowRegion):
 
         # For `nanobind` check if the module this SDFG corresponds to is loaded, i.e.
         #  its (build folder, name) identity is inside `sys.modules`.
-        if Config.get('compiler', 'interface') == 'nanobind':
+        if interface is None:
+            interface = compiler.resolve_compiler_interface(self)
+        if interface == 'nanobind':
             return compiler.nanobind_qualified_module_name(self.build_folder, self.name) in sys.modules
 
         build_folder = self.build_folder
@@ -2686,6 +2691,20 @@ class SDFG(ControlFlowRegion):
         #  code can expect `load_external_nsdfgs()` was called on it.
         sdfg: Optional[SDFG] = None
 
+        # Decide the Python interface for THIS SDFG once, in the external
+        #  decision function (no attribute is attached to the SDFG; the value
+        #  is passed along as arguments). Everything below - reuse, collision
+        #  handling, folder generation - keys off the decided value, and code
+        #  generation never re-reads the configuration. The 'auto' detector
+        #  inspects the arglist, which requires resolved external nested
+        #  SDFGs - so the decision runs on the materialized compile copy
+        #  (every branch below materializes it anyway, this is cost-neutral).
+        if sdfg is None:
+            sdfg = copy.deepcopy(self)
+            sdfg.load_external_nsdfgs()
+        interface = compiler.resolve_compiler_interface(sdfg)
+        nanobind_interface = interface == 'nanobind'
+
         # Content-verified module reuse (nanobind; compiler.nanobind_reuse_loaded,
         # default on): if THIS identity (build folder, name) is already loaded and
         # the loaded module was built from an SDFG with the same pre-codegen
@@ -2694,7 +2713,7 @@ class SDFG(ControlFlowRegion):
         # rename-and-rebuild below), never a wrong reuse; only an actual hash
         # collision between different contents could, which we accept everywhere.
         source_hash = None
-        if Config.get('compiler', 'interface') == 'nanobind' and Config.get_bool('compiler', 'nanobind_reuse_loaded'):
+        if nanobind_interface and Config.get_bool('compiler', 'nanobind_reuse_loaded'):
 
             # `hash_sdfg()` does not consider the instrumentation (at any level), but
             #  we have to, because it leads to different code. However, for that we
@@ -2726,7 +2745,6 @@ class SDFG(ControlFlowRegion):
             #  generator can include it in the bindings.
             # TODO(phimuell): It should not be a property, but we should come up with a
             #   better way to pass the value to the generator.
-            nanobind_interface = Config.get('compiler', 'interface') == 'nanobind'
             if nanobind_interface and source_hash is not None:
                 sdfg._source_sdfg_hash = source_hash
 
@@ -2739,7 +2757,7 @@ class SDFG(ControlFlowRegion):
             sdfg.build_folder = build_folder
 
             # Rename SDFG to avoid runtime issues with clashing names
-            if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode):
+            if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode, interface=interface):
                 collision_mode = Config.get('compiler', 'nanobind_name_collision')
                 assert collision_mode in ('rename', 'error'), \
                     f'Invalid value "{collision_mode}" for compiler.nanobind_name_collision (expected "rename" or "error").'
@@ -2756,7 +2774,7 @@ class SDFG(ControlFlowRegion):
 
             folder_was_explicit = self._build_folder is not None
             index = 0
-            while sdfg.is_loaded(folder_mode=folder_mode):
+            while sdfg.is_loaded(folder_mode=folder_mode, interface=interface):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
                 if nanobind_interface and not folder_was_explicit:
@@ -2799,7 +2817,8 @@ class SDFG(ControlFlowRegion):
             program_folder = compiler.generate_program_folder(sdfg,
                                                               program_objects,
                                                               build_folder,
-                                                              folder_mode=folder_mode)
+                                                              folder_mode=folder_mode,
+                                                              interface=interface)
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
@@ -2898,11 +2917,13 @@ class SDFG(ControlFlowRegion):
         Invokes an SDFG in a separate process to avoid crashes in the main process,generating and compiling code if necessary.
         Raises an exception if the SDFG execution fails.
 
-        :note: This function is not supported for the ``nanobind`` interface. To use
-            ``safe_call()`` with ``nanobind`` compile the SDFG explicitly and call
-            ``safe_call()`` on the returned object.
+        :note: This function is not supported when the resolved interface for this
+            SDFG is ``nanobind`` (an explicit setting, or the ``auto`` default
+            selecting it). To use ``safe_call()`` there, compile the SDFG
+            explicitly and call ``safe_call()`` on the returned object.
         """
-        if Config.get('compiler', 'interface') == 'nanobind':
+        from dace.codegen import compiler
+        if compiler.resolve_compiler_interface(self) == 'nanobind':
             # NOTE: The reason why we do not support this function under ``nanobind`` is
             #   because we can not guarantee that it a recompilation does not happen. If
             #   a recompilation happens then the reports are written to a different build
