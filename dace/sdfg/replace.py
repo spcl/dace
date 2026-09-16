@@ -70,9 +70,10 @@ def replace_dict(subgraph: 'StateSubgraphView',
     :param repl: Dictionary of replacements (key -> value).
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
     """
+    if any(not isinstance(k, str) or not isinstance(v, str) for k, v in repl.items()):
+        raise TypeError("Replacement keys and values must be strings")
     symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
+        symbolic.pystr_to_symbolic(symname): symbolic.pystr_to_symbolic(new_name)
         for symname, new_name in repl.items()
     }
 
@@ -123,7 +124,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
     # Replace in memlets
     for edge in subgraph.edges():
         if edge.data.data in repl:
-            edge.data.data = str(repl[edge.data.data])
+            edge.data.data = repl[edge.data.data]
         if (edge.data.subset is not None and repl.keys() & edge.data.subset.free_symbols):
             edge.data.subset = _replsym(edge.data.subset, symrepl)
         if (edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols):
@@ -140,7 +141,9 @@ def replace(subgraph: 'StateSubgraphView', name: str, new_name: str):
     :param name: Name to find.
     :param new_name: Name to replace.
     """
-    if str(name) == str(new_name):
+    if not isinstance(name, str) or not isinstance(new_name, str):
+        raise TypeError("Replacement keys and values must be strings")
+    if name == new_name:
         return
     replace_dict(subgraph, {name: new_name})
 
@@ -218,7 +221,7 @@ def replace_list_property_item(item: Any, element_type: type, repl: Dict[str, st
         # String lists hold names (e.g., ``Map.params``): replace whole identifiers only
         if not isinstance(item, str) or item not in repl:
             return item
-        new_name = str(repl[item])
+        new_name = repl[item]
         return new_name if new_name.isidentifier() else item
 
     is_symbolic_type = (element_type is symbolic.SymExpr

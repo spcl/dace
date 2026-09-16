@@ -430,7 +430,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict, value_as_string=True)
 
         # Access nodes that need to be reshaped
         reshapes: Set[str] = set()

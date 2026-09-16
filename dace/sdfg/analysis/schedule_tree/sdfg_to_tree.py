@@ -406,10 +406,13 @@ def _replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG) -> None:
     # Replace everything but the redefined symbols
     for state in sdfg.nodes():
         per_state_mapping = {k: v for k, v in mapping.items() if k not in redefined_symbols[state]}
-        symbolic.safe_replace(per_state_mapping, state.replace_dict)
+        symbolic.safe_replace(per_state_mapping, state.replace_dict, value_as_string=True)
         for e in sdfg.out_edges(state):
-            symbolic.safe_replace(per_state_mapping, lambda d: e.data.replace_dict(d, replace_keys=False))
-
+            symbolic.safe_replace(
+                per_state_mapping,
+                lambda d: e.data.replace_dict(d, replace_keys=False),
+                value_as_string=True,
+            )
 
 def _prepare_schedule_tree_edges(
     state: SDFGState

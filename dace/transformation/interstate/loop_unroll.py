@@ -90,9 +90,10 @@ class LoopUnroll(xf.MultiStateTransformation):
             # `position`, not `i`: for a negative stride `i` itself walks 0, -1, -2, ... and is
             # just as unsafe in a label. See instantiate_loop_iteration.
             current_index = start + i
+            current_index_str = symbolic.symstr(current_index)
             iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index, position)
-            iteration_region.replace_dict({self.loop.loop_variable: current_index}, replace_keys=True)
-            iteration_region.replace_meta_accesses({self.loop.loop_variable: symbolic.symstr(current_index)})
+            iteration_region.replace_dict({self.loop.loop_variable: current_index_str}, replace_keys=True)
+            iteration_region.replace_meta_accesses({self.loop.loop_variable: current_index_str})
 
             # Connect iterations with unconditional edges
             if len(unrolled_iterations) > 0:
@@ -165,7 +166,7 @@ class LoopUnroll(xf.MultiStateTransformation):
                             nsdfg_node.sdfg.parent_sdfg = graph.sdfg
             assert block not in block_map
             block_map[block] = new_block
-            new_block.replace_dict({loop.loop_variable: value})
+            new_block.replace_dict({loop.loop_variable: symbolic.symstr(value)})
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 
         for edge in loop.edges():
