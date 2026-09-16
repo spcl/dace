@@ -109,7 +109,6 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.remove_views import RemoveViews
-from dace.transformation.passes.scalar_fission import ArrayFission, ScalarFission
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
@@ -190,14 +189,7 @@ class PhaseFixpoint(ppl.Pass):
 
 def privatization_units() -> List[ppl.Pass]:
     """Split one container into per-scope versions where a dominating write allows it."""
-    return [
-        PrivatizeScalarsStage(),
-        PrivatizeArraysStage(),
-        ppl.Pipeline([ScalarFission()]),
-        ppl.Pipeline([ArrayFission()]),
-        PromoteConstantIndexAccess(),
-        BufferExpansion(),
-    ]
+    return [PrivatizeScalarsStage(), PrivatizeArraysStage(), PromoteConstantIndexAccess(), BufferExpansion()]
 
 
 def loop_to_map_units() -> List[ppl.Pass]:
