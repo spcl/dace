@@ -1057,6 +1057,46 @@ def test_war_detected_through_single_sided_copy_memlet():
                                        X=np.arange(8, dtype=np.float64) + 7.0)
 
 
+def test_war_read_through_a_view_orders_the_copy_out_of_the_view():
+    """CloudSC ``ztold[:] = ztp1[jk, :]`` then ``ztp1[jk, :] = ...``: the read happens at the view's consumer."""
+    sdfg = SDFG('war_read_through_view')
+    sdfg.add_array('A', [2, 8], dtypes.float64)
+    sdfg.add_array('Told', [8], dtypes.float64)
+    sdfg.add_array('X', [8], dtypes.float64)
+    sdfg.add_view('V', [8], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+    s1 = sdfg.add_state('save_old_row', is_start_block=True)
+    s2 = sdfg.add_state('overwrite_row')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    ar = s1.add_read('A')
+    view = s1.add_access('V')
+    told = s1.add_write('Told')
+    s1.add_edge(ar, None, view, 'views', Memlet('A[1, 0:8]'))
+    s1.add_edge(view, None, told, None, Memlet('Told[0:8]'))
+
+    xr = s2.add_read('X')
+    aw = s2.add_write('A')
+    tw = s2.add_tasklet('wr', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    s2.add_edge(xr, None, tw, '_in', Memlet('X[k]'))
+    s2.add_edge(tw, '_out', aw, None, Memlet('A[1, k]'))
+    sdfg.validate()
+
+    fused, st = _fuse(sdfg)
+    assert st is not None
+    told_writes = _node_by(st, 'Told', want_write=True)
+    a_writes = _node_by(st, 'A', want_write=True)
+    assert len(told_writes) == 1 and len(a_writes) == 1
+    _assert_ordered_before(st, told_writes[0], a_writes[0], 'WAR read through a view')
+
+    a = np.arange(16, dtype=np.float64).reshape(2, 8) + 1.0
+    _assert_fusion_preserves_semantics(sdfg,
+                                       fused.number_of_nodes(),
+                                       A=a,
+                                       Told=np.zeros(8),
+                                       X=np.arange(8, dtype=np.float64) + 7.0)
+
+
 # Determinism. The pass reads several decisions out of `set`s -- of AccessNodes, which
 # hash by ``id()``, and of data names, whose hash is salted per process. Both iterate in a
 # different order on a different run, so the same SDFG used to fuse on one run and not on
@@ -1199,3 +1239,4 @@ if __name__ == '__main__':
     test_three_state_chain_war_then_raw()
     test_war_survives_downstream_simplify()
     test_war_from_dace_program_matches_reference()
+    test_war_read_through_a_view_orders_the_copy_out_of_the_view()
