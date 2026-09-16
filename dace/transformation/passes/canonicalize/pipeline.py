@@ -256,12 +256,16 @@ class PropagateAndPrune(ppl.Pass):
             # ControlFlowBlockReachability dependency that only a Pipeline resolves.
             members = [SymbolPropagation(), ConstantPropagation(), DeadDataflowElimination()]
             result = ppl.Pipeline(members).apply_pass(sdfg, {})
+            if result:
+                changed += 1
             # The results dict also holds the resolved analyses, so only the members' own keys say the round
-            # modified the graph. A round that did not hands every later round the identical graph: stop there
-            # (CloudSC: 2.0s of 5.3s).
-            if not result or not any(type(member).__name__ in result for member in members):
-                break
-            changed += 1
+            # modified the graph. A round that did not hands every later round the identical graph, which it would
+            # repeat verbatim with the same report: count those rounds, skip the work (CloudSC: 2.0s of 5.3s).
+            if result and any(type(member).__name__ in result for member in members):
+                continue
+            if result:
+                changed += self.ROUNDS - 1 - round_index
+            break
         return changed or None
 
 
