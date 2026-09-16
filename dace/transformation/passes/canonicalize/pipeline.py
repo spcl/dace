@@ -1516,6 +1516,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # assign tasklet this pass plants on the boundary copy.
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _inline_single_state('post_l2m')
+    # Rebuild the scope summaries the inline above invalidated (see the note at the first
+    # parallelize stage). An inlined RMW body leaves its whole-array boundary memlet on the
+    # enclosing map exit, and codegen then reads that box as the write set: the outer map param
+    # does not vary it, so a per-element accumulation is emitted as an atomic it does not need.
+    s += [('post_l2m', PropagateMemlets())]
 
     # coalesce: prepare the graph for maximal map fusion now that the DOALL
     # loops have become maps -- see ``_coalesce`` for the per-step rationale.
