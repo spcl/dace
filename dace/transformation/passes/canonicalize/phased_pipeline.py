@@ -124,8 +124,17 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 #: A stage list: ``(phase label, pass)`` pairs in run order.
 Stages = List[Tuple[str, ppl.Pass]]
 
-#: Run ``SimplifyPass`` once between the normalize and lift phases.
-SIMPLIFY_AFTER_NORMALIZE = True
+#: Phase labels, in the paper's names and order (Fig. "fig:phases" and appendix "The Schedule in Detail").
+NORMALIZE_STATEMENTS = 'normalize_statements'
+LIFT_SEMANTICS = 'lift_semantics'
+DERIVE_PARALLELISM = 'derive_parallelism'
+RECOMPOSE = 'recompose'
+
+#: Rounds cap of the statement-normalization fixpoint.
+NORMALIZE_ROUNDS = 3
+#: The unit that decides whether the statement-normalization fixpoint takes another round. Invariant motion is
+#: the rewrite that re-exposes work for splitting; a round in which it changed nothing ends the fixpoint.
+NORMALIZE_DRIVER = 'LoopInvariantCodeMotion'
 #: Rounds cap of the inner map-fusion fixpoint (collapse, fuse, fuse states).
 FUSION_INNER_ROUNDS = 4
 #: Rounds cap of the outer fusion fixpoint (permute, inner fusion, condition fusion).
@@ -143,19 +152,22 @@ def prepared(units: List[ppl.Pass]) -> List[ppl.Pass]:
 
 @transformation.explicit_cf_compatible
 class PhaseFixpoint(ppl.Pass):
-    """Run a fixed list of units in order until one round changes nothing, at most ``max_rounds``.
+    """Run a fixed list of units in order until a round changes nothing, at most ``max_rounds``.
 
+    With ``drivers`` set, only a change by a unit of one of those class names earns another round.
     Fresh units every round: several units keep per-apply state. A ``SimplifyPass`` member skips
     the confirming tail of its own sweep (see ``IvSubstitutionFissionFixpoint``).
     """
 
     CATEGORY: str = 'Canonicalization'
 
-    def __init__(self, name: str, factory: Callable[[], List[ppl.Pass]], max_rounds: int) -> None:
+    def __init__(self, name: str, factory: Callable[[], List[ppl.Pass]], max_rounds: int,
+                 drivers: Tuple[str, ...] = ()) -> None:
         super().__init__()
         self.name = name
         self.factory = factory
         self.max_rounds = max_rounds
+        self.drivers = drivers
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -175,15 +187,18 @@ class PhaseFixpoint(ppl.Pass):
         rounds = 0
         for _ in range(self.max_rounds):
             changed = False
+            again = False
             for unit in self.units():
                 if isinstance(unit, SimplifyPass):
                     unit_changed = IvSubstitutionFissionFixpoint.simplify_until_settled(unit, sdfg)
                 else:
                     unit_changed = changed_the_graph(unit, unit.apply_pass(sdfg, {}))
                 changed = changed or unit_changed
-            if not changed:
+                again = again or (unit_changed and (not self.drivers or type(unit).__name__ in self.drivers))
+            if changed:
+                rounds += 1
+            if not again:
                 break
-            rounds += 1
         return rounds or None
 
 
@@ -197,15 +212,42 @@ def loop_to_map_units() -> List[ppl.Pass]:
     return [PropagateMemlets(), ParallelizeLoops(propagate=False), PatternApplyOnceEverywhere([PruneConnectors()])]
 
 
-def ingest_phase(semantic_lifting: bool, lift: bool, privatize_scatter_reductions: bool) -> Stages:
-    """Phase 0: structured control flow, one spelling per statement, every map lowered to a loop.
+def dead_dataflow_units() -> List[ppl.Pass]:
+    """Dead-code elimination, the one permitted reduction in work."""
+    return [ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination()]), DeadCarriedStoreElimination()]
 
-    The recognizers here match the FRONTEND map / nested-SDFG shape, which lowering destroys.
+
+def statement_round(target: str) -> List[ppl.Pass]:
+    """One round of statement normalization: IV substitution, split, privatize, invariant motion, WCR
+    normalization, dead dataflow.
+
+    Split precedes invariant motion because motion hoists whole statements. Privatization precedes it too, so a
+    split temporary rewritten every iteration is not hoisted.
     """
-    label = 'ingest'
+    promote = ScalarToSymbolPromotion()
+    promote.transients_only = False
+    units: List[ppl.Pass] = [promote, SimplifyPass(), HoistInductionVariableUpdates(), InductionVariableSubstitution()]
+    units += [PropagateIndexSubsets(), RemoveUnusedSymbols(), PropagateAndPrune()]
+    units += [ForwardStoreToLoad(), SplitStatements()]
+    units += privatization_units()
+    units += [LoopInvariantCodeMotion(), MoveLoopInvariantIfUp(require_full_hoist=(target == 'gpu'))]
+    units += [RevertNonReductionWCR(), NormalizeWCR()]
+    units += dead_dataflow_units()
+    return units
+
+
+def normalize_statements_phase(semantic_lifting: bool, lift: bool, privatize_scatter_reductions: bool,
+                               unroll_limit: int, perfect_loop_nesting: bool, target: str,
+                               normalize_loop_and_map_origin: bool) -> Stages:
+    """Normalize Statements: lower to loops, reroll, untile, the statement fixpoint, perfect nesting, permutation.
+
+    Also holds the recognizers that match the frontend map / nested-SDFG shape (labelled ``lift_semantics``):
+    lowering and splitting consume that shape.
+    """
+    label = NORMALIZE_STATEMENTS
     s: Stages = [(label, ControlFlowRaising()), (label, RequireStructuredControlFlow()), (label, RemoveViews())]
     if semantic_lifting and lift:
-        s += [(label, LoopToSymm()), (label, LiftInv())]
+        s += [(LIFT_SEMANTICS, LoopToSymm()), (LIFT_SEMANTICS, LiftInv())]
     if privatize_scatter_reductions:
         s += [(label, PrivatizeScatterReduction())]
     s += [(label, NormalizeWCR()), (label, SupplyNumThreads())]
@@ -213,69 +255,43 @@ def ingest_phase(semantic_lifting: bool, lift: bool, privatize_scatter_reduction
           (label, UniqueLoopIterators(assign_loop_iterator_post_value=False)), (label, ContinueToCondition()),
           (label, SimplifyPass())]
     if semantic_lifting and lift:
-        s += [(label, LoopToSymm()), (label, LoopToRankKUpdate())]
-    s += [(label, ConvertLengthOneArraysToScalars())]
-    s += [(label, RevertNonReductionWCR())]
+        s += [(LIFT_SEMANTICS, LoopToSymm()), (LIFT_SEMANTICS, LoopToRankKUpdate())]
+    s += [(label, ConvertLengthOneArraysToScalars()), (label, RevertNonReductionWCR())]
     lower_maps = MapToForLoop()
     lower_maps.keep_reductions_parallel = True
     s += [(label, PatternApplyOnceEverywhere([lower_maps])), (label, PatternApplyOnceEverywhere([PruneConnectors()])),
           (label, InlineSDFGs())]
     s += fold_scalar_slices(label)
-    s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets())]
-    s += [(label, StructuralCleanup())]
-    return s
+    s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
 
-
-def normalize_phase(unroll_limit: int, iv_split_rounds: int, perfect_loop_nesting: bool, target: str,
-                    normalize_loop_and_map_origin: bool) -> Stages:
-    """Phases 1-6: reroll, untile, IV substitution, LICM, WCR normalization, privatization, split,
-    perfect nesting, minimum-stride permutation."""
-    s: Stages = [('reroll', RerollUnrolledLoops())]
-    s += [('untile', UntileLoops()), ('untile', FuseConsecutiveLoops())]
+    s += [(label, RerollUnrolledLoops()), (label, UntileLoops()), (label, FuseConsecutiveLoops())]
     if unroll_limit > 0:
-        s += [('untile', ShortLoopUnroll(unroll_limit)),
-              ('untile', UniqueLoopIterators(assign_loop_iterator_post_value=False)), ('untile', SymbolSSA())]
+        s += [(label, ShortLoopUnroll(unroll_limit)),
+              (label, UniqueLoopIterators(assign_loop_iterator_post_value=False)), (label, SymbolSSA())]
+    s += [(label,
+           PhaseFixpoint('statements',
+                         lambda: statement_round(target),
+                         NORMALIZE_ROUNDS,
+                         drivers=(NORMALIZE_DRIVER, 'MoveLoopInvariantIfUp')))]
+    s += [(label, MaterializeLoopExitSymbols()), (label, StructuralCleanup())]
 
-    def statement_round() -> List[ppl.Pass]:
-        promote = ScalarToSymbolPromotion()
-        promote.transients_only = False
-        units: List[ppl.Pass] = [
-            promote, SimplifyPass(),
-            HoistInductionVariableUpdates(),
-            InductionVariableSubstitution()
-        ]
-        units += [PropagateIndexSubsets(), RemoveUnusedSymbols(), PropagateAndPrune()]
-        units += [LoopInvariantCodeMotion(), MoveLoopInvariantIfUp(require_full_hoist=(target == 'gpu'))]
-        units += [
-            ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination()]),
-            DeadCarriedStoreElimination()
-        ]
-        units += [RevertNonReductionWCR(), NormalizeWCR()]
-        units += privatization_units()
-        units += [ForwardStoreToLoad(), SplitStatements()]
-        return units
-
-    s += [('normalize', PhaseFixpoint('normalize', statement_round, iv_split_rounds))]
-    s += [('normalize', MaterializeLoopExitSymbols()), ('normalize', StructuralCleanup())]
-    label = 'perfect_nest'
     s += [(label, DistributeProducerConsumerLoop()), (label, MoveIfIntoLoop()),
           (label, CascadeInterstateEdgeAssignmentsUp())]
     if perfect_loop_nesting:
         s += [(label, PerfectLoopNesting(target=target))]
     s += [(label, UniqueLoopIterators(assign_loop_iterator_post_value=False)),
           (label, PatternApplyOnceEverywhere([TrivialLoopElimination()]))]
-    s += [('permute', LoopStridePermutation())]
+    s += [(label, LoopStridePermutation())]
     if normalize_loop_and_map_origin:
-        s += [('permute', NormalizeLoopAndMapOrigin())]
-    if SIMPLIFY_AFTER_NORMALIZE:
-        s += [('simplify', SimplifyPass())]
+        s += [(label, NormalizeLoopAndMapOrigin())]
+    s += [(label, SimplifyPass())]
     return s
 
 
-def lift_phase(semantic_lifting: bool, lift: bool, lift_copy: bool, interchange_carry_with_map: bool,
-               target: str) -> Stages:
-    """Phase 7: recognize library operators on the normalized loop nests."""
-    label = 'lift'
+def lift_semantics_phase(semantic_lifting: bool, lift: bool, lift_copy: bool, interchange_carry_with_map: bool,
+                         target: str) -> Stages:
+    """Lift Semantics: recognize library operators on the normalized loop nests."""
+    label = LIFT_SEMANTICS
     s: Stages = fold_scalar_slices(label)
     s += [(label, LoopToSymmetrize())]
     if semantic_lifting and lift_copy:
@@ -290,14 +306,16 @@ def lift_phase(semantic_lifting: bool, lift: bool, lift_copy: bool, interchange_
     return s
 
 
-def parallelize_phase(peel_limit: int, break_anti_dependence: bool, scatter_to_guarded_maps: bool,
-                      assume_parallel_guards: bool, target: str) -> Stages:
-    """Phase 8: Loop2Map, rescue of the refused loops, Loop2Map retry, guarded and reduction lifts."""
-    label = 'loop2map'
+def derive_parallelism_phase(peel_limit: int, break_anti_dependence: bool, scatter_to_guarded_maps: bool,
+                             assume_parallel_guards: bool, reconstruct_wavefront_nest: bool, semantic_lifting: bool,
+                             lift_copy: bool, target: str) -> Stages:
+    """Derive Parallelism: Loop2Map, rescue of the loops it refused, Loop2Map retry, guarded and reduction loops,
+    wavefront skew."""
+    label = DERIVE_PARALLELISM
     s: Stages = [(label, CascadeInterstateEdgeAssignmentsUp()),
                  (label, UniqueLoopIterators(assign_loop_iterator_post_value=False))]
     s += [(label, unit) for unit in loop_to_map_units()]
-    label = 'rescue'
+    # Rescue: each rewrite probes Loop2Map and acts only on a loop it refuses; maps are never touched.
     if peel_limit > 0:
         s += [(label, LoopCarriedRotationSubstitution(peel_limit)), (label, BestEffortLoopPeeling(peel_limit))]
     if break_anti_dependence:
@@ -308,9 +326,11 @@ def parallelize_phase(peel_limit: int, break_anti_dependence: bool, scatter_to_g
     s += [(label, CascadeInterstateEdgeAssignmentsUp()),
           (label, UniqueLoopIterators(assign_loop_iterator_post_value=False))]
     s += [(label, unit) for unit in loop_to_map_units()]
-    label = 'loop2map_guarded'
+    # Copy/fill on the maps just minted, before a later cleanup fuses a second writer into their state.
+    if semantic_lifting and lift_copy:
+        s += [(LIFT_SEMANTICS, AssignmentAndCopyKernelToMemsetAndMemcpy())]
     s += [(label, ParallelizeUnderConstraint(assume_constraint=assume_parallel_guards))]
-    label = 'loop2map_reduction'
+    # Accumulators become reduction loops, then derive again.
     s += [(label, FuseChainedScalarReductions()), (label, RevertNonReductionWCR()), (label, PinCarriedTopLevelLoops()),
           (label, AccumulatorCopyChainToWCR()), (label, RetargetWCRAccumulator())]
     s += [(label, PropagateMemlets()), (label, ParallelizeLoops(propagate=False))]
@@ -318,16 +338,10 @@ def parallelize_phase(peel_limit: int, break_anti_dependence: bool, scatter_to_g
     s += inline_single_state(label)
     s += [(label, StructuralCleanup()), (label, NormalizeWCR())]
     if scatter_to_guarded_maps:
-        s += [('loop2map_guarded', ScatterToGuardedMaps(assume_no_conflicts=assume_parallel_guards))]
+        s += [(label, ScatterToGuardedMaps(assume_no_conflicts=assume_parallel_guards))]
     if target == 'gpu':
         s += [(label, PatternApplyOnceEverywhere([PerfLoopNesting()]))]
-    return s
-
-
-def wavefront_phase(reconstruct_wavefront_nest: bool, target: str) -> Stages:
-    """Phase 9: skew the sequential nests Loop2Map refused, then map the exposed inner axis."""
-    label = 'wavefront'
-    s: Stages = []
+    # Wavefront: skew the nests every level left sequential, then map the exposed axis.
     if reconstruct_wavefront_nest:
         s += [(label, RevertNonReductionWCR())]
         s += inline_single_state(label)
@@ -340,24 +354,10 @@ def wavefront_phase(reconstruct_wavefront_nest: bool, target: str) -> Stages:
     return s
 
 
-def lift_maps_phase(semantic_lifting: bool, lift: bool, lift_copy: bool) -> Stages:
-    """Phase 7 again, on maps: the operators whose recognizers only match the fused map form."""
-    label = 'lift_maps'
-    s: Stages = [(label, InsertAssignTaskletsAtMapBoundary())]
-    s += inline_single_state(label)
-    s += [(label, PropagateMemlets())]
-    if semantic_lifting and lift_copy:
-        s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
-        s += inline_single_state(label)
-    if semantic_lifting and lift:
-        s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
-    return s
-
-
-def fusion_phase(target: str) -> Stages:
-    """Phase 10: (MapFusion x MapCollapse x FuseStates) to a fixpoint, inside an outer fixpoint that
-    re-permutes and fuses conditions."""
-    label = 'fusion'
+def recompose_phase(semantic_lifting: bool, lift: bool, lift_copy: bool, target: str) -> Stages:
+    """Recompose: (MapFusion x MapCollapse x FuseStates) to a fixpoint inside a fixpoint that re-permutes and fuses
+    conditions; hoist guards; lift what fusion exposed; final simplification and dead code."""
+    label = RECOMPOSE
     s: Stages = [(label, NormalizeWCRSource()), (label, RevertNonReductionWCR())]
     s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, EmptyStateElimination()),
           (label, PatternApplyOnceEverywhere([TrivialMapElimination()])), (label, EmptyLoopElimination()),
@@ -383,22 +383,27 @@ def fusion_phase(target: str) -> Stages:
             MoveLoopIntoMapGated(target=target)
         ]
         units += [unit for _, unit in inline_single_state(label)]
-        units += [PhaseFixpoint('fusion_inner', inner_round, FUSION_INNER_ROUNDS)]
+        units += [PhaseFixpoint('fusion', inner_round, FUSION_INNER_ROUNDS)]
         units += [PatternApplyOnceEverywhere([ConditionFusion()]), LiftTrivialIf(), NormalizeMapBody()]
         units += [unit for _, unit in inline_single_state(label)]
         return units
 
-    s += [(label, PhaseFixpoint('fusion', outer_round, FUSION_OUTER_ROUNDS))]
+    s += [(label, PhaseFixpoint('recompose', outer_round, FUSION_OUTER_ROUNDS))]
     s += [(label, MoveLoopInvariantIfUp(require_full_hoist=(target == 'gpu'))),
           (label, MoveMapInvariantIfUp(require_full_hoist=(target == 'gpu')))]
     s += inline_single_state(label)
-    return s
 
+    # The lifts whose matchers need the fused map form.
+    s += [(LIFT_SEMANTICS, InsertAssignTaskletsAtMapBoundary())]
+    s += inline_single_state(LIFT_SEMANTICS)
+    s += [(LIFT_SEMANTICS, PropagateMemlets())]
+    if semantic_lifting and lift_copy:
+        s += [(LIFT_SEMANTICS, AssignmentAndCopyKernelToMemsetAndMemcpy())]
+        s += inline_single_state(LIFT_SEMANTICS)
+    if semantic_lifting and lift:
+        s += [(LIFT_SEMANTICS, PatternApplyOnceEverywhere([LiftEinsum()]))]
 
-def seal_phase() -> Stages:
-    """Phase 11: reclaim what the phases left dead, and record the facts the output relies on."""
-    label = 'seal'
-    s: Stages = [(label, RelaxIntegerPowers())]
+    s += [(label, RelaxIntegerPowers())]
     s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination()]))]
     s += inline_single_state(label)
     s += [(label, PruneEmptyConditionalBranches())]
@@ -419,17 +424,16 @@ def build_phased_stages(unroll_limit: int, peel_limit: int, break_anti_dependenc
                         normalize_loop_and_map_origin: bool, assume_parallel_guards: bool, perfect_loop_nesting: bool,
                         iv_split_rounds: int, target: str, lift: bool, lift_copy: bool,
                         semantic_lifting: bool) -> Stages:
-    """The phased recipe, with the knobs of the legacy builder.
+    """The phased recipe, with the knobs of the legacy builder. ``iv_split_rounds`` is unused: the statement
+    fixpoint has its own cap (:data:`NORMALIZE_ROUNDS`).
 
     :returns: ``(phase label, pass)`` pairs in run order, fresh instances each call.
     """
-    s = ingest_phase(semantic_lifting, lift, privatize_scatter_reductions)
-    s += normalize_phase(unroll_limit, iv_split_rounds, perfect_loop_nesting, target, normalize_loop_and_map_origin)
-    s += lift_phase(semantic_lifting, lift, lift_copy, interchange_carry_with_map, target)
-    s += parallelize_phase(peel_limit, break_anti_dependence, scatter_to_guarded_maps, assume_parallel_guards, target)
-    s += wavefront_phase(reconstruct_wavefront_nest, target)
-    s += fusion_phase(target)
-    s += lift_maps_phase(semantic_lifting, lift, lift_copy)
-    s += seal_phase()
+    s = normalize_statements_phase(semantic_lifting, lift, privatize_scatter_reductions, unroll_limit,
+                                   perfect_loop_nesting, target, normalize_loop_and_map_origin)
+    s += lift_semantics_phase(semantic_lifting, lift, lift_copy, interchange_carry_with_map, target)
+    s += derive_parallelism_phase(peel_limit, break_anti_dependence, scatter_to_guarded_maps, assume_parallel_guards,
+                                  reconstruct_wavefront_nest, semantic_lifting, lift_copy, target)
+    s += recompose_phase(semantic_lifting, lift, lift_copy, target)
     prepared([unit for _, unit in s])
     return s
