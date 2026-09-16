@@ -135,7 +135,7 @@ class Subset(object):
     def ndrange(self) -> list[tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
         """
         Implements an iterator over strided N-dimensional rectangular regions of the subset.
-        Note that this may be an overapproximation of the actual subset, based on the subclass.
+        Note that this may be an over-approximation of the actual subset, based on the subclass.
 
         :return: An iterator over N-dimensional ranges.
         """
@@ -153,8 +153,7 @@ class Subset(object):
 
         if Config.get('optimizer', 'symbolic_positive'):
             return bounding_box_symbolic_positive(self, other, approximation=True)
-        else:
-            return bounding_box_cover_exact(self, other, approximation=True)
+        return bounding_box_cover_exact(self, other, approximation=True)
 
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
@@ -169,7 +168,7 @@ class Subset(object):
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
         if symbolic_positive and (not bounding_box_cover_exact(self, other)):
             return False
-        elif not bounding_box_symbolic_positive(self, other):
+        if not bounding_box_symbolic_positive(self, other):
             return False
 
         # NOTE: The original implementation always called ``nng()``. However, it was decided that
@@ -975,9 +974,9 @@ class Range(Subset):
             array: array descriptor to check against
 
         Returns:
-            True if the subset is contiguous, False otherwise
-            Returns False on all arrays that are not have a packed layout,
-            meaning that the complete array is contiguously stored in 1D memory.
+            True if the subset addresses one uninterrupted run of memory: the whole array has a
+            packed layout, or -- even on a non-packed (padded) descriptor -- the subset is a 1D
+            slice (at most one dimension has size > 1, and that dimension has stride 1).
         """
         # Any step size != 1 -> not contiguous
         if any(s != 1 for (_, _, s) in self):

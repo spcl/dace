@@ -222,7 +222,9 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
-        if len(self._dispatcher.instrumentation) > 2:
+        # NOTE: Some instrumentation providers (e.g. GPU_TX_MARKERS) never write to
+        # __state->report, so skip the report machinery unless at least one active provider does.
+        if any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values()):
             self.statestruct.append('dace::perf::Report report;')
             # Reset report if written every invocation
             if config.Config.get_bool('instrumentation', 'report_each_invocation'):
@@ -252,7 +254,7 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
 
         # Instrumentation saving
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+                and any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values())):
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
@@ -264,19 +266,11 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         initparams_comma = (', ' + initparams) if initparams else ''
         paramnames_comma = (', ' + paramnames) if paramnames else ''
         initparamnames_comma = (', ' + initparamnames) if initparamnames else ''
-        # Discard any GPU error left pending by another party before running. The runtime's
-        # error slot is per-host-thread and shared with every other GPU user in the process, so
-        # a value in it on entry is not ours, and the first checked call inside would report it
-        # as its own failure. __dace_init_cuda drains it too, but that runs once per state while
-        # contamination can arrive between any two calls - hence also here, per invocation.
-        # Declared rather than included: this function lives in the generated .cu, exactly like
-        # __dace_init_cuda below.
+        # Drain per invocation, not just per state: contamination can arrive between any two
+        # calls. Declared rather than included, since it lives in the generated .cu.
         gpu_drain_decl = ''
         gpu_drain_call = ''
-        # getattr, not attribute access: a user-registered code generator need not define
-        # target_name (the codegen tutorial's MyCustomLoop does not), and this walks every used
-        # target. The loop below only reads target_name inside a has_initializer/has_finalizer
-        # branch, so it never reached those.
+        # getattr: a user-registered code generator need not define target_name.
         if any(getattr(target, 'target_name', None) == 'cuda' for target in self._dispatcher.used_targets):
             gpu_drain_decl = (f'DACE_EXPORTED void '
                               f'__dace_gpu_drain_error({mangle_dace_state_struct_name(fname)} *__state);\n')
@@ -318,6 +312,15 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
             if target.has_initializer:
                 callsite_stream.write(
                     '__result |= __dace_init_%s(__state%s);' % (target.target_name, initparamnames_comma), sdfg)
+        # A failed target initializer leaves its part of the state struct unset, and everything below
+        # allocates against it -- persistent GPU arrays dereference __state->gpu_context, which
+        # __dace_init_cuda never constructs when it bails out on a missing device. Leave here first.
+        callsite_stream.write(f"""
+    if (__result) {{
+        delete __state;
+        return nullptr;
+    }}
+""", sdfg)
         for env in self.environments:
             init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
             if init_code:
@@ -361,7 +364,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
 
         # Instrumentation saving
         if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 2):
+                and any(i is not None and i.writes_to_report() for i in self._dispatcher.instrumentation.values())):
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
@@ -555,6 +558,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
     def _can_allocate(self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: Union[nodes.EntryNode, SDFGState,
                                                                                         SDFG]) -> bool:
+        # Views allocate no memory: they are bound at their access node, whose subset may use scope parameters
+        if isinstance(desc, data.View):
+            return True
+
         schedule = self._get_schedule(scope)
         # if not dtypes.can_allocate(desc.storage, schedule):
         #     return False

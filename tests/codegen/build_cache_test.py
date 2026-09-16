@@ -159,6 +159,24 @@ def test_precompiled_header_separates_source_trees(tmp_path, monkeypatch):
     assert mine != theirs, 'both trees were handed the same precompiled header'
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+def test_vanished_precompiled_header_is_not_included(tmp_path, monkeypatch):
+    """A build configured with a precompiled header must still build once that header is gone (e.g., it
+    lived in /dev/shm before a reboot) and no new one is made: the configured path must not linger."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    with dace.config.set_temporary('compiler', 'command_cache', value=False):
+        build_folder = build_and_check(tmp_path, 'pchvanished')
+        shutil.rmtree(tmp_path / 'cache' / 'pch')
+        # Keep only the configured cache, so the program is compiled again against it
+        cmake_folder = os.path.join(build_folder, 'build')
+        for entry in os.listdir(cmake_folder):
+            if entry != 'CMakeCache.txt':
+                path = os.path.join(cmake_folder, entry)
+                shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+        with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
+            build_and_check(tmp_path, 'pchvanished')
+
+
 def test_caches_disabled_still_builds(tmp_path):
     """With every cache off the build must still work -- they are optimizations, not requirements."""
     with dace.config.set_temporary('compiler', 'precompiled_header', value=False):

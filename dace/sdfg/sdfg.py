@@ -8,6 +8,7 @@ from numbers import Integral
 import os
 import json
 from hashlib import md5, sha256
+import pathlib
 import random
 import shutil
 import sys
@@ -133,6 +134,9 @@ def _nested_arrays_from_json(obj, context=None):
 
 
 def _replace_dict_keys(d, old, new):
+    # Keys are names, but a replacement may be given as a symbolic expression
+    old = str(old)
+    new = str(new)
     if old == new:
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
         return
@@ -147,6 +151,59 @@ def _replace_dict_values(d, old, new):
     for k, v in d.items():
         if v == old:
             d[k] = new
+
+
+def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
+    """Returns the path to the build cache folder for ``sdfg``.
+
+    If the build folder was explicitly set it is returned. If not set, then the function
+    will derive the root through ``build_folder_root()``, i.e. from the configuration keys
+    ``default_build_folder`` and ``cache_distaware``, and name the folder inside it according
+    to the configuration key ``cache``.
+    It is also important that retrieving the folder through this function does not set
+    the build folder in the SDFG.
+
+    :note: This function is used as getter for the ``SDFG.build_folder`` property, do not use directly.
+    :note: It is unspecific if the path is absolute or not.
+    """
+    if getattr(sdfg, "_build_folder", None) is not None:
+        return sdfg._build_folder
+    cache_config = Config.get('cache')
+    base_folder = build_folder_root()
+    if cache_config == 'single':
+        # Always use the same directory, overwriting any other program,
+        # preventing parallelism and caching of multiple programs, but
+        # saving space and potentially build time
+        return os.path.join(base_folder, 'single_cache')
+    elif cache_config == 'hash':
+        # Any change to the SDFG will result in a new cache folder
+        md5_hash = md5(str(sdfg.to_json()).encode('utf-8')).hexdigest()
+        return os.path.join(base_folder, f'{sdfg.name}_{md5_hash}')
+    elif cache_config == 'unique':
+        # Base name on location in memory, so no caching is possible between
+        # processes or subsequent invocations
+        md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
+        return os.path.join(base_folder, f'{sdfg.name}_{md5_hash}')
+    elif cache_config == 'name':
+        # Overwrites previous invocations, and can clash with other programs
+        # if executed in parallel in the same working directory
+        return os.path.join(base_folder, sdfg.name)
+    else:
+        raise ValueError(f'Unknown cache configuration: {cache_config}')
+
+
+def _sdfg_build_folder_setter(sdfg: "SDFG", new_build_folder: Union[str, None, pathlib.Path]) -> None:
+    if new_build_folder is None:
+        sdfg._build_folder = None
+    elif isinstance(new_build_folder, (str, pathlib.Path)):
+        sdfg._build_folder = str(new_build_folder)
+        if len(sdfg._build_folder) == 0:
+            raise ValueError(
+                f'Passed the empty string as new build folder to SDFG "{sdfg.name}", to clear it use `None`.')
+    else:
+        raise TypeError(
+            f'Can not assign "{new_build_folder}" ({type(new_build_folder).__name__}) as new build folder to SDFG "{sdfg.name}".'
+        )
 
 
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
@@ -385,17 +442,16 @@ class InterstateEdge(object):
             for name, new_name in repl.items():
                 _replace_dict_keys(self.assignments, name, new_name)
 
+        # Rewrite only what names a key: re-spelling the rest would drop the parsed condition and its caches.
         for k, v in self.assignments.items():
-            vast = ast.parse(v)
-            vast = astutils.ASTFindReplace(repl).visit(vast)
-            newv = astutils.unparse(vast)
-            if newv != v:
-                self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace(repl).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
+            replacer = astutils.ASTFindReplace(repl)
+            vast = replacer.visit(ast.parse(v))
+            if replacer.replace_count > 0:
+                self.assignments[k] = astutils.unparse(vast)
+        replacer = astutils.ASTFindReplace(repl)
+        condition = replacer.visit(ast.parse(self.condition.as_string))
+        if replacer.replace_count > 0:
+            self.condition.as_string = astutils.unparse(condition)
             self._uncond = None
             self._cond_sympy = None
 
@@ -467,6 +523,24 @@ class InterstateEdge(object):
         return ret
 
 
+class _UsedNames:
+    """Membership view over the names an SDFG already uses.
+
+    :func:`dace.utils.find_new_name` only ever asks whether a candidate is taken, so this
+    answers ``in`` from :meth:`SDFG.is_name_used` rather than materializing the union of
+    arrays, constants and symbols on every mint. Not a container in any other sense --
+    it is deliberately not iterable, because there is no cheap order to iterate in.
+    """
+
+    __slots__ = ('sdfg', )
+
+    def __init__(self, sdfg: 'SDFG') -> None:
+        self.sdfg = sdfg
+
+    def __contains__(self, name: str) -> bool:
+        return self.sdfg.is_name_used(name)
+
+
 @make_properties
 class SDFG(ControlFlowRegion):
     """ The main intermediate representation of code in DaCe.
@@ -532,8 +606,16 @@ class SDFG(ControlFlowRegion):
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
-    # Explicitly-set build folder, or None to derive it from the configuration
-    _build_folder = None
+    build_folder = Property(
+        dtype=str,
+        default=None,
+        allow_none=True,
+        desc='Returns the path to the build cache folder for SDFG. For a in dept '
+        'description see ``_sdfg_build_folder_getter()``.',
+        serialize_if=lambda sdfg: sdfg._build_folder is not None,
+        getter=_sdfg_build_folder_getter,
+        setter=_sdfg_build_folder_setter,
+    )
 
     def __init__(self,
                  name: str,
@@ -1257,38 +1339,6 @@ class SDFG(ControlFlowRegion):
         from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t
         return s2t.as_schedule_tree(self, in_place=in_place)
 
-    @property
-    def build_folder(self) -> str:
-        """ Returns a relative path to the build cache folder for this SDFG. """
-        if self._build_folder is not None:
-            return self._build_folder
-        cache_config = Config.get('cache')
-        base_folder = build_folder_root()
-        if cache_config == 'single':
-            # Always use the same directory, overwriting any other program,
-            # preventing parallelism and caching of multiple programs, but
-            # saving space and potentially build time
-            return os.path.join(base_folder, 'single_cache')
-        elif cache_config == 'hash':
-            # Any change to the SDFG will result in a new cache folder
-            md5_hash = md5(str(self.to_json()).encode('utf-8')).hexdigest()
-            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
-        elif cache_config == 'unique':
-            # Base name on location in memory, so no caching is possible between
-            # processes or subsequent invocations
-            md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
-            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
-        elif cache_config == 'name':
-            # Overwrites previous invocations, and can clash with other programs
-            # if executed in parallel in the same working directory
-            return os.path.join(base_folder, self.name)
-        else:
-            raise ValueError(f'Unknown cache configuration: {cache_config}')
-
-    @build_folder.setter
-    def build_folder(self, newfolder: str):
-        self._build_folder = newfolder
-
     def remove_data(self, name, validate=True):
         """ Removes a data descriptor from the SDFG.
 
@@ -1486,20 +1536,15 @@ class SDFG(ControlFlowRegion):
                                                 free_syms=free_syms,
                                                 used_before_assignment=used_before_assignment,
                                                 with_contents=with_contents)
-        # Expand array-descriptor stride/shape/offset symbols into the free
-        # set. Without this, a ``ConditionalBlock`` guard or memlet subset
-        # referencing ``A[i, j]`` leaves the symbols used in ``A`` 's strides
-        # out of the computed free-symbol set, causing
-        # ``generate_nsdfg_header`` to emit a nested function signature
-        # missing those symbols, ceating an invalid SDFG.
+        # A used array needs its stride/shape/offset symbols in the free set; a merely-declared one
+        # must not leak its shape symbol into the signature (issue #2382). ``read_and_write_sets``
+        # counts an array referenced only by a code-block guard as used.
         res_free, res_defined, res_before = result
         if with_contents:
-            for desc in self.arrays.values():
-                res_free |= {str(s) for s in desc.used_symbols(all_symbols)}
-            # Don't drag in symbols that are genuinely defined inside this
-            # SDFG (e.g., LoopRegion loop variables); keep only the ones
-            # outside ``defined_syms``.
-            res_free -= res_defined
+            read_set, write_set = self.read_and_write_sets()
+            for name in (read_set | write_set) & self.arrays.keys():
+                res_free |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
+            res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before
 
     def get_all_toplevel_symbols(self) -> Set[str]:
@@ -1868,8 +1913,10 @@ class SDFG(ControlFlowRegion):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 
-        names = (self._arrays.keys() | self.constants_prop.keys() | self.symbols.keys())
-        return dt.find_new_name(name, names)
+        # ``find_new_name`` only ever tests membership, so the union set never has to be built:
+        # a view answering ``in`` from :meth:`is_name_used` costs three dict lookups per probe
+        # instead of one set the size of every name in the SDFG per call.
+        return dt.find_new_name(name, _UsedNames(self))
 
     def is_name_used(self, name: str) -> bool:
         """ Checks if `name` is already used inside the SDFG."""

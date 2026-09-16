@@ -70,3 +70,33 @@ def test_pin_worker_to_gpu_noop_without_worker_id(monkeypatch):
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '0,1')
     root_conftest.pin_worker_to_gpu()
     assert os.environ['CUDA_VISIBLE_DEVICES'] == '0,1'
+
+
+def fake_config(numprocesses) -> types.SimpleNamespace:
+    return types.SimpleNamespace(option=types.SimpleNamespace(numprocesses=numprocesses))
+
+
+def test_is_xdist_controller_only_in_the_spawning_process(monkeypatch):
+    clear_worker_env(monkeypatch)
+    assert root_conftest.is_xdist_controller(fake_config(32))
+    assert not root_conftest.is_xdist_controller(fake_config(None))
+    assert not root_conftest.is_xdist_controller(fake_config(0))
+    monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
+    assert not root_conftest.is_xdist_controller(fake_config(32))
+
+
+def test_pin_worker_to_gpu_controller_keeps_whole_pool_for_its_workers(monkeypatch):
+    clear_worker_env(monkeypatch)
+    monkeypatch.setenv('SLURM_PROCID', '0')
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '0,1,2,3')
+    root_conftest.pin_worker_to_gpu(controller=True)
+    assert os.environ['CUDA_VISIBLE_DEVICES'] == '0,1,2,3'
+
+
+def test_pin_worker_to_gpu_worker_rotates_despite_a_rank_var(monkeypatch):
+    clear_worker_env(monkeypatch)
+    monkeypatch.setenv('SLURM_PROCID', '0')
+    monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw5')
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '0,1,2,3')
+    root_conftest.pin_worker_to_gpu()
+    assert os.environ['CUDA_VISIBLE_DEVICES'] == '1'

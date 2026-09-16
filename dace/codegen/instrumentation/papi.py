@@ -90,6 +90,9 @@ class PAPIInstrumentation(InstrumentationProvider):
         PAPIInstrumentation._counters = PAPIInstrumentation._counters or set(
             ast.literal_eval(Config.get('instrumentation', 'papi', 'default_counters')))
 
+    def writes_to_report(self) -> bool:
+        return True
+
     def get_unique_number(self):
         ret = self._unique_counter
         self._unique_counter += 1

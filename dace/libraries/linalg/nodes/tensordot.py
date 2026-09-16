@@ -302,7 +302,8 @@ class ExpandCuTensor(ExpandTransformation):
             std::vector<int32_t> modeC{{{','.join(str(m) for m in out_modes)}}};
         """
 
-        extents = "std::unordered_map<int, int64_t> extent;\n"
+        # Modes are dense indices into the concatenated shapes, so a vector indexes them directly.
+        extents = f"std::vector<int64_t> extent({len(left_tensor.shape) + len(right_tensor.shape)});\n"
         for i, s in zip(left_modes, left_tensor.shape):
             extents += f"extent[{i}] = {s};\n"
         for i, s in zip(right_modes, right_tensor.shape):

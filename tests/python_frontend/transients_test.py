@@ -22,7 +22,7 @@ def transients(A: dace.float32[n]):
     return oscalar, oarray
 
 
-def test_transients():
+def test_transients() -> None:
     A = np.random.rand(n).astype(np.float32)
     scal, arr = transients(A)
     if scal[0] > 0:
@@ -30,5 +30,28 @@ def test_transients():
     assert (arr[scal[0]:] == 0).all()
 
 
+def test_transient_from_numpy() -> None:
+
+    @dace.program
+    def tester(B: dace.data.Array(dace.float32, [60])) -> None:
+        A = np.full([60], 42.42, np.float32)
+
+        for i in dace.map[0:2]:
+            tmp_condition = B[0] < 0
+            if tmp_condition:
+                B[0] = 0
+
+            for j in dace.map[0:10]:
+                A[15 * i + 3 * j] = 1.0
+
+            for k in dace.map[10:20]:
+                B[k] = A[k]
+
+    sdfg = tester.to_sdfg(simplify=True, validate=True)
+    assert sdfg.arrays["A"].transient
+    assert not sdfg.arrays["B"].transient
+
+
 if __name__ == "__main__":
     test_transients()
+    test_transient_from_numpy()

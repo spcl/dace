@@ -8,12 +8,18 @@ typedef hipEvent_t gpuEvent_t;
 typedef hipError_t gpuError_t;
 #define gpuGetLastError hipGetLastError
 #define gpuGetErrorString hipGetErrorString
+#define gpuStreamSynchronize hipStreamSynchronize
+#define gpuDeviceSynchronize hipDeviceSynchronize
+#define gpuEventSynchronize hipEventSynchronize
 #else
 typedef cudaStream_t gpuStream_t;
 typedef cudaEvent_t gpuEvent_t;
 typedef cudaError_t gpuError_t;
 #define gpuGetLastError cudaGetLastError
 #define gpuGetErrorString cudaGetErrorString
+#define gpuStreamSynchronize cudaStreamSynchronize
+#define gpuDeviceSynchronize cudaDeviceSynchronize
+#define gpuEventSynchronize cudaEventSynchronize
 #endif
 
 // The context guard covers the calls checked during __dace_init_cuda before the context has been
@@ -63,6 +69,7 @@ struct Context {
   }
   ~Context() {
     delete[] streams;
+    delete[] internal_streams;
     delete[] events;
   }
   // Keep the first error. One failure tends to produce more, and only the first names the call that

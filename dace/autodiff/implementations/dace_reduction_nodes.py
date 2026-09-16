@@ -27,6 +27,7 @@ from dace.registry import autoregister_params
 from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
 
 # Utility imports
+import dace.autodiff.utils as ad_utils
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
@@ -142,22 +143,32 @@ class ReverseReduce(BackwardImplementation):
             sdfg.add_array(extremal_idx_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
             nsdfg_inputs.update({extremal_conn_name, extremal_idx_conn_name})
 
-            # Add transient array to count matching elements per output position
+            # Add transient array to count matching elements per output position. State lifetime,
+            # because ``setzero`` clears the counter where it is ALLOCATED: a Scope-lifetime heap
+            # transient inside a loop body is hoisted to the SDFG and cleared once per invocation,
+            # and the WCR accumulation below would then carry across iterations.
             count_arr_name = f"_{type_name}_count"
-            sdfg.add_array(count_arr_name, shape=out_desc.shape, dtype=out_desc.dtype, transient=True)
+            sdfg.add_array(count_arr_name,
+                           shape=out_desc.shape,
+                           dtype=out_desc.dtype,
+                           transient=True,
+                           lifetime=dtypes.AllocationLifetime.State)
 
         reduce_all_axes = forward_node.axes is None or set(range(len(in_desc.shape))) == set(forward_node.axes)
 
         if is_extremal:
-            # Two-state approach for max/min:
-            # State 1: Count elements matching extremal value
-            # State 2: Compute normalized gradient
+            # max/min backward splits the incoming gradient between the elements tied for the
+            # extremum, so it counts the ties first and divides by that count second. Both maps
+            # live in ONE state, chained through a single counter access node: the counter is then
+            # used in exactly one state, which is where it gets allocated, and ``setzero`` there
+            # clears it on every execution. Splitting them across two states moves the allocation
+            # up to the SDFG -- one clear per invocation -- and under a loop the WCR below keeps
+            # accumulating, so the k-th reversed iteration hands back grad/k instead of grad.
+            count_grad_state = sdfg.add_state(f"{type_name}_grad_{id(forward_node)}", is_start_block=True)
+            count_node = count_grad_state.add_access(count_arr_name)
+            count_node.setzero = True
 
-            count_state = sdfg.add_state(f"count_{type_name}_{id(forward_node)}")
-            grad_state = sdfg.add_state(f"grad_{type_name}_{id(forward_node)}")
-            sdfg.add_edge(count_state, grad_state, dace.InterstateEdge())
-
-            # State 1: Count matching elements
+            # Count matching elements
             count_memlet = Memlet.simple(count_arr_name,
                                          "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes),
                                          wcr_str="lambda x, y: x + y")
@@ -165,25 +176,20 @@ class ReverseReduce(BackwardImplementation):
                 extremal_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
             extremal_idx_memlet_count = Memlet.simple(extremal_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
 
-            _, _, count_exit = count_state.add_mapped_tasklet(
-                f"_count_{type_name}_matches_", {
-                    "i" + str(i): "0:{}".format(shape)
-                    for i, shape in enumerate(in_desc.shape)
-                }, {
-                    "__extremal_val": extremal_val_memlet_count,
-                    "__extremal_val_idx": extremal_idx_memlet_count
-                },
-                "__count = 1.0 if __extremal_val == __extremal_val_idx else 0.0", {"__count": count_memlet},
-                external_edges=True)
+            count_grad_state.add_mapped_tasklet(f"_count_{type_name}_matches_", {
+                "i" + str(i): "0:{}".format(shape)
+                for i, shape in enumerate(in_desc.shape)
+            }, {
+                "__extremal_val": extremal_val_memlet_count,
+                "__extremal_val_idx": extremal_idx_memlet_count
+            },
+                                                "__count = 1.0 if __extremal_val == __extremal_val_idx else 0.0",
+                                                {"__count": count_memlet},
+                                                external_edges=True,
+                                                output_nodes={count_arr_name: count_node})
 
-            # Set count array to zero before accumulation
-            count_out_edges = count_state.out_edges(count_exit)
-            if len(count_out_edges) == 1:
-                count_out_node = count_out_edges[0].dst
-                if isinstance(count_out_node, dace.nodes.AccessNode):
-                    count_out_node.setzero = True
-
-            # State 2: Compute normalized gradient (grad / count)
+            # Compute the normalized gradient (grad / count). Reading through ``count_node`` is
+            # what orders this map after the counting map above.
             reduction_memlet = Memlet.simple(
                 rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
             reverse_reduction_memlet = Memlet.simple(rev_output_conn_name,
@@ -203,16 +209,17 @@ class ReverseReduce(BackwardImplementation):
             }
             tasklet_code = "__out = __in / __count if __extremal_val == __extremal_val_idx else 0"
 
-            _, _, exit_map = grad_state.add_mapped_tasklet(f"_{type_name}_grad_" +
-                                                           str(reduction_type).replace(".", "_") + "_", {
-                                                               "i" + str(i): "0:{}".format(shape)
-                                                               for i, shape in enumerate(in_desc.shape)
-                                                           },
-                                                           tasklet_inputs,
-                                                           tasklet_code, {"__out": reverse_reduction_memlet},
-                                                           external_edges=True)
+            _, _, exit_map = count_grad_state.add_mapped_tasklet(f"_{type_name}_grad_" +
+                                                                 str(reduction_type).replace(".", "_") + "_", {
+                                                                     "i" + str(i): "0:{}".format(shape)
+                                                                     for i, shape in enumerate(in_desc.shape)
+                                                                 },
+                                                                 tasklet_inputs,
+                                                                 tasklet_code, {"__out": reverse_reduction_memlet},
+                                                                 external_edges=True,
+                                                                 input_nodes={count_arr_name: count_node})
 
-            state = grad_state
+            state = count_grad_state
         else:
             # Sum reduction: simple broadcast
             state = sdfg.add_state(f"block_{id(forward_node)}")
@@ -233,7 +240,10 @@ class ReverseReduce(BackwardImplementation):
                                                       tasklet_code, {"__out": reverse_reduction_memlet},
                                                       external_edges=True)
 
-        nsdfg = context.backward_state.add_nested_sdfg(sdfg, nsdfg_inputs, {rev_output_conn_name})
+        nsdfg = context.backward_state.add_nested_sdfg(sdfg,
+                                                       sorted(nsdfg_inputs), [rev_output_conn_name],
+                                                       symbol_mapping=ad_utils.backward_symbol_mapping(
+                                                           sdfg, context.backward_state))
 
         out_edges = state.out_edges(exit_map)
         if len(out_edges) != 1:
