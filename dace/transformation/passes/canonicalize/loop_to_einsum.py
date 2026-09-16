@@ -193,26 +193,29 @@ class _NestShape(NamedTuple):
     n_dims: int  # upper bound on the iteration dimensions the probe can collapse into one map
     has_mul: bool  # some tasklet's code holds a '*'
     all_copy_tasklets: bool  # every tasklet is a pure ``__out = __inp``
-    has_nested_sdfg: bool  # body the probe inlines -- this summary cannot see into it
 
 
 def _nest_shape(loop: LoopRegion) -> _NestShape:
-    """Summarize ``loop``'s own states in one walk (see :func:`_plausible_contraction`)."""
+    """Summarize ``loop``'s states in one walk, nested SDFG bodies included (see :func:`_plausible_contraction`)."""
     n_dims = 1  # ``loop`` itself
-    has_mul, all_copy, has_nested = False, True, False
-    for region in loop.all_control_flow_regions(recursive=True):
-        if region is not loop and isinstance(region, LoopRegion) and region.loop_variable:
-            n_dims += 1
-    for state in loop.all_states():
-        for n in state.nodes():
-            if isinstance(n, nodes.MapEntry):
-                n_dims += len(n.map.params)
-            elif isinstance(n, nodes.NestedSDFG):
-                has_nested = True
-            elif isinstance(n, nodes.Tasklet):
-                has_mul = has_mul or '*' in n.code.as_string
-                all_copy = all_copy and _is_copy_tasklet(n)
-    return _NestShape(n_dims, has_mul, all_copy, has_nested)
+    has_mul, all_copy = False, True
+    regions: List[ControlFlowRegion] = [loop]
+    while regions:
+        region = regions.pop()
+        for block in region.all_control_flow_regions(recursive=True):
+            if block is not loop and isinstance(block, LoopRegion) and block.loop_variable:
+                n_dims += 1
+        for state in region.all_states():
+            for n in state.nodes():
+                if isinstance(n, nodes.MapEntry):
+                    n_dims += len(n.map.params)
+                elif isinstance(n, nodes.NestedSDFG):
+                    # The probe inlines the body, so its loops, maps and tasklets count as this nest's own.
+                    regions.append(n.sdfg)
+                elif isinstance(n, nodes.Tasklet):
+                    has_mul = has_mul or '*' in n.code.as_string
+                    all_copy = all_copy and _is_copy_tasklet(n)
+    return _NestShape(n_dims, has_mul, all_copy)
 
 
 def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Dict[str, None], live: Dict[str, None]) -> bool:
@@ -234,8 +237,8 @@ def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Dict[str, None
        no pipeline step synthesizes a ``*``; the transpose shape instead needs the
        map scope to hold nothing but ``__out = __inp`` copies.
 
-    (2) and (3) read only this nest's own states, so a nest holding a ``NestedSDFG``
-    -- whose body the probe inlines and this summary cannot see -- skips them."""
+    (2) and (3) read the nest's states and the bodies of its ``NestedSDFG`` nodes, which the
+    probe inlines, so a nested body is screened like the nest itself."""
     boundary: Dict[str, None] = {}
     for name in written:
         desc = root.arrays.get(name)
@@ -244,8 +247,6 @@ def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Dict[str, None
     if len(boundary) != 1:
         return False
     shape = _nest_shape(loop)
-    if shape.has_nested_sdfg:
-        return True
     return shape.n_dims >= 2 and (shape.has_mul or shape.all_copy_tasklets)
 
 
