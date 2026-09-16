@@ -63,6 +63,19 @@ def in_state_order(state: SDFGState, node_iter, order: Optional[Dict[nodes.Node,
     return sorted(node_iter, key=order.__getitem__)
 
 
+def read_consumers(state: SDFGState, owner_sdfg: sdfg.SDFG, node: nodes.AccessNode) -> List[nodes.Node]:
+    """The nodes reading ``node`` in ``state``. A View is a pointer, so its read happens where the view is consumed."""
+    consumers: List[nodes.Node] = []
+    pending = [e.dst for e in state.out_edges(node)]
+    for consumer in pending:
+        if (isinstance(consumer, nodes.AccessNode) and isinstance(owner_sdfg.arrays.get(consumer.data), dt.View)
+                and state.out_degree(consumer) > 0):
+            pending.extend(e.dst for e in state.out_edges(consumer))
+        else:
+            consumers.append(consumer)
+    return consumers
+
+
 def mismatched_data_edges(state: SDFGState, owner_sdfg):
     """Yield ``(eid, edge, src_an, dst_an, name)`` for every edge of ``state`` whose
     ``memlet.data`` matches neither memlet-path endpoint nor the edge connectors.
@@ -590,8 +603,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 """
                 endpoints = []
                 for rn in readers:
-                    for e in first_state.out_edges(rn):
-                        cons = e.dst
+                    for cons in read_consumers(first_state, sdfg, rn):
                         if isinstance(cons, nodes.EntryNode):
                             cons = next(
                                 (v for v in first_state.scope_children()[cons] if isinstance(v, nodes.ExitNode)), None)
