@@ -1114,6 +1114,35 @@ def test_refusal_reason_follows_block_order_not_memory_addresses():
     assert all(reason.startswith("write to A0 ") for reason in reasons), reasons
 
 
+@pytest.mark.parametrize("transient", [True, False])
+def test_body_node_joined_only_by_ordering_edge(transient: bool):
+    """A body access node with only an empty-memlet edge is in no read/write set; the lift must still declare it."""
+    sdfg = dace.SDFG(f"ordering_only_{transient}")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", (dace.symbol("N"), ), dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=transient)
+    outside = sdfg.add_state("outside", is_start_block=True)
+    init = outside.add_tasklet("init", {}, {"o": dace.float64}, "o = 1.0")
+    outside.add_edge(init, "o", outside.add_write("s"), None, dace.Memlet("s"))
+    loop = LoopRegion("for_i", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(outside, loop, dace.InterstateEdge())
+    body = loop.add_state("body", is_start_block=True)
+    write = body.add_tasklet("w", {}, {"o": dace.float64}, "o = 2.0")
+    body.add_edge(write, "o", body.add_write("A"), None, dace.Memlet("A[i]"))
+    body.add_nedge(write, body.add_access("s"), dace.Memlet())
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(LoopToMap) == 1
+
+    sdfg.validate()
+    assert not any(isinstance(n, LoopRegion) for n in sdfg.all_control_flow_regions(recursive=True))
+    assert "s" in sdfg.arrays
+    nsdfg = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    assert "s" in nsdfg.sdfg.arrays
+    assert nsdfg.sdfg.arrays["s"].transient == transient
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()

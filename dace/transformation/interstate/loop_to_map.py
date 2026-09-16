@@ -1636,6 +1636,17 @@ class LoopToMap(xf.MultiStateTransformation):
         read_set -= view_set
         write_set -= view_set
 
+        # A node joined only by empty (ordering) memlets is in no set above, yet moves into the body.
+        # A transient gets a body-local copy (the parent keeps its own); anything else is routed in read-only.
+        ordering_local = OrderedSet()
+        for name in OrderedSet(node.data for state in states for node in state.data_nodes()):
+            if name in rw_set or name in view_set:
+                continue
+            if sdfg.arrays[name].transient:
+                ordering_local.add(name)
+            else:
+                read_set.add(name)
+
         # Ordered from here on: these name the nested SDFG's connectors and fix the order its
         # access nodes are wired in, which is what numbers the enclosing map's IN_n / OUT_n. Left
         # as sets they get numbered differently per interpreter run, because set iteration order
@@ -1677,7 +1688,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set | view_set:
+        for name in unique_set | view_set | set(ordering_local):
             if '.' in name:
                 root_data_name = name.split('.')[0]
                 name = root_data_name
