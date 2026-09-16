@@ -350,10 +350,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             assignments=self._pending_interstate_assignments(),
         )
 
-        self._continue_conditional_block(node, conditional_block, merge_state)
+        self._process_next_conditional_block(node, conditional_block, merge_state)
 
-    def _continue_conditional_block(self, node: tn.ControlFlowScope, conditional_block: ConditionalBlock,
-                                    merge_state: SDFGState) -> None:
+    def _process_next_conditional_block(self, node: tn.ControlFlowScope, conditional_block: ConditionalBlock,
+                                        merge_state: SDFGState) -> None:
         """
         Prepares the next branch of a conditional block after visiting the branch of ``node``.
 
@@ -417,7 +417,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._pending_interstate_assignments():
             raise NotImplementedError("TODO: update edge with new assignments")
 
-        self._continue_conditional_block(node, conditional_block, merge_state)
+        self._process_next_conditional_block(node, conditional_block, merge_state)
 
     def visit_ElseScope(self, node: tn.ElseScope, sdfg: SDFG) -> None:
         # get ConditionalBlock from stack
