@@ -133,6 +133,9 @@ def _nested_arrays_from_json(obj, context=None):
 
 
 def _replace_dict_keys(d, old, new):
+    # Keys are names, but a replacement may be given as a symbolic expression
+    old = str(old)
+    new = str(new)
     if old == new:
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
         return
@@ -438,17 +441,16 @@ class InterstateEdge(object):
             for name, new_name in repl.items():
                 _replace_dict_keys(self.assignments, name, new_name)
 
+        # Rewrite only what names a key: re-spelling the rest would drop the parsed condition and its caches.
         for k, v in self.assignments.items():
-            vast = ast.parse(v)
-            vast = astutils.ASTFindReplace(repl).visit(vast)
-            newv = astutils.unparse(vast)
-            if newv != v:
-                self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace(repl).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
+            replacer = astutils.ASTFindReplace(repl)
+            vast = replacer.visit(ast.parse(v))
+            if replacer.replace_count > 0:
+                self.assignments[k] = astutils.unparse(vast)
+        replacer = astutils.ASTFindReplace(repl)
+        condition = replacer.visit(ast.parse(self.condition.as_string))
+        if replacer.replace_count > 0:
+            self.condition.as_string = astutils.unparse(condition)
             self._uncond = None
             self._cond_sympy = None
 

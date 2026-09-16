@@ -157,6 +157,10 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         for e in dup_nstate.edges():
             final_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
 
+        # The loop variable is not defined after the loop: use the last iteration of the original range
+        last_iteration = map_rstart + (symbolic.int_floor(map_rend - map_rstart, map_rstride) + 1) * map_rstride
+        sd.replace(final_state, map_param, last_iteration)
+
         # If there is a WCR output with transient, only output in last state
         nstate: sd.SDFGState
         for node in nstate.sink_nodes():
