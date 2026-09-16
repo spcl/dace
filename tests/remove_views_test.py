@@ -1003,6 +1003,75 @@ def test_view_with_ordering_edge_and_no_reader_is_kept():
     assert len(state.edges_between(a, v)) == 1
 
 
+def _add_flat_view_read(sdfg, name, viewed, rows, cols, entry_label, consume_label, symbol, index):
+    """``viewed -> name`` flat reshape in one state, read by an interstate assignment into ``symbol``."""
+    sdfg.add_view(name, [rows * cols], dace.int64)
+    entry = sdfg.add_state(entry_label)
+    entry.add_edge(entry.add_read(viewed), None, entry.add_access(name), 'views',
+                   Memlet(data=viewed, subset=f'0:{rows}, 0:{cols}', other_subset=f'0:{rows * cols}'))
+    consume = sdfg.add_state(consume_label)
+    sdfg.add_edge(entry, consume, dace.InterstateEdge(assignments={symbol: f'{name}[{index}]'}))
+    return entry, consume
+
+
+def test_interstate_edge_table_is_rebuilt_per_run():
+    """The per-run interstate-edge table may not survive its run, or a later run rewrites nothing.
+
+    RemoveViews derives the interstate edges and their condition text once per ``apply_pass``
+    because it neither adds nor removes an edge and never rewrites a condition. That is a
+    per-RUN invariant, not a per-INSTANCE one: an edge added between two runs of the same
+    instance must be seen by the second one.
+    """
+    M, N = 4, 5
+    sdfg = dace.SDFG('view_table_per_run')
+    sdfg.add_array('A', [M, N], dace.int64)
+    sdfg.add_array('B', [1], dace.int64)
+    _, consume = _add_flat_view_read(sdfg, 'V1', 'A', M, N, 'entry', 'consume', 's', 7)
+    t = consume.add_tasklet('write', {}, {'out'}, 'out = s')
+    consume.add_edge(t, 'out', consume.add_write('B'), None, Memlet('B[0]'))
+    sdfg.validate()
+
+    xform = RemoveViews()
+    assert xform.apply_pass(sdfg, {}) == {'V1'}
+    assert xform.interstate_edges == [], 'the table outlived the run that built it'
+
+    # A second view, and a second interstate edge, added AFTER the first run.
+    second, consume2 = _add_flat_view_read(sdfg, 'V2', 'A', M, N, 'entry2', 'consume2', 'u', 13)
+    sdfg.add_edge(consume, second, dace.InterstateEdge())
+    t2 = consume2.add_tasklet('write2', {}, {'out'}, 'out = u')
+    consume2.add_edge(t2, 'out', consume2.add_write('B'), None, Memlet('B[0]'))
+    sdfg.validate()
+
+    assert xform.apply_pass(sdfg, {}) == {'V2'}
+    assert _count_views(sdfg) == 0
+    rewritten = [rhs for e in sdfg.all_interstate_edges() for rhs in e.data.assignments.values()]
+    assert rewritten and all('V1[' not in rhs and 'V2[' not in rhs for rhs in rewritten), rewritten
+    sdfg.validate()
+
+
+def test_view_named_in_a_condition_keeps_the_view():
+    """A conditional edge that mentions the view refuses the fold -- so the condition TEXT is
+    load-bearing in the prefilter, which is what the cached text has to reproduce."""
+    M, N = 4, 5
+    sdfg = dace.SDFG('view_in_condition')
+    sdfg.add_array('A', [M, N], dace.int64)
+    sdfg.add_array('B', [1], dace.int64)
+    entry, consume = _add_flat_view_read(sdfg, 'V', 'A', M, N, 'entry', 'consume', 's', 7)
+    t = consume.add_tasklet('write', {}, {'out'}, 'out = s')
+    consume.add_edge(t, 'out', consume.add_write('B'), None, Memlet('B[0]'))
+
+    skip = sdfg.add_state('skip')
+    guard = dace.InterstateEdge(condition='V[0] > 0')
+    sdfg.add_edge(entry, skip, guard)
+    condition_before = guard.condition.as_string
+    sdfg.validate()
+
+    xform = RemoveViews()
+    assert xform.apply_pass(sdfg, {}) is None
+    assert _count_views(sdfg) == 1
+    assert guard.condition.as_string == condition_before, 'RemoveViews rewrote a condition'
+
+
 if __name__ == '__main__':
     test_view_array_array()
     test_view_slice_detect_simple()
@@ -1027,3 +1096,5 @@ if __name__ == '__main__':
     test_write_view_keeps_ordering_edge()
     test_ordering_edge_never_rehomed_onto_the_viewed_array()
     test_view_with_ordering_edge_and_no_reader_is_kept()
+    test_interstate_edge_table_is_rebuilt_per_run()
+    test_view_named_in_a_condition_keeps_the_view()
