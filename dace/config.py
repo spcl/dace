@@ -62,33 +62,6 @@ def _env2bool(envval):
     return str(envval).lower() in ['true', '1', 'y', 'yes', 'on', 'verbose']
 
 
-def _coerce_env_value(envval: str, metadata: Dict[str, Any], envvar: str):
-    """
-    Coerces an environment variable string to the schema-declared type of a
-    configuration entry.
-
-    :param envval: The raw environment variable value.
-    :param metadata: The schema metadata of the configuration entry.
-    :param envvar: The environment variable name (for diagnostics).
-    :return: The coerced value.
-    :raise ValueError: If the value cannot be coerced to the declared type.
-    """
-    entry_type = metadata['type']
-    if entry_type == 'bool':
-        return _env2bool(envval)
-    if entry_type == 'int':
-        return int(envval)
-    if entry_type == 'float':
-        return float(envval)
-    if entry_type == 'list':
-        result = yaml.load(envval, Loader=yaml.SafeLoader)
-        if not isinstance(result, list):
-            raise ValueError(f'{envvar} does not contain a list: {envval!r}')
-        return result
-    # Strings (and 'any'-typed entries) are kept verbatim
-    return envval
-
-
 class _ConfigData(threading.local):
     """Thread local data storage for the configuration scheme.
 
@@ -108,16 +81,69 @@ class _ConfigData(threading.local):
     def cfg_filename(self):
         return self._cfg_filename
 
+    @staticmethod
+    def _env_name_for(prefix: str, key: str) -> str:
+        """
+        Returns the environment variable name of a configuration key, e.g.
+        ``DACE_compiler_build_type`` for ``('compiler', 'build_type')``.
+
+        :param prefix: Environment variable prefix of the key's parent path
+                       (``'DACE'`` at the top level).
+        :param key: The configuration key.
+        :return: The environment variable name.
+        """
+        return prefix + '_' + key
+
+    @staticmethod
+    def _coerce_env_value(envval: str, metadata: Dict[str, Any], envvar: str):
+        """
+        Coerces an environment variable string to the schema-declared type of a
+        configuration entry.
+
+        The ``_config`` dictionary has always held typed values: schema
+        defaults and configuration-file entries are produced by the YAML
+        loader (bools, ints, floats, lists). Only the historical read-time
+        environment override in ``get()`` returned raw strings (which
+        ``get_bool()`` papered over). Coercing at seeding time keeps
+        ``_config`` uniformly typed, so ``get()`` returns the same type
+        regardless of where a value came from.
+
+        :param envval: The raw environment variable value.
+        :param metadata: The schema metadata of the configuration entry.
+        :param envvar: The environment variable name (for diagnostics).
+        :return: The coerced value.
+        :raise ValueError: If the value cannot be coerced to the declared type.
+        """
+        entry_type = metadata['type']
+        if entry_type == 'bool':
+            return _env2bool(envval)
+        if entry_type == 'int':
+            return int(envval)
+        if entry_type == 'float':
+            return float(envval)
+        if entry_type == 'list':
+            result = yaml.load(envval, Loader=yaml.SafeLoader)
+            if not isinstance(result, list):
+                raise ValueError(f'{envvar} does not contain a list: {envval!r}')
+            return result
+        # Strings (and 'any'-typed entries) are kept verbatim
+        return envval
+
     def _add_defaults(self, config, metadata, prefix='DACE'):
         """ Add defaults to configuration from metadata.
 
             Where a default is inserted, the environment is consulted first:
             if ``<prefix>_<key path>`` (e.g. ``DACE_compiler_build_type``) is
-            set, its value — coerced to the schema-declared type — becomes the
-            entry's value instead of the schema default. The environment
-            therefore only influences defaults; values loaded from a
-            configuration file or set through :func:`Config.set` (including
-            :func:`set_temporary` / :func:`temporary_config`) take precedence.
+            set, its value — coerced to the schema-declared type (see
+            :func:`_coerce_env_value`) — becomes the entry's value instead of
+            the schema default. The environment therefore only influences
+            defaults; values already present in ``config`` — i.e. entries read
+            from the configuration file (``.dace.conf``, or the file named by
+            ``DACE_CONFIG``, loaded by :func:`load` before this runs) or set
+            through :func:`Config.set` (including :func:`set_temporary` /
+            :func:`temporary_config`) — take precedence. The
+            skip-existing-keys loop below is the original upstream behavior of
+            this function; it is what makes file values win.
 
             :param config: The (sub-)configuration dictionary to fill.
             :param metadata: The schema metadata of ``config``.
@@ -127,7 +153,7 @@ class _ConfigData(threading.local):
         osname = platform.system()
         modified = False
         for k, v in metadata.items():
-            envvar = prefix + '_' + k
+            envvar = self._env_name_for(prefix, k)
             # Recursive call for fields inside the dictionary
             if v['type'] == 'dict':
                 if k not in config:
@@ -142,7 +168,7 @@ class _ConfigData(threading.local):
             # Environment-provided default
             if envvar in os.environ:
                 try:
-                    config[k] = _coerce_env_value(os.environ[envvar], v, envvar)
+                    config[k] = self._coerce_env_value(os.environ[envvar], v, envvar)
                     continue
                 except (ValueError, yaml.YAMLError) as ex:
                     warnings.warn(f'Ignoring environment variable {envvar}: {ex}')
