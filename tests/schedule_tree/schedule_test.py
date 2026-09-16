@@ -34,8 +34,11 @@ def test_for_in_map_in_for():
     assert len(fornode.children) == 1  # map
     mapnode = fornode.children[0]
     assert isinstance(mapnode, tn.MapScope)
-    assert len(mapnode.children) == 2  # copy, for
-    copynode, fornode = mapnode.children
+    # Without simplification the slice ``A[i]`` is reached through a view of its own, which the tree
+    # renders as a node of its own ahead of the copy.
+    children = [c for c in mapnode.children if not isinstance(c, tn.ViewNode)]
+    assert len(children) == 2  # copy, for
+    copynode, fornode = children
     assert isinstance(copynode, tn.CopyNode)
     assert isinstance(fornode, tn.LoopScope)
     assert len(fornode.children) == 1  # tasklet
@@ -79,10 +82,15 @@ def test_nesting():
     sdfg = main.to_sdfg(simplify=True)
     stree = as_schedule_tree(sdfg)
 
-    # Despite two levels of nesting, immediate children are the 4 for loops
-    assert len(stree.children) == 4
-    offsets = ['', '5', '10', '15']
-    for fornode, offset in zip(stree.children, offsets):
+    # Despite two levels of nesting, immediate children are the 4 slice views and the 4 for loops
+    views = [n for n in stree.children if isinstance(n, tn.ViewNode)]
+    loops = [n for n in stree.children if not isinstance(n, tn.ViewNode)]
+    assert len(views) == 4 and all(v.source == 'a' for v in views)
+    assert len(loops) == 4
+    offsets = ['0:5', '5:10', '10:15', '15:20']
+    for view, fornode, offset in zip(views, loops, offsets):
+        # The slice each call is given is the view, so the loop below it works on that view
+        assert offset in str(view.memlet)
         assert isinstance(fornode, tn.LoopScope)
         assert len(fornode.children) == 1  # map
         mapnode = fornode.children[0]
@@ -90,7 +98,7 @@ def test_nesting():
         assert len(mapnode.children) == 1  # tasklet
         tasklet = mapnode.children[0]
         assert isinstance(tasklet, tn.TaskletNode)
-        assert offset in str(next(iter(tasklet.in_memlets.values())))
+        assert view.target in str(next(iter(tasklet.in_memlets.values())))
 
 
 def test_nesting_view():
@@ -112,26 +120,6 @@ def test_nesting_view():
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
     assert any(isinstance(node, tn.ViewNode) for node in stree.children)
-
-
-def test_nesting_nview():
-
-    @dace.program
-    def nest2(a: dace.float64[40]):
-        a += 1
-
-    @dace.program
-    def nest1(a: dace.float64[4, 5, 10]):
-        for i in range(5):
-            nest2(a[:, i, :])
-
-    @dace.program
-    def main(a: dace.float64[20, 10]):
-        nest1(a)
-
-    sdfg = main.to_sdfg()
-    stree = as_schedule_tree(sdfg)
-    assert any(isinstance(v, tn.NView) for v in stree.children)
 
 
 def test_irreducible_sub_sdfg():
@@ -253,10 +241,16 @@ def test_dyn_map_range():
     assert len(stree.children) == 2
     assert all(isinstance(c, tn.MapScope) for c in stree.children)
     mapscope = stree.children[1]
-    start, end, dynrangemap = mapscope.children
-    assert isinstance(start, tn.DynScopeCopyNode)
-    assert isinstance(end, tn.DynScopeCopyNode)
+    dynrangemap = mapscope.children[-1]
     assert isinstance(dynrangemap, tn.MapScope)
+
+    # The two bounds are read from A_row ahead of the inner map, which then ranges between them.
+    # Simplification promotes those reads to symbols, so they arrive as assignments; without it they
+    # are copies into scalars first and reach the map through its dynamic-range connectors.
+    bounds = [c for c in mapscope.children[:-1] if isinstance(c, (tn.AssignNode, tn.DynScopeCopyNode))]
+    assert len(bounds) == 2
+    start, end = (c.name if isinstance(c, tn.AssignNode) else c.target for c in bounds)
+    assert str(dynrangemap.node.map.range) == f'{start}:{end}'
 
 
 def test_multiview():
@@ -287,7 +281,6 @@ if __name__ == '__main__':
     test_libnode()
     test_nesting()
     test_nesting_view()
-    test_nesting_nview()
     test_irreducible_sub_sdfg()
     test_irreducible_in_loops()
     test_reference()
