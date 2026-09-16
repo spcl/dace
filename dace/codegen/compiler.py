@@ -664,7 +664,7 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
         with open(object_folder / 'FOLDER_MODE', 'rt') as F:
             folder_mode = F.readline().strip()
         if probe and folder_mode not in ('development', 'production'):
-            # E.g. empty, because an older DaCe, which does not write it atomically, is still writing it.
+            # E.g. an older DaCe version, which does not write the file atomically, might have left it empty.
             return None
         return folder_mode
     else:
