@@ -18,7 +18,8 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, SDFGState,
-                             StateSubgraphView, LoopRegion, ControlFlowRegion, UnstructuredControlFlow)
+                             StateSubgraphView, LoopRegion, ControlFlowRegion, UnstructuredControlFlow,
+                             sdfg_scope_symbols)
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
@@ -1000,6 +1001,12 @@ def consolidate_edges(
     """
     from dace.sdfg.propagation import propagate_memlets_scope
 
+    # What is visible at SDFG scope is fixed for the whole call: consolidation unions edges inside
+    # a scope and propagation rewrites memlet subsets, so neither adds a symbol, a descriptor or an
+    # interstate edge. Rebuilding it per scope walked every descriptor again -- 93% of this
+    # function's time on CloudSC.
+    scope_symbols = sdfg_scope_symbols(sdfg) if propagate else None
+
     total_consolidated = 0
     for state in sdfg.states():
         # Start bottom-up
@@ -1010,21 +1017,18 @@ def consolidate_edges(
         next_queue = []
         while len(queue) > 0:
             for scope in queue:
-                propagate_entry, propagate_exit = False, False
-
-                consolidated = consolidate_edges_scope(state, scope.entry)
-                total_consolidated += consolidated
-                if consolidated > 0:
-                    propagate_entry = True
-
-                consolidated = consolidate_edges_scope(state, scope.exit)
-                total_consolidated += consolidated
-                if consolidated > 0:
-                    propagate_exit = True
+                entry_consolidated = consolidate_edges_scope(state, scope.entry)
+                exit_consolidated = consolidate_edges_scope(state, scope.exit)
+                total_consolidated += entry_consolidated + exit_consolidated
 
                 # Repropagate memlets
                 if propagate:
-                    propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
+                    propagate_memlets_scope(sdfg,
+                                            state,
+                                            scope,
+                                            entry_consolidated > 0,
+                                            exit_consolidated > 0,
+                                            scope_symbols=scope_symbols)
 
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
