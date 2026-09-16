@@ -3,7 +3,7 @@
 
 import re
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional
 from copy import deepcopy
 
 import sympy as sp
@@ -44,6 +44,57 @@ def _internal_replace(sym, symrepl):
         return sym
 
     return sym.subs(newrepl)
+
+
+def symbol_names(exprs: Iterable[Any]) -> Optional[Dict[str, None]]:
+    """Names of every Symbol node in ``exprs``, bound or free, including the container of a ``Subscript``.
+
+    :param exprs: SymPy expressions, ``SymExpr`` pairs and plain numbers.
+    :return: The names, or ``None`` when an expression is of a type whose symbols cannot be listed.
+    """
+    names: Dict[str, None] = {}
+    for expr in exprs:
+        if isinstance(expr, symbolic.SymExpr):
+            names.update(dict.fromkeys(atom.name for atom in expr.expr.atoms(sp.Symbol)))
+            names.update(dict.fromkeys(atom.name for atom in expr.approx.atoms(sp.Symbol)))
+        elif isinstance(expr, sp.Basic):
+            names.update(dict.fromkeys(atom.name for atom in expr.atoms(sp.Symbol)))
+        elif not isinstance(expr, (int, float)):
+            return None
+    return names
+
+
+def replacements_for(exprs: Iterable[Any], symrepl: Dict[Any, Any]) -> Dict[Any, Any]:
+    """The entries of ``symrepl`` that ``subs`` can apply to any of ``exprs``, in the order of ``symrepl``.
+
+    ``subs`` applies the entries one after another, so an entry counts if its key names a symbol of an expression or
+    of a value an earlier counted entry brings in. The dropped entries change nothing, so ``subs`` of the result
+    equals ``subs(symrepl)``. A key that is not a Symbol, a value that is a string, or an expression whose symbols
+    cannot be listed keeps the whole mapping.
+
+    :param exprs: The expressions ``symrepl`` is about to be substituted into.
+    :param symrepl: The symbolic replacement mapping.
+    :return: The entries that can apply; empty when none can.
+    """
+    if any(not isinstance(key, sp.Symbol) or isinstance(value, str) for key, value in symrepl.items()):
+        return symrepl
+    names = symbol_names(exprs)
+    if names is None:
+        return symrepl
+    chosen: Dict[Any, None] = {}
+    grew = True
+    while grew:
+        grew = False
+        for key, value in symrepl.items():
+            if key in chosen or key.name not in names:
+                continue
+            value_names = symbol_names((value, ))
+            if value_names is None:
+                return symrepl
+            names.update(value_names)
+            chosen[key] = None
+            grew = True
+    return {key: value for key, value in symrepl.items() if key in chosen}
 
 
 def _replsym(symlist, symrepl):
@@ -242,7 +293,8 @@ def replace_list_property_item(item: Any, element_type: type, repl: Dict[str, st
                         or (isinstance(element_type, type) and issubclass(element_type, sp.Basic)))
     if element_type in (int, float) or is_symbolic_type:
         try:
-            newitem = symbolic.pystr_to_symbolic(str(item)).subs(symrepl)
+            newitem = symbolic.pystr_to_symbolic(str(item))
+            newitem = newitem.subs(replacements_for((newitem, ), symrepl))
         except (AttributeError, TypeError, ValueError, SyntaxError, sp.SympifyError):
             return item
         if element_type in (int, float):
@@ -272,15 +324,20 @@ def replace_properties_dict(node: Any,
         if isinstance(propclass, properties.SymbolicProperty):
             # NOTE: `propval` can be a numeric constant instead of a symbolic expression.
             if not symbolic.issymbolic(propval):
-                setattr(node, pname, symbolic.pystr_to_symbolic(str(propval)).subs(symrepl))
-            else:
-                setattr(node, pname, propval.subs(symrepl))
+                propval = symbolic.pystr_to_symbolic(str(propval))
+            setattr(node, pname, propval.subs(replacements_for((propval, ), symrepl)))
         elif isinstance(propclass, properties.DataProperty):
             if propval in repl:
                 setattr(node, pname, repl[propval])
         elif isinstance(propclass, properties.RangeProperty):
             # A Range is mutable: substitute in place, which keeps its tile sizes.
-            propval.replace(symrepl)
+            bounds = [
+                b for (begin, end, step), tile in zip(propval.ranges, propval.tile_sizes)
+                for b in (begin, end, step, tile)
+            ]
+            range_repl = replacements_for(bounds, symrepl)
+            if range_repl:
+                propval.replace(range_repl)
         elif isinstance(propclass, properties.ShapeProperty):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
