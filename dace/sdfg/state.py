@@ -1448,6 +1448,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     @label.setter
     def label(self, label: str):
         self._label = label
+        # A rename in place is the one way, besides ``add_node``, that a name becomes live in the
+        # parent region, so it is recorded there too (see ``_ensure_unique_block_name``).
+        if self._parent_graph is not None:
+            self._parent_graph._labels.add(label)
 
     @property
     def name(self) -> str:
@@ -3033,7 +3037,6 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     def add_return(self, label=None) -> ReturnBlock:
         label = self._ensure_unique_block_name(label)
         block = ReturnBlock(label)
-        self._labels.add(label)
         self.add_node(block)
         return block
 
@@ -3060,11 +3063,11 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: Optional[str] = None) -> str:
-        # Ledger of every name ever issued, unioned with the live labels on each call. Staleness cannot
-        # be inferred from the node COUNT -- inlining renames blocks in place and leaves the count
-        # untouched -- and a plain rebuild from the live nodes forgets names a removed block once
-        # carried, which an inlined reference may still point at. The union never reissues either.
-        self._labels = (self._labels or set()) | {s.label for s in self.nodes()}
+        # Ledger of every name ever issued here, held INCREMENTALLY: ``add_node`` records the label a
+        # block arrives with and the ``label`` setter records a rename in place, so the live labels are
+        # always a subset of it and no walk over the nodes can add anything. A removal deliberately
+        # leaves its name behind -- an inlined reference may still point at it, and reissuing it would
+        # alias. Membership only: the set is never iterated, so no order-dependent behavior rides on it.
         return dt.find_new_name(proposed or 'block', self._labels)
 
     def add_node(self,
@@ -3079,6 +3082,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         if ensure_unique_name:
             node.label = self._ensure_unique_block_name(node.label)
 
+        self._labels.add(node.label)
         super().add_node(node)
         self._cached_start_block = None
         node.parent_graph = self
@@ -3136,7 +3140,6 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
         state = SDFGState(label)
-        self._labels.add(label)
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
@@ -4048,14 +4051,12 @@ class LoopRegion(ControlFlowRegion):
     def add_break(self, label=None) -> BreakBlock:
         label = self._ensure_unique_block_name(label)
         block = BreakBlock(label)
-        self._labels.add(label)
         self.add_node(block)
         return block
 
     def add_continue(self, label=None) -> ContinueBlock:
         label = self._ensure_unique_block_name(label)
         block = ContinueBlock(label)
-        self._labels.add(label)
         self.add_node(block)
         return block
 
@@ -4122,6 +4123,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
         if not isinstance(branch, ControlFlowRegion):
             raise TypeError('Expected ControlFlowRegion, got ' + str(type(branch)))
         self._branches.append([condition, branch])
+        self._labels.add(branch.label)
         branch.parent_graph = self
         # A branch is added through this list rather than through ``add_node``, so the claim the
         # generic path makes has to be made here instead -- the same claim, not a lesser one.
