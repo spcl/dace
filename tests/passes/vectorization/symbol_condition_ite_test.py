@@ -12,17 +12,21 @@ Inlining is only sound for a LOOP-INVARIANT predicate: a per-lane one would spla
 across the tile, so both the spelled-out iter_var case and the one an interstate assignment hides
 are refused instead.
 """
+import copy
+
 import numpy as np
 import pytest
 
 import dace
 from dace import nodes
+from dace.ordered import OrderedSet
 from dace.libraries.tileops._dispatch import detect_host_isa, select_tile_implementation
 from dace.libraries.tileops.nodes.tile_ite import TileITE
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.tile_assertions import assert_tiled
 
 N = 64
 WIDTHS = (8, )
@@ -123,3 +127,63 @@ def test_symbol_mask_ite_selects_every_lane_from_the_splat(isa):
         out = np.zeros(WIDTHS[0])
         compiled(t=t, e=e, o=out, flag_sym=flag)
         assert np.array_equal(out, t if flag else e), f'isa={isa} flag={flag}: a lane picked the wrong arm'
+
+
+def unwritten_transient_reads(sdfg: dace.SDFG) -> list[str]:
+    """Transient scalars some nested SDFG of ``sdfg`` reads but never writes: uninitialized reads."""
+    found = []
+    for inner in sdfg.all_sdfgs_recursive():
+        if inner.parent_nsdfg_node is None:
+            continue
+        accesses = [(state, node) for state in inner.states() for node in state.data_nodes()]
+        written = OrderedSet(node.data for state, node in accesses
+                             if any(not e.data.is_empty() for e in state.in_edges(node)))
+        found += [
+            node.data for state, node in accesses
+            if isinstance(node.desc(inner), dace.data.Scalar) and node.desc(inner).transient
+            and node.data not in written and any(not e.data.is_empty() for e in state.out_edges(node))
+        ]
+    return found
+
+
+def interstate_flag_blend_sdfg() -> dace.SDFG:
+    """``flag = flags[1]`` on an interstate edge, then ``out[i] = ITE(flag, x[i], out[i])`` over ``0:n``."""
+    n = dace.symbol('n')
+    sdfg = dace.SDFG('interstate_flag_blend_with_remainder')
+    for name in ('x', 'out'):
+        sdfg.add_array(name, [n], dace.float64)
+    sdfg.add_array('flags', [4], dace.bool_)
+    sdfg.add_symbol('flag', dace.bool_)
+    read_flag = sdfg.add_state('read_flag', is_start_block=True)
+    body = sdfg.add_state('body')
+    sdfg.add_edge(read_flag, body, dace.InterstateEdge(assignments={'flag': 'flags[1]'}))
+    entry, exit_ = body.add_map('blend_map', dict(i='0:n'))
+    blend = body.add_tasklet('blend', dict.fromkeys(['_t', '_e']), dict.fromkeys(['_o']), '_o = ITE(flag, _t, _e)')
+    body.add_memlet_path(body.add_read('x'), entry, blend, dst_conn='_t', memlet=dace.Memlet('x[i]'))
+    body.add_memlet_path(body.add_read('out'), entry, blend, dst_conn='_e', memlet=dace.Memlet('out[i]'))
+    body.add_memlet_path(blend, exit_, body.add_write('out'), src_conn='_o', memlet=dace.Memlet('out[i]'))
+    return sdfg
+
+
+def test_an_interstate_flag_reaches_the_remainder_body():
+    """The flag an interstate edge reads from data must reach the remainder loop, not only the tiled one.
+
+    ``n = 37`` leaves a 5-element remainder at width 8. Demoting ``flag`` to a scalar and splitting the map
+    used to give the remainder copy its own never-written ``flag_0``, so the tail blended on garbage.
+    """
+    sdfg = interstate_flag_blend_sdfg()
+    untransformed = copy.deepcopy(sdfg)
+    VectorizeCPUMultiDim(VectorizeConfig(widths=WIDTHS, target_isa=detect_host_isa(),
+                                         validate=True)).apply_pass(sdfg, {})
+
+    assert_tiled(sdfg, untransformed, 'interstate flag blend')
+    assert unwritten_transient_reads(sdfg) == [], 'a body reads a transient scalar nothing writes'
+
+    n = 37
+    rng = np.random.default_rng(3)
+    for flag in (False, True):
+        x, out = rng.standard_normal(n), rng.standard_normal(n)
+        expected = np.where(flag, x, out)
+        flags = np.array([not flag, flag, not flag, not flag])
+        sdfg(x=x, out=out, flags=flags, n=n)
+        assert np.array_equal(out, expected), f'flag={flag}: the tiled loop or its remainder blended the wrong arm'

@@ -1418,6 +1418,12 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
     # The explicit new_exit.map fix-up below only repairs the OUTERMOST pair; nested maps need this.
     memo = {}
+    # A transient the scope never writes holds a value from outside it; a replica renaming it would
+    # read a container nothing writes.
+    written_in_scope: OrderedSet[str] = OrderedSet(
+        n.data for n in scope.nodes()
+        if isinstance(n, nodes.AccessNode) and any(e.data is not None and not e.data.is_empty()
+                                                   for e in state.in_edges(n)))
     for node in scope.nodes():
         node_copy = copy.deepcopy(node, memo)
         if node == scope.entry:
@@ -1425,8 +1431,8 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
         elif node == exit_node:
             new_exit = node_copy
 
-        if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
-                and node.desc(sdfg).transient):
+        if (isinstance(node, nodes.AccessNode) and node.data in written_in_scope
+                and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope and node.desc(sdfg).transient):
             to_find_new_names.append(node_copy)
         state.add_node(node_copy)
         new_nodes.append(node_copy)
