@@ -22,31 +22,9 @@ from dace.codegen.common import sym2cpp
 from dace.config import Config
 
 # ml_dtypes-backed low-precision types: numpy cannot export their arrays via
-# DLPack or the buffer protocol, so they bypass nb::ndarray entirely (see the
-# __array_interface__ branch in _argument_binding) and are excluded from
-# shape/stride inference sources and from user_args.
+# DLPack or the buffer protocol, so nanobind cannot ingest them; they are
+# outside the interface's scope (see argument_unsupported).
 _LOWP_TYPES = (dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2)
-
-# RAII wrapper around a Python buffer view; nested inside the generated handle,
-# emitted only when the SDFG has struct arguments. PyBUF_SIMPLE yields the raw
-# contiguous bytes regardless of the compound dtype that makes nb::ndarray
-# reject record arrays; the resulting address is the struct's/array's data
-# pointer. The guard outlives call()'s nested GIL release, so PyBuffer_Release
-# always runs with the GIL held.
-_PYBUFFER_HELPER = '''    struct _DacePyBuffer {
-        Py_buffer view{};
-        bool ok = false;
-        explicit _DacePyBuffer(PyObject *o) {
-            ok = (PyObject_GetBuffer(o, &view, PyBUF_SIMPLE) == 0);
-            if (!ok) throw nb::python_error();
-        }
-        _DacePyBuffer(_DacePyBuffer &&other) noexcept : view(other.view), ok(other.ok) { other.ok = false; }
-        _DacePyBuffer(const _DacePyBuffer &) = delete;
-        _DacePyBuffer &operator=(const _DacePyBuffer &) = delete;
-        ~_DacePyBuffer() { if (ok) PyBuffer_Release(&view); }
-        void *data() const { return view.buf; }
-    };
-'''
 
 # dtype_traits specialization advertising dace::float16 (= dace::half) as a
 # 16-bit DLPack float, so nb::ndarray<dace::float16, ...> accepts a numpy/cupy
@@ -72,7 +50,7 @@ template <> struct dtype_traits<dace::float16> {
 # numpy.bool_, and integer-like values (Python int, numpy integer scalars) -
 # and nothing more: floats have no __index__ and keep being rejected. Kept as
 # a caster rather than per-argument setup code so it slots uniformly into
-# call(), initialize() and user_call's try_cast.
+# call() and initialize().
 _DACE_BOOL_CASTER = '''
 // The implicit bool conversion is load-bearing: a bool SYMBOL's binding
 // parameter is passed by its raw name into init_impl (and the workspace
@@ -115,6 +93,77 @@ template <> struct type_caster<dace_bool> {
 };
 }}
 '''
+
+
+def argument_unsupported(name: str, desc: dt.Data) -> Optional[str]:
+    """The reason argument ``(name, desc)`` is outside the nanobind interface's scope, or ``None``.
+
+    This predicate is the single source of truth for the interface's data
+    scope: :func:`_argument_binding` raises exactly when it returns a reason,
+    and :func:`unsupported_reason` (the ``compiler.interface=auto`` detector in
+    ``dace.codegen.compiler``) walks the same predicate over the arglist - so
+    the codegen refusals and the automatic ctypes fallback cannot diverge.
+
+    In scope: scalars and arrays of primitive data (integers, floats incl.
+    float16 arrays, complex, bool, vectors of them), string scalars, nullable
+    and GPU arrays, ``pyobject`` scalars and arrays, and array return values.
+    Out of scope (kept on the ctypes interface): ``Structure``,
+    ``ContainerArray``, record-dtype (``dtypes.struct``) arrays, callbacks,
+    ml_dtypes-backed low-precision data, float16 and vector scalars, string
+    arrays, non-array returns and returns with a nonzero offset.
+    """
+    hint = 'use the ctypes interface (compiler.interface=ctypes, or the default "auto").'
+    if isinstance(desc, dt.Structure):
+        return f'argument "{name}" is a Structure, which is out of scope; {hint}'
+    if isinstance(desc, dt.ContainerArray):
+        return f'argument "{name}" is a ContainerArray, which is out of scope; {hint}'
+    if isinstance(desc.dtype, dtypes.callback):
+        return f'callback argument "{name}" is out of scope (needs the ctypes trampoline machinery); {hint}'
+    if desc.dtype.base_type in _LOWP_TYPES:
+        return (f'argument "{name}" of low-precision type {desc.dtype} is out of scope '
+                f'(nanobind cannot ingest ml_dtypes-backed data); {hint}')
+    if name.startswith('__return'):
+        if not isinstance(desc, dt.Array):
+            return (f'return value "{name}" of type {type(desc).__name__} is not supported; '
+                    f'returns are arrays only.')
+        if isinstance(desc.dtype, dtypes.struct):
+            return f'return value "{name}" is a record-dtype (dtypes.struct) array, which is out of scope; {hint}'
+        if any(str(o) != '0' for o in desc.offset):
+            return (f'return value "{name}" has a nonzero offset; in-binding allocation '
+                    f'assumes offset 0; {hint}')
+        return None
+    if isinstance(desc, dt.Array):
+        if isinstance(desc.dtype, dtypes.struct):
+            return f'argument "{name}" is a record-dtype (dtypes.struct) array, which is out of scope; {hint}'
+        if desc.dtype.base_type == dtypes.string:
+            return f'argument "{name}" is a string array (char-buffer form), which is out of scope; {hint}'
+        return None
+    if isinstance(desc, dt.Scalar):
+        if isinstance(desc.dtype, dtypes.pyobject) or desc.dtype == dtypes.string:
+            return None
+        if desc.dtype.base_type == dtypes.float16:
+            return (f'float16 scalar argument "{name}" is out of scope '
+                    f'(dace::half would need a value type-caster); {hint}')
+        if isinstance(desc.dtype, dtypes.vector):
+            return f'vector scalar argument "{name}" is out of scope; {hint}'
+        return None
+    return f'argument "{name}" of type {type(desc).__name__} is out of scope; {hint}'
+
+
+def unsupported_reason(sdfg) -> Optional[str]:
+    """The reason the nanobind interface cannot compile ``sdfg``, or ``None`` if it can.
+
+    Walks :func:`argument_unsupported` over the full ``sdfg.arglist()`` - the
+    exact descriptors the bindings generator binds, return values included.
+    ``compiler.resolve_compiler_interface`` consults this for
+    ``compiler.interface=auto``; under an explicit ``nanobind`` setting the
+    same predicate raises at code generation instead.
+    """
+    for name, desc in sdfg.arglist().items():
+        reason = argument_unsupported(name, desc)
+        if reason is not None:
+            return reason
+    return None
 
 
 def _symbol_fallbacks(arglist: Dict[str, dt.Data], arg_names: List[str],
@@ -176,11 +225,14 @@ def _symbol_fallbacks(arglist: Dict[str, dt.Data], arg_names: List[str],
     # (arg_names arrives pre-filtered to arglist members).
     explicit_symbols = {name for name in arg_names_set if _plain_numeric_symbol(name)}
 
-    # The shape and strides of these array arguments can be used to
+    # The shape and strides of these array arguments can be used to infer
+    # symbol values. Struct/container/low-precision arrays cannot occur here
+    # anymore (out of scope, refused before this runs); vector arrays are
+    # excluded because their run-time shape differs from the descriptor shape.
     sources = [(name, desc) for name, desc in arglist.items()
-               if name in arg_names_set and isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray)
-               and not isinstance(desc.dtype, (dtypes.struct, dtypes.vector)) and desc.optional is not True
-               and desc.dtype.base_type not in _LOWP_TYPES and not name.startswith('__return')]
+               if name in arg_names_set and isinstance(desc, dt.Array)
+               and not isinstance(desc.dtype, dtypes.vector) and desc.optional is not True
+               and not name.startswith('__return')]
 
     dace_infer_src = f'__dace_infer_src_{id(arglist)}'
     placeholder = sympy.Symbol(dace_infer_src)
@@ -308,18 +360,24 @@ def _argument_binding(arglist: Dict[str, dt.Data],
     allow_return_override = Config.get_bool('compiler', 'nanobind_allow_return_override')
 
     for name, desc in arglist.items():
+        # The scope predicate is the one refusal site: everything it flags is
+        # kept on the ctypes interface (and `compiler.interface=auto` routes
+        # such SDFGs there instead of ever reaching this raise).
+        reason = argument_unsupported(name, desc)
+        if reason is not None:
+            raise NotImplementedError(f'Nanobind interface: {reason}')
+
         # A pyobject is an opaque PyObject* (`typedef void *pyobject` in
-        # pyinterop.h). Returns are permanently out (arrays only). A SCALAR
-        # pyobject argument passes through: the nb::object parameter holds a
-        # reference for the duration of the call and the raw pointer is
-        # forwarded - reading `.ptr()` needs no GIL, and the program must not
-        # retain the pointer beyond the call (ctypes-interface parity, which
-        # passes a borrowed ctypes.py_object the same way). Arrays of
-        # pyobjects are refused.
+        # pyinterop.h). A SCALAR pyobject argument passes through: the
+        # nb::object parameter holds a reference for the duration of the call
+        # and the raw pointer is forwarded - reading `.ptr()` needs no GIL,
+        # and the program must not retain the pointer beyond the call
+        # (ctypes-interface parity, which passes a borrowed ctypes.py_object
+        # the same way).
         # Returns fall through to the __return branch below, which allocates the object array
         # and decays it to the single contained object on the way out (ctypes parity).
         if isinstance(desc.dtype, dtypes.pyobject) and not name.startswith('__return'):
-            if isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray):
+            if isinstance(desc, dt.Array):
                 # An ARRAY of pyobjects, i.e. numpy dtype=object: the buffer is a flat run of
                 # PyObject* slots. nb::ndarray cannot ingest it (DLPack refuses object arrays
                 # outright), so the pointer comes from __array_interface__ exactly as for the
@@ -342,31 +400,10 @@ def _argument_binding(arglist: Dict[str, dt.Data],
                 call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__ptr)')
                 nb_args_by_name[name] = f'nb::arg("{name}")'
                 continue
-            if not isinstance(desc, dt.Scalar):
-                raise NotImplementedError(f'Nanobind interface: pyobject argument "{name}" is only supported '
-                                          f'as a scalar or a plain array, not as a {type(desc).__name__}; '
-                                          f'use the ctypes interface (compiler.interface=ctypes).')
             params_by_name[name] = f'nb::object {name}'
             call_args.append(f'reinterpret_cast<{desc.dtype.ctype}>({name}.ptr())')
             nb_args_by_name[name] = f'nb::arg("{name}")'
             continue
-
-        # A callback's ctype is not a C++ type, so it cannot go through the
-        # generic branches (hence the early `continue`). The wrapper passes the
-        # address of a ctypes CFUNCTYPE - whose libffi thunk re-acquires the
-        # GIL - and the typed pointer is recovered under the real name, so
-        # init_call, the program call and sym_stores all see the right type.
-        if isinstance(desc.dtype, dtypes.callback):
-            params_by_name[name] = f'std::uintptr_t {name}__addr'
-            setup_stmts.append(f'{desc.dtype.as_arg(name)} = reinterpret_cast<{desc.dtype.as_arg("")}>({name}__addr);')
-            call_args.append(name)
-            nb_args_by_name[name] = f'nb::arg("{name}")'
-            continue
-
-        # A non-array return (scalar, structure) cannot carry output back.
-        if name.startswith('__return') and not isinstance(desc, dt.Array):
-            raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
-                                      f'{type(desc).__name__} is not supported; returns are arrays only.')
 
         if name.startswith('__return'):
             # Return arrays bind as DEFAULTED nb::object parameters and are
@@ -377,31 +414,10 @@ def _argument_binding(arglist: Dict[str, dt.Data],
             # semantics stay exactly those of the former Python-side
             # allocation. The binding returns the array object(s) at the end
             # of call().
-            if isinstance(desc, dt.ContainerArray):
-                raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
-                                          f'{type(desc).__name__}[{desc.dtype}] is not supported; '
-                                          f'returns are plain arrays only.')
-            if any(str(o) != '0' for o in desc.offset):
-                raise NotImplementedError(f'Nanobind interface: return value "{name}" has a non-zero offset; '
-                                          f'in-binding allocation assumes offset 0.')
-
-            is_struct_ret = isinstance(desc.dtype, dtypes.struct)
             is_vector_ret = isinstance(desc.dtype, dtypes.vector)
-            is_lowp_ret = desc.dtype.base_type in _LOWP_TYPES
             is_pyobj_ret = isinstance(desc.dtype, dtypes.pyobject)
-            # Both are dtypes nb::ndarray cannot ingest (DLPack refuses ml_dtypes-backed and
-            # object arrays alike), so both take the pointer from the array-interface dict.
-            is_iface_ret = is_lowp_ret or is_pyobj_ret
             gpu = desc.storage == dtypes.StorageType.GPU_Global
-            if is_struct_ret:
-                # A record dtype is rebuilt from its field descriptor list; the
-                # array itself cannot go through nb::ndarray (DLPack has no
-                # compound dtype), so the data pointer comes from the buffer
-                # protocol, like struct-array input arguments.
-                descr = desc.dtype.as_numpy_dtype().descr
-                fields = ''.join(f'__d.append(nb::make_tuple("{n}", "{t}")); ' for n, t in descr)
-                dtype_expr = f'__mod.attr("dtype")([&]() {{ nb::list __d; {fields}return __d; }}())'
-            elif is_vector_ret:
+            if is_vector_ret:
                 # A vector array allocates as its base scalar with a trailing
                 # veclen dimension - the exact layout numpy produced for the
                 # former subarray-dtype allocation (numpy auto-expands
@@ -446,24 +462,17 @@ def _argument_binding(arglist: Dict[str, dt.Data],
             # Mirrors the former Python allocation: a zeroed flat buffer
             # wrapped with the descriptor's shape and (byte) strides.
             # cupy.ndarray takes memptr/strides positionally after dtype.
-            # bfloat16/float8 are registered with NumPy by ml_dtypes; without that import the
-            # dtype NAME cannot be resolved - by NumPy, nor by CuPy, which re-exports
-            # numpy.dtype. The ctypes allocator relies on exactly the same registration, so
-            # neither interface special-cases the storage: hand the dtype to CuPy and let it
-            # succeed or raise on its own (CuPy gained experimental ml_dtypes.bfloat16 support
-            # in v15.0.0a1; float8 is not covered).
-            lowp_import = 'nb::module_::import_("ml_dtypes"); ' if is_lowp_ret else ''
             # An object array must be allocated with numpy even for GPU storage - a pyobject
             # return is a host-side Python object, never device memory.
             if is_pyobj_ret:
                 gpu = False
             if gpu:
-                alloc = (f'[&]() {{ {lowp_import}nb::object __mod = nb::module_::import_("cupy");\n'
+                alloc = (f'[&]() {{ nb::object __mod = nb::module_::import_("cupy");\n'
                          f'            nb::object __dt = {dtype_expr};\n'
                          f'            return __mod.attr("ndarray")(nb::make_tuple({dims}), __dt, '
                          f'__mod.attr("zeros")({total}, __dt).attr("data"), nb::make_tuple({strides_b})); }}()')
             else:
-                alloc = (f'[&]() {{ {lowp_import}nb::object __mod = nb::module_::import_("numpy");\n'
+                alloc = (f'[&]() {{ nb::object __mod = nb::module_::import_("numpy");\n'
                          f'            nb::object __dt = {dtype_expr};\n'
                          f'            return __mod.attr("ndarray")(nb::make_tuple({dims}), __dt, '
                          f'__mod.attr("zeros")({total}, __dt), 0, nb::make_tuple({strides_b})); }}()')
@@ -479,18 +488,11 @@ def _argument_binding(arglist: Dict[str, dt.Data],
                           f'        if ({name}__obj.is_none()) {{\n'
                           f'            {name}__obj = {alloc};\n'
                           f'        }}')
-            if is_struct_ret:
-                # Buffer-protocol pointer; a provided buffer is accepted as-is
-                # (no nb::ndarray view exists to validate a record array with).
-                return_setup.append(f'{obtain}\n'
-                                    f'        _DacePyBuffer {name}__buf({name}__obj.ptr());')
-                call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__buf.data())')
-            elif is_iface_ret:
-                # Same reason as low-precision ARGUMENTS: nb::ndarray can never ingest an
-                # ml_dtypes-backed array (no DLPack, no buffer protocol), so the pointer comes
-                # from the array-interface dict instead. The return object is already an
-                # nb::object here, so unlike the argument path there is no type caster to
-                # bypass - only the nb::cast is replaced. Object arrays take the same route.
+            if is_pyobj_ret:
+                # DLPack refuses object arrays, so nb::ndarray can never ingest one: the
+                # pointer comes from the array-interface dict instead. The return object is
+                # already an nb::object here, so unlike the argument path there is no type
+                # caster to bypass - only the nb::cast is replaced.
                 iface = '__cuda_array_interface__' if gpu else '__array_interface__'
                 extract = (f'nb::object {name}__ai = {name}__obj.attr("{iface}");\n'
                            f'        const std::uintptr_t {name}__ptr = '
@@ -525,53 +527,6 @@ def _argument_binding(arglist: Dict[str, dt.Data],
             nb_args_by_name[name] = f'nb::arg("{name}").none() = nb::none()'
             continue
 
-        # bfloat16 / float8 (ml_dtypes-backed): numpy cannot export such
-        # arrays via DLPack (BufferError) or the buffer protocol ("cannot
-        # include dtype 'E' in a buffer"), so nb::ndarray can never ingest
-        # them, even with a dtype_traits specialization
-        # (https://github.com/wjakob/nanobind/discussions/560). But numpy
-        # DOES expose __array_interface__ - the very protocol the ctypes
-        # marshaller reads - so a plain array binds as nb::object and the
-        # raw pointer is extracted from the interface dict in setup (GIL
-        # held; the nb::object parameter keeps the array alive across the
-        # call). The typestr itemsize check is the one sanity guard: no
-        # dtype identity, no contiguity checks - ctypes-grade by design.
-        if desc.dtype.base_type in _LOWP_TYPES:
-            if (isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray)
-                    and not isinstance(desc.dtype, (dtypes.struct, dtypes.vector)) and desc.optional is not True):
-                iface = ('__cuda_array_interface__'
-                         if desc.storage == dtypes.StorageType.GPU_Global else '__array_interface__')
-                nbytes = desc.dtype.base_type.bytes
-                lowp_name = desc.dtype.base_type.to_string()
-                # The guard is itemsize-only: the kind letter varies (ml_dtypes
-                # registers e5m2 as '<f1' but bfloat16/e4m3fn as '<V2'/'<V1'),
-                # and dtype identity is not part of this contract anyway.
-                setup_stmts.append(
-                    f'nb::object {name}__ai = {name}.attr("{iface}");\n'
-                    f'        const std::string {name}__ts = nb::cast<std::string>({name}__ai["typestr"]);\n'
-                    f'        if ({name}__ts.size() < 3 || {name}__ts.substr(2) != "{nbytes}")\n'
-                    f'            throw std::invalid_argument("SDFG argument error: argument \'{name}\': expected a '
-                    f'{lowp_name} array (itemsize {nbytes}), got typestr \'" + {name}__ts + "\'.");\n'
-                    f'        const std::uintptr_t {name}__ptr = '
-                    f'nb::cast<std::uintptr_t>(nb::tuple({name}__ai["data"])[0]);')
-                params_by_name[name] = f'nb::object {name}'
-                call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__ptr)')
-                nb_args_by_name[name] = f'nb::arg("{name}")'
-                continue
-            raise NotImplementedError(f'Nanobind interface: argument "{name}" of low-precision type '
-                                      f'{desc.dtype} is only supported as a plain non-nullable array '
-                                      f'(scalars would need value type-casters); '
-                                      f'use the ctypes interface (compiler.interface=ctypes).')
-
-        # A float16 *scalar* would need a nanobind value type-caster for
-        # dace::half (Python float <-> half); float16 arrays are handled via a
-        # dtype_traits specialization (see _uses_half_ndarray). Scalars are rare
-        # and ctypes only maps them to raw c_ushort, so refuse them clearly.
-        if isinstance(desc, dt.Scalar) and desc.dtype.base_type == dtypes.float16:
-            raise NotImplementedError(f'Nanobind interface: float16 scalar argument "{name}" is not '
-                                      f'supported (dace::half needs a value type-caster); '
-                                      f'use the ctypes interface (compiler.interface=ctypes).')
-
         ctype = desc.dtype.ctype
         if isinstance(desc, dt.Scalar) and desc.dtype == dtypes.string:
             # A string scalar is a C string (int8_t*). std::optional<std::string>
@@ -583,42 +538,6 @@ def _argument_binding(arglist: Dict[str, dt.Data],
             call_args.append(
                 f'{name}.has_value() ? reinterpret_cast<{ctype}>(const_cast<char *>({name}->c_str())) : nullptr')
             nb_args_by_name[name] = f'nb::arg("{name}").none()'
-
-        elif isinstance(desc, dt.ContainerArray):
-            # Array of structures: the caller passes a numpy array of
-            # per-element pointers (e.g. ctypes.addressof), whose data pointer
-            # is forwarded cast to the element-pointer type - no device
-            # constraint, the pointer table is passed through as-is. Must
-            # precede the Array branch - ContainerArray subclasses Array.
-            params_by_name[name] = f'nb::ndarray<uint64_t> {name}'
-            call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
-            nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
-
-        elif isinstance(desc, dt.Structure):
-            # Thin pointer passthrough: the caller builds the C struct as a
-            # ctypes.Structure, whose address the buffer protocol yields
-            # directly. Marshalling a Python object field by field instead
-            # would need the full struct definition; deferred.
-            params_by_name[name] = f'nb::object {name}'
-            setup_stmts.append(f'_DacePyBuffer {name}_buf({name}.ptr());')
-            call_args.append(f'reinterpret_cast<{ctype}>({name}_buf.data())')
-            nb_args_by_name[name] = f'nb::arg("{name}")'
-
-        elif isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct):
-            # nb::ndarray rejects a numpy record array (DLPack has no compound dtype),
-            # so take a generic object and pull the raw bytes via the buffer protocol.
-            # A nullable one accepts None -> null pointer.
-            params_by_name[name] = f'nb::object {name}'
-            if desc.optional:
-                setup_stmts.append(
-                    f'std::optional<_DacePyBuffer> {name}_buf; if (!{name}.is_none()) {name}_buf.emplace({name}.ptr());'
-                )
-                call_args.append(f'{name}.is_none() ? nullptr : reinterpret_cast<{ctype} *>({name}_buf->data())')
-                nb_args_by_name[name] = f'nb::arg("{name}").none()'
-            else:
-                setup_stmts.append(f'_DacePyBuffer {name}_buf({name}.ptr());')
-                call_args.append(f'reinterpret_cast<{ctype} *>({name}_buf.data())')
-                nb_args_by_name[name] = f'nb::arg("{name}")'
 
         elif isinstance(desc, dt.Array):
             # The ndarray scalar type may differ from the cast target: a vector
@@ -682,25 +601,6 @@ def _argument_binding(arglist: Dict[str, dt.Data],
     return params, call_args, nb_args, must_pass_setup + setup_stmts + return_setup
 
 
-def _referenced_struct_name(desc):
-    """The C struct type name a ``Structure`` / ``ContainerArray``-of-Structure references, else ``None``.
-
-    For a ContainerArray the innermost element type decides (nested containers
-    of arrays reference builtins like ``double`` and need no declaration).
-    """
-    if isinstance(desc, dt.Structure):
-        return desc.dtype.ctype.rstrip(' *')  # e.g. "CSRMatrix*" -> "CSRMatrix"
-    if isinstance(desc, dt.ContainerArray):
-        stype = desc.stype
-        while isinstance(stype, dt.ContainerArray):
-            stype = stype.stype
-        if isinstance(stype, dt.Structure):
-            return stype.dtype.ctype.rstrip(' *')
-    if isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct):
-        return desc.dtype.ctype
-    return None
-
-
 def _ndarray_scalar_ctype(dtype):
     """The C++ scalar type for an ``nb::ndarray<...>`` parameter.
 
@@ -717,33 +617,14 @@ def _ndarray_scalar_ctype(dtype):
 def _uses_half_ndarray(arglist) -> bool:
     """True iff some argument binds a ``dace::float16`` ndarray scalar.
 
-    Only the plain-array branch binds an ``nb::ndarray<scalar, ...>``; container
-    arrays (uint64 pointer tables) and struct arrays (raw buffers) never do, so
-    they cannot pull in the half dtype. When this holds the generated TU needs
-    the ``dtype_traits<dace::float16>`` specialization.
+    When this holds the generated TU needs the ``dtype_traits<dace::float16>``
+    specialization (plain, nullable, GPU and vector-of-half arrays all bind
+    that scalar).
     """
     for desc in arglist.values():
-        if (isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray)
-                and not isinstance(desc.dtype, dtypes.struct)
-                and _ndarray_scalar_ctype(desc.dtype) == dtypes.float16.ctype):
+        if isinstance(desc, dt.Array) and _ndarray_scalar_ctype(desc.dtype) == dtypes.float16.ctype:
             return True
     return False
-
-
-def _structure_forward_decls(arglist):
-    """Forward declarations for the C structs referenced by Structure / ContainerArray arguments.
-
-    The bindings only pass pointers to these structs (thin passthrough), so a
-    forward declaration is enough - the full definition lives in the frame code.
-    """
-    decls = []
-    seen = set()
-    for desc in arglist.values():
-        struct_name = _referenced_struct_name(desc)
-        if struct_name and struct_name not in seen:
-            seen.add(struct_name)
-            decls.append(f'struct {struct_name};')
-    return '\n'.join(decls)
 
 
 def _pointer_field_names(statestruct):
@@ -773,214 +654,6 @@ def _external_memory_storages(sdfg):
         if desc.lifetime == dtypes.AllocationLifetime.External:
             storages.add(desc.storage)
     return sorted(storages, key=lambda s: s.name)
-
-
-def _user_call_binding(sdfg,
-                       arglist: Dict[str, dt.Data],
-                       init_call: str,
-                       gpu_check_call: str = '',
-                       ws_check_lead: str = '') -> Tuple[str, str]:
-    """Generates the ``user_call`` method and its ``.def`` line from ``sdfg.user_args``.
-
-    ``user_args`` is a structured promise: entries are argument names or
-    (nested) tuples of them. Tuple entries bind as ``nb::tuple`` parameters and
-    are destructured in the body with per-element ``nb::try_cast`` - arrays
-    with ``convert=false`` (by-reference, never a silent copy), scalars with
-    nanobind's regular conversion - since a parameter-level ``.noconvert()``
-    would propagate to every tuple element uniformly (probe result, see the
-    design doc). There is no kwargs absorber: every argument must be listed or
-    inferable from listed ones, which makes completeness checkable here, at
-    code-generation time.
-
-    An empty string entry is an IGNORED placeholder slot ("this position
-    exists in the caller's convention, dace does not need it"): at the top
-    level it becomes an ``nb::object`` parameter accepting anything (including
-    ``None``) that is never read; nested inside a tuple the position is
-    counted by the length check but never extracted.
-
-    :return: The pair ``(method_source, def_source)``, both empty when
-             ``user_args`` is empty.
-    """
-    user_args = getattr(sdfg, 'user_args', None) or []
-    if not user_args:
-        return '', ''
-    name = sdfg.name
-
-    flat: List[str] = []
-
-    def _flatten(entry):
-        if isinstance(entry, str):
-            # '' is an ignored placeholder slot, not an argument name.
-            if entry:
-                flat.append(entry)
-        else:
-            if len(entry) == 0:
-                raise ValueError(f"SDFG '{name}': user_args contains an empty tuple.")
-            for sub in entry:
-                _flatten(sub)
-
-    for entry in user_args:
-        _flatten(entry)
-
-    listed = set()
-    for n in flat:
-        if n not in arglist:
-            raise ValueError(f"SDFG '{name}': user_args lists unknown argument '{n}'.")
-        if n in listed:
-            raise ValueError(f"SDFG '{name}': user_args lists argument '{n}' more than once.")
-        listed.add(n)
-
-    # Initial scope: primitive scalars (plus opaque pyobject scalars) and
-    # plain arrays only.
-    for n in flat:
-        desc = arglist[n]
-        if isinstance(desc, dt.ContainerArray) or isinstance(desc, dt.Structure):
-            supported = False
-        elif isinstance(desc, dt.Array):
-            # pyobject arrays are excluded for the same reason as the low-precision ones: both
-            # take their pointer from __array_interface__ via setup statements, and the fast
-            # path has no setup scope (see the `assert not setup` below). A pyobject SCALAR is
-            # still fine - it forwards `.ptr()` inline.
-            supported = (not isinstance(desc.dtype, dtypes.struct) and desc.optional is not True
-                         and desc.dtype.base_type not in _LOWP_TYPES and not isinstance(desc.dtype, dtypes.pyobject))
-        elif isinstance(desc, dt.Scalar):
-            supported = (not isinstance(desc.dtype, (dtypes.callback, dtypes.vector)) and desc.dtype != dtypes.string
-                         and desc.dtype.base_type != dtypes.float16)
-        else:
-            supported = False
-        if not supported:
-            raise ValueError(f"SDFG '{name}': user_args argument '{n}' is of a kind not supported by "
-                             f"user_call (initial scope: primitive scalars and plain non-nullable arrays).")
-
-    # The fast path allocates nothing, so return values are refused.
-    if any(n == '__return' or n.startswith('__return_') for n in sdfg.arrays):
-        raise ValueError(f"SDFG '{name}': user_call does not support SDFGs with return values.")
-
-    # Completeness: with no kwargs, every unlisted argument must be an
-    # inferable symbol - decidable here, so a violation never reaches run time.
-    _, fallbacks = _symbol_fallbacks(arglist, flat, sdfg.symbols)
-    for n in arglist:
-        if n not in listed and n not in fallbacks:
-            raise ValueError(f"SDFG '{name}': user_call missing argument '{n}': not listed in "
-                             f"user_args and not inferable from any listed argument.")
-
-    # Parameter declarations and call-argument expressions for every listed
-    # name come from the same generator call() uses, so the per-argument
-    # semantics (noconvert arrays, bool-as-uint8, strict scalars, vector base
-    # types, GPU devices) are identical by construction. For tuple-bound names
-    # only the *arrival* differs: the same typed declaration becomes a local
-    # filled by try_cast instead of a function parameter.
-    param_decl = {}
-    call_expr = {}
-    arg_annot = {}
-    for n in flat:
-        p, ca, na, setup = _argument_binding({n: arglist[n]}, [n], set(), {})
-        assert not setup  # the scope restriction excludes everything that needs setup
-        param_decl[n], call_expr[n], arg_annot[n] = p[0], ca[0], na[0]
-
-    def _convert_flag(desc) -> str:
-        # Arrays: never convert (a converted ndarray is a silent copy).
-        # Scalars: nanobind's regular conversion, matching the call() dispatcher.
-        return 'false' if isinstance(desc, dt.Array) else 'true'
-
-    params: List[str] = []
-    def_args: List[str] = []
-    extract: List[str] = []
-
-    # Synthesized identifiers (positional tuple parameters `argN`, their
-    # nested locals `argN_M`, ignored-slot names) must not shadow real
-    # argument names: every listed name becomes a C++ declaration in the
-    # same scope, so a real argument literally called `arg1` would otherwise
-    # redeclare the parameter. Mangle with trailing underscores until free.
-    taken = set(arglist)
-
-    def _fresh(base: str) -> str:
-        candidate = base
-        while candidate in taken:
-            candidate += '_'
-        taken.add(candidate)
-        return candidate
-
-    def _emit_extractions(entry, tuple_expr: str, path: str):
-        extract.append(f'if (nb::len({tuple_expr}) != {len(entry)})\n'
-                       f'            throw std::invalid_argument("SDFG argument error: argument \'{path}\': '
-                       f'expected a tuple of length {len(entry)}.");')
-        for j, sub in enumerate(entry):
-            if sub == '':
-                # An ignored placeholder: counted by the length check above,
-                # never extracted - any value may sit in this position.
-                continue
-            elem = f'{tuple_expr}[{j}]'
-            sub_path = f'{path}[{j}]'
-            if isinstance(sub, str):
-                decl_type = param_decl[sub].rsplit(' ', 1)[0]
-                extract.append(
-                    f'{param_decl[sub]};\n'
-                    f'        if (!nb::try_cast<{decl_type}>({elem}, {sub}, {_convert_flag(arglist[sub])}))\n'
-                    f'            throw std::invalid_argument("SDFG argument error: argument \'{sub}\' '
-                    f'(in {sub_path}): incompatible value.");')
-            else:
-                sub_tuple = _fresh(f'{tuple_expr}_{j}')
-                extract.append(
-                    f'nb::tuple {sub_tuple};\n'
-                    f'        if (!nb::try_cast<nb::tuple>({elem}, {sub_tuple}, false))\n'
-                    f'            throw std::invalid_argument("SDFG argument error: argument \'{sub_path}\': '
-                    f'expected a tuple.");')
-                _emit_extractions(sub, sub_tuple, sub_path)
-
-    for i, entry in enumerate(user_args, start=1):
-        if entry == '':
-            # Ignored placeholder slot: accepts anything (None included, hence
-            # .none()), never read - the unnamed parameter avoids an
-            # unused-parameter warning in the generated code.
-            pname = _fresh(f'arg{i}')
-            params.append(f'nb::object /* {pname}: ignored */')
-            def_args.append(f'nb::arg("{pname}").none()')
-        elif isinstance(entry, str):
-            params.append(param_decl[entry])
-            def_args.append(arg_annot[entry])
-        else:
-            # The error-message path stays the pretty position label argN;
-            # only the C++ identifier is mangled on a collision.
-            pname = _fresh(f'arg{i}')
-            params.append(f'nb::tuple {pname}')
-            def_args.append(f'nb::arg("{pname}")')
-            _emit_extractions(entry, pname, f'arg{i}')
-
-    # Unlisted inferable symbols: plain const locals - no optional machinery,
-    # since completeness is already guaranteed above.
-    for n in arglist:
-        if n not in listed:
-            extract.append(f'const {arglist[n].dtype.ctype} {n} = {fallbacks[n]};')
-
-    user_call_args = ', '.join(call_expr[n] if n in listed else n for n in arglist)
-    program_args = 'm_state' + (f', {user_call_args}' if user_call_args else '')
-
-    if extract:
-        extract_block = '\n        '.join(extract)
-        body = (f'{ws_check_lead}{extract_block}\n'
-                f'        {{\n'
-                f'            nb::gil_scoped_release _nogil;\n'
-                f'            init_impl({init_call});\n'
-                f'            __program_{name}({program_args});\n'
-                f'        }}\n'
-                f'{gpu_check_call}'.rstrip('\n'))
-    else:
-        body = (f'{ws_check_lead}{{\n'
-                f'            nb::gil_scoped_release _nogil;\n'
-                f'            init_impl({init_call});\n'
-                f'            __program_{name}({program_args});\n'
-                f'        }}\n'
-                f'{gpu_check_call}'.rstrip('\n'))
-
-    method = (f'\n    // Structured fast-path entry point (SDFG.user_args); see the Python\n'
-              f'    // wrapper\'s user_bind_call() for the contract.\n'
-              f'    void user_call({", ".join(params)}) {{\n'
-              f'        {body}\n'
-              f'    }}\n')
-    def_line = (f'\n        .def("user_call", &DaceHandle_{name}::user_call' + ''.join(f', {a}'
-                                                                                       for a in def_args) + ')')
-    return method, def_line
 
 
 def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
@@ -1104,15 +777,13 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
 
     call_param_list = ', '.join(params + ['nb::kwargs'])
     init_param_list = ', '.join(init_params + ['nb::kwargs'])
-    user_call_method, user_call_def = _user_call_binding(sdfg, arglist, init_call, gpu_check_call, ws_check_lead)
     # The trailing nb::kwargs absorber needs an annotation too.
     call_def_args = ''.join(f', {a}' for a in nb_args + ['nb::arg("_extra_kwargs")'])
     init_def_args = ''.join(f', {a}' for a in init_nb_args + ['nb::arg("_extra_kwargs")'])
     has_gpu = 'true' if _has_gpu_code(sdfg) else 'false'
 
     # Codegen-time call metadata, exposed on the handle so the Python wrapper
-    # does not re-derive it (the __return naming convention and the callback
-    # detection live in one place).
+    # does not re-derive it (the __return naming convention lives in one place).
     def _ret_obj(n: str) -> str:
         """The expression yielding the Python object handed back for return ``n``.
 
@@ -1138,21 +809,12 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
         ret_expr = ('nb::make_tuple(' + ', '.join(_ret_obj(n)
                                                   for n in return_names) + ')') if return_names else 'nb::none()'
     return_names_def = ', '.join(f'"{n}"' for n in return_names)
-    callback_names_def = ', '.join(f'"{n}"' for n in arglist if isinstance(arglist[n].dtype, dtypes.callback))
 
     # Symbol values are never stored on the handle: the external-memory entry
     # points (framecode.py, generate_external_memory_management) take the init
     # symbols as arguments, so the caller passes them per call - the bound
     # methods accept the full __call__-style argument set and the dispatcher
     # picks the ones needed (the trailing nb::kwargs absorbs the rest).
-    #
-    # Callbacks are among these init symbols: the Python frontend registers a
-    # callback via `sdfg.add_symbol(name, dtypes.callback(...))`, riding the
-    # symbol machinery because a callback shares a symbol's defining property -
-    # a scalar, runtime-constant value that parameterizes the execution (here a
-    # pointer-sized function pointer). That is why they flow through
-    # `used_symbols()` into the init signature, and why the init setup
-    # statements (the pointer recovery) apply to the workspace methods too.
     init_symbol_names = list(init_arglist.keys())
     init_sym_args = ''.join(f', {s}' for s in init_symbol_names)
     init_comma_decl = f', {init_decl}' if init_decl else ''
@@ -1175,7 +837,7 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
         f'            return;\n'
         f'        }}' for s in ext_storages)
 
-    # Callback-pointer recovery for the workspace methods (their init-symbol
+    # Setup statements for the workspace methods (their init-symbol
     # parameters arrive like initialize()'s).
     ws_init_setup = ''.join(f'{stmt}\n        ' for stmt in init_setup)
 
@@ -1190,10 +852,6 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
     source_hash = getattr(sdfg, '_source_sdfg_hash', None)
     source_hash_attr = f'\n    m.attr("source_sdfg_hash") = "{source_hash}";' if source_hash else ''
 
-    # Forward declarations for structs passed by pointer (Structure arguments).
-    struct_decls = _structure_forward_decls(arglist)
-    struct_fwd_block = f'\n{struct_decls}' if struct_decls else ''
-
     # nanobind's ndarray dtype detection uses std::is_floating_point, which is
     # false for dace::half (on the host path a 2-byte struct of raw IEEE-754
     # half bits). Teach it that dace::float16 is a 16-bit DLPack float so a
@@ -1204,15 +862,11 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
     bool_caster_block = _DACE_BOOL_CASTER if any(
         isinstance(d, dt.Scalar) and d.dtype.base_type == dtypes.bool_ for d in arglist.values()) else ''
 
-    # setup_stmts (struct pointer extraction, callback pointer recovery,
-    # omittable-symbol locals) may need the Python API, so with them the GIL is
-    # released only around the kernel call - the RAII buffer guards outlive
-    # that nested scope and release with the GIL re-acquired. Without them,
-    # call() keeps the simpler whole-body release. initialize() gets the same
-    # treatment for its own (init-symbol) setup statements - callbacks are init
-    # symbols. The _DacePyBuffer helper is emitted only when a setup statement
-    # actually uses it (a symbol-only setup block does not).
-    pybuffer_helper = _PYBUFFER_HELPER if any('_DacePyBuffer' in s for s in setup_stmts + init_setup) else ''
+    # setup_stmts (pyobject-array pointer extraction, omittable-symbol locals,
+    # return allocation) may need the Python API, so with them the GIL is
+    # released only around the kernel call. Without them, call() keeps the
+    # simpler whole-body release. initialize() gets the same treatment for its
+    # own (init-symbol) setup statements.
 
     if setup_stmts:
         setup_block = '\n        '.join(setup_stmts)
@@ -1279,7 +933,7 @@ namespace nb = nanobind;
 // methods. Identical content in two modules (a copied artifact) shares the
 // type identity - harmless, the code is identical.
 extern "C" {{
-struct {state_t};{struct_fwd_block}
+struct {state_t};
 {state_t} *__dace_init_{name}({init_decl});
 int __dace_exit_{name}({state_t} *__state);
 void __program_{name}({program_params});{gpu_check_decl}
@@ -1295,7 +949,7 @@ namespace dace {{ namespace generated {{ namespace {type_ns} {{
 // in-flight calls. Per-call data is all locals, so distinct handles are
 // independent.
 struct DaceHandle_{name} {{
-{pybuffer_helper}    {state_t} *m_state = nullptr;
+    {state_t} *m_state = nullptr;
     // Honored by the compiled per-call GPU error check; inert when this module
     // has no GPU code (the check method is only emitted with a GPU target).
     bool m_gpu_error_check = true;
@@ -1355,7 +1009,7 @@ struct DaceHandle_{name} {{
     nb::object call({call_param_list}) {{
         {call_body}
     }}
-{user_call_method}}};
+}};
 
 }} }} }} // namespace dace::generated::{type_ns}
 
@@ -1364,7 +1018,7 @@ NB_MODULE({name}, m) {{
     nb::class_<DaceHandle_{name}>(m, "CompiledSDFGHandle")
         .def("initialize", &DaceHandle_{name}::initialize{init_def_args})
         .def("finalize", &DaceHandle_{name}::finalize)
-        .def("__call__", &DaceHandle_{name}::call{call_def_args}){user_call_def}
+        .def("__call__", &DaceHandle_{name}::call{call_def_args})
         .def("get_workspace_sizes", &DaceHandle_{name}::get_workspace_sizes{init_def_args})
         .def("set_workspace", &DaceHandle_{name}::set_workspace,
              nb::arg("storage"), nb::arg("buffer"){init_def_args})
@@ -1379,7 +1033,6 @@ NB_MODULE({name}, m) {{
                      [](DaceHandle_{name} &h) {{ return h.m_gpu_error_check; }},
                      [](DaceHandle_{name} &h, bool v) {{ h.m_gpu_error_check = v; }})
         .def_prop_ro("return_names", [](DaceHandle_{name} &) {{ return nb::make_tuple({return_names_def}); }})
-        .def_prop_ro("callback_names", [](DaceHandle_{name} &) {{ return nb::make_tuple({callback_names_def}); }})
         .def_prop_ro("state_pointer", [](DaceHandle_{name} &h) {{
             h.require_state();
             return reinterpret_cast<std::uintptr_t>(h.m_state);

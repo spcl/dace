@@ -762,20 +762,21 @@ def test_nanobind_interface_pyobject_array_and_return_binding():
 
 
 def test_nanobind_interface_pyobject_array_arg_e2e(nanobind_interface):
-    """E2E: every element of an object array reaches a callback as the very same
-    Python object. The caller's array owns the references and the nb::object
-    parameter keeps it alive across the call, so the slots stay valid while the
-    program dereferences them - the same lifetime contract as ctypes, which also
-    hands out pointers into the caller's buffer."""
+    """E2E: every slot of an object array reaches the program as the very
+    address of the caller's Python object (on CPython ``id()`` is that
+    address). The caller's array owns the references and the nb::object
+    parameter keeps it alive across the call - the same lifetime contract as
+    ctypes, which also hands out pointers into the caller's buffer."""
     from dace import dtypes
 
     sdfg = dace.SDFG('pyobject_array_passthrough')
     sdfg.add_array('objs', [3], dtypes.pyobject())
-    sdfg.add_array('A', [3], dace.float64)
-    sdfg.add_symbol('consume', dace.callback(None, dtypes.pyobject()))
+    sdfg.add_array('A', [3], dace.uint64)
     state = sdfg.add_state()
     me, mx = state.add_map('m', dict(i='0:3'))
-    t = state.add_tasklet('t', {'o_in'}, {'a_out'}, 'consume(o_in)\na_out = 1.0')
+    t = state.add_tasklet('t', {'o_in'}, {'a_out'},
+                          'a_out = reinterpret_cast<unsigned long long>(o_in);',
+                          language=dace.Language.CPP)
     state.add_memlet_path(state.add_read('objs'), me, t, dst_conn='o_in', memlet=dace.Memlet('objs[i]'))
     state.add_memlet_path(t, mx, state.add_write('A'), src_conn='a_out', memlet=dace.Memlet('A[i]'))
 
@@ -789,14 +790,10 @@ def test_nanobind_interface_pyobject_array_arg_e2e(nanobind_interface):
     payloads = [Payload(0), Payload(1), Payload(2)]
     objs = np.empty(3, dtype=object)
     objs[:] = payloads
-    seen = []
-    a = np.zeros(3)
-    csdfg(objs=objs, A=a, consume=lambda x: seen.append(x))
+    a = np.zeros(3, dtype=np.uint64)
+    csdfg(objs=objs, A=a)
 
-    assert len(seen) == 3
-    assert sorted(o.tag for o in seen) == [0, 1, 2]
-    assert all(s is p for s, p in zip(sorted(seen, key=lambda o: o.tag), payloads))  # identity, not copies
-    assert np.allclose(a, 1.0)
+    assert list(a) == [id(p) for p in payloads]  # identity, not copies
 
 
 def test_nanobind_interface_pyobject_return_e2e(nanobind_interface):
@@ -805,20 +802,24 @@ def test_nanobind_interface_pyobject_return_e2e(nanobind_interface):
     the decay-to-single-object convention is what is being matched."""
     from dace import dtypes
 
+    # A hashable payload type (shared across both halves): the ctypes
+    # marshaller keys its pyobject keep-alive registry by the argument itself.
+    class Payload:
+        pass
+
     def build_and_run(interface):
         with set_temporary('compiler', 'interface', value=interface):
             sdfg = dace.SDFG(f'pyobj_ret_parity_{interface}')
-            sdfg.add_array('A', [4], dace.float64)
-            sdfg.arrays['A'].optional = False
+            sdfg.add_scalar('obj', dtypes.pyobject())
             sdfg.add_array('__return', [1], dtypes.pyobject())
-            sdfg.add_symbol('produce', dace.callback(dtypes.pyobject()))
-            sdfg.arg_names = ['A']
+            sdfg.arg_names = ['obj']
             st = sdfg.add_state()
-            t = st.add_tasklet('t', {}, {'o'}, 'o = produce()')
+            t = st.add_tasklet('t', {'o_in'}, {'o'}, 'o = o_in;', language=dace.Language.CPP)
+            st.add_edge(st.add_read('obj'), None, t, 'o_in', dace.Memlet('obj[0]'))
             st.add_edge(t, 'o', st.add_write('__return'), None, dace.Memlet('__return[0]'))
             csdfg = sdfg.compile()
-            payload = {'tag': 'the-object'}
-            return csdfg(A=np.zeros(4), produce=lambda: payload), payload
+            payload = Payload()
+            return csdfg(obj=payload), payload
 
     nb_result, nb_payload = build_and_run('nanobind')
     assert nb_result is nb_payload  # the object itself, and the very same one
@@ -826,65 +827,6 @@ def test_nanobind_interface_pyobject_return_e2e(nanobind_interface):
     ct_result, ct_payload = build_and_run('ctypes')
     assert ct_result is ct_payload
     assert type(nb_result) is type(ct_result)
-
-
-def test_nanobind_interface_lowp_return_binding():
-    """A bfloat16/float8 RETURN allocates through ml_dtypes and takes its pointer
-    from the array-interface dict.
-
-    numpy cannot resolve the dtype NAME without ml_dtypes imported (np.dtype('bfloat16')
-    raises TypeError), and nb::ndarray cannot ingest the result, so the allocation
-    imports ml_dtypes and the extraction skips the nb::cast. The storage is NOT
-    special-cased: the dtype goes to CuPy for a GPU return exactly as the ctypes
-    allocator hands it over, and CuPy succeeds or raises on its own.
-    """
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    sdfg = dace.SDFG('lowp_return_bind_probe')
-    sdfg.add_array('A', [8], dace.bfloat16)
-    sdfg.add_array('__return', [8], dace.bfloat16)
-    sdfg.arrays['__return'].optional = False
-    code = generate_bindings_code(sdfg)
-    assert 'nb::module_::import_("ml_dtypes")' in code
-    assert '__mod.attr("dtype")("bfloat16")' in code
-    assert '__return__ai' in code and '__array_interface__' in code
-    assert 'reinterpret_cast<dace::bfloat16 *>(__return__ptr)' in code
-    assert 'nb::cast<nb::ndarray<' not in code.split('__return__obj')[1][:400]  # no DLPack view
-
-    # GPU storage takes the CUDA flavour of the protocol and allocates via CuPy.
-    gpu_sdfg = dace.SDFG('lowp_return_gpu_bind_probe')
-    gpu_sdfg.add_array('__return', [8], dace.bfloat16, storage=dace.StorageType.GPU_Global)
-    gpu_sdfg.arrays['__return'].optional = False
-    with set_temporary('compiler', 'cuda', 'backend', value='cuda'):
-        gpu_code = generate_bindings_code(gpu_sdfg)
-    assert 'nb::module_::import_("cupy")' in gpu_code
-    assert '__cuda_array_interface__' in gpu_code
-
-
-def test_nanobind_interface_lowp_return_e2e(nanobind_interface):
-    """E2E: a bfloat16 return array is allocated in the binding and comes back as a
-    numpy array of the right dtype and values."""
-    ml_dtypes = pytest.importorskip('ml_dtypes')
-
-    sdfg = dace.SDFG('bf16_return_e2e')
-    sdfg.add_array('A', [8], dace.bfloat16)
-    sdfg.add_array('__return', [8], dace.bfloat16)
-    sdfg.arrays['A'].optional = False
-    sdfg.arrays['__return'].optional = False
-    sdfg.arg_names = ['A']
-    st = sdfg.add_state()
-    st.add_mapped_tasklet('copy',
-                          dict(i='0:8'),
-                          dict(inp=dace.Memlet('A[i]')),
-                          'out = inp',
-                          dict(out=dace.Memlet('__return[i]')),
-                          external_edges=True)
-
-    csdfg = sdfg.compile()
-    a = np.arange(8, dtype=np.float32).astype(ml_dtypes.bfloat16)
-    result = csdfg(A=a)
-    assert result.dtype == ml_dtypes.bfloat16
-    assert np.array_equal(result.astype(np.float32), a.astype(np.float32))
 
 
 def test_nanobind_interface_pyobject_scalar_binding():
@@ -904,16 +846,18 @@ def test_nanobind_interface_pyobject_scalar_binding():
 
 
 def test_nanobind_interface_pyobject_scalar_arg_e2e(nanobind_interface):
-    """A pyobject scalar argument passes through as an opaque PyObject* and
-    arrives at a callback as the very same object (identity preserved)."""
+    """A pyobject scalar argument passes through as an opaque PyObject*:
+    the program sees the very address of the caller's object (identity
+    preserved; on CPython ``id()`` is that address)."""
     from dace import dtypes
 
     sdfg = dace.SDFG('pyobject_passthrough')
     sdfg.add_scalar('obj', dtypes.pyobject())
-    sdfg.add_array('A', [4], dace.float64)
-    sdfg.add_symbol('consume', dace.callback(None, dtypes.pyobject()))
+    sdfg.add_array('A', [1], dace.uint64)
     state = sdfg.add_state()
-    t = state.add_tasklet('t', {'o_in'}, {'a_out'}, 'consume(o_in)\na_out = 1.0')
+    t = state.add_tasklet('t', {'o_in'}, {'a_out'},
+                          'a_out = reinterpret_cast<unsigned long long>(o_in);',
+                          language=dace.Language.CPP)
     state.add_edge(state.add_read('obj'), None, t, 'o_in', dace.Memlet('obj[0]'))
     state.add_edge(t, 'a_out', state.add_write('A'), None, dace.Memlet('A[0]'))
 
@@ -923,78 +867,9 @@ def test_nanobind_interface_pyobject_scalar_arg_e2e(nanobind_interface):
         pass
 
     payload = Payload()
-    received = []
-    a = np.zeros(4)
-    csdfg(obj=payload, A=a, consume=lambda x: received.append(x))
-    assert a[0] == 1.0
-    assert len(received) == 1
-    assert received[0] is payload
-
-
-def test_nanobind_interface_lowp_dtypes_rejected():
-    """bfloat16/float8 SCALARS are refused at codegen (they would need value
-    type-casters, like float16 scalars); arrays pass through the
-    __array_interface__ pointer extraction instead (see the binding test)."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    sdfg = dace.SDFG('lowp_reject_scalar')
-    sdfg.add_scalar('x', dace.bfloat16)
-    with pytest.raises(NotImplementedError, match='ctypes'):
-        generate_bindings_code(sdfg)
-
-
-def test_nanobind_interface_lowp_array_binding():
-    """A bfloat16/float8 array binds as nb::object: numpy cannot export
-    ml_dtypes arrays via DLPack or the buffer protocol, but it does expose
-    __array_interface__ - the raw pointer is extracted from there (the same
-    protocol the ctypes marshaller uses), with a typestr itemsize check as
-    the one sanity guard. GPU arrays read __cuda_array_interface__."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    sdfg = dace.SDFG('lowp_array_bind_probe')
-    sdfg.add_array('A', [4], dace.bfloat16)
-    sdfg.add_array('B', [4], dace.float8_e4m3fn)
-    code = generate_bindings_code(sdfg)
-    sig = code.split('nb::object call(')[1].split(') {')[0]
-    assert 'nb::object A' in sig
-    assert '__array_interface__' in code
-    # Itemsize-only guard: the typestr kind letter varies across ml_dtypes.
-    assert 'expected a bfloat16 array (itemsize 2)' in code
-    assert 'expected a float8_e4m3fn array (itemsize 1)' in code
-    assert 'reinterpret_cast<dace::bfloat16 *>' in code
-    assert 'reinterpret_cast<dace::float8_e4m3fn *>' in code
-
-    # GPU storage reads the CUDA flavor of the protocol.
-    sdfg = dace.SDFG('lowp_gpu_bind_probe')
-    sdfg.add_array('A', [4], dace.bfloat16, storage=dace.StorageType.GPU_Global)
-    code = generate_bindings_code(sdfg)
-    assert '__cuda_array_interface__' in code
-
-    # Not eligible for user_args (needs setup statements, outside the fast
-    # path's initial scope).
-    sdfg = dace.SDFG('lowp_uargs_probe')
-    sdfg.add_array('A', [4], dace.bfloat16)
-    sdfg.user_args = ['A']
-    with pytest.raises(ValueError, match='not supported'):
-        generate_bindings_code(sdfg)
-
-
-def test_nanobind_interface_callback_binding():
-    """A callback argument binds as a function-pointer address (std::uintptr_t + reinterpret_cast)."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    sdfg = dace.SDFG('callback_bind_probe')
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_symbol('cb', dace.callback(dace.float64, dace.float64))
-    state = sdfg.add_state()
-    t = state.add_tasklet('t', {}, {'o'}, 'o = cb(1.0)')
-    state.add_edge(t, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
-
-    code = generate_bindings_code(sdfg)
-    assert 'std::uintptr_t cb__addr' in code  # shadow parameter
-    assert 'reinterpret_cast<double (*)(double)>(cb__addr)' in code  # typed local via setup
-    assert 'nb::arg("cb")' in code  # keyword stays the real name
-    assert 'm_sym_' not in code  # symbol values are never stored on the handle
+    a = np.zeros(1, dtype=np.uint64)
+    csdfg(obj=payload, A=a)
+    assert a[0] == id(payload)
 
 
 def test_nanobind_interface_unset_workspace_refused(nanobind_interface):
@@ -1107,9 +982,9 @@ def test_nanobind_interface_initialize_returns_state_handle(nanobind_interface):
 
 
 def test_nanobind_interface_handle_metadata_binding():
-    """The handle exposes the codegen-time call metadata - return-array names
-    and callback names - so the Python wrapper does not re-derive them from
-    naming conventions. The single-vs-tuple return convention is compiled into
+    """The handle exposes the codegen-time call metadata - the return-array
+    names - so the Python wrapper does not re-derive them from naming
+    conventions. The single-vs-tuple return convention is compiled into
     call()'s return statement, not exposed."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
@@ -1121,25 +996,19 @@ def test_nanobind_interface_handle_metadata_binding():
     assert 'nb::make_tuple("__return_0", "__return_1")' in code
     assert 'return nb::make_tuple(__return_0__obj, __return_1__obj);' in code
 
-    # Single-value return plus a callback: the bare array is returned.
+    # Single-value return: the bare array is returned.
     sdfg = dace.SDFG('metadata_probe_single')
     sdfg.add_array('__return', [4], dace.float64)
     sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_symbol('cb', dace.callback(dace.float64, dace.float64))
-    state = sdfg.add_state()
-    t = state.add_tasklet('t', {}, {'o'}, 'o = cb(1.0)')
-    state.add_edge(t, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
     code = generate_bindings_code(sdfg)
     assert 'nb::make_tuple("__return")' in code
     assert 'return __return__obj;' in code
-    assert '"callback_names", [](DaceHandle_metadata_probe_single &) { return nb::make_tuple("cb"); }' in code
 
-    # No returns, no callbacks: empty tuples.
+    # No returns: an empty tuple.
     sdfg = dace.SDFG('metadata_probe_empty')
     sdfg.add_array('A', [10], dace.float64)
     code = generate_bindings_code(sdfg)
     assert '"return_names", [](DaceHandle_metadata_probe_empty &) { return nb::make_tuple(); }' in code
-    assert '"callback_names", [](DaceHandle_metadata_probe_empty &) { return nb::make_tuple(); }' in code
 
 
 def test_nanobind_interface_symbol_inference_binding():
@@ -1386,26 +1255,6 @@ def test_nanobind_interface_symbol_inference_cross_symbol(nanobind_interface):
     A2 = np.zeros(10)
     csdfg(A=A2, b=np.int32(4), a=np.int32(6))
     assert A2[9] == 1.0
-
-
-def test_nanobind_interface_scalar_callback(nanobind_interface):
-    """A scalar callback is invoked from the GIL-released kernel and its result lands in the output."""
-    cscale = dace.symbol('cscale', dace.callback(dace.float64, dace.float64))
-
-    @dace.program
-    def cb_prog_nanobind(A: dace.float64[10], B: dace.float64[10]):
-
-        @dace.map(_[0:10])
-        def index(i):
-            a << A[i]
-            b >> B[i]
-            b = cscale(a)
-
-    csdfg = cb_prog_nanobind.to_sdfg().compile()
-    A = np.random.rand(10)
-    B = np.zeros(10)
-    csdfg(A=A, B=B, cscale=lambda x: x * 3.0)
-    assert np.allclose(B, A * 3.0)
 
 
 def test_nanobind_interface_bool_scalar_binds_via_caster():
@@ -1827,183 +1676,6 @@ def test_nanobind_interface_safe_call_return_rejected(nanobind_interface):
         csdfg.safe_call(np.zeros(5))
 
 
-def _build_csr_to_dense(name, nested):
-    """Builds a CSR-to-dense SDFG whose input ``A`` is a (optionally nested) Structure.
-
-    Returns ``(sdfg, csr_obj, wrapper_obj_or_None)``.
-    """
-    M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                                  name='CSRMatrix')
-    wrapper_obj = dace.data.Structure(dict(csr=csr_obj), name='Wrapper') if nested else None
-
-    sdfg = dace.SDFG(name)
-    sdfg.add_datadesc('A', wrapper_obj if nested else csr_obj)
-    sdfg.add_array('B', [M, N], dace.float32)
-
-    spmat = wrapper_obj.members['csr'] if nested else csr_obj
-    prefix = 'A.csr' if nested else 'A'
-    sdfg.add_view('vindptr', spmat.members['indptr'].shape, spmat.members['indptr'].dtype)
-    sdfg.add_view('vindices', spmat.members['indices'].shape, spmat.members['indices'].dtype)
-    sdfg.add_view('vdata', spmat.members['data'].shape, spmat.members['data'].dtype)
-
-    state = sdfg.add_state()
-    A = state.add_access('A')
-    B = state.add_access('B')
-    indptr = state.add_access('vindptr')
-    indices = state.add_access('vindices')
-    data = state.add_access('vdata')
-
-    state.add_edge(A, None, indptr, 'views', dace.Memlet.from_array(f'{prefix}.indptr', spmat.members['indptr']))
-    state.add_edge(A, None, indices, 'views', dace.Memlet.from_array(f'{prefix}.indices', spmat.members['indices']))
-    state.add_edge(A, None, data, 'views', dace.Memlet.from_array(f'{prefix}.data', spmat.members['data']))
-
-    ime, imx = state.add_map('i', dict(i='0:M'))
-    jme, jmx = state.add_map('idx', dict(idx='start:stop'))
-    jme.add_in_connector('start')
-    jme.add_in_connector('stop')
-    t = state.add_tasklet('indirection', {'j', '__val'}, {'__out'}, '__out[i, j] = __val')
-
-    state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i'), dst_conn='start')
-    state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i+1'), dst_conn='stop')
-    state.add_memlet_path(indices, ime, jme, t, memlet=dace.Memlet(data='vindices', subset='idx'), dst_conn='j')
-    state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
-    state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
-    return sdfg, csr_obj, wrapper_obj
-
-
-def _csr_example():
-    """A small CSR matrix (M=2, N=3, nnz=3) and its dense form, as contiguous numpy arrays."""
-    indptr = np.array([0, 2, 3], dtype=np.int32)
-    indices = np.array([0, 2, 1], dtype=np.int32)
-    data = np.array([1.0, 2.0, 3.0], dtype=np.float32)
-    expected = np.array([[1, 0, 2], [0, 3, 0]], dtype=np.float32)
-    return indptr, indices, data, expected
-
-
-def test_nanobind_interface_structure_argument(nanobind_interface):
-    """A flat Structure argument is passed as a pointer to a user-built ctypes.Structure."""
-    sdfg, csr_obj, _ = _build_csr_to_dense('csr_struct_nanobind', nested=False)
-    csdfg = sdfg.compile()
-
-    indptr, indices, data, expected = _csr_example()
-    B = np.zeros((2, 3), dtype=np.float32)
-    inpA = csr_obj.dtype._typeclass.as_ctypes()(indptr=indptr.__array_interface__['data'][0],
-                                                indices=indices.__array_interface__['data'][0],
-                                                data=data.__array_interface__['data'][0])
-    csdfg(A=inpA, B=B, M=2, N=3, nnz=3)
-    assert np.allclose(B, expected)
-
-
-def test_nanobind_interface_nested_structure_argument(nanobind_interface):
-    """A nested Structure argument (Wrapper(csr=...)) works via the same pointer passthrough."""
-    import ctypes
-
-    sdfg, csr_obj, wrapper_obj = _build_csr_to_dense('nested_csr_struct_nanobind', nested=True)
-    csdfg = sdfg.compile()
-
-    indptr, indices, data, expected = _csr_example()
-    B = np.zeros((2, 3), dtype=np.float32)
-    inpCSR = csr_obj.dtype._typeclass.as_ctypes()(indptr=indptr.__array_interface__['data'][0],
-                                                  indices=indices.__array_interface__['data'][0],
-                                                  data=data.__array_interface__['data'][0])
-    inpW = wrapper_obj.dtype._typeclass.as_ctypes()(csr=ctypes.pointer(inpCSR))
-    csdfg(A=inpW, B=B, M=2, N=3, nnz=3)
-    assert np.allclose(B, expected)
-
-
-def test_nanobind_interface_container_array_read(nanobind_interface):
-    """ContainerArray argument (array of structures) on the nanobind interface.
-
-    NOTE: verbatim copy of
-    ``tests/sdfg/data/container_array_test.py::test_read_struct_array``, run
-    under ``compiler.interface=nanobind`` - kept so the ContainerArray behaviour
-    is validated against a known-good ctypes test with no doubt. Remove it once
-    the ContainerArray tests are parametrized over both interfaces.
-    """
-    import ctypes
-
-    import pytest
-    sparse = pytest.importorskip('scipy.sparse')
-
-    L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
-    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                                  name='CSRMatrix')
-
-    sdfg = dace.SDFG('array_of_csr_to_dense')
-
-    sdfg.add_datadesc('A', csr_obj[L])
-    sdfg.add_array('B', [L, M, N], dace.float32)
-
-    sdfg.add_datadesc_view('vcsr', csr_obj)
-    sdfg.add_view('vindptr', csr_obj.members['indptr'].shape, csr_obj.members['indptr'].dtype)
-    sdfg.add_view('vindices', csr_obj.members['indices'].shape, csr_obj.members['indices'].dtype)
-    sdfg.add_view('vdata', csr_obj.members['data'].shape, csr_obj.members['data'].dtype)
-
-    state = sdfg.add_state()
-
-    A = state.add_access('A')
-    B = state.add_access('B')
-
-    bme, bmx = state.add_map('b', dict(b='0:L'))
-    bme.map.schedule = dace.ScheduleType.Sequential
-
-    vcsr = state.add_access('vcsr')
-    indptr = state.add_access('vindptr')
-    indices = state.add_access('vindices')
-    data = state.add_access('vdata')
-
-    state.add_memlet_path(A, bme, vcsr, dst_conn='views', memlet=dace.Memlet(data='A', subset='b'))
-    state.add_edge(vcsr, None, indptr, 'views', memlet=dace.Memlet.from_array('vcsr.indptr', csr_obj.members['indptr']))
-    state.add_edge(vcsr,
-                   None,
-                   indices,
-                   'views',
-                   memlet=dace.Memlet.from_array('vcsr.indices', csr_obj.members['indices']))
-    state.add_edge(vcsr, None, data, 'views', memlet=dace.Memlet.from_array('vcsr.data', csr_obj.members['data']))
-
-    ime, imx = state.add_map('i', dict(i='0:M'))
-    jme, jmx = state.add_map('idx', dict(idx='start:stop'))
-    jme.add_in_connector('start')
-    jme.add_in_connector('stop')
-    t = state.add_tasklet('indirection', {'j', '__val'}, {'__out'}, '__out[i, j] = __val')
-
-    state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i'), dst_conn='start')
-    state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i+1'), dst_conn='stop')
-    state.add_memlet_path(indices, ime, jme, t, memlet=dace.Memlet(data='vindices', subset='idx'), dst_conn='j')
-    state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
-    state.add_memlet_path(t,
-                          jmx,
-                          imx,
-                          bmx,
-                          B,
-                          memlet=dace.Memlet(data='B', subset='b, 0:M, 0:N', volume=1),
-                          src_conn='__out')
-
-    func = sdfg.compile()
-
-    rng = np.random.default_rng(42)
-    A = np.ndarray((10, ), dtype=sparse.csr_matrix)
-    dace_A = np.ndarray((10, ), dtype=ctypes.c_void_p)
-    B = np.zeros((10, 20, 20), dtype=np.float32)
-
-    ctypes_A = []
-    for b in range(10):
-        A[b] = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
-        ctypes_obj = csr_obj.dtype._typeclass.as_ctypes()(indptr=A[b].indptr.__array_interface__['data'][0],
-                                                          indices=A[b].indices.__array_interface__['data'][0],
-                                                          data=A[b].data.__array_interface__['data'][0])
-        ctypes_A.append(ctypes_obj)  # This is needed to keep the object alive ...
-        dace_A[b] = ctypes.addressof(ctypes_obj)
-
-    func(A=dace_A, B=B, L=A.shape[0], M=A[0].shape[0], N=A[0].shape[1], nnz=A[0].nnz)
-    ref = np.ndarray((10, 20, 20), dtype=np.float32)
-    for b in range(10):
-        ref[b] = A[b].toarray()
-
-    assert np.allclose(B, ref)
-
-
 def test_nanobind_interface_complex_array(nanobind_interface):
     """A complex128 array argument compiles and runs (dace::complex128 resolves via the dace type header)."""
     N = dace.symbol('N')
@@ -2119,70 +1791,6 @@ def test_nanobind_interface_filename(nanobind_interface):
     assert csdfg.filename.endswith('.so')
 
 
-def test_nanobind_interface_struct_element_return(nanobind_interface):
-    """A return array of a dace.struct (dtypes.struct element) round-trips (argmax-style)."""
-    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
-
-    @dace.program
-    def argmax_nanobind(x: dace.float64[1024]):
-        result = np.ndarray([1], dtype=pair)
-        with dace.tasklet:
-            init >> result[0]
-            init.idx = -1
-            init.val = -1e38
-
-        for i in dace.map[0:1024]:
-            with dace.tasklet:
-                inp << x[i]
-                out >> result(1, lambda x, y: pair(val=max(x.val, y.val), idx=(x.idx if x.val > y.val else y.idx)))
-                out = pair(idx=i, val=inp)
-
-        return result
-
-    csdfg = argmax_nanobind.to_sdfg().compile()
-    assert isinstance(csdfg, dace.codegen.nanobind_compiled_sdfg.NanobindCompiledSDFG)
-
-    A = np.random.rand(1024)
-    result = csdfg(x=A)
-    assert result[0][0] == np.argmax(A)
-
-
-def test_nanobind_interface_struct_element_array_forward_declared():
-    """A dtypes.struct-element array forward-declares the struct and binds an untyped ndarray."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
-    sdfg = dace.SDFG('struct_elem_probe')
-    sdfg.add_array('p', [4], pair)
-    code = generate_bindings_code(sdfg)
-    assert 'struct pair;' in code  # forward-declared
-    assert 'reinterpret_cast<pair *>' in code  # cast to the struct pointer
-    assert 'nb::ndarray<pair' not in code  # never the struct as ndarray scalar
-
-
-def test_nanobind_interface_struct_element_input(nanobind_interface):
-    """A dtypes.struct-element array passed as an input is byte-view marshalled and copies correctly."""
-    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
-
-    sdfg = dace.SDFG('copy_struct_input_nanobind')
-    sdfg.add_array('A', [4], pair)  # input array of struct
-    sdfg.add_array('B', [4], pair)  # output array of struct
-    state = sdfg.add_state()
-    state.add_edge(state.add_access('A'), None, state.add_access('B'), None, dace.Memlet('A[0:4]'))
-
-    csdfg = sdfg.compile()
-    assert isinstance(csdfg, dace.codegen.nanobind_compiled_sdfg.NanobindCompiledSDFG)
-
-    A = np.zeros(4, dtype=pair.as_numpy_dtype())
-    for i in range(4):
-        A[i]['idx'] = i * 10
-        A[i]['val'] = float(i)
-    B = np.zeros(4, dtype=pair.as_numpy_dtype())
-    csdfg(A=A, B=B)
-    assert np.array_equal(B['idx'], A['idx'])
-    assert np.array_equal(B['val'], A['val'])
-
-
 def test_nanobind_interface_single_element_tuple_return(nanobind_interface):
     """A single-element tuple return comes back as a 1-tuple, not a bare array.
 
@@ -2232,73 +1840,6 @@ def test_nanobind_interface_many_return_values(nanobind_interface):
     assert isinstance(result, tuple)
     assert len(result) == 12
     assert tuple(int(r[0]) for r in result) == tuple(range(1, 13))
-
-
-def test_nanobind_interface_struct_input_binds_as_object():
-    """A struct-element array input binds as nb::object; the pointer is extracted in C++."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
-    sdfg = dace.SDFG('struct_input_object_probe')
-    sdfg.add_array('p', [4], pair)  # struct-element array input
-    sdfg.arrays['p'].optional = False  # non-nullable, for the deterministic form
-    code = generate_bindings_code(sdfg)
-    assert 'nb::object p' in code  # bound as a generic Python object
-    assert 'PyObject_GetBuffer' in code  # pointer pulled via the buffer protocol in C++
-    assert '_DacePyBuffer p_buf(p.ptr())' in code  # via the RAII helper
-    assert 'reinterpret_cast<pair *>(p_buf.data())' in code  # cast to the struct pointer
-    assert 'nb::ndarray<uint8_t, nb::device::cpu> p' not in code  # no Python-side byte-view form
-
-
-def test_nanobind_interface_optional_struct_array_binding():
-    """A struct-element array binds as nb::object; nullable -> guarded optional + None->null, non-nullable -> unconditional."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
-    sdfg = dace.SDFG('opt_struct_probe')
-    sdfg.add_array('p', [4], pair)
-    sdfg.arrays['p'].optional = True
-    sdfg.add_array('q', [4], pair)
-    sdfg.arrays['q'].optional = False
-    code = generate_bindings_code(sdfg)
-
-    # both bind as nb::object
-    assert 'nb::object p' in code
-    assert 'nb::object q' in code
-    # nullable p: guarded optional buffer + None -> null pointer
-    assert 'std::optional<_DacePyBuffer> p_buf' in code
-    assert 'p.is_none()' in code
-    # non-nullable q: unconditional buffer extraction
-    assert '_DacePyBuffer q_buf(q.ptr())' in code
-    # no old byte-view ndarray form remains
-    assert 'nb::ndarray<uint8_t' not in code
-
-
-def test_nanobind_interface_optional_struct_array_input(nanobind_interface):
-    """An optional struct-element array accepts a record array (read by reference) and None (null pointer)."""
-    from typing import Optional
-
-    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
-
-    @dace.program
-    def optional_struct_arg(a: Optional[pair[1]], out: dace.int32[1]):
-        if a is None:
-            out[0] = -1
-        else:
-            out[0] = 1
-
-    sdfg = optional_struct_arg.to_sdfg()
-    assert sdfg.arrays['a'].optional is True
-    csdfg = sdfg.compile()
-
-    A = np.zeros(1, dtype=pair.as_numpy_dtype())
-    out = np.zeros(1, dtype=np.int32)
-    csdfg(a=A, out=out)
-    assert out[0] == 1  # a real (non-null) array is passed by reference
-
-    out = np.zeros(1, dtype=np.int32)
-    csdfg(a=None, out=out)
-    assert out[0] == -1  # None arrived as a null pointer
 
 
 def test_nanobind_interface_gpu_array_binding():
@@ -2545,51 +2086,6 @@ def test_nanobind_interface_gpu_workspace(nanobind_interface):
 
 
 @pytest.mark.gpu
-def test_nanobind_interface_gpu_callback(nanobind_interface):
-    """A callback that receives a DEVICE array, on the nanobind interface.
-
-    The callback's array is rebuilt from the raw pointer by
-    ``make_reference_from_descriptor``, which chooses CuPy over NumPy from the
-    descriptor's storage - so the callback must see a ``cupy.ndarray`` aliasing
-    device memory, and a write through it must be visible to the caller.
-
-    Note this currently pins behaviour SHARED with ctypes:
-    ``NanobindCompiledSDFG._process_callbacks`` delegates to the same
-    ``cbtype.get_trampoline`` the ctypes interface uses. It is here as the
-    regression guard for moving that processing into the nanobind binding,
-    where the device-array reconstruction would become nanobind's own.
-
-    Adapted from
-    ``tests/python_frontend/callback_autodetect_test.py::test_gpu_callback``.
-    """
-    cp = pytest.importorskip('cupy')
-
-    seen = []
-
-    def cb_with_gpu(arr):
-        seen.append(arr)
-        arr *= 2
-
-    # ``A`` stays unannotated on purpose: the frontend takes its descriptor
-    # (and so GPU_Global storage) from the CuPy argument, which is what makes
-    # the callback's own array descriptor device-resident too.
-    @dace.program
-    def gpu_callback_nanobind(A):
-        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
-        tmp[:] = A
-        cb_with_gpu(tmp)
-        A[:] = tmp
-
-    a = cp.random.rand(20)
-    expected = cp.asnumpy(a) * 2
-    with pytest.warns(UserWarning, match='Automatically creating callback'):
-        gpu_callback_nanobind(a)
-
-    assert np.allclose(cp.asnumpy(a), expected)  # the in-place write reached the caller
-    assert len(seen) == 1
-    assert isinstance(seen[0], cp.ndarray)  # device memory, not a host copy
-
-
 def test_nanobind_interface_gpu_error_check(monkeypatch):
     """The GPU error check lives in the compiled binding (it reads the SDFG's
     own error record there, mirroring the ctypes mechanism): its exception
@@ -2608,7 +2104,6 @@ def test_nanobind_interface_gpu_error_check(monkeypatch):
     class FakeHandle:
         has_gpu_code = True
         return_names = ()
-        callback_names = ()
         pending_error = None
 
         def __call__(self, *args, **kwargs):
@@ -2651,7 +2146,6 @@ def test_nanobind_interface_gpu_error_check_disabled():
     class FakeHandle:
         has_gpu_code = True
         return_names = ()
-        callback_names = ()
         gpu_error_check = None  # written by the wrapper
 
         def __call__(self, *args, **kwargs):
@@ -2705,7 +2199,6 @@ def test_nanobind_interface_finalize_error_translation(monkeypatch):
         has_gpu_code = False
         return_names = ()
         is_single_value_ret = False
-        callback_names = ()
         exit_code = 0
 
         def finalize(self):
@@ -2874,345 +2367,96 @@ def test_nanobind_interface_strict_scalar_cast_runtime(nanobind_interface):
         assert np.isclose(result[0], 3.0)
 
 
-def _uargs_axpy_sdfg(simplify=True):
-    """Shared probe for the user_args tests: arglist A, B, alpha + size symbol N."""
-    N = dace.symbol('N')
-
-    @dace.program
-    def uargs_axpy(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
-        B[:] = alpha * A + B
-
-    return uargs_axpy.to_sdfg(simplify=simplify)
+def _structure_reject_probe(name: str, container: bool = False):
+    """A minimal SDFG whose argument ``A`` is a Structure (or a ContainerArray of one)."""
+    csr = dace.data.Structure(dict(data=dace.float32[4]), name='OnlyData')
+    sdfg = dace.SDFG(name)
+    sdfg.add_datadesc('A', csr[4] if container else csr)
+    return sdfg
 
 
-def test_nanobind_interface_user_args_binding():
-    """A non-empty ``user_args`` generates ``user_call``: tuple entries bind as
-    ``nb::tuple`` with per-element extraction, plain entries bind like call()'s
-    parameters, no kwargs absorber exists, and unlisted inferable symbols are
-    plain const locals (no optional machinery)."""
+def test_nanobind_interface_structure_rejected():
+    """Structure arguments are outside the reduced interface scope: refused at
+    codegen with a ctypes-pointing error."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    sdfg = _uargs_axpy_sdfg()
-    sdfg.user_args = [('A', 'B'), 'alpha']
-    code = generate_bindings_code(sdfg)
-
-    assert '.def("user_call"' in code
-    sig = code.split('void user_call(')[1].split(') {')[0]
-    body = code.split('void user_call(')[1]
-    assert 'nb::tuple arg1' in sig
-    assert 'double alpha' in sig
-    assert 'kwargs' not in sig  # no kwargs at all: everything listed or inferable
-    # Per-element extraction: length check + convert-controlled casts.
-    assert 'nb::len(arg1)' in body
-    assert 'try_cast' in body
-    # N is unlisted and inferable: a plain const local, no std::optional dance.
-    assert 'const int N = ' in body
-    assert 'A.shape(0)' in body
-    assert 'N__opt' not in body.split('nb::object call(')[0]
+    with pytest.raises(NotImplementedError, match='ctypes'):
+        generate_bindings_code(_structure_reject_probe('structure_reject_probe'))
 
 
-def test_nanobind_interface_user_args_not_generated_when_empty():
-    """Without user_args nothing is generated - the feature is fully opt-in."""
+def test_nanobind_interface_container_array_rejected():
+    """ContainerArray arguments are outside the reduced interface scope."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    code = generate_bindings_code(_uargs_axpy_sdfg())
-    assert 'user_call' not in code
+    with pytest.raises(NotImplementedError, match='ctypes'):
+        generate_bindings_code(_structure_reject_probe('container_reject_probe', container=True))
 
 
-def test_nanobind_interface_user_args_validation():
-    """user_args is validated at codegen time with clear errors."""
-    from dace import dtypes
+def test_nanobind_interface_record_array_rejected():
+    """Record-dtype (dtypes.struct element) arrays are outside the reduced
+    interface scope, as inputs and as returns."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    def probe(user_args):
-        sdfg = _uargs_axpy_sdfg()
-        sdfg.user_args = user_args
-        return generate_bindings_code(sdfg)
+    pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
 
-    with pytest.raises(ValueError, match="unknown argument 'nope'"):
-        probe([('A', 'nope'), 'B', 'alpha'])
-    with pytest.raises(ValueError, match="'A'.*more than once"):
-        probe([('A', 'A'), 'B', 'alpha'])
-    with pytest.raises(ValueError, match='empty tuple'):
-        probe([('A', ()), 'B', 'alpha'])
-    with pytest.raises(ValueError, match="missing argument"):
-        probe([('A', 'B')])  # alpha unlisted and not inferable
-
-    # A pyobject ARRAY is outside the initial scope: like the low-precision arrays it takes
-    # its pointer from __array_interface__ through a setup statement, and the fast path has
-    # no setup scope. Without this the generator hits `assert not setup` instead of a usable
-    # error. A pyobject SCALAR stays eligible - it forwards `.ptr()` inline.
-    sdfg = dace.SDFG('uargs_pyobject_array_probe')
-    sdfg.add_array('objs', [4], dtypes.pyobject())
-    sdfg.add_array('A', [4], dace.float64)
-    sdfg.arrays['A'].optional = False
-    sdfg.user_args = ['objs', 'A']
-    with pytest.raises(ValueError, match="'objs'.*not supported"):
+    sdfg = dace.SDFG('record_array_reject_probe')
+    sdfg.add_array('p', [4], pair)
+    with pytest.raises(NotImplementedError, match='ctypes'):
         generate_bindings_code(sdfg)
 
-    sdfg = dace.SDFG('uargs_pyobject_scalar_probe')
-    sdfg.add_scalar('obj', dtypes.pyobject())
-    sdfg.add_array('A', [4], dace.float64)
-    sdfg.arrays['A'].optional = False
-    sdfg.user_args = ['obj', 'A']
-    generate_bindings_code(sdfg)  # eligible
-
-    # A string scalar is outside the initial primitive-only scope.
-    sdfg = dace.SDFG('uargs_string_probe')
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_scalar('s', dtypes.string)
-    sdfg.user_args = ['A', 's']
-    with pytest.raises(ValueError, match="'s'.*not supported"):
-        generate_bindings_code(sdfg)
-
-    # A nullable array is outside the initial scope.
-    sdfg = dace.SDFG('uargs_nullable_probe')
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.arrays['A'].optional = True
-    sdfg.user_args = ['A']
-    with pytest.raises(ValueError, match="'A'.*not supported"):
-        generate_bindings_code(sdfg)
-
-    # Return-value SDFGs are refused (the fast path allocates nothing).
-    N = dace.symbol('N')
-
-    @dace.program
-    def uargs_ret(A: dace.float64[10]):
-        return A + 1.0
-
-    sdfg = uargs_ret.to_sdfg(simplify=True)
-    sdfg.user_args = ['A']
-    with pytest.raises(ValueError, match='return'):
+    sdfg = dace.SDFG('record_return_reject_probe')
+    sdfg.add_array('__return', [4], pair)
+    with pytest.raises(NotImplementedError, match='ctypes'):
         generate_bindings_code(sdfg)
 
 
-def test_nanobind_interface_user_args_e2e(nanobind_interface):
-    """E2E: structured call through user_bind_call, by-reference semantics kept."""
-    sdfg = _uargs_axpy_sdfg()
-    sdfg.user_args = [('A', 'B'), 'alpha']
-    csdfg = sdfg.compile()
-
-    n = 16
-    a = np.random.rand(n)
-    b = np.random.rand(n)
-    expected = 2.0 * a + b
-    csdfg.user_bind_call((a, b), 2.0)  # N inferred from A.shape(0)
-    assert np.allclose(b, expected)
-
-    # A float32 array element must be rejected, never silently copied.
-    with pytest.raises(Exception):
-        csdfg.user_bind_call((np.zeros(n, dtype=np.float32), b), 2.0)
-
-
-def test_nanobind_interface_user_args_position_name_collision(nanobind_interface):
-    """An SDFG argument literally named like a synthesized positional
-    parameter (arg1, arg2, ...) must not be shadowed by it: the synthesized
-    C++ names are mangled away from real argument names (trailing '_')."""
+def test_nanobind_interface_callback_rejected():
+    """Callback arguments are outside the reduced interface scope (their
+    marshalling needed the ctypes trampoline machinery)."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    sdfg = dace.SDFG('uargs_argname_clash')
-    sdfg.add_array('arg1', [4], dace.float64)
-    sdfg.add_array('B', [4], dace.float64)
+    sdfg = dace.SDFG('callback_reject_probe')
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_symbol('cb', dace.callback(dace.float64, dace.float64))
     state = sdfg.add_state()
-    t = state.add_tasklet('t', {'i'}, {'o'}, 'o = i + 1.0')
-    state.add_edge(state.add_read('arg1'), None, t, 'i', dace.Memlet('arg1[0]'))
-    state.add_edge(t, 'o', state.add_write('B'), None, dace.Memlet('B[0]'))
-    sdfg.user_args = [('arg1', 'B')]
+    t = state.add_tasklet('t', {}, {'o'}, 'o = cb(1.0)')
+    state.add_edge(t, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
 
-    # The tuple parameter at position 1 yields its name to the real
-    # argument 'arg1' listed inside it.
-    sig = generate_bindings_code(sdfg).split('void user_call(')[1].split(') {')[0]
-    assert 'nb::tuple arg1_' in sig
-
-    # The real proof is that it compiles and runs (RED: C++ shadowing).
-    csdfg = sdfg.compile()
-    a = np.ones(4)
-    b = np.zeros(4)
-    csdfg.user_bind_call((a, b))
-    assert b[0] == 2.0
+    with pytest.raises(NotImplementedError, match='ctypes'):
+        generate_bindings_code(sdfg)
 
 
-def test_nanobind_interface_user_args_pyobject_scalar_binding():
-    """A pyobject scalar may be listed in user_args: top-level it binds as
-    nb::object, nested it arrives via try_cast<nb::object>; the raw PyObject*
-    is forwarded either way."""
-    from dace import dtypes
+def test_nanobind_interface_lowp_rejected():
+    """bfloat16/float8 (ml_dtypes-backed) data is outside the reduced interface
+    scope in every form: scalars, arrays and returns."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    def make():
-        sdfg = dace.SDFG('uargs_pyobj_probe')
-        sdfg.add_scalar('obj', dtypes.pyobject())
-        sdfg.add_array('A', [4], dace.float64)
-        return sdfg
-
-    sdfg = make()
-    sdfg.user_args = ['obj', 'A']
-    ucall = generate_bindings_code(sdfg).split('void user_call(')[1]
-    assert 'nb::object obj' in ucall.split(') {')[0]
-    assert 'reinterpret_cast<pyobject>(obj.ptr())' in ucall
-
-    sdfg = make()
-    sdfg.user_args = [('obj', 'A')]
-    ucall = generate_bindings_code(sdfg).split('void user_call(')[1]
-    assert 'try_cast<nb::object>' in ucall
-    assert 'reinterpret_cast<pyobject>(obj.ptr())' in ucall
+    for name, add in (('lowp_scalar_reject_probe', lambda s: s.add_scalar('x', dace.bfloat16)),
+                      ('lowp_array_reject_probe', lambda s: s.add_array('A', [4], dace.bfloat16)),
+                      ('lowp_fp8_reject_probe', lambda s: s.add_array('A', [4], dace.float8_e4m3fn)),
+                      ('lowp_return_reject_probe', lambda s: s.add_array('__return', [4], dace.bfloat16))):
+        sdfg = dace.SDFG(name)
+        add(sdfg)
+        with pytest.raises(NotImplementedError, match='ctypes'):
+            generate_bindings_code(sdfg)
 
 
-def test_nanobind_interface_user_args_pyobject_e2e(nanobind_interface):
-    """E2E: a pyobject rides through user_bind_call in a nested position
-    without disturbing its neighbors."""
-    from dace import dtypes
+def test_nanobind_interface_unsupported_reason_predicate():
+    """`unsupported_reason` is the codegen refusals' predicate: None for a
+    supported SDFG, the refusal reason for an out-of-scope one."""
+    from dace.codegen.nanobind_bindings import unsupported_reason
 
-    sdfg = _uargs_axpy_sdfg()
-    sdfg.add_scalar('obj', dtypes.pyobject())
-    sdfg.user_args = [('A', 'obj'), 'B', 'alpha']
-    csdfg = sdfg.compile()
+    supported = dace.SDFG('predicate_supported_probe')
+    supported.add_array('A', [4], dace.float64)
+    supported.add_scalar('x', dace.float64)
+    supported.add_array('__return', [4], dace.float64)
+    assert unsupported_reason(supported) is None
 
-    n = 16
-    a = np.random.rand(n)
-    b = np.random.rand(n)
-    expected = 2.0 * a + b
-    csdfg.user_bind_call((a, object()), b, 2.0)
-    assert np.allclose(b, expected)
+    assert 'Structure' in unsupported_reason(_structure_reject_probe('predicate_structure_probe'))
 
-
-def test_nanobind_interface_user_args_ignore_slots_binding():
-    """'' entries are ignored placeholder slots: top-level they are nb::object
-    parameters accepting anything (incl. None) and never read; nested they are
-    counted by the tuple length check but never extracted."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    sdfg = _uargs_axpy_sdfg()
-    sdfg.user_args = ['', ('A', '', 'B'), 'alpha']
-    ucall = generate_bindings_code(sdfg).split('void user_call(')[1]
-    sig = ucall.split(') {')[0]
-    body = ucall
-
-    assert 'nb::object' in sig  # the top-level ignored slot
-    assert 'nb::arg("arg1").none()' in body  # placeholder accepts None too
-    assert 'nb::len(arg2) != 3' in body  # the nested ignored slot is counted...
-    assert 'arg2[0]' in body and 'arg2[2]' in body
-    assert 'arg2[1]' not in body  # ...but never extracted
-
-
-def test_nanobind_interface_user_args_ignore_slots_e2e(nanobind_interface):
-    """E2E: ignored slots swallow arbitrary values (None, dicts) while the real
-    entries around them keep working; the tuple length check still counts them."""
-    sdfg = _uargs_axpy_sdfg()
-    sdfg.user_args = ['', ('A', '', 'B'), 'alpha']
-    csdfg = sdfg.compile()
-
-    n = 16
-    a = np.random.rand(n)
-    b = np.random.rand(n)
-    expected = 2.0 * a + b
-    csdfg.user_bind_call(None, (a, {'junk': 1}, b), 2.0)
-    assert np.allclose(b, expected)
-
-    # The ignored nested slot still counts toward the tuple length.
-    with pytest.raises(Exception):
-        csdfg.user_bind_call(None, (a, b), 2.0)
-
-    # Wrong tuple length is a clear error.
-    with pytest.raises(Exception):
-        csdfg.user_bind_call((a, ), 2.0)
-
-
-def test_nanobind_interface_user_args_nested_e2e(nanobind_interface):
-    """E2E: nested tuples destructure (the idea.md example shape)."""
-    sdfg = _uargs_axpy_sdfg()
-    sdfg.user_args = [('A', ('B', ), 'alpha')]
-    csdfg = sdfg.compile()
-
-    n = 8
-    a = np.random.rand(n)
-    b = np.random.rand(n)
-    expected = 3.0 * a + b
-    csdfg.user_bind_call((a, (b, ), 3.0))
-    assert np.allclose(b, expected)
-
-
-def test_nanobind_interface_user_args_cross_symbol_inference():
-    """A listed symbol is promised, so an unlisted one is inferable through a
-    multi-symbol shape: A[a + b] with 'b' listed infers a = A.shape(0) - b."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    a = dace.symbol('a')
-    b = dace.symbol('b')
-    sdfg = dace.SDFG('uargs_cross_sym_probe')
-    sdfg.add_array('A', [a + b], dace.float64)
-    state = sdfg.add_state()
-    tasklet = state.add_tasklet('set_last', {}, {'o'}, 'o = 1.0')
-    state.add_edge(tasklet, 'o', state.add_write('A'), None, dace.Memlet('A[a + b - 1]'))
-    sdfg.user_args = ['A', 'b']
-
-    code = generate_bindings_code(sdfg)
-    body = code.split('void user_call(')[1]
-    assert 'const int a = ' in body
-    assert 'A.shape(0) - b' in body
-
-
-def test_nanobind_interface_user_args_serialization_and_hash():
-    """user_args is a serialized SDFG property: it survives a JSON roundtrip
-    and changes the SDFG hash (so the build cache rebuilds on change)."""
-    sdfg = _uargs_axpy_sdfg()
-    hash_without = sdfg.hash_sdfg()
-
-    sdfg.user_args = [('A', 'B'), 'alpha']
-    restored = dace.SDFG.from_json(sdfg.to_json())
-    # JSON has no tuples; entries come back as sequences with the same nesting.
-    assert [list(e) if not isinstance(e, str) else e for e in restored.user_args] \
-        == [['A', 'B'], 'alpha']
-    assert sdfg.hash_sdfg() != hash_without
-
-
-def test_nanobind_interface_user_bind_call_requires_user_args(nanobind_interface):
-    """user_bind_call on a module compiled without user_args raises clearly."""
-    csdfg = _uargs_axpy_sdfg().compile()
-    with pytest.raises(ValueError, match='user_args'):
-        csdfg.user_bind_call((np.zeros(4), np.zeros(4)), 1.0)
-
-
-def test_nanobind_interface_user_bind_call_gpu_error_check(monkeypatch):
-    """user_bind_call keeps the GPU error-record check: it runs inside the
-    compiled user_call (gated there by the gpu_error_check toggle), so its
-    exception propagates through the wrapper, which itself never consults the
-    process-global GPU runtime slot."""
-    import types
-    from dace.codegen import common
-    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
-
-    sdfg = dace.SDFG('uargs_gpu_error_probe')
-    sdfg.add_array('A', [10], dace.float64, storage=dace.StorageType.GPU_Global)
-
-    class FakeHandle:
-        has_gpu_code = True
-        return_names = ()
-        callback_names = ()
-        gpu_error_check = None  # written by the wrapper
-        pending_error = None
-
-        def user_call(self, *args):
-            if self.gpu_error_check and self.pending_error is not None:
-                raise RuntimeError(f'An error was detected when calling "uargs_gpu_error_probe": '
-                                   f'{self.pending_error}')
-
-    handle = FakeHandle()
-    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: handle, __file__='<stub>')
-
-    def forbidden_runtime():
-        raise AssertionError('the wrapper consulted the process-global GPU runtime slot')
-
-    monkeypatch.setattr(common, 'get_gpu_runtime', forbidden_runtime)
-
-    csdfg = NanobindCompiledSDFG(sdfg, stub_module, ['A'])
-    handle.pending_error = 'illegal memory access'
-    with pytest.raises(RuntimeError, match='illegal memory access'):
-        csdfg.user_bind_call((object(), ))
-
-    # The toggle reaches the handle, where the compiled check honors it.
-    csdfg.gpu_error_check = False
-    csdfg.user_bind_call((object(), ))  # does not raise
+    lowp = dace.SDFG('predicate_lowp_probe')
+    lowp.add_array('A', [4], dace.bfloat16)
+    assert unsupported_reason(lowp) is not None
 
 
 if __name__ == '__main__':
@@ -3223,7 +2467,6 @@ if __name__ == '__main__':
     test_nanobind_interface_positional_and_extra_kwargs()
     test_nanobind_interface_has_gpu_code()
     test_nanobind_interface_state_pointer()
-    test_nanobind_interface_pyobject_rejected()
     test_nanobind_interface_string_argument()
     test_nanobind_interface_optional_array()
     test_nanobind_interface_nullable_args_enable_none()
@@ -3232,22 +2475,13 @@ if __name__ == '__main__':
     test_nanobind_interface_safe_call()
     test_nanobind_interface_safe_call_kwargs()
     test_nanobind_interface_safe_call_return_rejected()
-    test_nanobind_interface_structure_argument()
-    test_nanobind_interface_nested_structure_argument()
-    test_nanobind_interface_container_array_read()
     test_nanobind_interface_complex_array()
     test_nanobind_interface_includes_dace_type_headers()
     test_nanobind_interface_vector_array()
     test_nanobind_interface_vector_uses_base_scalar()
-    test_nanobind_interface_float16_rejected()
     test_nanobind_interface_filename()
-    test_nanobind_interface_struct_element_return()
-    test_nanobind_interface_struct_element_array_forward_declared()
-    test_nanobind_interface_struct_element_input()
     test_nanobind_interface_single_element_tuple_return()
     test_nanobind_interface_non_array_return_rejected()
     test_nanobind_interface_many_return_values()
-    test_nanobind_interface_optional_struct_array_binding()
-    test_nanobind_interface_optional_struct_array_input()
     test_nanobind_interface_strict_scalar_cast_binding()
     test_nanobind_interface_strict_scalar_cast_runtime()

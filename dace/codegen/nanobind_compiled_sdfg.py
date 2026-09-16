@@ -29,11 +29,9 @@ class NanobindCompiledSDFG:
 
     Unlike ``CompiledSDFG`` the advanced three-step interface
     (``construct_arguments()`` / ``fast_call()`` / ``convert_return_values()``)
-    is not provided; calling happens through ``__call__()`` or, when the SDFG
-    was compiled with a non-empty ``SDFG.user_args``, through the structured
-    fast-path :meth:`user_bind_call` (see the note below). Otherwise it
-    implements the same interface as ``CompiledSDFG``, with some deviations
-    listed bellow.
+    is not provided; calling happens through ``__call__()``, which forwards
+    straight to the compiled dispatcher. Otherwise it implements the same
+    interface as ``CompiledSDFG``, with some deviations listed bellow.
 
     :param sdfg: The ``SDFG`` this wrapper was compiled from; used to evaluate
                  return-array shapes and exposed via the ``sdfg`` property.
@@ -41,12 +39,12 @@ class NanobindCompiledSDFG:
     :param arg_names: The user-facing positional argument order, i.e. ``sdfg.arg_names``,
                       used to map positional call arguments to their names.
 
-    :note: The allocation of the return arrays is performed in Python and will slow
-           down calling. By setting ``compiler.nanobind_allow_return_override`` it
-           is possible to pass them, i.e. the special ``__return*`` arguments,
-           explicitly to ``__call__()``.
-    :note: Return values are arrays only; unlike the ctypes ``CompiledSDFG`` the
-           nanobind interface returns neither Python scalars nor pyobjects.
+    :note: Return arrays are allocated inside the compiled binding. Passing the
+           special ``__return*`` arguments explicitly to ``__call__()`` requires
+           compiling with ``compiler.nanobind_allow_return_override``.
+    :note: Return values are arrays only (a ``pyobject`` return decays to the
+           contained object, as on the ctypes interface); unlike the ctypes
+           ``CompiledSDFG`` the nanobind interface never returns Python scalars.
     :note: Symbolic arguments that are not listed in ``arg_names`` may be omitted
            from a call: the bindings deduce their value from the shape or stride
            expressions of the passed arrays, where only arrays of fundamental
@@ -57,23 +55,6 @@ class NanobindCompiledSDFG:
            value always takes precedence, a symbol that can not be deduced must
            be passed, and symbols needed for the return values have to be
            provided explicitly.
-    :note: With a non-empty ``SDFG.user_args`` the module additionally exposes
-           :meth:`user_bind_call`, a structured fast-path entry point:
-           ``user_args`` promises where each argument arrives (names or nested
-           tuples of names, destructured in the compiled binding with
-           by-reference array semantics enforced per element). An empty string
-           entry is an ignored placeholder slot: the position exists in the
-           caller's convention, accepts any value (``None`` included) and is
-           never read - nested slots still count toward the tuple length.
-           Scalar ``pyobject`` arguments may be listed and pass through as
-           opaque ``PyObject*``. There are no keyword arguments on that
-           path - every argument is either listed or inferred, verified at
-           code generation - and it bypasses hooks, ``do_not_execute``,
-           callback wrapping and return handling (return-value SDFGs are
-           refused at code generation). The GPU error-record check runs
-           inside the compiled binding and honors :attr:`gpu_error_check`.
-           ``__call__()`` never dispatches to it.
-    :note: Marshalling of Python callbacks is done in Python.
     :note: There is no caching of the "previous call arguments", i.e.
            ``CompiledSDFG._lastargs``. This means that the symbolic sizes must be
            explicitly passed to :meth:`get_workspace_sizes` and :meth:`set_workspace`.
@@ -96,25 +77,11 @@ class NanobindCompiledSDFG:
         self.do_not_execute: bool = False
 
         # Codegen-time call metadata comes from the handle: the `__return*`
-        # naming convention and the callback detection live in the bindings
-        # generator, not here. Return allocation, the single-value-vs-tuple
-        # convention and buffer-override validation all live in the binding
-        # too; the names remain exposed for introspection.
+        # naming convention lives in the bindings generator, not here. Return
+        # allocation, the single-value-vs-tuple convention and buffer-override
+        # validation all live in the binding too; the names remain exposed for
+        # introspection.
         self._return_values: Tuple[str, ...] = tuple(self._handle.return_names)
-
-        # Callback arguments; each call wraps the passed callable in a ctypes `CFUNCTYPE` (see _process_callbacks).
-        arglist = sdfg.arglist()
-        self._callback_args: Dict[str, Any] = {name: arglist[name].dtype for name in self._handle.callback_names}
-        self._callback_keepalive: List[Any] = []
-        self._callback_refs: List[Any] = []
-
-        # No callbacks to wrap: unless hooks are registered, a call needs no
-        # Python-side processing at all (returns are handled in the binding).
-        self._simple_call: bool = not self._callback_args
-
-        # Structured fast-path entry point; present only when the SDFG was
-        # compiled with a non-empty ``user_args`` (see user_bind_call).
-        self._user_call: Optional[Any] = getattr(self._handle, 'user_call', None)
 
         # Static per module; used to translate __dace_exit codes in _get_error_text.
         self._has_gpu_code: bool = bool(self._handle.has_gpu_code)
@@ -161,27 +128,6 @@ class NanobindCompiledSDFG:
     def gpu_error_check(self, value: bool) -> None:
         self._handle.gpu_error_check = bool(value)
 
-    def user_bind_call(self, *args: Any) -> None:
-        """Execute the compiled SDFG through the structured ``SDFG.user_args`` signature.
-
-        This is the fast path: arguments arrive exactly as ``user_args``
-        promised (nested tuples are destructured in the compiled binding, with
-        by-reference array semantics enforced per element), every argument not
-        listed is inferred - completeness was checked at code generation, so
-        nothing is looked up at run time - and there are no keyword arguments.
-        It deliberately bypasses hooks, ``do_not_execute``, positional-name
-        mapping, callback wrapping and return handling; the GPU last-error
-        check still runs and honors :attr:`gpu_error_check`. ``__call__`` never
-        dispatches here.
-
-        Only available when the SDFG was compiled with a non-empty
-        ``user_args``; raises ``ValueError`` otherwise.
-        """
-        if self._user_call is None:
-            raise ValueError(f"SDFG '{self._sdfg.name}' was compiled without user_args; "
-                             "user_bind_call is unavailable (set SDFG.user_args and recompile).")
-        self._user_call(*args)
-
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Execute the compiled SDFG.
 
@@ -209,16 +155,15 @@ class NanobindCompiledSDFG:
         :attr:`do_not_execute` suppresses the program run, ``None`` is
         returned.
         """
-        # Fast path - no callbacks, no hooks: hand the arguments straight to
-        # the compiled dispatcher (returns are handled inside the binding).
-        hooks_active = bool(hooks._COMPILED_SDFG_CALL_HOOKS)
-        if self._simple_call and not hooks_active:
-            result = None
+        # Fast path - no hooks: hand the arguments straight to the compiled
+        # dispatcher; all marshalling and the return allocation happen there.
+        if not hooks._COMPILED_SDFG_CALL_HOOKS:
             if self.do_not_execute is False:
-                result = self._handle(*args, **kwargs)
-            return result
+                return self._handle(*args, **kwargs)
+            return None
 
-        # Handle positional arguments and move them into `kwargs`.
+        # Hooks receive the processed keyword arguments (see
+        # _call_handle_with_hooks), so positional arguments are mapped first.
         if args:
             if len(args) > len(self._arg_names):
                 raise TypeError(f'Too many positional arguments (got {len(args)}, '
@@ -227,18 +172,7 @@ class NanobindCompiledSDFG:
                 if name in kwargs:
                     raise TypeError(f'Argument "{name}" passed both positionally and as a keyword.')
                 kwargs[name] = value
-
-        # Process the callbacks.
-        if self._callback_args:
-            self._process_callbacks(kwargs)
-
-        # Perform the call to the compiled extension.
-        result = None
-        if hooks_active:
-            result = self._call_handle_with_hooks(kwargs)
-        elif self.do_not_execute is False:
-            result = self._handle(**kwargs)
-        return result
+        return self._call_handle_with_hooks(kwargs)
 
     def _call_handle_with_hooks(self, kwargs: Dict[str, Any]) -> Any:
         """Runs the handle inside the registered compiled-SDFG call hooks.
@@ -266,30 +200,6 @@ class NanobindCompiledSDFG:
             result = self._hook_result
         return result
 
-    def _process_callbacks(self, kwargs: Dict[str, Any]) -> None:
-        """Replaces callback callables in ``kwargs`` with C function-pointer addresses.
-
-        Each callable is wrapped in the same trampoline + ctypes CFUNCTYPE the
-        ctypes interface uses - the libffi thunk re-acquires the GIL on entry,
-        so the kernel may invoke it while running GIL-free (also from worker
-        threads). Exceptions raised inside a callback follow ctypes semantics:
-        they are printed, not propagated to the caller.
-        """
-        # The CFUNCTYPE objects own the synthesized C entry points. They are
-        # retained for the wrapper's lifetime rather than per call: the opaque
-        # SDFG state may keep a pointer passed at initialization, so per-call
-        # replacement could leave a stored pointer dangling. Return-value
-        # references only need to survive until the kernel has consumed them,
-        # i.e. the next call.
-        self._callback_refs.clear()
-        for name, cbtype in self._callback_args.items():
-            if name not in kwargs:
-                continue
-            trampoline = cbtype.get_trampoline(kwargs[name], kwargs, self._callback_refs, None)
-            cfunc = cbtype.as_ctypes()(trampoline)
-            self._callback_keepalive.append(cfunc)
-            kwargs[name] = ctypes.cast(cfunc, ctypes.c_void_p).value
-
     def initialize(self, *args: Any, **kwargs: Any) -> ctypes.c_void_p:
         """Initializes the SDFG state eagerly, without running it.
 
@@ -311,13 +221,11 @@ class NanobindCompiledSDFG:
         return ctypes.c_void_p(self._handle.state_pointer)
 
     def _named_call_arguments(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        """Add the positional arguments to ``kwargs`` and wraps callback callables."""
+        """Adds the positional arguments to ``kwargs`` (in ``arg_names`` order)."""
         if args:
             assert not (multiple_names :=
                         kwargs.keys() & self._arg_names[:len(args)]), f"Specified '{multiple_names}' multiple times."
             kwargs.update(zip(self._arg_names, args, strict=False))
-        if self._callback_args:
-            self._process_callbacks(kwargs)
         return kwargs
 
     def finalize(self) -> None:
