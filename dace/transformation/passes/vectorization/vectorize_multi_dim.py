@@ -798,8 +798,29 @@ def normalize_loop_nests(sdfg: dace.SDFG) -> None:
     _resolve_body_nsdfg_symbol_aliases(sdfg)
 
 
+def shares_connector_through_one_node(node: dace.nodes.NestedSDFG) -> bool:
+    """Whether a single-state NestedSDFG reads and writes an inout connector without a pure source and sink.
+
+    This is the shape ``InlineSDFG`` accepts since PR #2586 and the tile descent keeps nested (cloudsc
+    ``zqlhs`` RMW chain). A loop-nest wrapper whose inner map reads a connector from a source access node
+    and writes it to a separate sink access node is not this shape and still inlines.
+
+    :param node: The nested SDFG node.
+    :returns: True if some inout connector has no scope-free source or no scope-free sink access node.
+    """
+    shared = OrderedSet(node.in_connectors) & OrderedSet(node.out_connectors)
+    if not shared or len(node.sdfg.nodes()) != 1 or not isinstance(node.sdfg.nodes()[0], dace.SDFGState):
+        return False
+    state: dace.SDFGState = node.sdfg.nodes()[0]
+    scope = state.scope_dict()
+    top_level = [n for n in state.data_nodes() if n.data in shared and scope[n] is None]
+    sources = OrderedSet(n.data for n in top_level if state.in_degree(n) == 0)
+    sinks = OrderedSet(n.data for n in top_level if state.out_degree(n) == 0)
+    return any(conn not in sources or conn not in sinks for conn in shared)
+
+
 def inline_loop_nest_wrappers(sdfg: dace.SDFG) -> int:
-    """Inline every body NestedSDFG except the inout-connector ones the tile descent walks.
+    """Inline every body NestedSDFG except the read-write inout ones the tile descent walks.
 
     ``InlineSDFG`` inlines a nested SDFG that reads and writes one container through a single
     access node (PR #2586), so handing the whole graph to the matcher now flattens the cloudsc
@@ -817,7 +838,7 @@ def inline_loop_nest_wrappers(sdfg: dace.SDFG) -> int:
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, dace.nodes.NestedSDFG) or not isinstance(parent, dace.SDFGState):
                 continue
-            if OrderedSet(node.in_connectors) & OrderedSet(node.out_connectors):
+            if shares_connector_through_one_node(node):
                 continue
             for xform, pattern_node in probes:
                 if not prune_and_inline.accepts(xform, pattern_node, parent, node):
