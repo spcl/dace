@@ -12,13 +12,16 @@ from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
-def _roundtrip(sdfg: dace.SDFG, expected_node_type: type, simplify: bool) -> dace.SDFG:
+def _roundtrip(sdfg: dace.SDFG, expected_node_type: type) -> dace.SDFG:
     """
     Converts an SDFG to a schedule tree and back, ensuring the tree contains a node of the given type.
+
+    Simplification of the resulting SDFG follows the configuration, so that both the simplified and the
+    unsimplified variants are covered by the CI matrix rather than by an extra test parameter.
     """
     stree = sdfg.as_schedule_tree()
     assert any(type(node) is expected_node_type for node in stree.preorder_traversal())
-    return stree.as_sdfg(simplify=simplify)
+    return stree.as_sdfg(simplify=dace.config.Config.get_bool('optimizer', 'automatic_simplification'))
 
 
 def test_implicit_inline_and_constants():
@@ -69,15 +72,14 @@ def test_name_propagation():
     assert sdfg.name == name
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_view_of_slice(simplify: bool):
+def test_view_of_slice():
 
     @dace.program
     def tester(a: dace.float64[30]):
         b = a[1:21]
         b[:] = 5
 
-    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode, simplify)
+    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode)
 
     a = np.random.rand(30)
     expected = a.copy()
@@ -86,8 +88,7 @@ def test_view_of_slice(simplify: bool):
     assert np.allclose(a, expected)
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_view_read_after_write(simplify: bool):
+def test_view_read_after_write():
 
     @dace.program
     def tester(a: dace.float64[30]):
@@ -95,7 +96,7 @@ def test_view_read_after_write(simplify: bool):
         b[3] = b[2] + a[7]
         a[9] = b[3] * 2
 
-    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode, simplify)
+    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode)
 
     a = np.random.rand(30)
     expected = a.copy()
@@ -105,8 +106,7 @@ def test_view_read_after_write(simplify: bool):
     assert np.allclose(a, expected)
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_view_of_view(simplify: bool):
+def test_view_of_view():
     sdfg = dace.SDFG('tester')
     sdfg.add_array('A', [20, 20], dace.float64)
     sdfg.add_array('B', [20, 20], dace.float64)
@@ -125,7 +125,7 @@ def test_view_of_view(simplify: bool):
     state.add_edge(bvv, 'views', bv, None, dace.Memlet('Bv[0:400]'))
     state.add_edge(bv, 'views', state.add_write('B'), None, dace.Memlet('Bv[0:400]'))
 
-    new_sdfg = _roundtrip(sdfg, tn.ViewNode, simplify)
+    new_sdfg = _roundtrip(sdfg, tn.ViewNode)
 
     a = np.random.rand(20, 20)
     b = np.random.rand(20, 20)
@@ -133,8 +133,7 @@ def test_view_of_view(simplify: bool):
     assert np.allclose(a, b)
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_view_in_map_scope(simplify: bool):
+def test_view_in_map_scope():
 
     @dace.program
     def tester(a: dace.float64[10, 30], b: dace.float64[10]):
@@ -142,7 +141,7 @@ def test_view_in_map_scope(simplify: bool):
             r = a[i]
             b[i] = r[4] + r[5]
 
-    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode, simplify)
+    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode)
 
     a = np.random.rand(10, 30)
     b = np.random.rand(10)
@@ -150,8 +149,7 @@ def test_view_in_map_scope(simplify: bool):
     assert np.allclose(b, a[:, 4] + a[:, 5])
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_view_write_in_map_scope(simplify: bool):
+def test_view_write_in_map_scope():
 
     @dace.program
     def tester(a: dace.float64[10, 30]):
@@ -159,7 +157,7 @@ def test_view_write_in_map_scope(simplify: bool):
             r = a[i]
             r[3] = i
 
-    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode, simplify)
+    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode)
 
     a = np.random.rand(10, 30)
     expected = a.copy()
@@ -168,8 +166,7 @@ def test_view_write_in_map_scope(simplify: bool):
     assert np.allclose(a, expected)
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_view_passed_to_nested_sdfg(simplify: bool):
+def test_view_passed_to_nested_sdfg():
 
     @dace.program
     def nested(x: dace.float64[20]):
@@ -179,7 +176,7 @@ def test_view_passed_to_nested_sdfg(simplify: bool):
     def tester(a: dace.float64[30]):
         nested(a[1:21])
 
-    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode, simplify)
+    new_sdfg = _roundtrip(tester.to_sdfg(simplify=False), tn.ViewNode)
 
     a = np.random.rand(30)
     expected = a.copy()
@@ -188,8 +185,7 @@ def test_view_passed_to_nested_sdfg(simplify: bool):
     assert np.allclose(a, expected)
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_dynamic_map_range(simplify: bool):
+def test_dynamic_map_range():
     H = dace.symbol('H')
     nnz = dace.symbol('nnz')
 
@@ -199,7 +195,7 @@ def test_dynamic_map_range(simplify: bool):
             for j in dace.map[A_row[i]:A_row[i + 1]]:
                 b[i] += A_val[j]
 
-    new_sdfg = _roundtrip(tester.to_sdfg(), tn.DynScopeCopyNode, simplify)
+    new_sdfg = _roundtrip(tester.to_sdfg(), tn.DynScopeCopyNode)
 
     A_row = np.array([0, 2, 3, 5], dtype=np.uint32)
     A_val = np.random.rand(5).astype(np.float32)
@@ -208,8 +204,7 @@ def test_dynamic_map_range(simplify: bool):
     assert np.allclose(b, [A_val[0] + A_val[1], A_val[2], A_val[3] + A_val[4]])
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_reference_set(simplify: bool):
+def test_reference_set():
     sdfg = dace.SDFG('tester')
     sdfg.add_symbol('n', dace.int32)
     sdfg.add_array('A', [20], dace.float64)
@@ -231,7 +226,7 @@ def test_reference_set(simplify: bool):
     end.add_nedge(end.add_access('ref'), end.add_access('C'), dace.Memlet('ref[0:20]'))
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
-    new_sdfg = _roundtrip(sdfg, tn.RefSetNode, simplify)
+    new_sdfg = _roundtrip(sdfg, tn.RefSetNode)
 
     a = np.random.rand(20)
     b = np.random.rand(20)
@@ -242,14 +237,13 @@ def test_reference_set(simplify: bool):
     assert np.allclose(c, b)
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_library_call(simplify: bool):
+def test_library_call():
 
     @dace.program
     def tester(a: dace.float64[5, 4], b: dace.float64[4, 3]):
         return a @ b
 
-    new_sdfg = _roundtrip(tester.to_sdfg(), tn.LibraryCall, simplify)
+    new_sdfg = _roundtrip(tester.to_sdfg(), tn.LibraryCall)
 
     a = np.random.rand(5, 4)
     b = np.random.rand(4, 3)
@@ -275,11 +269,10 @@ def _inverted_loop_sdfg(name: str, loop: LoopRegion) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize('simplify', (False, True))
-def test_do_while_loop(simplify: bool):
+def test_do_while_loop():
     # The condition never holds, the body is executed once
     sdfg = _inverted_loop_sdfg('tester', LoopRegion('loop', 'i < 0', inverted=True))
-    new_sdfg = _roundtrip(sdfg, tn.DoWhileScope, simplify)
+    new_sdfg = _roundtrip(sdfg, tn.DoWhileScope)
 
     a = np.zeros(10)
     new_sdfg(A=a)
@@ -287,8 +280,7 @@ def test_do_while_loop(simplify: bool):
 
 
 @pytest.mark.parametrize('update_before_condition', (False, True))
-@pytest.mark.parametrize('simplify', (False, True))
-def test_do_for_loop(update_before_condition: bool, simplify: bool):
+def test_do_for_loop(update_before_condition: bool):
     loop = LoopRegion('loop',
                       'i < 3',
                       'i',
@@ -297,7 +289,7 @@ def test_do_for_loop(update_before_condition: bool, simplify: bool):
                       inverted=True,
                       update_before_condition=update_before_condition)
     sdfg = _inverted_loop_sdfg('tester', loop)
-    new_sdfg = _roundtrip(sdfg, tn.LoopScope, simplify)
+    new_sdfg = _roundtrip(sdfg, tn.LoopScope)
 
     a = np.zeros(10)
     expected = np.zeros(10)
@@ -432,17 +424,16 @@ def test_transients_and_nested_sdfg() -> None:
 if __name__ == '__main__':
     test_implicit_inline_and_constants()
     test_name_propagation()
-    for simplify in (False, True):
-        test_view_of_slice(simplify)
-        test_view_read_after_write(simplify)
-        test_view_of_view(simplify)
-        test_view_in_map_scope(simplify)
-        test_view_write_in_map_scope(simplify)
-        test_view_passed_to_nested_sdfg(simplify)
-        test_dynamic_map_range(simplify)
-        test_reference_set(simplify)
-        test_library_call(simplify)
-        test_do_while_loop(simplify)
-        test_do_for_loop(False, simplify)
-        test_do_for_loop(True, simplify)
+    test_view_of_slice()
+    test_view_read_after_write()
+    test_view_of_view()
+    test_view_in_map_scope()
+    test_view_write_in_map_scope()
+    test_view_passed_to_nested_sdfg()
+    test_dynamic_map_range()
+    test_reference_set()
+    test_library_call()
+    test_do_while_loop()
+    test_do_for_loop(False)
+    test_do_for_loop(True)
     test_transients_and_nested_sdfg()
