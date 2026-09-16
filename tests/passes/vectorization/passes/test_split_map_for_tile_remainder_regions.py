@@ -192,16 +192,7 @@ def test_assume_even_range_check_aborts_at_runtime():
 
 
 def level_loop_writing_state_array_sdfg() -> dace.SDFG:
-    """CloudSC's ``zqsmix`` / ``zfoeew`` shape, over ``for k in 1:klev: for i in map(0:klon)``::
-
-        fwd = min(a[k, i], e[k - 1, i]); e[k, i] = fwd; q[k, i] = fwd; f[k, i] = fwd
-        q[k, i] = q[k, i] / (1 + f[k, i])
-
-    then ``out[1:] = q[1:]; g[1:] = f[1:]`` in a later state. ``q`` and ``f`` are 2-D transients written
-    and re-read inside the map body. ``q`` leaves the map through its exit; ``f`` is written by an
-    AccessNode inside the body and reaches the later state only by its name. The ``e[k - 1]`` read keeps
-    the level loop a loop.
-    """
+    # CloudSC zqsmix/zfoeew: 2-D transients q (leaves via the map exit) and f (in-body node only), read later.
     klev, klon = dace.symbol('klev'), dace.symbol('klon')
     sdfg = dace.SDFG('level_loop_writing_state_array')
     for name in ('a', 'e', 'out', 'g'):
@@ -255,26 +246,19 @@ def level_loop_writing_state_array_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def test_remainder_writes_the_state_arrays_it_shares_with_later_states():
-    """The remainder copy of the map writes ``q`` and ``f`` themselves, not renamed copies of them.
-
-    Both are read after the map. Renaming ``f`` left the remainder columns of ``f`` unwritten for the later
-    state (a silent wrong result). Renaming ``q`` made a 2-D transient only the remainder used; nesting kept
-    it inside the body, the tile passes left its ``(klev, klon)`` shape alone, and the lowered copy from the
-    ``(8,)`` tile into it failed validation. A temporary only the map uses is still renamed.
-    """
+def test_remainder_writes_the_state_arrays_it_shares_with_later_states() -> None:
+    """A renamed q failed tile-copy validation; a renamed f left its remainder columns unwritten."""
     sdfg = level_loop_writing_state_array_sdfg()
     SplitMapForTileRemainder(widths=(8, ), tail_mode="masked").apply_pass(sdfg, {})
     interior, boundary = _count_map_regions(sdfg, "columns")
     assert (interior, boundary) == (1, 1)
     two_dim_transients = [name for name, desc in sdfg.arrays.items() if desc.transient and len(desc.shape) == 2]
-    assert two_dim_transients == ['q',
-                                  'f'], f"the remainder must write q and f, not renamed copies: {two_dim_transients}"
+    assert two_dim_transients == ['q', 'f'], f"renamed copies of q or f: {two_dim_transients}"
     assert 'fwd_0' in sdfg.arrays, "the map-local temporary fwd must still get its own name in the remainder"
 
 
-def test_level_loop_writing_state_array_matches_numpy_with_a_remainder():
-    """``klon = 13`` leaves a 5-column remainder at width 8; the vectorized kernel compiles and matches NumPy."""
+def test_level_loop_writing_state_array_matches_numpy_with_a_remainder() -> None:
+    """``klon = 13`` leaves a 5-column remainder at width 8."""
     sdfg = level_loop_writing_state_array_sdfg()
     untransformed = copy.deepcopy(sdfg)
     VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=detect_host_isa(),
