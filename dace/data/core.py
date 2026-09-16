@@ -615,15 +615,6 @@ class Array(Data):
             if otherstride != stride:
                 return False
 
-        # Test total size
-        # if self.total_size != other.total_size:
-        #     return False
-
-        # Test offset
-        # for off, otheroff in zip(self.offset, other.offset):
-        #     if otheroff != off:
-        #         return False
-
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):

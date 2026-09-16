@@ -2603,9 +2603,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
         # Otherwise, symbolic replacement
         symbolic_repl[str(k)] = v
 
-    # A two-step replacement (through the intermediate __dacesym_* names) is only necessary
-    # if replacement keys appear within the replacement values (e.g., {M: N, N: M}).
-    # Otherwise, replace directly in a single pass.
+    # Two-step replacement is only needed when keys appear in the values (e.g., {M: N, N: M})
     if symbolic_repl:
         keys = set(symbolic_repl.keys())
         overlap = False

@@ -93,11 +93,7 @@ def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mappin
             if src_data is None and dst_data is None:
                 if e.data.data in input_mapping or e.data.data in output_mapping:
                     mapping = input_mapping if e.data.data in input_mapping else output_mapping
-                    # ``align_memlet``'s ``dst`` argument picks which end of the edge the memlet
-                    # should describe. That is a property of where the container sits on this edge,
-                    # not of which connector list its name belongs to: an output connector of the
-                    # nested SDFG can be read inside, in which case it is this edge's source, and
-                    # aligning it to the destination swaps the two subsets.
+                    # ``dst`` is where the container sits on this edge, not which connector list names it
                     aligns_to_dst = not (isinstance(mpath[0].src, dace.nodes.AccessNode)
                                          and mpath[0].src.data == e.data.data)
                     memlet = align_memlet(state, e, aligns_to_dst)
@@ -174,9 +170,7 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
         if not parent_node:
             do_not_replace = True
 
-        # A fresh name has to avoid every name this SDFG already holds, not only the ones seen so
-        # far: the loops below have not reached the rest of them yet, and renaming onto one of those
-        # silently overwrites it.
+        # Avoid every name the SDFG holds, not only those seen so far
         taken_names = set(identifiers_seen)
         taken_names |= set(nsdfg.arrays.keys())
         taken_names |= set(nsdfg.get_all_toplevel_symbols())

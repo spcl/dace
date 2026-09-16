@@ -9,7 +9,7 @@ from dace.properties import CodeBlock
 import dace.sdfg.nodes as nodes
 import dace.transformation.transformation as xf
 from dace import dtypes, data as dt
-from dace.sdfg import SDFG, SDFGState, state as dstate, utils as dace_utils
+from dace.sdfg import dealias, SDFG, SDFGState, state as dstate, utils as dace_utils
 from dace.sdfg.state import LoopRegion
 from dace.memlet import Memlet
 
@@ -254,6 +254,9 @@ class BackwardPassGenerator:
 
         # Forward required data by the backward pass according to a user defined strategy
         self.data_forwarding_manager.forward_data_to_backward_pass()
+
+        # The reversed nested SDFG's connectors describe the forward node's narrowed descriptors; restate them
+        self._integrate_reversed_nested_sdfgs()
 
         # In some cases (accessnode -> accessnode), the descriptors for the gradients of the function outputs are not
         # added yet. Add them now.
@@ -907,6 +910,17 @@ class BackwardPassGenerator:
                 self.backward_sdfg._find_new_name("gradient_" + forward_name)
 
         return self.array_grad_map[forward_name]
+
+    def _integrate_reversed_nested_sdfgs(self) -> None:
+        """
+        Brings every nested SDFG the backward pass created onto the descriptors it is connected to.
+
+        :note: This function operates in-place on the backward SDFG.
+        """
+        for state in self.backward_sdfg.states():
+            for node in list(state.nodes()):
+                if isinstance(node, nodes.NestedSDFG):
+                    dealias.integrate_nested_sdfg(node.sdfg)
 
     def _add_gradient_data_descriptor(self, data_name: str) -> dt.Array:
         """Add the data descriptor for the gradient for `data_name`.

@@ -137,20 +137,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 continue
             if imem.other_subset is not None or omem.other_subset is not None:
                 continue
-            # Unsqueezing offsets inner indices by the subset minima and inserts the unit dimensions of the outer
-            # subset. Both must agree for the inner indices to refer to the same outer elements.
-            if len(imem.subset) != len(omem.subset) or imem.subset.min_element() != omem.subset.min_element():
+            # Inner indices address the outer container itself, whichever part of it each edge covers
+            if not desc.is_equivalent(sdfg.arrays[imem.data]):
                 continue
-            if [s == 1 for s in imem.subset.size()] != [s == 1 for s in omem.subset.size()]:
-                continue
-            # Inner access nodes must not require reshaping views upon inlining
-            if any(
-                    len(desc.shape) > len(mem.subset)
-                    or not InlineSDFG._check_strides(desc.strides, sdfg.arrays[mem.data].strides, mem, nested_sdfg)
-                    for mem in (imem, omem)):
-                continue
-            # Inner access nodes must not be in a scope or copy from/to other data. Views of the
-            # connector are what the nested SDFG contract narrows it with, so they are not other data.
+            # Inner access nodes must not be in a scope or copy from/to data other than views of the connector
             accesses = [n for n in nstate.data_nodes() if n.data == conn]
             if not accesses or any(nstate.entry_node(n) is not None for n in accesses):
                 continue

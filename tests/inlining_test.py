@@ -1603,12 +1603,51 @@ def test_inline_shared_inout_connector_shared_outer_input(in_map: bool):
 
 
 @pytest.mark.parametrize('in_map', [False, True])
-@pytest.mark.parametrize('outer_context', ['producer', 'consumer', 'offset_mismatch'])
+def test_inline_shared_inout_connector_different_offsets(in_map: bool):
+    """
+    Tests inlining a shared input/output connector whose input and output bind different parts of the container.
+    """
+    sdfg, nested = _make_shared_inout_sdfg('write_then_read', in_map, 'offset_mismatch')
+    _check_shared_inout_inlining(sdfg, nested)
+
+
+def test_inline_shared_inout_connector_different_ranges():
+    """
+    Tests that a map body reading and writing different ranges of one row is inlined by simplification.
+    """
+
+    @dace.program
+    def shared_inout_different_ranges(A: dace.float64[128, 64]):
+        for i in dace.map[0:128]:
+            for j in dace.map[0:32]:
+                with dace.tasklet:
+                    out >> A[i, j]
+                    out = 5
+
+            for j in dace.map[33:60]:
+                with dace.tasklet:
+                    inp << A[i, j]
+                    out >> A[i, j]
+                    out = 6 + inp
+
+    sdfg = shared_inout_different_ranges.to_sdfg(simplify=True)
+    assert not any(isinstance(node, dace_nodes.NestedSDFG) for node, _ in sdfg.all_nodes_recursive())
+
+    a = np.random.rand(128, 64)
+    expected = np.copy(a)
+    expected[:, :32] = 5
+    expected[:, 33:60] += 6
+    sdfg(A=a)
+    assert np.allclose(a, expected)
+
+
+@pytest.mark.parametrize('in_map', [False, True])
+@pytest.mark.parametrize('outer_context', ['producer', 'consumer'])
 def test_inline_shared_inout_connector_rejected(outer_context: str, in_map: bool):
     """
     Tests that a shared input/output connector without source or sink access nodes is not inlined if its outer
-    input is written or its outer output is read in the same state (which would lose the ordering with the inlined
-    nodes), or if the input and output bind the connector to different offsets.
+    input is written or its outer output is read in the same state, which would lose the ordering with the inlined
+    nodes.
     """
     sdfg, nested = _make_shared_inout_sdfg('write_then_read', in_map, outer_context)
     with pytest.raises(ValueError, match='Transformation cannot be applied'):
@@ -1663,6 +1702,9 @@ if __name__ == "__main__":
             test_inline_shared_inout_connector(kind=kind, in_map=in_map)
     for in_map in [False, True]:
         test_inline_shared_inout_connector_shared_outer_input(in_map=in_map)
-    for outer_context in ['producer', 'consumer', 'offset_mismatch']:
+    for in_map in [False, True]:
+        test_inline_shared_inout_connector_different_offsets(in_map=in_map)
+    test_inline_shared_inout_connector_different_ranges()
+    for outer_context in ['producer', 'consumer']:
         for in_map in [False, True]:
             test_inline_shared_inout_connector_rejected(outer_context=outer_context, in_map=in_map)

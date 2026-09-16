@@ -98,9 +98,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
                                                     inputs={},
                                                     outputs={f'{node.data}_value'},
                                                     code=f'{node.data}_value = {symrepl[node_data_symbolic]}')
-                        # The container stands in for the scalar it replaces, so it is made of what
-                        # that scalar was made of. Typing it after the constant instead would hand a
-                        # nested SDFG below a container of a different type than its connector.
+                        # Type the container like the scalar it replaces, so connectors below keep matching
                         access_node_name, _ = sdfg.add_transient(f'{node.data}', [1], desc.dtype, find_new_name=True)
                         tmp_an = state.add_access(access_node_name)
                         state.add_edge(tasklet, f'{node.data}_value', tmp_an, None,
