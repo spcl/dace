@@ -221,5 +221,46 @@ def test_a_blend_over_an_element_the_body_already_updated_stays_a_blend():
     assert [e.dst_conn for e in state.in_edges(blend) if e.dst_conn == '_e'] == ['_e']
 
 
+def blend_on_a_symbol_condition() -> dace.SDFG:
+    """``out[i] = ITE(flag, x[i], out[i])`` with ``flag`` a bool symbol, CloudSC's ``llfall_index_2_0`` select."""
+    sdfg = dace.SDFG('blend_on_a_symbol_condition')
+    for name in ('x', 'out'):
+        sdfg.add_array(name, [N], dace.float64)
+    sdfg.add_symbol('flag', dace.bool_)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i='0:N'))
+    blend = state.add_tasklet('blend', {'_t', '_e'}, {'_o'}, '_o = ITE(flag, _t, _e)')
+    state.add_memlet_path(state.add_read('x'), me, blend, dst_conn='_t', memlet=dace.Memlet('x[i]'))
+    state.add_memlet_path(state.add_read('out'), me, blend, dst_conn='_e', memlet=dace.Memlet('out[i]'))
+    state.add_memlet_path(blend, mx, state.add_write('out'), src_conn='_o', memlet=dace.Memlet('out[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_blend_on_a_symbol_condition_stays_a_blend():
+    """Demoting ``ITE(flag, value, out)`` to ``IT(flag, value)`` leaves a masked write with no condition connector to
+    gate the store on, so the tile converter refused the whole SDFG (CloudSC vectorized to zero tile nodes)."""
+    sdfg = blend_on_a_symbol_condition()
+    NormalizeMaskedWriteTasklets().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    blend = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.Tasklet) and n.label == 'blend')
+    assert blend.code.as_string.strip() == '_o = ITE(flag, _t, _e)', blend.code.as_string
+
+
+@pytest.mark.parametrize('flag', [False, True])
+def test_a_blend_on_a_symbol_condition_tiles_and_matches_numpy(flag):
+    """The symbol-condition blend tiles (``TileITE`` with an inline predicate) and keeps the NumPy result."""
+    sdfg = blend_on_a_symbol_condition()
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=HOST_ISA, validate=True)).apply_pass(sdfg, {})
+    assert_tiled(sdfg, blend_on_a_symbol_condition())
+    rng = np.random.default_rng(5)
+    Nval = 37
+    x, out = rng.random(Nval), rng.random(Nval)
+    expected = x.copy() if flag else out.copy()
+    sdfg(x=x, out=out, flag=flag, N=Nval)
+    assert np.array_equal(out, expected), f"{out[:6]} != {expected[:6]}"
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-q', '-p', 'no:cacheprovider']))

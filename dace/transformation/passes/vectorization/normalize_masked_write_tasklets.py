@@ -175,6 +175,10 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         cond, value, else_arm = call.args
         if not (isinstance(else_arm, ast.Name) and else_arm.id in tasklet.in_connectors):
             return None
+        # A bare symbol condition stays a blend: ``TileITE`` inlines it as a predicate, while the
+        # masked store ``IT`` lowers to needs a connector to gate on (CloudSC ``llfall_index_2_0``).
+        if isinstance(cond, ast.Name) and cond.id not in tasklet.in_connectors:
+            return None
         # The else connector must feed ONLY this arm; otherwise dropping it changes the other use.
         others = [
             n.id for n in ast.walk(ast.Module(body=[ast.Expr(cond), ast.Expr(value)], type_ignores=[]))
