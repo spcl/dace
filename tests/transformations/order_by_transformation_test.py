@@ -46,7 +46,7 @@ def test_order_by_transformation_applies_the_same_matches():
     applied_ordered, enumerations_ordered = _apply(ordered, True)
     applied_unordered, enumerations_unordered = _apply(unordered, False)
 
-    assert applied_ordered > 0
+    assert applied_ordered == 2
     assert applied_ordered == applied_unordered
     assert ordered.hash_sdfg() == unordered.hash_sdfg()
     # Matching runs on the metadata of all transformations of the pass, so ordering by
