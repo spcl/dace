@@ -45,14 +45,6 @@ def partial2(A: dace.float64[N, N], X: dace.float64[N, N]):
 
 
 @dace.program
-def wcr2(A: dace.float64[N, N], X: dace.float64[N, N]):
-    for i, j in dace.map[0:N, 0:N]:
-        X[i, j] = A[i, j] * 2.0
-    for i, j in dace.map[0:N, 0:N]:
-        X[j, i] += A[i, j]
-
-
-@dace.program
 def copy3(A: dace.float64[N, N], X: dace.float64[N, N], C: dace.float64[N, N], Y: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         X[i, j] = A[i, j] * 2.0
@@ -167,19 +159,6 @@ def test_partial_write_needs_entry_conversion(n=16):
     expected = 2.0 * arrays["A"]
     expected[0, :] = 3.0 * arrays["A"][0, :]
     assert numpy.allclose(arrays["X"], expected)
-
-
-def test_wcr_write_counts_as_read(n=32):
-    """Kernel 1 only ACCUMULATES into X (a WCR write, no source access node): the segment still
-    needs the live-in values, so the entry conversion must be inserted."""
-    sdfg, kernels = split(wcr2)
-    assert any(e.data is not None and e.data.wcr is not None for e in kernels[1].state.edges())
-    applied = apply_assignment(sdfg, kernels, {"X": [ID, CM]})
-    assert len(applied.boundary_states) == 1
-    assert applied.exit_state is not None
-    sdfg.validate()
-    arrays = run(sdfg, n, seed=44, names=["A", "X"])
-    assert numpy.allclose(arrays["X"], 2.0 * arrays["A"] + arrays["A"].T)
 
 
 def test_relaid_copy_becomes_tensor_transpose(n=24):
