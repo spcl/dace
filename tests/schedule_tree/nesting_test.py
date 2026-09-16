@@ -188,8 +188,7 @@ def test_dealias_memlet_composition(simplify):
     inline_control_flow_regions(sdfg)
     stree = as_schedule_tree(sdfg)
 
-    # The chain of views denotes a single access: a[:, 1] viewed as b, b[-5:] viewed as c, and c[2]
-    # written -- which is a[N - 3, 1]. Simplification composes the views away, otherwise they remain.
+    # c[2] of b[-5:] of a[:, 1] is a[N - 3, 1]; the views remain unless simplified
     tasklet = stree.children[-1]
     assert isinstance(tasklet, tn.TaskletNode)
     if simplify:

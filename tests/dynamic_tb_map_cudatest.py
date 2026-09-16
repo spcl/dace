@@ -100,8 +100,7 @@ def test_dynamic_maps():
             if main_entry is None:
                 main_entry = node
                 for e in dace.sdfg.dynamic_map_inputs(state, node):
-                    # Two of a map's ranges may read the same array, so the element read -- not the
-                    # array it came out of -- is what tells one dynamic input from another.
+                    # Two ranges may read the same array, so key by the element read
                     main_dict[(e.data.data, str(e.data.subset))] = e.dst_conn
             else:
                 repl_dict = {}

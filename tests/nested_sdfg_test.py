@@ -45,7 +45,6 @@ def test():
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
     state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
 
-    # Integrate
     dealias.integrate_nested_sdfg(nsdfg.sdfg)
 
     N = 64

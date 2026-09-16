@@ -766,9 +766,7 @@ def test_multiple_global_accesses():
     assert np.array_equal(val, np.ones((10, 10)) * 3)
 
 
-# The same array, reached under two names: the caller knows it as ``_G_ALIAS``, the callee as
-# ``_G_ARRAY``. Only the caller's own name for the array follows the caller; the connector of the
-# call keeps the name the callee's descriptor is under.
+# One array under two names: the caller's ``_G_ALIAS`` and the callee's ``_G_ARRAY``
 _G_ARRAY = np.random.rand(20)
 _G_ALIAS = _G_ARRAY
 

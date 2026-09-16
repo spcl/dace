@@ -34,8 +34,7 @@ def test_for_in_map_in_for():
     assert len(fornode.children) == 1  # map
     mapnode = fornode.children[0]
     assert isinstance(mapnode, tn.MapScope)
-    # Without simplification the slice ``A[i]`` is reached through a view of its own, which the tree
-    # renders as a node of its own ahead of the copy.
+    # Without simplification the slice ``A[i]`` is a view node ahead of the copy
     children = [c for c in mapnode.children if not isinstance(c, tn.ViewNode)]
     assert len(children) == 2  # copy, for
     copynode, fornode = children
@@ -89,7 +88,6 @@ def test_nesting():
     assert len(loops) == 4
     offsets = ['0:5', '5:10', '10:15', '15:20']
     for view, fornode, offset in zip(views, loops, offsets):
-        # The slice each call is given is the view, so the loop below it works on that view
         assert offset in str(view.memlet)
         assert isinstance(fornode, tn.LoopScope)
         assert len(fornode.children) == 1  # map
@@ -244,9 +242,7 @@ def test_dyn_map_range():
     dynrangemap = mapscope.children[-1]
     assert isinstance(dynrangemap, tn.MapScope)
 
-    # The two bounds are read from A_row ahead of the inner map, which then ranges between them.
-    # Simplification promotes those reads to symbols, so they arrive as assignments; without it they
-    # are copies into scalars first and reach the map through its dynamic-range connectors.
+    # The bounds read from A_row are assignments when simplified, dynamic-range copies otherwise
     bounds = [c for c in mapscope.children[:-1] if isinstance(c, (tn.AssignNode, tn.DynScopeCopyNode))]
     assert len(bounds) == 2
     start, end = (c.name if isinstance(c, tn.AssignNode) else c.target for c in bounds)

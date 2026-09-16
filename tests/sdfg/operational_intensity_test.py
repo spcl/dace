@@ -136,9 +136,7 @@ test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], SymbolicType]
     'sequential_maps_small': (sequential_maps, 6, 3 * 8, {
         'N': 7
     }, 21 / (13 * 3 * 8)),
-    # The three arrays are compulsory misses. ``result`` costs a single cache line: the reduction
-    # accumulates into a scalar transient and stores to ``result`` once, so only that store reaches
-    # memory.
+    # The three arrays are compulsory misses; ``result`` is stored once, costing a single cache line
     'nested_reuse': (nested_reuse, 1024, 64, {
         'N': 1024
     }, 2048 / (3 * 1024 * 8 + 64)),

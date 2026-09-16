@@ -208,8 +208,7 @@ def test_const_utilities_case_non_const_input_not_present_in_output():
                        all_data_names - {"C"} | {"shr_A", "shr_B"}, {"i", "N"})
     _check_map_entries(transformed_state, True, False, dace.dtypes.ScheduleType.Sequential,
                        all_data_names - {"C"} | {"shr_A", "shr_B"}, {"i", "k", "N"})
-    # Using only shr_a and shr_b means no need of N: the shared buffers have constant strides, and
-    # C is addressed with a stride of 1, so no offset in this scope is computed from N.
+    # Using only shr_a and shr_b means no need of N
     _check_map_entries(transformed_state, True, False, dace.dtypes.ScheduleType.GPU_ThreadBlock,
                        {"shr_A", "shr_B"} | transformed_sdfg_tmp_names, {"i", "j", "k"})
 
@@ -222,7 +221,7 @@ def test_const_utilities_case_non_const_input_not_present_in_output():
     # Transformed state tests
     _check_map_entries(transformed_state, True, True, dace.dtypes.ScheduleType.GPU_Device, set(), {"i", "N"})
     _check_map_entries(transformed_state, True, True, dace.dtypes.ScheduleType.Sequential, set(), {"i", "k", "N"})
-    # Using only shr_a and shr_b means no need of N (see above).
+    # Using only shr_a and shr_b means no need of N
     _check_map_entries(transformed_state, True, True, dace.dtypes.ScheduleType.GPU_ThreadBlock, {"shr_A", "shr_B"},
                        {"i", "j", "k"})
 
@@ -232,8 +231,7 @@ def test_const_utilities_case_non_const_input_not_present_in_output():
     _check_map_entries(original_state, False, True, dace.dtypes.ScheduleType.GPU_ThreadBlock, {"A", "B"},
                        {"i", "j", "k"})
 
-    # Transformed state tests. Without the offset-calculation symbols these come only from the memlet
-    # expressions in the scope, none of which mention N, so they match the original state above.
+    # Transformed state tests
     _check_map_entries(transformed_state, False, True, dace.dtypes.ScheduleType.GPU_Device, set(), {"i"})
     _check_map_entries(transformed_state, False, True, dace.dtypes.ScheduleType.Sequential, set(), {"i", "k"})
     # Using only shr_a and shr_b means no need of N
