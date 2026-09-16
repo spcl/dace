@@ -7,6 +7,7 @@ only influence the defaults: values from a configuration file, ``Config.set``,
 the environment after the configuration is loaded has no effect on ``get()``.
 """
 import io
+import warnings
 
 import pytest
 
@@ -59,8 +60,20 @@ def test_config_file_overrides_env():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv('DACE_compiler_build_type', 'FromEnv')
-            _reload_from('compiler:\n  build_type: FromFile\n')
+            # The outranked environment variable is reported.
+            with pytest.warns(UserWarning, match='DACE_compiler_build_type'):
+                _reload_from('compiler:\n  build_type: FromFile\n')
             assert Config.get('compiler', 'build_type') == 'FromFile'
+
+
+def test_env_agreeing_with_file_value_does_not_warn():
+    with temporary_config():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv('DACE_compiler_build_type', 'SameValue')
+            with warnings.catch_warnings():
+                warnings.simplefilter('error')
+                _reload_from('compiler:\n  build_type: SameValue\n')
+            assert Config.get('compiler', 'build_type') == 'SameValue'
 
 
 def test_env_change_after_load_is_inert():
@@ -112,6 +125,7 @@ if __name__ == '__main__':
     test_temporary_config_overrides_env_seeded_value()
     test_config_set_overrides_env_seeded_value()
     test_config_file_overrides_env()
+    test_env_agreeing_with_file_value_does_not_warn()
     test_env_change_after_load_is_inert()
     test_env_bool_coercion()
     test_env_int_coercion()

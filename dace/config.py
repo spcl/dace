@@ -82,17 +82,15 @@ class _ConfigData(threading.local):
         return self._cfg_filename
 
     @staticmethod
-    def _env_name_for(prefix: str, key: str) -> str:
+    def _env_name_for(*key_hierarchy: str) -> str:
         """
         Returns the environment variable name of a configuration key, e.g.
         ``DACE_compiler_build_type`` for ``('compiler', 'build_type')``.
 
-        :param prefix: Environment variable prefix of the key's parent path
-                       (``'DACE'`` at the top level).
-        :param key: The configuration key.
+        :param key_hierarchy: The key path of the configuration entry.
         :return: The environment variable name.
         """
-        return prefix + '_' + key
+        return '_'.join(('DACE', ) + key_hierarchy)
 
     @staticmethod
     def _coerce_env_value(envval: str, metadata: Dict[str, Any], envvar: str):
@@ -100,13 +98,17 @@ class _ConfigData(threading.local):
         Coerces an environment variable string to the schema-declared type of a
         configuration entry.
 
-        The ``_config`` dictionary has always held typed values: schema
+        ``_config`` values carry YAML types rather than raw strings: schema
         defaults and configuration-file entries are produced by the YAML
-        loader (bools, ints, floats, lists). Only the historical read-time
+        loader (``false`` loads as ``bool``, ``5`` as ``int``). Note that
+        nothing enforces the schema-declared type — a hand-edited file may
+        store any YAML type for any key, unvalidated (that laxity predates
+        this function and is unchanged by it). The historical read-time
         environment override in ``get()`` returned raw strings (which
-        ``get_bool()`` papered over). Coercing at seeding time keeps
-        ``_config`` uniformly typed, so ``get()`` returns the same type
-        regardless of where a value came from.
+        ``get_bool()`` papered over). Coercing at seeding time makes an
+        env-derived value match what the YAML loader produces for the same
+        text, so ``get()`` returns the same type regardless of where a value
+        came from.
 
         :param envval: The raw environment variable value.
         :param metadata: The schema metadata of the configuration entry.
@@ -129,11 +131,11 @@ class _ConfigData(threading.local):
         # Strings (and 'any'-typed entries) are kept verbatim
         return envval
 
-    def _add_defaults(self, config, metadata, prefix='DACE'):
+    def _add_defaults(self, config, metadata, key_path=()):
         """ Add defaults to configuration from metadata.
 
             Where a default is inserted, the environment is consulted first:
-            if ``<prefix>_<key path>`` (e.g. ``DACE_compiler_build_type``) is
+            if ``DACE_<key path>`` (e.g. ``DACE_compiler_build_type``) is
             set, its value — coerced to the schema-declared type (see
             :func:`_coerce_env_value`) — becomes the entry's value instead of
             the schema default. The environment therefore only influences
@@ -143,26 +145,37 @@ class _ConfigData(threading.local):
             through :func:`Config.set` (including :func:`set_temporary` /
             :func:`temporary_config`) — take precedence. The
             skip-existing-keys loop below is the original upstream behavior of
-            this function; it is what makes file values win.
+            this function; it is what makes file values win, and a warning is
+            emitted when an environment variable is outranked that way (only
+            if it would have produced a different value).
 
             :param config: The (sub-)configuration dictionary to fill.
             :param metadata: The schema metadata of ``config``.
-            :param prefix: Environment variable prefix of ``config``'s path.
+            :param key_path: The key path of ``config`` (empty at the root).
             :return: True if configuration was modified, False otherwise.
         """
         osname = platform.system()
         modified = False
         for k, v in metadata.items():
-            envvar = self._env_name_for(prefix, k)
+            envvar = self._env_name_for(*key_path, k)
             # Recursive call for fields inside the dictionary
             if v['type'] == 'dict':
                 if k not in config:
                     modified = True
                     config[k] = {}
-                modified |= self._add_defaults(config[k], v['required'], envvar)
+                modified |= self._add_defaults(config[k], v['required'], key_path + (k, ))
                 continue
             # Key already exists in configuration, nothing to add
             if k in config:
+                if envvar in os.environ:
+                    try:
+                        envval = self._coerce_env_value(os.environ[envvar], v, envvar)
+                    except (ValueError, yaml.YAMLError):
+                        envval = os.environ[envvar]
+                    if envval != config[k]:
+                        warnings.warn(f'Environment variable {envvar} does not take effect: the entry is '
+                                      f'already set (e.g. in the configuration file) and keeps the value '
+                                      f'{config[k]!r}')
                 continue
             modified = True
             # Environment-provided default
