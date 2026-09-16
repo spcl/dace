@@ -38,6 +38,15 @@ required:
                     Automatically runs the set of optimizing transformation
                     heuristics on any program called via the Python frontend.
 
+            canonicalize_order:
+                type: str
+                default: legacy
+                title: Canonicalization recipe order
+                description: >
+                    Which recipe canonicalize builds: "legacy" (the historical stage list) or
+                    "phased" (one ordered list of phases, see
+                    dace/transformation/passes/canonicalize/PIPELINE.md).
+
             autotile_size:
                 type: int
                 default: 128

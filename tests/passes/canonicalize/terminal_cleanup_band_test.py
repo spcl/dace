@@ -17,7 +17,7 @@ The reclaimers, as one fixpoint pipeline:
   is impossible while the source still has another reader), and the mirrored ``RedundantSecondArray``
   is unsafe to run bare.
 
-Then the state-machine tidy-up -- ``_inline_single_state`` + ``_structural_cleanup`` plus
+Then the state-machine tidy-up -- ``inline_single_state`` + ``_structural_cleanup`` plus
 ``PruneEmptyConditionalBranches``, which splice out the scaffolding earlier stages leave behind,
 such as the empty ``else`` arm ``LoopToScan`` leaves when it splits a masked scan.
 

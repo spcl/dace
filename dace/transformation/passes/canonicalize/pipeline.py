@@ -9,6 +9,7 @@ import os
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from dace import SDFG, symbolic, properties
+from dace.config import Config
 from dace.ordered import OrderedSet
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import helpers as xfh
@@ -339,7 +340,7 @@ def run_structural_cleanup(sdfg: SDFG) -> None:
         unit.apply_pass(sdfg, {})
 
 
-def _inline_single_state(label: str) -> List[Tuple[str, ppl.Pass]]:
+def inline_single_state(label: str) -> List[Tuple[str, ppl.Pass]]:
     """Flatten single-state NestedSDFG bodies; un-inlined, they report whole-array memlets and
     every dependence test refuses on the box (seidel_2d). ``PruneConnectors`` shares the fixpoint
     because a dead connector is a hard ``InlineSDFG`` refusal.
@@ -350,7 +351,7 @@ def _inline_single_state(label: str) -> List[Tuple[str, ppl.Pass]]:
     return [(label, PruneAndInlineNestedSDFGs())]
 
 
-def _fold_scalar_slices(label: str) -> List[Tuple[str, ppl.Pass]]:
+def fold_scalar_slices(label: str) -> List[Tuple[str, ppl.Pass]]:
     """Fold the frontend scalar-slice bridge; behind the transient a matcher has no index to shift,
     which costs tsvc s252 its ``_remat`` clone and its map.
 
@@ -409,7 +410,7 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
                                      ('coalesce', PatternApplyOnceEverywhere([TrivialMapElimination()])),
                                      ('coalesce', EmptyLoopElimination()),
                                      ('coalesce', PatternApplyOnceEverywhere([MoveIfIntoMap()]))]
-    s += _inline_single_state('coalesce')
+    s += inline_single_state('coalesce')
     s += _structural_cleanup('coalesce')
     # Direction before order: a reversed source loop reaches here as an ascending parameter over
     # DESCENDING addresses, and the permuter scores unit coefficients -- so orient first and it
@@ -426,7 +427,7 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
     #     box instead of the real subset and refuses (polybench seidel_2d: LoopFusion saw
     #     ``A[0:N, 0:N]`` where the body writes ``A[i, j+1]``). Leaving the phase tidy is this
     #     helper's stated contract; the earlier call at step 6 predates the fusion that dirties it.
-    s += _inline_single_state('coalesce')
+    s += inline_single_state('coalesce')
     s += _structural_cleanup('coalesce')
     return s
 
@@ -574,7 +575,7 @@ class IvSubstitutionFissionFixpoint(ppl.Pass):
 
 
 @properties.make_properties
-class _PrivatizeScalarsStage(ppl.Pass):
+class PrivatizeScalarsStage(ppl.Pass):
     """Self-contained adapter for ``PrivatizeScalars`` in the recipe.
 
     ``PrivatizeScalars`` resolves its analysis dependencies itself when applied
@@ -617,8 +618,8 @@ class _PrivatizeScalarsStage(ppl.Pass):
 
 
 @properties.make_properties
-class _PrivatizeArraysStage(_PrivatizeScalarsStage):
-    """Array sibling of :class:`_PrivatizeScalarsStage`, paired with it everywhere it runs.
+class PrivatizeArraysStage(PrivatizeScalarsStage):
+    """Array sibling of :class:`PrivatizeScalarsStage`, paired with it everywhere it runs.
 
     A transient ARRAY reused as a per-iteration scratch buffer carries the same false
     write/write dependence as a reused scalar, so it needs privatizing at the same points of
@@ -722,6 +723,20 @@ GPU_DEFAULTS: Dict[str, Any] = {
     'normalize_loop_and_map_origin': False,
 }
 TARGET_DEFAULTS: Dict[str, Dict[str, Any]] = {'cpu': CPU_DEFAULTS, 'gpu': GPU_DEFAULTS}
+
+#: Recipe orders :class:`CanonicalizationPipeline` can build.
+ORDERS: Tuple[str, ...] = ('legacy', 'phased')
+
+
+def resolve_order(order: Optional[str]) -> str:
+    """``order`` if given, else ``optimizer.canonicalize_order`` from the DaCe config.
+
+    :raises ValueError: If the resolved order is not one of :data:`ORDERS`.
+    """
+    resolved = order if order is not None else Config.get('optimizer', 'canonicalize_order')
+    if resolved not in ORDERS:
+        raise ValueError(f"canonicalize order must be one of {list(ORDERS)}; got {resolved!r}")
+    return resolved
 
 
 def _resolve_target_default(target: str, knob: str, explicit: Optional[Any], fallback: Any) -> Any:
@@ -979,7 +994,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # The pipeline's only ``InlineMultistateSDFG``: lowering mints the nestings here.
     s += [('lower', PatternApplyOnceEverywhere([PruneConnectors()]))]
     s += [('lower', InlineSDFGs())]
-    s += _fold_scalar_slices('lower')
+    s += fold_scalar_slices('lower')
     # Splices out the empty *_pre_state / *_post_state boundary states MapToForLoop leaves: inside a
     # guard branch they make the body look like a heterogeneous [empty, empty, loop] chain and send
     # MoveIfIntoLoop down its imperfect path to wrap *empty* states. ``EmptyStateElimination`` is a
@@ -1034,9 +1049,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     #
     # AugAssignToWCR is intentionally NOT in this recipe: reductions are handled
     # via loop_to_reduce -> Reduce nodes, not WCR-on-Map. PrivatizeScalars is
-    # adapted (_PrivatizeScalarsStage) so its analysis dependencies resolve.
+    # adapted (PrivatizeScalarsStage) so its analysis dependencies resolve.
     s += [('reduce', EliminateTrivialTasklets()), ('reduce', RevertNonReductionWCR()),
-          ('reduce', _PrivatizeScalarsStage()), ('reduce', _PrivatizeArraysStage()), ('reduce', SymbolPropagation()),
+          ('reduce', PrivatizeScalarsStage()), ('reduce', PrivatizeArraysStage()), ('reduce', SymbolPropagation()),
           ('reduce', ConstantPropagation())]
     # UntileLoops (BEFORE ShortLoopUnroll): collapse manually-tiled two-level
     # nests (``for i in range(0, N, K): for ii in range(0, K): body[i+ii]`` or
@@ -1174,7 +1189,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # scalar + array fission and symbol/constant propagation -- the same prep the reduce
     # stage ran -- before LoopToMap can map it. Only runs when a knob is enabled.
     if peel_limit > 0 or break_anti_dependence:
-        s += [('peel', _PrivatizeScalarsStage()), ('peel', _PrivatizeArraysStage()), ('peel', SymbolPropagation()),
+        s += [('peel', PrivatizeScalarsStage()), ('peel', PrivatizeArraysStage()), ('peel', SymbolPropagation()),
               ('peel', ConstantPropagation())]
 
     # move_if_into_loop: push guarding conditionals into loop bodies. The genuine
@@ -1358,7 +1373,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # operand, bijective permutation), so letting it claim its shape first costs the einsum
     # matcher nothing -- an einsum needs >= 2 operands and refuses this shape anyway.
     # Re-fold: the stages since 'lower' mint fresh bridges (tsvc s254).
-    s += _fold_scalar_slices('loop_to_x')
+    s += fold_scalar_slices('loop_to_x')
     if semantic_lifting and lift:
         s += [('loop_to_x', LoopToTranspose())]
     s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', RevertNonReductionWCR()), ('loop_to_x', LoopToReduce()),
@@ -1484,8 +1499,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # here keeps the downstream structural cleanup's same-name candidate
     # list short -- defence-in-depth for the StateFusionExtended same-
     # name writer-merge guard.
-    s += [('reduction_to_wcr_map', _PrivatizeScalarsStage()), ('reduction_to_wcr_map', _PrivatizeArraysStage())]
-    s += _inline_single_state('reduction_to_wcr_map')
+    s += [('reduction_to_wcr_map', PrivatizeScalarsStage()), ('reduction_to_wcr_map', PrivatizeArraysStage())]
+    s += inline_single_state('reduction_to_wcr_map')
     s += _structural_cleanup('reduction_to_wcr_map')
     # LoopToMap above outlines the body, trapping the fresh WCR inside the nsdfg; the
     # normalize_reduction run is one band too early to see it (tsvc s4115). Idempotent.
@@ -1515,7 +1530,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # ``AssignmentAndCopyKernelToMemsetAndMemcpy`` lifts it to -- that recogniser matches the
     # assign tasklet this pass plants on the boundary copy.
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
-    s += _inline_single_state('post_l2m')
+    s += inline_single_state('post_l2m')
     # Rebuild the scope summaries the inline above invalidated (see the note at the first
     # parallelize stage). An inlined RMW body leaves its whole-array boundary memlet on the
     # enclosing map exit, and codegen then reads that box as the write set: the outer map param
@@ -1552,7 +1567,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         # read AccessNode inside, and ``InlineSDFG`` refuses a connector with no valid matching
         # access node. Inlining is what replaces the whole-array boundary memlet with the body's
         # real ``A[i, j+1]``, which every downstream dependence test needs.
-        s += _inline_single_state('loop_fuse')
+        s += inline_single_state('loop_fuse')
         s += [('loop_fuse', ReconstructWavefrontNest())]
     # GPU only: a state stranded between two loops blocks LoopFusion outright (it matches a two-node
     # path graph). SinkStateIntoLoop above already recovers the case where the state can be replicated
@@ -1573,7 +1588,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('loop_fuse', PropagateMemlets())]
     s += [('loop_fuse', ParallelizeLoops(propagate=False))]
-    s += _inline_single_state('loop_fuse')
+    s += inline_single_state('loop_fuse')
 
     # lift_copy (cleaning, post-parallelize): now that loops are maps, extract pure
     # data-movement out of them -- a contiguous element-wise copy -> a Copy library
@@ -1585,7 +1600,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # MapEntry nodes) and before the compute-map transforms / the einsum lift.
     if semantic_lifting and lift_copy:
         s += [('lift_copy', AssignmentAndCopyKernelToMemsetAndMemcpy())]
-        s += _inline_single_state('lift_copy')
+        s += inline_single_state('lift_copy')
 
     # interchange (post-parallelize, both modes): a sequential loop that survived
     # parallelize but wraps a parallel map (e.g. a recurrence sweep ``for t {
@@ -1597,7 +1612,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # loop-only (LoopStridePermutation) passes cannot cross that boundary. The
     # produced ``map { nsdfg { loop } }`` is flattened by the following cleanup.
     s += [('interchange', MoveLoopIntoMapGated(target=target))]
-    s += _inline_single_state('interchange')
+    s += inline_single_state('interchange')
 
     # TODO(perfect-nesting sift-down; GPU-oriented): a pass that turns an
     # *imperfect* nest into a perfect one so it can then be interchanged /
@@ -1657,7 +1672,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # opportunities; no FindSingleUseData).
     s += [('fuse', PatternApplyOnceEverywhere([ConditionFusion()]))]
     s += [('fuse', LiftTrivialIf())]
-    s += _inline_single_state('fuse')
+    s += inline_single_state('fuse')
     s += _structural_cleanup('fuse')
     s += [('fuse', PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]))]
     s += [('fuse', ppl.Pipeline([FuseMaps()]))]
@@ -1682,7 +1697,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # stage. Structural cleanup tidies the spliced states.
     s += [('fuse', NormalizeMapBody())]
     s += [('fuse', PatternApplyOnceEverywhere([ConditionFusion()]))]
-    s += _inline_single_state('fuse')
+    s += inline_single_state('fuse')
     s += _structural_cleanup('fuse')
 
     # lift: recognize a tensor-contraction map (``map[i, k, j]: c(+)[i, j] =
@@ -1811,7 +1826,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # (``canonicalize_coexisting_guards``) and the guarded scan split keeps an empty ``else``
     # (``scan_conditional``). It only ever removes a branch with no work in it, so the guarded
     # specializations the recipe leans on -- whose arms all carry a body -- are untouched.
-    s += _inline_single_state('end')
+    s += inline_single_state('end')
     s += [('end', PruneEmptyConditionalBranches())]
 
     # Final parallelize sweep: the symbolic-stride scan specialization
@@ -1836,7 +1851,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Rebuild the scope summaries LoopToMap reads (see the note at the first parallelize stage).
     s += [('end', PropagateMemlets())]
     s += [('end', ParallelizeLoops(propagate=False))]
-    s += _inline_single_state('end')
+    s += inline_single_state('end')
 
     # Terminal fuse: the main ``fuse`` stage runs BEFORE ``normalize_wcr`` and the
     # terminal ``LoopToMap`` above. Two maps that were not yet fuseable at that point
@@ -1956,7 +1971,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Same pass, same target gate: on CPU it still declines unless the interchange lowers the
     # innermost stride, so nothing moves on a host graph that the first run already settled.
     s += [('end', MoveLoopIntoMapGated(target=target))]
-    s += _inline_single_state('end')
+    s += inline_single_state('end')
 
     # cleanup (terminal): inline the plain control-flow regions the middle stages leave standing.
     # ``rotate`` splits a block and no ``clean`` stage runs after it, so the recipe can finish
@@ -2014,7 +2029,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # cleanup (terminal, and LAST): fold the views the inlines above minted. ``InlineSDFG`` gives a
     # sliced connector its own View descriptor, and the reclaim pipeline runs BEFORE
-    # ``_inline_single_state`` / ``InlineControlFlowRegions``, so nothing folds what they leave:
+    # ``inline_single_state`` / ``InlineControlFlowRegions``, so nothing folds what they leave:
     # CloudSC finished canonicalization holding 18 views of ``zpfplsx``, every one a FULL-array
     # alias carrying the base's own shape and strides, though the source never slices it. A view
     # reaches the vectorizer as an alias to reason about instead of the array itself.
@@ -2263,6 +2278,10 @@ class CanonicalizationPipeline(ppl.Pass):
         default=True,
         desc='Master gate for the post-LoopToMap map->library-node lifts (Einsum + Copy/Fill). '
         'False (set by the vectorizer) keeps the residual as raw maps it can lower.')
+    order = properties.Property(dtype=str,
+                                default='legacy',
+                                choices=list(ORDERS),
+                                desc="Recipe order: 'legacy' stage list or 'phased' (see PIPELINE.md).")
     stages = properties.ListProperty(
         element_type=str,
         allow_none=True,
@@ -2289,7 +2308,8 @@ class CanonicalizationPipeline(ppl.Pass):
                  lift_copy: bool = True,
                  semantic_lifting: bool = True,
                  dump_dir: Optional[str] = None,
-                 stages: Optional[Sequence[str]] = None):
+                 stages: Optional[Sequence[str]] = None,
+                 order: Optional[str] = None):
         if target not in TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
@@ -2329,6 +2349,7 @@ class CanonicalizationPipeline(ppl.Pass):
         self.lift_copy = lift_copy
         self.semantic_lifting = semantic_lifting
         self.stages = list(stages) if stages is not None else None
+        self.order = resolve_order(order)
         self._specialize_constants = specialize_constants or {}
 
     def modifies(self) -> ppl.Modifies:
@@ -2345,6 +2366,24 @@ class CanonicalizationPipeline(ppl.Pass):
 
         :returns: ``(stage_label, pass)`` pairs, in recipe order, fresh instances each call.
         """
+        if self.order == 'phased':
+            # Function-local: the phased module imports its helpers from this one.
+            from dace.transformation.passes.canonicalize.phased_pipeline import build_phased_stages
+            return build_phased_stages(unroll_limit=self.unroll_limit,
+                                       peel_limit=self.peel_limit,
+                                       break_anti_dependence=self.break_anti_dependence,
+                                       interchange_carry_with_map=self.interchange_carry_with_map,
+                                       scatter_to_guarded_maps=self.scatter_to_guarded_maps,
+                                       privatize_scatter_reductions=self.privatize_scatter_reductions,
+                                       reconstruct_wavefront_nest=self.reconstruct_wavefront_nest,
+                                       normalize_loop_and_map_origin=self.normalize_loop_and_map_origin,
+                                       assume_parallel_guards=self.assume_parallel_guards,
+                                       perfect_loop_nesting=self.perfect_loop_nesting,
+                                       iv_split_rounds=IV_SPLIT_MAX_ROUNDS,
+                                       target=self.target,
+                                       lift=self.lift,
+                                       lift_copy=self.lift_copy,
+                                       semantic_lifting=self.semantic_lifting)
         return _build_stages(unroll_limit=self.unroll_limit,
                              peel_limit=self.peel_limit,
                              break_anti_dependence=self.break_anti_dependence,
@@ -2421,16 +2460,17 @@ class CanonicalizationPipeline(ppl.Pass):
         return len(stages)
 
 
-def stage_labels(target: str = 'cpu') -> List[str]:
+def stage_labels(target: str = 'cpu', order: Optional[str] = None) -> List[str]:
     """Ordered, de-duplicated stage labels of the canonicalization recipe for ``target``.
 
     Lets a caller slice :func:`canonicalize` -- run every stage up to (not including) a chosen
     label, do its own thing, then run the rest via ``CanonicalizationPipeline(stages=...)``.
 
     :param target: ``'cpu'`` (default) or ``'gpu'``.
+    :param order: Recipe order; ``None`` reads the DaCe config.
     :returns: Stage labels in first-occurrence recipe order.
     """
-    seen = OrderedSet(label for label, _ in CanonicalizationPipeline(target=target).build_stages())
+    seen = OrderedSet(label for label, _ in CanonicalizationPipeline(target=target, order=order).build_stages())
     return list(seen)
 
 
@@ -2453,7 +2493,8 @@ def canonicalize(sdfg: SDFG,
                  lift_copy: bool = True,
                  semantic_lifting: bool = True,
                  dump_dir: Optional[str] = None,
-                 stages: Optional[Sequence[str]] = None) -> SDFG:
+                 stages: Optional[Sequence[str]] = None,
+                 order: Optional[str] = None) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
     One-call recipe analogous to ``auto_optimize``.
@@ -2533,6 +2574,8 @@ def canonicalize(sdfg: SDFG,
     :param stages: Stage labels to run, in recipe order (see :func:`stage_labels`); ``None``
                    (default) runs every stage. A label that does not occur in the recipe
                    raises ``ValueError``.
+    :param order: ``'legacy'`` or ``'phased'`` recipe; ``None`` (default) reads
+                  ``optimizer.canonicalize_order`` from the DaCe config.
     :returns: The same ``sdfg`` instance, canonicalized.
     """
     # Every stage below recovers loop bounds from STRING-backed properties, which means re-parsing
@@ -2548,7 +2591,7 @@ def canonicalize(sdfg: SDFG,
                                             scatter_to_guarded_maps, privatize_scatter_reductions,
                                             reconstruct_wavefront_nest, normalize_loop_and_map_origin,
                                             assume_parallel_guards, perfect_loop_nesting, specialize_constants, lift,
-                                            lift_copy, semantic_lifting, dump_dir, stages)
+                                            lift_copy, semantic_lifting, dump_dir, stages, order)
 
 
 def canonicalize_under_authority(sdfg: SDFG,
@@ -2570,7 +2613,8 @@ def canonicalize_under_authority(sdfg: SDFG,
                                  lift_copy,
                                  semantic_lifting,
                                  dump_dir,
-                                 stages: Optional[Sequence[str]] = None) -> SDFG:
+                                 stages: Optional[Sequence[str]] = None,
+                                 order: Optional[str] = None) -> SDFG:
     """The body of :func:`canonicalize`, run with the SDFG's symbol dtypes already in scope."""
     CanonicalizationPipeline(validate=validate,
                              validate_all=validate_all,
@@ -2590,7 +2634,8 @@ def canonicalize_under_authority(sdfg: SDFG,
                              lift_copy=lift_copy,
                              semantic_lifting=semantic_lifting,
                              dump_dir=dump_dir,
-                             stages=stages).apply_pass(sdfg, {})
+                             stages=stages,
+                             order=order).apply_pass(sdfg, {})
     # The guard stage runs last, so nothing cleans up after it: on kernels whose old entry was
     # empty it leaves a redundant empty state between guard and body, which a second canonicalize
     # then removes -- a difference that is only in run 1.
