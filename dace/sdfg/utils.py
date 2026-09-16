@@ -6,6 +6,8 @@ import collections
 import copy
 import re
 import warnings
+import numpy
+import sympy
 from dace import graphlib as nx
 import time
 
@@ -2659,7 +2661,7 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
 
 
-def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[str, Union[float, int, str]]):
+def specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[str, Union[float, int, str]]):
     # This function replaces the scalars named by <scalars> with their constant values
     # A scalar can appear on:
     # 1. Interstate Edge
@@ -2669,20 +2671,19 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[
     # 3. Access Node
     # -> If access node is used then e.g. [scalar] -> [tasklet]
     # -> then create a [tasklet] that uses the scalar_val as a constant value inside
-    import numpy
 
-    def _token_replace(code: str, src: str, dst: str) -> str:
+    def token_replace(code: str, src: str, dst: str) -> str:
         # Whole identifiers only. Splitting on whitespace and brackets alone missed every unspaced
         # operator -- `o = _in*3` kept the token '_in*3', so the connector was removed while the
         # code still referenced it. The lookbehind also excludes '.', leaving `x._in` alone.
         return re.sub(r'(?<![A-Za-z0-9_.])' + re.escape(src) + r'(?![A-Za-z0-9_])', dst, code).strip()
 
-    def _token_replace_all(code: str, repl: Dict[str, str]) -> str:
+    def token_replace_all(code: str, repl: Dict[str, str]) -> str:
         for src, dst in repl.items():
-            code = _token_replace(code, src, dst)
+            code = token_replace(code, src, dst)
         return code
 
-    def _scalar_literal(value: Union[float, int, str], dtype) -> str:
+    def scalar_literal(value: Union[float, int, str], dtype: Optional[dtypes.typeclass]) -> str:
         """Source-level literal for ``value``, substituted verbatim into tasklet code.
 
         An integer replacing a read of a floating-point scalar is written as a float literal: the
@@ -2703,7 +2704,7 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[
 
     def repl_code_block_or_str(input: Union[CodeBlock, str], repl: Dict[str, str]):
         if isinstance(input, CodeBlock):
-            return CodeBlock(_token_replace_all(input.as_string, repl))
+            return CodeBlock(token_replace_all(input.as_string, repl))
         for src, dst in repl.items():
             input = input.replace(src, dst)
         return input
@@ -2713,7 +2714,7 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[
     subs = dict(scalars)
     strvals = {name: str(val) for name, val in scalars.items()}
 
-    # Captured before the descriptors are removed below (see _scalar_literal).
+    # Captured before the descriptors are removed below (see scalar_literal).
     scalar_dtypes = {name: (sdfg.arrays[name].dtype if name in sdfg.arrays else None) for name in scalars}
 
     nsdfgs = []
@@ -2759,13 +2760,13 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[
                     # floats at 15 significant digits, so a float64 no longer round-trips
                     # bit-exactly, and it folds integer quotients into ``Rational`` literals such
                     # as ``(1 / 3)``, which the C++ backend then emits as integer division.
-                    replacer = astutils.ASTFindReplace({in_tasklet_name: _scalar_literal(scalar_val, scalar_dtype)})
+                    replacer = astutils.ASTFindReplace({in_tasklet_name: scalar_literal(scalar_val, scalar_dtype)})
                     body = CodeBlock(e.dst.code.as_string, dace.dtypes.Language.Python).code
                     new_body = [ast.fix_missing_locations(replacer.visit(stmt)) for stmt in body]
                     e.dst.code = CodeBlock(code=new_body, language=dace.dtypes.Language.Python)
                 else:
-                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name,
-                                                             _scalar_literal(scalar_val, scalar_dtype)),
+                    new_code = CodeBlock(code=token_replace(e.dst.code.as_string, in_tasklet_name,
+                                                            scalar_literal(scalar_val, scalar_dtype)),
                                          language=e.dst.code.language)
                     e.dst.code = new_code
                 state.remove_edge(e)
@@ -2832,10 +2833,10 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[
         assert not (scalars.keys() & out_data_mapping.keys())
         inner = {in_data_mapping[n]: v for n, v in scalars.items() if n in in_data_mapping}
         if inner:
-            _specialize_scalar_impl(root, nsdfg_node.sdfg, inner)
+            specialize_scalar_impl(root, nsdfg_node.sdfg, inner)
 
 
-def _interacting(values: Dict[str, Union[float, int, str]]) -> bool:
+def values_interact(values: Dict[str, Union[float, int, str]]) -> bool:
     """Whether any value mentions another entry's name.
 
     Batching substitutes SIMULTANEOUSLY; the one-at-a-time loop substitutes SEQUENTIALLY, and the two
@@ -2866,9 +2867,8 @@ def specialize_scalars(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, st
     :param sdfg: The SDFG to specialize.
     :param values: Map of scalar name to the constant value to substitute in.
     """
-    import sympy
 
-    def _sympy_to_python_number(val):
+    def sympy_to_python_number(val: Union[float, int, str, sympy.Number]) -> Union[float, int, str]:
         """Convert any SymPy numeric type to a native Python int or float."""
         if isinstance(val, sympy.Integer):
             return int(val)
@@ -2887,15 +2887,15 @@ def specialize_scalars(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, st
         assert isinstance(
             val, (float, int, str,
                   sympy.Number)), f"Expected scalar value to be float, int, str, or sympy.Number, got {type(val)}"
-        scalars[name] = _sympy_to_python_number(val) if not isinstance(val, (float, int, str)) else val
+        scalars[name] = sympy_to_python_number(val) if not isinstance(val, (float, int, str)) else val
 
-    if _interacting(scalars):
+    if values_interact(scalars):
         # Cannot fold into one pass without changing the result -- keep the sequential meaning.
         for name, val in scalars.items():
-            _specialize_scalar_impl(sdfg, sdfg, {name: val})
+            specialize_scalar_impl(sdfg, sdfg, {name: val})
         return
 
-    _specialize_scalar_impl(sdfg, sdfg, scalars)
+    specialize_scalar_impl(sdfg, sdfg, scalars)
 
 
 def specialize_symbol(sdfg: 'dace.SDFG', symbol_name: str, value: Union[float, int, str]):
@@ -2923,14 +2923,14 @@ def specialize_symbols(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, st
     symbols into a single call turns N walks into one.
 
     Substituting the symbols together is identical to substituting them one at a time as long as no
-    value names another key; :func:`_interacting` detects the exception and falls back to sequential.
+    value names another key; :func:`values_interact` detects the exception and falls back to sequential.
 
     :param sdfg: The SDFG to specialize.
     :param values: Map of symbol name to the constant value to substitute in.
     """
     if not values:
         return
-    if _interacting(values):
+    if values_interact(values):
         # Cannot fold into one pass without changing the result -- keep the sequential meaning.
         for name, value in values.items():
             specialize_symbols(sdfg, {name: value})
@@ -2952,7 +2952,7 @@ def specialize_symbols(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, st
             if name in sd.symbols:
                 sd.remove_symbol(name)
     # Strip the symbols from any nested SDFG node's symbol_mapping that still maps them.
-    for node, _ in sdfg.all_nodes_recursive():
+    for node, parent_graph in sdfg.all_nodes_recursive():
         if isinstance(node, NestedSDFG):
             for name in vals:
                 node.symbol_mapping.pop(name, None)
@@ -3046,8 +3046,9 @@ def symbol_carries_graph_structure(sdfg: 'dace.SDFG', symbol_str: str, structura
 
 def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                             symbol_str: str,
-                            default_type: 'dace.dtypes.typeclass' = None,
-                            in_scalar_name: str = None):
+                            default_type: Optional['dace.dtypes.typeclass'] = None,
+                            in_scalar_name: Optional[str] = None) -> None:
+    # Avoid import loop: both modules import dace.sdfg.utils at module scope.
     import dace.sdfg.construction_utils as cutil
     import dace.sdfg.tasklet_utils as tutil
 

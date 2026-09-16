@@ -1536,7 +1536,7 @@ def make_view_output_inline_sdfg() -> dace.SDFG:
     a_v = state.add_access("A_v")
     b_v = state.add_access("B_v")
     b = state.add_access("B")
-    nested = state.add_nested_sdfg(inner, inputs={"_ain"}, outputs={"_aout"}, name="nested_double")
+    nested = state.add_nested_sdfg(inner, inputs={"_ain": None}, outputs={"_aout": None}, name="nested_double")
     state.add_edge(a, None, a_v, "views", dace.Memlet("A[0, 0:3, 0:3] -> [0:3, 0:3]"))
     state.add_edge(a_v, None, nested, "_ain", dace.Memlet("A_v[0:3, 0:3]"))
     state.add_edge(nested, "_aout", b_v, None, dace.Memlet("B_v[0:3, 0:3]"))
