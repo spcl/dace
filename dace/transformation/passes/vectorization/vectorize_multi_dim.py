@@ -781,9 +781,10 @@ def normalize_loop_nests(sdfg: dace.SDFG) -> None:
 
     1. Inline the wrapper NSDFGs (and any single-state leaf body) via ``InlineSDFG`` /
        ``InlineMultistateSDFG`` so the maps become adjacent. A multi-state body, or one
-       with an inout connector (cloudsc ``zqlhs`` RMW / ``vbor`` reused-scalar chains), is
-       left intact for the walker -- the candidates are enumerated here rather than handed
-       to the matcher, because ``InlineSDFG`` accepts a shared inout connector.
+       that reads and writes an inout connector through one access node (cloudsc ``zqlhs``
+       RMW / ``vbor`` reused-scalar chains), is left intact for the walker -- the candidates
+       are enumerated here rather than handed to the matcher, because ``InlineSDFG`` accepts
+       such a body.
     2. ``MapCollapse`` the now-adjacent perfectly-nested single-param maps into one
        multi-param map.
 
@@ -798,13 +799,29 @@ def normalize_loop_nests(sdfg: dace.SDFG) -> None:
     _resolve_body_nsdfg_symbol_aliases(sdfg)
 
 
+def rewrites_inout_through_one_access_node(nsdfg: dace.nodes.NestedSDFG) -> bool:
+    """Whether an inout connector of ``nsdfg`` is read and written through one inner access node.
+
+    That is the RMW chain body the tile descent walks (cloudsc ``zqlhs``). A loop-nest wrapper
+    reads an inout container at a source node and writes it at a separate sink node, so it is
+    not one.
+
+    :param nsdfg: The nested SDFG node.
+    :returns: True if some inner access node of an inout connector has both in- and out-edges.
+    """
+    inout = OrderedSet(nsdfg.in_connectors) & OrderedSet(nsdfg.out_connectors)
+    return any(node.data in inout and state.in_degree(node) > 0 and state.out_degree(node) > 0
+               for state in nsdfg.sdfg.states() for node in state.data_nodes())
+
+
 def inline_loop_nest_wrappers(sdfg: dace.SDFG) -> int:
-    """Inline every body NestedSDFG except the inout-connector ones the tile descent walks.
+    """Inline every body NestedSDFG except the RMW chain bodies the tile descent walks.
 
     ``InlineSDFG`` inlines a nested SDFG that reads and writes one container through a single
     access node (PR #2586), so handing the whole graph to the matcher now flattens the cloudsc
     ``zqlhs`` RMW body that :func:`normalize_loop_nests` has to keep. Enumerate the candidates
-    instead and probe only the nodes the descent does not need.
+    instead and probe only the nodes the descent does not need
+    (see :func:`rewrites_inout_through_one_access_node`).
 
     :param sdfg: SDFG to inline in place.
     :returns: The number of inlines applied.
@@ -817,7 +834,7 @@ def inline_loop_nest_wrappers(sdfg: dace.SDFG) -> int:
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, dace.nodes.NestedSDFG) or not isinstance(parent, dace.SDFGState):
                 continue
-            if OrderedSet(node.in_connectors) & OrderedSet(node.out_connectors):
+            if rewrites_inout_through_one_access_node(node):
                 continue
             for xform, pattern_node in probes:
                 if not prune_and_inline.accepts(xform, pattern_node, parent, node):
