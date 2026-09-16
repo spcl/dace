@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, SDFGState, Memlet, config, data as dt, dtypes, properties, subsets, symbolic
 from dace.frontend.python import astutils
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes as nd, utils as sdutil, graph as gr
 from dace.transformation import pass_pipeline as ppl, transformation
 
@@ -528,14 +529,19 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
         return out
 
 
-def _references_view(edge_data, view_name: str) -> bool:
+def _condition_text(edge_data) -> str:
+    """The edge condition as text, or '' when it has none -- the prefilter's haystack."""
+    try:
+        return edge_data.condition.as_string or ''
+    except Exception:
+        return ''
+
+
+def _references_view(edge_data, view_name: str, condition_text: str) -> bool:
     """Cheap textual prefilter: does this interstate edge mention view_name at all?"""
     if any(view_name in v for v in edge_data.assignments.values()):
         return True
-    try:
-        return view_name in edge_data.condition.as_string
-    except Exception:
-        return False
+    return view_name in condition_text
 
 
 def _has_view_subscript(tree: ast.AST, view_name: str) -> bool:
@@ -554,6 +560,10 @@ def _has_view_subscript(tree: ast.AST, view_name: str) -> bool:
 @transformation.explicit_cf_compatible
 class RemoveViews(ppl.Pass):
 
+    #: Interstate edges paired with their condition text, derived once per :meth:`apply_pass` run
+    #: and dropped again at its end. Empty outside a run.
+    interstate_edges: List[Tuple[gr.Edge, str]] = []
+
     def modifies(self) -> ppl.Modifies:
         return (ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Tasklets)
 
@@ -570,6 +580,14 @@ class RemoveViews(ppl.Pass):
     ) -> Optional[Set[str]]:
         removed: Set[str] = set()
 
+        # Every view candidate asks three feasibility probes and three rewrites for the interstate
+        # edges, and each one re-unparsed every condition AST to a string. The set of interstate
+        # edges and the conditions are fixed for the whole run -- this pass adds and removes no
+        # block or edge, and rewrites only assignment right-hand sides, which are already strings
+        # and are read live -- so both are derived once here. On sw4_rhs4sg (850 views removed)
+        # that one unparse was 55% of this pass.
+        self.interstate_edges = [(e, _condition_text(e.data)) for e in sdfg.all_interstate_edges()]
+
         iteration = 0
         changed = True
         while changed:
@@ -579,16 +597,17 @@ class RemoveViews(ppl.Pass):
                 print(f'[{_PASS}] --- fixpoint iteration {iteration} ---')
             for state in sdfg.states():
                 changed |= self._process_state(sdfg, state, removed)
+        self.interstate_edges = []
 
+        # One walk for every name, not one walk per name: dropping a descriptor adds no access
+        # node, so the live set answers all of them.
+        accessed = OrderedSet(n.data for st in sdfg.states() for n in st.nodes() if isinstance(n, nd.AccessNode))
         for name in list(removed):
-            if name in sdfg.arrays:
-                still_used = any(
-                    isinstance(n, nd.AccessNode) and n.data == name for st in sdfg.states() for n in st.nodes())
-                if not still_used:
-                    sdfg.remove_data(name, validate=False)
-                    if _DEBUGPRINT:
-                        print(f'[{_PASS}] garbage-collected descriptor'
-                              f' "{name}"')
+            if name in sdfg.arrays and name not in accessed:
+                sdfg.remove_data(name, validate=False)
+                if _DEBUGPRINT:
+                    print(f'[{_PASS}] garbage-collected descriptor'
+                          f' "{name}"')
 
         if _DEBUGPRINT:
             if removed:
@@ -880,8 +899,8 @@ class RemoveViews(ppl.Pass):
         ``view_name``. Returns False if anything fails to parse or if any
         ``V[...]`` subscript survives the visit.
         """
-        for e in sdfg.all_interstate_edges():
-            if not _references_view(e.data, view_name):
+        for e, condition_text in self.interstate_edges:
+            if not _references_view(e.data, view_name, condition_text):
                 continue
 
             # Assignments: parse each RHS, visit, confirm no V-subscripts remain.
@@ -906,9 +925,9 @@ class RemoveViews(ppl.Pass):
         a fresh rewriter, and write the result back. Assignments round-trip
         conditions are CodeBlocks so we reassign the code list.
         """
-        for e in sdfg.all_interstate_edges():
+        for e, condition_text in self.interstate_edges:
             data = e.data
-            if not _references_view(data, view_name):
+            if not _references_view(data, view_name, condition_text):
                 continue
 
             for k, v in list(data.assignments.items()):

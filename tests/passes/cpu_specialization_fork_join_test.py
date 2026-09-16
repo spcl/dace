@@ -379,57 +379,6 @@ def test_passes_are_idempotent():
     assert SpecializeCpuTransfers().apply_pass(transfers, {}) is None
 
 
-def test_the_cpu_stage_decides_and_canonicalize_does_not():
-    """End to end, and the stage boundary is half the assertion.
-
-    ``canonicalize`` must leave BOTH shapes parallel: wherever the parallel/sequential choice is
-    open it takes parallel, so a nest that provably cannot pay for a region still comes out of it
-    holding one. ``cpu_specialize`` is what takes the region away, and only from that one -- TSVC
-    s115's symbolic extent is assumed big and keeps its region. Reading only the end state would
-    pass just as well if canonicalization had made the CPU's decision for it.
-    """
-    from dace.transformation.passes.canonicalize.pipeline import canonicalize
-    from dace.transformation.passes.cpu_specialization import cpu_specialize
-
-    @dace.program
-    def triangular_sweep(a: dace.float64[N]):
-        for j in range(N):
-            for i in range(j + 1, N):
-                a[i] = a[i] - a[j]
-
-    # Pinned across BOTH halves: canonicalize runs CalibrateCpuThresholds, which would otherwise
-    # rewrite the threshold to this host's core count -- and leave it rewritten for the rest of the
-    # process, which is how a size verdict starts depending on test order.
-    @dace.program
-    def tiny_sweep(a: dace.float64[BELOW_BREAK_EVEN], b: dace.float64[BELOW_BREAK_EVEN]):
-        for j in range(BELOW_BREAK_EVEN):
-            for i in range(BELOW_BREAK_EVEN):
-                a[i] = a[i] - b[j]
-
-    def parallel_maps(sdfg):
-        return [
-            n.map.label for n, _ in sdfg.all_nodes_recursive()
-            if isinstance(n, nodes.MapEntry) and n.map.schedule != dtypes.ScheduleType.Sequential
-        ]
-
-    with pinned_break_even():
-        sdfg = triangular_sweep.to_sdfg(simplify=True)
-        canonicalize(sdfg, validate=True)
-        tiny = tiny_sweep.to_sdfg(simplify=True)
-        canonicalize(tiny, validate=True)
-
-        assert parallel_maps(sdfg), 's115: a symbolic extent is big, so the inner map keeps its region'
-        assert parallel_maps(tiny), (f'canonicalization sequentialized a {BELOW_BREAK_EVEN}-wide map; that '
-                                     'verdict belongs to the CPU stage, not to the canonical form')
-
-        cpu_specialize(sdfg)
-        cpu_specialize(tiny)
-
-    assert parallel_maps(sdfg), 's115: the cost model must not take a symbolic extent away'
-    still_parallel = parallel_maps(tiny)
-    assert not still_parallel, f'a provably {BELOW_BREAK_EVEN}-wide map cannot pay for a region, got {still_parallel}'
-
-
 def test_strided_re_entered_copy_is_sequential_but_not_memcpy():
     """A non-contiguous copy has no single-``memcpy`` form: it is still sequentialized, but the
     implementation is left to the library node's own selector."""

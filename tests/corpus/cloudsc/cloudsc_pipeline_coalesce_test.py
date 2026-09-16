@@ -161,6 +161,15 @@ def test_coalescing_does_not_change_the_numbers(premapped):
         assert np.array_equal(ref, out), f'{name} changed: max |diff| = {np.max(np.abs(ref - out))}'
 
 
+def test_the_accumulation_reaching_the_band_needs_no_atomic(premapped):
+    """The third sweep accumulates one element per iteration, so the graph handed to the band must
+    already say so: an inlined RMW body leaves its whole-array memlet on the enclosing map exit, and
+    codegen reads that box as the write set and emits an atomic the write does not need."""
+    code = copy.deepcopy(premapped).generate_code()[0].code
+    assert '>::reduce(' in code, 'the accumulation reaching the band is not a WCR any more'
+    assert 'reduce_atomic' not in code, 'a per-element accumulation was emitted as an atomic'
+
+
 def test_reapplying_the_band_is_a_no_op(premapped):
     """Idempotence -- the ``FixedPointPipeline`` spin hazard. ONE application coalesces fully: the
     second leaves the graph bit-identical and reports no further fusion."""

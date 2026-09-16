@@ -13,6 +13,7 @@ import warnings
 
 import sympy as sp
 from io import StringIO
+from ordered_set import OrderedSet
 from typing import IO, TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import dace
@@ -782,6 +783,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     # Traverse memlet path to determine conflicts.
     # If no conflicts will occur, write without atomics
     # (e.g., if the array has been defined in a non-parallel schedule context)
+    followed_view_edges = OrderedSet()
     while edge is not None:
         path = dfg.memlet_path(edge)
         for e in path:
@@ -809,10 +811,13 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
 
         # Writes through views conflict on the viewed container
         viewed = sdutil.get_last_view_node(dfg, dst)
-        if viewed is None and isinstance(sdfg.arrays[dst.data], data.View):
-            # An inlined nested SDFG leaves the ``views`` edge leaving through the map exit: follow it.
+        if isinstance(sdfg.arrays[dst.data], data.View):
+            # The ``views`` edge can leave through a map exit -- inlining a nested SDFG puts one
+            # there. ``get_last_view_node`` resolves the container at the far end and skips that
+            # exit, so the edge is followed here to let the loop above see the scopes on the way.
             view_edge = sdutil.get_view_edge(dfg, dst)
-            if view_edge is not None and view_edge.src is dst:
+            if view_edge is not None and view_edge.src is dst and view_edge not in followed_view_edges:
+                followed_view_edges.add(view_edge)
                 edge = view_edge
                 continue
         dst = viewed or dst
