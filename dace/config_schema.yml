@@ -43,9 +43,10 @@ required:
                 default: legacy
                 title: Canonicalization recipe order
                 description: >
-                    Which recipe canonicalize builds: "legacy" (the historical stage list) or
+                    Which recipe canonicalize builds: "legacy" (the historical stage list),
                     "phased" (one ordered list of phases, see
-                    dace/transformation/passes/canonicalize/PIPELINE.md).
+                    dace/transformation/passes/canonicalize/PIPELINE.md), or "single" (work in
+                    progress: every pass at one position, see docs/design/canonicalize_phase_order.md).
 
             autotile_size:
                 type: int

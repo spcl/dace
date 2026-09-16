@@ -726,7 +726,7 @@ GPU_DEFAULTS: Dict[str, Any] = {
 TARGET_DEFAULTS: Dict[str, Dict[str, Any]] = {'cpu': CPU_DEFAULTS, 'gpu': GPU_DEFAULTS}
 
 #: Recipe orders :class:`CanonicalizationPipeline` can build.
-ORDERS: Tuple[str, ...] = ('legacy', 'phased')
+ORDERS: Tuple[str, ...] = ('legacy', 'phased', 'single')
 
 
 def resolve_order(order: Optional[str]) -> str:
@@ -2282,7 +2282,8 @@ class CanonicalizationPipeline(ppl.Pass):
     order = properties.Property(dtype=str,
                                 default='legacy',
                                 choices=list(ORDERS),
-                                desc="Recipe order: 'legacy' stage list or 'phased' (see PIPELINE.md).")
+                                desc="Recipe order: 'legacy' stage list, 'phased', or 'single' (work in progress; "
+                                "see PIPELINE.md).")
     stages = properties.ListProperty(
         element_type=str,
         allow_none=True,
@@ -2367,24 +2368,27 @@ class CanonicalizationPipeline(ppl.Pass):
 
         :returns: ``(stage_label, pass)`` pairs, in recipe order, fresh instances each call.
         """
-        if self.order == 'phased':
-            # Function-local: the phased module imports its helpers from this one.
+        if self.order in ('phased', 'single'):
+            # Function-local: the phased modules import their helpers from this one.
             from dace.transformation.passes.canonicalize.phased_pipeline import build_phased_stages
-            return build_phased_stages(unroll_limit=self.unroll_limit,
-                                       peel_limit=self.peel_limit,
-                                       break_anti_dependence=self.break_anti_dependence,
-                                       interchange_carry_with_map=self.interchange_carry_with_map,
-                                       scatter_to_guarded_maps=self.scatter_to_guarded_maps,
-                                       privatize_scatter_reductions=self.privatize_scatter_reductions,
-                                       reconstruct_wavefront_nest=self.reconstruct_wavefront_nest,
-                                       normalize_loop_and_map_origin=self.normalize_loop_and_map_origin,
-                                       assume_parallel_guards=self.assume_parallel_guards,
-                                       perfect_loop_nesting=self.perfect_loop_nesting,
-                                       iv_split_rounds=IV_SPLIT_MAX_ROUNDS,
-                                       target=self.target,
-                                       lift=self.lift,
-                                       lift_copy=self.lift_copy,
-                                       semantic_lifting=self.semantic_lifting)
+            from dace.transformation.passes.canonicalize.single_occurrence_pipeline import (
+                build_single_occurrence_stages)
+            builder = build_phased_stages if self.order == 'phased' else build_single_occurrence_stages
+            return builder(unroll_limit=self.unroll_limit,
+                           peel_limit=self.peel_limit,
+                           break_anti_dependence=self.break_anti_dependence,
+                           interchange_carry_with_map=self.interchange_carry_with_map,
+                           scatter_to_guarded_maps=self.scatter_to_guarded_maps,
+                           privatize_scatter_reductions=self.privatize_scatter_reductions,
+                           reconstruct_wavefront_nest=self.reconstruct_wavefront_nest,
+                           normalize_loop_and_map_origin=self.normalize_loop_and_map_origin,
+                           assume_parallel_guards=self.assume_parallel_guards,
+                           perfect_loop_nesting=self.perfect_loop_nesting,
+                           iv_split_rounds=IV_SPLIT_MAX_ROUNDS,
+                           target=self.target,
+                           lift=self.lift,
+                           lift_copy=self.lift_copy,
+                           semantic_lifting=self.semantic_lifting)
         return _build_stages(unroll_limit=self.unroll_limit,
                              peel_limit=self.peel_limit,
                              break_anti_dependence=self.break_anti_dependence,
