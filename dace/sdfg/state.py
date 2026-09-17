@@ -5,6 +5,7 @@ import ast
 import abc
 import collections
 import copy
+import re
 import inspect
 import itertools
 import warnings
@@ -764,12 +765,24 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
-        if isinstance(sdfg.start_block, AbstractControlFlowRegion):
-            update_if_not_none(defined_syms, sdfg.start_block.new_symbols(defined_syms))
+        try:
+            start_block = sdfg.start_block
+        except ValueError:
+            # The start block is ambiguous while the SDFG is still being built
+            start_block = None
+        if isinstance(start_block, AbstractControlFlowRegion):
+            update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
         for edge in sdfg.all_interstate_edges():
             update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
             if isinstance(edge.dst, AbstractControlFlowRegion):
                 update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
+        regions = []
+        region = state.parent_graph
+        while region is not None and region is not sdfg:
+            regions.append(region)
+            region = region.parent_graph
+        for region in reversed(regions):
+            update_if_not_none(defined_syms, region.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
         sdict = state.scope_dict()
@@ -921,16 +934,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets.
-                # NOTE: We have to use a memlet tree here, because the data could potentially
-                #   go to multiple sources. We have to do it this way, because if we would call
-                #   `memlet_tree()` here, then we would just get the edge back.
+                # Outgoing counterpart of the above. A source-relative Memlet's .data names the
+                # inner transient, not the written array, so resolve the real destination via the
+                # memlet-tree root -- else its shape/stride symbols drop from the kernel signature.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    if ((not oedge.data.is_empty()) and (oedge.data.data not in descs)
-                            and (oedge.data.data not in additional_descs)):
-                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+                    if oedge.data.is_empty():
+                        continue
+                    root_dst = self.graph.memlet_tree(oedge).root().edge.dst
+                    dst_name = root_dst.data if isinstance(root_dst, nd.AccessNode) else oedge.data.data
+                    if dst_name not in descs and dst_name not in additional_descs:
+                        additional_descs[dst_name] = sdfg.arrays[dst_name]
 
             else:
                 # Case is ignored.
@@ -965,6 +980,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             elif isinstance(self, SubgraphView):
                 if (desc.lifetime != dtypes.AllocationLifetime.Scope):
                     data_args[name] = desc
+                # Views allocate no memory, so their storage does not move them outside the subgraph
+                elif isinstance(desc, dt.View):
+                    continue
                 # Check for allocation constraints that would
                 # enforce array to be allocated outside subgraph
                 elif desc.lifetime == dtypes.AllocationLifetime.Scope:
@@ -1645,6 +1663,13 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # do not yet exist)
             for e in sdfg.edges():
                 symbols.update(e.data.new_symbols(sdfg, symbols))
+        regions = []
+        region = self.parent_graph
+        while region is not None and region is not sdfg:
+            regions.append(region)
+            region = region.parent_graph
+        for region in reversed(regions):
+            symbols.update({k: v for k, v in region.new_symbols(symbols).items() if v is not None})
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()
@@ -1715,25 +1740,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, (set, collections.abc.KeysView)):
+        if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
+            warnings.warn("Using sets for connectors is discouraged as it leads to indeterministic behavior.")
+        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView)):
+        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         tasklet = nd.Tasklet(
-            name,
-            inputs,
-            outputs,
-            code,
-            language,
-            state_fields=state_fields,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
-            location=location,
-            side_effects=side_effects,
-            debuginfo=debuginfo,
-        ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
             name,
             inputs,
             outputs,
@@ -1793,9 +1807,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, (set, collections.abc.KeysView)):
+        if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
+            warnings.warn("Using sets for connectors is discouraged as it leads to indeterministic behavior.")
+        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView)):
+        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         s = nd.NestedSDFG(
@@ -1821,9 +1837,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Validate missing symbols
             missing_symbols = [s for s in symbols if s not in symbol_mapping]
+            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
             if missing_symbols and self.sdfg is not None:
                 # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in self.sdfg.symbols}
+                parent_mapping = {s: s for s in missing_symbols if s in defined_symbols}
                 symbol_mapping.update(parent_mapping)
                 s.symbol_mapping = symbol_mapping
                 missing_symbols = [s for s in symbols if s not in symbol_mapping]
@@ -1833,9 +1850,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # Add new global symbols to nested SDFG
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
-                    # TODO: Think of a better way to avoid calling
-                    # symbols_defined_at in this moment
-                    sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
+                    sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
 
@@ -2913,15 +2928,35 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         node.sdfg = sdfg
         if isinstance(node, AbstractControlFlowRegion):
             for n in node.all_control_flow_blocks():
-                n.sdfg = self.sdfg
+                n.sdfg = sdfg
+            # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
+            # reports 0 -- the same id as the root and as every other unregistered region.
+            # Appending instead would assign positions in insertion order while this assigns
+            # them in tree order, so the next reset would silently renumber.
+            self.reset_cfg_list()
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
             start_block = is_start_state
 
         if start_block:
-            self.start_block = len(self.nodes()) - 1
+            self._start_block = len(self.nodes()) - 1
             self._cached_start_block = node
+
+    def remove_node(self, node):
+        # `_start_block` is an index into the node list, so any removal invalidates it:
+        # the indices of later nodes shift down, leaving it pointing at a different block
+        # or past the end. Re-resolve it by identity around the removal.
+        if self._start_block is not None:
+            start_block = self.node(self._start_block)
+        else:
+            start_block = None
+        super().remove_node(node)
+        self._cached_start_block = None
+        if start_block is node:
+            self._start_block = None
+        elif start_block is not None:
+            self.start_block = self.node_id(start_block)
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
@@ -3297,6 +3332,8 @@ class LoopRegion(ControlFlowRegion):
         self.update_before_condition = update_before_condition
         self.unroll = unroll
         self.unroll_factor = unroll_factor
+        self._new_symbols_key = None
+        self._new_symbols_value = {}
 
     def inline(self, lower_returns: bool = False) -> Tuple[bool, Any]:
         """
@@ -3608,7 +3645,7 @@ class LoopRegion(ControlFlowRegion):
 
     def replace_meta_accesses(self, replacements):
         if self.loop_variable in replacements:
-            self.loop_variable = replacements[self.loop_variable]
+            self.loop_variable = str(replacements[self.loop_variable])
         replace_in_codeblock(self.loop_condition, replacements)
         if self.init_statement:
             replace_in_codeblock(self.init_statement, replacements)
@@ -3755,6 +3792,20 @@ class LoopRegion(ControlFlowRegion):
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.init_statement and self.loop_variable:
+            # Reuse the inferred type while the header text and the types of the names it reads are unchanged
+            texts = (self.loop_variable, self.init_statement.as_string, self.loop_condition.as_string,
+                     self.update_statement.as_string if self.update_statement else '')
+            if self._new_symbols_key is not None and self._new_symbols_key[0] == texts:
+                names = self._new_symbols_key[1]
+            else:
+                names = tuple(sorted(set(re.findall(r'[A-Za-z_]\w*', ' '.join(texts)))))
+            arrays = self.sdfg.arrays
+            key = (texts, names, tuple(symbols.get(n)
+                                       for n in names), tuple(arrays[n].dtype if n in arrays else None for n in names))
+            if key == self._new_symbols_key:
+                return dict(self._new_symbols_value)
+            self._new_symbols_key = key
+            self._new_symbols_value = {}
             alltypes = copy.copy(symbols)
             alltypes.update({k: v.dtype for k, v in self.sdfg.arrays.items()})
             l_end = loop_analysis.get_loop_end(self)
@@ -3764,7 +3815,8 @@ class LoopRegion(ControlFlowRegion):
                                                   infer_expr_type(l_end, alltypes))
             init_rhs = loop_analysis.get_init_assignment(self)
             if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
-                return {self.loop_variable: inferred_type}
+                self._new_symbols_value = {self.loop_variable: inferred_type}
+            return dict(self._new_symbols_value)
         return {}
 
     def replace_dict(self,
@@ -3774,7 +3826,7 @@ class LoopRegion(ControlFlowRegion):
                      replace_keys: bool = True):
         if replace_keys:
             if self.loop_variable and self.loop_variable in repl:
-                self.loop_variable = repl[self.loop_variable]
+                self.loop_variable = str(repl[self.loop_variable])
 
         from dace.sdfg.replace import replace_properties_dict
         replace_properties_dict(self, repl, symrepl)
@@ -3819,6 +3871,11 @@ class LoopRegion(ControlFlowRegion):
 
 @make_properties
 class ConditionalBlock(AbstractControlFlowRegion):
+    """
+    A control flow region that represents conditional code exectution (if/elif/else).
+
+    Add branches with `add_branch(condition, region)`, where the condition is optional.
+    """
 
     _branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]]
 
@@ -3850,6 +3907,12 @@ class ConditionalBlock(AbstractControlFlowRegion):
         self._branches.append([condition, branch])
         branch.parent_graph = self
         branch.sdfg = self.sdfg
+        # A branch is reached only through this list, never through ``nodes()``, so the generic
+        # ``add_node`` bookkeeping never runs for it: propagate the SDFG into the branch and
+        # invalidate here instead. Without this the branch's blocks keep ``sdfg is None``.
+        for n in branch.all_control_flow_blocks():
+            n.sdfg = self.sdfg
+        self.reset_cfg_list()
 
     def remove_branch(self, branch: ControlFlowRegion):
         self._branches = [(c, b) for c, b in self._branches if b is not branch]

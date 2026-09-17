@@ -89,6 +89,11 @@ class CUDACodeGen(TargetCodeGenerator):
         self._cpu_codegen: Optional['CPUCodeGen'] = None
         self._block_dims = None
         self._grid_dims = None
+        # Number of chiplets the grid of the kernel being generated is distributed over
+        # (1 when the distribution does not apply, see ``chiplet_count``)
+        self._kernel_chiplet_count = 1
+        # Number of thread-blocks of the first grid dimension every chiplet owns (see ``chiplet_count``)
+        self._kernel_chiplet_chunk = 1
         self._kernel_map = None
         self._kernel_state = None
         self._kernel_grid_conditions: List[str] = []
@@ -99,6 +104,9 @@ class CUDACodeGen(TargetCodeGenerator):
         self._exitcode = CodeIOStream()
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
+        # True while generating an SDFG nested below the one whose schedule established the current
+        # device-level scope, i.e. no longer the kernel's own state machine.
+        self._below_toplevel_sdfg = False
         self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
         """
         # Keep track of which kernels got a threadBlock map inserted
@@ -258,6 +266,11 @@ class CUDACodeGen(TargetCodeGenerator):
         self._compute_pool_release(sdfg)
 
         # Write GPU context to state structure
+        # Deliberately declared WITHOUT an initializer: CompiledSDFG.get_state_struct() recovers
+        # the layout by parsing these declarations, and its field regex is anchored at the end of
+        # the declaration, so a `= nullptr` suffix stops the parse dead and silently drops every
+        # field after this one. The pointer is zeroed by value-initializing the whole state
+        # (`new T()` in framecode) instead, which DACE_GPU_CHECK relies on.
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
         # Collect all defined symbols and argument lists with one traversal
@@ -399,9 +412,9 @@ class CUDACodeGen(TargetCodeGenerator):
             poolcfg = int(Config.get('compiler', 'cuda', 'mempool_release_threshold'))
             pool_header = """
     {backend}MemPool_t mempool;
-    {backend}DeviceGetDefaultMemPool(&mempool, 0);
+    DACE_GPU_CHECK({backend}DeviceGetDefaultMemPool(&mempool, __dace_device));
     uint64_t threshold = {poolcfg_threshold};
-    {backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold);
+    DACE_GPU_CHECK({backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold));
 """.format(backend=self.backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
 
         self._codeobject.code = """
@@ -413,6 +426,7 @@ class CUDACodeGen(TargetCodeGenerator):
 DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
 DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
+DACE_EXPORTED void __dace_gpu_drain_error({sdfg_state_name} *__state);
 DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
 DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
 
@@ -434,14 +448,28 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
         return 2;
     }}
 
+    // One GPU per process, selected here and never changed, so the memory pool, every kernel and
+    // every library handle share it. Which physical GPU is the process's business: the visible-
+    // devices variable renumbers what it exposes, so a rank's own GPU is device 0. An ordinal
+    // fixed at codegen time cannot do that -- every rank shares one build.
+    const int __dace_device = 0;
+    if ({backend}SetDevice(__dace_device) != {backend}Success)
+    {{
+        printf("ERROR: could not select {backend} device 0 out of %d visible\\n", count);
+        return 4;
+    }}
+
+    __dace_gpu_drain_error(__state);
+
     // Initialize {backend} before we run the application
     float *dev_X;
     DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
     DACE_GPU_CHECK({backend}Free(dev_X));
 
-    {pool_header}
-
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
+
+    // After the context exists: DACE_GPU_CHECK records into it.
+    {pool_header}
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -477,9 +505,20 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     return __err;
 }}
 
-// The runtime's own last-error slot is per-host-thread and shared with every other GPU user in the
-// process, so it is not a reliable carrier for this SDFG's failures. Hand back what the generated
-// code recorded instead, and clear it so a failure is delivered exactly once.
+// Discard a pending error left by another GPU user in this process, so the next checked call does
+// not report it as its own. Sticky errors survive this and are reported normally.
+// Must not touch __state->gpu_context: init calls this before the context exists.
+void __dace_gpu_drain_error({sdfg_state_name} *__state) {{
+    (void)__state;
+    gpuError_t __pre_existing = {backend}GetLastError();
+    if (__pre_existing != (gpuError_t)0) {{
+        printf("WARNING: a GPU error was already pending on entry to a DaCe program and has been "
+               "discarded: %s (%d). It was not caused by this SDFG.\\n",
+               gpuGetErrorString(__pre_existing), __pre_existing);
+    }}
+}}
+
+// Returns what the generated code recorded, not the runtime's shared slot, and clears it.
 int __dace_gpu_last_error({sdfg_state_name} *__state) {{
     int __err = static_cast<int>(__state->gpu_context->lasterror);
     __state->gpu_context->lasterror = (gpuError_t)0;
@@ -563,11 +602,12 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
         # Get CUDA architectures from configuration
         backend = common.get_gpu_backend()
         if backend == 'cuda':
-            cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
-            cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
 
-            cuda_arch = ';'.join(cuda_arch)
-            options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
+            if cuda_arch := Config.get('compiler', 'cuda', 'cuda_arch'):
+                # A CUDA architecture was provided so use it.
+                cuda_arch = cuda_arch.split(',')
+                cuda_arch = [ca for ca in map(str.strip, cuda_arch) if len(ca) > 0]
+                options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{";".join(cuda_arch)}"')
 
             # One ``-Xcompiler`` per flag, since nvcc splits the comma-separated form on commas.
             # CMake hands nvcc nothing from CMAKE_CXX_FLAGS, so this is the only route.
@@ -576,12 +616,15 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
 
         if backend == 'hip':
-            hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
-            hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
+
+            if hip_arch := Config.get('compiler', 'cuda', 'hip_arch'):
+                # HIP architecture was given.
+                hip_arch = hip_arch.split(',')
+                hip_arch = [ha for ha in map(str.strip, hip_arch) if len(ha) > 0]
+                options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
 
             # No wrapping: hipcc is one driver, with no separate host compiler to forward to.
             flags = ' '.join([Config.get('compiler', 'cuda', 'hip_args')] + forwarded_host_args())
-            options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
             options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
@@ -671,9 +714,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             if nodedesc.pool:
-                cudastream = getattr(node, '_cuda_stream', 'nullptr')
-                if cudastream != 'nullptr':
-                    cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                cudastream = common.gpu_stream_expr(getattr(node, '_cuda_stream', 'nullptr'))
                 result_alloc.write(
                     f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
                 )
@@ -820,9 +861,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if nodedesc.pool:
                 if (sdfg, dataname) not in self.pool_release:  # If pooled, will be freed somewhere else
-                    cudastream = getattr(node, '_cuda_stream', 'nullptr')
-                    if cudastream != 'nullptr':
-                        cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                    cudastream = common.gpu_stream_expr(getattr(node, '_cuda_stream', 'nullptr'))
                     callsite_stream.write(
                         f'DACE_GPU_CHECK(%sFreeAsync(%s, %s));\n' % (self.backend, dataname, cudastream), cfg, state_id,
                         node)
@@ -1053,9 +1092,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             else:
                 if max_streams >= 0:
                     print('WARNING: Undefined stream, reverting to default')
-                if dst_location == 'Host':
-                    is_sync = True
                 cudastream = 'nullptr'
+
+            # The host can read a host-located destination as soon as the copy is done, so the copy
+            # has to be waited for. Stream assignment stamps host containers that sit inside a GPU
+            # dataflow chain, so the stamp says nothing about who reads them.
+            if dst_location == 'Host':
+                is_sync = True
 
             # Handle case of impending kernel/tasklet on another stream
             if max_streams >= 0:
@@ -1064,13 +1107,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         continue
                     if not hasattr(e.dst, '_cuda_stream'):
                         is_sync = True
-                    elif not hasattr(e, '_cuda_event'):
-                        is_sync = True
                     elif e.dst._cuda_stream != cudastream:
-                        syncwith[e.dst._cuda_stream] = e._cuda_event
+                        # A consumer on another stream is ordered by an event, or by the host when
+                        # stream assignment did not leave one.
+                        if hasattr(e, '_cuda_event'):
+                            syncwith[e.dst._cuda_stream] = e._cuda_event
+                        else:
+                            is_sync = True
 
-                if cudastream != 'nullptr':
-                    cudastream = '__state->gpu_context->streams[%d]' % cudastream
+                cudastream = common.gpu_stream_expr(cudastream)
 
             if memlet.wcr is not None:
                 raise NotImplementedError('Accumulate %s to %s not implemented' % (src_location, dst_location))
@@ -1284,12 +1329,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Post-copy synchronization
             if is_sync:
-                # Synchronize with host (done at destination)
-                pass
+                # Every copy emitted above is asynchronous, so the host has to wait for the stream
+                # before it may read the destination.
+                callsite_stream.write('DACE_GPU_CHECK(%sStreamSynchronize(%s));\n' % (self.backend, cudastream), cfg,
+                                      state_id, [src_node, dst_node])
             else:
                 # Synchronize with other streams as necessary
                 for streamid, event in syncwith.items():
-                    syncstream = '__state->gpu_context->streams[%d]' % streamid
+                    syncstream = common.gpu_stream_expr(streamid)
                     callsite_stream.write(
                         '''
     DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
@@ -1475,15 +1522,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 del self.pool_release[sd, name]
 
             if state.nosync == False:
-                streams_to_sync = set()
+                # Ordered set: the default stream is named by a string, so a plain set would order the
+                # synchronizations below by hash and make the emitted code depend on PYTHONHASHSEED.
+                streams_to_sync = {}
                 for node in state.sink_nodes():
-                    if hasattr(node, '_cuda_stream') and node._cuda_stream != 'nullptr':
-                        streams_to_sync.add(node._cuda_stream)
+                    if hasattr(node, '_cuda_stream'):
+                        streams_to_sync[node._cuda_stream] = None
                     else:
                         # Synchronize sink-node copies at the end of the state
                         for e in state.in_edges(node):
-                            if hasattr(e.src, '_cuda_stream') and e.src._cuda_stream != 'nullptr':
-                                streams_to_sync.add(e.src._cuda_stream)
+                            if hasattr(e.src, '_cuda_stream'):
+                                streams_to_sync[e.src._cuda_stream] = None
 
                 # Relaxed condition for skipping synchronization:
                 # if ALL the immediately reachable non-empty states (i.e.,
@@ -1492,14 +1541,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # then we can skip synchronization.
                 next_states = sdutil.get_next_nonempty_states(sdfg, state)
                 if next_states and len(streams_to_sync) == 1:
-                    if all(self._begin_streams(sdfg, ns) == streams_to_sync for ns in next_states):
+                    if all(self._begin_streams(sdfg, ns) == streams_to_sync.keys() for ns in next_states):
                         # Relax synchronization
-                        streams_to_sync = set()
+                        streams_to_sync = {}
 
                 for stream in streams_to_sync:
                     callsite_stream.write(
-                        'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
-                        (self.backend, stream), cfg, state.block_id)
+                        'DACE_GPU_CHECK(%sStreamSynchronize(%s));' % (self.backend, common.gpu_stream_expr(stream)),
+                        cfg, state.block_id)
 
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
@@ -1538,9 +1587,26 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 node for node in state.data_nodes() if isinstance(node.desc(sdfg), dace.data.Stream)
                 and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
             ]
+
+            # A state machine needs a barrier between its states wherever it runs: a nested SDFG
+            # with several states (or control flow) below the kernel still synchronizes between
+            # them. An SDFG that is one lone state has no state transition to order, so below the
+            # kernel's own SDFG it emits no barrier -- it may run inside a single-thread-guarded
+            # component, where a barrier is reached by one thread and never releases. Its writes
+            # are ordered by the enclosing state's own barrier instead.
+            lone_state = sdfg.number_of_nodes() == 1 and isinstance(sdfg.nodes()[0], SDFGState)
+            can_sync = not (self._below_toplevel_sdfg and lone_state)
+
             for stream in streams_to_reset:
                 ptrname = self.ptr(stream.data, stream.desc(sdfg), sdfg)
                 callsite_stream.write("{}.reset();".format(ptrname), cfg, state.block_id)
+
+            # The reset rewinds the queue head for the whole grid, and every block runs it. The
+            # barrier ending the previous state releases the blocks, it does not hold them in step,
+            # so a block entering late rewinds the head under a block that already pushed -- those
+            # slots are handed out twice, while the consumer's count keeps counting every push.
+            if streams_to_reset and can_sync:
+                callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
 
             components = dace.sdfg.concurrent_subgraphs(state)
             for c in components:
@@ -1592,7 +1658,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
-            callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
+            if can_sync:
+                callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
 
             # done here, code is generated
             return
@@ -1638,6 +1705,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # Create grid barrier only if there is a synchronization requirement on nested GPU_Device maps
                 if any(p is not scope_entry for p in dfg_scope.predecessors(node)):
                     create_grid_barrier = True
+            elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
+                # Device maps in nested SDFGs within the kernel may also synchronize the grid
+                if self._nested_grid_barrier_required(node.sdfg):
+                    create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
         kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry))
@@ -1681,9 +1752,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     self._in_device_code = oldval
 
                     self.extra_nsdfg_args.append((desc.as_arg(name=''), inner_name, outer_name))
+                    # A DefinedType.Pointer registers the POINTER ctype, as every other allocation
+                    # site does; the element type here makes consumers that adopt the defined ctype
+                    # (``emit_memlet_reference``) declare the parameter one indirection short.
                     self._dispatcher.defined_vars.add(inner_name,
                                                       DefinedType.Pointer,
-                                                      desc.dtype.ctype,
+                                                      dtypes.pointer(desc.dtype).ctype,
                                                       allow_shadowing=True)
                     extra_call_args.append(outer_name)
                     extra_call_args_typed.append(desc.as_arg(name=inner_name))
@@ -1873,7 +1947,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
-            cudastream = '__state->gpu_context->streams[%d]' % scope_entry._cuda_stream
+            cudastream = common.gpu_stream_expr(scope_entry._cuda_stream)
         else:
             cudastream = 'nullptr'
 
@@ -2005,6 +2079,83 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             ):
                 res.append((node.map, {dace.symbol(k): dace.symbol(k) for k in node.map.range.free_symbols}))
         return res
+
+    def detected_chiplet_count(self) -> int:
+        """
+        Returns the number of chiplets of the GPU of this machine, or 1 if it cannot be determined.
+
+        Called when the ``compiler.cuda.chiplet_number`` configuration entry is left at its default of 0,
+        which means that the number of chiplets has not been configured by the user. A detected number is
+        written back to that entry, so that the rest of the process sees the number the code is generated
+        for. Only the HIP backend is queried, chiplets being a feature of AMD GPUs, and a failure to
+        determine the number leaves the entry alone and disables the distribution.
+        """
+        if self.backend != 'hip':
+            return 1
+
+        chiplets = common.get_gpu_chiplet_count()
+        if chiplets is None:
+            return 1
+
+        Config.set('compiler', 'cuda', 'chiplet_number', value=chiplets)
+        return chiplets
+
+    def chiplet_count(self, kernelmap_entry: nodes.MapEntry, is_persistent: bool, has_dtbmap: bool,
+                      extra_grid_dims: List[symbolic.SymbolicType]) -> int:
+        """
+        Returns the number of chiplets (XCDs on AMD GPUs) the grid of the given kernel is distributed over,
+        or 1 if the distribution does not apply to it.
+
+        The distribution pads the first grid dimension to a multiple of the number of chiplets and permutes
+        it within itself, leaving the second and third grid dimensions untouched. It therefore applies to
+        kernels of any dimensionality, and only steps aside for kernels whose block indices are not
+        generated by ``generate_kernel_scope`` alone. Kernels whose map has the
+        ``allow_chiplet_threadblock_distribution`` property set to False are left alone as well.
+
+        The number of chiplets comes from the ``compiler.cuda.chiplet_number`` configuration entry, whose
+        default of 0 means that it is detected automatically (see ``detected_chiplet_count``).
+
+        :param kernelmap_entry: Entry node of the kernel map.
+        :param is_persistent: Whether the kernel uses a persistent grid.
+        :param has_dtbmap: Whether the kernel contains a dynamic thread-block map.
+        :param extra_grid_dims: Grid dimensions contributed by nested device maps, if any.
+        """
+        chiplets = int(Config.get('compiler', 'cuda', 'chiplet_number'))
+        if chiplets < 0:
+            raise ValueError(f'Invalid number of chiplets ({chiplets}) configured. Modify the '
+                             '`compiler.cuda.chiplet_number` configuration entry to a positive number, or to 0 '
+                             'to detect the number of chiplets of the GPU automatically.')
+
+        # A kernel that opts out of the distribution is left alone without any diagnostics, and without
+        # querying the GPU for the number of its chiplets
+        if not kernelmap_entry.map.allow_chiplet_threadblock_distribution:
+            return 1
+
+        if chiplets == 0:
+            chiplets = self.detected_chiplet_count()
+
+        if chiplets == 1:
+            return 1
+
+        if self.backend != 'hip':
+            warnings.warn(f'`compiler.cuda.chiplet_number` is set to {chiplets}, but the "{self.backend}" backend '
+                          'targets GPUs without chiplets. Distributing the grid over chiplets relies on the '
+                          'round-robin thread-block scheduling of multi-chiplet AMD GPUs.')
+
+        skip_reason = None
+        if is_persistent:
+            skip_reason = 'it uses a persistent grid'
+        elif has_dtbmap:
+            skip_reason = 'it contains a dynamic thread-block map'
+        elif extra_grid_dims:
+            skip_reason = 'it contains nested device maps'
+
+        if skip_reason is not None:
+            warnings.warn(f'Not distributing the grid of kernel "{kernelmap_entry.map.label}" over {chiplets} '
+                          f'chiplets because {skip_reason}.')
+            return 1
+
+        return chiplets
 
     def get_kernel_dimensions(self, dfg_scope):
         """
@@ -2216,6 +2367,25 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                              'thread-block size. To increase this limit, modify the '
                              '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
 
+        # Distribute the thread-blocks of the first grid dimension over the chiplets of the GPU
+        self._kernel_chiplet_count = self.chiplet_count(kernelmap_entry, is_persistent, has_dtbmap, extra_grid_dims)
+        if self._kernel_chiplet_count > 1:
+            # The hardware dispatches thread-block ``f`` to chiplet ``f % chiplets`` in a round-robin
+            # fashion, and the flattened block index is ``blockIdx.x + blockIdx.y * gridDim.x +
+            # blockIdx.z * gridDim.x * gridDim.y``. Padding ``gridDim.x`` to a multiple of the number of
+            # chiplets makes the two trailing terms vanish modulo that number, so the chiplet of a block
+            # is ``blockIdx.x % chiplets`` regardless of ``blockIdx.y`` and ``blockIdx.z``, which the
+            # distribution therefore leaves untouched. Each chiplet receives a contiguous chunk of
+            # ``ceil(grid_size[0] / chiplets)`` blocks of the first dimension (see the block index
+            # computed in ``generate_kernel_scope``), together with the whole of the other dimensions.
+            self._kernel_chiplet_chunk = int_ceil(grid_size[0], self._kernel_chiplet_count)
+            original_grid_size = grid_size
+            grid_size = [self._kernel_chiplet_chunk * self._kernel_chiplet_count] + grid_size[1:]
+            if Config.get_bool('debugprint'):
+                print(f'Distributing the grid of kernel "{kernelmap_entry.map.label}" over '
+                      f'{self._kernel_chiplet_count} chiplets, adjusting its size from {original_grid_size} to '
+                      f'{grid_size}.')
+
         return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
 
     def generate_kernel_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
@@ -2271,13 +2441,22 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 dfg_scope.source_nodes()[0])
 
         # do not generate an index if the kernel map is persistent
+        chiplet_count = self._kernel_chiplet_count
+        chiplet_chunk = self._kernel_chiplet_chunk
         if node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
             # First three dimensions are evaluated directly
             for i in range(min(len(krange), 3)):
                 varname = kernel_map.params[-i - 1]
 
-                # If we defaulted to a fixed number of threads per block, offset by thread ID
-                block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))
+                if chiplet_count > 1 and i == 0:
+                    # Contiguous partitioning: the chiplet of a block is ``blockIdx.x % chiplets`` and its
+                    # slot within that chiplet is ``blockIdx.x / chiplets``, so chiplet k owns the blocks
+                    # [k * chunk .. (k + 1) * chunk - 1] of this dimension (see ``get_kernel_dimensions``)
+                    block_expr = '((blockIdx.x %% %d) * %s + blockIdx.x / %d)' % (chiplet_count, _topy(chiplet_chunk),
+                                                                                  chiplet_count)
+                else:
+                    # If we defaulted to a fixed number of threads per block, offset by thread ID
+                    block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))
                 if not has_tbmap or has_dtbmap:
                     block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
 
@@ -2336,7 +2515,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 # Optimize conditions if they are always true
                 if i >= 3 or (dsym[i] >= minel) != True:
                     condition += '%s >= %s' % (v, _topy(minel))
-                if (i >= 3 or ((dsym_end[i] < maxel) != False and ((dsym_end[i] % self._block_dims[i]) != 0) == True)
+                # The grid of the distributed dimension is padded to a multiple of the number of
+                # chiplets, so its trailing blocks always have to be masked out
+                if (i >= 3 or (chiplet_count > 1 and i == 0)
+                        or ((dsym_end[i] < maxel) != False and ((dsym_end[i] % self._block_dims[i]) != 0) == True)
                         or (self._block_dims[i] > maxel) == True):
                     if len(condition) > 0:
                         condition += ' && '
@@ -2350,6 +2532,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     if not has_dtbmap:
                         kernel_stream.write('{', cfg, state_id, scope_entry)
 
+        # The conditions above are only generated when no inner thread-block map handles them. The padding
+        # of the distributed dimension is introduced at grid level, so its condition is needed either way.
+        # It is not added to ``_kernel_grid_conditions`` because those are only re-emitted around grid
+        # synchronization, which requires nested device maps, and those disable the distribution.
+        emit_chiplet_condition = (chiplet_count > 1 and has_tbmap and not has_dtbmap
+                                  and node.map.schedule != dtypes.ScheduleType.GPU_Persistent)
+        if emit_chiplet_condition:
+            kernel_stream.write('if (%s < %s) {' % (kernel_map.params[-1], _topy(krange.max_element()[0] + 1)), cfg,
+                                state_id, scope_entry)
+
         self._dispatcher.dispatch_subgraph(sdfg,
                                            cfg,
                                            dfg_scope,
@@ -2357,6 +2549,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                            function_stream,
                                            kernel_stream,
                                            skip_entry_node=True)
+
+        if emit_chiplet_condition:
+            kernel_stream.write('}', cfg, state_id, node)
 
         if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
             for _ in kernel_map.params:
@@ -2367,6 +2562,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         self._kernel_state = None
         self._in_device_code = False
         self._grid_dims = None
+        self._kernel_chiplet_count = 1
+        self._kernel_chiplet_chunk = 1
         self.dynamic_tbmap_type = None
 
     def get_next_scope_entries(self, dfg, scope_entry):
@@ -2387,6 +2584,30 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         return all_scopes[all_scopes.index(scope_entry) + 1:]
 
+    def _emits_grid_barrier(self, state: SDFGState, scope_entry: nodes.EntryNode) -> bool:
+        """
+        Returns whether the scope generator synchronizes the thread block or grid at the end of the given map.
+
+        :param state: The state containing the map.
+        :param scope_entry: Entry node of a map within a kernel.
+        :return: True if a synchronization point follows the map.
+        """
+        if self.get_next_scope_entries(state, scope_entry):
+            return True
+        parent = xfh.get_parent_map(state, scope_entry)
+        return parent is not None and parent[0].schedule == dtypes.ScheduleType.Sequential
+
+    def _nested_grid_barrier_required(self, nsdfg: SDFG) -> bool:
+        """
+        Returns whether any device map within the given nested SDFG synchronizes the grid.
+
+        :param nsdfg: A nested SDFG generated within a kernel.
+        :return: True if the kernel needs to declare a grid barrier.
+        """
+        return any(
+            isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device
+            and self._emits_grid_barrier(parent, node) for node, parent in nsdfg.all_nodes_recursive())
+
     def generate_devicelevel_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView,
                                    state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Sanity check
@@ -2396,7 +2617,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         scope_entry = dfg_scope.source_nodes()[0]
         scope_exit = dfg_scope.sink_nodes()[0]
         scope_map = scope_entry.map
-        next_scopes = self.get_next_scope_entries(dfg, scope_entry)
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
@@ -2823,8 +3043,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
-        parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
-        if (len(next_scopes) > 0 or parent_scope.schedule == dtypes.ScheduleType.Sequential):
+        if self._emits_grid_barrier(dfg, scope_entry):
             # Thread-block synchronization
             if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 callsite_stream.write('__syncthreads();', cfg, state_id, scope_entry)
@@ -2895,9 +3114,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                              node: nodes.NestedSDFG, function_stream: CodeIOStream,
                              callsite_stream: CodeIOStream) -> None:
         old_schedule = self._toplevel_schedule
+        old_below_toplevel = self._below_toplevel_sdfg
         nested_schedule = get_node_schedule(sdfg, dfg, node)
         if nested_schedule != dtypes.ScheduleType.Default:
             self._toplevel_schedule = nested_schedule
+        # A device-level scope is already open, so this SDFG sits inside one of its components
+        # rather than being the state machine that scope is made of.
+        self._below_toplevel_sdfg = old_schedule in dtypes.GPU_SCHEDULES
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
 
@@ -2905,6 +3128,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         self._cpu_codegen.calling_codegen = old_codegen
         self._toplevel_schedule = old_schedule
+        self._below_toplevel_sdfg = old_below_toplevel
 
     def _generate_MapExit(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.MapExit, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:

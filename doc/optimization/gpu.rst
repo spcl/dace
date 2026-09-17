@@ -124,6 +124,14 @@ The number of GPU streams can be controlled with the :envvar:`compiler.cuda.max_
 It is set to zero by default, which does not limit streams. If set to ``-1``, no streams will be created (the default
 stream will be used). This is sometimes preferable for performance.
 
+**One process, one GPU**: ``__dace_init_cuda`` selects device 0 and never changes it, so the memory
+pool and every library handle use that one. Which physical GPU that is belongs to the process, not
+to the build: give each rank its own with ``CUDA_VISIBLE_DEVICES`` (``HIP_VISIBLE_DEVICES`` on AMD),
+which renumbers the devices it exposes so the rank's GPU is device 0. There is deliberately no
+configuration entry for the ordinal -- every rank shares one build, so a compiled-in ordinal would
+send them all to the same GPU. To use several GPUs, run several processes; placing individual
+library nodes with ``location['gpu']`` is rejected.
+
 .. _amd:
 
 Using AMD GPUs
@@ -164,6 +172,59 @@ Note that if you are using CuPy, install its appropriate HIP/ROCm version.
     or use the HIP-provided tools to convert CUDA code to HIP code without changing the backend.
     If you find a feature that is not supported in DaCe, please open an issue on GitHub.
 
+
+Distributing thread-blocks over chiplets
+----------------------------------------
+
+Multi-chiplet AMD GPUs, such as the MI300 series, are partitioned into chiplets (XCDs), each with its own L2 cache.
+Thread-blocks are dispatched to them in a round-robin fashion, so consecutive blocks of a kernel land on different
+chiplets and the data they share has to be replicated in every L2 cache.
+
+``compiler.cuda.chiplet_number``, the number of chiplets of the GPU (6 on MI300A), makes the code generator
+distribute the first dimension of the grid over the chiplets instead: that dimension is padded to a multiple of the
+number of chiplets, so the grid becomes ``(ceil(grid_x / chiplets) * chiplets, grid_y, grid_z)``. Since the flattened
+block index is ``blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.x * gridDim.y``, a ``gridDim.x`` that is a
+multiple of the number of chiplets reduces the chiplet a block is dispatched to to ``blockIdx.x % chiplets``, whatever
+its other two indices are. The blocks of the first dimension are then permuted to
+``(blockIdx.x % chiplets) * ceil(grid_x / chiplets) + blockIdx.x / chiplets``, so that every chiplet works on a
+contiguous chunk of that dimension, together with the whole of the other two. The blocks that the padding adds beyond
+the range of the map are masked out. Setting the entry to 1 leaves the grid untouched.
+
+The entry is left at 0 by default, which makes the code generator determine the number of chiplets of the GPU of this
+machine when targeting HIP, through the ``amdsmi`` module that ships with ROCm, so that the distribution applies to a
+multi-chiplet AMD GPU without any configuration. The number is that of the first GPU ``amdsmi`` reports, which is
+accurate on nodes whose GPUs are all of the same model. If it cannot be determined, when generating code on a machine
+without ROCm for instance, a warning is issued once and the grids are left untouched.
+
+The detected number can be overridden, which is what generating code for a GPU other than the one of this machine
+calls for:
+
+.. code-block:: yaml
+
+    compiler:
+      cuda:
+        chiplet_number: 6
+
+The setting can also be given through the environment, without changing ``.dace.conf``:
+
+.. code-block:: bash
+
+    $ DACE_compiler_cuda_chiplet_number=6 python my_program.py
+
+The distribution reshapes the first dimension of the grid only, and leaves the second and third ones on their own
+grid dimension, so it applies to kernels of any dimensionality. It is inapplicable to kernels using a persistent grid,
+a dynamic thread-block map, or nested device maps, whose block indices are not derived from the grid alone. Such
+kernels keep their original grid, and a warning naming the kernel is issued.
+
+The setting describes the GPU, and applies to every kernel that can use it. A single kernel can be excluded from the
+distribution by setting the :attr:`~dace.sdfg.nodes.Map.allow_chiplet_threadblock_distribution` attribute of its map
+to ``False``, in which case its grid is left untouched and no warning is issued for it:
+
+.. code-block:: python
+
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.label == 'my_kernel':
+            node.map.allow_chiplet_threadblock_distribution = False
 
 Optimizing GPU SDFGs
 --------------------

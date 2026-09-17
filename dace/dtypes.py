@@ -538,6 +538,14 @@ def result_type_of(lhs, *rhs):
     if numpy.issubdtype(rhs_, numpy.integer):
         return lhs
     # Both sides are floating point numbers
+    # A complex type is not simply a wider float: half its width is the imaginary part, so its real
+    # component is only ``itemsize // 2``. Comparing byte widths alone therefore ties complex64 with
+    # float64 and lets argument order settle it -- ``result_type_of(complex64, double)`` answered
+    # ``double`` and dropped the imaginary part, while the same two the other way round answered
+    # ``complex64`` and dropped half the real precision. Where exactly one side is complex, take
+    # numpy's rule: the result is complex and wide enough for the other side's precision.
+    if numpy.issubdtype(lhs_, numpy.complexfloating) != numpy.issubdtype(rhs_, numpy.complexfloating):
+        return typeclass(numpy.promote_types(lhs_, rhs_).type)
     if size_lhs > size_rhs:
         return lhs
     return rhs  # RHS is bigger

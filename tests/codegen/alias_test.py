@@ -53,7 +53,7 @@ def test_inference():
         nested(a[:2], a[1:])
 
     @dace.program
-    def tester(a: dace.float64[20]):
+    def tester(a: dace.float64[3, 20]):
         interim(a)
 
     code = tester.to_sdfg(simplify=False).generate_code()[0]

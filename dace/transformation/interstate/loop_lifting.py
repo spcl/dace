@@ -58,6 +58,9 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         full_body = set(body)
         full_body.update(meta)
         cond_edge = self.loop_condition_edge()
+        # The edge-rewrite loop below may replace the condition on the edge itself (it is hoisted into the region);
+        # keep the original for constructions that need it afterwards.
+        original_condition = deepcopy(cond_edge.data.condition)
         incr_edge = self.loop_increment_edge()
         inverted = self.inverted
         init_edge = self.loop_init_edge()
@@ -88,97 +91,143 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                 if k != itvar:
                     left_over_incr_assignments[k] = incr_edge.data.assignments[k]
 
-        if inverted and incr_edge is cond_edge:
-            update_before_condition = False
-        else:
-            update_before_condition = True
+        if exec_before_loop is not None and self.expr_index in (0, 1):
+            # A guard block with dataflow executes BEFORE each condition check and therefore runs once more than the
+            # loop body: it also executes before the final, failing check - and the condition may depend on data it
+            # computes. A pre-checked loop region would drop that final execution and, worse, read the condition
+            # before the dataflow that defines it ever ran (an uninitialized read if the condition depends on a
+            # transient the block writes - a miscompilation that surfaced as a stack-garbage-dependent wrong result).
+            # The loop is therefore rotated instead: an unconditional COPY of the block executes before the region,
+            # and the original block moves to the END of each iteration - every condition check then happens
+            # immediately after an execution of the block, exactly as in the original state machine. The region
+            # deliberately carries no iteration-variable metadata: the initialization stays on the init edge and the
+            # increment on the former back edge, which preserves their evaluation points relative to the block.
+            loop = LoopRegion(label, condition_expr=cond_edge.data.condition, sdfg=sdfg)
+            iter_head = loop.add_state(label + '_iter_head', is_start_block=True)
 
-        loop = LoopRegion(label,
-                          condition_expr=cond_edge.data.condition,
-                          loop_var=itvar,
-                          initialize_expr=init_expr,
-                          update_expr=incr_expr,
-                          inverted=inverted,
-                          sdfg=sdfg,
-                          update_before_condition=update_before_condition)
-
-        # First state is added explicitly to mark the start of the region.
-        loop.add_node(first_state, is_start_block=True)
-
-        # If the loop has a latch state that needs to be guarded by the condition before execution, add it with a
-        # conditional block.
-        latch_cond = None
-        if guard_before_exec is not None:
-            latch_cond = ConditionalBlock(label + '_latch_guard')
-            loop.add_node(latch_cond)
-            latch_branch = ConditionalBlock(label + '_latch_guard_if')
-            latch_cond.add_branch(properties.CodeBlock(cond_edge.data.condition.code), latch_branch)
-            latch_branch.add_node(guard_before_exec, is_start_block=True)
-
-        added = set()
-        for e in graph.all_edges(*full_body):
-            if e.src in full_body and e.dst in full_body:
-                src = e.src if e.src is not guard_before_exec else latch_cond
-                dst = e.dst if e.dst is not guard_before_exec else latch_cond
-                if not e in added:
+            added = set()
+            for e in graph.all_edges(*full_body):
+                if e.src in full_body and e.dst in full_body:
+                    if e in added:
+                        continue
                     added.add(e)
-                    if e is incr_edge:
-                        if left_over_incr_assignments != {}:
-                            assignments = left_over_incr_assignments
-                            dst = e.dst
-                            if e.dst is first_state:
-                                if not update_before_condition:
-                                    left_over_incr_cond_region = ConditionalBlock(label + '_post_incr_conditional')
-                                    incr_graph = ControlFlowRegion(label + '_post_incr')
-                                    left_over_incr_cond_region.add_branch(cond_edge.data.condition, incr_graph)
-                                    incr_graph.add_edge(
-                                        incr_graph.add_state(label + '_post_incr_start', is_start_block=True),
-                                        incr_graph.add_state(label + '_post_incr_end'),
-                                        InterstateEdge(assignments=left_over_incr_assignments))
-                                    dst = left_over_incr_cond_region
-                                    assignments = {}
-                                else:
-                                    dst = loop.add_state(label + '_tail')
-                            loop.add_edge(e.src, dst, InterstateEdge(assignments=assignments))
-                    elif e is cond_edge:
-                        if not inverted:
-                            e.data.condition = properties.CodeBlock('1')
-                            loop.add_edge(src, dst, e.data)
+                    if e is cond_edge:
+                        # The condition is hoisted into the region; the edge's assignments execute right after a
+                        # successful check, i.e., at the start of an iteration.
+                        loop.add_edge(iter_head, e.dst, InterstateEdge(assignments=dict(e.data.assignments)))
                     else:
-                        loop.add_edge(src, dst, e.data)
+                        loop.add_edge(e.src, e.dst, e.data)
 
-        # Remove old loop.
-        for n in full_body:
-            graph.remove_node(n)
+            # Remove old loop.
+            for n in full_body:
+                graph.remove_node(n)
 
-        # If the loop has a guard state that is executed before the loop condition is checked for the first time, we
-        # need to construct a conditional check that executes the guard state ONLY, if the loop condition initially
-        # does not hold. If the loop condition holds (i.e., else), the loop is executed instead.
-        to_connect = None
-        if exec_before_loop is not None:
-            loop_guard_conditional = ConditionalBlock(label + '_guard_conditional')
-            graph.add_node(loop_guard_conditional)
-            new_init_edge = InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments)
-            if loop_info is not None:
-                new_init_edge.assignments[loop_info[0]] = init_edge.data.assignments[loop_info[0]]
-            graph.add_edge(init_edge.src, loop_guard_conditional, new_init_edge)
-
-            loop_not_executed = ControlFlowRegion(label + '_loop_not_executed')
-            negative_cond = astutils.negate_expr(cond_edge.data.condition.code[0])
-            loop_guard_conditional.add_branch(properties.CodeBlock([negative_cond]), loop_not_executed)
-            exec_before_loop_copy = deepcopy(exec_before_loop)
-            loop_not_executed.add_node(exec_before_loop_copy, is_start_block=True)
-
-            loop_executed_branch = ControlFlowRegion(label + '_loop_executed')
-            loop_guard_conditional.add_branch(None, loop_executed_branch)
-            loop_executed_branch.add_node(loop, is_start_block=True)
-
-            to_connect = loop_guard_conditional
-        else:
+            pre_block = deepcopy(exec_before_loop)
+            pre_block.label = label + '_pre_' + exec_before_loop.label
+            graph.add_node(pre_block)
             graph.add_node(loop)
-            graph.add_edge(init_edge.src, loop,
-                           InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments))
+            graph.add_edge(
+                init_edge.src, pre_block,
+                InterstateEdge(condition=init_edge.data.condition, assignments=dict(init_edge.data.assignments)))
+            graph.add_edge(pre_block, loop, InterstateEdge())
             to_connect = loop
+        else:
+            if inverted and incr_edge is cond_edge:
+                update_before_condition = False
+            else:
+                update_before_condition = True
+
+            loop = LoopRegion(label,
+                              condition_expr=cond_edge.data.condition,
+                              loop_var=itvar,
+                              initialize_expr=init_expr,
+                              update_expr=incr_expr,
+                              inverted=inverted,
+                              sdfg=sdfg,
+                              update_before_condition=update_before_condition)
+
+            # First state is added explicitly to mark the start of the region.
+            loop.add_node(first_state, is_start_block=True)
+
+            # If the loop has a latch state that needs to be guarded by the condition before execution, add it with a
+            # conditional block.
+            latch_cond = None
+            if guard_before_exec is not None:
+                latch_cond = ConditionalBlock(label + '_latch_guard')
+                loop.add_node(latch_cond)
+                latch_branch = ConditionalBlock(label + '_latch_guard_if')
+                latch_cond.add_branch(properties.CodeBlock(cond_edge.data.condition.code), latch_branch)
+                latch_branch.add_node(guard_before_exec, is_start_block=True)
+
+            added = set()
+            for e in graph.all_edges(*full_body):
+                if e.src in full_body and e.dst in full_body:
+                    src = e.src if e.src is not guard_before_exec else latch_cond
+                    dst = e.dst if e.dst is not guard_before_exec else latch_cond
+                    if not e in added:
+                        added.add(e)
+                        if e is incr_edge:
+                            if left_over_incr_assignments != {}:
+                                assignments = left_over_incr_assignments
+                                dst = e.dst
+                                if e.dst is first_state:
+                                    if not update_before_condition:
+                                        left_over_incr_cond_region = ConditionalBlock(label + '_post_incr_conditional')
+                                        incr_graph = ControlFlowRegion(label + '_post_incr')
+                                        left_over_incr_cond_region.add_branch(cond_edge.data.condition, incr_graph)
+                                        incr_graph.add_edge(
+                                            incr_graph.add_state(label + '_post_incr_start', is_start_block=True),
+                                            incr_graph.add_state(label + '_post_incr_end'),
+                                            InterstateEdge(assignments=left_over_incr_assignments))
+                                        dst = left_over_incr_cond_region
+                                        assignments = {}
+                                    else:
+                                        dst = loop.add_state(label + '_tail')
+                                loop.add_edge(e.src, dst, InterstateEdge(assignments=assignments))
+                        elif e is cond_edge:
+                            if not inverted:
+                                e.data.condition = properties.CodeBlock('1')
+                                loop.add_edge(src, dst, e.data)
+                        else:
+                            loop.add_edge(src, dst, e.data)
+
+            # Remove old loop.
+            for n in full_body:
+                graph.remove_node(n)
+
+            if exec_before_loop is not None:
+                # A self loop (expr. index 4) whose block carries dataflow: if the loop condition does not hold
+                # initially, the block must still execute exactly once - the conditional's first branch covers that
+                # case. The branch condition must be the negation of the ORIGINAL loop condition, captured before the
+                # edge-rewrite loop above replaced it with '1' (negating the replaced value produced the
+                # never-taken branch condition `(not 1)`).
+                # FIXME: When the loop DOES execute, the pre-checked region still drops the block's final execution
+                #   (after the last successful check, the original state machine runs the block once more before
+                #   exiting). Fixing that requires an inverted (do-while) region, which downstream transformations
+                #   such as LoopToMap do not currently expect for lifted self loops.
+                loop_guard_conditional = ConditionalBlock(label + '_guard_conditional')
+                graph.add_node(loop_guard_conditional)
+                new_init_edge = InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments)
+                if loop_info is not None:
+                    new_init_edge.assignments[loop_info[0]] = init_edge.data.assignments[loop_info[0]]
+                graph.add_edge(init_edge.src, loop_guard_conditional, new_init_edge)
+
+                loop_not_executed = ControlFlowRegion(label + '_loop_not_executed')
+                negative_cond = astutils.negate_expr(original_condition.code[0])
+                loop_guard_conditional.add_branch(properties.CodeBlock([negative_cond]), loop_not_executed)
+                exec_before_loop_copy = deepcopy(exec_before_loop)
+                loop_not_executed.add_node(exec_before_loop_copy, is_start_block=True)
+
+                loop_executed_branch = ControlFlowRegion(label + '_loop_executed')
+                loop_guard_conditional.add_branch(None, loop_executed_branch)
+                loop_executed_branch.add_node(loop, is_start_block=True)
+
+                to_connect = loop_guard_conditional
+            else:
+                graph.add_node(loop)
+                graph.add_edge(init_edge.src, loop,
+                               InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments))
+                to_connect = loop
 
         # Connect the loop to everything after the loop.
         graph.add_edge(to_connect, after, InterstateEdge(assignments=exit_edge.data.assignments))

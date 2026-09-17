@@ -100,6 +100,18 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=N
     return strio.getvalue().strip()
 
 
+def gpu_stream_expr(stream: Union[int, str]) -> str:
+    """Renders a ``_cuda_stream`` annotation as the C expression naming that stream.
+
+    The annotation indexes the context's stream array, except for ``'nullptr'``: the legacy default
+    stream lives outside it. Going through here keeps that stream an ordinary one, passed to work
+    and synchronized like any other.
+    """
+    if stream == 'nullptr':
+        return 'nullptr'
+    return f'__state->gpu_context->streams[{stream}]'
+
+
 @lru_cache()
 def get_gpu_backend() -> str:
     """
@@ -171,6 +183,44 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
                            'environment variable to point to the libraries.')
 
     return gpu_runtime.GPURuntime(backend, libpath)
+
+
+@lru_cache()
+def get_gpu_chiplet_count() -> Optional[int]:
+    """
+    Returns the number of chiplets (XCDs) of the GPU of this machine, or None if it cannot be determined.
+
+    The result is cached: the device does not change within a process, and ``amdsmi`` has to be
+    initialized and shut down around the query, which must happen exactly once. The warning on
+    failure is emitted from here, so that it is emitted only once per process as well.
+
+    :note: ``amdsmi`` is not a DaCe dependency, it ships with ROCm. Importing it loads
+           ``libamd_smi.so`` through ``ctypes``, which fails on machines without ROCm and not
+           necessarily with an ``ImportError``, hence the broad exception handling.
+    :note: ``amdsmi`` ignores ``ROCR_VISIBLE_DEVICES`` and ``HIP_VISIBLE_DEVICES`` and enumerates all
+           physical GPUs, so the first processor handle is not necessarily the device that HIP uses.
+           This is only accurate on nodes where all GPUs are of the same model.
+    """
+    try:
+        import amdsmi
+
+        amdsmi.amdsmi_init()
+        try:
+            processor_handles = amdsmi.amdsmi_get_processor_handles()
+            if not processor_handles:
+                raise RuntimeError('`amdsmi` did not report any GPU.')
+            chiplets = int(amdsmi.amdsmi_get_gpu_xcd_counter(processor_handles[0]))
+            if chiplets < 1:
+                raise RuntimeError(f'`amdsmi` reported an invalid number of chiplets ({chiplets}).')
+            return chiplets
+        finally:
+            amdsmi.amdsmi_shut_down()
+    except Exception as e:
+        warnings.warn(f'Could not determine the number of GPU chiplets through `amdsmi`: {e}. The '
+                      'distribution of thread-blocks over chiplets is disabled. Set the '
+                      '`compiler.cuda.chiplet_number` configuration entry to the number of chiplets of '
+                      'the GPU (6 on MI300A) to enable it.')
+        return None
 
 
 def platform_library_name(libname: str) -> str:
