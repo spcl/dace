@@ -432,6 +432,8 @@ class InterstateEdge(object):
         :param repl: Replacement dictionary.
         :param replace_keys: If False, skips replacing assignment keys.
         """
+        if any(not isinstance(k, str) or not isinstance(v, str) for k, v in repl.items()):
+            raise TypeError("Replacement keys and values must be strings")
         if not repl:
             return
 

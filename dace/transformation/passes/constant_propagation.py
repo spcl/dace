@@ -132,14 +132,21 @@ class ConstantPropagation(ppl.Pass):
 
                     if isinstance(block, SDFGState):
                         # Replace in state contents
-                        block.replace_dict(mapping)
+                        block.replace_dict({k: symbolic.symstr(v) for k, v in mapping.items()})
                     elif isinstance(block, AbstractControlFlowRegion):
-                        block.replace_dict(mapping, replace_in_graph=False, replace_keys=False)
+                        block.replace_dict(
+                            {k: symbolic.symstr(v) for k, v in mapping.items()},
+                            replace_in_graph=False,
+                            replace_keys=False,
+                        )
 
                 if out_mapping:
                     # Replace in outgoing edges as well
                     for e in block.parent_graph.out_edges(block):
-                        e.data.replace_dict(out_mapping, replace_keys=False)
+                        e.data.replace_dict(
+                            {k: symbolic.symstr(v) for k, v in out_mapping.items()},
+                            replace_keys=False,
+                        )
 
                 if isinstance(block, LoopRegion):
                     self._propagate_loop(block, post_constants, multivalue_desc_symbols)
@@ -149,7 +156,7 @@ class ConstantPropagation(ppl.Pass):
 
             # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
             sdfg.replace_dict({
-                k: v
+                k: symbolic.symstr(v)
                 for k, v in result.items() if k in desc_symbols
             },
                               replace_in_graph=False,
