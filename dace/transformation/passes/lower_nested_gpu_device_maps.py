@@ -36,30 +36,20 @@ def combine_bound(op, lhs, rhs):
     return symbolic.SymExpr(op(lhs_main, rhs_main).simplify(), op(lhs_approx, rhs_approx).simplify())
 
 
-def translate_bound_to_scope(bound, from_sdfg: SDFG, to_sdfg: SDFG):
-    """A range bound expressed in ``from_sdfg``'s own symbol namespace, rewritten in terms of
-    ``to_sdfg``'s namespace by substituting each ``NestedSDFG.symbol_mapping`` outward.
-
-    A nested map's bound can name a symbol that is local to that nested SDFG (never registered
-    in any ``sdfg.symbols`` -- it only ever meant something through the enclosing
-    ``NestedSDFG.symbol_mapping``). Hoisting the bound onto an outer, parentless kernel map
-    without walking that chain leaves the raw inner name behind after the inner scope is
-    flattened away, which is a genuinely free symbol nothing declares.
-
-    ``from_sdfg`` must be ``to_sdfg`` itself or one of its (possibly indirect) nested
-    descendants; a bound already expressed in ``to_sdfg``'s terms passes through unchanged.
-    """
+def translate_bound_to_scope(bound: symbolic.SymbolicType, from_sdfg: SDFG, to_sdfg: SDFG) -> symbolic.SymbolicType:
+    """Rewrite a bound from ``from_sdfg``'s symbols into ``to_sdfg``'s by applying each enclosing
+    ``NestedSDFG.symbol_mapping`` outward. ``from_sdfg`` is ``to_sdfg`` or a nested descendant."""
     cur_sdfg = from_sdfg
-    while cur_sdfg is not to_sdfg:
-        nsdfg_node = cur_sdfg.parent_nsdfg_node
-        if nsdfg_node is None:
-            break
-        repl = {symbolic.pystr_to_symbolic(name): value for name, value in nsdfg_node.symbol_mapping.items()}
-        if repl:
-            if isinstance(bound, symbolic.SymExpr):
-                bound = symbolic.SymExpr(bound.expr.subs(repl), bound.approx.subs(repl))
-            elif isinstance(bound, sympy.Basic):
-                bound = bound.subs(repl)
+    while cur_sdfg is not to_sdfg and cur_sdfg.parent_nsdfg_node is not None:
+        repl = {
+            symbolic.pystr_to_symbolic(name): value
+            for name, value in cur_sdfg.parent_nsdfg_node.symbol_mapping.items()
+        }
+        if repl and isinstance(bound, symbolic.SymExpr):
+            bound = symbolic.SymExpr(bound.expr.subs(repl, simultaneous=True), bound.approx.subs(repl,
+                                                                                                 simultaneous=True))
+        elif repl and isinstance(bound, sympy.Basic):
+            bound = bound.subs(repl, simultaneous=True)
         cur_sdfg = cur_sdfg.parent_sdfg
     return bound
 
@@ -327,10 +317,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                     for p, range in zip(nested_gpu_map.map.params, nested_gpu_map.map.range):
                         if p not in nested_map_params_and_ranges:
                             nested_map_params_and_ranges[p] = list()
-                        # The inner map's bounds are expressed in ITS OWN sdfg's symbol namespace
-                        # (map_state.sdfg), which may be several NestedSDFG levels below the outer,
-                        # parentless kernel map's sdfg -- translate before hoisting, or a scope-local
-                        # symbol (never in any sdfg.symbols) is stranded once that scope is flattened.
+                        # Inner bounds use the nested SDFG's symbols; map them to the kernel map's SDFG.
                         translated_range = tuple(
                             translate_bound_to_scope(bound, map_state.sdfg, sdfg) for bound in range)
                         nested_map_params_and_ranges[p].append(translated_range)
