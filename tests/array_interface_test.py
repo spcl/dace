@@ -4,6 +4,7 @@ import pytest
 
 import dace
 
+
 @pytest.fixture
 def ctypes_interface(monkeypatch):
     """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.

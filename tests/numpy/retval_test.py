@@ -3,6 +3,7 @@ import dace
 import numpy as np
 import pytest
 
+
 # The nanobind interface forbids a caller-provided `__return` buffer by default
 # (it is opt-in via compiler.nanobind_allow_return_override); this test asserts
 # the always-allow ctypes behavior, so it is ctypes-only. The nanobind behavior

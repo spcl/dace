@@ -10,6 +10,7 @@ import tempfile
 import dace
 from dace.codegen import compiler as sdfg_compiler
 
+
 # A nanobind extension module cannot be reloaded in-process, so recompiling a
 # same-named SDFG renames it into its own build folder (`<build_folder>_0/build`,
 # see tests/codegen/nanobind_interface_test.py::test_nanobind_interface_rename_own_build_folder).

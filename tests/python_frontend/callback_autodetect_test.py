@@ -8,6 +8,7 @@ import time
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
 
+
 @pytest.fixture
 def ctypes_interface(monkeypatch):
     """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
@@ -20,6 +21,7 @@ def ctypes_interface(monkeypatch):
     monkeypatch.delenv('DACE_compiler_interface', raising=False)
     with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
         yield
+
 
 N = dace.symbol('N')
 

@@ -8,6 +8,7 @@ from dace.codegen.exceptions import CompilationError
 from dace.codegen.compiler import load_precompiled_sdfg
 import numpy as np
 
+
 # A nanobind extension module cannot be reloaded in-process: a recompile renames
 # into its own build folder (so two same-named libs have different parents), and
 # a reload shares the one module file (no per-load copy). These tests assert the

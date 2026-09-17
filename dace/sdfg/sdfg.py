@@ -28,9 +28,8 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, Contr
 from dace.sdfg.type_inference import infer_expr_type
 from dace.data.distributed import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
-from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties,
-                             Property, CodeProperty, TransformationHistProperty, OptionalSDFGReferenceProperty,
-                             DictProperty, CodeBlock)
+from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
+                             TransformationHistProperty, OptionalSDFGReferenceProperty, DictProperty, CodeBlock)
 from typing import BinaryIO
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
@@ -2733,8 +2732,7 @@ class SDFG(ControlFlowRegion):
             #  object). Refused reuse falls through to the rename loop.
             module = sys.modules.get(compiler.nanobind_qualified_module_name(build_folder, self.name))
             if (module is not None and getattr(module, 'source_sdfg_hash', None) == source_hash
-                    and os.path.isdir(build_folder)
-                    and compiler.get_program_interface(build_folder) == 'nanobind'):
+                    and os.path.isdir(build_folder) and compiler.get_program_interface(build_folder) == 'nanobind'):
                 if return_program_handle:
                     sdfg.build_folder = build_folder  # See compile loop below.
                     return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg)

@@ -11,6 +11,7 @@ import pytest
 N = dace.symbol('N')
 M = dace.symbol('M')
 
+
 # The nanobind interface requires numpy arrays for array arguments; unlike the
 # ctypes marshaller it does not coerce a Python list to an array (that would tax
 # the common fast path). The tests below pass a Python list for an array

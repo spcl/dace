@@ -7,6 +7,7 @@ import pytest
 
 from scipy import sparse
 
+
 # These two tests pass the pointer array in its ctypes form
 # ((POINTER(c_double) * m)(...)); the nanobind interface accepts the
 # numpy-array-of-pointers form only (no ctypes-array coercion, by choice).
