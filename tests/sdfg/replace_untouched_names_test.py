@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests that symbol replacement leaves everything it does not rename as it was. """
 
+import pytest
+
 import dace
 from dace import subsets
 
@@ -86,9 +88,27 @@ def test_interstate_edge_with_a_replaced_name_is_rewritten():
     assert edge.assignments == {'i': '(j + 1)'}
 
 
+def test_replacement_values_must_be_strings():
+    sdfg = dace.SDFG('replace_types')
+    sdfg.add_symbol('N', dace.int64)
+
+    with pytest.raises(TypeError, match='Replacement keys and values must be strings'):
+        sdfg.replace_dict({'N': 5})
+
+
+def test_replace_values_must_be_strings():
+    sdfg = dace.SDFG('replace_types')
+    sdfg.add_symbol('N', dace.int64)
+
+    with pytest.raises(TypeError, match='Replacement keys and values must be strings'):
+        sdfg.replace('N', 5)
+
+
 if __name__ == '__main__':
     test_map_keeps_its_tile_sizes_when_an_unrelated_symbol_is_replaced()
     test_map_range_replacement_renames_bounds_and_tile_sizes_together()
     test_mapped_symbols_keep_dtype_and_assumptions_when_another_symbol_is_replaced()
     test_interstate_edge_without_a_replaced_name_is_left_untouched()
     test_interstate_edge_with_a_replaced_name_is_rewritten()
+    test_replacement_values_must_be_strings()
+    test_replace_values_must_be_strings()

@@ -134,8 +134,6 @@ def _nested_arrays_from_json(obj, context=None):
 
 def _replace_dict_keys(d, old, new):
     # Keys are names, but a replacement may be given as a symbolic expression
-    old = str(old)
-    new = str(new)
     if old == new:
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
         return
@@ -434,6 +432,8 @@ class InterstateEdge(object):
         :param repl: Replacement dictionary.
         :param replace_keys: If False, skips replacing assignment keys.
         """
+        if any(not isinstance(k, str) or not isinstance(v, str) for k, v in repl.items()):
+            raise TypeError("Replacement keys and values must be strings")
         if not repl:
             return
 
@@ -959,7 +959,8 @@ class SDFG(ControlFlowRegion):
         :param replace_in_graph: Whether to replace in SDFG nodes / edges.
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
-
+        if any(not isinstance(k, str) or not isinstance(v, str) for k, v in repldict.items()):
+            raise TypeError("Replacement keys and values must be strings")
         repldict = {k: v for k, v in repldict.items() if k != v}
         if symrepl:
             symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}

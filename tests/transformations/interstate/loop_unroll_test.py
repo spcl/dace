@@ -142,7 +142,7 @@ def test_triang_elim():
     KIDIA, KFDIA = 1, KLON
 
     sdfg = triang_elim_kernel.to_sdfg()
-    sdfg.replace_dict({"nclv": NCLV})
+    sdfg.replace_dict({"nclv": str(NCLV)})
     sdfg.validate()
 
     # Unroll the outer jn loop
@@ -163,7 +163,7 @@ def test_triang_elim():
 
 def test_melt_kernel():
     sdfg = melt_kernel.to_sdfg()
-    sdfg.replace_dict({"nclv": 5})
+    sdfg.replace_dict({"nclv": "5"})
     sdfg.validate()
 
     loops = {n for n in sdfg.nodes() if isinstance(n, LoopRegion)}
