@@ -1,22 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
-import pytest
 
 import dace
-
-
-@pytest.fixture
-def ctypes_interface(monkeypatch):
-    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
-
-    Under the default ``auto`` these SDFGs would select the nanobind interface,
-    where the asserted behavior differs: nanobind ndarray arguments accept numpy/DLPack only (no __array_interface__-style coercion).
-    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
-    is dropped first.
-    """
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
-        yield
 
 
 class ArrayWrapper:
@@ -29,7 +14,9 @@ class ArrayWrapper:
         return self.array.__array_interface__
 
 
-@pytest.mark.usefixtures('ctypes_interface')
+# Runs on both interfaces: ctypes coerces __array_interface__ objects in its
+# marshaller; the nanobind wrapper repairs the failed dispatch with a
+# zero-copy view (see NanobindCompiledSDFG's _unwrap_array_likes).
 def test_array_interface_input():
 
     @dace.program

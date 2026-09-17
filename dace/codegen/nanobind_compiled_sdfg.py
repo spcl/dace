@@ -11,9 +11,51 @@ import pathlib
 
 import ctypes
 
+import numpy as np
+
 import dace
 from dace import dtypes, hooks
 from dace.codegen import compiler
+
+
+def _unwrap_array_likes(args: Tuple[Any, ...], kwargs: Dict[str,
+                                                            Any]) -> Optional[Tuple[Tuple[Any, ...], Dict[str, Any]]]:
+    """Swaps array-like WRAPPER objects for zero-copy ndarray views, or ``None``.
+
+    The ctypes marshaller accepted any object implementing the array-interface
+    standards (see ``dtypes.is_array``: NDSL's Quantity, GT4Py storages, ...);
+    nanobind's dispatcher ingests numpy/DLPack objects only, and the ``auto``
+    interface selection cannot route around a call-time type. This repair runs
+    only after a failed dispatch: each array-like that is not already a numpy
+    array is replaced by a zero-copy view of its buffer (``cupy.asarray`` for
+    ``__cuda_array_interface__`` objects), preserving by-reference semantics.
+    Objects speaking DLPack (torch tensors, cupy arrays) never fail dispatch
+    and never reach this. Returns ``None`` when nothing was unwrapped, so the
+    caller re-raises the original dispatch error.
+    """
+
+    def _view(value):
+        if isinstance(value, np.ndarray) or not dtypes.is_array(value):
+            return None
+        if hasattr(value, '__cuda_array_interface__'):
+            import cupy
+            return cupy.asarray(value)
+        if hasattr(value, '__array_interface__'):
+            return np.asarray(value)
+        return None
+
+    changed = False
+    new_args = []
+    for value in args:
+        view = _view(value)
+        changed |= view is not None
+        new_args.append(value if view is None else view)
+    new_kwargs = {}
+    for name, value in kwargs.items():
+        view = _view(value)
+        changed |= view is not None
+        new_kwargs[name] = value if view is None else view
+    return (tuple(new_args), new_kwargs) if changed else None
 
 
 class NanobindCompiledSDFG:
@@ -157,9 +199,18 @@ class NanobindCompiledSDFG:
         """
         # Fast path - no hooks: hand the arguments straight to the compiled
         # dispatcher; all marshalling and the return allocation happen there.
+        # A failed dispatch is repaired once by unwrapping array-like wrapper
+        # objects (see _unwrap_array_likes) - native argument types never pay
+        # for this.
         if not hooks._COMPILED_SDFG_CALL_HOOKS:
             if self.do_not_execute is False:
-                return self._handle(*args, **kwargs)
+                try:
+                    return self._handle(*args, **kwargs)
+                except TypeError:
+                    repaired = _unwrap_array_likes(args, kwargs)
+                    if repaired is None:
+                        raise
+                    return self._handle(*repaired[0], **repaired[1])
             return None
 
         # Hooks receive the processed keyword arguments (see
@@ -195,7 +246,13 @@ class NanobindCompiledSDFG:
             # Checked inside the hook context: a hook may toggle the flag
             # (dace.profile does) before the program call would run.
             if self.do_not_execute is False:
-                result = self._handle(**kwargs)
+                try:
+                    result = self._handle(**kwargs)
+                except TypeError:
+                    repaired = _unwrap_array_likes((), kwargs)
+                    if repaired is None:
+                        raise
+                    result = self._handle(**repaired[1])
         if result is None:
             result = self._hook_result
         return result

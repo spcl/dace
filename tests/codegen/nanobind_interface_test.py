@@ -2523,6 +2523,37 @@ def test_nanobind_interface_unsupported_reason_predicate():
     assert unsupported_reason(lowp) is not None
 
 
+def test_nanobind_interface_array_like_wrapper_arguments(nanobind_interface):
+    """The ctypes marshaller accepted any object implementing
+    ``__array_interface__`` (NDSL's Quantity, GT4Py storages); nanobind's
+    dispatcher ingests numpy/DLPack only, and ``auto`` cannot route around a
+    CALL-TIME type. The wrapper repairs a failed dispatch once by swapping
+    array-likes for zero-copy views (by-reference semantics preserved); the
+    fast path stays a pure passthrough for native types."""
+
+    @dace.program
+    def tester(A: dace.float64[10]):
+        A += 1.0
+
+    class ArrayLike:
+
+        def __init__(self, arr):
+            self._arr = arr
+
+        @property
+        def __array_interface__(self):
+            return self._arr.__array_interface__
+
+    csdfg = tester.to_sdfg().compile()
+    base = np.zeros(10)
+    csdfg(A=ArrayLike(base))
+    # Written by reference through the wrapper's zero-copy view.
+    assert np.allclose(base, 1.0)
+    # A genuinely wrong argument still raises the ORIGINAL dispatch error.
+    with pytest.raises(TypeError):
+        csdfg(A='definitely not an array')
+
+
 def test_nanobind_interface_return_shape_symbol_not_in_arglist(nanobind_interface):
     """A symbol appearing only in a return descriptor's shape does not enter
     ``arglist()`` (nothing in the dataflow 'uses' it), but the in-binding
