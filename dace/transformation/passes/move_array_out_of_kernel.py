@@ -16,6 +16,7 @@ from dace.transformation import transformation, helpers
 from dace.transformation.pass_pipeline import Pass
 from dace.subsets import Range
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.replace import replace_properties_dict
 from dace.memlet import Memlet
 from dace.symbolic import symbol
 
@@ -270,6 +271,18 @@ class MoveArrayOutOfKernel(Pass):
 
             old_desc = inner_sdfg.arrays[array_name]
             new_desc = copy.deepcopy(old_desc)
+
+            # ``old_desc``'s shape/strides/offset/total_size are expressed in inner_sdfg's own
+            # symbols. A symbol local to inner_sdfg (e.g. a scratch buffer's own extent) is bound
+            # to an outer expression only through this level's symbol_mapping -- translate through
+            # it before handing the descriptor up, or the copy keeps the inner name as a phantom
+            # free symbol outer_sdfg never declares (silent wrong size, or an extra call argument).
+            symrepl = {
+                symbol(name): dace.symbolic.pystr_to_symbolic(value)
+                for name, value in nsdfg_node.symbol_mapping.items()
+            }
+            replace_properties_dict(new_desc, {}, symrepl)
+
             outer_sdfg.add_datadesc(array_name, new_desc)
 
             # Enclosing map scopes the data must flow back out through
