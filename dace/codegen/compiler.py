@@ -41,6 +41,23 @@ from dace.codegen.target import make_absolute
 T = TypeVar('T')
 
 
+@lru_cache(maxsize=None)
+def _nanobind_available() -> bool:
+    """Whether the nanobind package is importable. Cached: ``resolve_compiler_interface`` runs on
+    every ``compile()`` and must not pay a filesystem probe each time."""
+    return importlib.util.find_spec('nanobind') is not None
+
+
+@lru_cache(maxsize=None)
+def _warn_nanobind_unavailable() -> None:
+    """Warns once per process that ``auto`` degrades to ctypes-only. nanobind is a declared
+    dependency of DaCe, so a missing package usually means a broken installation -- a completely
+    silent fallback would mask that."""
+    warnings.warn('compiler.interface is "auto", but the nanobind package is not installed; '
+                  'falling back to the ctypes interface for all SDFGs. nanobind is a declared '
+                  'dependency of DaCe, so a missing package usually indicates a broken installation.')
+
+
 def resolve_compiler_interface(sdfg=None) -> str:
     """Decides the concrete Python interface ('ctypes' or 'nanobind') for compiling ``sdfg``.
 
@@ -52,9 +69,11 @@ def resolve_compiler_interface(sdfg=None) -> str:
     - ``ctypes``: always the ctypes interface.
     - ``nanobind``: always the nanobind interface; an SDFG outside its scope
       is refused fail-fast at code generation (see
-      ``nanobind_bindings.argument_unsupported``), never silently redirected.
-    - ``auto`` (the default): the nanobind interface iff it supports every
-      argument and return value of ``sdfg``
+      ``nanobind_bindings.argument_unsupported``), never silently redirected,
+      and a missing nanobind package stays a hard error at compile time.
+    - ``auto`` (the default): the nanobind interface iff the nanobind package
+      is available (a missing package falls back to ctypes with a one-time
+      warning) and it supports every argument and return value of ``sdfg``
       (``nanobind_bindings.unsupported_reason``), else the ctypes interface.
 
     :param sdfg: The SDFG about to be compiled, or ``None`` when there is no
@@ -67,6 +86,9 @@ def resolve_compiler_interface(sdfg=None) -> str:
         raise ValueError(f'Unknown value for `compiler.interface`: `{interface}`')
     if interface != 'auto':
         return interface
+    if not _nanobind_available():
+        _warn_nanobind_unavailable()
+        return 'ctypes'
     if sdfg is None:
         return 'ctypes'
     return 'nanobind' if nanobind_bindings.unsupported_reason(sdfg) is None else 'ctypes'

@@ -78,6 +78,36 @@ def test_resolve_compiler_interface(clean_interface_env):
             resolve_compiler_interface(supported)
 
 
+def test_auto_falls_back_to_ctypes_without_nanobind_package(clean_interface_env, monkeypatch):
+    """``auto`` in an environment without the nanobind package resolves to ctypes instead of
+    crashing at compile time, and says so once -- nanobind is a declared dependency, so its
+    absence usually means a broken installation and a silent fallback would mask it."""
+    import warnings
+
+    from dace.codegen import compiler
+
+    monkeypatch.setattr(compiler, '_nanobind_available', lambda: False)
+    compiler._warn_nanobind_unavailable.cache_clear()
+    supported = _supported_sdfg('no_nanobind_probe')
+    with set_temporary('compiler', 'interface', value='auto'):
+        with pytest.warns(UserWarning, match='nanobind package is not installed'):
+            assert compiler.resolve_compiler_interface(supported) == 'ctypes'
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')  # the warning fires once per process, not per compile
+            assert compiler.resolve_compiler_interface(supported) == 'ctypes'
+    compiler._warn_nanobind_unavailable.cache_clear()
+
+
+def test_explicit_nanobind_ignores_availability_probe(clean_interface_env, monkeypatch):
+    """Explicit ``nanobind`` stays a demand even without the package: resolution passes it
+    through unchanged, and the hard CompilerConfigurationError at compile time is the backstop."""
+    from dace.codegen import compiler
+
+    monkeypatch.setattr(compiler, '_nanobind_available', lambda: False)
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        assert compiler.resolve_compiler_interface(_supported_sdfg('demand_probe')) == 'nanobind'
+
+
 def test_auto_selects_nanobind_for_supported_sdfg(clean_interface_env):
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
