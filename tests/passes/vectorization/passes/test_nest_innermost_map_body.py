@@ -12,6 +12,7 @@ End-to-end numerical correctness is verified against the pre-pass SDFG
 output, the rewrite is a pure SDFG-shape transform.
 """
 import numpy as np
+import pytest
 
 import dace
 from dace.memlet import Memlet
@@ -19,6 +20,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
     NestInnermostMapBodyIntoNSDFG, )
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_innermost_map,
@@ -279,3 +281,72 @@ def test_reads_of_one_written_access_node_leave_no_dangling_connector():
     got = np.zeros(8)
     sdfg(A=ref.copy(), C=got)
     np.testing.assert_allclose(got, expected)
+
+
+def map_with_a_nested_body_reading_a_prefix() -> dace.SDFG:
+    """A map whose body holds a two-state NestedSDFG next to a tasklet, the NestedSDFG wired through
+    prefix memlets (``a[0:i + 1]``) over full-size inner arrays, as CloudSC's peeled ``zqxn`` solve.
+    ``b[i] = 3 * a[i] + 1.5`` and ``d[i] = 3 * c[i]``."""
+    inner = dace.SDFG('two_state_body')
+    inner.add_symbol('i', dace.int64)
+    inner.add_array('a', ('N', ), dace.float64)
+    inner.add_array('b', ('N', ), dace.float64)
+    inner.add_scalar('t', dace.float64, transient=True)
+    first = inner.add_state('first', is_start_block=True)
+    second = inner.add_state('second')
+    inner.add_edge(first, second, dace.InterstateEdge())
+    double = first.add_tasklet('double', {'x': None}, {'o': None}, 'o = x * 2.0')
+    first.add_edge(first.add_read('a'), None, double, 'x', Memlet('a[i]'))
+    doubled = first.add_access('t')
+    first.add_edge(double, 'o', doubled, None, Memlet('t'))
+    shift = first.add_tasklet('shift', {'x': None}, {'o': None}, 'o = x + 0.5')
+    first.add_edge(doubled, None, shift, 'x', Memlet('t'))
+    first.add_edge(shift, 'o', first.add_write('t'), None, Memlet('t'))
+    bump = second.add_tasklet('bump', {'x': None}, {'o': None}, 'o = x + 1.0')
+    second.add_edge(second.add_read('t'), None, bump, 'x', Memlet('t'))
+    bumped = second.add_access('t')
+    second.add_edge(bump, 'o', bumped, None, Memlet('t'))
+    store = second.add_tasklet('store', {'x': None, 'y': None}, {'o': None}, 'o = x + y')
+    second.add_edge(bumped, None, store, 'x', Memlet('t'))
+    second.add_edge(second.add_read('a'), None, store, 'y', Memlet('a[i]'))
+    second.add_edge(store, 'o', second.add_write('b'), None, Memlet('b[i]'))
+
+    sdfg = dace.SDFG('nested_body_reading_a_prefix')
+    for name in 'abcd':
+        sdfg.add_array(name, ('N', ), dace.float64)
+    state = sdfg.add_state('main')
+    me, mx = state.add_map('m', dict(i='0:N'))
+    body = state.add_nested_sdfg(inner, {'a': None}, {'b': None}, symbol_mapping={'i': 'i', 'N': 'N'})
+    state.add_memlet_path(state.add_read('a'), me, body, dst_conn='a', memlet=Memlet('a[0:i + 1]'))
+    state.add_memlet_path(body, mx, state.add_write('b'), src_conn='b', memlet=Memlet('b[0:i + 1]'))
+    triple = state.add_tasklet('triple', {'x': None}, {'o': None}, 'o = x * 3.0')
+    state.add_memlet_path(state.add_read('c'), me, triple, dst_conn='x', memlet=Memlet('c[i]'))
+    state.add_memlet_path(triple, mx, state.add_write('d'), src_conn='o', memlet=Memlet('d[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_nested_body_reading_a_prefix_is_flattened_into_the_body():
+    """The walker never descends into a NestedSDFG inside a body, so one left there runs once per tile."""
+    sdfg = map_with_a_nested_body_reading_a_prefix()
+
+    NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
+
+    sdfg.validate()
+    bodies = [node for node in sdfg.states()[0].nodes() if isinstance(node, dace.nodes.NestedSDFG)]
+    assert len(bodies) == 1
+    assert not any(isinstance(node, dace.nodes.NestedSDFG) for node, _ in bodies[0].sdfg.all_nodes_recursive())
+
+
+@pytest.mark.parametrize('n', [16, 17])
+def test_nested_body_reading_a_prefix_writes_every_lane(n):
+    rng = np.random.default_rng(seed=n)
+    a, c = rng.random(n), rng.random(n)
+    b, d = np.zeros(n), np.zeros(n)
+    sdfg = map_with_a_nested_body_reading_a_prefix()
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+
+    sdfg(a=a.copy(), b=b, c=c.copy(), d=d, N=n)
+
+    np.testing.assert_allclose(b, 3.0 * a + 1.5, rtol=1e-12)
+    np.testing.assert_allclose(d, 3.0 * c, rtol=1e-12)

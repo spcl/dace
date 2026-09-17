@@ -145,6 +145,17 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             if mem.other_subset is not None:
                 mem.other_subset = None
 
+    @staticmethod
+    def expand_body_boundary(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
+        xform = ExpandNestedSDFGInputs()
+        xform.setup_match(state.sdfg,
+                          state.parent_graph.cfg_id,
+                          state.block_id, {ExpandNestedSDFGInputs.nested_sdfg: nsdfg_node},
+                          0,
+                          override=True)
+        if xform.can_be_applied(state, 0, state.sdfg, permissive=False):
+            xform.apply(state, state.sdfg)
+
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
         """Wrap every eligible innermost map body in a NestedSDFG.
 
@@ -249,11 +260,15 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         # whose boundary subsets are not the full ``Range.from_array`` (its ``apply`` cannot offset
         # inner memlets), so a per-iteration connector (``a[i]``) would make the inline a silent
         # no-op and leave the body nested. Expanding widens those subsets and rebases the inner
-        # memlets, which is exactly the precondition the inline checks.
+        # memlets, which is exactly the precondition the inline checks. The body's own boundary goes
+        # first: ``nest_state_subgraph`` sizes the body descriptors by their subsets, so an interior
+        # prefix read (``a[0:i + 1]`` of ``a[N]``) spans the whole descriptor and never expands.
         flattened = 0
         for g, n in candidates:
             for node in map_body_nodes(g, n):
                 if isinstance(node, dace.nodes.NestedSDFG):
+                    if any(isinstance(inner, dace.nodes.NestedSDFG) for inner, _ in node.sdfg.all_nodes_recursive()):
+                        self.expand_body_boundary(g, node)
                     node.sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
                     flattened += node.sdfg.apply_transformations_repeated(
                         [InlineSDFG, InlineMultistateSDFG], permissive=False, validate=False) or 0
