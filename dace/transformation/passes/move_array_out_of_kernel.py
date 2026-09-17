@@ -272,11 +272,7 @@ class MoveArrayOutOfKernel(Pass):
             old_desc = inner_sdfg.arrays[array_name]
             new_desc = copy.deepcopy(old_desc)
 
-            # ``old_desc``'s shape/strides/offset/total_size are expressed in inner_sdfg's own
-            # symbols. A symbol local to inner_sdfg (e.g. a scratch buffer's own extent) is bound
-            # to an outer expression only through this level's symbol_mapping -- translate through
-            # it before handing the descriptor up, or the copy keeps the inner name as a phantom
-            # free symbol outer_sdfg never declares (silent wrong size, or an extra call argument).
+            # Descriptor symbols are inner_sdfg's own; rewrite them in outer symbols
             symrepl = {
                 symbol(name): dace.symbolic.pystr_to_symbolic(value)
                 for name, value in nsdfg_node.symbol_mapping.items()
