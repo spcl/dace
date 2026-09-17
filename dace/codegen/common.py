@@ -113,6 +113,28 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
 
 
 @lru_cache()
+def get_hip_platform() -> str:
+    """Which platform HIP compiles for: ``'amd'`` (the default) or ``'nvidia'``.
+
+    HIP itself keys this on the ``HIP_PLATFORM`` environment variable, and hipcc/CMake read the same
+    one, so DaCe asks it rather than inventing a second switch. Only meaningful when the GPU backend
+    is HIP. On the NVIDIA platform HIP is a header layer over the CUDA toolkit, so the AMD libraries
+    (rocBLAS, rocPRIM) are absent while the CUDA ones are present -- a choice keyed on the backend
+    alone gets that backwards.
+    """
+    return 'nvidia' if os.environ.get('HIP_PLATFORM', 'amd').lower() in ('nvidia', 'nvcc') else 'amd'
+
+
+def get_gpu_warp_size() -> int:
+    """Lanes per warp / wavefront on the hardware the GPU backend targets: 64 on AMD, 32 on NVIDIA.
+
+    A HIP build is not automatically an AMD one. On HIP's NVIDIA platform the code runs on NVIDIA
+    hardware, where a warp is 32 lanes -- assuming 64 there makes a warp-level reduction read lanes
+    that do not exist and quietly return the wrong sum.
+    """
+    return 64 if get_gpu_backend() == 'hip' and get_hip_platform() == 'amd' else 32
+
+
 def get_gpu_backend() -> str:
     """
     Returns the currently-selected GPU backend. If automatic,
@@ -174,6 +196,14 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
                     break
     elif backend == 'hip':
         libpath = ctypes.util.find_library('amdhip64')
+        if not libpath:
+            # HIP's NVIDIA platform has no runtime library of its own: every hip* entry point is an
+            # inline wrapper in the headers, and the runtime underneath is CUDA's. Its codes agree
+            # too -- the only two hipCUDAErrorTohipError renumbers are texture errors, and DaCe
+            # emits no texture API.
+            libpath = ctypes.util.find_library('cudart')
+            if libpath:
+                backend = 'cuda'
     else:
         raise RuntimeError(f'Cannot obtain GPU runtime library for backend {backend}')
 

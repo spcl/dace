@@ -75,3 +75,42 @@ test_cscs_gh200:
     - else
     -   echo "Codecov.io is unreachable"
     - fi
+
+# Same suite, generated as HIP and built by nvcc through HIP's NVIDIA platform.
+test_cscs_gh200_hip:
+  stage: test
+  extends:
+    - .container-runner-daint-gh200
+  image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
+  variables:
+    TEST_VARIANTS: 'gpu and not mpi'
+    SLURM_GPUS_PER_NODE: 4
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_TIMELIMIT: 40
+    PYTEST_XDIST_AUTO_NUM_WORKERS: 32
+    HIP_PLATFORM: nvidia
+    DACE_compiler_cuda_backend: hip
+    DACE_compiler_cuda_hip_arch: '90'
+    # hipcc does not forward HIP_PLATFORM to nvcc.
+    DACE_compiler_cuda_hip_args: '-D__HIP_PLATFORM_NVIDIA__'
+    DACE_compiler_cpu_args: '-O3 -D__HIP_PLATFORM_NVIDIA__ -Wno-unused-parameter -Wno-unused-label'
+  needs:
+    - build_cscs_gh200
+  interruptible: true
+  script:
+    - mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
+    - cd "${WORKDIR}/dace"
+    - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
+    - git checkout "${CI_COMMIT_SHA}"
+    # cuTENSOR-backed library nodes are reached on this platform too: HIP's NVIDIA platform builds
+    # the generated GPU file with nvcc, so the same library links. Same steps as the CUDA job.
+    - uv pip install cutensor-cu12
+    - CUTENSOR_DIR="${VIRTUAL_ENV}/lib/python${PY_VERSION}/site-packages/cutensor"
+    - ln -sf libcutensor.so.2 "${CUTENSOR_DIR}/lib/libcutensor.so"
+    - export CPATH="${CUTENSOR_DIR}/include:${CPATH:-}"
+    - export LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LIBRARY_PATH:-}"
+    - export LD_LIBRARY_PATH="${CUTENSOR_DIR}/lib:${LD_LIBRARY_PATH:-}"
+    - uv pip install -e ".[testing]"
+    - export DACE_cache=unique
+    - hipcc --version
+    - pytest --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"
