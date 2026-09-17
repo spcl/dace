@@ -669,7 +669,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def node(self, id: int) -> NodeT:
         try:
-            if isinstance(id, int) and id >= 0:
+            if id >= 0:
                 # Same result as the scan below, without a Python-level loop over the nodes
                 return next(itertools.islice(self._nodes.keys(), id, None))
             else:
