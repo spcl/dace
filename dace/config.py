@@ -98,17 +98,15 @@ class _ConfigData(threading.local):
         Coerces an environment variable string to the schema-declared type of a
         configuration entry.
 
-        ``_config`` values carry YAML types rather than raw strings: schema
-        defaults and configuration-file entries are produced by the YAML
-        loader (``false`` loads as ``bool``, ``5`` as ``int``). Note that
-        nothing enforces the schema-declared type — a hand-edited file may
-        store any YAML type for any key, unvalidated (that laxity predates
-        this function and is unchanged by it). The historical read-time
-        environment override in ``get()`` returned raw strings (which
-        ``get_bool()`` papered over). Coercing at seeding time makes an
-        env-derived value match what the YAML loader produces for the same
-        text, so ``get()`` returns the same type regardless of where a value
-        came from.
+        Coercion exists for compatibility with previous versions, where
+        ``_config`` values carried the types the YAML loader produced for
+        schema defaults and configuration-file entries (``false`` loads as
+        ``bool``, ``5`` as ``int``): an environment-derived value is made to
+        match what the YAML loader would produce for the same text, so
+        ``get()`` returns the same type regardless of where a value came
+        from. Note that the schema-declared type is not enforced anywhere —
+        a hand-edited file may store any YAML type for any key, unvalidated
+        (that laxity predates this function and is unchanged by it).
 
         :param envval: The raw environment variable value.
         :param metadata: The schema metadata of the configuration entry.
@@ -131,60 +129,31 @@ class _ConfigData(threading.local):
         # Strings (and 'any'-typed entries) are kept verbatim
         return envval
 
-    def _add_defaults(self, config, metadata, key_path=()):
+    def _add_defaults(self, config, metadata):
         """ Add defaults to configuration from metadata.
 
-            Where a default is inserted, the environment is consulted first:
-            if ``DACE_<key path>`` (e.g. ``DACE_compiler_build_type``) is
-            set, its value — coerced to the schema-declared type (see
-            :func:`_coerce_env_value`) — becomes the entry's value instead of
-            the schema default. The environment therefore only influences
-            defaults; values already present in ``config`` — i.e. entries read
-            from the configuration file (``.dace.conf``, or the file named by
-            ``DACE_CONFIG``, loaded by :func:`load` before this runs) or set
-            through :func:`Config.set` (including :func:`set_temporary` /
-            :func:`temporary_config`) — take precedence. The
-            skip-existing-keys loop below is the original upstream behavior of
-            this function; it is what makes file values win, and a warning is
-            emitted when an environment variable is outranked that way (only
-            if it would have produced a different value).
+            Fills only the keys missing from ``config`` with their schema
+            defaults; the environment is handled separately by
+            :func:`_apply_env` when the configuration is loaded.
 
             :param config: The (sub-)configuration dictionary to fill.
             :param metadata: The schema metadata of ``config``.
-            :param key_path: The key path of ``config`` (empty at the root).
             :return: True if configuration was modified, False otherwise.
         """
         osname = platform.system()
         modified = False
         for k, v in metadata.items():
-            envvar = self._env_name_for(*key_path, k)
             # Recursive call for fields inside the dictionary
             if v['type'] == 'dict':
                 if k not in config:
                     modified = True
                     config[k] = {}
-                modified |= self._add_defaults(config[k], v['required'], key_path + (k, ))
+                modified |= self._add_defaults(config[k], v['required'])
                 continue
             # Key already exists in configuration, nothing to add
             if k in config:
-                if envvar in os.environ:
-                    try:
-                        envval = self._coerce_env_value(os.environ[envvar], v, envvar)
-                    except (ValueError, yaml.YAMLError):
-                        envval = os.environ[envvar]
-                    if envval != config[k]:
-                        warnings.warn(f'Environment variable {envvar} does not take effect: the entry is '
-                                      f'already set (e.g. in the configuration file) and keeps the value '
-                                      f'{config[k]!r}')
                 continue
             modified = True
-            # Environment-provided default
-            if envvar in os.environ:
-                try:
-                    config[k] = self._coerce_env_value(os.environ[envvar], v, envvar)
-                    continue
-                except (ValueError, yaml.YAMLError) as ex:
-                    warnings.warn(f'Ignoring environment variable {envvar}: {ex}')
             # Empty list initialization (if no default is specified)
             if v['type'] == 'list' and 'default' not in v:
                 config[k] = []
@@ -194,6 +163,37 @@ class _ConfigData(threading.local):
             else:
                 config[k] = v['default']
         return modified
+
+    def _apply_env(self, config, metadata, key_path=()):
+        """ Apply ``DACE_*`` environment variables onto the configuration.
+
+            Runs when the configuration is loaded, after the configuration
+            file and the schema defaults were filled in, and overwrites the
+            affected entries: the source precedence at load time is, with
+            increasing priority, the schema default, the configuration file
+            (``.dace.conf``, or the file named by ``DACE_CONFIG``), and the
+            environment. Values set explicitly afterwards through
+            :func:`Config.set` (including :func:`set_temporary` /
+            :func:`temporary_config`) have the highest priority, since the
+            environment is never consulted again until the next load.
+            Environment values are coerced to the schema-declared type (see
+            :func:`_coerce_env_value`); a value that cannot be coerced is
+            reported with a warning and ignored.
+
+            :param config: The (sub-)configuration dictionary to modify.
+            :param metadata: The schema metadata of ``config``.
+            :param key_path: The key path of ``config`` (empty at the root).
+        """
+        for k, v in metadata.items():
+            if v['type'] == 'dict':
+                self._apply_env(config.setdefault(k, {}), v['required'], key_path + (k, ))
+                continue
+            envvar = self._env_name_for(*key_path, k)
+            if envvar in os.environ:
+                try:
+                    config[k] = self._coerce_env_value(os.environ[envvar], v, envvar)
+                except (ValueError, yaml.YAMLError) as ex:
+                    warnings.warn(f'Ignoring environment variable {envvar}: {ex}')
 
     def _initialize(self):
         """Initialize `self`, loads the specified configuration file.
@@ -234,6 +234,7 @@ class _ConfigData(threading.local):
             self._cfg_filename = None
             self._config = {}
             self._add_defaults(self._config, self._config_metadata['required'])
+            self._apply_env(self._config, self._config_metadata['required'])
 
         # Check for old configurations to update the file
         if 'execution' in self._config and self._cfg_filename:
@@ -251,8 +252,9 @@ class _ConfigData(threading.local):
         if self._config is None:
             self._config = {}
 
-        # Add defaults from metadata
+        # Add defaults from metadata, then apply the environment on top
         self._add_defaults(self._config, self._config_metadata['required'])
+        self._apply_env(self._config, self._config_metadata['required'])
 
     def load_schema(self, filename: Optional[str] = None):
         if filename is None:

@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Environment variables seed configuration defaults at load time.
+"""Environment variables are consumed when the configuration is loaded.
 
-``DACE_<option>`` variables are consumed when the configuration is loaded and
-only influence the defaults: values from a configuration file, ``Config.set``,
-``set_temporary`` and ``temporary_config`` all take precedence, and changing
-the environment after the configuration is loaded has no effect on ``get()``.
+``DACE_<option>`` variables are applied at load time with the precedence
+(increasing priority): schema default, configuration file, environment.
+Values set explicitly afterwards (``Config.set``, ``set_temporary``,
+``temporary_config``) have the highest priority, and changing the environment
+after the configuration is loaded has no effect on ``get()``.
 """
 import io
 import warnings
@@ -56,24 +57,28 @@ def test_config_set_overrides_env_seeded_value():
             assert Config.get('compiler', 'build_type') == 'FromSet'
 
 
-def test_config_file_overrides_env():
+def test_env_overrides_config_file():
     with temporary_config():
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv('DACE_compiler_build_type', 'FromEnv')
-            # The outranked environment variable is reported.
-            with pytest.warns(UserWarning, match='DACE_compiler_build_type'):
-                _reload_from('compiler:\n  build_type: FromFile\n')
-            assert Config.get('compiler', 'build_type') == 'FromFile'
-
-
-def test_env_agreeing_with_file_value_does_not_warn():
-    with temporary_config():
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setenv('DACE_compiler_build_type', 'SameValue')
             with warnings.catch_warnings():
                 warnings.simplefilter('error')
-                _reload_from('compiler:\n  build_type: SameValue\n')
-            assert Config.get('compiler', 'build_type') == 'SameValue'
+                _reload_from('compiler:\n  build_type: FromFile\n')
+            assert Config.get('compiler', 'build_type') == 'FromEnv'
+
+
+def test_precedence_default_file_env_set():
+    """Increasing priority: schema default, configuration file, environment, set()."""
+    with temporary_config():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.delenv('DACE_compiler_build_type', raising=False)
+            _reload_from('compiler:\n  build_type: FromFile\n')
+            assert Config.get('compiler', 'build_type') == 'FromFile'
+            mp.setenv('DACE_compiler_build_type', 'FromEnv')
+            _reload_from('compiler:\n  build_type: FromFile\n')
+            assert Config.get('compiler', 'build_type') == 'FromEnv'
+            Config.set('compiler', 'build_type', value='FromSet')
+            assert Config.get('compiler', 'build_type') == 'FromSet'
 
 
 def test_env_change_after_load_is_inert():
@@ -124,8 +129,8 @@ if __name__ == '__main__':
     test_set_temporary_overrides_env_seeded_value()
     test_temporary_config_overrides_env_seeded_value()
     test_config_set_overrides_env_seeded_value()
-    test_config_file_overrides_env()
-    test_env_agreeing_with_file_value_does_not_warn()
+    test_env_overrides_config_file()
+    test_precedence_default_file_env_set()
     test_env_change_after_load_is_inert()
     test_env_bool_coercion()
     test_env_int_coercion()
