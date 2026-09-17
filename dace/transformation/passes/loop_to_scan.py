@@ -1291,6 +1291,7 @@ class _CarryMapShape(NamedTuple):
     nsdfg: nodes.NestedSDFG  # the NestedSDFG node inside the Map's scope
     inner_state: SDFGState  # the single state inside ``nsdfg.sdfg``
     inner_scan: _Scan  # the scan-update info derived from inner memlets
+    inner_carry_name: str  # ``nsdfg.symbol_mapping`` key bound to the carry axis (may differ from ``loop.loop_variable``)
 
 
 def _detect_carry_loop_with_inner_map(loop: LoopRegion, sdfg: SDFG) -> Optional[_CarryMapShape]:
@@ -1385,7 +1386,8 @@ def _detect_carry_loop_with_inner_map(loop: LoopRegion, sdfg: SDFG) -> Optional[
                           map_exit=map_exit,
                           nsdfg=nsdfg,
                           inner_state=inner_state,
-                          inner_scan=inner_match)
+                          inner_scan=inner_match,
+                          inner_carry_name=inner_carry_name)
 
 
 class _InterchangeFakeLoop:
@@ -1459,6 +1461,12 @@ def _rewrite_interchange_carry_with_map(shape: _CarryMapShape, sdfg: SDFG) -> Op
     #    new top-level CFR, executed per Map thread.
     inner_sdfg = nsdfg_node.sdfg
     carry_var = loop.loop_variable
+    # The matched inner alias (``shape.inner_carry_name``, from ``symbol_mapping``) can
+    # differ from the outer loop variable's own name. The new LoopRegion below is always
+    # named after the OUTER variable (its condition/init/update text says so); re-point
+    # every inner reference at that name so the alias is not left dangling.
+    if shape.inner_carry_name != carry_var:
+        inner_sdfg.replace(shape.inner_carry_name, carry_var)
     # Materialise the loop's init / cond / update statements so they don't
     # share Python objects with the soon-removed outer ``LoopRegion``.
     new_inner_loop = LoopRegion(label=f'{carry_var}_inner_carry',
@@ -1480,12 +1488,14 @@ def _rewrite_interchange_carry_with_map(shape: _CarryMapShape, sdfg: SDFG) -> Op
     for blk in old_inner_blocks:
         new_inner_loop.add_node(blk, is_start_block=(blk is old_start))
 
-    # 4. The inner SDFG previously had ``carry_var`` (= the outer loop var)
-    #    coming in via ``symbol_mapping``. Now ``carry_var`` is OWNED by
-    #    the new inner LoopRegion (it's the loop variable), so drop the
-    #    symbol_mapping entry to avoid a redundant binding.
-    if carry_var in nsdfg_node.symbol_mapping:
-        del nsdfg_node.symbol_mapping[carry_var]
+    # 4. The inner SDFG previously had the carry axis coming in via
+    #    ``symbol_mapping``, keyed by the MATCHED inner alias (which the rename
+    #    above may not have touched -- ``symbol_mapping`` lives on the outer
+    #    NestedSDFG node, not inside ``inner_sdfg``). Now the carry axis is OWNED
+    #    by the new inner LoopRegion (it's the loop variable), so drop the
+    #    symbol_mapping entry to avoid a redundant, now-dangling binding.
+    if shape.inner_carry_name in nsdfg_node.symbol_mapping:
+        del nsdfg_node.symbol_mapping[shape.inner_carry_name]
     if carry_var in inner_sdfg.symbols:
         # The carry variable is now the loop's own iterator; remove it
         # from the inner SDFG's external symbol set so codegen doesn't
