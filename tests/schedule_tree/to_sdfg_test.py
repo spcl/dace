@@ -2,13 +2,16 @@
 """
 Tests components in conversion of schedule trees to SDFGs.
 """
+import copy
+
 import dace
 from dace import data, subsets as sbs
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, SDFGState
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, ReturnBlock, SDFGState,
+                             UnstructuredControlFlow)
 
 import numpy as np
 import pytest
@@ -47,6 +50,27 @@ def test_state_boundaries_waw() -> None:
 
     stree = t2s._insert_state_boundaries_to_tree(stree)
     assert [tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode] == [type(n) for n in stree.children]
+
+
+def test_state_boundaries_waw_chain() -> None:
+    # The node after a boundary is part of the new state, so a subsequent write to the same data needs another boundary
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla2', {'inp'}, {'out'}, 'out = inp'), {'inp': dace.Memlet('A[2]')},
+                           {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla3', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[2]')},
+                           {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    stree = t2s._insert_state_boundaries_to_tree(stree)
+    assert [tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode, tn.StateBoundaryNode,
+            tn.TaskletNode] == [type(n) for n in stree.children]
 
 
 @pytest.mark.parametrize('overlap', (False, True))
@@ -231,9 +255,220 @@ def test_create_state_boundary_state_transition(control_flow: bool) -> None:
     assert ["start", new_label] == [state.label for state in sdfg.states()]
 
 
-@pytest.mark.xfail(reason="Not yet implemented")
-def test_create_state_boundary_empty_memlet():
-    t2s._StreeToSDFG(boundary_behavior=t2s.StateBoundaryBehavior.EMPTY_MEMLET)
+def _tasklet_node(code: str, inputs: dict[str, str], outputs: dict[str, str]) -> tn.TaskletNode:
+    """
+    Creates a tasklet node with the given code and memlets per connector.
+    """
+    return tn.TaskletNode(nodes.Tasklet('tasklet', set(inputs.keys()), set(outputs.keys()), code), {
+        k: dace.Memlet(v)
+        for k, v in inputs.items()
+    }, {
+        k: dace.Memlet(v)
+        for k, v in outputs.items()
+    })
+
+
+def _map_node(param: str, children: list[tn.ScheduleTreeNode]) -> tn.MapScope:
+    """
+    Creates a map scope over ``0:10``.
+    """
+    return tn.MapScope(node=nodes.MapEntry(nodes.Map(f'map_{param}', [param], sbs.Range.from_string('0:10'))),
+                       children=children)
+
+
+def _boundary_tree_waw() -> tn.ScheduleTreeRoot:
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={'A': data.Array(dace.float64, [10])},
+                               children=[
+                                   _tasklet_node('out = 1', {}, {'out': 'A[1]'}),
+                                   _tasklet_node('out = 2', {}, {'out': 'A[1]'}),
+                               ])
+
+
+def _boundary_tree_read_write_race() -> tn.ScheduleTreeRoot:
+    # The first read must happen before the write, even though the tasklets do not depend on each other
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={
+                                   'A': data.Array(dace.float64, [10]),
+                                   'B': data.Array(dace.float64, [10])
+                               },
+                               children=[
+                                   _tasklet_node('out = inp + 1', {'inp': 'A[1]'}, {'out': 'B[0]'}),
+                                   _tasklet_node('out = inp + 1', {'inp': 'A[1]'}, {'out': 'B[1]'}),
+                                   _tasklet_node('out = inp * 10', {'inp': 'B[0]'}, {'out': 'A[1]'}),
+                                   _tasklet_node('out = inp + 1', {'inp': 'A[1]'}, {'out': 'B[0]'}),
+                               ])
+
+
+def _boundary_tree_maps() -> tn.ScheduleTreeRoot:
+    # Two maps writing the same data, followed by a tasklet reading it
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={
+                                   'A': data.Array(dace.float64, [10]),
+                                   'B': data.Array(dace.float64, [10])
+                               },
+                               children=[
+                                   _map_node('i', [_tasklet_node('out = i', {}, {'out': 'A[i]'})]),
+                                   _map_node('j', [_tasklet_node('out = j * 2', {}, {'out': 'A[j]'})]),
+                                   _tasklet_node('out = inp', {'inp': 'A[3]'}, {'out': 'B[0]'}),
+                               ])
+
+
+def _boundary_tree_copies() -> tn.ScheduleTreeRoot:
+    # A copy overwrites a tasklet's result, and another tasklet reads the copy
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={
+                                   'A': data.Array(dace.float64, [10]),
+                                   'B': data.Array(dace.float64, [10])
+                               },
+                               children=[
+                                   _tasklet_node('out = 5', {}, {'out': 'A[2]'}),
+                                   tn.CopyNode(target='A', memlet=dace.Memlet('B[0:10]')),
+                                   _tasklet_node('out = inp + 1', {'inp': 'A[2]'}, {'out': 'B[2]'}),
+                               ])
+
+
+def _boundary_tree_assignment() -> tn.ScheduleTreeRoot:
+    # The symbol assignment reads the first write, the later write must not be visible to it
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={'A': data.Array(dace.float64, [10])},
+                               symbols={'k': dace.int64},
+                               children=[
+                                   _tasklet_node('out = 5', {}, {'out': 'A[0]'}),
+                                   tn.AssignNode('k', CodeBlock('A[0]'),
+                                                 dace.InterstateEdge(assignments={'k': 'A[0]'})),
+                                   _tasklet_node('out = 1', {}, {'out': 'A[0]'}),
+                                   _tasklet_node('out = k', {}, {'out': 'A[k]'}),
+                               ])
+
+
+def _boundary_tree_in_map() -> tn.ScheduleTreeRoot:
+    # State boundaries in a map require a nested SDFG, whose boundaries are then converted
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={'A': data.Array(dace.float64, [10])},
+                               children=[
+                                   _map_node('i', [
+                                       _tasklet_node('out = 1', {}, {'out': 'A[i]'}),
+                                       _tasklet_node('out = i + 1', {}, {'out': 'A[i]'}),
+                                   ]),
+                               ])
+
+
+def _boundary_tree_control_flow() -> tn.ScheduleTreeRoot:
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={'A': data.Array(dace.float64, [10])},
+                               symbols={'i': dace.int64},
+                               children=[
+                                   _tasklet_node('out = 1', {}, {'out': 'A[0]'}),
+                                   _tasklet_node('out = 2', {}, {'out': 'A[0]'}),
+                                   tn.ForScope(loop=LoopRegion('loop', 'i < 10', 'i', 'i = 1', 'i = i + 1'),
+                                               children=[
+                                                   _tasklet_node('out = inp + i', {'inp': 'A[i - 1]'}, {'out': 'A[i]'}),
+                                                   _tasklet_node('out = inp * 2', {'inp': 'A[i]'}, {'out': 'A[i]'}),
+                                                   _tasklet_node('out = 0', {}, {'out': 'A[i]'}),
+                                                   _tasklet_node('out = inp + 1', {'inp': 'A[i - 1]'}, {'out': 'A[i]'}),
+                                               ]),
+                               ])
+
+
+def _boundary_tree_view() -> tn.ScheduleTreeRoot:
+    # A write to a view aliases a later write to the viewed array
+    A = data.Array(dace.float64, [20])
+    return tn.ScheduleTreeRoot(name='tester',
+                               containers={
+                                   'A': A,
+                                   'B': data.ArrayView(dace.float64, [10], transient=True)
+                               },
+                               children=[
+                                   _view_node('B', 'A[5:15]', A, [10]),
+                                   _tasklet_node('out = 1', {}, {'out': 'B[0]'}),
+                                   _tasklet_node('out = inp + 2', {'inp': 'A[4]'}, {'out': 'A[5]'}),
+                                   _tasklet_node('out = inp * 3', {'inp': 'B[0]'}, {'out': 'A[6]'}),
+                               ])
+
+
+#: Schedule trees with state boundaries, mapped to the expected values of ``A``, the expected number of states (in all
+#: SDFGs) when converting boundaries with empty memlets, and whether empty memlet edges are needed for ordering (as
+#: opposed to existing dataflow).
+_BOUNDARY_TREES = {
+    'waw': (_boundary_tree_waw, {
+        1: 2
+    }, 1, True),
+    'read_write_race': (_boundary_tree_read_write_race, {
+        1: 10
+    }, 1, False),
+    'maps': (_boundary_tree_maps, {
+        3: 6,
+        9: 18
+    }, 1, True),
+    'copies': (_boundary_tree_copies, {
+        2: 0
+    }, 1, True),
+    'assignment': (_boundary_tree_assignment, {
+        0: 1,
+        5: 5
+    }, 2, True),
+    'in_map': (_boundary_tree_in_map, {
+        i: i + 1
+        for i in range(10)
+    }, 3, True),
+    'control_flow': (_boundary_tree_control_flow, {
+        0: 2,
+        1: 3,
+        9: 11
+    }, 4, True),
+    'view': (_boundary_tree_view, {
+        5: 2,
+        6: 6
+    }, 1, False),
+}
+
+
+@pytest.mark.parametrize('name', _BOUNDARY_TREES.keys())
+def test_state_boundary_empty_memlet(name: str) -> None:
+    factory, expected_a, expected_states, needs_empty_edges = _BOUNDARY_TREES[name]
+
+    # Both boundary behaviors must compute the same results
+    results = {}
+    states = {}
+    empty_edges = {}
+    for behavior in (t2s.StateBoundaryBehavior.STATE_TRANSITION, t2s.StateBoundaryBehavior.EMPTY_MEMLET):
+        sdfg = factory().as_sdfg(simplify=False, state_boundary_behavior=behavior)
+        sdfg.name = f'tester_{name}_{behavior.name.lower()}'
+        all_states = [state for nested in sdfg.all_sdfgs_recursive() for state in nested.states()]
+        states[behavior] = len(all_states)
+        empty_edges[behavior] = [
+            e for state in all_states for e in state.edges()
+            if e.data.is_empty() and not isinstance(e.src, nodes.EntryNode) and not isinstance(e.dst, nodes.ExitNode)
+        ]
+
+        arrays = {aname: np.zeros(desc.shape) for aname, desc in sdfg.arrays.items() if not desc.transient}
+        sdfg(**arrays)
+        results[behavior] = arrays
+
+    transition = results[t2s.StateBoundaryBehavior.STATE_TRANSITION]
+    empty_memlet = results[t2s.StateBoundaryBehavior.EMPTY_MEMLET]
+    for aname in transition:
+        assert np.allclose(transition[aname], empty_memlet[aname]), f'{aname} differs between boundary behaviors'
+    for index, value in expected_a.items():
+        assert empty_memlet['A'][index] == value
+
+    # Boundaries that do not precede control flow or assignments are converted within states
+    assert states[t2s.StateBoundaryBehavior.EMPTY_MEMLET] == expected_states
+    assert states[t2s.StateBoundaryBehavior.STATE_TRANSITION] > expected_states
+    assert not empty_edges[t2s.StateBoundaryBehavior.STATE_TRANSITION]
+    assert bool(empty_edges[t2s.StateBoundaryBehavior.EMPTY_MEMLET]) == needs_empty_edges
+
+
+def test_state_boundary_empty_memlet_order() -> None:
+    # The write after the boundary is ordered after the first write through an empty memlet edge
+    sdfg = _boundary_tree_waw().as_sdfg(simplify=False, state_boundary_behavior=t2s.StateBoundaryBehavior.EMPTY_MEMLET)
+    state = sdfg.states()[0]
+    writes = [n for n in state.data_nodes() if n.data == 'A']
+    assert len(writes) == 2
+    first, second = sorted(writes, key=lambda n: state.in_edges(n)[0].src.code.as_string)
+    second_tasklet = state.in_edges(second)[0].src
+    assert [e.data.is_empty() for e in state.edges_between(first, second_tasklet)] == [True]
 
 
 def test_create_tasklet_raw() -> None:
@@ -1322,9 +1557,312 @@ def test_create_if_elif_else_values(value: int) -> None:
     assert a[0] == {7: 1, 3: 2, -1: 3}[value]
 
 
+def _write_node(value: str, memlet: str) -> tn.TaskletNode:
+    """
+    Creates a tasklet node that writes ``value`` to the given memlet.
+    """
+    return tn.TaskletNode(nodes.Tasklet('write', {}, {'out'}, f'out = {value}'), {}, {'out': dace.Memlet(memlet)})
+
+
+def _node_types(sdfg: dace.SDFG) -> set[type]:
+    """
+    Returns the types of all nodes and control flow blocks in the SDFG and its nested SDFGs.
+    """
+    return {type(n) for n, _ in sdfg.all_nodes_recursive()}
+
+
+def test_goto_exit_in_loop() -> None:
+    # The exit cannot be restructured out of the loop, so it becomes a return block
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [10]),
+            'B': data.Array(dace.float64, [1]),
+        },
+        symbols={'i': dace.int64},
+        children=[
+            tn.ForScope(loop=LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1'),
+                        children=[
+                            tn.IfScope(condition=CodeBlock('i == 5'), children=[tn.GotoNode(target=None)]),
+                            _write_node('i', 'A[i]'),
+                        ]),
+            _write_node('1', 'B[0]'),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    assert ReturnBlock in _node_types(sdfg)
+
+    a = np.zeros(10)
+    b = np.zeros(1)
+    sdfg(A=a, B=b)
+    assert np.allclose(a, [0, 1, 2, 3, 4, 0, 0, 0, 0, 0])
+    assert b[0] == 0
+
+
+@pytest.mark.parametrize('value', (10, 0))
+def test_forward_goto_structured(value: int) -> None:
+    # The statements after the if/else chain only run in the else branch, and the write after the goto is unreachable
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [3])},
+        symbols={'n': dace.int64},
+        children=[
+            tn.IfScope(condition=CodeBlock('n > 5'),
+                       children=[_write_node('1', 'A[0]'),
+                                 tn.GotoNode(target='end'),
+                                 _write_node('99', 'A[0]')]),
+            tn.ElseScope(children=[_write_node('2', 'A[0]')]),
+            _write_node('3', 'A[1]'),
+            tn.StateLabel(state='end'),
+            _write_node('4', 'A[2]'),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    node_types = _node_types(sdfg)
+    assert ReturnBlock not in node_types
+    assert nodes.NestedSDFG not in node_types
+    assert not any(isinstance(n, nodes.Tasklet) and '99' in n.code.as_string for n, _ in sdfg.all_nodes_recursive())
+
+    a = np.zeros(3)
+    sdfg(A=a, n=value)
+    assert np.allclose(a, [1, 0, 4] if value > 5 else [2, 3, 4])
+
+
+def test_forward_goto_at_sdfg_end() -> None:
+    # Jumping to the end of the program is equivalent to returning
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [10])},
+        symbols={'i': dace.int64},
+        children=[
+            tn.ForScope(loop=LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1'),
+                        children=[
+                            tn.IfScope(condition=CodeBlock('i == 3'), children=[tn.GotoNode(target='end')]),
+                            _write_node('i', 'A[i]'),
+                        ]),
+            tn.StateLabel(state='end'),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    node_types = _node_types(sdfg)
+    assert ReturnBlock in node_types
+    assert nodes.NestedSDFG not in node_types
+
+    a = np.zeros(10)
+    sdfg(A=a)
+    assert np.allclose(a, [0, 1, 2, 0, 0, 0, 0, 0, 0, 0])
+
+
+@pytest.mark.parametrize('value', (10, 3, 0))
+def test_forward_goto_nested_sdfg(value: int) -> None:
+    # Two branches fall through to the statements after the chain, which would have to be duplicated. Instead, the
+    # statements up to the label are nested, and the goto returns from the nested SDFG.
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [3])},
+        symbols={'n': dace.int64},
+        children=[
+            tn.IfScope(condition=CodeBlock('n > 5'), children=[tn.GotoNode(target='end')]),
+            tn.ElifScope(condition=CodeBlock('n > 2'), children=[_write_node('2', 'A[0]')]),
+            _write_node('3', 'A[1]'),
+            tn.StateLabel(state='end'),
+            _write_node('4', 'A[2]'),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    nested = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]
+    assert len(nested) == 1
+    assert any(isinstance(block, ReturnBlock) for block in nested[0].sdfg.all_control_flow_blocks(recursive=True))
+
+    a = np.zeros(3)
+    sdfg(A=a, n=value)
+    assert np.allclose(a, {10: [0, 0, 4], 3: [2, 3, 4], 0: [0, 3, 4]}[value])
+
+
+@pytest.mark.parametrize('target', ('missing', 'backward'))
+def test_invalid_goto(target: str) -> None:
+    children = [_write_node('1', 'A[0]'), tn.GotoNode(target=target)]
+    if target == 'backward':
+        children.insert(0, tn.StateLabel(state='backward'))
+    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [1])}, children=children)
+
+    with pytest.raises(ValueError):
+        stree.as_sdfg(simplify=False)
+
+
+def test_gblock_goto_loop() -> None:
+    # A loop written with forward and backward gotos, with assignments on transitions
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': data.Array(dace.float64, [10]),
+            'B': data.Array(dace.float64, [1]),
+        },
+        symbols={'i': dace.int64},
+        children=[
+            tn.GBlock(children=[
+                tn.StateLabel(state='start'),
+                tn.AssignNode('i', CodeBlock('0'), dace.InterstateEdge(assignments={'i': '0'})),
+                tn.GotoNode(target='check'),
+                tn.StateLabel(state='check'),
+                tn.StateIfScope(condition=CodeBlock('i >= 5'), children=[tn.GotoNode(target='done')]),
+                _write_node('i', 'A[i]'),
+                tn.AssignNode('i', CodeBlock('i + 1'), dace.InterstateEdge(assignments={'i': 'i + 1'})),
+                tn.GotoNode(target='check'),
+                tn.StateLabel(state='done'),
+                _write_node('1', 'B[0]'),
+            ]),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+    assert UnstructuredControlFlow in _node_types(sdfg)
+
+    a = np.zeros(10)
+    b = np.zeros(1)
+    sdfg(A=a, B=b)
+    assert np.allclose(a, [0, 1, 2, 3, 4, 0, 0, 0, 0, 0])
+    assert b[0] == 1
+
+
+@pytest.mark.parametrize('value', (7, 3, 0))
+def test_gblock_conditional_gotos(value: int) -> None:
+    # Two conditional gotos out of one segment, followed by statements that only run if neither is taken. Falling off
+    # the end of a segment exits the general block.
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [2])},
+        symbols={'n': dace.int64},
+        children=[
+            tn.GBlock(children=[
+                tn.StateLabel(state='entry'),
+                tn.StateIfScope(condition=CodeBlock('n > 5'), children=[tn.GotoNode(target='big')]),
+                tn.StateIfScope(condition=CodeBlock('n > 2'), children=[tn.GotoNode(target='medium')]),
+                _write_node('3', 'A[0]'),
+                tn.StateLabel(state='big'),
+                _write_node('1', 'A[0]'),
+                tn.StateLabel(state='medium'),
+                _write_node('2', 'A[0]'),
+            ]),
+            tn.TaskletNode(nodes.Tasklet('after', {'inp'}, {'out'}, 'out = inp + 10'), {'inp': dace.Memlet('A[0]')},
+                           {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+
+    a = np.zeros(2)
+    sdfg(A=a, n=value)
+    expected = {7: 1, 3: 2, 0: 3}[value]
+    assert np.allclose(a, [expected, expected + 10])
+
+
+def test_gblock_goto_to_loop() -> None:
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [10])},
+        symbols={'i': dace.int64},
+        children=[
+            tn.GBlock(children=[
+                tn.StateLabel(state='entry'),
+                tn.GotoNode(target='loop'),
+                tn.StateLabel(state='unreachable'),
+                _write_node('99', 'A[9]'),
+                tn.StateLabel(state='loop'),
+                tn.ForScope(loop=LoopRegion('loop', 'i < 5', 'i', 'i = 0', 'i = i + 1'),
+                            children=[_write_node('i', 'A[i]')]),
+            ]),
+        ],
+    )
+
+    sdfg = stree.as_sdfg(simplify=False)
+
+    a = np.zeros(10)
+    sdfg(A=a)
+    assert np.allclose(a, [0, 1, 2, 3, 4, 0, 0, 0, 0, 0])
+
+
+def test_state_boundaries_read_modify_write() -> None:
+    # A node that reads and writes the same data does not race with itself
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map('map_i', 'i', sbs.Range.from_string('0:20'))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet('increment', {'inp'}, {'out'}, 'out = inp + 1'),
+                                   {'inp': dace.Memlet('A[i]')}, {'out': dace.Memlet('A[i]')})
+                ],
+            ),
+        ],
+    )
+
+    stree = t2s._insert_state_boundaries_to_tree(stree)
+    assert not any(isinstance(n, tn.StateBoundaryNode) for n in stree.preorder_traversal())
+
+    sdfg = stree.as_sdfg(simplify=False)
+    assert nodes.NestedSDFG not in _node_types(sdfg)
+    a = np.random.rand(20)
+    expected = a + 1
+    sdfg(A=a)
+    assert np.allclose(a, expected)
+
+
+@pytest.mark.parametrize('scope', ('if', 'elif', 'else', 'loop'))
+def test_trailing_assignment_in_body(scope: str) -> None:
+    # Assignments at the end of a body are performed in that body, even without a state boundary after them
+    assign = tn.AssignNode('k', CodeBlock('k + 10'), dace.InterstateEdge(assignments={'k': 'k + 10'}))
+    if scope == 'loop':
+        body = [tn.ForScope(loop=LoopRegion('loop', 'i < 3', 'i', 'i = 0', 'i = i + 1'), children=[assign])]
+    else:
+        conditions = {'if': ('n > 5', 'n > 2'), 'elif': ('n > 50', 'n > 2'), 'else': ('n > 50', 'n > 20')}[scope]
+        branches = [[], [], []]
+        branches[('if', 'elif', 'else').index(scope)] = [assign]
+        body = [
+            tn.IfScope(condition=CodeBlock(conditions[0]), children=branches[0]),
+            tn.ElifScope(condition=CodeBlock(conditions[1]), children=branches[1]),
+            tn.ElseScope(children=branches[2]),
+        ]
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': data.Array(dace.float64, [1])},
+        symbols={
+            'i': dace.int64,
+            'k': dace.int64,
+            'n': dace.int64
+        },
+        children=[
+            tn.AssignNode('k', CodeBlock('0'), dace.InterstateEdge(assignments={'k': '0'})),
+            tn.StateBoundaryNode(),
+            *body,
+            tn.StateBoundaryNode(True),
+            _write_node('k', 'A[0]'),
+        ],
+    )
+
+    # Convert without inserting state boundaries after assignments
+    sdfg = dace.SDFG('tester')
+    sdfg._arrays.update(copy.deepcopy(stree.containers))
+    sdfg.symbols.update(stree.symbols)
+    t2s._StreeToSDFG().visit(stree, sdfg=sdfg)
+    sdfg.validate()
+
+    # With n=10, the body with the assignment is executed. With n=1, only the else branch is.
+    for n, expected in ((10, 10), (1, 10 if scope == 'else' else 0)):
+        a = np.zeros(1)
+        sdfg(A=a, n=n)
+        assert a[0] == (30 if scope == 'loop' else expected)
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
+    test_state_boundaries_waw_chain()
     test_state_boundaries_waw_ranges(overlap=False)
     test_state_boundaries_waw_ranges(overlap=True)
     test_state_boundaries_war()
@@ -1336,7 +1874,9 @@ if __name__ == '__main__':
     test_state_boundaries_propagation(boundary=True)
     test_create_state_boundary_state_transition(control_flow=True)
     test_create_state_boundary_state_transition(control_flow=False)
-    # test_create_state_boundary_empty_memlet()
+    for name in _BOUNDARY_TREES:
+        test_state_boundary_empty_memlet(name)
+    test_state_boundary_empty_memlet_order()
     test_create_tasklet_raw()
     test_create_tasklet_waw()
     test_create_tasklet_war()
@@ -1375,3 +1915,20 @@ if __name__ == '__main__':
     test_create_if_elif_else_values(7)
     test_create_if_elif_else_values(3)
     test_create_if_elif_else_values(-1)
+    test_goto_exit_in_loop()
+    test_forward_goto_structured(10)
+    test_forward_goto_structured(0)
+    test_forward_goto_at_sdfg_end()
+    test_forward_goto_nested_sdfg(10)
+    test_forward_goto_nested_sdfg(3)
+    test_forward_goto_nested_sdfg(0)
+    test_invalid_goto('missing')
+    test_invalid_goto('backward')
+    test_gblock_goto_loop()
+    test_gblock_conditional_gotos(7)
+    test_gblock_conditional_gotos(3)
+    test_gblock_conditional_gotos(0)
+    test_gblock_goto_to_loop()
+    test_state_boundaries_read_modify_write()
+    for scope in ('if', 'elif', 'else', 'loop'):
+        test_trailing_assignment_in_body(scope)

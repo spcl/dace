@@ -218,9 +218,11 @@ def test_dealias_interstate_edge():
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
     nodes = list(stree.preorder_traversal())[1:]
-    assert [type(n) for n in nodes] == [tn.StateIfScope, tn.GotoNode, tn.AssignNode]
+    assert [type(n) for n in nodes] == [tn.StateIfScope, tn.GotoNode, tn.AssignNode, tn.StateLabel]
     assert 'A[2]' in nodes[0].condition.as_string
-    assert 'B[4]' in nodes[-1].value.as_string
+    assert 'B[4]' in nodes[2].value.as_string
+    # The exit of the nested SDFG jumps to its end, not to the end of the program
+    assert nodes[1].target == nodes[3].name
 
 
 if __name__ == '__main__':
