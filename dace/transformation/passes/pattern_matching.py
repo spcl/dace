@@ -233,22 +233,23 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         applied = True
         while applied:
             applied = False
-            matched_pattern = next(match_patterns(sdfg,
-                                        permissive=self.permissive,
-                                        patterns=xforms,
-                                        states=self.states,
-                                        metadata=self._metadata), None)
-             if matched_pattern is not None:
-                 self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
-                 applied = True
+            matched_pattern = next(
+                match_patterns(sdfg,
+                               permissive=self.permissive,
+                               patterns=xforms,
+                               states=self.states,
+                               metadata=self._metadata), None)
+            if matched_pattern is not None:
+                self._apply_and_validate(matched_pattern, sdfg, start, pipeline_results, applied_transformations)
+                applied = True
 
         if self.validate:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
-                if applied and match is not None:
-                    raise InvalidSDFGError(f"Validation failed after applying {match.print_match(self)}.", self,
-                                           match.state_id) from err
+                if applied and matched_pattern is not None:
+                    raise InvalidSDFGError(f"Validation failed after applying {matched_pattern.print_match(self)}.",
+                                           self, matched_pattern.state_id) from err
                 else:
                     raise err
 
