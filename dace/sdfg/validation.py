@@ -282,7 +282,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                 'Ambiguous return values: an SDFG cannot have both a `__return` (single value) '
                 'and `__return_<i>` (tuple) data descriptor.', sdfg, None)
         elif '__return' in sdfg._arrays:
-            tuple_return_args = {'__return'}  # This is abuse
+            tuple_return_args = {'__return'}
         elif tuple_return_args and tuple_return_args != {f'__return_{i}' for i in range(len(tuple_return_args))}:
             raise InvalidSDFGError('Tuple return values are not consecutively named')
         for ret_name_to_check in tuple_return_args:
