@@ -14,7 +14,8 @@ set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of 
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
 set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
-set(DACE_PCH_DIR "" CACHE STRING "Directory holding a precompiled <dace/dace.h>")
+set(DACE_PCH_DIR "" CACHE STRING "Directory holding the precompiled runtime headers")
+set(DACE_PCH_INCLUDE_DIRS "" CACHE STRING "Include directories the precompiled header needs in its textual fallback")
 
 # Nanobind interface (compiler.interface=nanobind): build the program library
 # itself as a nanobind extension module (single artifact, no loader stub).
@@ -68,10 +69,16 @@ endforeach()
 
 # Reuse the precompiled DaCe runtime header. Generated host sources only: force-including it into an
 # environment's aux .cpp or a .cu can break a file that never asked for it. Mismatched flags are
-# ignored by the compiler.
+# ignored by the compiler, which then reads the header as text -- so any include directory the
+# header's content needs (the nanobind umbrella pulls <nanobind/nanobind.h> and Python.h) must be
+# on the compile line too, even for programs that link neither.
 if(DACE_PCH_DIR AND DACE_GENERATED_HOST_FILES)
+  set(DACE_PCH_OPTIONS "-I${DACE_PCH_DIR};-include;dace_prewarm.h")
+  foreach(DACE_PCH_INCLUDE_DIR ${DACE_PCH_INCLUDE_DIRS})
+    list(APPEND DACE_PCH_OPTIONS "-I${DACE_PCH_INCLUDE_DIR}")
+  endforeach()
   set_source_files_properties(${DACE_GENERATED_HOST_FILES} PROPERTIES
-                              COMPILE_OPTIONS "-I${DACE_PCH_DIR};-include;dace_prewarm.h")
+                              COMPILE_OPTIONS "${DACE_PCH_OPTIONS}")
 endif()
 
 # Internal dependencies

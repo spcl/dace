@@ -230,9 +230,8 @@ def _symbol_fallbacks(arglist: Dict[str, dt.Data], arg_names: List[str],
     # (out of scope, refused before this runs); vector arrays are excluded
     # because their run-time shape differs from the descriptor shape.
     sources = [(name, desc) for name, desc in arglist.items()
-               if name in arg_names_set and isinstance(desc, dt.Array)
-               and not isinstance(desc.dtype, dtypes.vector) and desc.optional is not True
-               and not name.startswith('__return')]
+               if name in arg_names_set and isinstance(desc, dt.Array) and not isinstance(desc.dtype, dtypes.vector)
+               and desc.optional is not True and not name.startswith('__return')]
 
     dace_infer_src = f'__dace_infer_src_{id(arglist)}'
     placeholder = sympy.Symbol(dace_infer_src)
@@ -903,24 +902,9 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
                            f'        init_impl({init_call});')
 
     return f'''// Auto-generated nanobind bindings for SDFG '{name}'.
-#include <cstdint>
-#include <optional>
-#include <stdexcept>
-#include <string>{gpu_runtime_include}
-
-// DaCe runtime types used in the extern "C" program signature, the argument
-// casts, and the nb::ndarray scalar types: dace::uint, dace::complex64/128
-// (aliases of unsigned int / std::complex<...>), dace::vec<T, N>, and the
-// `pyobject` typedef (pyinterop.h) that callback signatures may reference.
-#include <dace/types.h>
-#include <dace/vector.h>
-#include <dace/pyinterop.h>
-
-#include <nanobind/nanobind.h>
-#include <nanobind/ndarray.h>
-#include <nanobind/stl/complex.h>
-#include <nanobind/stl/optional.h>
-#include <nanobind/stl/string.h>
+// The include set lives in the runtime umbrella header so the binary-header
+// machinery can precompile it once for every generated module.
+#include <dace/nanobind.h>{gpu_runtime_include}
 
 namespace nb = nanobind;
 {float16_traits_block}{bool_caster_block}

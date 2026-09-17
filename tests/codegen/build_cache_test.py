@@ -7,6 +7,7 @@ import contextlib
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -132,11 +133,46 @@ def test_precompiled_header_is_actually_used(tmp_path):
     with open(database) as fp:
         generated = [e for e in json.load(fp) if 'pchused' in e['file']]
     assert generated, 'no compile command recorded for the generated source'
-    command = generated[0]['command']
-    assert 'dace_prewarm.h' in command, 'the precompiled header never reached the compile line'
-    checked = command.replace(' -c ', ' -Winvalid-pch -Werror=invalid-pch -c ')
-    result = subprocess.run(checked, shell=True, cwd=generated[0]['directory'], capture_output=True, text=True)
-    assert result.returncode == 0, f'the compiler refused the precompiled header:\n{result.stderr}'
+    # Every generated host TU must consume the header -- under the nanobind interface that is the
+    # frame TU and the bindings TU, whose compile lines carry nanobind's extra module flags.
+    for entry in generated:
+        command = entry['command']
+        assert 'dace_prewarm.h' in command, f'the precompiled header never reached {entry["file"]}'
+        checked = command.replace(' -c ', ' -Winvalid-pch -Werror=invalid-pch -c ')
+        result = subprocess.run(checked, shell=True, cwd=entry['directory'], capture_output=True, text=True)
+        assert result.returncode == 0, \
+            f'the compiler refused the precompiled header for {entry["file"]}:\n{result.stderr}'
+    if any(e['file'].endswith('_nanobind.cpp') for e in generated):
+        # A nanobind build must precompile the bindings' share too, not just <dace/dace.h>.
+        prewarm = re.search(r'-I(\S+)\s+-include\s+dace_prewarm\.h', generated[0]['command'])
+        assert prewarm, 'no prewarm include directory on the compile line'
+        with open(os.path.join(prewarm.group(1), 'dace_prewarm.h')) as fp:
+            assert '#include <dace/nanobind.h>' in fp.read(), 'the binary header misses the nanobind umbrella'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+def test_prewarm_header_carries_nanobind_when_present(tmp_path, monkeypatch):
+    """With nanobind importable, the composed binary header includes the runtime umbrella, so the
+    bindings' share of the compile is precompiled too."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    pch = compiler.prepare_precompiled_header({'cpu'})
+    assert pch, 'no precompiled header was produced'
+    with open(os.path.join(pch, 'dace_prewarm.h')) as fp:
+        assert '#include <dace/nanobind.h>' in fp.read()
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+def test_prewarm_header_stays_plain_without_nanobind(tmp_path, monkeypatch):
+    """Without nanobind the composed header and its cache key match today's plain-dace.h behavior; a
+    key that ignored the augmentation would hand one environment the other's binary header."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    augmented = compiler.prepare_precompiled_header({'cpu'})
+    monkeypatch.setattr(compiler, '_nanobind_pch_identity', lambda: None)
+    plain = compiler.prepare_precompiled_header({'cpu'})
+    assert augmented and plain, 'no precompiled header was produced'
+    assert plain != augmented, 'the nanobind identity must enter the cache key'
+    with open(os.path.join(plain, 'dace_prewarm.h')) as fp:
+        assert '<dace/nanobind.h>' not in fp.read()
 
 
 @pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')

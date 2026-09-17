@@ -21,6 +21,7 @@ import shutil
 import shlex
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import warnings
 from functools import lru_cache
@@ -559,12 +560,32 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def prepare_precompiled_header(targets) -> Optional[str]:
-    """Precompile ``<dace/dace.h>`` once per (runtime, compiler, flags), returning its dir or ``None``.
+def _nanobind_pch_identity() -> Optional[Tuple[Tuple[str, str], str, str]]:
+    """The include directories and version identity the nanobind umbrella adds to the binary
+    header: ``((nanobind include, Python include), nanobind version, Python version)``, or ``None``
+    when the ``nanobind`` package is absent.
 
-    The runtime umbrella header is most of the compile time of a small kernel; caching it across
-    SDFGs is what makes precompiling pay. Should the flags drift from CMake's line, the compiler
-    silently declines the header and produces the same object.
+    The versions belong in the PCH cache key: the mtime guard in
+    :func:`prepare_precompiled_header` only walks DaCe's own runtime tree, so an in-place nanobind
+    upgrade or another interpreter must miss the cache, never reuse a header built from foreign
+    includes.
+    """
+    try:
+        import nanobind
+    except ImportError:
+        return None
+    return ((nanobind.include_dir(), sysconfig.get_paths()['include']), nanobind.__version__, sys.version)
+
+
+def prepare_precompiled_header(targets) -> Optional[str]:
+    """Precompile the runtime headers once per (runtime, compiler, flags), returning the dir or ``None``.
+
+    The precompiled ``dace_prewarm.h`` contains ``<dace/dace.h>`` and, when the nanobind package is
+    present, the ``<dace/nanobind.h>`` umbrella as well -- so the bindings' share of a nanobind
+    module compile is served from the binary header too. The runtime umbrella header is most of the
+    compile time of a small kernel; caching it across SDFGs is what makes precompiling pay. Should
+    the flags drift from CMake's line, the compiler silently declines the header and produces the
+    same object.
 
     The include path is part of the key, not just the flags: the cache is machine-global, so two
     DaCe checkouts sharing a compiler would otherwise share one ``.gch`` and the second would compile
@@ -579,7 +600,15 @@ def prepare_precompiled_header(targets) -> Optional[str]:
              shlex.split(compiler_family.cpu_args() or '') + build_type_flags())
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
-    pch = os.path.join(build_cache_root(), 'pch', cache_key(runtime, cxx, *flags))
+    prewarm = '#include <dace/dace.h>\n'
+    key_parts = [runtime, cxx, *flags]
+    nb_identity = _nanobind_pch_identity()
+    if nb_identity is not None:
+        include_dirs, nb_version, py_version = nb_identity
+        prewarm += '#include <dace/nanobind.h>\n'
+        flags += [arg for d in include_dirs for arg in ('-I', d)]
+        key_parts += ['nanobind-prewarm', *include_dirs, nb_version, py_version]
+    pch = os.path.join(build_cache_root(), 'pch', cache_key(*key_parts))
     header = os.path.join(pch, 'dace_prewarm.h')
     newest = max((os.path.getmtime(os.path.join(r, f)) for r, _, fs in os.walk(runtime) for f in fs), default=0.0)
     try:
@@ -587,7 +616,7 @@ def prepare_precompiled_header(targets) -> Optional[str]:
         if not (os.path.exists(header + '.gch') and os.path.getmtime(header + '.gch') > newest):
             os.makedirs(pch, exist_ok=True)
             with open(header, 'w') as fp:
-                fp.write('#include <dace/dace.h>\n')
+                fp.write(prewarm)
             # Build to a private name and rename, so a concurrent build never sees a partial header.
             staging = f'{header}.gch.{os.getpid()}'
             subprocess.run([cxx] + flags + ['-I', runtime, '-x', 'c++-header', header, '-o', staging],
@@ -807,6 +836,12 @@ def configure_and_compile(
     # Always set (even if empty), so a CMake cache cannot keep pointing at a header that no longer exists
     pch_dir = prepare_precompiled_header(targets) or ''
     cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
+    # With nanobind present the prewarm header references <nanobind/nanobind.h>: every TU that is
+    # force-fed the header must resolve it even in the TEXTUAL fallback (a declined PCH reads the
+    # header as source), so the include directories ride along -- ctypes-only programs have no
+    # other source for them.
+    nb_identity = _nanobind_pch_identity() if pch_dir else None
+    cmake_command.append('-DDACE_PCH_INCLUDE_DIRS="{}"'.format(';'.join(nb_identity[0] if nb_identity else ())))
     # What the configure DISCOVERS: the command minus the flags naming this program. ``DACE_FILES``
     # reduces to its target subdirectories, which select the languages and packages CMake enables.
     shape = [c for c in cmake_command if not c.startswith(('-DDACE_SRC_DIR=', '-DDACE_FILES=', '-DDACE_PROGRAM_NAME='))]

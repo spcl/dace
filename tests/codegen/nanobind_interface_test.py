@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the nanobind-based `CompiledSDFG` interface (`compiler.interface=nanobind`)."""
+import os
 import sys
 
 import numpy as np
@@ -1747,12 +1748,15 @@ def test_nanobind_interface_complex_array(nanobind_interface):
     assert np.allclose(b, a + a)
 
 
-def test_nanobind_interface_includes_dace_type_headers():
-    """The generated TU includes the dace runtime type headers (so dace:: scalar names resolve).
+def test_nanobind_interface_includes_umbrella_header():
+    """The generated TU includes the runtime umbrella header, which carries the include set.
 
-    Version-independent guard for the type-header fix: complex/unsigned ndarray
-    scalar types are dace:: aliases of nanobind-supported scalars, but only once
-    the header is included.
+    The umbrella (<dace/nanobind.h>) is what the binary-header machinery
+    precompiles, so the generated TU must reference it instead of spelling the
+    nanobind includes out itself. The header in turn must provide the dace type
+    headers (the dace:: ndarray scalar aliases resolve only once they are
+    included) and every stl caster header the bindings rely on (casters are
+    opt-in per included header).
     """
     from dace import dtypes
     from dace.codegen.nanobind_bindings import generate_bindings_code
@@ -1760,9 +1764,16 @@ def test_nanobind_interface_includes_dace_type_headers():
     sdfg = dace.SDFG('dace_type_header_probe')
     sdfg.add_array('c', [4], dtypes.complex128)
     code = generate_bindings_code(sdfg)
-    assert '#include <dace/types.h>' in code
-    assert '#include <dace/vector.h>' in code
-    assert '#include <nanobind/stl/complex.h>' in code
+    assert '#include <dace/nanobind.h>' in code
+    assert '#include <nanobind/' not in code, 'nanobind includes belong in the umbrella header'
+
+    header_path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'nanobind.h')
+    with open(header_path) as fp:
+        header = fp.read()
+    for include in ('<dace/types.h>', '<dace/vector.h>', '<dace/pyinterop.h>', '<nanobind/nanobind.h>',
+                    '<nanobind/ndarray.h>', '<nanobind/stl/complex.h>', '<nanobind/stl/optional.h>',
+                    '<nanobind/stl/string.h>'):
+        assert f'#include {include}' in header
 
 
 def test_nanobind_interface_vector_array(nanobind_interface):
