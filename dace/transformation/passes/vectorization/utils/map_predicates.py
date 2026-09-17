@@ -270,7 +270,27 @@ def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | 
     iter_vars = tuple(params[-K:]) if K else tuple(params)
     if map_body_has_tiled_param_dependent_branch(state, map_entry, iter_vars):
         return False
+    if map_reduces_into_tiled_param_element(state, map_entry, iter_vars):
+        return False
     return True
+
+
+def map_reduces_into_tiled_param_element(state: SDFGState, map_entry: dace.nodes.MapEntry,
+                                         iter_vars: tuple[str, ...]) -> bool:
+    """True if a reduction leaving the map targets an element indexed by one of ``iter_vars``.
+
+    ``y[i] += A[i, k]`` over a tiled ``(i, k)`` keeps one accumulator per lane of ``i``, while the
+    tile fold writes every lane into the one element at the tile base (SpMV rows came out 0 or 4x).
+
+    :param state: state holding ``map_entry``.
+    :param map_entry: the candidate map.
+    :param iter_vars: the params that will be strided to the tile width.
+    :returns: ``True`` if the map must be left scalar.
+    """
+    params = {str(p) for p in iter_vars}
+    return any(edge.data.wcr is not None and params & {str(s)
+                                                       for s in edge.data.subset.free_symbols}
+               for edge in state.in_edges(state.exit_node(map_entry)))
 
 
 def is_foreign_language_tasklet(node: dace.nodes.Node) -> bool:

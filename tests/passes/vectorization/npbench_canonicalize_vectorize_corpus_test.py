@@ -43,7 +43,6 @@ UNTILED_KERNELS = frozenset({
     "azimint_hist",
     "crc16",
     "mandelbrot2",
-    "nbody",
     "resnet",
     "stockham_fft",
 })
