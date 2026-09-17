@@ -311,7 +311,8 @@ def test_slice_view_fold_preserves_anti_dependence_on_output():
     the END of ``out``'s adjacency, behind the empty ordering edge that fences the store. Codegen
     emits a state in depth-first topological order, so the store to ``out[:, 0:4]`` moved ahead of
     the ``7.0 * out[:, 1::2]`` read and the second half of the transform read back its own output.
-    ArrayElimination must decline the fold while ``out`` is read and written in the same state.
+    Since StateFusionExtended puts the happens-before edge on the view's real consumer, the fold may
+    proceed; the read must still precede every store.
     """
     import numpy as np
 
@@ -331,16 +332,8 @@ def test_slice_view_fold_preserves_anti_dependence_on_output():
     sdfg = war.to_sdfg(simplify=True)
     sdfg.validate()
 
-    # Structural: the named view of ``out`` must survive, and codegen's depth-first topological
-    # order must reach the read of ``out`` before every store into it.
-    surviving = {
-        n.data
-        for state in sdfg.all_states()
-        for n in state.data_nodes() if isinstance(sdfg.arrays[n.data], dace.data.View)
-    }
-    assert 'block' in surviving, ('ArrayElimination folded the named view ``block`` into ``out`` even though ``out`` '
-                                  'is read and written in the same state -- the fold re-orders the read behind the '
-                                  f'store; surviving views: {sorted(surviving)}')
+    # Structural: codegen's depth-first topological order must reach the read of ``out`` before every
+    # store into it.
 
     checked = False
     for state in sdfg.all_states():
