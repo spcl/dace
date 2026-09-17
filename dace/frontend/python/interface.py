@@ -437,6 +437,61 @@ def in_program() -> bool:
     return False
 
 
+def ai(description: str, *inputs, **kwargs):
+    """
+    Computes something described in natural language, rather than written out.
+
+    The call becomes an :class:`~dace.libraries.ai.nodes.ai_node.AINode` in the SDFG: a library node
+    that carries the description instead of an implementation. It is expanded when the program is
+    compiled, by asking a language model to write the tasklet that goes in its place, given the
+    description and the node's context -- the connectors and the data behind them, the maps and
+    nested SDFGs around it, and the compiler and machine it will be built for. The generated
+    tasklet is then part of the SDFG like any other node: it is saved with it, and compiling the
+    program again does not query the model again.
+
+    Use it where the implementation is the point and the code is not worth writing by hand: a
+    vectorized microkernel, a vendor intrinsic sequence, a call into an external library::
+
+        @dace.program
+        def matmul(A: dace.float32[N, N], B: dace.float32[N, N]):
+            return dace.ai('Write _out[i][j] = sum over k of _a[i][k] * _b[k][j], as a '
+                           'register-blocked microkernel using AVX2 FMA intrinsics.',
+                           a=A, b=B)
+
+    Since the description is the specification, it has to be able to name the variables the
+    generated code will see. Those are the node's connectors, and they are named from the call:
+    a keyword input ``a=A`` becomes ``_a``, a positional input becomes ``_in0``, ``_in1``, ... in
+    order, and the output is ``_out`` (or ``_out0``, ``_out1``, ... when ``out`` names several).
+    Symbols of the program, such as ``N`` above, are in scope in the generated code under their own
+    names and do not have to be passed in.
+
+    Which model is asked, and whether its answers are cached, is set by the ``ai`` entries of the
+    DaCe configuration -- see :mod:`dace.libraries.ai`. To read what the model wrote, or to ask it
+    for something better, see :func:`dace.libraries.ai.refine`.
+
+    :param description: What the node must compute, in natural language. State the intended
+                        semantics, the expected numerical behavior, and any implementation
+                        technique that is required (e.g. "use AVX2 intrinsics").
+    :param inputs: Data containers to read, connected as ``_in0``, ``_in1``, ...
+    :param out: Data container to write to, or a sequence of them. If not given, one is allocated
+                and returned. It has to name a whole container: to write into part of one, assign
+                the result instead, as in ``C[0:8, 0:8] = dace.ai(...)``.
+    :param shape: Shape of the allocated output. Defaults to the shape of the first input.
+    :param dtype: Data type of the allocated output. Defaults to the type of the first input.
+    :param storage: Storage type of the allocated output. Defaults to that of the first input.
+    :param name: Name of the node, shown in the SDFG and given to the model with the description.
+    :param schedule: Schedule of the node, which determines its default device mapping.
+    :param kwargs: Any other keyword argument is a data container to read, connected under a
+                   connector named after the keyword (``a=A`` is read as ``_a``).
+    :return: The container written to, or a tuple of them if ``out`` named several.
+    :note: This function is parsed by the DaCe Python frontend and cannot be called outside of a
+           ``@dace.program``. Use :class:`~dace.libraries.ai.nodes.ai_node.AINode` directly to add
+           such a node to an SDFG built with the SDFG API.
+    """
+    raise NotImplementedError('dace.ai can only be called inside a DaCe program. To describe a node in an '
+                              'SDFG built with the SDFG API, add a dace.libraries.ai.AINode to a state.')
+
+
 class named:
     """
     Creates a `NamedRegion` with the given label.
