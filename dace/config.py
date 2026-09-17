@@ -230,7 +230,9 @@ class _ConfigData(threading.local):
                 # If any filesystem-related error happened during file load, move on to next candidate
                 continue
         else:
-            # None of the files were found, load defaults from metadata
+            # No configuration file exists, so load() above never ran; build the
+            # configuration the same way load() would, minus the file: schema
+            # defaults first, then the environment on top.
             self._cfg_filename = None
             self._config = {}
             self._add_defaults(self._config, self._config_metadata['required'])
