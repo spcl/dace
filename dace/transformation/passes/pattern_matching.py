@@ -514,7 +514,7 @@ def _unconnected_pair_matcher(digraph, nxpattern, node_pred, edge_pred):
     second_candidates = candidates(second_pattern_node)
     for u in candidates(first_pattern_node):
         for v in second_candidates:
-            if u != v and not digraph.has_edge(u, v) and not digraph.has_edge(v, u):
+            if u is not v and not digraph.has_edge(u, v) and not digraph.has_edge(v, u):
                 yield {u: first, v: second}
 
 
