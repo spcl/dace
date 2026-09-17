@@ -15,8 +15,8 @@ def ctypes_interface(monkeypatch):
     """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
 
     Under the default ``auto`` these SDFGs would select the nanobind interface,
-    where the asserted behavior differs: the nanobind interface no longer supports ContainerArray at all; these tests assert the
-    ctypes pointer-array calling form.
+    where the asserted behavior differs: ContainerArray is outside the nanobind
+    interface's scope, and these tests assert the ctypes pointer-array calling form.
     The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
     is dropped first.
     """

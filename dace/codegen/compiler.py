@@ -90,11 +90,9 @@ def generate_program_folder(
     :param out_path: The folder in which the build files should be written.
     :param folder_mode: Select which files should be saved in the program build folder;
                         if not given, ``compiler.build_folder_mode`` is used.
-    :param interface: The DECIDED Python interface for this folder ('ctypes' or
-                      'nanobind', never 'auto') - ``SDFG.compile()`` passes the
-                      value :func:`resolve_compiler_interface` returned. If not
-                      given, it is resolved here from the configuration and
-                      ``sdfg``.
+    :param interface: The decided Python interface for this folder ('ctypes' or
+                      'nanobind', never 'auto'); if not given, it is resolved
+                      via :func:`resolve_compiler_interface`.
     :return: Path to the program folder.
 
     :note: The ``config`` argument is retained for compatibility and should not be used.

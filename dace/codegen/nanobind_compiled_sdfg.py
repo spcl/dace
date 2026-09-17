@@ -31,7 +31,7 @@ class NanobindCompiledSDFG:
     (``construct_arguments()`` / ``fast_call()`` / ``convert_return_values()``)
     is not provided; calling happens through ``__call__()``, which forwards
     straight to the compiled dispatcher. Otherwise it implements the same
-    interface as ``CompiledSDFG``, with some deviations listed bellow.
+    interface as ``CompiledSDFG``, with some deviations listed below.
 
     :param sdfg: The ``SDFG`` this wrapper was compiled from; used to evaluate
                  return-array shapes and exposed via the ``sdfg`` property.
@@ -55,14 +55,14 @@ class NanobindCompiledSDFG:
            value always takes precedence, a symbol that can not be deduced must
            be passed, and symbols needed for the return values have to be
            provided explicitly.
-    :note: There is no caching of the "previous call arguments", i.e.
-           ``CompiledSDFG._lastargs``. This means that the symbolic sizes must be
-           explicitly passed to :meth:`get_workspace_sizes` and :meth:`set_workspace`.
-           take the symbol values they depend on as arguments of that call.
+    :note: There is no caching of the "previous call arguments"
+           (``CompiledSDFG._lastargs``): :meth:`get_workspace_sizes` and
+           :meth:`set_workspace` take the symbol values they depend on as
+           arguments of that call.
     :note: Initialization is not thread safe. Calling the SDFG is thread safe only
            if ``self`` is already initialized and the SDFG does not have persistent
            or external memory. Furthermore, ``finalize()`` and the retrieval of
-           GPU erros is not thread safe.
+           GPU errors is not thread safe.
     :note: This class will not unload the module.
     """
 

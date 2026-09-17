@@ -227,8 +227,8 @@ def _symbol_fallbacks(arglist: Dict[str, dt.Data], arg_names: List[str],
 
     # The shape and strides of these array arguments can be used to infer
     # symbol values. Struct/container/low-precision arrays cannot occur here
-    # anymore (out of scope, refused before this runs); vector arrays are
-    # excluded because their run-time shape differs from the descriptor shape.
+    # (out of scope, refused before this runs); vector arrays are excluded
+    # because their run-time shape differs from the descriptor shape.
     sources = [(name, desc) for name, desc in arglist.items()
                if name in arg_names_set and isinstance(desc, dt.Array)
                and not isinstance(desc.dtype, dtypes.vector) and desc.optional is not True

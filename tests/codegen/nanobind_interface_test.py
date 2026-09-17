@@ -2429,7 +2429,7 @@ def _structure_reject_probe(name: str, container: bool = False):
 
 
 def test_nanobind_interface_structure_rejected():
-    """Structure arguments are outside the reduced interface scope: refused at
+    """Structure arguments are outside the nanobind interface's scope: refused at
     codegen with a ctypes-pointing error."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
@@ -2438,7 +2438,7 @@ def test_nanobind_interface_structure_rejected():
 
 
 def test_nanobind_interface_container_array_rejected():
-    """ContainerArray arguments are outside the reduced interface scope."""
+    """ContainerArray arguments are outside the nanobind interface's scope."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     with pytest.raises(NotImplementedError, match='ctypes'):
@@ -2446,8 +2446,8 @@ def test_nanobind_interface_container_array_rejected():
 
 
 def test_nanobind_interface_record_array_rejected():
-    """Record-dtype (dtypes.struct element) arrays are outside the reduced
-    interface scope, as inputs and as returns."""
+    """Record-dtype (dtypes.struct element) arrays are outside the nanobind
+    interface's scope, as inputs and as returns."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
@@ -2464,8 +2464,8 @@ def test_nanobind_interface_record_array_rejected():
 
 
 def test_nanobind_interface_callback_rejected():
-    """Callback arguments are outside the reduced interface scope (their
-    marshalling needed the ctypes trampoline machinery)."""
+    """Callback arguments are outside the nanobind interface's scope (their
+    marshalling needs the ctypes trampoline machinery)."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     sdfg = dace.SDFG('callback_reject_probe')
@@ -2480,8 +2480,8 @@ def test_nanobind_interface_callback_rejected():
 
 
 def test_nanobind_interface_lowp_rejected():
-    """bfloat16/float8 (ml_dtypes-backed) data is outside the reduced interface
-    scope in every form: scalars, arrays and returns."""
+    """bfloat16/float8 (ml_dtypes-backed) data is outside the nanobind
+    interface's scope in every form: scalars, arrays and returns."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     for name, add in (('lowp_scalar_reject_probe', lambda s: s.add_scalar('x', dace.bfloat16)),

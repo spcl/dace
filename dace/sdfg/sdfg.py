@@ -2605,7 +2605,7 @@ class SDFG(ControlFlowRegion):
         """
         Returns True if the SDFG binary is already loaded in the current process.
 
-        :param interface: The DECIDED Python interface for this SDFG ('ctypes'
+        :param interface: The decided Python interface for this SDFG ('ctypes'
             or 'nanobind'); if not given, it is resolved from the configuration
             and ``self`` via :func:`~dace.codegen.compiler.resolve_compiler_interface`.
         :note: What "loaded" means depends on the interface. For ``nanobind``
@@ -2691,11 +2691,9 @@ class SDFG(ControlFlowRegion):
         #  code can expect `load_external_nsdfgs()` was called on it.
         sdfg: Optional[SDFG] = None
 
-        # Decide the Python interface for THIS SDFG once, in the external
-        #  decision function (no attribute is attached to the SDFG; the value
-        #  is passed along as arguments). Everything below - reuse, collision
-        #  handling, folder generation - keys off the decided value, and code
-        #  generation never re-reads the configuration. The 'auto' detector
+        # Decide the Python interface for THIS SDFG once. Everything below -
+        #  reuse, collision handling, folder generation - keys off the decided
+        #  value, and code generation never re-reads the configuration. The 'auto' detector
         #  inspects the arglist, which requires resolved external nested
         #  SDFGs - so the decision runs on the materialized compile copy
         #  (every branch below materializes it anyway, this is cost-neutral).
