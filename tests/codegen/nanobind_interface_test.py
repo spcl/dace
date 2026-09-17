@@ -2523,6 +2523,33 @@ def test_nanobind_interface_unsupported_reason_predicate():
     assert unsupported_reason(lowp) is not None
 
 
+def test_nanobind_interface_return_shape_symbol_not_in_arglist(nanobind_interface):
+    """A symbol appearing only in a return descriptor's shape does not enter
+    ``arglist()`` (nothing in the dataflow 'uses' it), but the in-binding
+    return allocation renders it into C++ - so it must bind as a parameter,
+    and it must NOT be forwarded to the extern "C" program call, whose
+    signature does not take it (surfaced by the distributed pgemv test:
+    ``error: 'GM' was not declared in this scope``)."""
+    sym = dace.symbol('RETSYM', dace.int64)
+    sdfg = dace.SDFG('ret_only_symbol_prog')
+    sdfg.add_symbol('RETSYM', dace.int64)
+    sdfg.add_array('__return', [sym], dace.float64)
+    state = sdfg.add_state()
+    t = state.add_tasklet('t', {}, {'o'}, 'o = 42.0')
+    state.add_edge(t, 'o', state.add_write('__return'), None, dace.Memlet('__return[0]'))
+
+    # The premise that makes this a hazard: the symbol is NOT in the arglist.
+    assert 'RETSYM' not in sdfg.arglist()
+
+    csdfg = sdfg.compile()
+    out = csdfg(RETSYM=5)
+    assert out.shape == (5, )
+    assert out[0] == 42.0
+    # With no inference source, omitting the symbol is a clear error.
+    with pytest.raises(Exception, match="missing argument 'RETSYM'"):
+        csdfg()
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()

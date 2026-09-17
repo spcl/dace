@@ -12,6 +12,7 @@ hand-written kwargs lookups. A trailing ``nb::kwargs`` parameter absorbs
 extra keyword arguments, which the old ctypes interface allowed.
 """
 
+from collections import OrderedDict
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy
@@ -307,11 +308,13 @@ def _has_gpu_code(sdfg) -> bool:
     return False
 
 
-def _argument_binding(arglist: Dict[str, dt.Data],
-                      binding_order: List[str],
-                      optional_symbols: Set[str],
-                      symbol_fallbacks: Dict[str, str],
-                      sdfg=None) -> Tuple[List[str], List[str], List[str], List[str]]:
+def _argument_binding(
+    arglist: Dict[str, dt.Data],
+    binding_order: List[str],
+    optional_symbols: Set[str],
+    symbol_fallbacks: Dict[str, str],
+    sdfg=None,
+    binding_only: Set[str] = frozenset()) -> Tuple[List[str], List[str], List[str], List[str]]:
     """Generates the per-argument pieces of the bound ``call()``/``initialize()`` methods.
 
     Arrays are taken without implicit conversion: nanobind would otherwise
@@ -580,7 +583,8 @@ def _argument_binding(arglist: Dict[str, dt.Data],
                                        f'            throw std::invalid_argument("SDFG argument error: '
                                        f'missing argument \'{name}\' (not inferable from any array argument).");\n'
                                        f'        const {ctype} {name} = *{name}__opt;')
-            call_args.append(name)
+            if name not in binding_only:
+                call_args.append(name)
             nb_args_by_name[name] = f'nb::arg("{name}") = nb::none()'
 
         elif isinstance(desc, dt.Scalar) and desc.dtype.base_type == dtypes.bool_:
@@ -599,7 +603,8 @@ def _argument_binding(arglist: Dict[str, dt.Data],
             # even at the exact width (numpy.int32 -> int32_t): strict means
             # built-in Python scalar types only.
             params_by_name[name] = f'{ctype} {name}'
-            call_args.append(name)
+            if name not in binding_only:
+                call_args.append(name)
             nb_args_by_name[name] = (f'nb::arg("{name}").noconvert()' if strict_scalar else f'nb::arg("{name}")')
 
         else:
@@ -764,6 +769,29 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
     if any(n.startswith('__return') for n in arg_names):
         raise ValueError(f"SDFG '{sdfg.name}': return values cannot be listed in arg_names "
                          f"(they are defaulted keyword-only parameters of the binding).")
+
+    # A symbol appearing ONLY in a return descriptor's shape/strides is not
+    # 'used' by the dataflow and therefore absent from arglist() - but the
+    # in-binding return allocation renders it into C++, so it must still be a
+    # bindable parameter. Such symbols are BINDING-ONLY: the extern "C"
+    # program signature does not take them, so they are never forwarded to
+    # the program call (they only size the allocation, or validate a
+    # caller-provided buffer).
+    binding_only = []
+    for ret_name in sorted(n for n in sdfg.arrays if n.startswith('__return')):
+        for sym in sorted(map(str, sdfg.arrays[ret_name].free_symbols)):
+            if sym in arglist or sym in binding_only or sym.startswith('__dace'):
+                continue
+            if sym not in sdfg.symbols:
+                raise ValueError(f"SDFG '{sdfg.name}': return array '{ret_name}' uses symbol '{sym}', "
+                                 f"which is not in the SDFG's symbol registry.")
+            binding_only.append(sym)
+    if binding_only:
+        arglist = OrderedDict(arglist)
+        for sym in binding_only:
+            arglist[sym] = dt.Scalar(sdfg.symbols[sym])
+    binding_only = frozenset(binding_only)
+
     optional_symbols, symbol_fallbacks = _symbol_fallbacks(arglist, arg_names, sdfg.symbols)
     rest = [n for n in arglist.keys() if n not in set(arg_names)]
     return_params = [n for n in rest if n.startswith('__return')]
@@ -775,7 +803,8 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
                                                                 binding_order,
                                                                 optional_symbols,
                                                                 symbol_fallbacks,
-                                                                sdfg=sdfg)
+                                                                sdfg=sdfg,
+                                                                binding_only=binding_only)
 
     free_symbols = sorted(k for k in sdfg.used_symbols(all_symbols=False) if not k.startswith('__dace'))
     init_arglist = {k: v for k, v in arglist.items() if k in free_symbols}
