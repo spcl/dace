@@ -233,14 +233,14 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         applied = True
         while applied:
             applied = False
-            for match in match_patterns(sdfg,
+            matched_pattern = next(match_patterns(sdfg,
                                         permissive=self.permissive,
                                         patterns=xforms,
                                         states=self.states,
-                                        metadata=self._metadata):
-                self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
-                applied = True
-                break
+                                        metadata=self._metadata), None)
+             if matched_pattern is not None:
+                 self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                 applied = True
 
         if self.validate:
             try:
