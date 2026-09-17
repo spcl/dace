@@ -107,11 +107,16 @@ class StartStateElimination(transformation.MultiStateTransformation):
 
     def apply(self, graph, sdfg):
         state = self.start_state
-        # Move assignments to the nested SDFG node's symbol mappings
+        # Move assignments to the nested SDFG node's symbol mappings. Assignments on one
+        # edge execute sequentially, so substitute each RHS through the node's current
+        # mapping (which includes any assignment already moved in this same loop) before
+        # storing it, so an inner-only name never leaks into the outer scope.
         node = sdfg.parent_nsdfg_node
         edge = graph.out_edges(state)[0]
         for k, v in edge.data.assignments.items():
-            node.symbol_mapping[k] = v
+            rhs = symbolic.pystr_to_symbolic(v)
+            subs = {sym: node.symbol_mapping[str(sym)] for sym in rhs.free_symbols if str(sym) in node.symbol_mapping}
+            node.symbol_mapping[k] = rhs.subs(subs)
         graph.remove_node(state)
 
 
