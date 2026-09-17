@@ -2607,13 +2607,19 @@ class SDFG(ControlFlowRegion):
         :param interface: The decided Python interface for this SDFG ('ctypes'
             or 'nanobind'); if not given, it is resolved from the configuration
             and ``self`` via :func:`~dace.codegen.compiler.resolve_compiler_interface`.
-        :note: What "loaded" means depends on the interface. For ``nanobind``
-            this means a ``sys.modules`` registry lookup, the key is constructed using
-            :func:`nanobind_qualified_module_name`, see there for more information.
-            This means no file system access is performed.
-            For ``ctypes`` The full path of the compiled extension is constructed, if
-            the extension exists it is tested if that particular file was loaded into
-            the process or not.
+        :note: The probe is deliberately interface-agnostic: it reports loaded
+            when the (build folder, name) identity is resident under EITHER
+            mechanism - the ``sys.modules`` registry for nanobind modules (key
+            built by :func:`nanobind_qualified_module_name`) or the process's
+            ctypes DLL bookkeeping for the compiled extension file. Both
+            interfaces deliberately share the library file name, and dlopen
+            short-circuits on an exact pathname match against the link map -
+            so rebuilding a path whose previous artifact is still mapped under
+            the OTHER interface would hand the loader the stale mapping (a
+            ctypes library imported as a module fails with a ``PyInit``
+            ImportError; the reverse would silently run stale code). Reporting
+            such an identity as loaded drives the rename loop in
+            :func:`compile` instead.
             Neither check inspects (explicitly) the content of the library, so an SDFG
             modified after compilation may still report loaded. The only exception is
             the case where ``self.build_folder`` is not explicitly set and ``cache``
@@ -2622,12 +2628,11 @@ class SDFG(ControlFlowRegion):
         # Avoid import loops
         from dace.codegen import ctypes_compiled_sdfg as cs, compiler
 
-        # For `nanobind` check if the module this SDFG corresponds to is loaded, i.e.
-        #  its (build folder, name) identity is inside `sys.modules`.
-        if interface is None:
-            interface = compiler.resolve_compiler_interface(self)
-        if interface == 'nanobind':
-            return compiler.nanobind_qualified_module_name(self.build_folder, self.name) in sys.modules
+        # `interface` is accepted for call-site symmetry but does not narrow the
+        #  probe: residency under either mechanism makes the identity taken.
+        del interface
+        if compiler.nanobind_qualified_module_name(self.build_folder, self.name) in sys.modules:
+            return True
 
         build_folder = self.build_folder
         if folder_mode is None:

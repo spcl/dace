@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 import dace as dp
+from dace.config import set_temporary
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
 
@@ -47,20 +48,22 @@ def test():
 
 
 def test_bad_cast_csdfg():
-    # The `Casting` UserWarning + truncation is specific to the ctypes marshaller.
-    # The nanobind interface rejects a lossy scalar cast (0.1 -> int) outright
-    # (see `compiler.nanobind_strict_scalar_cast`), so this test is ctypes-only.
-    if dp.Config.get('compiler', 'interface') == 'nanobind':
-        pytest.skip('nanobind rejects a lossy scalar cast rather than warning (inherent divergence)')
+    # The `Casting` UserWarning + truncation is specific to the ctypes marshaller;
+    # the nanobind interface rejects a lossy scalar cast (0.1 -> int) outright.
+    # Pin ctypes so the behavior is tested in every leg (the env var overrides
+    # `set_temporary`, so it must be dropped first).
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv('DACE_compiler_interface', raising=False)
+        with set_temporary('compiler', 'interface', value='ctypes'):
 
-    @dp.program
-    def tester(a: int):
-        return a + 1
+            @dp.program
+            def tester(a: int):
+                return a + 1
 
-    csdfg = tester.to_sdfg().compile()
-    with pytest.warns(UserWarning, match='Casting'):
-        result = csdfg(0.1)
-    assert result.item() == 1
+            csdfg = tester.to_sdfg().compile()
+            with pytest.warns(UserWarning, match='Casting'):
+                result = csdfg(0.1)
+            assert result.item() == 1
 
 
 if __name__ == "__main__":

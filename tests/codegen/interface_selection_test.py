@@ -154,6 +154,31 @@ def test_explicit_ctypes_still_ctypes(clean_interface_env):
         assert isinstance(csdfg, CtypesCompiledSDFG)
 
 
+def test_auto_nanobind_renames_when_ctypes_holds_the_identity(clean_interface_env, monkeypatch):
+    """A (folder, name) identity resident as a loaded ctypes DLL must drive the
+    rename loop for a nanobind compile of the same identity: rebuilding the same
+    library path hands importlib the resident ctypes mapping instead of the
+    fresh module file (dlopen short-circuits on an exact pathname match against
+    the link map), which surfaces as ``ImportError: ... PyInit_<name>``."""
+    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
+
+    monkeypatch.delenv('DACE_cache', raising=False)
+    with set_temporary('cache', value='unique'):
+        with set_temporary('compiler', 'interface', value='ctypes'):
+            c1 = _supported_sdfg('resident_tester').compile()
+            a1 = np.zeros(10)
+            c1(A=a1, alpha=3.0)  # Actually load the ctypes DLL into the process.
+            assert a1[0] == 3.0
+        with set_temporary('compiler', 'interface', value='auto'):
+            c2 = _supported_sdfg('resident_tester').compile()
+            assert isinstance(c2, NanobindCompiledSDFG)
+            a2 = np.zeros(10)
+            c2(A=a2, alpha=5.0)
+            assert a2[0] == 5.0
+        # c1 must stay referenced (and its DLL mapped) through the whole block.
+        assert a1[0] == 3.0
+
+
 if __name__ == '__main__':
     test_resolve_compiler_interface()
     test_auto_selects_nanobind_for_supported_sdfg()
