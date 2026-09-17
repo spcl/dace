@@ -960,6 +960,46 @@ def test_cloudsc_for_1133_shape_after_inner_l2m():
     assert _num_scan_nodes(sdfg) == 0
 
 
+def test_cloudsc_for_1133_interchange_survives_symbol_mapping_alias():
+    """``nsdfg.symbol_mapping`` binds the carry axis by whatever inner key's VALUE names
+    the outer loop variable -- the key itself need not equal the outer name. Alias the
+    NestedSDFG's local carry symbol away from ``jk`` (key ``jk_alias`` -> value ``jk``,
+    same shape as a compiler-generated rename) and check the interchange still finds and
+    fully removes the binding, instead of deleting by a guessed key and leaving the old
+    one stale."""
+    import numpy as np
+    sdfg = _build_for_1133_post_l2m_sdfg()
+    LiftPreprocess().apply_pass(sdfg, {})
+    nsdfg_node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.NestedSDFG))
+    assert 'jk' in nsdfg_node.symbol_mapping, 'fixture must bind the carry axis by name jk before aliasing it'
+    nsdfg_node.symbol_mapping['jk_alias'] = nsdfg_node.symbol_mapping.pop('jk')
+    nsdfg_node.sdfg.replace('jk', 'jk_alias')
+
+    res = LoopToScan(interchange_carry_with_map=True).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res is not None and res >= 1
+
+    # Structural: no leftover binding under EITHER the alias key or the outer name, on
+    # every NestedSDFG in the rewritten graph.
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.sdfg.nodes.NestedSDFG):
+            assert 'jk_alias' not in n.symbol_mapping, 'stale alias key must not survive the rewrite'
+            assert 'jk' not in n.symbol_mapping, 'carry axis is now the inner loop var, not a symbol_mapping entry'
+    # arglist() walks every symbol_mapping value; a stale entry pointing at the removed
+    # outer symbol used to raise KeyError('jk') here.
+    assert set(sdfg.arglist().keys()) == {'delta', 'pfsqrf', 'KLEV', 'KLON'}
+
+    KL, KO = 6, 4
+    rng = np.random.default_rng(1133)
+    p_init = rng.standard_normal((KL, KO))
+    d = rng.standard_normal((KL, KO))
+    p_ref = _for_1133_oracle(KL, KO, p_init, d)
+    p_got = p_init.copy()
+    sdfg(pfsqrf=p_got, delta=d.copy(), KLEV=KL, KLON=KO)
+    assert np.allclose(p_got, p_ref), \
+        f'aliased-key interchange must still match the oracle; max diff {np.abs(p_got - p_ref).max()}'
+
+
 # Refusal-mode probes for the cloudsc pfsqXf shapes. Each exercises ONE failure gate
 # in ``LoopToScan._match_all`` that the cloudsc-actual bodies trip. Marked
 # ``xfail(strict=True)`` -> when the matcher is extended the test XPASSes and forces
