@@ -1292,6 +1292,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG',
     :param parent_sdfg: The parent SDFG this nested SDFG is in.
     :param parent_state: The state containing this nested SDFG.
     :param nsdfg_node: The NSDFG node containing this nested SDFG.
+    :param symbols: The `SymbolResolver` of the ongoing propagation, one is made if not given.
     :note: This operates in-place on the parent SDFG.
     """
     # We import late to avoid cyclic imports here.
@@ -1413,6 +1414,7 @@ def reset_state_annotations(sdfg: 'SDFG'):
 def propagate_memlets_sdfg(sdfg: 'SDFG', symbols: Optional[SymbolResolver] = None):
     """ Propagates memlets throughout an entire given SDFG.
 
+        :param symbols: The `SymbolResolver` of the ongoing propagation, one is made if not given.
         :note: This is an in-place operation on the SDFG.
     """
     # Reset previous annotations first
@@ -1430,6 +1432,7 @@ def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState', symbols: Optional[
 
         :param sdfg: The SDFG in which the state is situated.
         :param state: The state to propagate in.
+        :param symbols: The `SymbolResolver` of the ongoing propagation, one is made if not given.
         :note: This is an in-place operation on the SDFG state.
     """
     # Algorithm:
@@ -1471,7 +1474,12 @@ def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState', symbols: Optional[
     propagate_memlets_scope(sdfg, state, state.scope_leaves(), symbols=symbols)
 
 
-def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate_exit=True, symbols=None):
+def propagate_memlets_scope(sdfg,
+                            state,
+                            scopes,
+                            propagate_entry=True,
+                            propagate_exit=True,
+                            symbols: Optional[SymbolResolver] = None):
     """
     Propagate memlets from the given scopes outwards.
 
@@ -1480,6 +1488,7 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
     :param scopes: The ScopeTree object or a list thereof to start from.
     :param propagate_entry: If False, skips propagating out of the scope entry node.
     :param propagate_exit: If False, skips propagating out of the scope exit node.
+    :param symbols: The `SymbolResolver` of the ongoing propagation, one is made if not given.
     :note: This operation is performed in-place on the given SDFG.
     """
     from dace.sdfg.scope import ScopeTree
@@ -1528,6 +1537,7 @@ def propagate_memlets_map_scope(sdfg: 'SDFG',
     :param sdfg: The SDFG in which the scopes reside.
     :param state: The SDFG state in which the scopes reside.
     :param map_entry: Defining the Map scope to which propagation should be restricted.
+    :param symbols: The `SymbolResolver` of the ongoing propagation, one is made if not given.
     """
     if not isinstance(map_entry, nodes.MapEntry):
         raise TypeError(
@@ -1631,6 +1641,8 @@ def propagate_memlet(dfg_state,
         :param union_inner_edges: True if the propagation should take other
                                   neighboring internal memlets within the same
                                   scope into account.
+        :param symbols: The `SymbolResolver` of the ongoing propagation, if there is one; without
+                        it the state resolves the symbols itself.
     """
     if memlet.is_empty():
         return Memlet()
@@ -1653,11 +1665,13 @@ def propagate_memlet(dfg_state,
 
     sdfg = dfg_state.parent
     scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
+    # Without a resolver, ask the state directly: `propagate_memlet()` is also called on graph views
+    #  that only offer `symbols_defined_at()`.
+    entry_node_symbols = (symbols.defined_at(dfg_state, entry_node)
+                          if symbols is not None else dfg_state.symbols_defined_at(entry_node))
     defined_vars = [
-        symbolic.pystr_to_symbolic(s)
-        for s in ((symbols.defined_at(dfg_state, entry_node) if symbols is not None else dfg_state.
-                   symbols_defined_at(entry_node)).keys()
-                  | sdfg.constants.keys()) if s not in scope_node_symbols
+        symbolic.pystr_to_symbolic(s) for s in (entry_node_symbols.keys()
+                                                | sdfg.constants.keys()) if s not in scope_node_symbols
     ]
 
     # Find other adjacent edges within the connected to the scope node
