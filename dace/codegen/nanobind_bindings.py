@@ -62,12 +62,22 @@ struct dace_bool {
 namespace nanobind { namespace detail {
 template <> struct type_caster<dace_bool> {
     NB_TYPE_CASTER(dace_bool, const_name("bool"))
-    bool from_python(handle src, uint8_t flags, cleanup_list *) noexcept {
+    bool from_python(handle src, uint8_t, cleanup_list *) noexcept {
         PyObject *o = src.ptr();
         if (o == Py_True) { value.value = 1; return true; }
         if (o == Py_False) { value.value = 0; return true; }
-        int64_t i;
-        if (load_i64(o, flags, &i)) { value.value = (uint8_t) (i != 0); return true; }
+        // Integer-likes (Python int, numpy integer scalars) enter through the
+        // __index__ protocol; floats have no __index__ and stay rejected.
+        // Public CPython API only - nanobind's internal load_* helpers change
+        // signature across major versions (2.x -> 3.x broke the build).
+        if (PyObject *idx = PyNumber_Index(o)) {
+            long long i = PyLong_AsLongLong(idx);
+            Py_DECREF(idx);
+            if (i == -1 && PyErr_Occurred()) { PyErr_Clear(); return false; }
+            value.value = (uint8_t) (i != 0);
+            return true;
+        }
+        PyErr_Clear();
         // numpy.bool_ answers to neither of the above; accept it by type. The
         // type object resolves lazily (numpy may legitimately be absent) and
         // is deliberately leaked - it lives as long as numpy itself.
