@@ -36,6 +36,24 @@ def combine_bound(op, lhs, rhs):
     return symbolic.SymExpr(op(lhs_main, rhs_main).simplify(), op(lhs_approx, rhs_approx).simplify())
 
 
+def translate_bound_to_scope(bound: symbolic.SymbolicType, from_sdfg: SDFG, to_sdfg: SDFG) -> symbolic.SymbolicType:
+    """Rewrite a bound from ``from_sdfg``'s symbols into ``to_sdfg``'s by applying each enclosing
+    ``NestedSDFG.symbol_mapping`` outward. ``from_sdfg`` is ``to_sdfg`` or a nested descendant."""
+    cur_sdfg = from_sdfg
+    while cur_sdfg is not to_sdfg and cur_sdfg.parent_nsdfg_node is not None:
+        repl = {
+            symbolic.pystr_to_symbolic(name): value
+            for name, value in cur_sdfg.parent_nsdfg_node.symbol_mapping.items()
+        }
+        if repl and isinstance(bound, symbolic.SymExpr):
+            bound = symbolic.SymExpr(bound.expr.subs(repl, simultaneous=True), bound.approx.subs(repl,
+                                                                                                 simultaneous=True))
+        elif repl and isinstance(bound, sympy.Basic):
+            bound = bound.subs(repl, simultaneous=True)
+        cur_sdfg = cur_sdfg.parent_sdfg
+    return bound
+
+
 def bounds_outside_launch_scope(hoisted_range, kernel_params):
     """The symbols in ``hoisted_range`` that the kernel launch cannot see.
 
@@ -299,7 +317,10 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                     for p, range in zip(nested_gpu_map.map.params, nested_gpu_map.map.range):
                         if p not in nested_map_params_and_ranges:
                             nested_map_params_and_ranges[p] = list()
-                        nested_map_params_and_ranges[p].append(range)
+                        # Inner bounds use the nested SDFG's symbols; map them to the kernel map's SDFG.
+                        translated_range = tuple(
+                            translate_bound_to_scope(bound, map_state.sdfg, sdfg) for bound in range)
+                        nested_map_params_and_ranges[p].append(translated_range)
 
                 # Build the union of the collected ranges
                 new_ranges_to_add = {p: dace.subsets.Range([(0, 0, 1)]) for p in nested_map_params_and_ranges}

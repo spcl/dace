@@ -16,7 +16,8 @@ import pytest
 import sympy
 
 from dace.transformation.passes.lower_nested_gpu_device_maps import (NestedGPUDeviceMapLowering,
-                                                                     bounds_outside_launch_scope, combine_bound)
+                                                                     bounds_outside_launch_scope, combine_bound,
+                                                                     translate_bound_to_scope)
 from dace.ordered import OrderedSet
 
 
@@ -200,6 +201,80 @@ def test_a_plain_bound_stays_plain() -> None:
 
     assert not isinstance(combined, dace.symbolic.SymExpr), combined
     assert combined == dace.symbolic.pystr_to_symbolic('n')
+
+
+def _build_inner_kernel_with_renamed_scope_symbol() -> dace.SDFG:
+    """Outer ``GPU_Device`` kernel wrapping a NestedSDFG whose OWN local symbol ``M`` (never an
+    SDFG-level symbol anywhere -- it only ever means something through this NestedSDFG's own
+    ``symbol_mapping``) sizes the inner ``GPU_Device`` map's range, and maps to an OUTER symbol of a
+    DIFFERENT name (``K``). Mirrors ``durbin``'s ``flip`` helper, whose own ``M`` maps to the
+    caller's loop variable at each call site (``polybench/durbin_test.py``)."""
+    K = dace.symbol('K', dtype=dace.int32)
+
+    sdfg = dace.SDFG('lower_nested_renamed_symbol')
+    sdfg.add_array('B', [K], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+
+    state = sdfg.add_state('s')
+    outer_me, outer_mx = state.add_map('outer', dict(__o='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+
+    inner = dace.SDFG('nested_sdfg')
+    inner.add_symbol('M', dace.int32)
+    inner.add_array('b_out', [K], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_state = inner.add_state('nested_root', is_start_block=True)
+
+    me, mx = inner_state.add_map('inner_kernel', dict(__i='0:M'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    tasklet = inner_state.add_tasklet('write', {}, {'_b': dace.float64}, '_b = 1.0')
+    inner_state.add_memlet_path(me, tasklet, memlet=dace.Memlet())
+    inner_state.add_memlet_path(tasklet,
+                                mx,
+                                inner_state.add_write('b_out'),
+                                src_conn='_b',
+                                memlet=dace.Memlet('b_out[__i]'))
+
+    nsdfg = state.add_nested_sdfg(inner, {}, OrderedSet(('b_out', )), symbol_mapping={'M': 'K'})
+    state.add_memlet_path(outer_me, nsdfg, memlet=dace.Memlet())
+    state.add_memlet_path(nsdfg, outer_mx, state.add_write('B'), src_conn='b_out', memlet=dace.Memlet('B[0:K]'))
+    return sdfg
+
+
+def test_a_renamed_scope_symbol_translates_through_symbol_mapping_when_hoisted() -> None:
+    """The inner kernel's bound is ``M``, a name that exists ONLY in the (about-to-be-removed)
+    nested SDFG's own namespace; its ``symbol_mapping`` says ``M`` means the outer ``K``. Flattening
+    must rewrite the bound through that mapping before hoisting it onto the outer, parentless kernel
+    map -- otherwise ``M`` survives as a genuinely free symbol nothing declares once the inner scope
+    is gone, and later codegen dies with ``KeyError: 'M'`` out of ``SDFG.arglist``."""
+    sdfg = _build_inner_kernel_with_renamed_scope_symbol()
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    outer = next(n for state in sdfg.states() for n in state.nodes()
+                 if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
+    range_symbols = {str(s) for s in outer.map.range.free_symbols}
+    assert 'M' not in range_symbols, f'inner scope symbol M leaked into the outer range: {outer.map.range}'
+    assert 'K' in range_symbols, outer.map.range
+
+    assert 'M' not in sdfg.used_symbols(all_symbols=False)
+    sdfg.validate()
+
+
+def test_translate_bound_to_scope_rewrites_through_the_symbol_mapping_chain() -> None:
+    """Unit-level check on the helper itself: a bound walks one NestedSDFG boundary and comes out
+    renamed; a bound already in the target SDFG's own terms passes through unchanged."""
+    outer_sdfg = dace.SDFG('translate_outer')
+    outer_sdfg.add_symbol('K', dace.int32)
+    inner_sdfg = dace.SDFG('translate_inner')
+    inner_sdfg.add_symbol('M', dace.int32)
+    nsdfg_node = dace.nodes.NestedSDFG('nested', inner_sdfg, set(), set(), symbol_mapping={'M': 'K + 1'})
+    inner_sdfg.parent_nsdfg_node = nsdfg_node
+    inner_sdfg.parent_sdfg = outer_sdfg
+
+    bound = dace.symbolic.pystr_to_symbolic('M')
+    translated = translate_bound_to_scope(bound, inner_sdfg, outer_sdfg)
+    assert translated == dace.symbolic.pystr_to_symbolic('K + 1'), translated
+
+    # A bound already expressed in the target's own terms is untouched.
+    already_outer = dace.symbolic.pystr_to_symbolic('K')
+    assert translate_bound_to_scope(already_outer, outer_sdfg, outer_sdfg) == already_outer
 
 
 def _build_inner_range_that_names_the_outer_param() -> dace.SDFG:
