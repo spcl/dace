@@ -403,6 +403,72 @@ def test_the_lift_moves_one_slice_per_iteration_out_of_the_kernel():
     assert moved == {'block': SCRATCH_EXTENT, 'kernel': BLOCK_EXTENT * SCRATCH_EXTENT}, moved
 
 
+def kernel_with_a_locally_named_scratch_extent():
+    """A transient's extent is a symbol LOCAL to the nested SDFG that defines it, bound through
+    ``symbol_mapping`` to an outer expression under a DIFFERENT name (inner ``M`` -> outer ``NZ - 1``).
+
+    Regression: ``lift_array_through_nested_sdfgs`` deepcopied the descriptor's shape verbatim from
+    the nested scope without translating it through ``symbol_mapping``, so the lifted descriptor
+    named ``M`` -- a free symbol the outer SDFG never declares, and never bound to the ``NZ - 1`` it
+    was supposed to mean.
+    """
+    inner = dace.SDFG('inner_local_scratch')
+    inner.add_symbol('M', dace.int64)
+    inner.add_array('a_in', [NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    inner.add_array('out_in', [NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    inner.add_array('tmp', ['M'], dace.float64, transient=True, storage=dtypes.StorageType.GPU_Global)
+    fill = inner.add_state('fill', is_start_block=True)
+    fill.add_mapped_tasklet('scale', {'m': '0:M'}, {'__in': dace.Memlet('a_in[m]')},
+                            '__out = __in * 2.0', {'__out': dace.Memlet('tmp[m]')},
+                            schedule=dtypes.ScheduleType.Sequential,
+                            external_edges=True)
+    drain = inner.add_state_after(fill, 'drain')
+    drain.add_mapped_tasklet('shift', {'m': '0:M'}, {'__in': dace.Memlet('tmp[m]')},
+                             '__out = __in + 1.0', {'__out': dace.Memlet('out_in[m]')},
+                             schedule=dtypes.ScheduleType.Sequential,
+                             external_edges=True)
+
+    sdfg = dace.SDFG('locally_named_scratch_extent')
+    sdfg.add_array('a', [NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('out', [NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('grid', is_start_block=True)
+    kernel_entry, kernel_exit = state.add_map('kernel', dict(i='0:1'), schedule=dtypes.ScheduleType.GPU_Device)
+    nsdfg = state.add_nested_sdfg(inner, {'a_in'}, {'out_in'}, symbol_mapping={'M': NZ - 1})
+    state.add_memlet_path(state.add_read('a'), kernel_entry, nsdfg, dst_conn='a_in', memlet=dace.Memlet('a[0:NZ]'))
+    state.add_memlet_path(nsdfg,
+                          kernel_exit,
+                          state.add_write('out'),
+                          src_conn='out_in',
+                          memlet=dace.Memlet('out[0:NZ]'))
+    sdfg.validate()
+    return sdfg, kernel_entry
+
+
+def test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping():
+    """The lifted descriptor's shape must be expressed in the OUTER SDFG's own symbols.
+
+    Checked two ways: the shape's free symbols must be a subset of what the outer SDFG declares
+    (never the inner-only ``M``), and the leftover shape symbol must equal the exact outer
+    expression (``NZ - 1``) rather than merely being SOME outer name -- a fix that lifted the
+    identity mapping instead of the real one would still pass the first check.
+    """
+    sdfg, kernel_entry = kernel_with_a_locally_named_scratch_extent()
+    MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, 'tmp')
+
+    desc = sdfg.arrays['tmp']
+    free_names = {str(s) for dim in desc.shape for s in getattr(dim, 'free_symbols', set())}
+    assert free_names == {'NZ'}, f"shape names a symbol outside the outer SDFG: {free_names}"
+    assert sympy.simplify(desc.shape[-1] - (NZ - 1)) == 0, f"expected NZ - 1, got {desc.shape[-1]}"
+
+    # The same leak, seen from the call signature: an undeclared free symbol becomes a phantom
+    # argument nobody ever binds a value to.
+    sdfg.reset_cfg_list()
+    from dace.sdfg import utils as sdutil
+    sdutil.set_nested_sdfg_parent_references(sdfg)
+    args = sdfg.arglist()
+    assert 'M' not in args, f"the nested SDFG's local symbol leaked into the outer call signature: {list(args)}"
+
+
 if __name__ == '__main__':
     test_lift_leaves_descendant_nested_sdfgs_at_their_own_rank()
     test_lifted_scratch_below_a_nested_sdfg_computes_the_right_values()
