@@ -130,15 +130,16 @@ class _ConfigData(threading.local):
         return envval
 
     def _add_defaults(self, config, metadata):
-        """ Add defaults to configuration from metadata.
+        """
+        Adds defaults to the configuration from metadata.
 
-            Fills only the keys missing from ``config`` with their schema
-            defaults; the environment is handled separately by
-            :func:`_apply_env` when the configuration is loaded.
+        Fills only the keys missing from ``config`` with their schema
+        defaults; the environment is handled separately by
+        :func:`_apply_env` when the configuration is loaded.
 
-            :param config: The (sub-)configuration dictionary to fill.
-            :param metadata: The schema metadata of ``config``.
-            :return: True if configuration was modified, False otherwise.
+        :param config: The (sub-)configuration dictionary to fill.
+        :param metadata: The schema metadata of ``config``.
+        :return: True if configuration was modified, False otherwise.
         """
         osname = platform.system()
         modified = False
@@ -165,24 +166,25 @@ class _ConfigData(threading.local):
         return modified
 
     def _apply_env(self, config, metadata, key_path=()):
-        """ Apply ``DACE_*`` environment variables onto the configuration.
+        """
+        Applies ``DACE_*`` environment variables onto the configuration.
 
-            Runs when the configuration is loaded, after the configuration
-            file and the schema defaults were filled in, and overwrites the
-            affected entries: the source precedence at load time is, with
-            increasing priority, the schema default, the configuration file
-            (``.dace.conf``, or the file named by ``DACE_CONFIG``), and the
-            environment. Values set explicitly afterwards through
-            :func:`Config.set` (including :func:`set_temporary` /
-            :func:`temporary_config`) have the highest priority, since the
-            environment is never consulted again until the next load.
-            Environment values are coerced to the schema-declared type (see
-            :func:`_coerce_env_value`); a value that cannot be coerced is
-            reported with a warning and ignored.
+        Runs when the configuration is loaded, after the configuration
+        file and the schema defaults were filled in, and overwrites the
+        affected entries: the source precedence at load time is, with
+        increasing priority, the schema default, the configuration file
+        (``.dace.conf``, or the file named by ``DACE_CONFIG``), and the
+        environment. Values set explicitly afterwards through
+        :func:`Config.set` (including :func:`set_temporary` /
+        :func:`temporary_config`) have the highest priority, since the
+        environment is never consulted again until the next load.
+        Environment values are coerced to the schema-declared type (see
+        :func:`_coerce_env_value`); a value that cannot be coerced is
+        reported with a warning and ignored.
 
-            :param config: The (sub-)configuration dictionary to modify.
-            :param metadata: The schema metadata of ``config``.
-            :param key_path: The key path of ``config`` (empty at the root).
+        :param config: The (sub-)configuration dictionary to modify.
+        :param metadata: The schema metadata of ``config``.
+        :param key_path: The key path of ``config`` (empty at the root).
         """
         for k, v in metadata.items():
             if v['type'] == 'dict':
@@ -239,11 +241,11 @@ class _ConfigData(threading.local):
             self._apply_env(self._config, self._config_metadata['required'])
 
         # Migration of very old-format configuration files: the legacy 'execution' entry marks a
-        #  `dace.conf` written by very old DaCe versions, which saved every configuration entry.
-        #  Such a file is rewritten once in the new format, which keeps only the nondefault entries.
-        #  Note that the environment has already been applied at this point, so `DACE_*` values
-        #  that are set while the migration runs are persisted into the file as well. Files already
-        #  in the new format are never written back.
+        # `dace.conf` written by very old DaCe versions, which saved every configuration entry.
+        # Such a file is rewritten once in the new format, which keeps only the nondefault entries.
+        # Note that the environment has already been applied at this point, so `DACE_*` values
+        # that are set while the migration runs are persisted into the file as well. Files already
+        # in the new format are never written back.
         if 'execution' in self._config and self._cfg_filename:
             self.save(all=False)
 
