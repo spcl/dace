@@ -8,20 +8,9 @@ import time
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
 
-
-@pytest.fixture
-def ctypes_interface(monkeypatch):
-    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
-
-    Under the default ``auto`` these SDFGs would select the nanobind interface,
-    where the asserted behavior differs: nanobind ndarray arguments accept numpy/DLPack only (no __array_interface__-style coercion).
-    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
-    is dropped first.
-    """
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
-        yield
-
+# ctypes-pinned here: nanobind ndarray arguments accept numpy/DLPack only (no __array_interface__-style
+# coercion).
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
 
 N = dace.symbol('N')
 

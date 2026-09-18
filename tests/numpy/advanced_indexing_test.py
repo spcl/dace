@@ -11,23 +11,12 @@ import pytest
 N = dace.symbol('N')
 M = dace.symbol('M')
 
-
 # The nanobind interface requires numpy arrays for array arguments; unlike the
 # ctypes marshaller it does not coerce a Python list to an array (that would tax
 # the common fast path). The tests below pass a Python list for an array
 # parameter, so they are ctypes-only.
-@pytest.fixture
-def ctypes_interface(monkeypatch):
-    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
-
-    Under the default ``auto`` these SDFGs would select the nanobind interface,
-    where the asserted behavior differs: nanobind requires numpy arrays for array arguments (no list coercion).
-    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
-    is dropped first.
-    """
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
-        yield
+# ctypes-pinned here: nanobind requires numpy arrays for array arguments (no list coercion).
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
 
 
 def test_flat():

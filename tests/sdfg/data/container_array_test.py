@@ -7,23 +7,12 @@ import pytest
 
 from scipy import sparse
 
-
 # These two tests pass the pointer array in its ctypes form
 # ((POINTER(c_double) * m)(...)); the nanobind interface accepts the
 # numpy-array-of-pointers form only (no ctypes-array coercion, by choice).
-@pytest.fixture
-def ctypes_interface(monkeypatch):
-    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
-
-    Under the default ``auto`` these SDFGs would select the nanobind interface,
-    where the asserted behavior differs: ContainerArray is outside the nanobind
-    interface's scope, and these tests assert the ctypes pointer-array calling form.
-    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
-    is dropped first.
-    """
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
-        yield
+# ctypes-pinned here: ContainerArray is outside the nanobind interface's scope, and these tests assert the
+# ctypes pointer-array calling form.
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
 
 
 def test_read_struct_array():

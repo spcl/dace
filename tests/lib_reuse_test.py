@@ -8,24 +8,13 @@ from dace.codegen.exceptions import CompilationError
 from dace.codegen.compiler import load_precompiled_sdfg
 import numpy as np
 
-
 # A nanobind extension module cannot be reloaded in-process: a recompile renames
 # into its own build folder (so two same-named libs have different parents), and
 # a reload shares the one module file (no per-load copy). These tests assert the
 # ctypes library-reuse semantics, so they are ctypes-only.
-@pytest.fixture
-def ctypes_interface(monkeypatch):
-    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
-
-    Under the default ``auto`` these SDFGs would select the nanobind interface,
-    where the asserted behavior differs: nanobind cannot reload a module (a recompile renames to its own folder; a reload shares
-    one file).
-    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
-    is dropped first.
-    """
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
-        yield
+# ctypes-pinned here: nanobind cannot reload a module (a recompile renames to its own folder; a reload shares
+# one file).
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
 
 
 # Dynamically creates DaCe programs with the same name

@@ -10,25 +10,14 @@ import tempfile
 import dace
 from dace.codegen import compiler as sdfg_compiler
 
-
 # A nanobind extension module cannot be reloaded in-process, so recompiling a
 # same-named SDFG renames it into its own build folder (`<build_folder>_0/build`,
 # see tests/codegen/nanobind_interface_test.py::test_nanobind_interface_rename_own_build_folder).
 # These tests assert the ctypes in-place rebuild (same build_folder), so they are
 # ctypes-only.
-@pytest.fixture
-def ctypes_interface(monkeypatch):
-    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
-
-    Under the default ``auto`` these SDFGs would select the nanobind interface,
-    where the asserted behavior differs: the nanobind recompile renames into its own build folder; these tests assert the ctypes
-    in-place rebuild.
-    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
-    is dropped first.
-    """
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
-        yield
+# ctypes-pinned here: the nanobind recompile renames into its own build folder; these tests assert the ctypes
+# in-place rebuild.
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
 
 
 @pytest.fixture

@@ -8,20 +8,9 @@ import os
 import shutil
 import time
 
-
-@pytest.fixture
-def ctypes_interface(monkeypatch):
-    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
-
-    Under the default ``auto`` these SDFGs would select the nanobind interface,
-    where the asserted behavior differs: an already-imported extension module cannot be reloaded in-process after a same-path
-    recompile; ctypes supports this via ReloadableDLL (unload + reload).
-    The ``DACE_compiler_interface`` env var overrides ``set_temporary``, so it
-    is dropped first.
-    """
-    monkeypatch.delenv('DACE_compiler_interface', raising=False)
-    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
-        yield
+# ctypes-pinned here: an already-imported extension module cannot be reloaded in-process after a same-path
+# recompile; ctypes supports this via ReloadableDLL (unload + reload).
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
 
 
 def _program_name(function) -> str:
