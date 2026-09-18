@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests constants, optional, and keyword arguments. """
 from types import SimpleNamespace
+from typing import Optional
 import dace
 import numpy as np
 import pytest
@@ -108,7 +109,7 @@ def test_var_kwargs_aot():
 def test_none_arrays():
 
     @dace.program
-    def myprog_na(maybe_A: dace.float64[20], maybe_B: dace.float64[20]):
+    def myprog_na(maybe_A: Optional[dace.float64[20]], maybe_B: Optional[dace.float64[20]]):
         result = np.zeros([20], dtype=dace.float64)
         if maybe_B is None:
             if maybe_A is not None:

@@ -4,8 +4,10 @@ each test asserts the cache ENGAGES -- a declined header or unreplayed recording
 correct build save for wall-clock time.
 """
 import contextlib
+import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -26,9 +28,21 @@ def scaled_add(x: dace.float64[N], y: dace.float64[N]):
 @pytest.fixture
 def private_cache(tmp_path, monkeypatch):
     """Point the caches at this test. PCH off: it is ~125 MB, tmp is often a RAM disk, and a failed
-    per-test build would change the recording key and defeat the replay under test. Covered below."""
+    per-test build would change the recording key and defeat the replay under test. Covered below.
+
+    Under the nanobind interface the fixture also warms the helper-archive cache: the first build
+    into a cold cache publishes nanobind's helper archive, which ADDS a flag to every later build's
+    cmake command -- and with it a second recording key, so the cache only converges on the second
+    build of a shape. Warming keeps the keys stable, preserving the "second build replays" semantics
+    these tests assert. The warmup's own recordings are dropped so the first measured build still
+    runs CMake."""
     monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
     with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
+        # 'auto' (the default) selects nanobind for these plain probe
+        #  programs, so the archive warmup applies there too.
+        if dace.Config.get('compiler', 'interface') in ('nanobind', 'auto'):
+            build_and_check(tmp_path, 'archwarmup')
+            shutil.rmtree(os.path.join(str(tmp_path / 'cache'), 'commands'), ignore_errors=True)
         yield
 
 
@@ -51,10 +65,15 @@ def make(name, gpu=False):
 @contextlib.contextmanager
 def own_build_folder(tmp_path, name):
     """One fresh build folder per program. Pins ``cache=name`` too, since CI's ``DACE_cache=single``
-    shares one directory across SDFGs and these tests need a fresh folder."""
-    with dace.config.set_temporary('default_build_folder', value=str(tmp_path / name)):
-        with dace.config.set_temporary('cache', value='name'):
-            yield
+    shares one directory across SDFGs and these tests need a fresh folder. Pins the development
+    folder mode too: these tests inspect ``build/`` after compiling, and the production mode CI runs
+    under deletes it (the env var must go first, as it beats ``set_temporary``)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv('DACE_compiler_build_folder_mode', raising=False)
+        with dace.config.set_temporary('compiler', 'build_folder_mode', value='development'):
+            with dace.config.set_temporary('default_build_folder', value=str(tmp_path / name)):
+                with dace.config.set_temporary('cache', value='name'):
+                    yield
 
 
 def build_and_check(tmp_path, name, gpu=False):
@@ -114,11 +133,46 @@ def test_precompiled_header_is_actually_used(tmp_path):
     with open(database) as fp:
         generated = [e for e in json.load(fp) if 'pchused' in e['file']]
     assert generated, 'no compile command recorded for the generated source'
-    command = generated[0]['command']
-    assert 'dace_prewarm.h' in command, 'the precompiled header never reached the compile line'
-    checked = command.replace(' -c ', ' -Winvalid-pch -Werror=invalid-pch -c ')
-    result = subprocess.run(checked, shell=True, cwd=generated[0]['directory'], capture_output=True, text=True)
-    assert result.returncode == 0, f'the compiler refused the precompiled header:\n{result.stderr}'
+    # Every generated host TU must consume the header -- under the nanobind interface that is the
+    # frame TU and the bindings TU, whose compile lines carry nanobind's extra module flags.
+    for entry in generated:
+        command = entry['command']
+        assert 'dace_prewarm.h' in command, f'the precompiled header never reached {entry["file"]}'
+        checked = command.replace(' -c ', ' -Winvalid-pch -Werror=invalid-pch -c ')
+        result = subprocess.run(checked, shell=True, cwd=entry['directory'], capture_output=True, text=True)
+        assert result.returncode == 0, \
+            f'the compiler refused the precompiled header for {entry["file"]}:\n{result.stderr}'
+    if any(e['file'].endswith('_nanobind.cpp') for e in generated):
+        # A nanobind build must precompile the bindings' share too, not just <dace/dace.h>.
+        prewarm = re.search(r'-I(\S+)\s+-include\s+dace_prewarm\.h', generated[0]['command'])
+        assert prewarm, 'no prewarm include directory on the compile line'
+        with open(os.path.join(prewarm.group(1), 'dace_prewarm.h')) as fp:
+            assert '#include <dace/nanobind.h>' in fp.read(), 'the binary header misses the nanobind umbrella'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+def test_prewarm_header_carries_nanobind_when_present(tmp_path, monkeypatch):
+    """With nanobind importable, the composed binary header includes the runtime umbrella, so the
+    bindings' share of the compile is precompiled too."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    pch = compiler.prepare_precompiled_header({'cpu'})
+    assert pch, 'no precompiled header was produced'
+    with open(os.path.join(pch, 'dace_prewarm.h')) as fp:
+        assert '#include <dace/nanobind.h>' in fp.read()
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+def test_prewarm_header_stays_plain_without_nanobind(tmp_path, monkeypatch):
+    """Without nanobind the composed header and its cache key match today's plain-dace.h behavior; a
+    key that ignored the augmentation would hand one environment the other's binary header."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    augmented = compiler.prepare_precompiled_header({'cpu'})
+    monkeypatch.setattr(compiler, '_nanobind_pch_identity', lambda: None)
+    plain = compiler.prepare_precompiled_header({'cpu'})
+    assert augmented and plain, 'no precompiled header was produced'
+    assert plain != augmented, 'the nanobind identity must enter the cache key'
+    with open(os.path.join(plain, 'dace_prewarm.h')) as fp:
+        assert '<dace/nanobind.h>' not in fp.read()
 
 
 @pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
@@ -167,6 +221,29 @@ def test_caches_disabled_still_builds(tmp_path):
         with dace.config.set_temporary('compiler', 'configure_cache', value=False):
             with dace.config.set_temporary('compiler', 'command_cache', value=False):
                 build_and_check(tmp_path, 'nocaches')
+
+
+def test_wrongly_named_nanobind_archive_is_ignored(tmp_path, monkeypatch):
+    """A cached helper archive whose name does not match the helper target the module really links
+    must be ignored, never linked: nanobind names each variant after HOW it was compiled, so a
+    leftover of another variant (older DaCe options, changed nanobind naming) is not
+    interchangeable. The planted candidate is garbage on purpose -- linking it would fail the
+    build, so a passing build proves it was ignored -- and the build must then heal the cache by
+    publishing the real archive under its own name."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    cache_dir = None
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv('DACE_compiler_interface', raising=False)
+        with dace.config.set_temporary('compiler', 'interface', value='nanobind'):
+            with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
+                cache_dir = compiler.nanobind_static_cache_dir()
+                os.makedirs(cache_dir)
+                with open(os.path.join(cache_dir, 'libnanobind-static-stale.a'), 'wb') as fh:
+                    fh.write(b'not an archive')
+                build_and_check(tmp_path, 'staletolerant')
+    published = sorted(os.path.basename(p) for p in glob.glob(os.path.join(cache_dir, 'libnanobind*.a')))
+    assert len(published) == 2 and 'libnanobind-static-stale.a' in published, \
+        f'the build did not publish the real archive next to the stale one: {published}'
 
 
 @pytest.mark.gpu

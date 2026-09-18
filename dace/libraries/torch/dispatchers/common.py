@@ -15,6 +15,7 @@ from typing import Callable, List, Tuple, Union
 
 import dace
 import torch
+
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.frontend.ml.onnx.importer import create_output_array
@@ -87,10 +88,12 @@ def compile_and_init_sdfgs(
 
     all_kwargs = {**inputs, **outputs, **symbols, **forwarded_transients, **module.dace_model.initialized_parameters}
 
-    compiled.initialize(**all_kwargs)
+    # initialize() returns the state handle as a ctypes pointer on both
+    # compiler interfaces; the raw ctypes attributes only exist on one.
+    handle = compiled.initialize(**all_kwargs)
     for _, hook in module.post_compile_hooks.items():
         hook(compiled)
-    handle_ptr = torch.tensor([compiled._libhandle.value]).squeeze(0)
+    handle_ptr = torch.tensor([handle.value]).squeeze(0)
 
     if module.backward:
         # Compile and initialize the backward_sdfg
@@ -105,8 +108,8 @@ def compile_and_init_sdfgs(
             for _, bwd_name in module._ad_result.given_grad_names.items()
         }
 
-        compiled_bwd.initialize(**required_grads, **given_grads, **forwarded_transients)
-        bwd_handle_ptr = torch.tensor([compiled_bwd._libhandle.value]).squeeze(0)
+        bwd_handle = compiled_bwd.initialize(**required_grads, **given_grads, **forwarded_transients)
+        bwd_handle_ptr = torch.tensor([bwd_handle.value]).squeeze(0)
         return compiled, handle_ptr, compiled_bwd, bwd_handle_ptr
     else:
         return compiled, handle_ptr

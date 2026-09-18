@@ -24,3 +24,18 @@ def pytest_generate_tests(metafunc):
             pytest.param(True, id="use_cpp_dispatcher"),
             pytest.param(False, id="no_use_cpp_dispatcher"),
         ])
+
+
+@pytest.fixture
+def ctypes_interface(monkeypatch):
+    """Pins ``compiler.interface`` to ctypes for tests that assert ctypes-specific behavior.
+
+    Under the default ``auto`` these SDFGs would select the nanobind interface,
+    where the asserted behavior differs; a comment at the fixture's use sites
+    names the divergence per file. The ``DACE_compiler_interface`` env var
+    overrides ``set_temporary``, so it is dropped first.
+    """
+    import dace
+    monkeypatch.delenv('DACE_compiler_interface', raising=False)
+    with dace.config.set_temporary('compiler', 'interface', value='ctypes'):
+        yield

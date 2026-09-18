@@ -2,10 +2,15 @@
 
 import dace
 import numpy as np
+import pytest
 import re
 import os
 import shutil
 import time
+
+# ctypes-pinned here: an already-imported extension module cannot be reloaded in-process after a same-path
+# recompile; ctypes supports this via ReloadableDLL (unload + reload).
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
 
 
 def _program_name(function) -> str:
@@ -59,7 +64,13 @@ def test_recreate_sdfg():
     assert np.allclose(a + 2, very_unique_program_321(a))
 
 
-def test_regenerate_code():
+@pytest.mark.usefixtures('ctypes_interface')
+def test_regenerate_code(monkeypatch):
+    # This test edits the generated sources on disk, which only exist in the
+    # development folder mode. The env var wins over Config at read time, so
+    # setting it shields against a CI-side production override.
+    monkeypatch.setenv('DACE_compiler_build_folder_mode', 'development')
+
     # Get the program name, regardless of running directly or through pytest
     def very_unique_program_432():
         pass

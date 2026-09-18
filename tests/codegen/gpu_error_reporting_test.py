@@ -43,6 +43,35 @@ def arguments(m):
     }
 
 
+def unchecked_call(csdfg, m):
+    """A call that must NOT consume the SDFG's error record.
+
+    ctypes: ``fast_call`` with ``do_gpu_check=False`` (the documented default).
+    nanobind: there is no ``fast_call``; the equivalent is a plain call with
+    the ``gpu_error_check`` toggle off - the check (and thus the record read)
+    lives in the compiled binding, gated by that toggle.
+    """
+    if hasattr(csdfg, 'fast_call'):
+        callargs, initargs = csdfg.construct_arguments(**arguments(m))
+        csdfg.fast_call(callargs, initargs, do_gpu_check=False)
+    else:
+        previous = csdfg.gpu_error_check
+        csdfg.gpu_error_check = False
+        try:
+            csdfg(**arguments(m))
+        finally:
+            csdfg.gpu_error_check = previous
+
+
+def checked_call(csdfg, m):
+    """A call that reads the SDFG's error record and raises what it holds."""
+    if hasattr(csdfg, 'fast_call'):
+        callargs, initargs = csdfg.construct_arguments(**arguments(m))
+        csdfg.fast_call(callargs, initargs, do_gpu_check=True)
+    else:
+        csdfg(**arguments(m))
+
+
 @pytest.mark.gpu
 def test_failed_launch_reaches_caller():
     csdfg = build_doubler()
@@ -58,9 +87,8 @@ def test_failure_is_not_charged_to_an_innocent_sdfg():
     failing = build_doubler()
     innocent = build_doubler()
 
-    # ``do_gpu_check=False`` is the documented default, so nothing here consumes the runtime's slot.
-    callargs, initargs = failing.construct_arguments(**arguments(FAILING_M))
-    failing.fast_call(callargs, initargs, do_gpu_check=False)
+    # An unchecked call: nothing here consumes the failing SDFG's record.
+    unchecked_call(failing, FAILING_M)
 
     innocent(**arguments(WORKING_M))
     innocent.finalize()
@@ -74,16 +102,14 @@ def test_failure_is_not_charged_to_an_innocent_sdfg():
 def test_failure_survives_a_drained_runtime_slot():
     csdfg = build_doubler()
 
-    callargs, initargs = csdfg.construct_arguments(**arguments(FAILING_M))
-    csdfg.fast_call(callargs, initargs, do_gpu_check=False)
+    unchecked_call(csdfg, FAILING_M)
 
     # Stands in for any other GPU user in the process reading the runtime's shared last-error slot.
     common.get_gpu_runtime().get_last_error()
 
     # This launch is valid, so only the record the generated code kept can still report the failure.
-    callargs, initargs = csdfg.construct_arguments(**arguments(WORKING_M))
     with pytest.raises(RuntimeError, match='gpu_error_doubler'):
-        csdfg.fast_call(callargs, initargs, do_gpu_check=True)
+        checked_call(csdfg, WORKING_M)
 
     csdfg.finalize()
 
@@ -92,12 +118,10 @@ def test_failure_survives_a_drained_runtime_slot():
 def test_reported_failure_is_not_reported_again():
     csdfg = build_doubler()
 
-    callargs, initargs = csdfg.construct_arguments(**arguments(FAILING_M))
     with pytest.raises(RuntimeError, match='gpu_error_doubler'):
-        csdfg.fast_call(callargs, initargs, do_gpu_check=True)
+        checked_call(csdfg, FAILING_M)
 
-    callargs, initargs = csdfg.construct_arguments(**arguments(WORKING_M))
-    csdfg.fast_call(callargs, initargs, do_gpu_check=True)
+    checked_call(csdfg, WORKING_M)
 
     csdfg.finalize()
 

@@ -3,8 +3,16 @@ import ctypes
 
 import dace
 import numpy as np
+import pytest
 
 from scipy import sparse
+
+# These two tests pass the pointer array in its ctypes form
+# ((POINTER(c_double) * m)(...)); the nanobind interface accepts the
+# numpy-array-of-pointers form only (no ctypes-array coercion, by choice).
+# ctypes-pinned here: ContainerArray is outside the nanobind interface's scope, and these tests assert the
+# ctypes pointer-array calling form.
+# (The shared `ctypes_interface` fixture lives in tests/conftest.py.)
 
 
 def test_read_struct_array():
@@ -188,6 +196,7 @@ def test_write_struct_array():
         assert np.allclose(A[b], B[b].toarray())
 
 
+@pytest.mark.usefixtures('ctypes_interface')
 def test_jagged_container_array():
     N = dace.symbol('N')
     M = dace.symbol('M')
@@ -223,6 +232,7 @@ def test_jagged_container_array():
     assert np.allclose(ref, B[0])
 
 
+@pytest.mark.usefixtures('ctypes_interface')
 def test_two_levels():
     N = dace.symbol('N')
     M = dace.symbol('M')

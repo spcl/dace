@@ -14,6 +14,9 @@ class ArrayWrapper:
         return self.array.__array_interface__
 
 
+# Runs on both interfaces: ctypes coerces __array_interface__ objects in its
+# marshaller; the nanobind wrapper repairs the failed dispatch with a
+# zero-copy view (see NanobindCompiledSDFG's _unwrap_array_likes).
 def test_array_interface_input():
 
     @dace.program

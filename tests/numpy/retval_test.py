@@ -39,6 +39,7 @@ def test_nested_ret():
 
 
 def test_return_override():
+    # Caller-provided `__return` buffers are accepted on both interfaces.
     A = np.random.rand(20)
     result = np.random.rand(20)
     result2 = oneret(A, __return=result)

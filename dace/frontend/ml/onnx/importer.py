@@ -284,7 +284,7 @@ class ONNXModel:
                  simplify: bool = False,
                  onnx_simplify: bool = True,
                  storage: Optional[dtypes.StorageType] = None,
-                 save_transients: Optional[Dict[str, torch.Tensor]] = None,
+                 save_transients: "Optional[Dict[str, torch.Tensor]]" = None,
                  auto_merge: bool = False):
         """
         :param name: the name for the SDFG.
@@ -617,7 +617,7 @@ class ONNXModel:
         return compiled_sdfg
 
     def __call__(self, *args,
-                 **kwargs) -> Union[Union[torch.Tensor, np.ndarray], Tuple[Union[torch.Tensor, np.ndarray]]]:
+                 **kwargs) -> "Union[Union[torch.Tensor, np.ndarray], Tuple[Union[torch.Tensor, np.ndarray]]]":
         """ Execute the model.
 
             :param args: positional arguments to the model. The i-th argument will be passed as the i-th input of the
@@ -750,7 +750,7 @@ class ONNXModel:
 def create_output_array(inferred_symbols: Dict[str, int],
                         desc: dt.Data,
                         use_torch=False,
-                        zeros: bool = False) -> Union[np.ndarray, torch.tensor]:
+                        zeros: bool = False) -> "Union[np.ndarray, torch.tensor]":
     """ Create the array for an output. This is either a numpy array or a torch tensor depending on `use_torch`
 
         When `self.force_torch_outputs` is True, the outputs will be tensors. Otherwise, the outputs will be tensors
