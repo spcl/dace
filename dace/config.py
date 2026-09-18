@@ -288,28 +288,35 @@ class _ConfigData(threading.local):
         self._add_defaults(self._config, new_metadata['required'])
 
     def save(self, path: Optional[str] = None, all: bool = False, file: Optional[io.FileIO] = None):
-        if path is None and file is None:
-            path = self._cfg_filename
-            if path is None:
-                # Try to create a new config file in reversed priority order, and if all else fails keep config in memory
-                for filename in [self._default_cfg_path, self.default_filename]:
-                    try:
-                        self.save(path=filename, all=all)
-                        self._cfg_filename = filename
-                        return
-                    except (FileNotFoundError, PermissionError, OSError):
-                        # If any filesystem-related error happened during file save, move on to next candidate
-                        continue
-
-                warnings.warn('No DaCe configuration file was able to be saved')
-                return
-
-        # Write configuration file
+        what_to_save = self._config if all else self.nondefaults()
         if file is not None:
-            yaml.dump(self._config if all else self.nondefaults(), file, default_flow_style=False)
-        else:
+            assert path is None, "Specified both `path` and `file` in `Config.save()`."
+            yaml.dump(what_to_save, file, default_flow_style=False)
+
+        elif path is not None:
+            assert file is None, "Specified both `path` and `file` in `Config.save()`."
             with open(path, 'w') as f:
-                yaml.dump(self._config if all else self.nondefaults(), f, default_flow_style=False)
+                yaml.dump(what_to_save, f, default_flow_style=False)
+
+        elif self._default_cfg_path is not None:
+            # Neither a path nor a file was specified, but a default configuration file
+            #  path is known. Use that.
+            self.save(path=self._default_cfg_path, all=all, file=None)
+
+        else:
+            # Neither a path nor a file was specified of a configuration file is known.
+            #  Try the default ones.
+            for filename in [self._default_cfg_path, self.default_filename]:
+                if not os.path.isfile(filename):
+                    continue
+                try:
+                    self.save(path=filename, all=all)
+                    self._cfg_filename = filename
+                    return
+                except (PermissionError, OSError):
+                    # If any filesystem-related error happened during file save, move on to next candidate
+                    continue
+            warnings.warn('No DaCe configuration file was able to be saved')
 
     def get_metadata(self, *key_hierarchy):
         # Support for "a.b.c" in calls
