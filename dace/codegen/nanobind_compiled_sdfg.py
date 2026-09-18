@@ -213,10 +213,17 @@ class NanobindCompiledSDFG:
         :attr:`do_not_execute` suppresses the program run, ``None`` is
         returned.
         """
-        # Positional arguments bind by arg_names (ctypes parity, see
-        # _named_call_arguments); keyword-only calls stay a pure passthrough.
+        # Positional arguments bind by arg_names (ctypes parity); keyword-only
+        # calls stay a pure passthrough. This is _named_call_arguments (which
+        # the cold entry points call), inlined to keep the hot path free of
+        # the extra call - keep the two in sync.
         if args:
-            kwargs = self._named_call_arguments(args, kwargs)
+            if (multiple_names := kwargs.keys() & set(self._arg_names[:len(args)])):
+                raise TypeError(f"Argument(s) {sorted(multiple_names)} passed both positionally and as keywords.")
+            if len(args) > len(self._arg_names):
+                warnings.warn(f"SDFG '{self._sdfg.name}': {len(args) - len(self._arg_names)} extra positional "
+                              f"argument(s) beyond arg_names are ignored (ctypes-interface parity).")
+            kwargs.update(zip(self._arg_names, args, strict=False))
 
         # Fast path - no hooks: hand the arguments straight to the compiled
         # dispatcher; all marshalling and the return allocation happen there.
