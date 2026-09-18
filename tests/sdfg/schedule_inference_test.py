@@ -4,6 +4,7 @@ import dace
 from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace.transformation.helpers import get_parent_map
+from dace.transformation.auto.auto_optimize import apply_gpu_storage
 import pytest
 
 
@@ -186,6 +187,29 @@ def test_view_storage_follows_the_container():
     assert sdfg.arrays['v'].storage == dace.StorageType.GPU_Global
 
 
+def test_scope_schedule_ignores_a_staging_buffer():
+    """ A scope's schedule follows the containers outside it, not a buffer it gathers into. """
+    M = 32
+    N = dace.symbol('N')
+
+    @dace.program
+    def transpose_and_add(A: dace.float64[M, N], B: dace.float64[N, M]):
+        for i in dace.map[0:N]:
+            local_gather = dace.define_local([M], A.dtype, storage=dace.StorageType.GPU_Shared)
+            for j in dace.map[0:M]:
+                local_gather[j] = A[j, i]
+            local_gather[:] >> B(M, lambda x, y: x + y)[i, :]
+
+    sdfg = transpose_and_add.to_sdfg()
+    apply_gpu_storage(sdfg)
+
+    set_default_schedule_and_storage_types(sdfg, [None])
+
+    outer = next(node for node, _ in sdfg.all_nodes_recursive()
+                 if isinstance(node, dace.nodes.MapEntry) and node.map.params == ['i'])
+    assert outer.schedule == dace.ScheduleType.GPU_Device
+
+
 if __name__ == '__main__':
     test_default_schedule_autodetect()
     test_gpu_schedule_autodetect()
@@ -198,3 +222,4 @@ if __name__ == '__main__':
     test_ambiguous_schedule_2()
     test_semi_ambiguous_schedule()
     test_view_storage_follows_the_container()
+    test_scope_schedule_ignores_a_staging_buffer()

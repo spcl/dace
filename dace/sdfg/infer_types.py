@@ -40,7 +40,7 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
         dtype = node.sdfg.arrays[cname].dtype
         ctype = (dtype if scalar else dtypes.pointer(dtype))
     elif e.data.data is not None:  # Obtain type from memlet
-        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
+        scalar |= isinstance(sdfg.arrays[e.data.data], (data.Scalar, data.Stream))
         if isinstance(node, nodes.LibraryNode):
             scalar &= allocated_as_scalar
         dtype = sdfg.arrays[e.data.data].dtype
@@ -239,10 +239,13 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
     if node is None or isinstance(node, nodes.NestedSDFG):  # State or nested SDFG
         pass
     elif isinstance(node, nodes.EntryNode):
-        # Test for storage of the scope by collecting all neighboring memlets
-        memlets = set(e.data.data for e in state.out_edges(node) if not e.data.is_empty())
+        # The containers that decide are the ones outside the scope: an edge on the inside may name
+        # a buffer the scope gathers into, which says nothing about the schedule the scope should have
+        memlets = set(e.data.data for e in state.in_edges(node)
+                      if not e.data.is_empty() and e.dst_conn and e.dst_conn.startswith('IN_'))
         exit_node = state.exit_node(node)
-        memlets.update(e.data.data for e in state.in_edges(exit_node) if not e.data.is_empty())
+        memlets.update(e.data.data for e in state.out_edges(exit_node)
+                       if not e.data.is_empty() and e.src_conn and e.src_conn.startswith('OUT_'))
     else:
         # Other nodes only need neighboring memlets
         memlets = set(e.data.data for e in state.all_edges(node) if not e.data.is_empty())
