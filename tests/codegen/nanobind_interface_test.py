@@ -1770,10 +1770,71 @@ def test_nanobind_interface_includes_umbrella_header():
     header_path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'nanobind.h')
     with open(header_path) as fp:
         header = fp.read()
-    for include in ('<dace/types.h>', '<dace/vector.h>', '<dace/pyinterop.h>', '<nanobind/nanobind.h>',
-                    '<nanobind/ndarray.h>', '<nanobind/stl/complex.h>', '<nanobind/stl/optional.h>',
-                    '<nanobind/stl/string.h>'):
+    # The std headers must be explicit: the generated code uses these types
+    # directly, and relying on transitive inclusion breaks under stdlibs that
+    # do not leak them (LLVM's libc++).
+    for include in ('<cstdint>', '<optional>', '<stdexcept>', '<string>', '<dace/types.h>', '<dace/vector.h>',
+                    '<dace/pyinterop.h>', '<nanobind/nanobind.h>', '<nanobind/ndarray.h>', '<nanobind/stl/complex.h>',
+                    '<nanobind/stl/optional.h>', '<nanobind/stl/string.h>'):
         assert f'#include {include}' in header
+
+
+def test_nanobind_interface_generated_tu_is_self_contained(tmp_path):
+    """A representative generated TU syntax-checks under a second compiler.
+
+    GCC's libstdc++ leaks standard headers transitively; LLVM's libc++ does
+    not. The umbrella header lists every std header the generated code uses
+    explicitly, and this gate compiles a TU exercising the string, optional,
+    pyobject, bool and return branches with clang++ (against libc++ where
+    available), so a generated dependency on a transitive include cannot land
+    silently.
+    """
+    import shutil
+    import subprocess
+    import sysconfig
+
+    clangxx = shutil.which('clang++')
+    if clangxx is None:
+        pytest.skip('clang++ not available')
+    import nanobind as nanobind_pkg
+
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('self_contained_probe')
+    sdfg.add_array('A', [10], dtypes.float64)
+    sdfg.arrays['A'].optional = True  # std::optional<nb::ndarray>
+    sdfg.add_scalar('s', dtypes.string)  # std::optional<std::string>
+    sdfg.add_scalar('b', dtypes.bool_)  # the dace_bool caster
+    sdfg.add_array('P', [4], dtypes.pyobject())  # std::uintptr_t via __array_interface__
+    sdfg.add_array('__return', [5], dtypes.float64)  # in-binding allocation
+    state = sdfg.add_state()
+    t = state.add_tasklet('t', {'a_in', 's_in', 'b_in', 'p_in'}, {'o'}, 'o = a_in')
+    state.add_edge(state.add_read('A'), None, t, 'a_in', dace.Memlet('A[0]'))
+    state.add_edge(state.add_read('s'), None, t, 's_in', dace.Memlet('s[0]'))
+    state.add_edge(state.add_read('b'), None, t, 'b_in', dace.Memlet('b[0]'))
+    state.add_edge(state.add_read('P'), None, t, 'p_in', dace.Memlet('P[0]'))
+    state.add_edge(t, 'o', state.add_write('__return'), None, dace.Memlet('__return[0]'))
+
+    tu = tmp_path / 'probe_nanobind.cpp'
+    tu.write_text(generate_bindings_code(sdfg))
+
+    dace_include = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include')
+    args = [
+        clangxx, '-std=c++20', '-fsyntax-only', f'-I{dace_include}', f'-I{nanobind_pkg.include_dir()}',
+        f'-I{sysconfig.get_paths()["include"]}'
+    ]
+    # Prefer libc++, THE stdlib without transitive-include leakage; fall back
+    # to clang over libstdc++ (still a second compiler's view) if unavailable.
+    # The probe must include a header: syntax-checking an empty TU succeeds
+    # even when the libc++ headers are not installed.
+    libcxx_probe = tmp_path / 'libcxx_probe.cpp'
+    libcxx_probe.write_text('#include <cstdint>\nint main() { return 0; }\n')
+    if subprocess.run(
+        [clangxx, '-stdlib=libc++', '-fsyntax-only', str(libcxx_probe)], capture_output=True).returncode == 0:
+        args.append('-stdlib=libc++')
+    result = subprocess.run(args + [str(tu)], capture_output=True, text=True)
+    assert result.returncode == 0, f'generated TU is not self-contained:\n{result.stderr}'
 
 
 def test_nanobind_interface_vector_array(nanobind_interface):

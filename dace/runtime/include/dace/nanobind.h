@@ -9,10 +9,13 @@
 // prepare_precompiled_header), so keep it self-contained and free of
 // program-specific content.
 
-#include <cstdint>
-#include <optional>
-#include <stdexcept>
-#include <string>
+// Standard headers the generated code relies on, listed explicitly so the
+// bindings never depend on transitive includes (GCC's libstdc++ leaks them,
+// LLVM's libc++ does not):
+#include <cstdint>    // std::uintptr_t
+#include <optional>   // std::optional
+#include <stdexcept>  // std::invalid_argument, std::runtime_error
+#include <string>     // std::string
 
 // DaCe runtime types used in the extern "C" program signature, the argument
 // casts, and the nb::ndarray scalar types: dace::uint, dace::complex64/128
