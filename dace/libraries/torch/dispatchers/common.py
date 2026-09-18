@@ -15,7 +15,7 @@ from typing import Callable, List, Tuple, Union
 
 import dace
 import torch
-from dace import config
+
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.frontend.ml.onnx.importer import create_output_array
@@ -96,11 +96,8 @@ def compile_and_init_sdfgs(
     handle_ptr = torch.tensor([handle.value]).squeeze(0)
 
     if module.backward:
-        # Compile and initialize the backward_sdfg (the gradient buffers are
-        # caller-provided, so the same return-override applies as in
-        # ONNXModel.compile_and_init)
-        with config.set_temporary('compiler', 'nanobind_allow_return_override', value=True):
-            compiled_bwd: CompiledSDFG = module.backward_sdfg.compile()
+        # Compile and initialize the backward_sdfg
+        compiled_bwd: CompiledSDFG = module.backward_sdfg.compile()
 
         required_grads = {
             bwd_name: create_output_array(symbols, compiled_bwd.sdfg.arrays[bwd_name], use_torch=True, zeros=True)

@@ -601,12 +601,7 @@ class ONNXModel:
     def compile_and_init(self) -> compiled_sdfg.CompiledSDFG:
         """ Compile the SDFG and load parameters into GPU memory. """
 
-        # Callers pass the model's outputs in explicitly as `__return*` buffers
-        # (see `__call__` and the torch dispatchers); the nanobind interface
-        # accepts caller-provided return buffers only when that override is
-        # baked in at compile time.
-        with config.set_temporary('compiler', 'nanobind_allow_return_override', value=True):
-            compiled_sdfg = self.sdfg.compile()
+        compiled_sdfg = self.sdfg.compile()
 
         # copy all parameters to the device
         self.initialized_parameters = {}

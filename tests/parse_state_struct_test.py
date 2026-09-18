@@ -91,9 +91,6 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     # copy the B array into the transient ptr
     ptr = getattr(state_struct, f'__{sdfg.cfg_id}_persistent_transient')
     cuda_helper.host_to_gpu(ptr, B.copy())
-    # Take the returned array instead of passing a __return buffer: explicit
-    # return buffers are refused on the nanobind interface unless the module
-    # was compiled with compiler.nanobind_allow_return_override.
     result = compiledsdfg(A=A)
 
     assert np.allclose(result, A @ B)

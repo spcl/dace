@@ -366,10 +366,6 @@ def _argument_binding(
     return_setup = []
 
     strict_scalar = Config.get_bool('compiler', 'nanobind_strict_scalar_cast')
-    # Whether a caller-provided return buffer is accepted is decided AT CODE
-    # GENERATION TIME and baked into the module: the binding never consults the
-    # config at run time (changing the option requires a recompile).
-    allow_return_override = Config.get_bool('compiler', 'nanobind_allow_return_override')
 
     for name, desc in arglist.items():
         # The scope predicate is the one refusal site: everything it flags is
@@ -489,17 +485,12 @@ def _argument_binding(
                          f'            return __mod.attr("ndarray")(nb::make_tuple({dims}), __dt, '
                          f'__mod.attr("zeros")({total}, __dt), 0, nb::make_tuple({strides_b})); }}()')
 
-            if not allow_return_override:
-                obtain = (f'if (!{name}.is_none())\n'
-                          f'            throw std::invalid_argument("SDFG argument error: the implicit output '
-                          f'\'{name}\' cannot be passed explicitly: this module was compiled with '
-                          f'compiler.nanobind_allow_return_override=false; enable the option and recompile.");\n'
-                          f'        nb::object {name}__obj = {alloc};')
-            else:
-                obtain = (f'nb::object {name}__obj = {name};\n'
-                          f'        if ({name}__obj.is_none()) {{\n'
-                          f'            {name}__obj = {alloc};\n'
-                          f'        }}')
+            # A caller-provided buffer is always accepted (ctypes-interface
+            # parity); the size validation below is the safety net.
+            obtain = (f'nb::object {name}__obj = {name};\n'
+                      f'        if ({name}__obj.is_none()) {{\n'
+                      f'            {name}__obj = {alloc};\n'
+                      f'        }}')
             if is_pyobj_ret:
                 # DLPack refuses object arrays, so nb::ndarray can never ingest one: the
                 # pointer comes from the array-interface dict instead. The return object is
@@ -509,30 +500,28 @@ def _argument_binding(
                 extract = (f'nb::object {name}__ai = {name}__obj.attr("{iface}");\n'
                            f'        const std::uintptr_t {name}__ptr = '
                            f'nb::cast<std::uintptr_t>(nb::tuple({name}__ai["data"])[0]);')
-                if allow_return_override:
-                    # ``size`` rather than the nd view (which does not exist here); both NumPy
-                    # and CuPy arrays expose it. Same contract as below: too small is refused,
-                    # larger is legitimate.
-                    extract += (f'\n        if (!{name}.is_none() && '
-                                f'nb::cast<size_t>({name}__obj.attr("size")) < '
-                                f'static_cast<size_t>({total}))\n'
-                                f'            throw std::invalid_argument("SDFG argument error: return buffer '
-                                f'\'{name}\' has a wrong shape (smaller than the symbol-derived return size).");')
+                # ``size`` rather than the nd view (which does not exist here); both NumPy
+                # and CuPy arrays expose it. Same contract as below: too small is refused,
+                # larger is legitimate.
+                extract += (f'\n        if (!{name}.is_none() && '
+                            f'nb::cast<size_t>({name}__obj.attr("size")) < '
+                            f'static_cast<size_t>({total}))\n'
+                            f'            throw std::invalid_argument("SDFG argument error: return buffer '
+                            f'\'{name}\' has a wrong shape (smaller than the symbol-derived return size).");')
                 return_setup.append(f'{obtain}\n        {extract}')
                 call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__ptr)')
             else:
                 extract = f'auto {name}__nd = nb::cast<nb::ndarray<{nb_scalar}, {device}>>({name}__obj, false);'
-                if allow_return_override:
-                    # The program writes through the DESCRIPTOR's shape and
-                    # strides regardless of the buffer's own: the guard is
-                    # against out-of-bounds writes, so a too-SMALL buffer is
-                    # rejected while a larger one is a legitimate pattern (a
-                    # caller may hand in a longer buffer whose tail must stay
-                    # untouched - see local_storage_test's test_uneven).
-                    extract += (f'\n        if (!{name}.is_none() && {name}__nd.size() < '
-                                f'static_cast<size_t>({total}))\n'
-                                f'            throw std::invalid_argument("SDFG argument error: return buffer '
-                                f'\'{name}\' has a wrong shape (smaller than the symbol-derived return size).");')
+                # The program writes through the DESCRIPTOR's shape and
+                # strides regardless of the buffer's own: the guard is
+                # against out-of-bounds writes, so a too-SMALL buffer is
+                # rejected while a larger one is a legitimate pattern (a
+                # caller may hand in a longer buffer whose tail must stay
+                # untouched - see local_storage_test's test_uneven).
+                extract += (f'\n        if (!{name}.is_none() && {name}__nd.size() < '
+                            f'static_cast<size_t>({total}))\n'
+                            f'            throw std::invalid_argument("SDFG argument error: return buffer '
+                            f'\'{name}\' has a wrong shape (smaller than the symbol-derived return size).");')
                 return_setup.append(f'{obtain}\n        {extract}')
                 call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__nd.data())')
             params_by_name[name] = f'nb::object {name}'

@@ -127,77 +127,61 @@ def test_nanobind_interface_return_value(nanobind_interface):
     assert np.allclose(result, a + 1.0)
 
 
-def test_nanobind_interface_return_override_forbidden_by_default(nanobind_interface):
-    """By default the nanobind interface refuses a caller-provided __return buffer."""
-    import pytest
+def test_nanobind_interface_return_override_accepted_by_default(nanobind_interface):
+    """A caller-provided __return buffer is written in place and returned,
+    matching the ctypes interface (no option gates it; the in-binding shape
+    validation below is the safety net)."""
 
     @dace.program
-    def double_ret_default(A: dace.float64[20]):
+    def double_ret_ovr(A: dace.float64[20]):
         return A * 2
 
-    csdfg = double_ret_default.to_sdfg().compile()
+    csdfg = double_ret_ovr.to_sdfg().compile()
     a = np.random.rand(20)
-    out = np.empty(20, dtype=np.float64)
-    with pytest.raises(ValueError, match='nanobind_allow_return_override'):
-        csdfg(A=a, __return=out)
-
-
-def test_nanobind_interface_return_override_allowed(nanobind_interface):
-    """With the option on, a caller-provided __return buffer is written in place and returned."""
-    with set_temporary('compiler', 'nanobind_allow_return_override', value=True):
-
-        @dace.program
-        def double_ret_ovr(A: dace.float64[20]):
-            return A * 2
-
-        csdfg = double_ret_ovr.to_sdfg().compile()
-        a = np.random.rand(20)
-        out = np.zeros(20, dtype=np.float64)
-        result = csdfg(A=a, __return=out)
-        assert result is out  # the caller's buffer is returned
-        assert np.allclose(out, a * 2)  # ...and written in place
+    out = np.zeros(20, dtype=np.float64)
+    result = csdfg(A=a, __return=out)
+    assert result is out  # the caller's buffer is returned
+    assert np.allclose(out, a * 2)  # ...and written in place
 
 
 def test_nanobind_interface_return_override_wrong_dtype_rejected_by_binding(nanobind_interface):
-    """With the option on, no Python-side type check is imposed: a buffer the
-    nanobind binding cannot accept (wrong dtype) is rejected by the binding."""
+    """No Python-side type check is imposed: a buffer the nanobind binding
+    cannot accept (wrong dtype) is rejected by the binding."""
     import pytest
-    with set_temporary('compiler', 'nanobind_allow_return_override', value=True):
 
-        @dace.program
-        def double_ret_dtype(A: dace.float64[20]):
-            return A * 2
+    @dace.program
+    def double_ret_dtype(A: dace.float64[20]):
+        return A * 2
 
-        csdfg = double_ret_dtype.to_sdfg().compile()
-        a = np.random.rand(20)
-        wrong = np.zeros(20, dtype=np.float32)  # binding expects float64
-        with pytest.raises(Exception):
-            csdfg(A=a, __return=wrong)
+    csdfg = double_ret_dtype.to_sdfg().compile()
+    a = np.random.rand(20)
+    wrong = np.zeros(20, dtype=np.float32)  # binding expects float64
+    with pytest.raises(Exception):
+        csdfg(A=a, __return=wrong)
 
 
 def test_nanobind_interface_return_override_too_small_rejected(nanobind_interface):
-    """With the option on, a caller-provided buffer SMALLER than the
-    symbol-derived return size is rejected (the program writes through the
-    descriptor's shape and strides - a too-small buffer means out-of-bounds
-    writes). A LARGER buffer is a legitimate pattern and passes: the program
-    fills its prefix and the tail stays untouched (the contract
-    local_storage_test's test_uneven relies on)."""
+    """A caller-provided buffer SMALLER than the symbol-derived return size is
+    rejected (the program writes through the descriptor's shape and strides -
+    a too-small buffer means out-of-bounds writes). A LARGER buffer is a
+    legitimate pattern and passes: the program fills its prefix and the tail
+    stays untouched (the contract local_storage_test's test_uneven relies
+    on)."""
     import pytest
-    with set_temporary('compiler', 'nanobind_allow_return_override', value=True):
 
-        @dace.program
-        def double_ret_shape(A: dace.float64[20]):
-            return A * 2
+    @dace.program
+    def double_ret_shape(A: dace.float64[20]):
+        return A * 2
 
-        csdfg = double_ret_shape.to_sdfg().compile()
-        a = np.random.rand(20)
-        with pytest.raises(Exception, match='shape'):
-            csdfg(A=a, __return=np.zeros(16, dtype=np.float64))  # too small
-        big = np.ones(25, dtype=np.float64)
-        result = csdfg(A=a, __return=big)
-        assert result is big
-        assert np.allclose(big[:20], a * 2)  # prefix written...
-        assert np.allclose(big[20:], 1.0)  # ...tail untouched
+    csdfg = double_ret_shape.to_sdfg().compile()
+    a = np.random.rand(20)
+    with pytest.raises(Exception, match='shape'):
+        csdfg(A=a, __return=np.zeros(16, dtype=np.float64))  # too small
+    big = np.ones(25, dtype=np.float64)
+    result = csdfg(A=a, __return=big)
+    assert result is big
+    assert np.allclose(big[:20], a * 2)  # prefix written...
+    assert np.allclose(big[20:], 1.0)  # ...tail untouched
 
 
 def test_nanobind_interface_positional_and_extra_kwargs(nanobind_interface):

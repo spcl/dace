@@ -82,9 +82,10 @@ class NanobindCompiledSDFG:
     :param arg_names: The user-facing positional argument order, i.e. ``sdfg.arg_names``,
                       used to map positional call arguments to their names.
 
-    :note: Return arrays are allocated inside the compiled binding. Passing the
-           special ``__return*`` arguments explicitly to ``__call__()`` requires
-           compiling with ``compiler.nanobind_allow_return_override``.
+    :note: Return arrays are allocated inside the compiled binding. A caller
+           may pass the special ``__return*`` arguments explicitly to
+           ``__call__()`` to supply their own output buffers; the binding
+           validates them against the symbol-derived return size.
     :note: Return values are arrays only (a ``pyobject`` return decays to the
            contained object, as on the ctypes interface); unlike the ctypes
            ``CompiledSDFG`` the nanobind interface never returns Python scalars.
@@ -205,13 +206,12 @@ class NanobindCompiledSDFG:
         passed - omitting it raises an error naming the symbol.
 
         Return arrays are allocated and returned by the compiled binding itself
-        (after symbol inference, so inferred symbols may size them). Passing a
-        ``__return*`` buffer explicitly is refused unless the module was
-        COMPILED with ``compiler.nanobind_allow_return_override`` enabled (the
-        decision is baked in at code generation); an accepted buffer is
-        validated against the symbol-derived return shape. When
-        :attr:`do_not_execute` suppresses the program run, ``None`` is
-        returned.
+        (after symbol inference, so inferred symbols may size them). A
+        ``__return*`` buffer passed explicitly is used as the output buffer
+        and returned, validated against the symbol-derived return size (a
+        too-small buffer is rejected; the ctypes interface accepts the same
+        arguments). When :attr:`do_not_execute` suppresses the program run,
+        ``None`` is returned.
         """
         # Positional arguments bind by arg_names (ctypes parity); keyword-only
         # calls stay a pure passthrough. This is _named_call_arguments (which
