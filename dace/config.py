@@ -238,10 +238,10 @@ class _ConfigData(threading.local):
             self._add_defaults(self._config, self._config_metadata['required'])
             self._apply_env(self._config, self._config_metadata['required'])
 
-        # Check for old configurations to update the file
-        if 'execution' in self._config and self._cfg_filename:
-            # Reset config to only nondefault ones
-            self.save(all=False)
+        # Loading never writes the configuration file. (A legacy-migration
+        # rewrite used to live here; an implicit save would now persist
+        # environment-provided values into the user's file, where they would
+        # outlive the environment variable.)
 
     def load(self, filename: Optional[str] = None, file: Optional[io.FileIO] = None):
         if file is not None:
@@ -350,7 +350,7 @@ class _ConfigData(threading.local):
         # Values loaded from a configuration file may be strings
         return _env2bool(str(res))
 
-    def append(self, *key_hierarchy, value, autosave):
+    def append(self, *key_hierarchy, value):
         # Support for "a.b.c" in calls
         if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
             key_hierarchy = key_hierarchy[0].split('.')
@@ -361,12 +361,10 @@ class _ConfigData(threading.local):
             current_conf = current_conf[key]
 
         current_conf[key_hierarchy[-1]] += value
-        if autosave:
-            self.save()
 
         return current_conf[key_hierarchy[-1]]
 
-    def set(self, *key_hierarchy, value, autosave):
+    def set(self, *key_hierarchy, value):
         # Support for "a.b.c" in calls
         if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
             key_hierarchy = key_hierarchy[0].split('.')
@@ -377,8 +375,6 @@ class _ConfigData(threading.local):
             current_conf = current_conf[key]
 
         current_conf[key_hierarchy[-1]] = value
-        if autosave:
-            self.save()
 
     def nondefaults(self) -> Dict[str, Any]:
         current_conf = self._config
@@ -525,10 +521,13 @@ class Config(object):
         return Config._data.get_bool(*key_hierarchy)
 
     @staticmethod
-    def append(*key_hierarchy, value=None, autosave=False):
+    def append(*key_hierarchy, value=None):
         """
         Appends to the current value of a given configuration entry
         and sets it.
+
+        Never writes the configuration file; use :func:`Config.save`
+        explicitly to persist configuration changes.
 
         :param key_hierarchy: A tuple of strings leading to the
                                 configuration entry.
@@ -536,20 +535,21 @@ class Config(object):
                                 configuration entry c which is in the
                                 path a->b.
         :param value: The value to append.
-        :param autosave: If True, saves the configuration to the file
-                            after modification.
         :return: Current configuration entry value.
 
         Examples::
 
             Config.append('compiler', 'cpu', 'args', value='-fno-plt')
         """
-        return Config._data.append(*key_hierarchy, value=value, autosave=autosave)
+        return Config._data.append(*key_hierarchy, value=value)
 
     @staticmethod
-    def set(*key_hierarchy, value=None, autosave=False):
+    def set(*key_hierarchy, value=None):
         """
         Sets the current value of a given configuration entry.
+
+        Never writes the configuration file; use :func:`Config.save`
+        explicitly to persist configuration changes.
 
         :param key_hierarchy: A tuple of strings leading to the
                               configuration entry.
@@ -557,14 +557,12 @@ class Config(object):
                               configuration entry c which is in the
                               path a->b.
         :param value: The value to set.
-        :param autosave: If True, saves the configuration to the file
-                         after modification.
 
         Examples::
 
             Config.set('profiling', value=True)
         """
-        return Config._data.set(*key_hierarchy, value=value, autosave=autosave)
+        return Config._data.set(*key_hierarchy, value=value)
 
     def nondefaults(self) -> Dict[str, Any]:
         return Config._data.nondefaults()

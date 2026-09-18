@@ -124,6 +124,36 @@ def test_env_bad_int_warns_and_falls_back_to_default():
                 Config.get_default('compiler', 'max_stack_array_size')
 
 
+def test_set_has_no_autosave():
+    """``Config.set``/``append`` never write the configuration file: the
+    ``autosave`` parameter is removed (nothing in the tree ever passed True)."""
+    with temporary_config():
+        with pytest.raises(TypeError):
+            Config.set('debugprint', value=True, autosave=True)
+        with pytest.raises(TypeError):
+            Config.append('compiler', 'cpu', 'args', value=' -O2', autosave=True)
+
+
+def test_load_never_writes_the_config_file(tmp_path):
+    """Loading a legacy config file (one carrying the pre-2019 ``execution``
+    key) rewrote it in place with the nondefault entries - and since the
+    environment is applied before that ran, ``DACE_*`` values leaked into the
+    user's file and outlived the export. Loading is read-only now."""
+    from dace.config import _ConfigData
+
+    cfg = tmp_path / 'legacy.conf'
+    cfg.write_text('execution: {}\ndebugprint: true\n')
+    before = cfg.read_text()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv('DACE_CONFIG', str(cfg))
+        mp.setenv('DACE_profiling', '1')
+        mp.chdir(tmp_path)
+        store = _ConfigData()  # A fresh store runs _initialize -> load.
+        assert store.get('debugprint') is True  # The file was read...
+        assert store.get('profiling') is True  # ...and the environment applied,
+    assert cfg.read_text() == before  # ...but nothing wrote the file back.
+
+
 if __name__ == '__main__':
     test_env_seeds_default_on_load()
     test_set_temporary_overrides_env_seeded_value()
