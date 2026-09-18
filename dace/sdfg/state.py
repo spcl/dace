@@ -3764,8 +3764,12 @@ class LoopRegion(ControlFlowRegion):
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
         if self.init_statement is not None:
-            # Loops with no initialization statement do not redefine the loop variable
+            # Loops with no initialization statement do not redefine the loop variable. The init statement may
+            # also define further loop-carried symbols (e.g. address cursors), one assignment per statement.
             defined_syms.add(self.loop_variable)
+            for stmt in (self.init_statement.code if isinstance(self.init_statement.code, list) else []):
+                if isinstance(stmt, ast.Assign):
+                    defined_syms.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
 
             free_syms |= self.init_statement.get_free_symbols()
         if self.update_statement is not None:
