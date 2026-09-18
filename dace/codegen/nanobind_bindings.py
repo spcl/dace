@@ -27,84 +27,6 @@ from dace.config import Config
 # outside the interface's scope (see argument_unsupported).
 _LOWP_TYPES = (dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2)
 
-# dtype_traits specialization advertising dace::float16 (= dace::half) as a
-# 16-bit DLPack float, so nb::ndarray<dace::float16, ...> accepts a numpy/cupy
-# float16 array. nanobind's own detection uses std::is_floating_point, false for
-# the half struct. Emitted only when a float16 ndarray argument exists.
-_FLOAT16_TRAITS = '''
-namespace nanobind { namespace detail {
-template <> struct dtype_traits<dace::float16> {
-    static constexpr dlpack::dtype value{
-        (uint8_t) dlpack::dtype_code::Float, 16, 1
-    };
-    static constexpr auto name = const_name("float16");
-};
-}}
-'''
-
-# Boolean scalar arguments need their own caster: nanobind's bool caster only
-# ever accepts an exact Python bool, and the integer-caster detour this
-# interface used to take (binding the parameter as uint8_t) broke when
-# nanobind 2.14 narrowed integer conversion to the __index__ protocol just as
-# numpy removed __index__ from numpy.bool_ (int() still works, index() does
-# not). The caster restores the intended acceptance set - Python bool,
-# numpy.bool_, and integer-like values (Python int, numpy integer scalars) -
-# and nothing more: floats have no __index__ and keep being rejected. Kept as
-# a caster rather than per-argument setup code so it slots uniformly into
-# call() and initialize().
-_DACE_BOOL_CASTER = '''
-// The implicit bool conversion is load-bearing: a bool SYMBOL's binding
-// parameter is passed by its raw name into init_impl (and the workspace
-// methods), where the extern "C" signature takes a plain bool.
-struct dace_bool {
-    uint8_t value;
-    operator bool() const { return value != 0; }
-};
-namespace nanobind { namespace detail {
-template <> struct type_caster<dace_bool> {
-    NB_TYPE_CASTER(dace_bool, const_name("bool"))
-    bool from_python(handle src, uint8_t, cleanup_list *) noexcept {
-        PyObject *o = src.ptr();
-        if (o == Py_True) { value.value = 1; return true; }
-        if (o == Py_False) { value.value = 0; return true; }
-        // Integer-likes (Python int, numpy integer scalars) enter through the
-        // __index__ protocol; floats have no __index__ and stay rejected.
-        // Public CPython API only - nanobind's internal load_* helpers change
-        // signature across major versions (2.x -> 3.x broke the build).
-        if (PyObject *idx = PyNumber_Index(o)) {
-            long long i = PyLong_AsLongLong(idx);
-            Py_DECREF(idx);
-            if (i == -1 && PyErr_Occurred()) { PyErr_Clear(); return false; }
-            value.value = (uint8_t) (i != 0);
-            return true;
-        }
-        PyErr_Clear();
-        // numpy.bool_ answers to neither of the above; accept it by type. The
-        // type object resolves lazily (numpy may legitimately be absent) and
-        // is deliberately leaked - it lives as long as numpy itself.
-        static PyObject *np_bool_type = []() -> PyObject * {
-            PyObject *np = PyImport_ImportModule("numpy");
-            if (!np) { PyErr_Clear(); return nullptr; }
-            PyObject *t = PyObject_GetAttrString(np, "bool_");
-            Py_DECREF(np);
-            if (!t) PyErr_Clear();
-            return t;
-        }();
-        if (np_bool_type && PyObject_TypeCheck(o, (PyTypeObject *) np_bool_type)) {
-            int r = PyObject_IsTrue(o);
-            if (r < 0) { PyErr_Clear(); return false; }
-            value.value = (uint8_t) r;
-            return true;
-        }
-        return false;
-    }
-    static handle from_cpp(dace_bool src, rv_policy, cleanup_list *) noexcept {
-        return handle(src.value ? Py_True : Py_False).inc_ref();
-    }
-};
-}}
-'''
-
 
 def argument_unsupported(name: str, desc: dt.Data) -> Optional[str]:
     """The reason argument ``(name, desc)`` is outside the nanobind interface's scope, or ``None``.
@@ -577,10 +499,10 @@ def _argument_binding(
             nb_args_by_name[name] = f'nb::arg("{name}") = nb::none()'
 
         elif isinstance(desc, dt.Scalar) and desc.dtype.base_type == dtypes.bool_:
-            # Bound through the emitted dace_bool caster (see _DACE_BOOL_CASTER): Python bool,
-            # numpy.bool_ and integer-like values. Deliberately exempt from strict_scalar's
-            # .noconvert(), which would re-reject numpy.bool_.
-            params_by_name[name] = f'dace_bool {name}'
+            # Bound through the shared dace_bool caster (<dace/nanobind_helpers.h>): Python
+            # bool, numpy.bool_ and integer-like values. Deliberately exempt from
+            # strict_scalar's .noconvert(), which would re-reject numpy.bool_.
+            params_by_name[name] = f'dace::nanobind_detail::dace_bool {name}'
             call_args.append(f'static_cast<{ctype}>({name}.value)')
             nb_args_by_name[name] = f'nb::arg("{name}")'
 
@@ -615,19 +537,6 @@ def _ndarray_scalar_ctype(dtype):
     if isinstance(dtype, dtypes.vector):
         return dtype.vtype.ctype
     return dtype.ctype
-
-
-def _uses_half_ndarray(arglist) -> bool:
-    """True iff some argument binds a ``dace::float16`` ndarray scalar.
-
-    When this holds the generated TU needs the ``dtype_traits<dace::float16>``
-    specialization (plain, nullable, GPU and vector-of-half arrays all bind
-    that scalar).
-    """
-    for desc in arglist.values():
-        if isinstance(desc, dt.Array) and _ndarray_scalar_ctype(desc.dtype) == dtypes.float16.ctype:
-            return True
-    return False
 
 
 def _pointer_field_names(statestruct):
@@ -879,16 +788,6 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
     source_hash = getattr(sdfg, '_source_sdfg_hash', None)
     source_hash_attr = f'\n    m.attr("source_sdfg_hash") = "{source_hash}";' if source_hash else ''
 
-    # nanobind's ndarray dtype detection uses std::is_floating_point, which is
-    # false for dace::half (on the host path a 2-byte struct of raw IEEE-754
-    # half bits). Teach it that dace::float16 is a 16-bit DLPack float so a
-    # numpy/cupy float16 array binds by reference - its bytes are exactly an
-    # array of dace::half, so the reinterpret_cast is a no-op. Emitted only when
-    # a float16 ndarray argument exists.
-    float16_traits_block = _FLOAT16_TRAITS if _uses_half_ndarray(arglist) else ''
-    bool_caster_block = _DACE_BOOL_CASTER if any(
-        isinstance(d, dt.Scalar) and d.dtype.base_type == dtypes.bool_ for d in arglist.values()) else ''
-
     # setup_stmts (pyobject-array pointer extraction, omittable-symbol locals,
     # return allocation) may need the Python API, so with them the GIL is
     # released only around the kernel call. Without them, call() keeps the
@@ -935,7 +834,7 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
 #include <dace/nanobind.h>{gpu_runtime_include}
 
 namespace nb = nanobind;
-{float16_traits_block}{bool_caster_block}
+
 // The generated types live in dace::generated::<name>_<content hash>. nanobind
 // shares its type registry across all modules in-process and keys it by type
 // name, so the namespace must distinguish not only different SDFG names but

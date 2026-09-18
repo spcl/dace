@@ -1296,11 +1296,14 @@ def test_nanobind_interface_symbol_inference_cross_symbol(nanobind_interface):
 
 
 def test_nanobind_interface_bool_scalar_binds_via_caster():
-    """A bool scalar arg binds through the emitted dace_bool caster: nanobind's
+    """A bool scalar arg binds through the shared dace_bool caster: nanobind's
     own bool caster accepts only an exact Python bool, and the integer-caster
     detour (uint8_t) died with nanobind 2.14 (integer conversion narrowed to
-    __index__) x numpy 2.5 (numpy.bool_ lost __index__). The caster is emitted
-    only when a bool scalar is actually bound."""
+    __index__) x numpy 2.5 (numpy.bool_ lost __index__). The caster lives in
+    the runtime helpers header (<dace/nanobind_helpers.h>), shared by every
+    generated module."""
+    import os
+
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     sdfg = dace.SDFG('bool_scalar_bind_probe')
@@ -1316,9 +1319,8 @@ def test_nanobind_interface_bool_scalar_binds_via_caster():
     # the kernel call. The kernel's own extern-C declaration still takes
     # `bool flag` - that is correct - so this asserts the binding param
     # specifically, not the whole TU.
-    assert 'dace_bool flag' in code
+    assert 'dace::nanobind_detail::dace_bool flag' in code
     assert 'static_cast<bool>(flag.value)' in code
-    assert 'struct type_caster<dace_bool>' in code
 
     # The call() signature itself must not take the parameter as a plain bool
     # (nanobind's bool caster would then reject numpy.bool_ again).
@@ -1326,10 +1328,14 @@ def test_nanobind_interface_bool_scalar_binds_via_caster():
     assert 'dace_bool flag' in call_signature
     assert ' bool flag' not in call_signature
 
-    # No bool scalar bound -> no caster emitted.
-    plain = dace.SDFG('bool_scalar_free_probe')
-    plain.add_array('A', [10], dace.float64)
-    assert 'dace_bool' not in generate_bindings_code(plain)
+    # The caster itself is static, shared content in the helpers header (only
+    # public CPython API - nanobind's internals change across major versions).
+    helpers_path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'nanobind_helpers.h')
+    with open(helpers_path) as fp:
+        helpers = fp.read()
+    assert 'struct type_caster<dace::nanobind_detail::dace_bool>' in helpers
+    assert 'PyNumber_Index' in helpers
+    assert 'nb::detail::load_' not in helpers
 
 
 def test_nanobind_interface_bool_symbol_condition(nanobind_interface):
@@ -1759,7 +1765,7 @@ def test_nanobind_interface_includes_umbrella_header():
     # do not leak them (LLVM's libc++).
     for include in ('<cstdint>', '<optional>', '<stdexcept>', '<string>', '<dace/types.h>', '<dace/vector.h>',
                     '<dace/pyinterop.h>', '<nanobind/nanobind.h>', '<nanobind/ndarray.h>', '<nanobind/stl/complex.h>',
-                    '<nanobind/stl/optional.h>', '<nanobind/stl/string.h>'):
+                    '<nanobind/stl/optional.h>', '<nanobind/stl/string.h>', '<dace/nanobind_helpers.h>'):
         assert f'#include {include}' in header
 
 
@@ -2344,10 +2350,13 @@ def test_nanobind_interface_finalize_error_translation(monkeypatch):
 
 
 def test_nanobind_interface_float16_array_binding():
-    """A float16 array binds as nb::ndarray<dace::float16> and the TU carries a
-    dtype_traits specialization teaching nanobind that dace::float16 is a
-    16-bit float (its own dtype detection uses std::is_floating_point, false
-    for the dace::half struct)."""
+    """A float16 array binds as nb::ndarray<dace::float16>; the dtype_traits
+    specialization teaching nanobind that dace::float16 is a 16-bit float (its
+    own dtype detection uses std::is_floating_point, false for the dace::half
+    struct) is shared static content in the runtime helpers header, so the
+    generated TU carries none of it."""
+    import os
+
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     sdfg = dace.SDFG('float16_array_probe')
@@ -2355,19 +2364,13 @@ def test_nanobind_interface_float16_array_binding():
 
     code = generate_bindings_code(sdfg)
     assert 'nb::ndarray<dace::float16' in code
-    assert 'struct dtype_traits<dace::float16>' in code
-    assert 'dlpack::dtype_code::Float' in code
+    assert 'dtype_traits' not in code  # static content lives in the header
 
-
-def test_nanobind_interface_float16_trait_only_when_needed():
-    """A float16-free module does not emit the dtype_traits specialization."""
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    sdfg = dace.SDFG('float16_absent_probe')
-    sdfg.add_array('A', [10], dace.float64)
-
-    code = generate_bindings_code(sdfg)
-    assert 'dtype_traits<dace::float16>' not in code
+    helpers_path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'nanobind_helpers.h')
+    with open(helpers_path) as fp:
+        helpers = fp.read()
+    assert 'struct dtype_traits<dace::float16>' in helpers
+    assert 'dlpack::dtype_code::Float' in helpers
 
 
 def test_nanobind_interface_float16_scalar_still_rejected():

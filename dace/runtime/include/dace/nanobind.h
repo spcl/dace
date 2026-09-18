@@ -36,4 +36,9 @@
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 
+// Static helpers shared by every generated module (the dace_bool caster and
+// the dace::float16 dtype_traits), so the generated TU carries per-program
+// content only.
+#include <dace/nanobind_helpers.h>
+
 #endif  // __DACE_NANOBIND_H
