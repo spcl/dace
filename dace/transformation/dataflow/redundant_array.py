@@ -12,7 +12,7 @@ from networkx.exception import NetworkXError, NodeNotFound
 from dace import data, dtypes
 from dace import memlet as mm
 from dace import subsets, symbolic
-from dace.sdfg import SDFG, SDFGState, graph, nodes
+from dace.sdfg import dealias, SDFG, SDFGState, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
 from dace.transformation import transformation as pm
@@ -634,6 +634,12 @@ class RedundantArray(pm.SingleStateTransformation):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
+        # Nested SDFGs writing the removed container write the one behind it, so their connectors follow
+        to_integrate = [
+            e.src for e in graph.in_edges(in_array) if isinstance(e.src, nodes.NestedSDFG)
+            and e.src_conn in e.src.sdfg.arrays and not e.src.sdfg.arrays[e.src_conn].is_equivalent(out_desc)
+        ]
+
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
@@ -800,6 +806,9 @@ class RedundantArray(pm.SingleStateTransformation):
                 sdfg.remove_data(in_array.data)
         except ValueError:  # Already in use (e.g., with Views)
             pass
+
+        for nsdfg_node in to_integrate:
+            dealias.integrate_nested_sdfg(nsdfg_node.sdfg)
 
 
 class RedundantSecondArray(pm.SingleStateTransformation):
@@ -1223,6 +1232,45 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             graph.remove_node(in_array)
 
 
+def _connector_describes_view(connector_desc: data.Data, view_desc: data.Data, viewed_desc: data.Data) -> bool:
+    """
+    Checks whether a nested SDFG connector describes a view but not the container behind it.
+
+    Removing the view moves the connector onto the viewed container without moving the memlets
+    inside, which are written in the view's coordinates.
+
+    :param connector_desc: The descriptor of the connector inside the nested SDFG.
+    :param view_desc: The descriptor of the view.
+    :param viewed_desc: The descriptor of the container it views.
+    :return: True if removing the view would leave the connector describing the wrong container.
+    """
+    return connector_desc.is_equivalent(view_desc) and not connector_desc.is_equivalent(viewed_desc)
+
+
+def _view_carries_a_connector(state: SDFGState, edges: List[graph.MultiConnectorEdge[mm.Memlet]], view_desc: data.Data,
+                              viewed_desc: data.Data, from_source: bool) -> bool:
+    """
+    Checks whether a nested SDFG on the far end of ``edges`` describes the view rather than the
+    container behind it (see ``_connector_describes_view``).
+
+    :param state: The state the view lives in.
+    :param edges: The edges between the view and the nested SDFGs that use it.
+    :param view_desc: The descriptor of the view about to be removed.
+    :param viewed_desc: The descriptor of the container it views.
+    :param from_source: True if the nested SDFGs write the view, False if they read it.
+    :return: True if removing the view would leave a connector describing the wrong container.
+    """
+    for edge in edges:
+        for leaf in state.memlet_tree(edge).leaves():
+            node = leaf.src if from_source else leaf.dst
+            connector = leaf.src_conn if from_source else leaf.dst_conn
+            if not isinstance(node, nodes.NestedSDFG) or connector not in node.sdfg.arrays:
+                continue
+            if _connector_describes_view(node.sdfg.arrays[connector], view_desc, viewed_desc):
+                return True
+    return False
+
+
 class SqueezeViewRemove(pm.SingleStateTransformation):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
@@ -1276,6 +1324,9 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
                 dst_conn = e.dst_conn
                 if dst_conn in e.dst.out_connectors:
                     return False
+
+        if _view_carries_a_connector(state, state.out_edges(out_array), out_desc, in_desc, False):
+            return False
 
         return True
 
@@ -1362,6 +1413,9 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
                 src_conn = e.src_conn
                 if src_conn in e.src.in_connectors:
                     return False
+
+        if _view_carries_a_connector(state, state.in_edges(in_array), in_desc, out_desc, True):
+            return False
 
         return True
 
@@ -1505,6 +1559,8 @@ class RedundantReadSlice(pm.SingleStateTransformation):
                         if sink_conn in sink_node.sdfg.arrays and isinstance(out_desc, data.ArrayView):
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != out_desc.strides or ndesc.dtype != out_desc.dtype:
+                                return False
+                            if _connector_describes_view(ndesc, out_desc, in_desc):
                                 return False
 
         return True
@@ -1657,6 +1713,8 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                             ndesc = source_node.sdfg.arrays[source_conn]
                             if ndesc.strides != in_desc.strides or ndesc.dtype != in_desc.dtype:
                                 return False
+                            if _connector_describes_view(ndesc, in_desc, out_desc):
+                                return False
 
         return True
 
@@ -1777,6 +1835,8 @@ class RemoveSliceView(pm.SingleStateTransformation):
                         if sink_conn in sink_node.sdfg.arrays:
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != desc.strides or ndesc.dtype != desc.dtype:
+                                return False
+                            if _connector_describes_view(ndesc, desc, viewed.desc(sdfg)):
                                 return False
 
         ########################################################

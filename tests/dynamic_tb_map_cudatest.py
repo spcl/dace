@@ -100,14 +100,16 @@ def test_dynamic_maps():
             if main_entry is None:
                 main_entry = node
                 for e in dace.sdfg.dynamic_map_inputs(state, node):
-                    main_dict[e.data.data] = e.dst_conn
+                    # Two ranges may read the same array, so key by the element read
+                    main_dict[(e.data.data, str(e.data.subset))] = e.dst_conn
             else:
                 repl_dict = {}
                 for e in dace.sdfg.dynamic_map_inputs(state, node):
+                    key = (e.data.data, str(e.data.subset))
                     node.remove_in_connector(e.dst_conn)
-                    node.add_in_connector(main_dict[e.data.data])
-                    repl_dict[e.dst_conn] = main_dict[e.data.data]
-                    e._dst_conn = main_dict[e.data.data]
+                    node.add_in_connector(main_dict[key])
+                    repl_dict[e.dst_conn] = main_dict[key]
+                    e._dst_conn = main_dict[key]
                 node.map.range.replace(repl_dict)
 
     sdfg.apply_gpu_transformations()

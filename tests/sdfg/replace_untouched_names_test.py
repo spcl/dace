@@ -31,7 +31,9 @@ def nested_mapping_sdfg() -> tuple[dace.SDFG, dace.nodes.NestedSDFG]:
     sdfg = dace.SDFG('outer')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_symbol('M', dace.int64)
-    nsdfg = sdfg.add_state('s').add_nested_sdfg(inner, {}, {}, {'P': N + M, 'Q': N})
+    nsdfg = sdfg.add_state('s').add_nested_sdfg(inner, {}, {})
+    # Set the mapping on the node: passing it to add_nested_sdfg substitutes it into the nested SDFG
+    nsdfg.symbol_mapping = {'P': N + M, 'Q': N}
     return sdfg, nsdfg
 
 

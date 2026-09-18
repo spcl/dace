@@ -854,35 +854,6 @@ class ViewNode(ScheduleTreeNode):
 
 
 @dataclass
-class NView(ViewNode):
-    """
-    Nested SDFG view node. Subclass of a view that specializes in nested SDFG boundaries.
-    """
-
-    def as_string(self, indent: int = 0):
-        return indent * INDENTATION + f'{self.target} = nview {self.memlet} as {self.view_desc.shape}'
-
-
-@dataclass
-class NViewEnd(ScheduleTreeNode):
-    """
-    Artificial node to denote the scope end of the associated Nested SDFG view node.
-    """
-
-    target: str
-    """Target name of the associated NView container."""
-
-    def as_string(self, indent: int = 0):
-        return indent * INDENTATION + f"end nview {self.target}"
-
-    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
-        return MemletSet()
-
-    def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
-        return MemletSet()
-
-
-@dataclass
 class RefSetNode(ScheduleTreeNode):
     """
     Reference set node. Sets a reference to a data container.

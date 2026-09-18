@@ -406,59 +406,25 @@ def _find_unconditionally_executed_states(sdfg: SDFG) -> Set[SDFGState]:
 def _unsqueeze_memlet_subsetunion(internal_memlet: Memlet, external_memlet: Memlet, parent_sdfg: dace.SDFG,
                                   nsdfg: NestedSDFG) -> Memlet:
     """
-    Helper method that tries to unsqueeze a memlet, containing a SubsetUnion as subset, in
-    a nested SDFG. If it fails it falls back to an empty memlet.
+    Restates a border memlet of a nested SDFG, whose subset may be a
+    :class:`~dace.subsets.SubsetUnion`, in terms of the container its connector is connected to.
 
-    :param internal_memlet: The internal memlet to unsqueeze.
-    :param
+    :param internal_memlet: The border memlet inside the nested SDFG.
+    :param external_memlet: The memlet on the connector.
+    :param parent_sdfg: The SDFG containing the nested SDFG.
+    :param nsdfg: The nested SDFG node.
+    :return: The internal memlet, expressed in the outer container.
     """
-
-    from dace.transformation.helpers import unsqueeze_memlet
-
-    if isinstance(external_memlet.subset, subsets.SubsetUnion):
-        external_memlet.subset = external_memlet.subset.subset_list[0]
-    if isinstance(external_memlet.dst_subset, subsets.SubsetUnion):
-        external_memlet.dst_subset = external_memlet.dst_subset.subset_list[0]
-    if isinstance(external_memlet.src_subset, subsets.SubsetUnion):
-        external_memlet.src_subset = external_memlet.src_subset.subset_list[0]
-    if isinstance(internal_memlet.subset, subsets.SubsetUnion):
-        _subsets = internal_memlet.subset.subset_list
-    else:
-        _subsets = [internal_memlet.subset]
-
-    tmp_memlet = Memlet(data=internal_memlet.data,
-                        subset=internal_memlet.subset,
-                        other_subset=internal_memlet.other_subset)
-
     internal_array = nsdfg.sdfg.arrays[internal_memlet.data]
     external_array = parent_sdfg.arrays[external_memlet.data]
+    if not external_array.is_equivalent(internal_array):
+        raise ValueError(f'Connector "{internal_memlet.data}" of {nsdfg.label} describes '
+                         f'{internal_array}, not the container "{external_memlet.data}" it is connected to. '
+                         'Restate the nested SDFG with dace.sdfg.dealias.convert_legacy_nested_sdfgs.')
 
-    for j, subset in enumerate(_subsets):
-        if subset is None:
-            continue
-        tmp_memlet.subset = subset
-        try:
-            unsqueezed_memlet = unsqueeze_memlet(tmp_memlet,
-                                                 external_memlet,
-                                                 False,
-                                                 internal_offset=internal_array.offset,
-                                                 external_offset=external_array.offset)
-            subset = unsqueezed_memlet.subset
-        except (ValueError, NotImplementedError):
-            # In any case of memlets that cannot be unsqueezed (i.e.,
-            # reshapes), use empty memlets.
-            subset = None
-        _subsets[j] = subset
-
-    # if all subsets are empty make memlet empty
-    if all(s is None for s in _subsets):
-        external_memlet.subset = None
-        external_memlet.other_subset = None
-    else:
-        external_memlet = unsqueezed_memlet
-        external_memlet.subset = subsets.SubsetUnion(_subsets)
-
-    return external_memlet
+    result = copy.deepcopy(internal_memlet)
+    result.data = external_memlet.data
+    return result
 
 
 def _freesyms(expr):
