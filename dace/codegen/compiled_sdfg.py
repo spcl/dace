@@ -58,6 +58,10 @@ class CompiledSDFGProtocol(Protocol):
     def has_gpu_code(self) -> bool:
         ...
 
+    @property
+    def is_initialized(self) -> bool:
+        ...
+
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         ...
 

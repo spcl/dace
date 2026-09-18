@@ -364,6 +364,16 @@ class CtypesCompiledSDFG(object):
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
 
     @property
+    def is_initialized(self) -> bool:
+        """Whether the SDFG state is currently initialized.
+
+        True after :meth:`initialize` (or the first call) ran and no
+        :meth:`finalize` happened since. The interface-agnostic way for
+        library code to ask; both compiled-SDFG classes provide it.
+        """
+        return self._initialized
+
+    @property
     def build_folder_mode(self) -> Optional[str]:
         """The save mode of the build folder the loaded library came from, or ``None`` if it could not be determined.
 

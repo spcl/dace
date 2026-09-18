@@ -2554,6 +2554,34 @@ def test_nanobind_interface_array_like_wrapper_arguments(nanobind_interface):
         csdfg(A='definitely not an array')
 
 
+def test_nanobind_interface_positional_arguments_map_to_arg_names(nanobind_interface):
+    """Positional arguments bind by ``arg_names`` (ctypes parity), never by the
+    binding's parameter order: extras beyond ``arg_names`` are dropped with a
+    warning (the ctypes mapping zip-truncates silently), and a name passed
+    both positionally and as a keyword is a clear error. Previously the fast
+    path forwarded positionals raw, so an extra positional fell onto the next
+    binding slot and collided with (or silently replaced) a keyword argument -
+    surfaced by softmax_test's autodiff call ``sdfg(x, out, ..., gradient_x=...)``."""
+    sdfg = dace.SDFG('positional_map_prog')
+    sdfg.add_array('x', [10], dace.float64)
+    sdfg.add_array('g', [10], dace.float64)
+    state = sdfg.add_state()
+    t = state.add_tasklet('t', {'xin'}, {'gout'}, 'gout = xin + 1.0')
+    state.add_edge(state.add_read('x'), None, t, 'xin', dace.Memlet('x[0]'))
+    state.add_edge(t, 'gout', state.add_write('g'), None, dace.Memlet('g[0]'))
+    sdfg.arg_names = ['x']
+
+    csdfg = sdfg.compile()
+    x = np.zeros(10)
+    g = np.zeros(10)
+    junk = np.zeros(10)
+    with pytest.warns(UserWarning, match='positional'):
+        csdfg(x, junk, g=g)
+    assert g[0] == 1.0
+    with pytest.raises(TypeError, match='both positionally and as'):
+        csdfg(x, x=x)
+
+
 def test_nanobind_interface_return_shape_symbol_not_in_arglist(nanobind_interface):
     """A symbol appearing only in a return descriptor's shape does not enter
     ``arglist()`` (nothing in the dataflow 'uses' it), but the in-binding

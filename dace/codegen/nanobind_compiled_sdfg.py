@@ -8,6 +8,7 @@ Loading (importlib under the ``dace.generated.*`` namespace) lives in
 from typing import Union, List, Any, Tuple, Dict, Optional, Callable
 from types import ModuleType
 import pathlib
+import warnings
 
 import ctypes
 
@@ -152,6 +153,21 @@ class NanobindCompiledSDFG:
         return self._handle.has_gpu_code
 
     @property
+    def is_initialized(self) -> bool:
+        """Whether the SDFG state is currently initialized.
+
+        True after :meth:`initialize` (or the first call) ran and no
+        :meth:`finalize` happened since. The interface-agnostic way for
+        library code to ask; both compiled-SDFG classes provide it.
+        """
+        # The handle deliberately has no non-throwing null-state probe:
+        # state_pointer raises on an uninitialized or finalized state.
+        try:
+            return bool(self._handle.state_pointer)
+        except RuntimeError:
+            return False
+
+    @property
     def gpu_error_check(self) -> bool:
         """Whether each call on a GPU SDFG raises the error its generated code recorded.
 
@@ -197,6 +213,11 @@ class NanobindCompiledSDFG:
         :attr:`do_not_execute` suppresses the program run, ``None`` is
         returned.
         """
+        # Positional arguments bind by arg_names (ctypes parity, see
+        # _named_call_arguments); keyword-only calls stay a pure passthrough.
+        if args:
+            kwargs = self._named_call_arguments(args, kwargs)
+
         # Fast path - no hooks: hand the arguments straight to the compiled
         # dispatcher; all marshalling and the return allocation happen there.
         # A failed dispatch is repaired once by unwrapping array-like wrapper
@@ -205,24 +226,14 @@ class NanobindCompiledSDFG:
         if not hooks._COMPILED_SDFG_CALL_HOOKS:
             if self.do_not_execute is False:
                 try:
-                    return self._handle(*args, **kwargs)
+                    return self._handle(**kwargs)
                 except TypeError:
-                    repaired = _unwrap_array_likes(args, kwargs)
+                    repaired = _unwrap_array_likes((), kwargs)
                     if repaired is None:
                         raise
-                    return self._handle(*repaired[0], **repaired[1])
+                    return self._handle(**repaired[1])
             return None
 
-        # Hooks receive the processed keyword arguments (see
-        # _call_handle_with_hooks), so positional arguments are mapped first.
-        if args:
-            if len(args) > len(self._arg_names):
-                raise TypeError(f'Too many positional arguments (got {len(args)}, '
-                                f'expected at most {len(self._arg_names)}).')
-            for name, value in zip(self._arg_names, args, strict=False):
-                if name in kwargs:
-                    raise TypeError(f'Argument "{name}" passed both positionally and as a keyword.')
-                kwargs[name] = value
         return self._call_handle_with_hooks(kwargs)
 
     def _call_handle_with_hooks(self, kwargs: Dict[str, Any]) -> Any:
@@ -278,10 +289,23 @@ class NanobindCompiledSDFG:
         return ctypes.c_void_p(self._handle.state_pointer)
 
     def _named_call_arguments(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        """Adds the positional arguments to ``kwargs`` (in ``arg_names`` order)."""
+        """Adds the positional arguments to ``kwargs`` (in ``arg_names`` order).
+
+        Positional arguments bind by ``arg_names`` ONLY - never by the
+        binding's parameter order, which continues past ``arg_names`` with
+        internal ordering (gradient buffers, omittable symbols, returns).
+        Extras beyond ``arg_names`` are dropped with a warning: the ctypes
+        mapping zip-truncates them silently, and callers rely on that. A name
+        passed both positionally and as a keyword is an error (nanobind's
+        trailing kwargs absorber would otherwise swallow the keyword and the
+        positional would win silently).
+        """
         if args:
-            assert not (multiple_names :=
-                        kwargs.keys() & self._arg_names[:len(args)]), f"Specified '{multiple_names}' multiple times."
+            if (multiple_names := kwargs.keys() & set(self._arg_names[:len(args)])):
+                raise TypeError(f"Argument(s) {sorted(multiple_names)} passed both positionally and as keywords.")
+            if len(args) > len(self._arg_names):
+                warnings.warn(f"SDFG '{self._sdfg.name}': {len(args) - len(self._arg_names)} extra positional "
+                              f"argument(s) beyond arg_names are ignored (ctypes-interface parity).")
             kwargs.update(zip(self._arg_names, args, strict=False))
         return kwargs
 

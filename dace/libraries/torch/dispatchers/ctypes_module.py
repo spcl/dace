@@ -53,7 +53,7 @@ def callable_for_fwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward
     :param forward_compiled: Compiled SDFG for forward pass.
     :return: Function that executes the forward pass.
     """
-    assert forward_compiled._initialized
+    assert forward_compiled.is_initialized
 
     fwd_arglist = forward_compiled.sdfg.arglist()
 
@@ -85,8 +85,8 @@ def callable_for_bwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward
                             backward_compiled: CompiledSDFG, backward_result: BackwardResult,
                             forwarded_arrays: Dict[str, data.Data]):
 
-    assert forward_compiled._initialized
-    assert backward_compiled._initialized
+    assert forward_compiled.is_initialized
+    assert backward_compiled.is_initialized
 
     fwd_arglist = forward_compiled.sdfg.arglist()
 

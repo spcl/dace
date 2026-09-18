@@ -61,6 +61,26 @@ def test_vector_return_exotic_strides(compiler_interface):
     assert np.array_equal(result, a)
 
 
+def test_is_initialized_lifecycle(compiler_interface):
+    """``is_initialized`` reports the state lifecycle identically on both
+    interfaces: False after compile, True after ``initialize()``, False after
+    ``finalize()``. Library code (e.g. the torch dispatchers) consults it
+    instead of the ctypes-private ``_initialized`` attribute."""
+    sdfg = dace.SDFG(f'is_init_prog_{compiler_interface}')
+    sdfg.add_array('A', [4], dace.float64)
+    state = sdfg.add_state()
+    t = state.add_tasklet('t', {'i'}, {'o'}, 'o = i + 1.0')
+    state.add_edge(state.add_read('A'), None, t, 'i', dace.Memlet('A[0]'))
+    state.add_edge(t, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
+
+    csdfg = sdfg.compile()
+    assert csdfg.is_initialized is False
+    csdfg.initialize(A=np.zeros(4))
+    assert csdfg.is_initialized is True
+    csdfg.finalize()
+    assert csdfg.is_initialized is False
+
+
 if __name__ == '__main__':
     for interface in ('ctypes', 'nanobind'):
         with set_temporary('compiler', 'interface', value=interface):
