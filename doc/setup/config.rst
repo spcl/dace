@@ -4,8 +4,10 @@ Configuring DaCe
 ================
 
 Various aspects of DaCe can be configured through a YAML file called ``.dace.conf``, through ``DACE_*`` environment
-variables, or through the configuration API. DaCe never creates or modifies a configuration file on its own:
-:func:`~dace.config.Config.save` writes one explicitly.
+variables, or through the configuration API. DaCe does not create or modify a configuration file on its own —
+:func:`~dace.config.Config.save` writes one explicitly — with one exception: a configuration file in the old format
+(which stored *every* entry) is rewritten once, when first loaded, to the current format that keeps only the entries
+changed from their defaults.
 
 .. note::
     Documentation for all configuration entries is available at the :ref:`config_schema`.
@@ -96,8 +98,9 @@ sources in increasing priority:
 
 Values set through the API afterwards (:func:`~dace.config.Config.set`, :func:`~dace.config.set_temporary`,
 :func:`~dace.config.temporary_config`) have the highest priority, since the environment is only consulted while
-loading. Loading never writes the configuration file, so neither environment values nor API changes end up in
-``.dace.conf`` unless :func:`~dace.config.Config.save` is called explicitly.
+loading. Loading does not write the configuration file (apart from the one-time migration of old-format files noted
+above), so neither environment values nor API changes end up in ``.dace.conf`` unless
+:func:`~dace.config.Config.save` is called explicitly.
 
 
 .. rubric::

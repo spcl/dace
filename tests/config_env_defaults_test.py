@@ -134,24 +134,43 @@ def test_set_has_no_autosave():
             Config.append('compiler', 'cpu', 'args', value=' -O2', autosave=True)
 
 
-def test_load_never_writes_the_config_file(tmp_path):
-    """Loading a legacy config file (one carrying the pre-2019 ``execution``
-    key) rewrote it in place with the nondefault entries - and since the
-    environment is applied before that ran, ``DACE_*`` values leaked into the
-    user's file and outlived the export. Loading is read-only now."""
+def test_legacy_config_file_is_migrated_on_load(tmp_path):
+    """A config file in the old format (marked by the legacy ``execution``
+    entry, which old DaCe versions wrote because they saved EVERY entry) is
+    rewritten once, in the new nondefaults-only format. The environment has
+    been applied by then, so ``DACE_*`` values set during the migration are
+    persisted into the file as well - documented behavior."""
     from dace.config import _ConfigData
 
     cfg = tmp_path / 'legacy.conf'
     cfg.write_text('execution: {}\ndebugprint: true\n')
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv('DACE_CONFIG', str(cfg))
+        mp.setenv('DACE_profiling', '1')
+        mp.chdir(tmp_path)
+        _ConfigData()  # A fresh store runs _initialize -> load -> migration.
+    migrated = cfg.read_text()
+    assert 'execution' not in migrated  # The legacy marker is gone...
+    assert 'debugprint: true' in migrated  # ...nondefaults are kept...
+    assert 'profiling: true' in migrated  # ...and env-set values are persisted.
+
+
+def test_load_does_not_rewrite_a_modern_config_file(tmp_path):
+    """A file already in the new format is never written back: neither the
+    environment nor anything else leaks into the user's file on load."""
+    from dace.config import _ConfigData
+
+    cfg = tmp_path / 'modern.conf'
+    cfg.write_text('debugprint: true\n')
     before = cfg.read_text()
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv('DACE_CONFIG', str(cfg))
         mp.setenv('DACE_profiling', '1')
         mp.chdir(tmp_path)
-        store = _ConfigData()  # A fresh store runs _initialize -> load.
+        store = _ConfigData()
         assert store.get('debugprint') is True  # The file was read...
-        assert store.get('profiling') is True  # ...and the environment applied,
-    assert cfg.read_text() == before  # ...but nothing wrote the file back.
+        assert store.get('profiling') is True  # ...the environment applied,
+    assert cfg.read_text() == before  # ...and nothing wrote the file back.
 
 
 if __name__ == '__main__':

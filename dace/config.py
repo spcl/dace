@@ -238,10 +238,14 @@ class _ConfigData(threading.local):
             self._add_defaults(self._config, self._config_metadata['required'])
             self._apply_env(self._config, self._config_metadata['required'])
 
-        # Loading never writes the configuration file. (A legacy-migration
-        # rewrite used to live here; an implicit save would now persist
-        # environment-provided values into the user's file, where they would
-        # outlive the environment variable.)
+        # Migration of very old-format configuration files: the legacy 'execution' entry marks a
+        #  `dace.conf` written by very old DaCe versions, which saved every configuration entry.
+        #  Such a file is rewritten once in the new format, which keeps only the nondefault entries.
+        #  Note that the environment has already been applied at this point, so `DACE_*` values
+        #  that are set while the migration runs are persisted into the file as well. Files already
+        #  in the new format are never written back.
+        if 'execution' in self._config and self._cfg_filename:
+            self.save(all=False)
 
     def load(self, filename: Optional[str] = None, file: Optional[io.FileIO] = None):
         if file is not None:
