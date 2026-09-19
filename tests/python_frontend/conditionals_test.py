@@ -243,6 +243,22 @@ def test_guard_only_symbol_is_registered():
     assert np.allclose(b, 1.0), "guard false -> body skipped"
 
 
+_K64 = dace.symbol("guard_flag64", dtype=dace.int64)
+
+
+@dace.program
+def guard_only_int64_symbol(a: dace.float64[10]):
+    if _K64 > 0:
+        a[:] = a + 1.0
+
+
+def test_guard_only_symbol_keeps_its_declared_dtype():
+    """fuse_move_ifs: the condition is re-parsed from its string, which mints a bare int32 ``K``;
+    registering that dtype turned the drop-in's int64 ``K`` argument into ``int``."""
+    sdfg = guard_only_int64_symbol.to_sdfg(simplify=False)
+    assert sdfg.symbols["guard_flag64"] == dace.int64
+
+
 def test_simple_guard_reads_the_current_version():
     """A ``Name``-only guard is unparsed verbatim, so it must resolve through the parser's
     variable map: reassigning versions a scalar (``maxv`` -> ``maxv_0``) and the raw spelling

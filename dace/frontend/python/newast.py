@@ -2770,7 +2770,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
                         if (astr not in self.sdfg.symbols and not (astr in self.variables or astr in self.sdfg.arrays)):
-                            self.sdfg.add_symbol(astr, atom.dtype)
+                            self.sdfg.add_symbol(astr, self.declared_symbol_dtype(atom))
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
@@ -2919,7 +2919,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                     # Add to global SDFG symbols if not a scalar
                     if (astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays):
-                        self.sdfg.add_symbol(astr, atom.dtype)
+                        self.sdfg.add_symbol(astr, self.declared_symbol_dtype(atom))
 
         # Handle else clause
         if node.orelse:
@@ -2980,6 +2980,13 @@ class ProgramVisitor(ExtNodeVisitor):
         self.cfg_target.add_node(continue_block, ensure_unique_name=True)
         self._on_block_added(continue_block)
 
+    def declared_symbol_dtype(self, atom: symbolic.symbol) -> dtypes.typeclass:
+        """The dtype ``atom``'s name was declared with. A range or condition re-parsed from its
+        string mints a bare symbol of the default dtype, so ``if K > 0`` over an int64 ``K``
+        registered ``K`` as int32."""
+        declared = self.globals.get(str(atom))
+        return declared.dtype if isinstance(declared, symbolic.symbol) else atom.dtype
+
     def visit_If(self, node: ast.If):
         # Generate conditions
         cond, _, _ = self._visit_test(node.test)
@@ -2996,7 +3003,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if (symbolic.issymbolic(atom, self.sdfg.constants) and astr not in self.sdfg.symbols
                         and astr not in self.variables and astr not in self.sdfg.arrays
                         and astr not in self.scope_arrays):
-                    self.sdfg.add_symbol(astr, atom.dtype)
+                    self.sdfg.add_symbol(astr, self.declared_symbol_dtype(atom))
 
         # Add conditional region
         cond_block = ConditionalBlock(f'if_{node.lineno}')
