@@ -678,7 +678,63 @@ def test_array_wcr_read_target_falls_back_to_atomic():
     assert np.allclose(got_off, ref), "flag-off numerically wrong"
 
 
+def build_wcr_element_sum(elements) -> dace.SDFG:
+    """An outer CPU_Multicore map over ``k`` accumulating ``X[k]`` into single ELEMENTS of ``A``, one
+    tasklet output per element -- tsvc ``s311``'s ``sum_out[0]`` of a length-N ``sum_out``."""
+    sd = dace.SDFG("wcr_elem_%d" % len(elements))
+    sd.add_array("X", [KK], dace.float64)
+    sd.add_array("A", [NR, NM], dace.float64)
+    st = sd.add_state()
+    me, mx = st.add_map("outer", dict(k="0:%d" % KK), schedule=dace.ScheduleType.CPU_Multicore)
+    outs = {"aout%d" % n: None for n in range(len(elements))}
+    t = st.add_tasklet("acc", {"xin"}, outs, "\n".join("%s = xin" % name for name in outs))
+    st.add_memlet_path(st.add_read("X"), me, t, dst_conn="xin", memlet=dace.Memlet(data="X", subset="k"))
+    write = st.add_write("A")
+    for name, (i, j) in zip(outs, elements):
+        st.add_memlet_path(t,
+                           mx,
+                           write,
+                           src_conn=name,
+                           memlet=dace.Memlet(data="A", subset="%d, %d" % (i, j), wcr="lambda a, b: a + b"))
+    sd.validate()
+    sd.openmp_array_reductions = True
+    return sd
+
+
+def test_array_wcr_section_covers_only_the_written_element():
+    """s311: ``reduction(+:sum_out[0:LEN_1D])`` for a write to ``sum_out[0]`` gave every thread a
+    private copy of the whole array and overflowed the thread stack at judge size. The section
+    ends at the last written element and starts at 0, which GCC's ``simd`` reduction needs."""
+    sd = build_wcr_element_sum([(2, 3)])
+    _, src = _compile_and_read_src(sd)
+    pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert any("reduction(+:A[0:18])" in l for l in pragma), "\n".join(pragma)
+    X = np.random.default_rng(3).standard_normal(KK)
+    A0 = np.random.default_rng(4).standard_normal((NR, NM))
+    ref = A0.copy()
+    ref[2, 3] += X.sum()
+    assert np.allclose(_run_arr(sd, X, A0), ref)
+
+
+def test_array_wcr_two_spans_of_one_array_share_one_clause():
+    """OpenMP refuses an array in two reduction clauses, so two written spans fall back to the
+    whole buffer once."""
+    sd = build_wcr_element_sum([(0, 0), (4, 6)])
+    _, src = _compile_and_read_src(sd)
+    pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert any("reduction(+:A[0:%d])" % (NR * NM) in l for l in pragma), "\n".join(pragma)
+    assert not any(l.count("A[") > 1 for l in pragma), "\n".join(pragma)
+    X = np.random.default_rng(5).standard_normal(KK)
+    A0 = np.random.default_rng(6).standard_normal((NR, NM))
+    ref = A0.copy()
+    ref[0, 0] += X.sum()
+    ref[4, 6] += X.sum()
+    assert np.allclose(_run_arr(sd, X, A0), ref)
+
+
 if __name__ == "__main__":
+    test_array_wcr_section_covers_only_the_written_element()
+    test_array_wcr_two_spans_of_one_array_share_one_clause()
     test_array_wcr_read_target_falls_back_to_atomic()
     test_mixed_copy_and_reduce_map()
     test_mixed_copy_and_product_reduce_detects_star_op()

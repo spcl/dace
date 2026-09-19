@@ -16,6 +16,7 @@ from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
+from dace.ordered import OrderedSet
 from dace.codegen.common import codeblock_to_cpp, emits_tree_reductions, sym2cpp, update_persistent_desc
 from dace.codegen.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
@@ -538,6 +539,37 @@ def _contiguous_element_count(desc):
     except TypeError:
         return None
     return acc
+
+
+def written_span(desc: data.Array, subset: Optional[subsets.Subset], count):
+    """Length of the flat section ``[0:length]`` covering ``subset`` in a C-contiguous ``desc``.
+
+    Elements the body never writes keep their value (identity + combine), so the section only has
+    to cover the subset. It starts at 0: GCC 16 drops a ``simd`` reduction over a section with a
+    nonzero lower bound (``reduction(+:A[17:1])`` returns ``A`` unchanged, ``A[0:18]`` is right).
+    No subset: the whole buffer.
+    """
+    if subset is None or subset.dims() != len(desc.strides):
+        return count
+    last = sum(high * stride for high, stride in zip(subset.max_element(), desc.strides))
+    return symbolic.simplify(last + 1)
+
+
+def one_section_per_array(clauses: List[Tuple], whole_targets: Dict[str, str]) -> List[Tuple]:
+    """``clauses`` with one section per array: OpenMP refuses an array in two reduction clauses, so an
+    array reduced through two different spans falls back to its whole buffer."""
+    targets: Dict[str, OrderedSet] = {}
+    for _op, target, name, _declare in clauses:
+        targets.setdefault(name, OrderedSet()).add(target)
+    out = []
+    seen = OrderedSet()
+    for op_str, target, name, declare in clauses:
+        if len(targets[name]) > 1:
+            target = whole_targets[name]
+        if (op_str, target) not in seen:
+            seen.add((op_str, target))
+            out.append((op_str, target, name, declare))
+    return out
 
 
 def _complex_declare_reduction(op_str: str, ctype: str) -> Optional[Tuple[str, str]]:
@@ -3463,6 +3495,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         out = []
         seen = set()
+        whole_targets: Dict[str, str] = {}
         try:
             map_exit = state.exit_node(map_entry)
         except (KeyError, StopIteration):
@@ -3533,13 +3566,16 @@ class CPUCodeGen(TargetCodeGenerator):
             if is_scalar:
                 clause_target = var_name
             elif sdfg.openmp_array_reductions:
-                # An array-section reduction ``reduction(op:A[0:n])`` privatizes the WHOLE
-                # buffer per thread for the region; only a provably contiguous buffer is
-                # eligible, anything else falls through to the atomic path.
+                # An array-section reduction privatizes its section per thread for the region; only
+                # a provably contiguous buffer is eligible, anything else falls through to the atomic
+                # path. The section is the written span, not the buffer: ``sum[0]`` of a length-N
+                # array reduced as ``sum[0:N]`` gives every thread N private elements (tsvc s311).
                 count = _contiguous_element_count(desc)
                 if count is None:
                     continue
-                clause_target = "%s[0:%s]" % (var_name, cpp.sym2cpp(count))
+                length = written_span(desc, oedge.data.get_dst_subset(oedge, state), count)
+                clause_target = "%s[0:%s]" % (var_name, cpp.sym2cpp(length))
+                whole_targets[oedge.dst.data] = "%s[0:%s]" % (var_name, cpp.sym2cpp(count))
             else:
                 continue
 
@@ -3558,7 +3594,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
             seen.add(key)
             out.append((op_str, clause_target, oedge.dst.data, declare))
-        return out
+        return one_section_per_array(out, whole_targets)
 
     def renders_simd(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
         """Whether ``map_entry``'s loop carries ``simd``: ``MarkSIMDMaps`` marked it and, in a standalone
