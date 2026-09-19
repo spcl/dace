@@ -47,6 +47,7 @@ SIZE_CAP: int = 16
 class PolybenchKernel:
     modpath: str
     program_name: str
+    lapack: bool = False
 
     @property
     def name(self) -> str:
@@ -86,7 +87,8 @@ def collect(name: Optional[str] = None) -> List[PolybenchKernel]:
         progs = [v for v in vars(mod).values() if isinstance(v, DaceProgram)]
         if not progs or not hasattr(mod, "sizes") or not hasattr(mod, "args") or not hasattr(mod, "init_array"):
             continue
-        kernels.append(PolybenchKernel(modpath=info.name, program_name=progs[0].name))
+        kernels.append(
+            PolybenchKernel(modpath=info.name, program_name=progs[0].name, lapack=bool(vars(mod).get('LAPACK'))))
     kernels.sort(key=lambda k: k.name)
     if name is not None:
         kernels = [k for k in kernels if k.name == name]

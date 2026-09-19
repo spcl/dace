@@ -30,7 +30,10 @@ def _package():
 
 
 def collect(name: Optional[str] = None) -> List[dict]:
-    """Discover benchmark ``CORPUS`` descriptors recursively across dwarf folders."""
+    """Discover benchmark ``CORPUS`` descriptors recursively across dwarf folders.
+
+    A descriptor with ``lapack=True`` links LAPACKE; tests running it carry the ``lapack`` marker.
+    """
     pkg = _package()
     found: List[dict] = []
     for info in pkgutil.walk_packages(pkg.__path__, prefix=pkg.__name__ + "."):

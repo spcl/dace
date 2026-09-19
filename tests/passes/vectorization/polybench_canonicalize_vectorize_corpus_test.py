@@ -34,6 +34,7 @@ from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinne
 from tests.corpus.polybench import polybench
 
 KERNELS = [k.name for k in polybench.collect()]
+LAPACK_KERNELS = frozenset(k.name for k in polybench.collect() if k.lapack)
 PHASES = ("canon", "canon_vec")
 
 #: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
@@ -53,7 +54,10 @@ UNTILED_KERNELS = frozenset({
 
 
 def _cases():
-    return [pytest.param(name, phase, id=f"{name}-{phase}") for name in KERNELS for phase in PHASES]
+    return [
+        pytest.param(name, phase, id=f"{name}-{phase}", marks=pytest.mark.lapack if name in LAPACK_KERNELS else ())
+        for name in KERNELS for phase in PHASES
+    ]
 
 
 # Round-robin multidim knob set (one config per kernel by index), mirroring the

@@ -55,4 +55,5 @@ CORPUS = dict(name='cholesky2',
               output_args=OUTPUT_ARGS,
               initialize=initialize,
               reference=reference,
-              program=kernel)
+              program=kernel,
+              lapack=True)

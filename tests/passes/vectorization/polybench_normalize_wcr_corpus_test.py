@@ -28,7 +28,7 @@ from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline
 
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
-KERNELS = [k.name for k in polybench.collect()]
+KERNELS = [pytest.param(k.name, marks=pytest.mark.lapack if k.lapack else ()) for k in polybench.collect()]
 PIPELINES = ("simplify", "simplify_l2m_mapfusion")
 
 PREP: dict = {}

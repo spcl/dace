@@ -49,7 +49,10 @@ UNTILED_KERNELS = frozenset({
 
 
 def _cases():
-    return [pytest.param(name, phase, id=f"{name}-{phase}") for name in KERNELS for phase in PHASES]
+    return [
+        pytest.param(name, phase, id=f"{name}-{phase}", marks=pytest.mark.lapack if CORPUS[name].get("lapack") else ())
+        for name in KERNELS for phase in PHASES
+    ]
 
 
 # Round-robin multidim knob set (one config per kernel by index), mirroring the

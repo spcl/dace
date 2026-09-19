@@ -15,6 +15,9 @@ paper_sizes = {N: 2000}
 
 args = [([N, N], datatype)]
 
+#: ``np.linalg.cholesky`` links LAPACKE: tests running this kernel carry the ``lapack`` marker.
+LAPACK = True
+
 
 def init_array(A, n):
     for i in range(0, n, 1):

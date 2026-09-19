@@ -28,7 +28,9 @@ from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
 CORPUS = {c["name"]: c for c in npbench.collect()}
-KERNELS = sorted(CORPUS)
+KERNELS = [
+    pytest.param(name, marks=pytest.mark.lapack if CORPUS[name].get("lapack") else ()) for name in sorted(CORPUS)
+]
 PIPELINES = ("simplify", "simplify_l2m_mapfusion")
 
 PREP: dict = {}

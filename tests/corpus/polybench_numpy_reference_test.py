@@ -39,6 +39,8 @@ from tests.corpus.polybench import polybench as PB
 from tests.corpus.polybench import polybench_numpy as PN
 
 KERNELS = [k.name for k in PB.collect()]
+#: The SDFG reference of a LAPACK kernel links LAPACKE.
+SDFG_REFERENCE_CASES = [pytest.param(k.name, marks=pytest.mark.lapack if k.lapack else ()) for k in PB.collect()]
 
 
 def worst_difference(ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray]) -> Tuple[str, float, float]:
@@ -68,7 +70,7 @@ def test_every_kernel_has_a_numpy_reference():
     assert sorted(PN.VECTORIZATION) == sorted(KERNELS)
 
 
-@pytest.mark.parametrize('name', KERNELS)
+@pytest.mark.parametrize('name', SDFG_REFERENCE_CASES)
 def test_numpy_reference_matches_sdfg_reference(name):
     kernel = PB.collect(name)[0]
     arrays, psize = PB.make_inputs(kernel)
