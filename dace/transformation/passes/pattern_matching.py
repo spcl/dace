@@ -417,8 +417,8 @@ def _try_to_match_transformation(
                              is what issue#1911 is about; ``setup_match`` resets the member, so it
                              has to be set after that call.
     """
-    # ``i`` IS the node id: the digraph is numbered by ``enumerate(graph.nodes())``, which is the
-    # iteration ``node_id`` linear-scans. Unmutated between the collapse and this probe.
+    # `collapse_multigraph_to_nx` numbers the nodes in the order of `graph.nodes()`, so the index of
+    # a node in the collapsed graph is its node ID; `graph.node_id` would find it by a linear scan.
     subgraph = {nxpattern.nodes[j]['node']: i for i, j in subgraph.items()}
 
     try:
