@@ -220,12 +220,12 @@ def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
     ``sdfg.symbols`` key, so it also names symbols a map defines inside a scope (a transient sized
     by its enclosing map parameter registers one on inlining), and guarding those put them in the
     signature -- ``Missing program argument``. Of those, only a name that sizes or indexes
-    something (:func:`sized_symbols`, anywhere in the nesting) carries the assumption; a symbol
-    read only by a branch condition never did, and trapping it aborted ``if K > 0`` at ``K = -1``
-    (llr fuse_move_ifs).
+    something (:func:`sized_symbols`, anywhere in the nesting) or that a rewrite reasoned about
+    (a tracked relation) carries the assumption; a symbol read only by a branch condition never
+    did, and trapping it aborted ``if K > 0`` at ``K = -1`` (llr fuse_move_ifs).
     """
     args = sdfg.used_symbols(all_symbols=False)
-    sized = sized_names(sdfg)
+    sized = sized_names(sdfg) | {s.name for relation in tracked_assumptions(sdfg) for s in relation.free_symbols}
     return sorted(s for s in args if sdfg.symbols.get(s) in SIGNED_INTEGER_DTYPES and s in sized)
 
 

@@ -293,13 +293,14 @@ def test_tracked_assumption_deduped_and_true_dropped():
 
 def test_tracked_assumption_out_of_scope_skipped():
     """A relation over a symbol that is not an SDFG free symbol cannot be checked
-    at the entry state, so it is skipped (only the nonneg tasklets remain)."""
+    at the entry state, so it is skipped (only the nonneg tasklets remain). ``K`` is only a
+    tasklet value here and in no kept relation, so it carries no nonnegativity trap either."""
     sdfg = _kn_sdfg()
     record_assumption(sdfg, dace.symbol('Q', dtype=dace.int64) < N)  # Q is not in the SDFG
     assert insert_assumption_guards(sdfg) == 1
     conds = [t.code.as_string for t in _trap_tasklets(sdfg)]
     assert all('Q' not in c for c in conds)
-    assert any('K < 0' in c for c in conds) and any('N < 0' in c for c in conds)
+    assert conds == ['if ((N < 0)) { std::abort(); }'], conds
 
 
 def test_back_compat_aliases():
