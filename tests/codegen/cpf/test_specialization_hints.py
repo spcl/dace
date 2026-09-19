@@ -25,10 +25,11 @@ import pytest
 import dace
 from dace import cpf_lowering
 from dace.codegen.cpf import render
-from dace.libraries.standard.nodes.scan import Scan, ScanOp
+from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import (SEQUENTIAL_PINNED, AnnotateLoopKinds,
+                                                                         proven_carrying_access)
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 
@@ -113,10 +114,28 @@ def test_a_scan_states_its_trade_although_the_expansion_consumes_the_node():
     sdfg.validate()
 
     rendered = comment_lines(render(sdfg).code)
-    assert '// parallel scan; canonicalization takes the parallel form.' in rendered
-    assert '// Alternative: a sequential loop over parallel maps.' in rendered
+    # CPF renders a host Scan through its sequential expansion, so the trade is stated from that side.
+    assert '// sequential scan; this expansion runs the recurrence as one loop.' in rendered
+    assert '// Alternative: the parallel scan canonicalization chose.' in rendered
     # Folded into the node's description so one expansion is one trade, not one per map it leaves.
-    assert rendered.count('// Alternative: a sequential loop over parallel maps.') == 1
+    assert rendered.count('// Alternative: the parallel scan canonicalization chose.') == 1
+    assert not [line for line in rendered if line.startswith('// parallel scan')]
+
+
+@pytest.mark.parametrize('implementation, hint', [('pure', SEQUENTIAL_SCAN_HINT), ('CPU', PARALLEL_SCAN_HINT)])
+def test_a_scan_hint_follows_the_expansion_that_ran(implementation, hint):
+    """scan_affine_decay: "parallel scan" was printed over the sequential loop ``pure`` emits."""
+    sdfg = dace.SDFG(f'cpf_hint_scan_{implementation.lower()}')
+    sdfg.add_array('arr_in', [N], dace.float64)
+    sdfg.add_array('arr_out', [N], dace.float64)
+    state = sdfg.add_state('scan')
+    node = Scan('Scan', op=ScanOp.SUM)
+    state.add_node(node)
+    state.add_edge(state.add_read('arr_in'), None, node, '_scan_in', dace.Memlet('arr_in[0:N]'))
+    state.add_edge(node, '_scan_out', state.add_write('arr_out'), None, dace.Memlet('arr_out[0:N]'))
+    assert node.specialization_hint == PARALLEL_SCAN_HINT
+    node.expand(state, implementation)
+    assert node.specialization_hint == hint
 
 
 def test_no_hint_and_an_empty_hint_render_identically():
@@ -335,13 +354,18 @@ def test_naming_the_loops_does_not_move_a_line_of_code():
         return [line for line in code.splitlines() if not line.strip().startswith('//')]
 
     # The same SDFG rendered twice, so the entry point keeps its name and the only variable left
-    # between the two texts is the annotation.
+    # between the two texts is the annotation. The rendering names loops itself, so the baseline
+    # pre-empts it: a hint already set is kept, and ``x`` names no kind.
     for build in (scaling_sdfg, carried_sdfg, breaking_sdfg):
-        sdfg = build(f'cpf_kind_stable_{build.__name__}')
-        before = render(sdfg).code
-        after = named(sdfg)
+        placeholder = build(f'cpf_kind_stable_{build.__name__}')
+        for node, _ in placeholder.all_nodes_recursive():
+            if isinstance(node, (nodes.MapEntry, LoopRegion)):
+                node.specialization_hint = 'x'
+        before = render(placeholder).code
+        after = named(build(f'cpf_kind_stable_{build.__name__}'))
         assert without_comments(before) == without_comments(after), build.__name__
-        assert len(comment_lines(after)) > len(comment_lines(before)), build.__name__
+        assert '// x' in comment_lines(before) and '// x' not in comment_lines(after), build.__name__
+        assert any(' -- ' in line for line in comment_lines(after)), build.__name__
 
 
 def test_an_already_recorded_hint_is_left_alone():
@@ -367,6 +391,108 @@ def test_the_canonicalize_pipeline_names_the_loops_it_leaves_behind():
     rendered = comment_lines(render(sdfg).code)
     assert any(line.startswith('// parallel -- the iterations are independent') for line in rendered)
     assert any(line.startswith('// sequential -- carried:') for line in rendered)
+
+
+# Loops born after canonicalize: specialization, library expansion, codegen copy lowering.
+
+
+def test_a_map_a_library_expansion_leaves_is_labelled():
+    """s311: the Reduce map carried the library description and no kind, unlike every other map."""
+    sdfg = dace.SDFG('cpf_kind_reduce')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('total', [1], dace.float64)
+    state = sdfg.add_state('reduce')
+    reduction = state.add_reduce('lambda x, y: x + y', axes=None, identity=0.0)
+    state.add_edge(state.add_read('a'), None, reduction, '_in', dace.Memlet('a[0:N]'))
+    state.add_edge(reduction, '_out', state.add_write('total'), None, dace.Memlet('total[0]'))
+    sdfg.validate()
+    rendered = comment_lines(render(sdfg).code)
+    assert '// reduction over the given axes with the given operator' in rendered, rendered
+    assert '// parallel -- the iterations are independent' in rendered, rendered
+
+
+def test_a_map_codegen_lowers_a_copy_into_is_labelled():
+    """ext_war_unit's seam copy: codegen lowers the copy into a map after every pass has run."""
+    sdfg = dace.SDFG('cpf_kind_copy')
+    sdfg.add_array('src', [N], dace.float64)
+    sdfg.add_array('dst', [N], dace.float64)
+    state = sdfg.add_state('copy')
+    state.add_nedge(state.add_read('src'), state.add_write('dst'), dace.Memlet('src[0:N:2] -> [0:N/2]'))
+    sdfg.validate()
+    code = render(sdfg).code
+    lines = [line.strip() for line in code.splitlines()]
+    pragma = next(index for index, line in enumerate(lines) if line.startswith('#pragma omp parallel for'))
+    assert lines[pragma - 1] == '// parallel -- the iterations are independent', code
+
+
+def test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering():
+    """BandCarriedLoops and seam splitting add loops after ``AnnotateLoopKinds`` ran."""
+    rendered = comment_lines(render(carried_sdfg('cpf_kind_late')).code)
+    assert any(line.startswith('// sequential -- carried: RAW on b[') for line in rendered), rendered
+
+
+def test_a_carried_dependence_behind_a_whole_array_memlet_is_proven():
+    """s275: a guarded column recurrence. The nested body's memlets cover all of ``aa``, so
+    ``LoopToMap`` could only decline; the element accesses inside prove the carry."""
+
+    @dace.program
+    def guarded_columns(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+        for i in range(N):
+            if aa[0, i] > 0.0:
+                for j in range(1, N):
+                    aa[j, i] = aa[j - 1, i] + bb[j, i]
+
+    sdfg = guarded_columns.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False, target='cpu')
+    hints = [loop.specialization_hint for loop in loops_of(sdfg)]
+    assert len(hints) == 1, hints
+    assert hints[0].startswith('sequential -- carried: RAW on aa['), hints
+    assert hints[0].endswith(' - 1, _loop_it_0]'), hints
+
+
+def test_a_read_ahead_dependence_is_named_war_not_raw():
+    """ext_war_unit: ``a[i] = a[i + 1] + ...`` reads what a LATER iteration writes."""
+
+    @dace.program
+    def ahead(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N - 1):
+            a[i] = a[i + 1] + b[i]
+
+    sdfg = ahead.to_sdfg(simplify=True)
+    AnnotateLoopKinds().apply_pass(sdfg, {})
+    assert [loop.specialization_hint for loop in loops_of(sdfg)] == ['sequential -- carried: WAR on a[i + 1]']
+
+
+def test_no_carried_dependence_is_claimed_for_independent_elements():
+    """The element proof needs one write and one read ``d != 0`` iterations apart, nothing less."""
+
+    @dace.program
+    def offset_copy(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            b[i] = a[i] + b[i]
+
+    loops = loops_of(offset_copy.to_sdfg(simplify=True))
+    assert loops and all(proven_carrying_access(loop) is None for loop in loops)
+
+
+def test_a_pinned_independent_loop_does_not_read_as_parallel():
+    """versioned_distance_update: the K == 0 arm is pinned, rendered without a pragma, and was
+    labelled parallel."""
+
+    @dace.program
+    def independent(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(N):
+            b[i] = a[i] * 2.0
+
+    sdfg = independent.to_sdfg(simplify=True)
+    loops = loops_of(sdfg)
+    assert loops, 'the frontend mapped the loop, so there is no pinned loop to label'
+    for loop in loops:
+        loop.pinned_sequential = True
+    code = named(sdfg)
+    assert '// ' + SEQUENTIAL_PINNED in [line.strip() for line in code.splitlines()], code
+    assert '#pragma omp' not in code
+    assert not any(line.startswith('// parallel --') for line in comment_lines(code))
 
 
 if __name__ == '__main__':

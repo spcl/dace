@@ -47,6 +47,7 @@ from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
 from dace.sdfg import SDFG, nodes
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory and plain locals, and
@@ -417,7 +418,7 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
             state = group[0][1]
             order = {id(node): index for index, node in enumerate(state.nodes())}
             chosen.append(min(group, key=lambda pair: order[id(pair[0])]))
-        described: Dict[int, Tuple[str, str, set]] = {}
+        described: Dict[int, Tuple[nodes.LibraryNode, str, set]] = {}
         for node, state in chosen:
             available = type(node).implementations
             for candidate in renderable_implementations(node, state):
@@ -426,17 +427,10 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
                     break
             if provenance is not None:
                 description = description_of(node)
-                # A library node's specialization hint has to be captured here for the same reason
-                # its description does: the expansion consumes the node, and the loops it leaves
-                # behind carry no memory of what chose their shape. Folded into the description so
-                # the emitter's once-per-origin dedupe covers both -- a Scan expands into several
-                # maps, and the trade is one trade, not one per map.
-                if description is not None and node.specialization_hint:
-                    description = f'{description}\n{node.specialization_hint}'
                 if description is not None:
-                    # Recorded BEFORE the expansion: afterwards the node is gone, and with it any
-                    # way to ask what it was.
-                    described[id(state)] = (node.guid, description, {existing.guid for existing in state.nodes()})
+                    # Recorded BEFORE the expansion: afterwards the node is gone from the graph, and
+                    # with it any way to ask what it was.
+                    described[id(state)] = (node, description, {existing.guid for existing in state.nodes()})
 
         selected = {id(node) for node, _ in chosen}
         sdfg.expand_library_nodes(recursive=False, predicate=lambda node: id(node) in selected)
@@ -445,7 +439,13 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
             record = described.get(id(state))
             if record is None:
                 continue
-            origin, description, before = record
+            node, description, before = record
+            origin = node.guid
+            # The specialization hint is read AFTER the expansion, which may have corrected it (a
+            # sequential Scan expansion says so). Folded into the description so the emitter's
+            # once-per-origin dedupe covers both: a Scan expands into several maps, one trade.
+            if node.specialization_hint:
+                description = f'{description}\n{node.specialization_hint}'
             for produced in state.nodes():
                 if produced.guid in before:
                     continue
@@ -563,12 +563,12 @@ def refuse_runtime_scopes(sdfg: SDFG) -> None:
 def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
-    Four things happen: every written signature scalar is promoted to a length-1 array so it is
+    Five things happen: every written signature scalar is promoted to a length-1 array so it is
     addressable (:class:`~dace.transformation.passes.scalar_promotion.PromoteScalarOutputsToArrays`),
     what that could not make renderable is refused
     (:func:`refuse_by_value_returns`), every library node is pointed at the best implementation a
-    standalone unit can compile and expanded (:func:`force_renderable_expansions`), and lifetimes
-    that would need a state struct are
+    standalone unit can compile and expanded (:func:`force_renderable_expansions`), every loop still
+    unlabelled is given its kind (``AnnotateLoopKinds``), and lifetimes that would need a state struct are
     demoted (see :data:`LIFETIME_DEMOTIONS`). Anything CPF cannot express raises here rather than
     at compile time, where the message would be a C++ diagnostic about a name this module chose.
 
@@ -592,6 +592,8 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
     refuse_by_value_returns(sdfg)
     force_renderable_expansions(sdfg, provenance)
+    # Canonicalize labelled the loops it left; specialization and the expansions above made more.
+    AnnotateLoopKinds().apply_pass(sdfg, {})
     for _, _, desc in sdfg.arrays_recursive():
         demoted = LIFETIME_DEMOTIONS.get(desc.lifetime)
         if demoted is not None:

@@ -38,6 +38,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes, type_inference
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import PARALLEL
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. Exact-width
 #: ``<cstdint>`` types: ``long long`` is only guaranteed to be AT LEAST 64 bits, so it does not say
@@ -501,7 +502,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Compute (and memoize) the walk plan BEFORE the base emitter runs, so ``map_scope_needs_brace``
         # -- which the base calls -- sees it, and push this map so the scope hooks below can find it.
         self.emit_provenance(node, cfg, state_id, callsite_stream)
-        hint = cpf_lowering.hint_comment(node.specialization_hint)
+        # A map born in codegen (copy lowering) was never labelled; a Map is data-parallel by definition.
+        hint = cpf_lowering.hint_comment(node.specialization_hint or PARALLEL)
         if hint:
             callsite_stream.write(hint.rstrip('\n'), cfg, state_id, node)
         self.walk_plan_for(sdfg, cfg.state(state_id), node)

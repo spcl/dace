@@ -796,6 +796,23 @@ def single_block_scan_call(op: ScanOp, exclusive: bool, n_expr: str, seed: str) 
             f'static_cast<long>({n_expr}), {seed});')
 
 
+#: The trade a Scan records: canonicalization takes the parallel form.
+PARALLEL_SCAN_HINT = ('parallel scan; canonicalization takes the parallel form.\n'
+                      'Alternative: a sequential loop over parallel maps.\n'
+                      'CPU: the loop is worth trying -- the scan does more work, and the loop '
+                      'may already saturate the memory system.\n'
+                      'GPU: the scan is usually the better of the two.\n'
+                      'Both are correct. Measure before choosing.')
+
+#: The same trade after a sequential expansion: the emitted scan is one loop.
+SEQUENTIAL_SCAN_HINT = ('sequential scan; this expansion runs the recurrence as one loop.\n'
+                        'Alternative: the parallel scan canonicalization chose.\n'
+                        'CPU: the loop is usually the better of the two -- the scan does more work, and the loop '
+                        'may already saturate the memory system.\n'
+                        'GPU: the parallel scan is usually the better of the two.\n'
+                        'Both are correct. Measure before choosing.')
+
+
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """Portable fallback: a hand-written single-loop scan."""
@@ -806,6 +823,10 @@ class ExpandPure(ExpandTransformation):
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         refuse_unsupported_affine_flags(node)
         in_desc, out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        # The hint is read after expansion (``dace.codegen.cpf``); a comment claiming the parallel
+        # form over this loop would be false.
+        if node.specialization_hint == PARALLEL_SCAN_HINT:
+            node.specialization_hint = SEQUENTIAL_SCAN_HINT
         if node.op is ScanOp.AFFINE:
             refuse_widening(node, in_desc, out_desc, 'op=AFFINE')
             if _is_length_one(node, state):
@@ -1375,12 +1396,7 @@ class Scan(nodes.LibraryNode):
         # than the sequential loop it replaces: it wins where there are threads to spare and loses
         # where the loop was already the cheap way to spend a core. Canonicalization takes the
         # parallel form and records the reverse for a specializing pass to consider.
-        self.specialization_hint = ('parallel scan; canonicalization takes the parallel form.\n'
-                                    'Alternative: a sequential loop over parallel maps.\n'
-                                    'CPU: the loop is worth trying -- the scan does more work, and the loop '
-                                    'may already saturate the memory system.\n'
-                                    'GPU: the scan is usually the better of the two.\n'
-                                    'Both are correct. Measure before choosing.')
+        self.specialization_hint = PARALLEL_SCAN_HINT
         self.chains = chains
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState):
