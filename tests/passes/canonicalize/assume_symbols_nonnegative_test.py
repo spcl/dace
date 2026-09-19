@@ -66,6 +66,27 @@ def test_emits_guard_as_first_state():
     sdfg.validate()
 
 
+def test_a_symbol_read_only_by_a_branch_is_not_trapped():
+    """fuse_move_ifs: ``if K > 0`` is written for negative ``K``; trapping ``K < 0`` aborted the
+    K = -1 case although no size or index ever assumed ``K >= 0``. ``N`` sizes ``x`` and is kept."""
+
+    @dace.program
+    def branch(x: dace.float64[N], y: dace.float64[N]):
+        if K > 0:
+            y[:] = x
+        else:
+            y[:] = -x
+
+    sdfg = branch.to_sdfg(simplify=True)
+    canonicalize(sdfg)
+    traps = ' '.join(t.code.as_string for t in _trap_tasklets(sdfg))
+    assert 'N < 0' in traps and 'K' not in traps, traps
+    x = np.arange(4, dtype=np.float64)
+    y = np.zeros(4)
+    sdfg(x=x, y=y, N=4, K=-1)
+    assert np.array_equal(y, -x)
+
+
 def test_idempotent():
     sdfg = _axpy_sdfg()
     assert insert_symbol_nonnegative_guard(sdfg) == 1

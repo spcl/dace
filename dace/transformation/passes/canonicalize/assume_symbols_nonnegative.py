@@ -69,12 +69,18 @@ def names_still_plain(sdfg: SDFG) -> dict:
     :param sdfg: The SDFG to inspect (one level; callers iterate nested SDFGs themselves).
     :returns: The symbol names seen without the assumption, membership-checked only.
     """
-    plain: dict = {}
+    return dict.fromkeys(str(s) for s in sized_symbols(sdfg) if not s.is_nonnegative)
+
+
+def sized_symbols(sdfg: SDFG) -> List[sympy.Symbol]:
+    """Every symbol in the sympy-typed properties ``replace_dict`` threads the assumption into:
+    descriptor extents, map ranges, memlet subsets and volumes (one level of ``sdfg``)."""
+    found: List[sympy.Symbol] = []
 
     def scan(*exprs):
         for expr in exprs:
             if isinstance(expr, sympy.Basic):
-                plain.update(dict.fromkeys(str(s) for s in expr.free_symbols if not s.is_nonnegative))
+                found.extend(expr.free_symbols)
 
     for desc in sdfg.arrays.values():
         scan(*desc.shape, *desc.strides, desc.total_size, *desc.offset)
@@ -87,7 +93,7 @@ def names_still_plain(sdfg: SDFG) -> dict:
             for subset in (edge.data.subset, edge.data.other_subset):
                 if subset is not None:
                     scan(*(bound for rng in subset.ndrange() for bound in rng))
-    return plain
+    return found
 
 
 def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
@@ -206,16 +212,32 @@ def is_assumption_guard_block(block) -> bool:
 
 
 def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
-    """Sorted names of the SDFG's signed-integer argument symbols.
+    """Sorted names of the SDFG's signed-integer argument symbols that canonicalization assumed
+    nonnegative.
 
     ``used_symbols(all_symbols=False)`` is the set ``arglist`` builds the signature from, i.e. the
-    values a caller passes in -- the ones canonicalization assumed nonnegative. ``free_symbols``
-    is NOT that set: it unions every registered ``sdfg.symbols`` key, so it also names symbols a
-    map defines inside a scope (a transient sized by its enclosing map parameter registers one on
-    inlining), and guarding those put them in the signature -- ``Missing program argument``.
+    values a caller passes in. ``free_symbols`` is NOT that set: it unions every registered
+    ``sdfg.symbols`` key, so it also names symbols a map defines inside a scope (a transient sized
+    by its enclosing map parameter registers one on inlining), and guarding those put them in the
+    signature -- ``Missing program argument``. Of those, only a name that sizes or indexes
+    something (:func:`sized_symbols`, anywhere in the nesting) carries the assumption; a symbol
+    read only by a branch condition never did, and trapping it aborted ``if K > 0`` at ``K = -1``
+    (llr fuse_move_ifs).
     """
     args = sdfg.used_symbols(all_symbols=False)
-    return sorted(s for s in args if sdfg.symbols.get(s) in SIGNED_INTEGER_DTYPES)
+    sized = sized_names(sdfg)
+    return sorted(s for s in args if sdfg.symbols.get(s) in SIGNED_INTEGER_DTYPES and s in sized)
+
+
+def sized_names(sdfg: SDFG) -> set:
+    """Names of :func:`sized_symbols` in ``sdfg``, plus the outer names a nested SDFG's sized
+    symbols are bound to through its ``symbol_mapping``."""
+    names = {str(s) for s in sized_symbols(sdfg)}
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.NestedSDFG) and node.sdfg.parent_sdfg is sdfg:
+            for inner in sized_names(node.sdfg) & node.symbol_mapping.keys():
+                names.update(str(s) for s in symbolic.pystr_to_symbolic(str(node.symbol_mapping[inner])).free_symbols)
+    return names
 
 
 def collect_assumptions(sdfg: SDFG) -> List:
@@ -224,9 +246,9 @@ def collect_assumptions(sdfg: SDFG) -> List:
 
     Two sources, unified into one list of sympy booleans:
 
-    * **Auto-collected from the symbols** -- every signed-integer free symbol is
-      assumed nonnegative (``s >= 0``), the offset-sign contract canonicalization
-      reasons under (see [[feedback_symbols_nonnegative_canonicalization]]).
+    * **Auto-collected from the symbols** -- every signed-integer argument symbol that sizes or
+      indexes something is assumed nonnegative (``s >= 0``), the offset-sign contract
+      canonicalization reasons under (see [[feedback_symbols_nonnegative_canonicalization]]).
     * **Recorded by the passes** -- every relation a rewrite stashed via
       :func:`~dace.transformation.passes.canonicalize.tracked_assumptions.record_assumption`,
       kept only when all of its symbols are argument symbols so it is evaluable at
