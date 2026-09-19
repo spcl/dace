@@ -40,7 +40,7 @@ from dace import properties, symbolic
 from dace.sdfg.nodes import MapEntry, Tasklet
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import replicate_scope
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
+from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 
 # Label suffix marking the fully-in-bounds interior a tile-remainder split
@@ -258,7 +258,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             return 'symbolic'
         return 'below' if t < W else 'nondivisible'
 
-    def _split(self, state: dace.SDFGState, map_entry: MapEntry, K: int) -> bool:
+    def _split(self, state: dace.SDFGState, map_entry: MapEntry, widths: tuple[int, ...]) -> bool:
         """Peel ``map_entry``'s K innermost dims into interior + K slabs.
 
         See module docstring for the K-slab decomposition. Interior =
@@ -268,19 +268,20 @@ class SplitMapForTileRemainder(ppl.Pass):
 
         :param state: State holding the map.
         :param map_entry: Innermost map entry to peel (becomes the interior).
-        :param K: Number of tiled (innermost) dims.
+        :param widths: The map's own tile widths (:func:`map_tile_widths`), one per tiled innermost dim.
         :returns: ``True`` if interior marked (always, when map has >= K dims);
             ``False`` if map too small.
         """
         ranges = list(map_entry.map.range.ranges)
-        if len(ranges) < K:
+        K = len(widths)
+        if K == 0 or len(ranges) < K:
             return False
         tiled_dims = list(range(len(ranges) - K, len(ranges)))
         # ``assume_even``: caller guarantees every tiled extent is a multiple of W,
         # so no boundary -> skip peel, mark whole map ``__tile_main`` (mask-free).
         if self.assume_even:
             classes = []
-            for d, W in zip(tiled_dims, self.widths):
+            for d, W in zip(tiled_dims, widths):
                 lb, ub, _ = map_entry.map.range[d]
                 classes.append((self._trip_class(lb, ub, W), d, W, lb, ub))
             # A provably-too-small dim (extent < W) cannot be tiled with no remainder to cover it
@@ -306,7 +307,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
                 map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
             return True
-        for d, W in zip(tiled_dims, self.widths):
+        for d, W in zip(tiled_dims, widths):
             lb, ub, step = map_entry.map.range[d]
             if self._provably_divisible(lb, ub, W):
                 continue
@@ -355,13 +356,13 @@ class SplitMapForTileRemainder(ppl.Pass):
         # freshly replicated remainder map.
         # Safe: the comprehension is fully evaluated before the first ``_split`` mutates anything.
         scan_cache: dict[int, Any] = {}
-        eligible = [(n, g) for n, g in sdfg.all_nodes_recursive()
+        eligible = [(n, g, map_tile_widths(g, n, tuple(self.widths))) for n, g in sdfg.all_nodes_recursive()
                     if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState)
-                    and is_vectorizable_map(g, n, len(self.widths), scan_cache=scan_cache) and len(n.map.params) >= K
+                    and is_vectorizable_map(g, n, K, scan_cache=scan_cache) and len(n.map.params) >= K
                     and not n.map.label.endswith(TILE_MAIN_MARKER) and not n.map.label.endswith(SCALAR_TAIL_MARKER)
                     and not n.map.label.endswith(TILE_K1_TAIL_MARKER) and not n.map.label.endswith(MASKED_TAIL_MARKER)]
-        for n, g in eligible:
-            if self._split(g, n, K):
+        for n, g, widths in eligible:
+            if self._split(g, n, widths):
                 applied += 1
                 if self.range_check:
                     self._record_stride_facts(g, n)

@@ -14,7 +14,8 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import is_gpu_resident_map, is_vectorizable_map
+from dace.transformation.passes.vectorization.utils.map_predicates import (is_gpu_resident_map, is_vectorizable_map,
+                                                                           map_tile_widths)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
@@ -105,21 +106,24 @@ class MarkTileDims(ppl.Pass):
         """
         return False
 
-    def _classify_one(self, map_entry: MapEntry) -> TileDimSpec | None:
+    def _classify_one(self, state: dace.SDFGState, map_entry: MapEntry) -> TileDimSpec | None:
         """Build a :class:`TileDimSpec` for ``map_entry`` if eligible.
 
+        :param state: The state holding ``map_entry``.
         :param map_entry: The candidate inner map entry.
         :returns: Spec when the K innermost params each have step == 1; ``None`` otherwise.
         :raises NotImplementedError: When ``skip_ineligible`` is ``False`` and map ineligible.
         """
         # ``__tile_k1_tail`` maps pin K=1 widths=(1,) regardless of orchestrator
         # widths: single-lane scalar-tile remainder over the innermost iter-var only.
-        widths = (1, ) if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER) else tuple(self.widths)
+        widths = (1, ) if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER) else map_tile_widths(
+            state, map_entry, tuple(self.widths))
         K = len(widths)
         params = list(map_entry.map.params)
         ranges = list(map_entry.map.range.ranges)
-        if len(params) < K:
-            return self._fail_or_skip(f"map {map_entry.label!r} has only {len(params)} params (< K={K})")
+        if K == 0 or len(params) < K:
+            return self._fail_or_skip(f"map {map_entry.label!r} has only {len(params)} params "
+                                      f"(< K={len(self.widths)})")
         iter_vars = tuple(params[-K:])
         slice_ranges = ranges[-K:]
         global_ubs = []
@@ -191,7 +195,7 @@ class MarkTileDims(ppl.Pass):
                 continue
             if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: stays scalar
                 continue
-            spec = self._classify_one(n)
+            spec = self._classify_one(g, n)
             if spec is not None:
                 specs[n] = spec
         assert_invariant(no_memlet_dim_mismatch(sdfg), "MarkTileDims",

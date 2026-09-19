@@ -474,7 +474,7 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
     orchestrator refuses the kernel and leaves it correct + scalar instead.
     """
     import dace.data as data
-    for _state, nsdfg_node, _map_entry in _tile_tagged_bodies(sdfg, K):
+    for _state, nsdfg_node, _map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
         inner_sdfg = nsdfg_node.sdfg
         for state in inner_sdfg.states():
             for node in state.nodes():
@@ -487,11 +487,11 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
                     if edge.data is None or edge.data.data is None:
                         continue
                     desc = inner_sdfg.arrays.get(edge.data.data)
-                    if not isinstance(desc, data.Array) or tuple(desc.shape) != tuple(widths):
+                    if not isinstance(desc, data.Array) or tuple(desc.shape) != map_widths:
                         continue
                     return (f"{inner_sdfg.name}.{state.label}: tasklet ``{node.label}`` still holds "
                             f"the scalar body ``{node.code.as_string.strip()!r}`` while its operand "
-                            f"``{edge.data.data}`` was widened to a {tuple(widths)} tile "
+                            f"``{edge.data.data}`` was widened to a {map_widths} tile "
                             f"(ConvertTaskletsToTileOps could not classify it)")
     return None
 
@@ -507,7 +507,7 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
     Refuse the kernel instead of handing back a silently wrong per-lane value.
     """
     import dace.data as data
-    for _state, nsdfg_node, _map_entry in _tile_tagged_bodies(sdfg, K):
+    for _state, nsdfg_node, _map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
         inner_sdfg = nsdfg_node.sdfg
         for state in inner_sdfg.states():
             for node in state.nodes():
@@ -519,7 +519,7 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
                     if edge.data is None or edge.data.data is None:
                         continue
                     outer = inner_sdfg.arrays.get(edge.data.data)
-                    if not isinstance(outer, data.Array) or tuple(outer.shape) != tuple(widths):
+                    if not isinstance(outer, data.Array) or tuple(outer.shape) != map_widths:
                         continue
                     inner = node.sdfg.arrays.get(conn)
                     if inner is None:
@@ -530,7 +530,7 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
                         collapsed = False
                     if collapsed:
                         return (f"{inner_sdfg.name}.{state.label}: nested SDFG ``{node.label}`` reads/writes "
-                                f"tile ``{edge.data.data}`` {tuple(widths)} through single-element connector "
+                                f"tile ``{edge.data.data}`` {map_widths} through single-element connector "
                                 f"``{conn}`` -- it would run once at the tile base (lane 0 for all lanes)")
     return None
 
@@ -542,9 +542,9 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> 
     """
     import dace.data as data
     from dace.transformation.passes.vectorization.utils.tile_access import data_is_lane_indexed
-    for _state, nsdfg_node, map_entry in _tile_tagged_bodies(sdfg, K):
+    for _state, nsdfg_node, map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
         inner_sdfg = nsdfg_node.sdfg
-        iter_vars = tuple(map_entry.map.params[-K:])
+        iter_vars = tuple(map_entry.map.params[-len(map_widths):])
         for name, desc in inner_sdfg.arrays.items():
             if not desc.transient:
                 continue
@@ -557,7 +557,7 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> 
             if not isinstance(desc, data.Array):
                 continue
             shape = tuple(desc.shape)
-            if shape == tuple(widths):
+            if shape == map_widths:
                 continue
             try:
                 if all(bool(dace.symbolic.simplify(s - 1) == 0) for s in shape):
@@ -570,13 +570,14 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> 
             if data_is_lane_indexed(inner_sdfg, name, iter_vars):
                 continue
             return (f"{inner_sdfg.name}: lane-dep transient ``{name}`` has shape {shape} "
-                    f"!= widths {tuple(widths)} (expected widened or Scalar bridge)")
+                    f"!= widths {map_widths} (expected widened or Scalar bridge)")
     return None
 
 
 def tile_main_map_step_is_widths(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> str | None:
-    """Every TILE_MAIN map has its last-K dim steps == ``widths``."""
+    """Every TILE_MAIN map has its tiled dim steps == its own :func:`map_tile_widths`."""
     from dace.transformation.passes.vectorization.split_map_for_tile_remainder import TILE_MAIN_MARKER
+    from dace.transformation.passes.vectorization.utils.map_predicates import map_tile_widths
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
@@ -586,10 +587,11 @@ def tile_main_map_step_is_widths(sdfg: SDFG, K: int, widths: tuple[int, ...]) ->
                     continue
                 if len(node.map.range) < K:
                     continue
-                tail_steps = tuple(node.map.range[-K + d][2] for d in range(K))
-                if tuple(str(s) for s in tail_steps) != tuple(str(s) for s in widths):
-                    return (f"{sd.name}.{state.label}: TILE_MAIN map ``{node.map.label}`` last-K steps "
-                            f"{tail_steps} != expected widths {tuple(widths)}")
+                map_widths = map_tile_widths(state, node, tuple(widths))
+                tail_steps = tuple(rng[2] for rng in node.map.range[len(node.map.range) - len(map_widths):])
+                if tuple(str(s) for s in tail_steps) != tuple(str(s) for s in map_widths):
+                    return (f"{sd.name}.{state.label}: TILE_MAIN map ``{node.map.label}`` tiled steps "
+                            f"{tail_steps} != expected widths {map_widths}")
     return None
 
 
@@ -615,9 +617,11 @@ def no_strided_map_param_in_surviving_condition(sdfg: SDFG, K: int) -> str | Non
             for node in state.nodes():
                 if not isinstance(node, MapEntry) or len(node.map.range) < K or len(node.map.params) < K:
                     continue
-                if all(str(node.map.range[-K + d][2]) == '1' for d in range(K)):
+                strided = tuple(param for param, (_, _, step) in zip(node.map.params[-K:], node.map.range[-K:])
+                                if str(step) != '1')
+                if not strided:
                     continue  # not strided: nothing was rebound to a tile base
-                if map_body_has_tiled_param_dependent_branch(state, node, tuple(node.map.params[-K:])):
+                if map_body_has_tiled_param_dependent_branch(state, node, strided):
                     return (f"{sd.name}.{state.label}: strided map ``{node.map.label}`` still holds a "
                             f"conditional guarding its own param -- that guard is evaluated once per "
                             f"tile, not per lane")
@@ -676,11 +680,12 @@ def _iter_states(scope: SDFG | SDFGState) -> Iterator[tuple[SDFG, SDFGState]]:
     raise TypeError(f"Invariant scope must be SDFG or SDFGState, got {type(scope).__name__}")
 
 
-def _tile_tagged_bodies(sdfg: SDFG, K: int) -> Iterator[tuple[SDFGState, NestedSDFG, MapEntry]]:
-    """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG."""
+def _tile_tagged_bodies(sdfg: SDFG,
+                        widths: tuple[int, ...]) -> Iterator[tuple[SDFGState, NestedSDFG, MapEntry, tuple[int, ...]]]:
+    """Yield ``(state, nsdfg_node, map_entry, map_widths)`` for every tile-tagged body NSDFG."""
     from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                        TILE_K1_TAIL_MARKER)
-    from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map
+    from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map, map_tile_widths
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
@@ -691,7 +696,8 @@ def _tile_tagged_bodies(sdfg: SDFG, K: int) -> Iterator[tuple[SDFGState, NestedS
                         continue
                 except (StopIteration, ValueError):
                     continue
-                if len(node.map.params) < K:
+                map_widths = map_tile_widths(state, node, tuple(widths))
+                if not map_widths:
                     continue
                 if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
                     continue
@@ -702,4 +708,4 @@ def _tile_tagged_bodies(sdfg: SDFG, K: int) -> Iterator[tuple[SDFGState, NestedS
                 nsdfgs = [n for n in scope if isinstance(n, NestedSDFG)]
                 if len(nsdfgs) != 1:
                     continue
-                yield state, nsdfgs[0], node
+                yield state, nsdfgs[0], node, map_widths

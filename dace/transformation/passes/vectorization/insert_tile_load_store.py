@@ -27,7 +27,7 @@ from dace.sdfg.state import SDFGState
 from dace.symbolic import has_one_marker
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.broadcast import (is_scalar_or_len1_source, splat_scalar_to_tile)
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
+from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                             memlet_subset_matches_descriptor,
                                                                             no_duplicate_connector_edges,
@@ -401,6 +401,10 @@ class InsertTileLoadStore(ppl.Pass):
     def depends_on(self):
         return set()
 
+    def lane_widths(self, iter_vars: Tuple[str, ...]) -> tuple[int, ...]:
+        """The innermost widths matching a map's tiled ``iter_vars``."""
+        return tuple(int(w) for w in self.widths[len(self.widths) - len(iter_vars):])
+
     def _body_nsdfgs(self, sdfg: SDFG):
         """Yield ``(state, nsdfg_node, map_entry)`` for every body NSDFG directly inside an
         innermost map whose dim count >= ``K``.
@@ -412,7 +416,6 @@ class InsertTileLoadStore(ppl.Pass):
         """
         from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                            TILE_K1_TAIL_MARKER)
-        K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, MapEntry):
                 continue
@@ -423,7 +426,7 @@ class InsertTileLoadStore(ppl.Pass):
                     continue
             except (StopIteration, ValueError):
                 continue
-            if len(node.map.params) < K:
+            if len(node.map.params) < len(self.widths):
                 continue
             # Skip postamble tails: ``__scalar_tail`` = step-1 sequential loop running the
             # original (non-tile) body -- no tile load/store. ``__tile_k1_tail`` runs at K=1
@@ -458,7 +461,7 @@ class InsertTileLoadStore(ppl.Pass):
             # downstream of a tile-input tasklet to tile-shape (W,). Recursive BFS so multi-hop
             # scalar chains all resize, else ConvertTaskletsToTileOps emits a Tile-kind output
             # only on the first chain link.
-            self._resize_scalar_chain_downstream_of_tiles(inner_state)
+            self._resize_scalar_chain_downstream_of_tiles(inner_state, self.lane_widths(iter_vars))
             staged += self._stage_writes_in_state(inner_state, inner_sdfg, iter_vars, mask_name)
         return staged
 
@@ -556,7 +559,7 @@ class InsertTileLoadStore(ppl.Pass):
                         g_record, iter_vars, src_arr_strides=tuple(desc.strides) if desc.strides else None)
                     bridge_name, _ = stage_tile_load(inner_state,
                                                      an,
-                                                     widths=tuple(self.widths),
+                                                     widths=self.lane_widths(iter_vars),
                                                      src_subset=src_subset_memlet,
                                                      name_hint=f"{an.data}_gather",
                                                      dim_strides=_g_strides,
@@ -617,7 +620,7 @@ class InsertTileLoadStore(ppl.Pass):
                             self._is_global_tile_copy_consumer(inner_state, e, iter_vars) for e in s_edges):
                         bridge_name, _ = stage_tile_load(inner_state,
                                                          an,
-                                                         widths=tuple(self.widths),
+                                                         widths=self.lane_widths(iter_vars),
                                                          src_subset=Memlet(data=an.data, subset=const_sub),
                                                          name_hint=f"{an.data}_bcast",
                                                          src_kind="Scalar",
@@ -649,7 +652,7 @@ class InsertTileLoadStore(ppl.Pass):
                                                                              src_arr_strides=src_arr_strides)
                 bridge_name, _ = stage_tile_load(inner_state,
                                                  an,
-                                                 widths=tuple(self.widths),
+                                                 widths=self.lane_widths(iter_vars),
                                                  src_subset=src_subset_memlet,
                                                  name_hint=f"{an.data}_tile",
                                                  dim_strides=dim_strides,
@@ -759,7 +762,7 @@ class InsertTileLoadStore(ppl.Pass):
                 wrecord, iter_vars, src_arr_strides=tuple(desc.strides) if desc.strides else None)
             bridge_name, scatter_store = stage_tile_store(inner_state,
                                                           an,
-                                                          widths=tuple(self.widths),
+                                                          widths=self.lane_widths(iter_vars),
                                                           dst_subset=dst_subset_memlet,
                                                           name_hint=f"{an.data}_scatter_out",
                                                           dim_strides=scatter_strides,
@@ -767,7 +770,7 @@ class InsertTileLoadStore(ppl.Pass):
                                                           gather_dims=scatter_source_dims,
                                                           idx_sources=idx_sources_w,
                                                           mask_an=self._mask_an(inner_state, mask_name))
-            self._rewire_producers_to_bridge(inner_state, an, bridge_name, w_edges)
+            self._rewire_producers_to_bridge(inner_state, an, bridge_name, w_edges, self.lane_widths(iter_vars))
             return 1
         # Structured tile store: LINEAR / AFFINE / REPLICATE / MODULAR.
         dst_subset_memlet = Memlet.from_memlet(w_edges[0].data)
@@ -782,13 +785,13 @@ class InsertTileLoadStore(ppl.Pass):
                                                                                         src_arr_strides=dst_arr_strides)
         bridge_name, structured_store = stage_tile_store(inner_state,
                                                          an,
-                                                         widths=tuple(self.widths),
+                                                         widths=self.lane_widths(iter_vars),
                                                          dst_subset=dst_subset_memlet,
                                                          name_hint=f"{an.data}_tile_out",
                                                          dim_strides=dim_strides_w,
                                                          dst_dims=store_dst_dims,
                                                          mask_an=self._mask_an(inner_state, mask_name))
-        self._rewire_producers_to_bridge(inner_state, an, bridge_name, w_edges)
+        self._rewire_producers_to_bridge(inner_state, an, bridge_name, w_edges, self.lane_widths(iter_vars))
         return 1
 
     def _pad_to_tile_dims(self, record, iter_vars: Tuple[str, ...], src_arr_strides=None):
@@ -820,7 +823,7 @@ class InsertTileLoadStore(ppl.Pass):
         """
         from collections import defaultdict
         K = len(iter_vars)
-        widths = tuple(int(w) for w in self.widths)
+        widths = self.lane_widths(iter_vars)
         ndim = len(src_arr_strides) if src_arr_strides is not None else None
 
         def _stride_is_one(s) -> bool:
@@ -960,7 +963,7 @@ class InsertTileLoadStore(ppl.Pass):
         not vary per lane.
         """
         from dace.symbolic import ONE
-        widths = tuple(int(w) for w in self.widths)
+        widths = self.lane_widths(iter_vars)
         K = len(iter_vars)
         arr_name = str(sub.args[0])
         idx_exprs = list(sub.args[1:])
@@ -1033,7 +1036,7 @@ class InsertTileLoadStore(ppl.Pass):
         """
         import re
         import dace.symbolic as symbolic
-        widths = tuple(int(w) for w in self.widths)
+        widths = self.lane_widths(iter_vars)
         parsed = symbolic.pystr_to_symbolic(begin_str)
         # A bare array read IS the index (``A[idx[ii]]`` -> Range begin ``idx[ii]``), not a hoisted
         # symbol: stage it directly (also covers the unit fixtures that skip frontend hoisting).
@@ -1068,7 +1071,7 @@ class InsertTileLoadStore(ppl.Pass):
                 return materialise_lane_id_index_tile(inner_state,
                                                       begin_str,
                                                       iter_vars,
-                                                      tuple(self.widths),
+                                                      self.lane_widths(iter_vars),
                                                       name_hint=name_hint)
             return None  # no data-dependent symbol / not a lane expr
         sym_to_conn: Dict[str, Tuple[str, AccessNode]] = {}
@@ -1231,7 +1234,7 @@ class InsertTileLoadStore(ppl.Pass):
         return None
 
     def _rewire_producers_to_bridge(self, inner_state: SDFGState, original_an: AccessNode, bridge_name: str,
-                                    original_in_edges) -> None:
+                                    original_in_edges, widths: tuple[int, ...]) -> None:
         """Write-side symmetric of :meth:`_rewire_consumers_to_bridge`.
 
         Redirect each producer edge that wrote into ``original_an`` to write into bridge AN
@@ -1262,7 +1265,7 @@ class InsertTileLoadStore(ppl.Pass):
                 src_memlet = Memlet(data=old_edge.src.data,
                                     subset=an_side_subset(old_edge, old_edge.src, inner_state.sdfg, inner_state))
                 splat_scalar_to_tile(inner_state, f"{bridge_name}_bcast", old_edge.src, old_edge.src_conn, src_memlet,
-                                     bridge_an, old_edge.dst_conn, bridge_name, tuple(self.widths))
+                                     bridge_an, old_edge.dst_conn, bridge_name, widths)
                 inner_state.remove_edge(old_edge)
                 continue
             new_memlet = Memlet.from_memlet(bridge_memlet_template)
@@ -1316,7 +1319,7 @@ class InsertTileLoadStore(ppl.Pass):
         if consumer_desc.transient is True:
             return False
         K = len(iter_vars)
-        widths = tuple(self.widths)
+        widths = self.lane_widths(iter_vars)
         consumer_shape = tuple(consumer_desc.shape)
         D = len(consumer_shape)
         if D < K:
@@ -1357,7 +1360,9 @@ class InsertTileLoadStore(ppl.Pass):
         inner_state.add_edge(store, "_dst", consumer_an, None, Memlet(data=consumer_an.data, subset=dst_subset_str))
         return True
 
-    def _resize_scalar_chain_downstream_of_tiles(self, inner_state: SDFGState) -> int:
+    def _resize_scalar_chain_downstream_of_tiles(self,
+                                                 inner_state: SDFGState,
+                                                 widths: tuple[int, ...] | None = None) -> int:
         """Phase A6: for ``dst[idx[i]] = src[i] + 1.0`` (``i`` the vector param)
         the WHOLE chain should be tile-shape — no scalar transients between the
         tile source (TileLoad output) and tile sink (TileStore input).
@@ -1373,7 +1378,7 @@ class InsertTileLoadStore(ppl.Pass):
         """
         from dace.sdfg.nodes import Tasklet
         sdfg = inner_state.sdfg
-        widths = tuple(self.widths)
+        widths = tuple(self.widths) if widths is None else widths
         target_shape = (widths[0], ) if len(widths) == 1 else tuple(widths)
         target_subset = ", ".join(f"0:{w}" for w in widths)
 
@@ -1489,10 +1494,10 @@ class InsertTileLoadStore(ppl.Pass):
         :param pipeline_results: Pipeline results (unused).
         :returns: Number of ANs staged across the SDFG, or ``None`` if zero.
         """
-        K = len(self.widths)
         total = 0
         for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
-            iter_vars = tuple(map_entry.map.params[-K:])
+            params = map_entry.map.params
+            iter_vars = tuple(params[len(params) - len(map_tile_widths(_state, map_entry, self.widths)):])
             total += self._stage_inner_body(_state, nsdfg_node.sdfg, iter_vars)
             # Audit the design 3.8.3 lib-node-boundary invariant on every touched
             # body state: loud failure surfaces stale ``other_subset`` at staging

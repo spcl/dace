@@ -22,7 +22,7 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.broadcast import (is_scalar_or_len1_source, splat_scalar_to_tile)
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
+from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, logical_binops_are_bool,
                                                                             mask_connectors_are_bool,
                                                                             no_duplicate_connector_edges,
@@ -300,6 +300,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         default=(8, ),
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
+    body_widths = properties.Property(
+        dtype=tuple,
+        default=(8, ),
+        desc="Widths of the body being converted: a map tiles only its params that index no reduction target.",
+    )
 
     def __init__(self, widths: Tuple[int, ...] = (8, )) -> None:
         """Build the pass.
@@ -311,6 +316,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"ConvertTaskletsToTileOps: widths length {len(widths)} not in {{1, 2, 3}}")
         self.widths = tuple(widths)
+        self.body_widths = self.widths
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.Tasklets
@@ -380,7 +386,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         indices), so the per-lane materialisation lives in one place.
         """
         from dace.transformation.passes.vectorization.utils.tasklets import materialise_lane_id_index_tile
-        return materialise_lane_id_index_tile(inner_state, expr, iter_vars, tuple(self.widths)).data
+        return materialise_lane_id_index_tile(inner_state, expr, iter_vars, tuple(self.body_widths)).data
 
     def _find_mask_an(self, inner_state: SDFGState):
         """Find the AccessNode that :class:`TileMaskGen` WRITES to (its ``_o`` target).
@@ -430,7 +436,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         if mask_an is None:
             return
-        subset = ", ".join(f"0:{w}" for w in self.widths)
+        subset = ", ".join(f"0:{w}" for w in self.body_widths)
         existing = [e for e in inner_state.in_edges(lib_node) if e.dst_conn == "_mask"]
         if existing:
             # AND-combine: a ``_mask`` edge is already wired (e.g. a masked-write ``cond``
@@ -458,7 +464,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         desc = sdfg.arrays.get(name)
         if not isinstance(desc, dace.data.Array) or not desc.transient:
             return
-        if desc.dtype != dace.bool_ or tuple(desc.shape) != tuple(self.widths):
+        if desc.dtype != dace.bool_ or tuple(desc.shape) != tuple(self.body_widths):
             return
         desc.storage = dace.dtypes.StorageType.Register
 
@@ -467,7 +473,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         AccessNode. Both operands are ``widths``-shaped bool mask tiles; ``&&`` lowers
         per-lane to logical AND and satisfies ``logical_binops_are_bool`` (bool in/out)."""
         sdfg = inner_state.sdfg
-        widths = tuple(self.widths)
+        widths = tuple(self.body_widths)
         name, _ = sdfg.add_array("_mask_and",
                                  shape=widths,
                                  dtype=dace.bool_,
@@ -492,7 +498,6 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         """
         from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                            TILE_K1_TAIL_MARKER)
-        K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, MapEntry):
                 continue
@@ -503,7 +508,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     continue
             except (StopIteration, ValueError):
                 continue
-            if len(node.map.params) < K:
+            if len(node.map.params) < len(self.widths):
                 continue
             if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
                 continue
@@ -788,7 +793,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             # the shortcut for an already-widened tile output and fall through to the
             # ``TileLoad(src_kind='Symbol')`` broadcast fill below (which splats the identity
             # across every lane).
-            out_is_tile = (isinstance(const_desc, dace.data.Array) and tuple(const_desc.shape) == tuple(self.widths))
+            out_is_tile = (isinstance(const_desc, dace.data.Array)
+                           and tuple(const_desc.shape) == tuple(self.body_widths))
             # An ordering edge's dst is not a consumer; counting it only ever loses the shortcut.
             consumers = [e.dst for e in data_out_edges(inner_state, const_dst)]
             if (const_desc is not None and not out_is_tile and is_same_domain_constant(str(expr), const_desc.dtype)
@@ -805,7 +811,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_desc = (inner_state.sdfg.arrays.get(out_dst.data)
                     if out_edge.data is not None and isinstance(out_dst, dace.nodes.AccessNode) else None)
         is_tile_out = (out_desc is not None and isinstance(out_desc, dace.data.Array)
-                       and tuple(out_desc.shape) == tuple(self.widths))
+                       and tuple(out_desc.shape) == tuple(self.body_widths))
         if not is_tile_out:
             return False  # scalar const store -- keep the single-statement python tasklet
         # A tile iter-var in the expression makes the value LANE-VARYING (``Yi[:, j] = j``,
@@ -813,15 +819,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Expand ``v -> v + __l<k>`` per lane and fill with a TileIota instead.
         if self._is_lane_id_dependent(str(expr), iter_vars):
             tl = TileIota(name=f"{tasklet.label}_lane_iota",
-                          widths=tuple(self.widths),
+                          widths=tuple(self.body_widths),
                           expr=self._per_lane_expr(str(expr), iter_vars))
         else:
             tl = TileLoad(name=f"{tasklet.label}_const_bcast",
-                          widths=tuple(self.widths),
+                          widths=tuple(self.body_widths),
                           src_kind="Symbol",
                           src_expr=str(expr))
         inner_state.add_node(tl)
-        subset = ", ".join(f"0:{w}" for w in self.widths)
+        subset = ", ".join(f"0:{w}" for w in self.body_widths)
         inner_state.add_edge(tl, "_dst", out_edge.dst, out_edge.dst_conn, dace.Memlet(f"{out_edge.dst.data}[{subset}]"))
         inner_state.remove_edge(out_edge)
         reanchor_order_edges(inner_state, tasklet, tl)
@@ -1236,7 +1242,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         dst_desc = sdfg.arrays.get(out_edge.data.data) if out_edge.data is not None else None
         if src_desc is None or dst_desc is None:
             return False
-        widths = tuple(self.widths)
+        widths = tuple(self.body_widths)
         src_is_scalar = (isinstance(src_desc, dace.data.Scalar)
                          or (isinstance(src_desc, dace.data.Array) and tuple(src_desc.shape) == (1, )))
         dst_is_tile = isinstance(dst_desc, dace.data.Array) and tuple(dst_desc.shape) == widths
@@ -1291,7 +1297,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if arr_edge.data is None or idx_edge.data is None or out_edge.data is None:
             return False
         sdfg = inner_state.sdfg
-        widths = tuple(self.widths)
+        widths = tuple(self.body_widths)
         arr_desc = sdfg.arrays.get(arr_edge.data.data)
         idx_desc = sdfg.arrays.get(idx_edge.data.data)
         out_desc = sdfg.arrays.get(out_edge.data.data)
@@ -1434,7 +1440,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         acc_in_edge = in_edges[acc_conn]
         mask_an = self._find_mask_an(inner_state)
         reduce_node = TileReduce(name=f"{tasklet.label}_reduce",
-                                 widths=tuple(self.widths),
+                                 widths=tuple(self.body_widths),
                                  op=op,
                                  has_mask=mask_an is not None)
         inner_state.add_node(reduce_node)
@@ -1492,7 +1498,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return False
         out_edge = out_edges[0]
         out_dtype = inner_state.sdfg.arrays[out_edge.data.data].dtype
-        subset = ", ".join(f"0:{w}" for w in self.widths)
+        subset = ", ".join(f"0:{w}" for w in self.body_widths)
 
         def _plan_arm(arg, is_sym):
             """Decide an arm's lowering. Returns ``(kind, expr, wire)`` where ``wire``
@@ -1516,7 +1522,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # TileITE select-arm predicate wired via the unified ``_mask`` connector (user
         # 2026-06-12). Downstream global TileStore gates the iter-mask; no separate one.
         ite = TileITE(name=f"{tasklet.label}_ite",
-                      widths=tuple(self.widths),
+                      widths=tuple(self.body_widths),
                       kind_t=kind_t,
                       kind_e=kind_e,
                       expr_t=expr_t,
@@ -1550,7 +1556,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if wire_e is not None:
             inner_state.add_edge(wire_e[0], wire_e[1], ite, "_e", wire_e[2])
         if self._ensure_output_widened(inner_state, out_edge, ite):
-            subset_str = ", ".join(f"0:{w}" for w in self.widths)
+            subset_str = ", ".join(f"0:{w}" for w in self.body_widths)
             _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{subset_str}]")
         else:
             _out_memlet = dace.Memlet.from_memlet(out_edge.data)
@@ -1680,7 +1686,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         import dace.dtypes as dtypes
         from dace.memlet import Memlet
         sdfg = inner_state.sdfg
-        widths = tuple(int(w) for w in self.widths)
+        widths = tuple(int(w) for w in self.body_widths)
         arr_name, _ = sdfg.add_array("_cond_bcast",
                                      shape=widths,
                                      dtype=dtype,
@@ -1744,7 +1750,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         import dace.dtypes as dtypes
         from dace.memlet import Memlet
         sdfg = inner_state.sdfg
-        widths = tuple(int(w) for w in self.widths)
+        widths = tuple(int(w) for w in self.body_widths)
         # Pick element dtype from the OUTPUT edge's array (the ITE's output dtype).
         out_desc = sdfg.arrays.get(out_edge.data.data)
         dtype = out_desc.dtype if out_desc is not None else dace.float64
@@ -1832,7 +1838,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # divisible main map (no mask AN) stays unmasked (fast path).
         mask_an = self._find_mask_an(inner_state)
         binop = TileBinop(name=f"{tasklet.label}_binop",
-                          widths=tuple(self.widths),
+                          widths=tuple(self.body_widths),
                           op=op,
                           kind_a=kind_a,
                           kind_b=kind_b,
@@ -1845,7 +1851,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         if _was_widened:
 
-            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+            _subset_str = ", ".join(f"0:{w}" for w in self.body_widths)
 
             _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
 
@@ -1888,7 +1894,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         kind_c = self._operand_kind(inner_state, c_edge)
         mask_an = self._find_mask_an(inner_state)
         fma = TileFMA(name=f"{tasklet.label}_fma",
-                      widths=tuple(self.widths),
+                      widths=tuple(self.body_widths),
                       kind_a=kind_a,
                       kind_b=kind_b,
                       kind_c=kind_c,
@@ -1900,7 +1906,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(c_edge.src, c_edge.src_conn, fma, "_c", dace.Memlet.from_memlet(c_edge.data))
         _was_widened = self._ensure_output_widened(inner_state, out_edge, fma)
         if _was_widened:
-            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+            _subset_str = ", ".join(f"0:{w}" for w in self.body_widths)
             _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
         else:
             _out_memlet = dace.Memlet.from_memlet(out_edge.data)
@@ -1981,7 +1987,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         mask_an = self._find_mask_an(inner_state)
         if symbol_side == "b":
             binop = TileBinop(name=f"{tasklet.label}_binop_sym",
-                              widths=tuple(self.widths),
+                              widths=tuple(self.body_widths),
                               op=op,
                               kind_a=kind_tile_side,
                               kind_b=sym_kind,
@@ -1993,7 +1999,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 self._wire_materialised_tile(inner_state, binop, "_b", sym_an_name)
         else:
             binop = TileBinop(name=f"{tasklet.label}_binop_sym",
-                              widths=tuple(self.widths),
+                              widths=tuple(self.body_widths),
                               op=op,
                               kind_a=sym_kind,
                               kind_b=kind_tile_side,
@@ -2008,7 +2014,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         if _was_widened:
 
-            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+            _subset_str = ", ".join(f"0:{w}" for w in self.body_widths)
 
             _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
 
@@ -2029,7 +2035,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Find or create the AN. The materialiser already adds it; reuse to keep scheduling.
         existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == tile_name), None)
         an = existing if existing is not None else inner_state.add_access(tile_name)
-        subset = ", ".join(f"0:{w}" for w in self.widths)
+        subset = ", ".join(f"0:{w}" for w in self.body_widths)
         inner_state.add_edge(an, None, lib_node, dst_conn, dace.Memlet(f"{tile_name}[{subset}]"))
 
     def _ensure_output_widened(self, inner_state: SDFGState, out_edge, lib_node=None) -> bool:
@@ -2049,7 +2055,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         desc = sdfg.arrays.get(out_edge.dst.data)
         if desc is None or not desc.transient:
             return False
-        widths = tuple(self.widths)
+        widths = tuple(self.body_widths)
         if lib_node is not None:
             any_tile_in = False
             for e in inner_state.in_edges(lib_node):
@@ -2115,7 +2121,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Mask-when-partial.
         mask_an = self._find_mask_an(inner_state)
         unop = TileUnop(name=f"{tasklet.label}_unop_sym",
-                        widths=tuple(self.widths),
+                        widths=tuple(self.body_widths),
                         op=op,
                         kind_a=sym_kind,
                         expr_a=sym_expr,
@@ -2128,7 +2134,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         if _was_widened:
 
-            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+            _subset_str = ", ".join(f"0:{w}" for w in self.body_widths)
 
             _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
 
@@ -2159,7 +2165,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Mask-when-partial.
         mask_an = self._find_mask_an(inner_state)
         binop = TileBinop(name=f"{tasklet.label}_binop_two_sym",
-                          widths=tuple(self.widths),
+                          widths=tuple(self.body_widths),
                           op=op,
                           kind_a=kind_a,
                           kind_b=kind_b,
@@ -2176,7 +2182,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         if _was_widened:
 
-            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+            _subset_str = ", ".join(f"0:{w}" for w in self.body_widths)
 
             _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
 
@@ -2204,7 +2210,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Mask-when-partial.
         mask_an = self._find_mask_an(inner_state)
         unop = TileUnop(name=f"{tasklet.label}_unop",
-                        widths=tuple(self.widths),
+                        widths=tuple(self.body_widths),
                         op=op,
                         kind_a=kind_a,
                         has_mask=mask_an is not None)
@@ -2215,7 +2221,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
         if _was_widened:
 
-            _subset_str = ", ".join(f"0:{w}" for w in self.widths)
+            _subset_str = ", ".join(f"0:{w}" for w in self.body_widths)
 
             _out_memlet = dace.Memlet(f"{out_edge.dst.data}[{_subset_str}]")
 
@@ -2266,10 +2272,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         :returns: Number of tasklets converted, or ``None`` if zero.
         """
         total = 0
-        K = len(self.widths)
-        for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
-            iter_vars = tuple(map_entry.map.params[-K:])
-            total += self._convert_inner(nsdfg_node.sdfg, iter_vars)
+        for state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
+            self.body_widths = map_tile_widths(state, map_entry, self.widths)
+            params = map_entry.map.params
+            iter_vars = tuple(params[len(params) - len(self.body_widths):])
+            try:
+                total += self._convert_inner(nsdfg_node.sdfg, iter_vars)
+            finally:
+                self.body_widths = self.widths
         # Post-conditions.
         assert_invariant(no_memlet_dim_mismatch(sdfg), "ConvertTaskletsToTileOps",
                          "memlet subset and other_subset have matching dimensionality")

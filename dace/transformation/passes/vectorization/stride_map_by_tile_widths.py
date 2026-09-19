@@ -14,7 +14,7 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
+from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
                                                                             no_strided_map_param_in_surviving_condition,
                                                                             tile_main_map_step_is_widths)
@@ -64,16 +64,14 @@ class StrideMapByTileWidths(ppl.Pass):
         """
         return False
 
-    def _stride_one(self, map_entry: MapEntry) -> bool:
+    def _stride_one(self, map_entry: MapEntry, widths: tuple[int, ...]) -> bool:
         """Stride the K innermost dims of ``map_entry`` by ``widths``.
 
         :param map_entry: Inner map to rewrite.
+        :param widths: The map's own tile widths, one per tiled innermost dim.
         :returns: ``True`` if ``map.range`` was rewritten; ``False`` if
             the map already steps by ``widths`` (idempotent no-op).
         """
-        # ``__tile_k1_tail`` maps = K=1 widths=(1,): stride stays 1 (postamble
-        # is a per-element single-lane tile-op loop).
-        widths = (1, ) if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER) else tuple(self.widths)
         K = len(widths)
         ranges = list(map_entry.map.range.ranges)
         if len(ranges) < K:
@@ -119,10 +117,14 @@ class StrideMapByTileWidths(ppl.Pass):
                 continue
             if specs is not None and n not in specs:
                 continue
-            map_widths = (1, ) if n.map.label.endswith(TILE_K1_TAIL_MARKER) else tuple(self.widths)
-            if len(n.map.params) < len(map_widths):
+            # ``__tile_k1_tail`` maps = K=1 widths=(1,): stride stays 1 (a per-element single-lane loop).
+            if n.map.label.endswith(TILE_K1_TAIL_MARKER):
+                map_widths = (1, )
+            else:
+                map_widths = map_tile_widths(g, n, tuple(self.widths))
+            if not map_widths:
                 continue
-            if self._stride_one(n):
+            if self._stride_one(n, map_widths):
                 rewritten += 1
             scan_cache.clear()  # ``_stride_one`` rewrote the map; every cached body scan is stale
         K = len(self.widths)

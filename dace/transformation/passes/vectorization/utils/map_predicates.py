@@ -268,29 +268,50 @@ def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | 
         return False
     params = list(map_entry.map.params)
     iter_vars = tuple(params[-K:]) if K else tuple(params)
-    if map_body_has_tiled_param_dependent_branch(state, map_entry, iter_vars):
+    # A reduction target indexed by one of these params needs its own accumulator per lane.
+    if tiled_param_count(state, map_entry, len(iter_vars)) < len(iter_vars):
         return False
-    if map_reduces_into_tiled_param_element(state, map_entry, iter_vars):
+    if map_body_has_tiled_param_dependent_branch(state, map_entry, iter_vars):
         return False
     return True
 
 
-def map_reduces_into_tiled_param_element(state: SDFGState, map_entry: dace.nodes.MapEntry,
-                                         iter_vars: tuple[str, ...]) -> bool:
-    """True if a reduction leaving the map targets an element indexed by one of ``iter_vars``.
+def tiled_param_count(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int) -> int:
+    """How many innermost params of ``map_entry`` a ``K``-dim tiling strides.
 
-    ``y[i] += A[i, k]`` over a tiled ``(i, k)`` keeps one accumulator per lane of ``i``, while the
-    tile fold writes every lane into the one element at the tile base (SpMV rows came out 0 or 4x).
+    Counts inward-out and stops at a param indexing a reduction target: ``y[i] += A[i, k]`` over
+    ``(i, k)`` keeps one accumulator per row, so only ``k`` is tiled and its lanes fold into ``y[i]``.
+    Zero when the innermost param itself indexes the target. A map with fewer than ``K`` params is
+    not narrowed here (``K``): the width-aware passes refuse it (:func:`map_tile_widths`).
 
     :param state: state holding ``map_entry``.
     :param map_entry: the candidate map.
-    :param iter_vars: the params that will be strided to the tile width.
-    :returns: ``True`` if the map must be left scalar.
+    :param K: the tile rank the caller requests.
+    :returns: the number of trailing params to tile, at most ``K``.
     """
-    params = {str(p) for p in iter_vars}
-    return any(edge.data.wcr is not None and params & {str(s)
-                                                       for s in edge.data.subset.free_symbols}
-               for edge in state.in_edges(state.exit_node(map_entry)))
+    if len(map_entry.map.params) < K:
+        return K
+    reduced = {
+        str(s)
+        for e in state.in_edges(state.exit_node(map_entry)) if e.data.wcr is not None
+        for s in e.data.subset.free_symbols
+    }
+    params = map_entry.map.params
+    count = 0
+    for param in reversed(params[len(params) - K:]):
+        if param in reduced:
+            break
+        count += 1
+    return count
+
+
+def map_tile_widths(state: SDFGState, map_entry: dace.nodes.MapEntry, widths: tuple[int, ...]) -> tuple[int, ...]:
+    """The tile widths of ``map_entry``'s tiled params: the innermost ``widths`` its
+    :func:`tiled_param_count` keeps (empty when the map stays scalar or has fewer params than widths)."""
+    if len(map_entry.map.params) < len(widths):
+        return ()
+    count = tiled_param_count(state, map_entry, len(widths))
+    return tuple(widths[len(widths) - count:])
 
 
 def is_foreign_language_tasklet(node: dace.nodes.Node) -> bool:
@@ -611,7 +632,13 @@ def is_vectorizable_map(state: SDFGState,
     """
     if map_entry.map.label.endswith(NO_VECTORIZE_MARKER):
         return False
-    if not (is_innermost_map(state, map_entry) and is_tile_eligible(state, map_entry, K)):
+    if not is_innermost_map(state, map_entry):
+        return False
+    if K:
+        K = tiled_param_count(state, map_entry, K)
+        if K == 0:
+            return False
+    if not is_tile_eligible(state, map_entry, K):
         return False
     if map_body_has_library_node(state, map_entry):
         return False

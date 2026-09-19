@@ -41,7 +41,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import is_same_domain_constant
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
+from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                             lane_dep_transients_widened,
@@ -186,15 +186,14 @@ class WidenAccesses(ppl.Pass):
     def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def _body_nsdfgs(self, sdfg: SDFG) -> Iterator[tuple[SDFGState, NestedSDFG, MapEntry]]:
-        """Yield ``(state, nsdfg_node, map_entry)`` per tile-tagged body NSDFG.
+    def _body_nsdfgs(self, sdfg: SDFG) -> Iterator[tuple[SDFGState, NestedSDFG, MapEntry, tuple[int, ...]]]:
+        """Yield ``(state, nsdfg_node, map_entry, map_widths)`` per tile-tagged body NSDFG.
 
         Same predicate as :class:`InsertTileLoadStore`. Skips ``__scalar_tail``
         (sequential body) and ``__tile_k1_tail`` (pinned K=1) postambles.
         """
         from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                            TILE_K1_TAIL_MARKER)
-        K = len(self.widths)
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, MapEntry):
                 continue
@@ -205,7 +204,7 @@ class WidenAccesses(ppl.Pass):
                     continue
             except (StopIteration, ValueError):
                 continue
-            if len(node.map.params) < K:
+            if len(node.map.params) < len(self.widths):
                 continue
             if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
                 continue
@@ -216,7 +215,11 @@ class WidenAccesses(ppl.Pass):
             nsdfgs = [n for n in scope_nodes if isinstance(n, NestedSDFG)]
             if len(nsdfgs) != 1:
                 continue
-            yield parent, nsdfgs[0], node
+            yield parent, nsdfgs[0], node, map_tile_widths(parent, node, self.widths)
+
+    def lane_widths(self, iter_vars: tuple[str, ...]) -> tuple[int, ...]:
+        """The innermost widths matching a map's tiled ``iter_vars``."""
+        return tuple(self.widths[len(self.widths) - len(iter_vars):])
 
     # Step 1: classify non-transient ANs
     def _classify_non_transients(self, inner_sdfg: SDFG, iter_vars: tuple[str, ...]) -> set[str]:
@@ -289,7 +292,7 @@ class WidenAccesses(ppl.Pass):
         through gather/scatter emission with a materialised idx tile of matching rank. Classifier
         returns ``PerDimKind.GATHER`` -> skip here.
         """
-        widths = tuple(self.widths)
+        widths = self.lane_widths(iter_vars)
         K = len(iter_vars)
         if sub is None:
             return None
@@ -733,7 +736,7 @@ class WidenAccesses(ppl.Pass):
 
         :returns: number of (AN, k) pairs seeded.
         """
-        widths = tuple(self.widths)
+        widths = self.lane_widths(iter_vars)
         seeded = 0
         # Fanout adds interstate assignments, so both caches are dropped after every success.
         scan_cache: dict[int, Any] = {}
@@ -782,7 +785,11 @@ class WidenAccesses(ppl.Pass):
                             resolver.invalidate_sdfg(inner_sdfg)  # fanout added SDFG symbols
         return seeded
 
-    def _widen_transient(self, inner_sdfg: SDFG, name: str, to_widen: set[str]) -> bool:
+    def _widen_transient(self,
+                         inner_sdfg: SDFG,
+                         name: str,
+                         to_widen: set[str],
+                         widths: tuple[int, ...] | None = None) -> bool:
         """Swap descriptor to ``Array(widths)`` + rewrite touching memlets.
 
         Returns True on rewrite, False if not eligible.
@@ -793,7 +800,7 @@ class WidenAccesses(ppl.Pass):
         desc = inner_sdfg.arrays.get(name)
         if desc is None or not desc.transient or not self._is_widenable(desc):
             return False
-        widths = tuple(self.widths)
+        widths = tuple(self.widths) if widths is None else widths
         target_subset = ", ".join(f"0:{w}" for w in widths)
         target_range = subsets.Range.from_string(target_subset)
         inner_sdfg.arrays[name] = dd.Array(
@@ -965,10 +972,10 @@ class WidenAccesses(ppl.Pass):
         :returns: Total widenings (descriptor swaps + memlet rewrites on non-transients) across
             the SDFG, or ``None`` if zero.
         """
-        K = len(self.widths)
         total = 0
-        for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
-            iter_vars = tuple(map_entry.map.params[-K:])
+        for _state, nsdfg_node, map_entry, map_widths in self._body_nsdfgs(sdfg):
+            K = len(map_widths)
+            iter_vars = tuple(map_entry.map.params[len(map_entry.map.params) - K:])
             inner_sdfg = nsdfg_node.sdfg
             # Per-iter-var inclusive ub for the lane-fanout clamp (remainder
             # safety: ``idx[i + lane]`` -> ``idx[Min(i + lane, ub)]``).
@@ -1006,7 +1013,7 @@ class WidenAccesses(ppl.Pass):
             to_widen = self._propagate_lane_dep(inner_sdfg, iter_vars, nt_lane_dep)
             # Step 4: widen lane-dep transient descriptors.
             for name in sorted(to_widen):
-                if self._widen_transient(inner_sdfg, name, to_widen):
+                if self._widen_transient(inner_sdfg, name, to_widen, map_widths):
                     total += 1
             # Step 5: seed per-lane symbols for Bypass-form gathers. Idempotent;
             # InsertTileLoadStore/materialiser consume them. Pass per-iter-var ub
@@ -1015,6 +1022,6 @@ class WidenAccesses(ppl.Pass):
         # Post-conditions (always run).
         assert_invariant(no_memlet_dim_mismatch(sdfg), "WidenAccesses",
                          "memlet subset and other_subset have matching dimensionality")
-        assert_invariant(lane_dep_transients_widened(sdfg, K, tuple(self.widths)), "WidenAccesses",
+        assert_invariant(lane_dep_transients_widened(sdfg, len(self.widths), tuple(self.widths)), "WidenAccesses",
                          "lane-dep transients widened to (W_0,...,W_{K-1}) or kept as Scalar bridge")
         return total if total else None

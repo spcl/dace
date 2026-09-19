@@ -35,6 +35,7 @@ from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE,
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
+from dace.transformation.passes.vectorization.utils.map_predicates import map_tile_widths
 
 #: Every tile library node the emit stage can leave behind. A map whose scope holds one of these
 #: WAS tiled, whatever any predicate would say about its body now.
@@ -84,15 +85,15 @@ class RestoreUntiledMapStride(ppl.Pass):
         """
         return False
 
-    def steps_match_widths(self, map_entry: MapEntry) -> bool:
-        """Do the last-K dims of ``map_entry`` step by ``widths``?
+    def steps_match_widths(self, map_entry: MapEntry, widths: tuple[int, ...]) -> bool:
+        """Do the tiled dims of ``map_entry`` step by ``widths``?
 
         :param map_entry: The map to inspect.
-        :returns: ``True`` when every one of the K innermost steps equals its width.
+        :param widths: The map's own tile widths (:func:`map_tile_widths`).
+        :returns: ``True`` when every one of the tiled innermost steps equals its width.
         """
         ranges = list(map_entry.map.range.ranges)
-        widths = tuple(self.widths)
-        if len(ranges) < len(widths):
+        if not widths or len(ranges) < len(widths):
             return False
         return all(str(step) == str(width) for (_lb, _ub, step), width in zip(ranges[-len(widths):], widths))
 
@@ -129,13 +130,13 @@ class RestoreUntiledMapStride(ppl.Pass):
                     return True
         return False
 
-    def restore_step(self, map_entry: MapEntry) -> None:
+    def restore_step(self, map_entry: MapEntry, K: int) -> None:
         """Put the K innermost steps of ``map_entry`` back to 1.
 
         :param map_entry: The map to repair.
+        :param K: The number of tiled innermost dims.
         """
         ranges = list(map_entry.map.range.ranges)
-        K = len(self.widths)
         repaired = [(lb, ub, symbolic.SymExpr(1)) for (lb, ub, _step) in ranges[-K:]]
         map_entry.map.range = subsets.Range(ranges[:-K] + repaired)
 
@@ -152,7 +153,8 @@ class RestoreUntiledMapStride(ppl.Pass):
         for node, graph in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, MapEntry) or not isinstance(graph, dace.SDFGState):
                 continue
-            if not self.steps_match_widths(node):
+            widths = map_tile_widths(graph, node, tuple(self.widths))
+            if not self.steps_match_widths(node, widths):
                 continue
             scope = self.scope_nodes(graph, node)
             if any(isinstance(n, TILE_NODES) for n in scope):
@@ -162,9 +164,9 @@ class RestoreUntiledMapStride(ppl.Pass):
                     for inner, _ in n.sdfg.all_nodes_recursive()):
                 continue
             if self.body_was_widened(scope):
-                raise VectorizeUnsupported(f"map {node.map.label!r} steps by {tuple(self.widths)} over a body the "
+                raise VectorizeUnsupported(f"map {node.map.label!r} steps by {widths} over a body the "
                                            f"emitters widened but never lowered to tile ops; the stride cannot be "
                                            f"restored, so this kernel is refused")
-            self.restore_step(node)
+            self.restore_step(node, len(widths))
             repaired += 1
         return repaired or None

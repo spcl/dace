@@ -17,7 +17,8 @@ from dace.transformation.passes.analysis import scopes
 from dace.libraries.tileops import TileMaskGen
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_body_nodes
+from dace.transformation.passes.vectorization.utils.map_predicates import (is_vectorizable_map, map_body_nodes,
+                                                                           map_tile_widths)
 from dace.transformation.passes.vectorization.utils.mask_scaffold import (prepend_dominating_init_state,
                                                                           thread_symbols_into_nsdfg)
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
@@ -66,19 +67,23 @@ class GenerateTileIterationMask(ppl.Pass):
         """Idempotent -> False."""
         return False
 
-    def _spec_for(self, map_entry: MapEntry) -> TileDimSpec:
-        """Rebuild a :class:`TileDimSpec` from a map's last K params.
+    def _spec_for(self, state: dace.SDFGState, map_entry: MapEntry) -> TileDimSpec | None:
+        """Rebuild a :class:`TileDimSpec` from a map's tiled params (:func:`map_tile_widths`).
 
+        :param state: The state holding ``map_entry``.
         :param map_entry: Inner map entry.
         :returns: A fresh :class:`TileDimSpec` covering the K innermost
-            dims; ``global_ubs[k]`` is ``str(ub_k + 1)`` (exclusive).
+            dims; ``global_ubs[k]`` is ``str(ub_k + 1)`` (exclusive). ``None`` for an untiled map.
         """
-        K = len(self.widths)
+        widths = map_tile_widths(state, map_entry, tuple(self.widths))
+        if not widths:
+            return None
+        K = len(widths)
         params = list(map_entry.map.params)
         ranges = list(map_entry.map.range.ranges)
         iter_vars = tuple(params[-K:])
         global_ubs = tuple(str(r[1] + 1) for r in ranges[-K:])
-        return TileDimSpec(iter_vars=iter_vars, widths=tuple(self.widths), global_ubs=global_ubs)
+        return TileDimSpec(iter_vars=iter_vars, widths=widths, global_ubs=global_ubs)
 
     def _attach_mask(self, resolver: scopes.ScopedSymbolResolver, parent_sdfg: dace.SDFG, parent_state: dace.SDFGState,
                      map_entry: MapEntry, spec: TileDimSpec) -> bool:
@@ -177,7 +182,6 @@ class GenerateTileIterationMask(ppl.Pass):
         if pipeline_results and "MarkTileDims" in pipeline_results:
             specs = pipeline_results["MarkTileDims"]
         attached = 0
-        K = len(self.widths)
         # Shared across the maps this loop REFUSES -- the gate's whole-SDFG body scan is what makes a
         # per-map selection loop quadratic, and a refusal never mutates. Dropped below the moment a
         # mask is attached, so no candidate is ever gated on a stale scan.
@@ -196,14 +200,14 @@ class GenerateTileIterationMask(ppl.Pass):
                 continue
             if specs is not None and n not in specs:
                 continue
-            if len(n.map.params) < K:
-                continue
             # The all-main interior region of a ``masked_tail`` split is fully
             # in bounds on every tiled dim — skip the mask so the descent / emit
             # lower it with ``has_mask=False`` (the fast path).
             if n.map.label.endswith(TILE_MAIN_MARKER):
                 continue
-            spec = specs[n] if specs is not None and n in specs else self._spec_for(n)
+            spec = specs[n] if specs is not None and n in specs else self._spec_for(g, n)
+            if spec is None:
+                continue
             if self._attach_mask(resolver, g.sdfg, g, n, spec):
                 attached += 1
             scan_cache.clear()  # ``_attach_mask`` rewrote the body; every cached body scan is stale

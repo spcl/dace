@@ -7,9 +7,8 @@ The **1D** and **2D data gathers** (``a[i] = b[idx[i]] + ...``) land through the
 end-to-end numerical equivalence against the unvectorized reference, plus the lowered shape for
 the 1D case (equal numbers alone cannot tell a real gather from a scalar fallback).
 
-The **SpMV** and **WCR-reduction** families assert only that the orchestrator runs to completion:
-it lowers what it can and declines the reduction fold with a warning, leaving the kernel correct
-and un-tiled. When their ``TileReduce`` slice lands, those tests gain equivalence assertions too.
+**SpMV** reduces into ``y[i]``: only the innermost ``k`` is tiled and a ``TileReduce`` folds its
+lanes into the row, so it asserts that shape plus equivalence against the reference.
 """
 
 import numpy as np
@@ -157,17 +156,25 @@ def test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(m, n):
     np.testing.assert_allclose(c_vec, c_ref, rtol=1e-12, atol=1e-12)
 
 
-def test_vectorize_cpu_multi_dim_accepts_spmv():
-    """SpMV (gather + reduction): the orchestrator must run to completion rather than raise. It
-    declines the reduction fold -- the addend never widened to a tile, so no tile-op reduction
-    shape matches -- and leaves the kernel correct and un-tiled. The prior contract was a hard
-    ``NotImplementedError``; declining quietly and correctly is what this pins."""
+def test_vectorize_cpu_multi_dim_tiles_the_spmv_row_reduction_on_k_only():
+    """SpMV (gather + reduction into ``y[i]``): the row ``i`` indexes the reduction target, so only
+    the innermost ``k`` is tiled and its lanes fold into ``y[i]``; ``i`` stays a scalar dim."""
     sdfg = _build_spmv()
     canonicalize(sdfg, validate=True)  # the tiler's input contract
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR,
+                                         expand_tile_nodes=False)).apply_pass(sdfg, {})
 
+    steps = [
+        tuple(str(step) for _, _, step in node.map.range) for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.MapEntry) and node.map.params == ['i', 'k']
+    ]
+    assert ('1', '8') in steps
+    assert all(i_step == '1' for i_step, _ in steps)
+    assert any(isinstance(node, TileReduce) for node, _ in sdfg.all_nodes_recursive())
+
+    sdfg.expand_library_nodes()
     rng = np.random.default_rng(seed=20260824)
-    n, nnz = 12, 21  # neither extent divides either width: the decline must hold on the tail too
+    n, nnz = 12, 21  # neither extent divides either width: the fold must hold on the tail too
     A = rng.random((n, nnz))
     x = rng.random(n)
     col = rng.integers(0, n, size=nnz).astype(np.int32)
