@@ -2,13 +2,15 @@
 """ File containing DaCe-serializable versions of graphs, nodes, and edges. """
 
 from collections import deque, OrderedDict
+import copy
 import itertools
 import uuid
 import networkx as nx
+from dace import graphlib
 from dace.dtypes import deduplicate
 import dace.serialize
-from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
-from ordered_set import OrderedSet
+from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
+from dace.ordered import OrderedSet
 
 
 class NodeNotFoundError(Exception):
@@ -411,10 +413,11 @@ class Graph(Generic[NodeT, EdgeT]):
         :param as_edges: If True, returns list of edges instead of nodes.
         """
         if as_edges:
-            for path in map(nx.utils.pairwise, nx.all_simple_paths(self._nx, source_node, dest_node)):
-                yield [Edge(e[0], e[1], self._nx.edges[e]['data']) for e in path]
+            for path in graphlib.all_simple_paths(self._nx, source_node, dest_node):
+                path = list(path)
+                yield [Edge(u, v, self._nx.edges[u, v]['data']) for u, v in zip(path[:-1], path[1:])]
         else:
-            yield from nx.all_simple_paths(self._nx, source_node, dest_node)
+            yield from graphlib.all_simple_paths(self._nx, source_node, dest_node)
 
     def all_nodes_between(self, begin: NodeT, end: NodeT) -> Sequence[NodeT]:
         """Finds all nodes between begin and end.
@@ -467,7 +470,14 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         # Is there an inherent reason why the nodes are in the same relative order than
         #  in their source graph. If there is no reason we can even drop the `sorted()`
         #  and store them in a `set`. Note as of Pathon 3.6, `dict` is ordered.
-        self._subgraph_nodes = {n: None for n in sorted(subgraph_nodes, key=lambda n: graph.node_id(n))}
+        if isinstance(graph, OrderedDiGraph):
+            # ``node_id`` is the position in ``nodes()``: one filtered walk replaces a scan per member.
+            members = dict.fromkeys(subgraph_nodes)
+            self._subgraph_nodes = {n: None for n in graph.nodes() if n in members}
+            if len(self._subgraph_nodes) != len(members):
+                raise NodeNotFoundError(next(n for n in members if n not in self._subgraph_nodes))
+        else:
+            self._subgraph_nodes = {n: None for n in sorted(subgraph_nodes, key=lambda n: graph.node_id(n))}
 
     def nodes(self) -> List[NodeT]:
         # TODO: The `Graph` interface defines that `nodes()` returns an `Iterable`, but here
@@ -548,7 +558,7 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def __init__(self):
         super().__init__()
-        self._nx = nx.DiGraph()
+        self._nx = graphlib.DiGraph()
 
     def nodes(self):
         return self._nx.nodes()
@@ -600,13 +610,13 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return [e for e in self.out_edges(source) if e.dst == destination]
 
     def find_cycles(self):
-        return nx.simple_cycles(self._nx)
+        return graphlib.simple_cycles(self._nx)
 
     def has_cycles(self) -> bool:
         try:
-            nx.find_cycle(self._nx, self.source_nodes())
+            graphlib.find_cycle(self._nx, self.source_nodes())
             return True
-        except nx.NetworkXNoCycle:
+        except graphlib.NetworkXNoCycle:
             return False
 
 
@@ -614,7 +624,7 @@ class MultiDiGraph(DiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def __init__(self):
         super().__init__()
-        self._nx = nx.MultiDiGraph()
+        self._nx = graphlib.MultiDiGraph()
 
     @staticmethod
     def _from_nx(edge) -> MultiEdge[EdgeT]:
@@ -712,6 +722,29 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nx.add_edge(src, dst, data=data)
         return edge
 
+    def reorder_nodes(self, order: Sequence[NodeT]):
+        """Permute the node list into ``order``, leaving nodes, edges and adjacency untouched.
+
+        ``nodes()`` (and with it ``node_id`` and everything serialized by index) reports insertion
+        order, so a node's position records WHEN it was added. A rewrite that has to place a node
+        at a fixed position -- an entry block that must lead the list whether it was built first or
+        last -- can only say so here. Both node stores are permuted together, so the backing
+        ``networkx`` graph keeps agreeing with ``nodes()`` and traversal tie-breaks stay
+        deterministic.
+
+        :param order: A permutation of the current nodes.
+        """
+        reordered = OrderedDict((n, self._nodes[n]) for n in order)
+        if len(reordered) != len(self._nodes):
+            raise ValueError('reorder_nodes expects a permutation of the current node list')
+        self._nodes = reordered
+        # networkx has no reordering API; popping and re-inserting each node in the wanted order
+        # moves it to the end of every backing dict, so after one sweep they read in ``order``.
+        for n in order:
+            self._nx._node[n] = self._nx._node.pop(n)
+            self._nx._succ[n] = self._nx._succ.pop(n)
+            self._nx._pred[n] = self._nx._pred.pop(n)
+
     def remove_node(self, node: NodeT):
         try:
             for edge in self.all_edges(node):
@@ -749,23 +782,27 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return False
 
     def find_cycles(self):
-        return nx.simple_cycles(self._nx)
+        return graphlib.simple_cycles(self._nx)
 
     def has_cycles(self) -> bool:
         try:
             sources = self.source_nodes()
             if len(sources) == 0:
-                nx.find_cycle(self._nx)
+                graphlib.find_cycle(self._nx)
             else:
-                nx.find_cycle(self._nx, sources)
+                graphlib.find_cycle(self._nx, sources)
             return True
-        except nx.NetworkXNoCycle:
+        except graphlib.NetworkXNoCycle:
             return False
 
     def edges_between(self, source: NodeT, destination: NodeT) -> List[Edge[EdgeT]]:
         if (source, destination) in self._edges:
             return [self._edges[(source, destination)]]
-        if source not in self.nodes(): return []
+        # ``self._nodes``, not ``self.nodes()``: the latter materializes every node into a list and
+        # linear-scans it. On a multigraph the fast path above can never hit (edges hash by identity),
+        # so every call reached this line -- 1.27us at 10 nodes, 79.7us at 4000.
+        if source not in self._nodes:
+            return []
         return [e for e in self.out_edges(source) if e.dst == destination]
 
     def reverse(self):
@@ -869,6 +906,129 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
 
     def is_multigraph(self) -> bool:
         return True
+
+
+#: Values ``copy.deepcopy`` returns as-is; copying them through the dispatcher costs a call each.
+IMMUTABLE_COPY_TYPES = (type(None), bool, int, float, str)
+#: networkx graph classes whose adjacency :func:`copy_nx_graph` rebuilds directly.
+STRUCTURALLY_COPIED_NX_TYPES = (nx.DiGraph, nx.MultiDiGraph)
+NX_GRAPH_FIELDS = frozenset({'graph', '_node', '_adj', '_succ', '_pred', '__networkx_cache__'})
+
+
+def copy_value(value: Any, memo: Dict[int, Any]) -> Any:
+    """``copy.deepcopy(value, memo)``, without the dispatch for a value that copies to itself."""
+    if type(value) in IMMUTABLE_COPY_TYPES:
+        return value
+    return copy.deepcopy(value, memo)
+
+
+def keep_alive(value: Any, memo: Dict[int, Any]) -> None:
+    # Same contract as ``copy._keep_alive``: an id in the memo must not be recycled mid-copy.
+    memo.setdefault(id(memo), []).append(value)
+
+
+def copy_attribute_dict(source: Dict[Any, Any], memo: Dict[int, Any]) -> Dict[Any, Any]:
+    known = memo.get(id(source))
+    if known is None:
+        known = {key: copy_value(value, memo) for key, value in source.items()}
+        memo[id(source)] = known
+        keep_alive(source, memo)
+    return known
+
+
+def copy_graph_edge(edge: Edge, memo: Dict[int, Any]) -> Edge:
+    """``copy.deepcopy(edge, memo)`` for an edge object, which has no ``__deepcopy__`` of its own."""
+    known = memo.get(id(edge))
+    if known is None:
+        known = object.__new__(type(edge))
+        memo[id(edge)] = known
+        keep_alive(edge, memo)
+        known.__dict__.update({key: copy_value(value, memo) for key, value in edge.__dict__.items()})
+    return known
+
+
+def copy_nx_graph(graph: Any, memo: Dict[int, Any]) -> Any:
+    """``copy.deepcopy(graph, memo)`` for a networkx (multi)digraph, rebuilt dict by dict.
+
+    Same result as the generic copy: every dict keeps its own key order, and the adjacency objects networkx
+    shares (``_adj is _succ``, and one edge-key or attribute dict under both ``_succ[u][v]`` and
+    ``_pred[v][u]``) stay shared in the copy. Any other graph type takes the generic path."""
+    known = memo.get(id(graph))
+    if known is not None:
+        return known
+    if (type(graph) not in STRUCTURALLY_COPIED_NX_TYPES or graph.__dict__.keys() != NX_GRAPH_FIELDS
+            or graph._adj is not graph._succ):
+        return copy.deepcopy(graph, memo)
+    clone = type(graph).__new__(type(graph))
+    memo[id(graph)] = clone
+    keep_alive(graph, memo)
+    multigraph = graph.is_multigraph()
+
+    def copied_node(node: Any) -> Any:
+        found = memo.get(id(node))
+        return found if found is not None else copy.deepcopy(node, memo)
+
+    def copied_adjacency(outer: Dict[Any, Dict[Any, Any]]) -> Dict[Any, Dict[Any, Any]]:
+        result = {}
+        for node, neighbors in outer.items():
+            inner = {}
+            for neighbor, entry in neighbors.items():
+                if multigraph:
+                    shared = memo.get(id(entry))
+                    if shared is None:
+                        shared = {key: copy_attribute_dict(attributes, memo) for key, attributes in entry.items()}
+                        memo[id(entry)] = shared
+                        keep_alive(entry, memo)
+                    inner[copied_node(neighbor)] = shared
+                else:
+                    inner[copied_node(neighbor)] = copy_attribute_dict(entry, memo)
+            result[copied_node(node)] = inner
+        return result
+
+    fields = clone.__dict__
+    fields['graph'] = copy.deepcopy(graph.graph, memo)
+    fields['_node'] = {
+        copied_node(node): copy_attribute_dict(attributes, memo)
+        for node, attributes in graph._node.items()
+    }
+    successors = copied_adjacency(graph._succ)
+    fields['_adj'] = successors
+    fields['_succ'] = successors
+    fields['_pred'] = copied_adjacency(graph._pred)
+    fields['__networkx_cache__'] = copy.deepcopy(graph.__dict__['__networkx_cache__'], memo)
+    return clone
+
+
+def copy_edge_index(edges: 'OrderedDict[Any, Edge]', memo: Dict[int, Any]) -> 'OrderedDict[Any, Edge]':
+    """Deep copy of an ``{edge or (src, dst): edge}`` index, keeping its order."""
+    result = type(edges)()
+    for key, edge in edges.items():
+        clone = copy_graph_edge(edge, memo)
+        if key is edge:
+            result[clone] = clone
+        else:
+            result[tuple(copy_value(node, memo) for node in key)] = clone
+    return result
+
+
+def copy_node_index(nodes: 'OrderedDict[Any, Any]', memo: Dict[int, Any]) -> 'OrderedDict[Any, Any]':
+    """Deep copy of a ``{node: (in-edge index, out-edge index)}`` index, keeping every order."""
+    result = type(nodes)()
+    for node, (in_edges, out_edges) in nodes.items():
+        result[copy_value(node, memo)] = (copy_edge_index(in_edges, memo), copy_edge_index(out_edges, memo))
+    return result
+
+
+def copy_graph_field(owner: Any, name: str, value: Any, memo: Dict[int, Any]) -> Any:
+    """The deep copy of ``owner.<name>``, taking the structural copy for an ordered graph's containers."""
+    if isinstance(owner, OrderedDiGraph):
+        if name == '_nx':
+            return copy_nx_graph(value, memo)
+        if name == '_nodes':
+            return copy_node_index(value, memo)
+        if name == '_edges':
+            return copy_edge_index(value, memo)
+    return copy_value(value, memo)
 
 
 def generate_element_id(element) -> str:

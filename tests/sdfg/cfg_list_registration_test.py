@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Every control-flow region must be registered in its SDFG's ``cfg_list`` as soon as it is added."""
 
+import copy
+
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
@@ -79,6 +81,43 @@ def test_registration_survives_serialization_round_trip():
     assert_all_registered(dace.SDFG.from_json(sdfg.to_json()))
 
 
+def nested_with_conditional(name: str) -> dace.SDFG:
+    """A nested SDFG whose body is a region subtree, so registering only its root is not enough."""
+    inner = dace.SDFG(name)
+    inner.add_array('x', [10], dace.float64)
+    cond = ConditionalBlock(f'{name}_cond')
+    inner.add_node(cond, is_start_block=True)
+    branch = ControlFlowRegion(f'{name}_branch')
+    branch.add_state(f'{name}_bstate', is_start_block=True)
+    cond.add_branch(CodeBlock('1 < 5'), branch)
+    return inner
+
+
+def test_copied_nested_sdfg_is_registered_when_added():
+    """A deep-copied nested SDFG carries an empty ``cfg_list``; attaching it must register its subtree.
+
+    Map-fusion clones of a producer body attach a copied ``NestedSDFG`` node with ``add_node``, and
+    statement splitting hands a copied SDFG to ``add_nested_sdfg``. Either way the copy used to stay
+    out of the list and the first ``cfg_id`` asked of it raised ``list.index(x): x not in list``.
+    """
+    sdfg = dace.SDFG('host')
+    sdfg.add_array('x', [10], dace.float64)
+    state = sdfg.add_state('s', is_start_block=True)
+    node = state.add_nested_sdfg(nested_with_conditional('inner'), inputs={}, outputs={'x'})
+    assert_all_registered(sdfg)
+
+    state.add_node(copy.deepcopy(node))
+    assert_all_registered(sdfg)
+
+    state.add_nested_sdfg(copy.deepcopy(node.sdfg), inputs={}, outputs={'x'})
+    assert_all_registered(sdfg)
+
+    before = [id(cfg) for cfg in sdfg.cfg_list]
+    sdfg.reset_cfg_list()
+    assert [id(cfg) for cfg in sdfg.cfg_list] == before
+
+
 if __name__ == '__main__':
     test_regions_are_registered_when_added()
     test_registration_survives_serialization_round_trip()
+    test_copied_nested_sdfg_is_registered_when_added()

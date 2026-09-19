@@ -262,7 +262,9 @@ def test_two_levels():
     ref = jagged_array[1][2][3]
 
     B = np.zeros([1])
-    sdfg(A=jagged_array, B=B)
+    # The extents are part of the signature and cannot be read back from a ctypes array of
+    # pointers, so the caller supplies them.
+    sdfg(A=jagged_array, B=B, K=5, M=5, N=5)
     assert np.allclose(ref, B[0])
 
 

@@ -1,17 +1,24 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
+
 from dace.properties import SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation
 from dace.frontend.common import op_repository as oprepo
 from dace.sdfg.nodes import LibraryNode
 import dace.library as library
 from dace.sdfg import SDFG, SDFGState, nodes
-from dace import data as dt, memlet as mm, subsets as sbs
+from dace import data as dt, memlet as mm, subsets as sbs, symbolic
 import dace
 import copy
 
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+
+from dace.libraries.blas import blas_helpers
+from .. import environments
+from dace.libraries.blas import gpu_dialect
+from dace.ordered import OrderedSet
 
 
 @library.expansion
@@ -76,6 +83,122 @@ class ExpandGerPure(ExpandTransformation):
         return nsdfg_node
 
 
+def _ger_strides(node, parent_state, parent_sdfg):
+    """Extract leading-dim strides from ``_A``, ``_x`` and ``_y`` memlets."""
+    sx = sy = lda = None
+    for e in parent_state.in_edges(node):
+        sq = copy.deepcopy(e.data.subset)
+        dims = sq.squeeze()
+        desc = parent_sdfg.arrays[e.data.data]
+        if e.dst_conn == '_A':
+            lda = desc.strides[dims[0]]
+        elif e.dst_conn == '_x':
+            sx = desc.strides[dims[0]]
+        elif e.dst_conn == '_y':
+            sy = desc.strides[dims[0]]
+    return lda, sx, sy
+
+
+@library.expansion
+class ExpandGerOpenBLAS(ExpandTransformation):
+    """``cblas_?ger(layout, m, n, alpha, X, incX, Y, incY, A, lda)`` after copying ``_A`` into ``_res``."""
+
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        a_desc = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, '_A')).data.data]
+        dtype = a_desc.dtype.base_type
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandGerPure.expansion(node, parent_state, parent_sdfg, **kwargs)
+        lda, sx, sy = _ger_strides(node, parent_state, parent_sdfg)
+        prefix = func.lower()
+        m, n = node.m, node.n
+        alpha = node.alpha
+        # cBLAS ger updates A in place; copy _A into _res first, then call.
+        if dtype in (dace.complex64, dace.complex128):
+            cfunc = prefix + 'gerc' if dtype == dace.complex128 else prefix + 'gerc'
+        else:
+            cfunc = prefix + 'ger'
+        code = f"""
+        for (int __i = 0; __i < ({m}); ++__i)
+          cblas_{prefix}copy({n}, _A + __i * ({lda}), 1, _res + __i * ({lda}), 1);
+        """
+        if dtype in (dace.complex64, dace.complex128):
+            code += f"""
+            {dtype.ctype} __alpha = {dtype.ctype}({alpha});
+            cblas_{cfunc}(CblasRowMajor, {m}, {n}, &__alpha, _x, {sx}, _y, {sy}, _res, {lda});
+            """
+        else:
+            code += f"cblas_{cfunc}(CblasRowMajor, {m}, {n}, ({dtype.ctype})({alpha}), _x, {sx}, _y, {sy}, _res, {lda});"
+        return dace.sdfg.nodes.Tasklet(node.name,
+                                       node.in_connectors,
+                                       node.out_connectors,
+                                       code,
+                                       language=dace.dtypes.Language.CPP)
+
+
+@library.expansion
+class ExpandGerMKL(ExpandTransformation):
+
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(*args, **kwargs):
+        return ExpandGerOpenBLAS.expansion(*args, **kwargs)
+
+
+@library.expansion
+class ExpandGerGPUBLAS(ExpandTransformation):
+    """cuBLAS ``cublas?ger(handle, m, n, &alpha, x, incx, y, incy, A, lda)``; works on the in-place ``_res`` after copy."""
+
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        a_desc = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, '_A')).data.data]
+        dtype = a_desc.dtype.base_type
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandGerPure.expansion(node, parent_state, parent_sdfg, **kwargs)
+        lda, sx, sy = _ger_strides(node, parent_state, parent_sdfg)
+        m, n = node.m, node.n
+        alpha = node.alpha
+        cfunc = func + 'ger' if dtype not in (dace.complex64, dace.complex128) else func + 'gerc'
+        code = cls.environments[0].handle_setup_code(node)
+        code += gpu_dialect.host_scalar_mode(
+            cls.dialect, f"""
+        {dtype.ctype} __alpha = {dtype.ctype}({alpha});
+        gpuMemcpyAsync(_res, _A, sizeof({dtype.ctype}) * ({m}) * ({lda}),
+                        gpuMemcpyDeviceToDevice, __dace_current_stream);
+        {cls.dialect.check_error}({cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, {m}, &__alpha, _y, {sy}, _x, {sx}, _res, {lda}));
+        """)
+        return dace.sdfg.nodes.Tasklet(node.name,
+                                       node.in_connectors,
+                                       node.out_connectors,
+                                       code,
+                                       language=dace.dtypes.Language.CPP)
+
+
+@dace.library.expansion
+class ExpandGerCuBLAS(ExpandGerGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+@dace.library.expansion
+class ExpandGerRocBLAS(ExpandGerGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    dialect = gpu_dialect.ROCBLAS
+
+
 @library.node
 class Ger(LibraryNode):
     """
@@ -87,7 +210,13 @@ class Ger(LibraryNode):
     """
 
     # Global properties
-    implementations = {"pure": ExpandGerPure}
+    implementations = {
+        "pure": ExpandGerPure,
+        "OpenBLAS": ExpandGerOpenBLAS,
+        "MKL": ExpandGerMKL,
+        "cuBLAS": ExpandGerCuBLAS,
+        "rocBLAS": ExpandGerRocBLAS,
+    }
     default_implementation = None
 
     # Object fields
@@ -101,7 +230,7 @@ class Ger(LibraryNode):
         default=1, desc="A scalar which will be multiplied with the outer product x*yT before adding matrix A")
 
     def __init__(self, name, n=dace.symbolic.symbol("n"), m=dace.symbolic.symbol("m"), alpha=1, location=None):
-        super().__init__(name, location=location, inputs={"_x", "_y", "_A"}, outputs={"_res"})
+        super().__init__(name, location=location, inputs=OrderedSet(('_x', '_y', '_A')), outputs={"_res"})
 
         self.n = n
         self.m = m
@@ -159,7 +288,7 @@ class Ger(LibraryNode):
         if len(size_y) != 1:
             raise ValueError("y must be a vector")
 
-        if size_a[0] != size_x[0] or size_a[1] != size_y[0]:
+        if symbolic.inequal_symbols(size_a[0], size_x[0]) or symbolic.inequal_symbols(size_a[1], size_y[0]):
             raise ValueError("Input vectors x and y (outer product) must match with the matrix A dimensions.")
 
         out_edges = state.out_edges(self)

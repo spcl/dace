@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for dace.sdfg.properties module."""
 
+import copy
 import unittest
 import sympy as sp
 import dace
@@ -8,6 +9,33 @@ import dace
 
 class PropertyTests(unittest.TestCase):
     """Implements unit tests for dace.sdfg.properties.Property class."""
+
+    def test_deep_copied_code_block_keeps_code_and_language_but_owns_its_ast(self):
+        python_block = dace.properties.CodeBlock('b = a + 1')
+        cpp_block = dace.properties.CodeBlock('b = a + 1;', dace.dtypes.Language.CPP)
+        original_text = python_block.as_string
+
+        python_clone, cpp_clone, python_clone_again = copy.deepcopy([python_block, cpp_block, python_block])
+        python_clone.code[0].targets[0].id = 'c'
+
+        self.assertEqual(python_block.as_string, original_text)
+        self.assertNotEqual(python_clone.as_string, original_text)
+        self.assertIs(python_clone_again, python_clone)
+        self.assertIsNot(cpp_clone, cpp_block)
+        self.assertEqual(cpp_clone.as_string, 'b = a + 1;')
+        self.assertEqual(cpp_clone.language, dace.dtypes.Language.CPP)
+        self.assertEqual(python_clone.language, dace.dtypes.Language.Python)
+
+    def test_code_blocks_sharing_one_statement_list_still_share_it_after_a_deep_copy(self):
+        first = dace.properties.CodeBlock('b = a * 2')
+        second = dace.properties.CodeBlock(first)
+
+        first_clone, second_clone = copy.deepcopy([first, second])
+
+        self.assertIs(first_clone.code, second_clone.code)
+        self.assertIsNot(first_clone.code, first.code)
+        self.assertIsNot(first_clone.code[0], first.code[0])
+        self.assertEqual(first_clone.as_string, first.as_string)
 
     def test_indirect_properties(self):
 

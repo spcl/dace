@@ -172,7 +172,13 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
             buffer_write = state.add_write(buffer_name)
 
             tasklet = state.add_tasklet(
-                node.name, {"val_in", "buffer_in"}, {"val_out", "buffer_out"}, f"""\
+                node.name, {
+                    "val_in": None,
+                    "buffer_in": None
+                }, {
+                    "val_out": None,
+                    "buffer_out": None
+                }, f"""\
 wide = buffer_in
 wide[_{node.name}_w] = val_in
 if _{node.name}_w == {gear_factor} - 1:

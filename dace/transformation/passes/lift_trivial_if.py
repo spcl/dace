@@ -42,6 +42,16 @@ def _trivial_cond_check_cached(code_string: str, val: bool) -> bool:
         tokens = re.split(r'(\s+|[()\[\]])', code_string)
         replacements = {"True": "1", "False": "0", "and": "*", "or": "+"}
         rewritten = " ".join(replacements.get(t.strip(), t.strip()) for t in tokens).strip()
+        # Cheap screen before the sledgehammer. ``evaluate`` below only ever returns a verdict for a
+        # symbol-FREE expression, and ``sympy.simplify`` of a relational routes through
+        # ``equals``/``is_constant``, which samples numerically via mpmath PSLQ -- on CLOUDSC that is
+        # seconds spent proving that ``zqx_index_9 < yrecldp_rlmin`` is not a constant, once per
+        # truth value per distinct guard. ``expand`` settles the cancellations an SDFG guard can
+        # actually contain (polynomials over integer symbols, which sympy's own constructors already
+        # fold most of) for a fraction of the cost; whatever it leaves holding a free symbol cannot
+        # come back a literal, so there is nothing for the expensive path to find.
+        if sympy.expand(symbolic.pystr_to_symbolic(rewritten)).free_symbols:
+            return False
         simplified = dace.symbolic.SymExpr(rewritten).simplify()
         # symstr, not sympy's printer: this string is re-parsed by SymExpr, so it must stay in
         # DaCe's own vocabulary -- and sympy raises outright on int_floor/int_ceil, which the
@@ -392,6 +402,20 @@ class LiftTrivialIf(ppl.Pass):
                     rmed_count += self._detect_trivial_ifs_and_rm_cfg(node.sdfg)
 
         return rmed_count
+
+    def lift_in_region(self, region, recursive: bool = True) -> int:
+        """Scoped entry point: collapse decidable conditionals inside ``region`` -- recursively by
+        default, one level only with ``recursive=False`` -- without walking the whole SDFG. For a
+        caller that just made a guard constant (TrivialLoopElimination substituting the iterator
+        into a spliced single-trip body) and wants the cleanup local to what it touched.
+
+        :param region: The control flow region to simplify in place.
+        :param recursive: Also descend into nested regions and SDFGs.
+        :returns: Number of branches/conditionals removed.
+        """
+        if recursive:
+            return self._detect_trivial_ifs_and_rm_cfg(region)
+        return self._detect_and_remove_top_level_trivial_ifs(region)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, int]]:
         """Collapse every statically-decidable conditional in ``sdfg`` into its taken branch.

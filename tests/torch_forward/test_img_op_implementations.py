@@ -7,6 +7,7 @@ from torch import nn
 
 from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
 class CustomBatchNorm(torch.autograd.Function):
@@ -48,23 +49,27 @@ class BatchNorm2dMeanVar(nn.Module):
 
 
 @pytest.mark.torch
-def test_bn():
+@pytest.mark.parametrize("device", DEVICES)
+def test_bn(device):
 
-    inputs = torch.rand(1, 64, 60, 60)
+    dev = torch_device(device)
+
+    inputs = torch.rand(1, 64, 60, 60).to(dev)
 
     # pytorch and onnx specification differ in the way they use momentum:
     # pytorch_momentum = 1 - onnx_momentum
     # to guarantee matching behavior, we set the momentum to 0.5
 
-    pt_model = BatchNorm2dMeanVar(64, momentum=0.5)
+    pt_model = BatchNorm2dMeanVar(64, momentum=0.5).to(dev)
     dace_model = BatchNorm2dMeanVar(64, momentum=0.5)
     pt_model.train()
     dace_model.train()
 
     dace_model.load_state_dict(pt_model.state_dict())
 
-    dace_model = DaceModule(dace_model, sdfg_name="test_bn", training=True)
-    dace_output, dace_mean, dace_var = dace_model(inputs)
+    dace_model = DaceModule(dace_model, sdfg_name=f"test_bn_{device}", training=True, cuda=is_gpu(device))
+    with experimental_cuda():
+        dace_output, dace_mean, dace_var = dace_model(inputs)
     pt_output, pt_mean, pt_var = pt_model(inputs)
 
     torch_tensors_close("output", pt_output, dace_output)
@@ -73,22 +78,26 @@ def test_bn():
 
 
 @pytest.mark.torch
-def test_global_avg_pool():
-    inputs = torch.rand(1, 64, 60, 60)
+@pytest.mark.parametrize("device", DEVICES)
+def test_global_avg_pool(device):
+    dev = torch_device(device)
 
-    pt_model = nn.AdaptiveAvgPool2d(1)
+    inputs = torch.rand(1, 64, 60, 60).to(dev)
+
+    pt_model = nn.AdaptiveAvgPool2d(1).to(dev)
     dace_model = nn.AdaptiveAvgPool2d(1)
 
     # Note: AdaptiveAvgPool2d has no parameters, but load_state_dict ensures compatibility
     dace_model.load_state_dict(pt_model.state_dict())
 
-    dace_model = DaceModule(dace_model, sdfg_name="test_global_avg_pool", training=True)
-    dace_output = dace_model(inputs)
+    dace_model = DaceModule(dace_model, sdfg_name=f"test_global_avg_pool_{device}", training=True, cuda=is_gpu(device))
+    with experimental_cuda():
+        dace_output = dace_model(inputs)
     pt_output = pt_model(inputs)
 
     torch_tensors_close("output", pt_output, dace_output)
 
 
 if __name__ == "__main__":
-    test_bn()
-    test_global_avg_pool()
+    test_bn(device="cpu")
+    test_global_avg_pool(device="cpu")

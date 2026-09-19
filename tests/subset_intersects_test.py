@@ -1,4 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
+
 import dace
 from dace import subsets
 
@@ -72,7 +74,27 @@ def test_covers_symbolic():
     assert rng8.covers(rng8) is True
 
 
+def test_undecidable_bound_raises_on_the_method_and_is_None_through_the_helper():
+    """The two answers ``intersects`` gives for "I cannot tell", and why callers want the helper.
+
+    ``Range.intersects`` RAISES when SymPy will not decide a bound -- a ``Min``/``int_floor`` one
+    from anti-dependence chunking is the shape that does it. The module-level helper folds that
+    into the same ``None`` it already returns for indeterminate, so a caller that means to be
+    conservative gets one answer to check instead of an exception it has to remember to catch.
+    """
+    i = dace.symbol('_loop_it', nonnegative=True)
+    length = dace.symbol('LEN_1D', positive=True)
+    upper = dace.symbolic.pystr_to_symbolic('Min(LEN_1D - 2, _loop_it + 4095)')
+    rng1 = subsets.Range([(i + 1, upper, 1)])
+    rng2 = subsets.Range([(i, upper - 1, 1)])
+
+    with pytest.raises(TypeError):
+        rng1.intersects(rng2)
+    assert subsets.intersects(rng1, rng2) is None
+
+
 if __name__ == '__main__':
     test_intersects_symbolic()
     test_intersects_constant()
     test_covers_symbolic()
+    test_undecidable_bound_raises_on_the_method_and_is_None_through_the_helper()

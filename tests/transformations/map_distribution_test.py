@@ -40,5 +40,28 @@ def test_eao_mpi():
         assert (True)
 
 
+def test_ordering_edge_into_map_exit_is_not_a_write():
+    """The MapExit scan must skip ordering edges instead of looking up ``arrays[None]``."""
+    sdfg = dace.SDFG('eao_ordering')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64)
+    state = sdfg.add_state()
+
+    me, mx = state.add_map('m', dict(i='0:8'))
+    tasklet = state.add_tasklet('t', {'a': None}, {'b': None}, 'b = a * 2.0')
+    state.add_memlet_path(state.add_access('A'), me, tasklet, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(tasklet, mx, state.add_access('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+    side = state.add_tasklet('side', {}, {}, 'pass')
+    state.add_nedge(me, side, dace.Memlet())
+    state.add_nedge(side, mx, dace.Memlet())
+    sdfg.validate()
+
+    xform = ElementWiseArrayOperation()
+    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), {ElementWiseArrayOperation.map_entry: state.node_id(me)},
+                      0)
+    assert xform.can_be_applied(state, 0, sdfg) is True  # used to raise KeyError: None
+
+
 if __name__ == '__main__':
     test_eao_mpi()
+    test_ordering_edge_into_map_exit_is_not_a_write()

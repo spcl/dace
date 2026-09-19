@@ -276,6 +276,7 @@ if res[neighbor] == -1:
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses SDFG Stream data descriptors (not supported by experimental codegen)
 def test_persistent_fusion():
     sdfg, s_init = _make_sdfg()
 
@@ -331,6 +332,7 @@ def test_persistent_fusion():
 
 
 @pytest.mark.gpu
+@pytest.mark.old_gpu_codegen_only  # uses SDFG Stream data descriptors (not supported by experimental codegen)
 def test_persistent_fusion_interstate():
     N = dace.symbol('N', dtype=dace.int64)
 

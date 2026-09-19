@@ -41,6 +41,22 @@ def test_assign_pointer():
         get_code(program)
 
 
+def test_a_scalar_python_modulo_lowers_to_py_mod():
+
+    @dace.program
+    def program(A: dace.int32[N], B: dace.int32[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a + (M % 4)
+
+    code = get_code(program)
+
+    assert 'py_mod(' in code
+    assert 'PyMod' not in code
+
+
 def test_compare_scalar_vector():
 
     @dace.program
@@ -54,6 +70,24 @@ def test_compare_scalar_vector():
     code = get_code(program)
 
     assert 'svcmplt' in code
+
+
+def test_scalar_input_is_read_through_its_connector():
+    """The SVE unparser types every name through the tasklet's connectors, so a scalar read that
+    the readable CPU generator inlines as ``alpha[0]`` has no type and aborts code generation."""
+
+    @dace.program
+    def program(alpha: dace.float64, X: dace.float64[N], Y: dace.float64[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << alpha
+                x << X[i]
+                y >> Y[i]
+                y = a * x
+
+    code = get_code(program)
+
+    assert 'svdup_f64(a)' in code, code
 
 
 def test_if_block():

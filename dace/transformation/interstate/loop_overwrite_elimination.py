@@ -49,11 +49,10 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         return start + symbolic.int_floor(end - start, stride) * stride
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        # Check if this is a for-loop with known range.
-        start = loop_analysis.get_init_assignment(self.loop)
-        end = loop_analysis.get_loop_end(self.loop)
-        stride = loop_analysis.get_loop_stride(self.loop)
-        if start is None or end is None or stride is None:
+        # Check if this is a for-loop with known range: ``_last_iteration`` is None for exactly the
+        # unknown-range cases (no init assignment, no end, or no stride).
+        last_iteration = self._last_iteration()
+        if last_iteration is None:
             return False
 
         # Check if any continue, break, or return statements are present in the loop.
@@ -105,6 +104,9 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 unique_set.add(name)
 
         # All the uniuque data needs to be written and read in the same index, otherwise there might be a loop-carried dependency.
+        # An EMPTY memlet is a pure ordering edge and accesses nothing: its ``get_src/dst_subset`` is
+        # ``None``, which the subset tests below would otherwise read as a whole-array, never-intersecting
+        # access and refuse a perfectly overwritable loop (``A[0] = B[i]; A[0] = C[i]``).
         for state in states:
             for dn in state.data_nodes():
                 if dn.data not in unique_set:
@@ -112,11 +114,15 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 read_subsets = set()
                 write_subsets = set()
                 for e in state.out_edges(dn):
+                    if e.data.is_empty():
+                        continue
                     # If pointers are involved or it's not an overwrite, give up
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
                     read_subsets.add(e.data.get_src_subset(e, state))
                 for e in state.in_edges(dn):
+                    if e.data.is_empty():
+                        continue
                     # If pointers are involved or it's not an overwrite, give up
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
@@ -131,6 +137,8 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 if dn.data in unique_set:
                     continue
                 for e in state.in_edges(dn):
+                    if e.data.is_empty():
+                        continue
                     # If pointers are involved or it's not an overwrite, give up
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
@@ -151,14 +159,24 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 if dn.data in unique_set or dn.data not in write_subsets:
                     continue
                 for e in state.out_edges(dn):
+                    if e.data.is_empty():
+                        continue
                     # If pointers are involved or it's not an overwrite, give up
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
 
                     src_subset = copy.deepcopy(e.data.get_src_subset(e, state))
-                    src_subset.replace({self.loop.loop_variable: end})
-                    # None of write_subsets should lie within the new subset
-                    if any(intersects(ws_ss, src_subset) for ws_ss in write_subsets[dn.data]):
+                    # Pin the read to the iterate ``apply`` will actually keep, NOT to ``end`` -- see
+                    # ``_last_iteration``. Testing ``end`` examined an index the loop may never reach.
+                    src_subset.replace({self.loop.loop_variable: last_iteration})
+                    # None of write_subsets should lie within the new subset. ``intersects`` is
+                    # three-valued: True / False / None, where None means IT COULD NOT DECIDE (e.g. a
+                    # non-unit stride or tile, or an undecidable symbolic relation -- the module-level
+                    # wrapper turns that TypeError into None). None is falsy, so testing it directly let
+                    # an undecidable overlap fall through and ACCEPT, dropping a real loop-carried
+                    # dependency. Refuse unless the answer is a definite False, which is the sound
+                    # direction and matches the ``not intersects(...)`` guard on the unique-data check.
+                    if any(intersects(ws_ss, src_subset) is not False for ws_ss in write_subsets[dn.data]):
                         return False
 
         # No conditional edge may depend on the loop variable.
@@ -184,11 +202,24 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         last_iteration = self._last_iteration()
         itervar = self.loop.loop_variable
 
-        # Rewrite each occurence of the loop variable in the loop body
-        self.loop.replace(itervar, last_iteration)
+        # Pin every occurrence of the loop variable to the surviving iterate. This substitutes a VALUE, so
+        # it must NOT go through ``replace`` -- that is a RENAME (``replace_keys=True``), which would rewrite
+        # an interstate-edge assignment's KEY to the expression, e.g. ``{'N - 1': ...}``. ``replace_keys=False``
+        # leaves assignment keys and the loop's own ``loop_variable`` alone; the loop is removed below anyway,
+        # and every reference in the body still gets the value. ``TrivialLoopElimination`` substitutes the
+        # same way for the same reason.
+        self.loop.replace_dict({itervar: str(last_iteration)},
+                               symrepl={symbolic.symbol(itervar): last_iteration},
+                               replace_keys=False)
 
-        # Add the loop contents to the parent graph.
-        graph.add_node(self.loop.start_block)
+        # Reparent the loop's blocks into the parent graph. A loop body is its own name scope, so a label
+        # that was unique inside the loop can already be taken in the destination -- rename on arrival.
+        # Every block is added explicitly, up front: the edge loop below would otherwise auto-add the
+        # non-start blocks (``OrderedDiGraph.add_edge``), bypassing the unique naming entirely. Edges are
+        # wired by object reference, so relabelling is safe. ``start_block`` goes first to keep the
+        # parent's node order as it was.
+        for block in [self.loop.start_block] + [b for b in self.loop.nodes() if b is not self.loop.start_block]:
+            graph.add_node(block, ensure_unique_name=True)
         for e in graph.in_edges(self.loop):
             graph.add_edge(e.src, self.loop.start_block, e.data)
         sink = graph.add_state(self.loop.label + "_sink")

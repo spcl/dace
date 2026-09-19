@@ -54,6 +54,11 @@ class ONNXForward(abc.ABC):
     selection based on applicability criteria.
     """
 
+    #: Library environments the expansion needs. Declared here so consumers can read it off any
+    #: implementation instead of probing for it; a tuple, since the default is shared by every
+    #: subclass that does not override it. Only ever iterated.
+    environments: tuple = ()
+
     @staticmethod
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         """Check whether this implementation can be applied to the given node.

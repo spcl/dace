@@ -11,19 +11,34 @@ import numpy as np
 import ast
 from dace import data, dtypes
 from dace import symbolic
-from dace.symbolic import symbol, SymExpr, symstr
-import sympy
+from dace.symbolic import MODULO_FUNCTIONS, symbol, SymExpr, symstr
+from dace import symbolic_engine as sympy
 import sys
 import dace.frontend.python.astutils
 from typing import Callable, Union
 
+
+def magnitude_type(arg_types: list[dtypes.typeclass]) -> dtypes.typeclass:
+    """``abs`` of a complex operand is its real magnitude; any other operand keeps its type."""
+    from dace.frontend.python.replacements.utils import complex_to_scalar  # Avoid import loop
+    return complex_to_scalar(arg_types[0])
+
+
 # Additional function names that can be used to infer types
 KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {
-    'abs': lambda arg_types: arg_types[0],
+    'abs': magnitude_type,
+    # sympy's spellings, which an interstate assignment printed from a symbolic expression carries
+    'Abs': magnitude_type,
+    'Min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'Max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'log': lambda arg_types: arg_types[0],
     'min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
     'round': lambda arg_types: dtypes.typeclass(int),
+    **{
+        name: lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types)
+        for name in MODULO_FUNCTIONS
+    },
 }
 
 _cmpops = {
@@ -464,7 +479,14 @@ def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
     if isinstance(dtype, np.dtype):
         return dtypes.typeclass(dtype.type)
 
-    return None
+    # C / numpy dtype aliases that are not attributes of ``dtypes`` (``double``,
+    # ``single``, ``short``, ...) still name a concrete type. ``typeclass`` resolves
+    # them and raises for a non-dtype name (a math function like ``sqrt``), so a
+    # cast call ``double(N)`` types as its target rather than falling to ``None``.
+    try:
+        return dtypes.typeclass(dtype_str)
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 def _Attribute(t, symbols, inferred_symbols):

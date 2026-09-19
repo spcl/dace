@@ -21,6 +21,7 @@ from transformers import BertTokenizer, BertModel
 
 import dace.libraries.onnx as donnx
 from tests.utils import torch_tensors_close
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 BERT_TINY_MODEL = "google/bert_uncased_L-2_H-128_A-2"
 
@@ -41,8 +42,10 @@ class _BertONNXExportWrapper(torch.nn.Module):
         return output[0], output[1]
 
 
+@pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.onnx
-def test_bert_full():
+@pytest.mark.parametrize("device", DEVICES)
+def test_bert_full(device):
     tokenizer = BertTokenizer.from_pretrained(BERT_TINY_MODEL)
     pt_model = BertModel.from_pretrained(BERT_TINY_MODEL)
     pt_model.eval()
@@ -75,15 +78,21 @@ def test_bert_full():
                                                       token_type_ids=segments_tensors.shape,
                                                       attention_mask=attention_mask.shape))
 
-    dace_model = donnx.ONNXModel("test_bert_full", model, auto_merge=True)
+    dace_model = donnx.ONNXModel(f"test_bert_full_{device}", model, auto_merge=True, cuda=is_gpu(device))
 
-    dace_output = dace_model(input_ids=tokens_tensor, token_type_ids=segments_tensors, attention_mask=attention_mask)
+    with experimental_cuda():
+        dace_output = dace_model(input_ids=tokens_tensor.to(torch_device(device)),
+                                 token_type_ids=segments_tensors.to(torch_device(device)),
+                                 attention_mask=attention_mask.to(torch_device(device)))
 
     output = pt_model(tokens_tensor, token_type_ids=segments_tensors, attention_mask=attention_mask)
+
+    if is_gpu(device):
+        dace_output = [t.cpu() for t in dace_output]
 
     torch_tensors_close("output_0", output[0], dace_output[0])
     torch_tensors_close("output_1", output[1], dace_output[1])
 
 
 if __name__ == "__main__":
-    test_bert_full()
+    test_bert_full("cpu")

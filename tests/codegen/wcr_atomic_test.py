@@ -89,6 +89,27 @@ def test_wcr_through_view_atomic():
     assert code.count('atomic(') == 1
 
 
+def test_wcr_through_view_leaving_the_map_exit_atomic():
+    """The ``views`` edge leaves through the parallel map exit, the shape inlining a nested SDFG
+    leaves behind: the exit still has to make the accumulation atomic."""
+    size = 1000
+    sdfg = dace.SDFG('wcr_view_through_exit')
+    sdfg.add_array('A', [size], dace.float64)
+    sdfg.add_view('V', [5], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i=f'0:{size}'), schedule=dace.ScheduleType.CPU_Multicore)
+    tasklet = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    view = state.add_access('V')
+    state.add_nedge(me, tasklet, dace.Memlet())
+    state.add_edge(tasklet, 'o', view, None, dace.Memlet('V[0]', wcr='lambda a, b: a + b'))
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+    state.add_edge(view, 'views', mx, 'IN_A', dace.Memlet('A[5:10]'))
+    state.add_edge(mx, 'OUT_A', state.add_write('A'), None, dace.Memlet(f'A[0:{size}]'))
+    sdfg.validate()
+    assert sdfg.generate_code()[0].code.count('atomic(') == 1
+
+
 if __name__ == '__main__':
     test_wcr_overlapping_atomic()
     test_wcr_strided_atomic()
@@ -96,3 +117,4 @@ if __name__ == '__main__':
     test_wcr_strided_nonatomic_offset()
     test_wcr_nested_atomic()
     test_wcr_through_view_atomic()
+    test_wcr_through_view_leaving_the_map_exit_atomic()
