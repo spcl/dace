@@ -103,15 +103,26 @@ class OffloadingIRNode:
     def get_all_tails(self):
         assert self.is_open_node()
 
-        def recursion(node, result: list):
+        # ITERATIVE, and it has to be: the IR is one node per state and per interstate edge, so the
+        # chain is as long as the program has blocks and a recursive walk overran Python's stack on
+        # the first application-sized graph it met (CloudSC, ~2k blocks -- "RecursionError: maximum
+        # recursion depth exceeded" out of ``apply_gpu_transformations``, which is where the whole
+        # GPU canonicalization of that kernel stopped). The stack below reproduces the recursion
+        # exactly, pre-order and duplicates included: children are pushed REVERSED so they pop in
+        # ``node.next`` order, and a node that reaches the close node contributes itself and none of
+        # its remaining children, which is what the recursive ``return`` did.
+        result: list = []
+        stack = [self]
+        while stack:
+            node = stack.pop()
+            children = []
             for next in node.next:
-                if next == self.close:  # definition of a tail: a node that points at this section's end (close-node)
+                if next == self.close:  # a tail: a node that points at this section's end (close-node)
                     result.append(node)
-                    return
-                recursion(next, result)
-
-        result = []
-        recursion(self, result)
+                    children.clear()
+                    break
+                children.append(next)
+            stack.extend(reversed(children))
         return result
 
     # static makers
@@ -1541,18 +1552,19 @@ class OffloadToAccelerator(ppl.Pass):
         return curr_node
 
     def __traverse_IR(self, IR: OffloadingIRNode, method):
-
-        def recursion(node, visited_set):
+        # ITERATIVE for the same reason :meth:`OffloadingIRNode.get_all_tails` is: the IR chain is as
+        # long as the program has blocks, and a recursive pre-order walk overran Python's stack on the
+        # first application-sized graph. The explicit stack keeps the recursion's own order -- children
+        # pushed REVERSED so they pop in ``node.next`` order -- so ``method`` sees the same sequence.
+        visited_set = OrderedSet()
+        stack = [IR]
+        while stack:
+            node = stack.pop()
             if node in visited_set:
-                return
+                continue
             visited_set.add(node)
-
             method(node)
-
-            for next in node.next:
-                recursion(next, visited_set)
-
-        return recursion(IR, OrderedSet())
+            stack.extend(reversed(node.next))
 
     def __traverse_same_level(self, IR: OffloadingIRNode, method):  #DFS
         queue = IR.next.copy()

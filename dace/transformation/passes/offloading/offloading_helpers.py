@@ -287,18 +287,19 @@ def get_predecessors(state: SDFGState, node: nodes.Node) -> OrderedSet:
 
 
 def traverse_IR(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:
-
-    def recursion(node: OffloadingIRNode, visited_set: OrderedSet) -> None:
+    # ITERATIVE for the same reason :meth:`OffloadingIRNode.get_all_tails` is: the IR chain is as
+    # long as the program has blocks, and a recursive pre-order walk overran Python's stack on the
+    # first application-sized graph. The explicit stack keeps the recursion's own order -- children
+    # pushed REVERSED so they pop in ``node.next`` order -- so ``method`` sees the same sequence.
+    visited_set: OrderedSet = OrderedSet()
+    stack = [IR]
+    while stack:
+        node = stack.pop()
         if node in visited_set:
-            return
+            continue
         visited_set.add(node)
-
         method(node)
-
-        for next in node.next:
-            recursion(next, visited_set)
-
-    return recursion(IR, OrderedSet())
+        stack.extend(reversed(node.next))
 
 
 def traverse_same_level(IR: OffloadingIRNode, method: Callable[[OffloadingIRNode], None]) -> None:  # DFS

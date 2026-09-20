@@ -70,15 +70,26 @@ class OffloadingIRNode:
     def get_all_tails(self) -> List['OffloadingIRNode']:
         assert self.is_open_node()
 
-        def recursion(node: 'OffloadingIRNode', result: List['OffloadingIRNode']) -> None:
+        # ITERATIVE, and it has to be: the IR is one node per state and per interstate edge, so the
+        # chain is as long as the program has blocks and a recursive walk overran Python's stack on
+        # the first application-sized graph it met (CloudSC, ~2k blocks -- "RecursionError: maximum
+        # recursion depth exceeded" out of ``apply_gpu_transformations``, which is where the whole
+        # GPU canonicalization of that kernel stopped). The stack below reproduces the recursion
+        # exactly, pre-order and duplicates included: children are pushed REVERSED so they pop in
+        # ``node.next`` order, and a node that reaches the close node contributes itself and none of
+        # its remaining children, which is what the recursive ``return`` did.
+        result: List['OffloadingIRNode'] = []
+        stack = [self]
+        while stack:
+            node = stack.pop()
+            children = []
             for next in node.next:
-                if next == self.close:  # definition of a tail: a node that points at this section's end (close-node)
+                if next == self.close:  # a tail: a node that points at this section's end (close-node)
                     result.append(node)
-                    return
-                recursion(next, result)
-
-        result = []
-        recursion(self, result)
+                    children.clear()
+                    break
+                children.append(next)
+            stack.extend(reversed(children))
         return result
 
     # static makers
