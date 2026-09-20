@@ -26,6 +26,7 @@ import dace
 from dace import cpf_lowering
 from dace.codegen import cpf
 from dace.codegen.codeobject import CodeObject
+from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.standard.nodes import FindFirst, Scan
 from dace.libraries.standard.nodes.scan import ScanOp
 
@@ -172,6 +173,66 @@ def test_the_host_implementation_still_wins_over_host_memory():
     node, state = next((n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, FindFirst))
     with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_HIP):
         assert cpf.renderable_implementations(node, state)[0] != 'CUDA'
+
+
+def host_level_gemm_sdfg(name: str) -> dace.SDFG:
+    """A ``Gemm`` at HOST level over device memory, in the shape ``finalize_for_target`` leaves it.
+
+    That shape is the whole point: the node was pointed at a device LIBRARY CALL, which needs no
+    schedule of its own, so ``Sequential`` is what a GPU-finalized graph carries here.
+    """
+    sdfg = dace.SDFG(name)
+    storage = dace.dtypes.StorageType.GPU_Global
+    sdfg.add_array('a', [N, N], dace.float64, storage=storage)
+    sdfg.add_array('b', [N, N], dace.float64, storage=storage)
+    sdfg.add_array('c', [N, N], dace.float64, storage=storage)
+    state = sdfg.add_state()
+    node = Gemm('gemm', alpha=1.0, beta=0.0)
+    node.schedule = dace.dtypes.ScheduleType.Sequential
+    state.add_node(node)
+    state.add_edge(state.add_read('a'), None, node, '_a', dace.Memlet.from_array('a', sdfg.arrays['a']))
+    state.add_edge(state.add_read('b'), None, node, '_b', dace.Memlet.from_array('b', sdfg.arrays['b']))
+    state.add_edge(node, '_c', state.add_write('c'), None, dace.Memlet.from_array('c', sdfg.arrays['c']))
+    return sdfg
+
+
+def test_a_host_level_node_over_device_memory_expands_into_a_kernel():
+    """A ``Gemm`` / ``Dot`` / ``Reduce`` at host level over ``GPU_Global`` operands has no
+    renderable DEVICE expansion -- cuBLAS and CUB are library calls a standalone unit cannot make --
+    so CPF re-points it at ``pure``, whose expansion is maps. Those maps inherit ``node.schedule``,
+    which a GPU-finalized graph left ``Sequential`` because the node was going to be a library call.
+
+    Left there the expansion is a HOST map indexing device pointers, and validation refuses the
+    whole render: ``Data container "_c" is stored as StorageType.GPU_Global but accessed on host``.
+    Every scientific_computing kernel carrying a host-level matmul or dot product failed exactly
+    this way (lulesh, cholesky, minife, quatrex_rgf, channel_flow, ls3df_scf,
+    warpx_esirkepov_deposition), so the schedule is corrected where the implementation is chosen."""
+    sdfg = host_level_gemm_sdfg('cpf_hip_host_gemm')
+    code = cpf.cpf(sdfg, language='hip')
+    assert_standalone_device(code, 'cpf_hip_host_gemm')
+    assert '__global__' in code, 'the pure expansion of a device-memory Gemm must become a kernel'
+
+
+def test_the_schedule_correction_is_confined_to_host_level_device_memory():
+    """The correction is a CHOICE, not a device-dialect override. A node over HOST memory keeps its
+    schedule (its maps are host code, correctly), and so does one already inside a kernel, which has
+    no launch to issue."""
+    host = host_level_gemm_sdfg('cpf_hip_host_gemm_hostmem')
+    for array in ('a', 'b', 'c'):
+        host.arrays[array].storage = dace.dtypes.StorageType.CPU_Heap
+    node, state = next((n, s) for n, s in host.all_nodes_recursive() if isinstance(n, Gemm))
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_HIP):
+        cpf.schedule_host_level_device_node(node, state)
+    assert node.schedule == dace.dtypes.ScheduleType.Sequential, 'host memory must not be rescheduled'
+
+    device = host_level_gemm_sdfg('cpf_hip_host_gemm_device')
+    node, state = next((n, s) for n, s in device.all_nodes_recursive() if isinstance(n, Gemm))
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_C):
+        cpf.schedule_host_level_device_node(node, state)
+    assert node.schedule == dace.dtypes.ScheduleType.Sequential, 'a host dialect must not be rescheduled'
+    with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_HIP):
+        cpf.schedule_host_level_device_node(node, state)
+    assert node.schedule == dace.dtypes.ScheduleType.GPU_Device
 
 
 def test_a_device_library_node_inside_a_kernel_keeps_the_device_code_implementation():

@@ -364,6 +364,35 @@ def renderable_implementations(node: nodes.LibraryNode, state) -> Tuple[str, ...
     return preferred + RENDERABLE_IMPLEMENTATIONS
 
 
+def schedule_host_level_device_node(node: nodes.LibraryNode, state) -> None:
+    """Make a host-level node over device memory expand into a KERNEL rather than a host map.
+
+    A library node whose operands live in device memory and which sits at host level
+    (:func:`on_device_at_host_level`) is left ``Sequential`` by
+    :func:`~dace.transformation.passes.canonicalize.finalize.canonicalize_set_fast_implementations`,
+    because it was pointed at a device LIBRARY CALL (cuBLAS/cuSolverDn/CUB) and a call needs no
+    schedule of its own. CPF cannot render that call, so :func:`renderable_implementations` re-points
+    the node at ``pure``/``Auto``, whose expansion is MAPS -- and those maps inherit ``node.schedule``.
+    Left ``Sequential`` they are host code indexing ``GPU_Global`` operands, which validation rejects
+    outright ("stored as StorageType.GPU_Global but accessed on host"): measured on the
+    scientific_computing Gemm/Dot/Reduce/TensorDot nodes (lulesh, cholesky, minife, channel_flow,
+    ls3df_scf), every one of which refused to render as ``hip``.
+
+    Setting the schedule here is the same correction
+    :func:`~dace.transformation.passes.canonicalize.finalize.canonicalize_set_fast_implementations`
+    already makes for a node with NO device expansion; CPF reaches the same state by a different
+    route -- a device expansion exists, but not one a standalone unit can compile.
+
+    A node already on a device schedule, a host-dialect rendering and a node inside a kernel are all
+    left alone: only the host-level device-memory case is wrong, and only in a device dialect. So is
+    a node whose implementation CPF did not choose -- its caller leaves that one's expansion alone.
+    """
+    if not cpf_lowering.device() or node.schedule in DEVICE_SCHEDULES:
+        return
+    if on_device_at_host_level(node, state):
+        node.schedule = dtypes.ScheduleType.GPU_Device
+
+
 def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
     """Expand every library node in ``sdfg`` through a renderable implementation, in place.
 
@@ -421,10 +450,11 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
         described: Dict[int, Tuple[nodes.LibraryNode, str, set]] = {}
         for node, state in chosen:
             available = type(node).implementations
-            for candidate in renderable_implementations(node, state):
-                if candidate in available:
-                    node.implementation = candidate
-                    break
+            selected = next((c for c in renderable_implementations(node, state) if c in available), None)
+            if selected is not None:
+                node.implementation = selected
+                if selected not in RENDERABLE_BY_NODE_DEVICE.get(type(node).__name__, ()):
+                    schedule_host_level_device_node(node, state)
             if provenance is not None:
                 description = description_of(node)
                 if description is not None:
