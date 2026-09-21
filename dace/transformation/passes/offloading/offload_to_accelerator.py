@@ -193,6 +193,16 @@ def in_sequential_specialization_arm(block) -> bool:
     return False
 
 
+def in_a_loop(block) -> bool:
+    """Whether a ``LoopRegion`` of ``block``'s own SDFG encloses it, i.e. whether it may run more than once."""
+    region = block.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion):
+            return True
+        region = region.parent_graph
+    return False
+
+
 @properties.make_properties
 @explicit_cf_compatible
 class OffloadToAccelerator(ppl.Pass):
@@ -617,6 +627,7 @@ class OffloadToAccelerator(ppl.Pass):
         # array on the next scan and would be requested again for ever (TSVC s332's ``result``).
         attempted: OrderedSet[str] = OrderedSet()
         entries = self.separate_returns_and_refresh_scopes(sdfg)
+        self.initialize_device_tables_on_the_device(sdfg)
 
         for _ in range(3):
             # step 2: copy analysis -> IR stores analysis results
@@ -711,6 +722,76 @@ class OffloadToAccelerator(ppl.Pass):
             # The analysis reads scopes from the cache, which predates the entry states.
             self.cache_scopes(sdfg)
         return entries
+
+    def initialize_device_tables_on_the_device(self, sdfg: SDFG) -> None:
+        """Run the host code filling a table only kernels read as ONE size-1 kernel per state.
+
+        The table is then born where it is read. Left on the host, the copy analysis ships it down
+        mid-run, because the hybrid resolution only lifts host code that shares a state with a device
+        use of the same data -- not a fill like CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``, which sits
+        beside unrelated kernels and is read by kernels in later states.
+        """
+        writers = self.device_table_writers(sdfg)
+        for state, tasklets in writers.items():
+            self._wrap_region_in_size1_map(state, tasklets)
+        if writers:
+            self.cache_scopes(sdfg)
+
+    def device_table_writers(self, sdfg: SDFG) -> dict[SDFGState, OrderedSet[nodes.Tasklet]]:
+        """The host tasklets writing a table that only kernels read, keyed by their one state.
+
+        The table is a transient array longer than one element; a length-1 one becomes a by-value
+        scalar and needs no copy at all. Outside every kernel of this SDFG:
+
+        * every read is a GPU map's. A host tasklet, nested SDFG, library node, interstate edge or
+          control-flow condition reading it would need the reverse copy (CloudSC's ``iphase`` and
+          ``zvqx`` feed interstate assignments, ``llfall`` a branch condition);
+        * every write is a top-level tasklet with one output that reads only scalars, which a kernel
+          takes by value -- so no array is dragged onto the device with it;
+        * those writes sit in ONE state outside every loop, so the one launch that replaces the copy
+          runs once -- not once per iteration, nor once per state a scattered init touches.
+
+        Writes by kernels are fine: they already put the table on the device.
+        """
+        refused: OrderedSet[str] = OrderedSet(name for edge in sdfg.all_interstate_edges()
+                                              for name in edge.data.used_arrays(sdfg.arrays))
+        for region in sdfg.all_control_flow_regions():
+            refused |= OrderedSet(memlet.data for memlet in region.get_meta_read_memlets())
+        read_by_kernels: OrderedSet[str] = OrderedSet()
+        writers: dict[str, dict[SDFGState, OrderedSet[nodes.Tasklet]]] = {}
+        for state in sdfg.states():
+            scopes = self.cached_scopes[state]
+            looped = in_a_loop(state)
+            for node in state.data_nodes():
+                desc = sdfg.arrays.get(node.data)
+                if (type(desc) is not data.Array or not desc.transient or self._is_length1_array(node.data, sdfg)
+                        or self.enclosing_kernel(scopes, node)):
+                    continue
+                for edge in state.out_edges(node):
+                    if isinstance(edge.dst, nodes.MapEntry) and self.has_GPU_schedule(edge.dst):
+                        read_by_kernels.add(node.data)
+                    elif not edge.data.is_empty():
+                        refused.add(node.data)
+                for edge in state.in_edges(node):
+                    if edge.data.is_empty() or (isinstance(edge.src, nodes.MapExit)
+                                                and self.has_GPU_schedule(edge.src)):
+                        continue
+                    if not looped and self.fills_from_scalars(sdfg, state, scopes, edge.src):
+                        writers.setdefault(node.data, {}).setdefault(state, OrderedSet()).add(edge.src)
+                    else:
+                        refused.add(node.data)
+        found: dict[SDFGState, OrderedSet[nodes.Tasklet]] = {}
+        for name, per_state in writers.items():
+            if name in read_by_kernels and name not in refused and len(per_state) == 1:
+                (state, tasklets), = per_state.items()
+                found.setdefault(state, OrderedSet()).update(tasklets)
+        return found
+
+    def fills_from_scalars(self, sdfg: SDFG, state: SDFGState, scopes: dict, node: nodes.Node) -> bool:
+        """A top-level tasklet with one output whose every input is a scalar, or that has none."""
+        return (isinstance(node, nodes.Tasklet) and scopes[node] is None and state.out_degree(node) == 1 and all(
+            edge.data.is_empty() or (isinstance(edge.src, nodes.AccessNode) and self._is_scalar(edge.src.data, sdfg))
+            for edge in state.in_edges(node)))
 
     def offload_host_level_bodies(self, sdfg: SDFG) -> None:
         """Place again inside every nested SDFG that is still host code: each body is its own level.
