@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace import dtypes
+from dace import data, dtypes
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -125,6 +125,37 @@ def test_a_fill_inside_a_loop_stays_host_code():
     """A kernel there would launch once per iteration to replace one copy after the loop."""
     scopes = fill_scopes(offloaded(looped=True))
     assert scopes and all(scope is None for scope in scopes), scopes
+
+
+def ordering_edge_after_a_kernel() -> dace.SDFG:
+    """A kernel writes ``A``; an empty memlet orders the read of scalar ``s`` by a second kernel after it.
+
+    CloudSC's ``zpsupsatsrce`` orders some thirty reads this way, ``ptsphy`` among them.
+    """
+    sdfg = dace.SDFG('ordering_edge_after_a_kernel')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_scalar('s', dace.float64)
+    state = sdfg.add_state('ordered')
+    _, _, exit_a = state.add_mapped_tasklet('write_a', {'i': f'0:{N}'}, {},
+                                            'o = 1.0', {'o': dace.Memlet('A[i]')},
+                                            external_edges=True)
+    written = state.out_edges(exit_a)[0].dst
+    _, entry_b, _ = state.add_mapped_tasklet('scale_b', {'i': f'0:{N}'}, {'inp': dace.Memlet('s[0]')},
+                                             'o = inp * 2.0', {'o': dace.Memlet('B[i]')},
+                                             external_edges=True)
+    state.add_nedge(written, state.in_edges(entry_b)[0].src, dace.Memlet())
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_ordering_edge_does_not_make_a_scalar_device_written():
+    """A scalar no kernel writes stays a by-value scalar: a device copy of it would be copied in mid-run."""
+    sdfg = ordering_edge_after_a_kernel()
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert isinstance(sdfg.arrays['s'], data.Scalar), sdfg.arrays['s']
+    assert not [name for name in sdfg.arrays if name != 's' and name.endswith('_s')], list(sdfg.arrays)
 
 
 @pytest.mark.gpu

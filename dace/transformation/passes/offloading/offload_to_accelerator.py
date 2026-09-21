@@ -467,7 +467,8 @@ class OffloadToAccelerator(ppl.Pass):
                     through_the_exit |= self.get_data_used_by_outgoing_access_nodes(sdfg,
                                                                                     state,
                                                                                     node,
-                                                                                    include_scalars=True)
+                                                                                    include_scalars=True,
+                                                                                    ordering=False)
                 if not isinstance(node, nodes.AccessNode) or node.data not in sdfg.arrays:
                     continue
                 kernel = self.enclosing_kernel(scopes, node)
@@ -1010,9 +1011,6 @@ class OffloadToAccelerator(ppl.Pass):
     def has_GPU_schedule(self, node):
         return self.get_schedule(node) in dtypes.GPU_SCHEDULES
 
-    def get_children(self, state, node):
-        return OrderedSet(e.dst for e in state.out_edges(node))
-
     def get_predecessors(self, state, node):
         return OrderedSet(e.src for e in state.in_edges(node))
 
@@ -1062,7 +1060,14 @@ class OffloadToAccelerator(ppl.Pass):
                                                sdfg: SDFG,
                                                state: SDFGState,
                                                node: nodes.Node,
-                                               include_scalars: bool = False) -> OrderedSet[str]:
+                                               include_scalars: bool = False,
+                                               ordering: bool = True) -> OrderedSet[str]:
+        """Data of the access nodes downstream of ``node``; ``ordering`` follows empty memlets too.
+
+        Placement follows them, and relies on it (tsvc_2_5 ``reduce_inner_carry`` keeps its taskloop's
+        output on the device that way). A write analysis must not: an empty memlet only orders, so the
+        scalars CloudSC orders after ``zpsupsatsrce`` are not written by the kernel before them.
+        """
 
         def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]):
             # the visited set is necessary for edge cases, e.g. an access node A whose successor B is a view node
@@ -1089,9 +1094,9 @@ class OffloadToAccelerator(ppl.Pass):
                     arrays.add(data_name)
 
             # check if more access nodes DOWNstream
-            for n in self.get_children(state, node):
-                if isinstance(n, nodes.AccessNode):
-                    arrays |= recursion(n, visited_set)
+            for edge in state.out_edges(node):
+                if isinstance(edge.dst, nodes.AccessNode) and (ordering or not edge.data.is_empty()):
+                    arrays |= recursion(edge.dst, visited_set)
 
             return arrays
 
