@@ -905,6 +905,13 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
                 history.append(get_outer_subset(out_edge))
             if any(sbs.intersects(incoming, prior) is not False for prior in history):
                 continue
+            # The dropped write's node may order a later scope that itself writes the kept node;
+            # moving that ordering onto the kept node would close a cycle, and dropping it would
+            # lose a happens-before. Keep both writes apart instead.
+            if any(
+                    nx.has_path(state._nx, oe.dst, out_edge.dst) for oe in state.out_edges(edge_to_remove.dst)
+                    if oe.data.is_empty()):
+                continue
             history.append(incoming)
 
         remove_outer_connector(conn_to_remove)

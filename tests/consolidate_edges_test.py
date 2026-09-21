@@ -2,6 +2,7 @@
 
 from typing import Tuple
 import dace
+import networkx as nx
 import numpy as np
 from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
@@ -114,6 +115,71 @@ def test_consolidate_edges_merges_disjoint_writes():
     sdfg(B=res)
     assert np.array_equal(res[0:4], np.ones(4))
     assert np.array_equal(res[6:10], np.full(4, 2.0))
+
+
+def _make_reanchor_cycle_sdfg() -> Tuple[dace.SDFG, dace.SDFGState]:
+    # Map1 folds two disjoint writes to B into one connector. The stranded write target
+    # ('stranded') still carries a happens-before edge into Map2's entry (a WAW guard: whatever
+    # Map1's second write touched must finish before Map2 starts). Map2's own exit writes the
+    # SAME array into the node Map1's fold keeps ('kept') -- exactly the CloudSC shape where a
+    # zero-fill map's write and a later map's write land on one shared access node.
+    sdfg = dace.SDFG(utility.unique_name('reanchor_cycle'))
+    sdfg.add_array('B', [10], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+
+    me1, mx1 = state.add_map('fold', dict(__i='0:1'))
+    t1 = state.add_tasklet('t1', {}, {'out': None}, '\n'.join(f'out[{k}] = 1.0' for k in range(4)))
+    t2 = state.add_tasklet('t2', {}, {'out': None}, '\n'.join(f'out[{k}] = 2.0' for k in range(2)))
+    state.add_nedge(me1, t1, dace.Memlet())
+    state.add_nedge(me1, t2, dace.Memlet())
+    mx1.add_scope_connectors('1')
+    mx1.add_scope_connectors('2')
+    state.add_edge(t1, 'out', mx1, 'IN_1', dace.Memlet('B[0:4]'))
+    state.add_edge(t2, 'out', mx1, 'IN_2', dace.Memlet('B[4:6]'))
+    kept = state.add_access('B')
+    stranded = state.add_access('B')
+    state.add_edge(mx1, 'OUT_1', kept, None, dace.Memlet('B[0:4]'))
+    state.add_edge(mx1, 'OUT_2', stranded, None, dace.Memlet('B[4:6]'))
+
+    me2, mx2 = state.add_map('m2', dict(__j='0:1'))
+    state.add_nedge(stranded, me2, dace.Memlet())  # the WAW guard that must not become cyclic
+    t3 = state.add_tasklet('t3', {}, {'out': None}, '\n'.join(f'out[{k}] = 3.0' for k in range(4)))
+    state.add_nedge(me2, t3, dace.Memlet())
+    mx2.add_scope_connectors('3')
+    state.add_edge(t3, 'out', mx2, 'IN_3', dace.Memlet('B[6:10]'))
+    state.add_edge(mx2, 'OUT_3', kept, None, dace.Memlet('B[6:10]'))
+
+    sdfg.validate()
+    return sdfg, state
+
+
+def test_consolidate_edges_never_reanchors_ordering_into_a_cycle():
+    """A folded write's stranded ordering edge must not be reanchored onto a node the same
+    fold's scope later writes -- doing so closes MapEntry -> ... -> MapExit -> node -> MapEntry.
+
+    Regression for the CloudSC offload/vectorize crash (2026-09-21): ConsolidateEdges, run
+    inside SimplifyPass as part of canonicalization/vectorization, left a state cyclic; a much
+    LATER pass's own ``sdfg.validate()`` call (SplitTasklets, or SimplifyPass's own trailing
+    validate) then raised ``InvalidSDFGError: State should be acyclic but contains cycles`` --
+    far from ``reanchor_stranded_ordering`` (dace/sdfg/utils.py), the call that actually broke
+    the graph.
+    """
+    sdfg, state = _make_reanchor_cycle_sdfg()
+
+    ref = np.zeros(10)
+    sdfg(B=ref)
+
+    consolidate_edges(sdfg, propagate=False)
+    sdfg.validate()  # must not raise "State should be acyclic but contains cycles"
+    # ... nor drop the happens-before: map 2 still starts after everything map 1 wrote.
+    fold_exit = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapExit) and n.map.label == 'fold')
+    m2_entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and n.map.label == 'm2')
+    assert nx.has_path(state._nx, fold_exit, m2_entry), 'the fold dropped the ordering into the second map'
+
+    got = np.zeros(10)
+    sdfg(B=got)
+    assert np.array_equal(ref, got)
+    assert np.array_equal(got, np.array([1, 1, 1, 1, 2, 2, 3, 3, 3, 3], dtype=np.float64))
 
 
 def _make_sdfg_multi_usage_input(
