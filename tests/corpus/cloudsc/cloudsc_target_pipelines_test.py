@@ -77,14 +77,6 @@ SPECIES_CONSTANTS = {'nclv': 5, 'ncldql': 1, 'ncldqi': 2, 'ncldqr': 3, 'ncldqs':
 #: ``zvqx`` species inside the column loop, so left symbolic they keep 6 column loops sequential.
 CONFIG_FLAGS = {name: int(CLOUDSC_CONSTANTS[name]) for name in ('yrecldp_nssopt', 'yrecldp_laericesed')}
 
-#: The two device legs are parked. Both start from a ``canonicalize`` run, and on this dwarf that
-#: run neither fits a CI budget nor currently produces a valid graph (the CPU leg fails validation
-#: inside the pipeline after ~3.5h). Device coverage for CloudSC lives in
-#: ``cloudsc_loop2map_fuse_test.py``, which reaches fusible maps by a short recipe instead. Drop this
-#: marker when canonicalize is inside its budget and valid again.
-CANON_GPU_PARKED = pytest.mark.skip(reason='CloudSC canonicalize is over budget and invalid; device '
-                                    'coverage is in cloudsc_loop2map_fuse_test.py')
-
 #: Tolerance for every leg here, taken from the ``parallel`` arm of ``cloudsc_canonicalize_test``
 #: (``_ARMS['parallel']``): each leg runs its maps in parallel -- OpenMP on the host, one thread per
 #: element on the device -- so the reductions and WCR accumulations fold in a different order than
@@ -253,7 +245,6 @@ def test_vectorize_on_canonical_cpu_is_numerically_correct(reference_bundle, can
     assert_matches(out, reference_out, 'vectorize/cpu')
 
 
-@CANON_GPU_PARKED
 @pytest.mark.gpu
 @pytest.mark.integration
 def test_canonicalize_gpu_is_numerically_correct(reference_bundle, canonical_gpu_file):
@@ -274,7 +265,6 @@ def test_canonicalize_gpu_is_numerically_correct(reference_bundle, canonical_gpu
     assert_matches(out, reference_out, 'canonicalize/gpu')
 
 
-@CANON_GPU_PARKED
 @pytest.mark.gpu
 @pytest.mark.integration
 def test_gpu_offload_of_canonical_cpu_is_numerically_correct(reference_bundle, canonical_cpu_file):
