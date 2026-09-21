@@ -535,7 +535,7 @@ def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> 
             ("_out = (-_in1) + _in2", zrainacc, d1_access_str, zsolqa4, zsolqa_access_str_rev, zsolqa5,
              zsolqa_access_str_rev),
         ]):
-            t1 = state.add_tasklet("t1", {"_in1", "_in2"}, {"_out"}, tasklet_code)
+            t1 = state.add_tasklet("t1", ["_in1", "_in2"], ["_out"], tasklet_code)
             state.add_edge(in1, None, t1, "_in1", dace.memlet.Memlet(f"{in1.data}[{instr1}]"))
             state.add_edge(in2, None, t1, "_in2", dace.memlet.Memlet(f"{in2.data}[{instr2}]"))
             state.add_edge(t1, "_out", out, None, dace.memlet.Memlet(f"{out.data}[{outstr}]"))
@@ -629,7 +629,7 @@ def _get_disjoint_chain_sdfg_two() -> dace.SDFG:
             ("_out = (-_in1) + _in2", zrainacc, d1_access_str, zsolqa4, zsolqa_access_str_rev, zsolqa5,
              zsolqa_access_str_rev),
         ]):
-            t1 = state.add_tasklet("t1", {"_in1", "_in2"}, {"_out"}, tasklet_code)
+            t1 = state.add_tasklet("t1", ["_in1", "_in2"], ["_out"], tasklet_code)
             state.add_edge(in1, None, t1, "_in1", dace.memlet.Memlet(f"{in1.data}[{instr1}]"))
             state.add_edge(in2, None, t1, "_in2", dace.memlet.Memlet(f"{in2.data}[{instr2}]"))
             state.add_edge(t1, "_out", out, None, dace.memlet.Memlet(f"{out.data}[{outstr}]"))
@@ -638,7 +638,7 @@ def _get_disjoint_chain_sdfg_two() -> dace.SDFG:
 
     z1 = sd1_s2.add_access("zrainacc")
     z2 = sd1_s2.add_access("zrainacc")
-    t1 = sd1_s2.add_tasklet("increment", {"_in"}, {"_out"}, "_out = _in + 1")
+    t1 = sd1_s2.add_tasklet("increment", ["_in"], ["_out"], "_out = _in + 1")
     sd1_s2.add_edge(z1, None, t1, "_in", dace.memlet.Memlet("zrainacc[_for_it_52]"))
     sd1_s2.add_edge(t1, "_out", z2, None, dace.memlet.Memlet("zrainacc[_for_it_52]"))
     sd1.validate()
@@ -769,7 +769,7 @@ def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: boo
             access_nodes[in2_arr] = in2_an
         access_nodes[out_arr] = out_an
 
-        t = inner_state.add_tasklet("t_" + out_arr, {"_in1", "_in2"} if in2_arr is not None else {"_in1"}, {"_out"},
+        t = inner_state.add_tasklet("t_" + out_arr, ["_in1", "_in2"] if in2_arr is not None else ["_in1"], ["_out"],
                                     tasklet_code)
         access_str1 = f"{in1_arr}[{in1_subset}]" if in1_subset != "0" else in1_arr
         if in2_arr is not None:
@@ -785,7 +785,7 @@ def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: boo
     in_args = in_arrays.union({"ptsphy"})
     if add_scalar:
         in_args.add("ralvdcp")
-    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, in_args, out_arrays, inner_symbol_mapping)
+    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, sorted(in_args), sorted(out_arrays), inner_symbol_mapping)
 
     m1_entry, m1_exit = outer_state.add_map(name="m1", ndrange={"j": "0:klev:1"})
     m2_entry, m2_exit = outer_state.add_map(name="m2", ndrange={"i": "kidia-1:kfdia:1"})
@@ -926,7 +926,7 @@ def _get_cloudsc_snippet_four():
             access_nodes[in2_arr] = in2_an
         access_nodes[out_arr] = out_an
 
-        t = inner_state.add_tasklet("t_" + out_arr, {"_in1", "_in2"} if in2_arr is not None else {"_in1"}, {"_out"},
+        t = inner_state.add_tasklet("t_" + out_arr, ["_in1", "_in2"] if in2_arr is not None else ["_in1"], ["_out"],
                                     tasklet_code)
         access_str1 = f"{in1_arr}[{in1_subset}]" if in1_subset != "0" else in1_arr
         if in2_arr is not None:
@@ -940,7 +940,7 @@ def _get_cloudsc_snippet_four():
 
     inner_symbol_mapping = {sym: sym for sym in symbols}
     in_args = in_arrays
-    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, in_args, out_arrays, inner_symbol_mapping)
+    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, sorted(in_args), sorted(out_arrays), inner_symbol_mapping)
 
     m1_entry, m1_exit = outer_state.add_map(name="m1", ndrange={"_for_it_93": "kidia-1:kfdia:1"})
 
@@ -1022,13 +1022,13 @@ def _get_map_inside_nested_map():
 
     inner_symbol_mapping = {sym: sym for sym in symbols}
     in_args = in_scalars
-    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, in_args, out_arrays, inner_symbol_mapping)
+    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, sorted(in_args), sorted(out_arrays), inner_symbol_mapping)
 
     m1_entry, m1_exit = outer_state.add_map(name="m1", ndrange={"i": "0:5:1"})
 
     inner_sdfg.validate()
 
-    t2 = inner_state.add_tasklet("t2", set(), {"_out"}, "_out = 1")
+    t2 = inner_state.add_tasklet("t2", set(), ["_out"], "_out = 1")
     inner_state.add_edge(t2, "_out", inner_state.add_access("int_array2"), None,
                          dace.memlet.Memlet("int_array2[1,1,1]"))
 
@@ -1072,8 +1072,8 @@ def _get_dependency_edge_to_unary_symbol_sdfg():
     an2_dst = inner_state.add_access("int_array2")
     an_tmp = inner_state.add_access("tmp0")
     inner_state.sdfg.add_scalar("tmp0", dace.int64, dace.dtypes.StorageType.Register, True)
-    t1 = inner_state.add_tasklet("t1", set(), {"_out"}, "_out = i + 1")
-    t2 = inner_state.add_tasklet("t2", {"_in1", "_in2"}, {"_out"}, "_out = _in1 > _in2")
+    t1 = inner_state.add_tasklet("t1", set(), ["_out"], "_out = i + 1")
+    t2 = inner_state.add_tasklet("t2", ["_in1", "_in2"], ["_out"], "_out = _in1 > _in2")
 
     inner_state.add_edge(an1_src, None, t1, None, dace.memlet.Memlet(None))
     inner_state.add_edge(t1, "_out", an_tmp, None, dace.memlet.Memlet("tmp0"))
@@ -1095,7 +1095,7 @@ def _get_dependency_edge_to_unary_symbol_sdfg():
 
     inner_symbol_mapping = {sym: sym for sym in symbols}
     in_args = in_arrays.union(in_scalars)
-    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, in_args, out_arrays, inner_symbol_mapping)
+    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, sorted(in_args), sorted(out_arrays), inner_symbol_mapping)
 
     m1_entry, m1_exit = outer_state.add_map(name="m1", ndrange={"i": "0:klon:1"})
 
@@ -1178,9 +1178,9 @@ def _get_unstructured_access_cloudsc_sdfg(layout: str = "C") -> dace.SDFG:
     zrr = state_inner2.add_access("zrr")
     zmm = state_inner2.add_access("zmm")
 
-    t1 = state_inner2.add_tasklet("t1", {"_in1"}, {"_out"}, "_out = max(1e-14, _in1)")
-    t2 = state_inner2.add_tasklet("t2", {"_in1", "_in2"}, {"_out"}, "_out = max(_in1, _in2)")
-    t3 = state_inner2.add_tasklet("t3", {"_in1", "_in2"}, {"_out"}, "_out = _in1 / _in2")
+    t1 = state_inner2.add_tasklet("t1", ["_in1"], ["_out"], "_out = max(1e-14, _in1)")
+    t2 = state_inner2.add_tasklet("t2", ["_in1", "_in2"], ["_out"], "_out = max(_in1, _in2)")
+    t3 = state_inner2.add_tasklet("t3", ["_in1", "_in2"], ["_out"], "_out = _in1 / _in2")
 
     if layout == "Fortran":
         state_inner2.add_edge(zqx, None, t1, "_in1", dace.memlet.Memlet("zqx[_for_it_88, 0, jo - 1]"))
