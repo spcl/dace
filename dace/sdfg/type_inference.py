@@ -133,6 +133,41 @@ def infer_expr_type(code, symbols=None):
         raise TypeError("Expected expression, got: {}".format(type(code)))
 
 
+def _range_bound_type(bound, symbols) -> dtypes.typeclass:
+    """The dtype a single range bound contributes; see :func:`infer_iteration_symbol_type`."""
+    try:
+        expr = symbolic.pystr_to_symbolic(bound)
+    except Exception:
+        expr = None
+    # sympy.Integer holds exactly the untyped integer literals: a TypedConstant declares its own
+    # dtype and is not one, and neither is a SymExpr or any expression naming a symbol.
+    if isinstance(expr, sympy.Integer):
+        info = np.iinfo(symbolic.DEFAULT_SYMBOL_TYPE.type)
+        if info.min <= int(expr) <= info.max:
+            return symbolic.DEFAULT_SYMBOL_TYPE
+    return infer_expr_type(bound, symbols)
+
+
+def infer_iteration_symbol_type(*bounds, symbols=None) -> dtypes.typeclass:
+    """
+    Return the dtype to declare an iteration symbol (map parameter, loop variable, PE index) with,
+    given the bounds of the range it iterates over.
+
+    A bare integer literal carries no width of its own, so it only promotes the result when it does
+    not fit in :data:`~dace.symbolic.DEFAULT_SYMBOL_TYPE`. Inferring each bound in isolation instead
+    maps a Python ``int`` to 64 bits, which declares ``0:N`` 64-bit on account of the literal alone
+    and leaves the declaration disagreeing with every symbol instance the IR builds for that name.
+
+    :param bounds: Range bounds, as strings or symbolic expressions; ``None`` bounds are skipped.
+    :param symbols: Already-declared symbols, as a mapping from name to dtype.
+    :return: The dtype to declare the iteration symbol with.
+    """
+    inferred = [_range_bound_type(b, symbols or {}) for b in bounds if b is not None]
+    if not inferred:
+        return symbolic.DEFAULT_SYMBOL_TYPE
+    return dtypes.result_type_of(inferred[0], *inferred)
+
+
 def _dispatch(tree, symbols, inferred_symbols):
     """Dispatcher function, dispatching tree type T to method _T."""
     try:
