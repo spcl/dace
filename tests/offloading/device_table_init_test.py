@@ -127,6 +127,11 @@ def test_a_fill_inside_a_loop_stays_host_code():
     assert scopes and all(scope is None for scope in scopes), scopes
 
 
+def test_a_table_the_device_only_reads_is_not_copied_back():
+    """The host copy is still current, so a device-to-host copy of it before the host read is dead traffic."""
+    assert table_copies(offloaded('tasklet', looped=True)) == [('table', 'table_gpu')]
+
+
 def ordering_edge_after_a_kernel() -> dace.SDFG:
     """A kernel writes ``A``; an empty memlet orders the read of scalar ``s`` by a second kernel after it.
 

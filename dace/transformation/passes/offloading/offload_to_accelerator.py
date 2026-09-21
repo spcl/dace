@@ -1923,6 +1923,13 @@ class OffloadToAccelerator(ppl.Pass):
         placed: dict[tuple[Any, str], dict[str, set[bool]]] = {}
 
         def place_copy(before, after, array_names, to_gpu: bool):
+            # Copying back to the HOST is about device-side modifications, the mirror of the rule in
+            # ``insert_copies``: a host-born name whose device copy nothing writes still holds its value
+            # on the host (CloudSC's ``iphase_gpu -> iphase`` after the kernels that only read it).
+            if not to_gpu:
+                array_names = OrderedSet(
+                    name for name in array_names
+                    if self.is_array_stored_on_GPU(sdfg, name) or self._get_gpu_name(name) in written)
             point = (after, 'before') if after is not None else (before, 'after')
             directions = placed.setdefault(point, {})
             fresh = OrderedSet(name for name in array_names if directions.get(name) != {to_gpu})
