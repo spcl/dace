@@ -2568,9 +2568,11 @@ def sympy_divide_fix(expr):
                     break
             else:
                 continue
-            nexpr = nexpr.subs(
-                candidate,
-                int_floor(sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1:])), int(1 / candidate.args[ri])))
+            rest = sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1:]))
+            # Only an integer quotient is a floor division: ``x / 2`` over a double ``x`` is a half.
+            if not integral_index_expression(rest):
+                continue
+            nexpr = nexpr.subs(candidate, int_floor(rest, int(1 / candidate.args[ri])))
             processed += 1
 
     return nexpr
@@ -3980,18 +3982,22 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return '((int64_t)%s)' % rounded
 
     def _print_Rational(self, expr):
-        """A sympy ``Rational`` in C++.
+        """A sympy ``Rational``, which is a real number: an integer division is ``int_floor``.
 
-        Emitted as a floating quotient when the caller named the surrounding floating type, and
-        left as the integer fraction otherwise -- see ``fp_ctype``. The cast is written on BOTH
-        operands rather than on the result: casting the result would divide first and truncate
+        Text divides by its operands' types, so a bare ``1/2`` reads back as integer division, 0 --
+        ``sqrt(x)`` round-tripped through an interstate edge as ``x ** (1/2)``, i.e. ``pow(x, 0)``.
+        Printed as a floating quotient instead: of ``fp_ctype`` when the caller named it, since a
+        double literal would widen an fp32 kernel, and of double otherwise. The cast is written on
+        BOTH operands rather than on the result: casting the result would divide first and truncate
         before the conversion ever happened.
         """
-        if not self.cpp_mode or self.fp_ctype is None:
-            return super()._print_Rational(expr)
+        if self.cpp_mode and self.fp_ctype is not None:
+            if expr.q == 1:
+                return self._fp_literal(expr.p)
+            return '(%s / %s)' % (self._fp_literal(expr.p), self._fp_literal(expr.q))
         if expr.q == 1:
-            return self._fp_literal(expr.p)
-        return '(%s / %s)' % (self._fp_literal(expr.p), self._fp_literal(expr.q))
+            return super()._print_Rational(expr)
+        return '(%d.0 / %d)' % (expr.p, expr.q)
 
     def _fp_literal(self, value) -> str:
         """``value`` converted to ``fp_ctype``: a functional cast in C++, a cast expression in C."""
@@ -4225,6 +4231,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             res = "({})".format(base)
             for _ in range(1, int_exp):
                 res += " * ({})".format(base)
+            if int_exp > 1:
+                # The product is ONE operand: bare, ``x / N**2`` prints as ``x/(N) * (N)``, which is ``x``.
+                res = "({})".format(res)
 
             if negative:
                 lowered = self._mpr_call('reciprocal', [res])
