@@ -182,10 +182,32 @@ def has_wcr_in_edge(state: SDFGState, anode: nd.AccessNode) -> bool:
     A WCR edge accumulates INTO its destination, so the destination's prior value is read even with no
     outgoing edge. Degree alone would call such a node write-only and let liveness drop a live accumulator.
     A ``Reduce`` with no identity is the same write before expansion: it folds into the output's value.
+    The resolution can also sit inside a ``NestedSDFG`` the write comes out of -- LoopToMap outlines a
+    reduction loop's body, leaving ``CR: Sum`` on the inner edge and none on the MapExit path.
     """
     from dace.libraries.standard.nodes.reduce import Reduce
-    return any((e.data is not None and e.data.wcr is not None) or (isinstance(e.src, Reduce) and e.src.identity is None)
-               for e in state.in_edges(anode))
+    for edge in state.in_edges(anode):
+        if edge.data is not None and edge.data.wcr is not None:
+            return True
+        if isinstance(edge.src, Reduce) and edge.src.identity is None:
+            return True
+        if isinstance(edge.src, (nd.ExitNode, nd.NestedSDFG)) and any(
+                resolved_at_leaf(leaf) for leaf in state.memlet_tree(edge).leaves()):
+            return True
+    return False
+
+
+def resolved_at_leaf(leaf: Edge[Memlet]) -> bool:
+    """Whether the innermost edge of a write's memlet path resolves conflicts, on itself or in the NestedSDFG it leaves."""
+    if leaf.data.wcr is not None:
+        return True
+    return isinstance(leaf.src, nd.NestedSDFG) and accumulates_into(leaf.src.sdfg, leaf.src_conn)
+
+
+def accumulates_into(sdfg: SDFG, name: str) -> bool:
+    """Whether some write to ``name`` anywhere in ``sdfg`` is conflict-resolved (see :func:`has_wcr_in_edge`)."""
+    return any(node.data == name and has_wcr_in_edge(state, node) for state in sdfg.all_states()
+               for node in state.data_nodes())
 
 
 @properties.make_properties
