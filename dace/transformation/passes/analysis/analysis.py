@@ -610,6 +610,76 @@ def dominated_through_region(block: ControlFlowBlock, other: ControlFlowBlock,
     return False
 
 
+class StateFlow:
+    """State-level control flow of one SDFG, flattened across regions, for kill-aware reachability.
+
+    Every block gets an entry and an exit node, a loop also a latch (its back edge and its exit), so a
+    path is a sequence of executed states. Break, continue and return follow their real edges.
+    """
+
+    def __init__(self, sdfg: SDFG) -> None:
+        self.succ: Dict[Tuple[str, int], List[Tuple[str, int]]] = defaultdict(list)
+        self.states: Dict[int, SDFGState] = {}
+        self.add_region(sdfg)
+
+    def link(self, src: Tuple[str, ControlFlowBlock], dst: Tuple[str, ControlFlowBlock]) -> None:
+        self.succ[(src[0], id(src[1]))].append((dst[0], id(dst[1])))
+
+    def add_region(self, region: ControlFlowRegion) -> None:
+        if region.number_of_nodes() == 0:
+            self.link(('in', region), ('out', region))
+        else:
+            self.link(('in', region), ('in', region.start_block))
+        exit_node = ('latch', region) if isinstance(region, LoopRegion) else ('out', region)
+        if isinstance(region, LoopRegion):
+            self.link(('in', region), ('out', region))
+            self.link(('latch', region), ('in', region.start_block))
+            self.link(('latch', region), ('out', region))
+        for edge in region.edges():
+            self.link(('out', edge.src), ('in', edge.dst))
+        for block in region.nodes():
+            if region.out_degree(block) == 0:
+                self.link(('out', block), exit_node)
+            self.add_block(block)
+
+    def add_block(self, block: ControlFlowBlock) -> None:
+        if isinstance(block, SDFGState):
+            self.states[id(block)] = block
+            self.link(('in', block), ('out', block))
+        elif isinstance(block, ConditionalBlock):
+            for condition, branch in block.branches:
+                self.link(('in', block), ('in', branch))
+                self.link(('out', branch), ('out', block))
+                self.add_region(branch)
+            if all(condition is not None for condition, _ in block.branches):
+                self.link(('in', block), ('out', block))
+        elif isinstance(block, (BreakBlock, ContinueBlock)):
+            loop = block.parent_graph
+            while loop is not None and not isinstance(loop, LoopRegion):
+                loop = loop.parent_graph
+            if loop is not None:
+                self.link(('in', block), ('out', loop) if isinstance(block, BreakBlock) else ('latch', loop))
+        elif isinstance(block, ControlFlowRegion):
+            self.add_region(block)
+
+    def reaches_avoiding(self, src: SDFGState, dst: SDFGState, kill: SDFGState) -> bool:
+        """Whether ``dst`` can start executing after ``src`` on a path that never runs ``kill``."""
+        target, blocked = ('in', id(dst)), ('in', id(kill))
+        seen = {('out', id(src))}
+        work = deque(seen)
+        while work:
+            node = work.popleft()
+            if node == target:
+                return True
+            if node == blocked:
+                continue
+            for nxt in self.succ.get(node, ()):
+                if nxt not in seen:
+                    seen.add(nxt)
+                    work.append(nxt)
+        return False
+
+
 def diverting_exit_inside(region: AbstractControlFlowRegion) -> bool:
     """Whether ``region`` contains a ``break`` / ``continue`` / ``return`` block.
 
@@ -867,6 +937,34 @@ class ScalarWriteShadowScopes(ppl.Pass):
 
         return None
 
+    def _sees_value_of(self, desc: str, flow: StateFlow, write_state: ControlFlowBlock,
+                       other_write: Optional[Tuple[ControlFlowBlock, nd.AccessNode]], access: Tuple[ControlFlowBlock,
+                                                                                                    Any],
+                       reach_cache: Dict[Tuple[int, str], Dict[nd.AccessNode, Set[nd.Node]]]) -> bool:
+        """Whether ``access``, in the scope of ``other_write``, can observe the value written in ``write_state``.
+
+        Reachability alone is too coarse inside an enclosing loop: its back edge reaches everything, so
+        two sibling loops that each write a temporary before reading it looked like one carried chain.
+        A value only arrives along a path that does not run ``other_write`` first. Anything this cannot
+        decide at state granularity, or an undominated scope with no write to kill it, keeps the old
+        answer: merge.
+        """
+        if other_write is None:
+            return True
+        kill_state, kill_node = other_write
+        access_state, access_node = access
+        if not all(isinstance(b, SDFGState) for b in (write_state, kill_state, access_state)):
+            return True
+        if write_state is kill_state:
+            return True
+        if not flow.reaches_avoiding(write_state, access_state, kill_state):
+            return False
+        if access_state is not kill_state:
+            return True
+        if not isinstance(access_node, nd.AccessNode) or access_node is kill_node:
+            return False
+        return not self._reaches(kill_state, kill_node, access_node, self._reach_memo(kill_state, desc, reach_cache))
+
     def apply_pass(self, top_sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[int, WriteScopeDict]:
         """
         :return: A dictionary mapping each data descriptor name to a dictionary, where writes to that data descriptor
@@ -910,6 +1008,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
             must_write_cache: Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]] = {}
             # Same span, same argument: nothing below mutates the graph.
             reach_cache: Dict[Tuple[int, str], Dict[nd.AccessNode, Set[nd.Node]]] = {}
+            # Built on the first merge candidate: most SDFGs never need it.
+            flow: Optional[StateFlow] = None
 
             # ``(cfg_id, block_id)`` of a state, from per-region index maps: both properties are linear scans.
             state_positions = StatePositions(sdfg)
@@ -1003,7 +1103,12 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         if other_write is None or dominated_through_region(other_write[0], write_state, dominators):
                             noa = len(other_accesses)
                             if noa > 0 and (noa > 1 or list(other_accesses)[0] != other_write):
-                                if any([a_state in reach for a_state, _ in other_accesses]):
+                                reached = [access for access in other_accesses if access[0] in reach]
+                                if reached:
+                                    flow = flow or StateFlow(sdfg)
+                                if any(
+                                        self._sees_value_of(desc, flow, write_state, other_write, access, reach_cache)
+                                        for access in reached):
                                     other_accesses.update(accesses)
                                     other_accesses.add(write)
                                     to_remove.add(write)
