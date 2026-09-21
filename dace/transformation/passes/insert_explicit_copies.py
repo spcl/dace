@@ -406,6 +406,9 @@ class InsertExplicitCopies(ppl.Pass):
             inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
         else:
             inner_subset = copy.deepcopy(inner_subset)
+        # One container over one subset on both sides of the scope is the same memory: nothing moves.
+        if outer.data == inner_node.data and inner_subset == outer_subset:
+            return None
         key = order.copy_key(edge)
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
         label = (f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}")

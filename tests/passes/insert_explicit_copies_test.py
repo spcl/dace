@@ -1261,3 +1261,32 @@ def test_lifted_copy_inherits_the_state_instrumentation():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_a_stage_in_of_a_container_into_itself_is_not_a_copy():
+    """``s -> MapEntry -> s`` names ONE container on both sides of the scope: nothing moves. Lifting it
+    anyway emitted ``s = s;`` inside the kernel, which fails to compile once ``s`` is a ``const`` kernel
+    argument (CloudSC's hoisted ``nested_sdfg_neg_zrg_r_*`` under VectorizeGPU)."""
+    sdfg = dace.SDFG("stage_in_same_container")
+    sdfg.add_array("B", [_N_STAGE], dace.float64, storage=_CPU)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state("s")
+    init = state.add_tasklet("init", {}, {"_out"}, "_out = 3.0")
+    outer = state.add_access("s")
+    state.add_edge(init, "_out", outer, None, Memlet("s[0]"))
+    me, mx = state.add_map("m", {"i": f"0:{_N_STAGE}"})
+    inner = state.add_access("s")
+    state.add_memlet_path(outer, me, inner, memlet=Memlet("s[0]"))
+    t = state.add_tasklet("use", {"_in"}, {"_out"}, "_out = _in + i")
+    state.add_edge(inner, None, t, "_in", Memlet("s[0]"))
+    state.add_memlet_path(t, mx, state.add_write("B"), src_conn="_out", memlet=Memlet("B[i]"))
+    sdfg.validate()
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, [
+        n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode)
+    ]
+    B = np.zeros(_N_STAGE)
+    sdfg(B=B)
+    np.testing.assert_array_equal(B, 3.0 + np.arange(_N_STAGE))
