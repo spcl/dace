@@ -635,7 +635,12 @@ def no_conditional_interstate_assign_on_widened_data(sdfg: SDFG, widths: tuple[i
 
 
 def lane_varying_interstate_guard(sdfg: SDFG, widths: tuple[int, ...]) -> tuple[ConditionalBlock, str] | None:
-    """No ``ConditionalBlock`` guarded by WIDENED data may assign a symbol on an interstate edge.
+    """No ``ConditionalBlock`` guarded by WIDENED data may survive branch lowering.
+
+    Whatever the arm holds, the guard stays scalar control flow over a ``(W,)`` buffer: a ``double[W]``
+    comparison does not compile (CloudSC's ``nssopt`` map once its flags are baked in), and a
+    ``bool[W]`` one decays to a never-null pointer, so every lane takes the branch. The case that
+    first bit is an interstate assignment in the arm, which branch lowering cannot predicate.
 
     The lane-varying analogue of :func:`no_strided_map_param_in_surviving_condition`. A symbol holds
     ONE value for the whole tile, so an assignment only some lanes reach cannot be represented.
@@ -657,16 +662,17 @@ def lane_varying_interstate_guard(sdfg: SDFG, widths: tuple[int, ...]) -> tuple[
             assigned = [
                 e for r in region.all_control_flow_regions(recursive=True) for e in r.edges() if e.data.assignments
             ]
-            if not assigned:
-                continue
             for name in condition.get_free_symbols():
                 desc = block.sdfg.arrays.get(name)
                 if desc is None or not desc.shape or desc.shape[-1] not in widths:
                     continue
                 keys = sorted(k for e in assigned for k in e.data.assignments)
+                if keys:
+                    return block, (f"{block.sdfg.name}.{block.label}: conditional on widened ``{name}`` "
+                                   f"{desc.shape} assigns {keys} on an interstate edge -- one symbol cannot "
+                                   f"hold a per-lane value, so the guard runs for every lane")
                 return block, (f"{block.sdfg.name}.{block.label}: conditional on widened ``{name}`` "
-                               f"{desc.shape} assigns {keys} on an interstate edge -- one symbol cannot "
-                               f"hold a per-lane value, so the guard runs for every lane")
+                               f"{desc.shape} survived branch lowering -- a scalar guard over a lane buffer")
     return None
 
 

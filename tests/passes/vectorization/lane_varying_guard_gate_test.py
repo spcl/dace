@@ -37,7 +37,7 @@ from tests.corpus.npbench import npbench
 WIDTHS = (8, )
 
 
-def guarded_assign_sdfg(guard_shape) -> dace.SDFG:
+def guarded_assign_sdfg(guard_shape, assign: bool = True) -> dace.SDFG:
     """``if guard: k = 1`` where ``guard`` has ``guard_shape`` -- the shape decides lane-varying."""
     sdfg = dace.SDFG(f'guarded_assign_{len(guard_shape)}d')
     sdfg.add_array('guard', guard_shape, dace.bool_, transient=True)
@@ -50,7 +50,7 @@ def guarded_assign_sdfg(guard_shape) -> dace.SDFG:
     branch = dace.sdfg.state.ControlFlowRegion('if_body', sdfg=sdfg)
     cond_block.add_branch(CodeBlock('guard'), branch)
     branch.add_edge(branch.add_state('b0', is_start_block=True), branch.add_state('b1'),
-                    dace.InterstateEdge(assignments={'k': '1'}))
+                    dace.InterstateEdge(assignments={'k': '1'} if assign else {}))
     return sdfg
 
 
@@ -58,6 +58,13 @@ def test_invariant_flags_a_guard_over_a_widened_buffer():
     violation = no_conditional_interstate_assign_on_widened_data(guarded_assign_sdfg(WIDTHS), WIDTHS)
     assert violation is not None, "a bool[8] guard deciding an interstate assignment was not flagged"
     assert 'guard' in violation and 'k' in violation, violation
+
+
+def test_invariant_flags_any_guard_over_a_widened_buffer_that_survives_lowering():
+    """No assignment needed: the scalar ``if`` over a ``double[8]`` does not compile, over a
+    ``bool[8]`` it takes every lane."""
+    violation = no_conditional_interstate_assign_on_widened_data(guarded_assign_sdfg(WIDTHS, assign=False), WIDTHS)
+    assert violation is not None and 'survived branch lowering' in violation, violation
 
 
 def test_invariant_accepts_a_scalar_guard():
