@@ -33,8 +33,9 @@ offload leg cannot be attributed to the vectorizer / the offload rather than to 
 Tolerances are NOT new. Both host legs and both device legs use the ``parallel`` arm bound of
 ``cloudsc_canonicalize_test`` (:data:`PARALLEL_TOL`): the graphs run their maps in parallel, so the
 reduction order differs from the sequential reference by construction. The device legs additionally
-build with :data:`~tests.corpus.cloudsc.pipelines.STRICT_FP_CUDA_ARGS`, so nvcc contracts nothing and
-approximates nothing -- the residual is device libm, not reassociation.
+build under :func:`~tests.corpus.cloudsc.pipelines.strict_fp_device_build` (nvcc or amdclang), so the
+device compiler contracts nothing and approximates nothing -- the residual is device libm, not
+reassociation.
 
 Cost: the ``simplify=False`` parse (cached on disk across runs) plus ONE ``canonicalize`` per target,
 both module-scoped, then one compile+run per leg. Slow -- run it with a raised ``--timeout``.
@@ -53,23 +54,28 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.config import set_temporary
 from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from tests.corpus.cloudsc.generate_data_for_cloudsc import IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (CLOUDSC_CONSTANTS, IEEE_CPU_ARGS, build_cloudsc_sdfg,
+                                                            compare_outputs)
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
-from tests.corpus.cloudsc.pipelines import (STRICT_FP_CUDA_ARGS, build_reference_outputs, generate_cuda_code,
-                                            gpu_is_runnable, is_device_scheduled, map_entries, omp_parallel_for_count,
-                                            run_candidate)
+from tests.corpus.cloudsc.pipelines import (build_reference_outputs, generate_cuda_code, gpu_is_runnable,
+                                            is_device_scheduled, map_entries, omp_parallel_for_count, run_candidate,
+                                            strict_fp_device_build)
 
 #: CloudSC species PARAMETER constants (Fortran NCLV=5, NCLDQL=1..NCLDQV=5), baked in so the
 #: species / LU loops become constant-trip. Same set the sibling canonicalize test specializes with;
 #: klev / klon / kidia / kfdia stay symbolic.
 SPECIES_CONSTANTS = {'nclv': 5, 'ncldql': 1, 'ncldqi': 2, 'ncldqr': 3, 'ncldqs': 4, 'ncldqv': 5}
+
+#: Run-time configuration flags, baked in at the values the reference inputs carry. The
+#: ``yrecldp_nssopt`` if/elif chain has no ``else`` and the ``yrecldp_laericesed`` branch writes one
+#: ``zvqx`` species inside the column loop, so left symbolic they keep 6 column loops sequential.
+CONFIG_FLAGS = {name: int(CLOUDSC_CONSTANTS[name]) for name in ('yrecldp_nssopt', 'yrecldp_laericesed')}
 
 #: The two device legs are parked. Both start from a ``canonicalize`` run, and on this dwarf that
 #: run neither fits a CI budget nor currently produces a valid graph (the CPU leg fails validation
@@ -108,7 +114,14 @@ def canonicalized(reference_file: str, target: str, out_path: str) -> str:
     sdfg = dace.SDFG.from_file(reference_file)
     # The loop transforms log every refused loop; keep the test output readable.
     with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull):
-        canonicalize(sdfg, validate=True, validate_all=False, target=target, specialize_constants=SPECIES_CONSTANTS)
+        canonicalize(sdfg,
+                     validate=True,
+                     validate_all=False,
+                     target=target,
+                     specialize_constants={
+                         **SPECIES_CONSTANTS,
+                         **CONFIG_FLAGS
+                     })
     sdfg.validate()
     sdfg.save(out_path, compress=True)
     del sdfg
@@ -131,23 +144,24 @@ def run_on_device(sdfg: dace.SDFG, inputs, tag: str):
     """Run an offloaded ``sdfg`` on the GPU under the same strict FP rules the host reference used,
     and return the outputs back on the host.
 
-    nvcc contracts to FMA and approximates division / sqrt by DEFAULT, which would build the device
-    leg under looser FP rules than the reference it is compared against -- :data:`STRICT_FP_CUDA_ARGS`
-    turns that off. ``sequential=False`` because forcing sequential schedules would demote every
-    kernel back to the host and the run would pass while proving nothing about the GPU.
+    The device compilers contract to FMA by DEFAULT, which would build the device leg under looser
+    FP rules than the reference it is compared against -- :func:`strict_fp_device_build` turns that
+    off. ``sequential=False`` because forcing sequential schedules would demote every kernel back to
+    the host and the run would pass while proving nothing about the GPU.
 
     Which arguments are device buffers is READ OFF the descriptors (:func:`device_resident`), not
     assumed: the two offload recipes disagree, and guessing wrong is either a crash or -- worse -- a
-    silent host run.
+    silent host run. A mirroring offload leaves none, and then no device array library is needed.
     """
+    on_device = device_resident(sdfg)
+    if not on_device:
+        with strict_fp_device_build():
+            return run_candidate(sdfg, inputs, IEEE_CPU_ARGS, sequential=False, tag=tag)
     import cupy  # GPU-only dependency; a CPU collection of this file must not need it
 
-    on_device = device_resident(sdfg)
     args = {k: (cupy.asarray(v) if k in on_device and isinstance(v, np.ndarray) else v) for k, v in inputs.items()}
-    cuda_args = f'{STRICT_FP_CUDA_ARGS} {dace.Config.get("compiler", "cuda", "args")}'
-    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
-        with set_temporary('compiler', 'cuda', 'args', value=cuda_args):
-            out = run_candidate(sdfg, args, IEEE_CPU_ARGS, sequential=False, tag=tag)
+    with strict_fp_device_build():
+        out = run_candidate(sdfg, args, IEEE_CPU_ARGS, sequential=False, tag=tag)
     return {k: (cupy.asnumpy(v) if isinstance(v, cupy.ndarray) else v) for k, v in out.items()}
 
 

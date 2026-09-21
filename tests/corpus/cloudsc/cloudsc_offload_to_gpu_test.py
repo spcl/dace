@@ -253,15 +253,9 @@ def test_device_written_data_is_not_constant():
     assert 'pout' not in constant_offload_data(blocked_sdfg(), {'pin', 'pout'})
 
 
-def test_transients_promoted_and_scalars_registered():
-    """A transient the kernel uses goes to ``GPU_Global``; scalars go to ``Register``.
-
-    ``scratch`` is wired into the kernel body rather than merely declared: promotion is gated on real
-    device use, so a dangling descriptor would pin nothing and the assertion would pass vacuously.
-    """
-    sdfg = blocked_sdfg()
+def with_kernel_written_scratch(sdfg: dace.SDFG) -> nodes.AccessNode:
+    """Wire a transient ``scratch`` the kernel body writes into ``sdfg``; returns its top-level node."""
     sdfg.add_transient('scratch', [klev, klon, nblocks], dace.float64)
-    sdfg.add_scalar('acc', dace.float64, transient=True)
     state = sdfg.states()[0]
     inner_exit = next(n for n in state.nodes() if isinstance(n, nodes.MapExit) and n.map.label == 'work')
     block_exit = next(n for n in state.nodes() if isinstance(n, nodes.MapExit) and n.map.label == 'blocks')
@@ -275,12 +269,41 @@ def test_transients_promoted_and_scalars_registered():
     state.add_edge(tasklet, 's', inner_exit, 'IN_scratch', Memlet(data='scratch', subset='jk, jl, ibl'))
     state.add_edge(inner_exit, 'OUT_scratch', block_exit, 'IN_scratch',
                    Memlet(data='scratch', subset='0:klev, 0:klon, ibl'))
-    state.add_edge(block_exit, 'OUT_scratch', state.add_write('scratch'), None,
-                   Memlet.from_array('scratch', sdfg.arrays['scratch']))
+    scratch = state.add_write('scratch')
+    state.add_edge(block_exit, 'OUT_scratch', scratch, None, Memlet.from_array('scratch', sdfg.arrays['scratch']))
+    return scratch
+
+
+def test_transients_promoted_and_scalars_registered():
+    """A transient the kernel uses goes to ``GPU_Global``; scalars go to ``Register``.
+
+    ``scratch`` is wired into the kernel body rather than merely declared: promotion is gated on real
+    device use, so a dangling descriptor would pin nothing and the assertion would pass vacuously.
+    """
+    sdfg = blocked_sdfg()
+    with_kernel_written_scratch(sdfg)
+    sdfg.add_scalar('acc', dace.float64, transient=True)
 
     offload_cloudsc_to_gpu(sdfg)
     assert sdfg.arrays['scratch'].storage == dtypes.StorageType.GPU_Global
     assert sdfg.arrays['acc'].storage == dtypes.StorageType.Register
+
+
+def test_an_ordering_edge_to_a_host_tasklet_does_not_pin_a_kernel_written_transient():
+    """An empty memlet orders a host tasklet after the array without touching it. CloudSC's LICM
+    preheaders do this to ``zqxn``; counting it as a host access kept the array on the host while the
+    kernels wrote it, and the device faulted on the host pointer."""
+    sdfg = blocked_sdfg()
+    scratch = with_kernel_written_scratch(sdfg)
+    sdfg.add_transient('flag', [1], dace.float64)
+    state = sdfg.states()[0]
+    host = state.add_tasklet('init', {}, {'o'}, 'o = 0.0')
+    state.add_edge(scratch, None, host, None, Memlet())
+    state.add_edge(host, 'o', state.add_write('flag'), None, Memlet(data='flag', subset='0'))
+
+    offload_cloudsc_to_gpu(sdfg)
+    assert sdfg.arrays['scratch'].storage == dtypes.StorageType.GPU_Global
+    assert 'gpu_scratch' not in sdfg.arrays
 
 
 def test_host_only_transient_stays_host():
@@ -484,8 +507,8 @@ def test_offloaded_graph_generates_default_stream_cuda():
     """The pinned setting reaches the emitted code: streams are nulled, never created."""
     sdfg = blocked_sdfg()
     offload_cloudsc_to_gpu(sdfg)
-    cuda = '\n'.join(obj.clean_code for obj in generate_code(sdfg) if obj.language == 'cu')
-    assert cuda, 'the offloaded graph must emit a .cu object'
+    cuda = '\n'.join(obj.clean_code for obj in generate_code(sdfg) if obj.title == 'CUDA')
+    assert cuda, 'the offloaded graph must emit a device code object'
     assert 'internal_streams[i] = nullptr' in cuda
     assert 'StreamCreateWithFlags' not in cuda, 'no concurrent stream may be created'
 
@@ -564,7 +587,7 @@ def test_view_in_a_kernel_still_code_generates():
     offload_cloudsc_to_gpu(sdfg)
     assert isinstance(sdfg.arrays['scratch_row'], data.View)
     assert sdfg.arrays['scratch'].storage == dtypes.StorageType.GPU_Global
-    cuda = '\n'.join(obj.clean_code for obj in generate_code(sdfg) if obj.language == 'cu')
+    cuda = '\n'.join(obj.clean_code for obj in generate_code(sdfg) if obj.title == 'CUDA')
     assert '__global__ void' in cuda
 
 

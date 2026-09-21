@@ -44,6 +44,7 @@ import numpy
 import dace
 from dace import dtypes
 from dace.codegen.codegen import generate_code
+from dace.codegen.common import get_gpu_backend
 from dace.config import set_temporary
 from dace.sdfg import nodes
 from dace.sdfg.utils import specialize_symbols
@@ -138,6 +139,21 @@ OFFLOAD_VARIANTS: Tuple[str, ...] = VARIANTS
 #: build regimes; it does NOT relax anybody's tolerance -- the caller's ``numeric_check`` still decides.
 STRICT_FP_CUDA_ARGS: str = '-fmad=false --prec-div=true --prec-sqrt=true'
 
+#: The HIP counterpart: amdclang contracts to FMA in device code by default, and its FP64 division
+#: and square root are already correctly rounded.
+STRICT_FP_HIP_ARGS: str = '-ffp-contract=off'
+
+
+@contextlib.contextmanager
+def strict_fp_device_build():
+    """Build device code under the host reference's strict FP rules, on the experimental backend,
+    for whichever GPU backend is active: nvcc flags go in ``compiler.cuda.args``, amdclang flags in
+    ``compiler.cuda.hip_args``."""
+    key, strict = ('hip_args', STRICT_FP_HIP_ARGS) if get_gpu_backend() == 'hip' else ('args', STRICT_FP_CUDA_ARGS)
+    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        with set_temporary('compiler', 'cuda', key, value=f'{strict} {dace.Config.get("compiler", "cuda", key)}'):
+            yield
+
 #: Host FP rules shared by BOTH legs: no fast-math, no FMA contraction, so the SDFG matches
 #: strict-IEEE gfortran. Carries NO optimization level -- ``compiler.build_type`` is the single
 #: source of that, and an ``-O`` here does not work anyway: CMake emits
@@ -197,10 +213,11 @@ def generate_cuda_code(sdfg: dace.SDFG) -> int:
     """
     with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
         objects = generate_code(copy.deepcopy(sdfg))
-    cuda = [obj for obj in objects if obj.language == 'cu']
-    assert cuda, 'CUDA codegen emitted no .cu object -- the graph is not device-scheduled'
+    # Selected by target, not extension: the HIP backend writes its device code to a ``.cpp`` object.
+    cuda = [obj for obj in objects if obj.title == 'CUDA']
+    assert cuda, 'GPU codegen emitted no device code object -- the graph is not device-scheduled'
     kernels = sum(obj.clean_code.count('__global__') for obj in cuda)
-    assert kernels > 0, 'CUDA codegen emitted a .cu object with no __global__ kernel'
+    assert kernels > 0, 'GPU codegen emitted a device code object with no __global__ kernel'
     return kernels
 
 
@@ -250,7 +267,7 @@ def check_offload_phase(sdfg: dace.SDFG, numeric_check: Optional[Callable[[dace.
     caller's check needs no GPU-specific spelling. Without one of those two, it falls back to
     :func:`generate_cuda_code`.
 
-    The device leg builds with :data:`STRICT_FP_CUDA_ARGS` so its FP rules match the strict-FP host
+    The device leg builds under :func:`strict_fp_device_build` so its FP rules match the strict-FP host
     reference. Residual host/device differences (device libm is not host libm) are left for
     ``numeric_check`` to judge at the caller's own tolerance -- nothing here loosens it.
     """
@@ -260,10 +277,8 @@ def check_offload_phase(sdfg: dace.SDFG, numeric_check: Optional[Callable[[dace.
         print(f'    numeric[{OFFLOAD_PHASE}]: NOT RUN ON DEVICE ({reason}) -- STRUCTURAL ONLY: '
               f'validate() + CUDA codegen, {kernels} __global__ kernel(s), experimental backend.')
         return False
-    cuda_args = f'{STRICT_FP_CUDA_ARGS} {dace.Config.get("compiler", "cuda", "args")}'
-    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
-        with set_temporary('compiler', 'cuda', 'args', value=cuda_args):
-            numeric_check(sdfg, OFFLOAD_PHASE)
+    with strict_fp_device_build():
+        numeric_check(sdfg, OFFLOAD_PHASE)
     print(f'    numeric[{OFFLOAD_PHASE}]: VERIFIED ON DEVICE -- the offloaded graph ran on the GPU and '
           f'matched the reference ({kernels} __global__ kernel(s), experimental backend, strict-FP).')
     return True

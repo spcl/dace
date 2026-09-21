@@ -33,7 +33,7 @@ from dace.sdfg import nodes
 
 from tests.corpus.cloudsc.cloudsc_offload_to_gpu_test import blocked_sdfg
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
-from tests.corpus.cloudsc.pipelines import STRICT_FP_CUDA_ARGS, check_offload_phase, gpu_is_runnable
+from tests.corpus.cloudsc.pipelines import check_offload_phase, gpu_is_runnable, strict_fp_device_build
 
 pytestmark = pytest.mark.gpu
 
@@ -109,10 +109,8 @@ def run_on_device(sdfg: dace.SDFG, buffers: dict, name: str) -> dict:
     assert any(node.map.schedule == dace.ScheduleType.GPU_Device
                for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.MapEntry)), \
         'nothing was scheduled onto the device -- the comparison would be host-vs-host'
-    cuda_args = f'{STRICT_FP_CUDA_ARGS} {dace.Config.get("compiler", "cuda", "args")}'
-    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
-        with set_temporary('compiler', 'cuda', 'args', value=cuda_args):
-            sdfg(**buffers, **SIZES)
+    with strict_fp_device_build():
+        sdfg(**buffers, **SIZES)
     return buffers
 
 

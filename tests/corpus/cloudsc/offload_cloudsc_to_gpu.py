@@ -646,6 +646,9 @@ def tasklet_accessed_arrays(graph: dace.SDFG, in_kernel: bool, device_side: bool
             if not (isinstance(desc, data.Array) and desc.transient):
                 continue
             for edge in (state.in_edges(node) if writing else state.out_edges(node)):
+                # An empty memlet orders the tasklet after the array; it accesses nothing.
+                if edge.data.is_empty():
+                    continue
                 path = state.memlet_path(edge)
                 tasklet = path[0].src if writing else path[-1].dst
                 if not isinstance(tasklet, nodes.Tasklet):
