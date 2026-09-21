@@ -140,6 +140,11 @@ def interleave(inter, f, seq, **kwargs):
             f(x, **kwargs)
 
 
+def integer_literal(node: ast.AST) -> bool:
+    """Whether ``node`` is an ``int`` literal, signed or not (``bool`` excluded)."""
+    return isinstance(numeric_literal_value(node), int)
+
+
 def numeric_literal_value(node: ast.AST):
     """The numeric value of a literal operand (``2``, ``2.5``, ``2.5j``) including a unary sign
     (``-1.5``), or ``None`` if ``node`` is not one.
@@ -190,6 +195,12 @@ def numeric_power_value(node: ast.AST):
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         inner = numeric_power_value(node.operand)
         return None if inner is None else -inner
+    if isinstance(node, ast.BinOp) and type(node.op).__name__ in CPPUnparser.binop_lambda:
+        # Python semantics: ``1 / 2`` is 0.5, which is the exponent ``sqrt`` is recognized by.
+        left, right = numeric_power_value(node.left), numeric_power_value(node.right)
+        if left is None or right is None or (isinstance(node.op, ast.Div) and right == 0):
+            return None
+        return CPPUnparser.binop_lambda[type(node.op).__name__](left, right)
     if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
         func = node.func
         if isinstance(func, ast.Attribute):
@@ -1388,6 +1399,9 @@ class CPPUnparser:
 
             # General pow operator
             self.emit_call('dace::math::pow', [t.left, t.right])
+        elif isinstance(t.op, ast.Div) and integer_literal(t.left) and integer_literal(t.right):
+            # Python's ``/`` is true division; between two int literals C's truncates.
+            self.write('(%r / %s)' % (float(numeric_literal_value(t.left)), self.render(t.right)))
         else:
             self.write("(")
 
