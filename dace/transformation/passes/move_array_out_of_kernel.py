@@ -357,6 +357,10 @@ class MoveArrayOutOfKernel(Pass):
         otherwise the full map-dimension range. This makes memlets represent
         per-thread/per-block slices when lifting arrays out of kernels.
 
+        Indices are taken relative to the map's first iteration, the origin of the dimension
+        :meth:`get_new_shape_info` sizes: an interior map ``1:N-1`` gets a dimension of ``N-2``, and
+        indexing it by the raw ``param`` would overrun the buffer by one row.
+
         :param map_chain: Nested MapEntry nodes, innermost to outermost, as :meth:`get_maps_between`
             returns them.
         :returns: List of ``(start, end, stride)`` tuples per map dimension, outermost map first --
@@ -369,16 +373,17 @@ class MoveArrayOutOfKernel(Pass):
 
             map_parent_state = self._node_to_state_cache[next_map]
             level = []
-            for param, (start, end, stride) in zip(next_map.map.params, next_map.map.range.ndrange()):
+            for param, (start, end, stride), origin in zip(next_map.map.params, next_map.map.range.ndrange(),
+                                                           next_map.map.range.min_element()):
 
                 node_is_map = ((isinstance(node, nodes.MapEntry) and node == next_map)
                                or (isinstance(node, nodes.MapExit) and map_parent_state.exit_node(next_map) == node))
                 node_state = self._node_to_state_cache[node]
                 if helpers.contained_in(node_state, node, next_map) and not node_is_map:
-                    index = symbol(param)
+                    index = symbol(param) - origin
                     level.append((index, index, 1))
                 else:
-                    level.append((start, end, stride))
+                    level.append((start - origin, end - origin, stride))
             subset = level + subset
 
         return subset
@@ -447,7 +452,7 @@ class MoveArrayOutOfKernel(Pass):
         for start, end, _stride in params_as_ranges:
             if start != end:
                 return
-            prefix.append(str(start))
+            prefix.append(dace.symbolic.symstr(start))
         if not prefix:
             return
         for node in state.nodes():

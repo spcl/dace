@@ -18,11 +18,12 @@ from dace import dtypes
 NX, NY, NZ = (dace.symbol(s, dtype=dace.int64) for s in ('NX', 'NY', 'NZ'))
 
 
-def kernel_with_symbolic_scratch() -> dace.SDFG:
+def kernel_with_symbolic_scratch(halo: int = 0) -> dace.SDFG:
     """``out[i, j, k] = 2 * a[i, j, NZ - 1 - k] + 1`` through a per-iteration ``tmp[NZ]``.
 
     The reversed read is what keeps ``tmp`` alive: a straight-through copy is recomputed into the
-    consumer and the buffer disappears.
+    consumer and the buffer disappears. ``halo`` leaves that many boundary planes of ``out``
+    unwritten, so the kernel map starts at ``halo`` the way a stencil's interior sweep does.
     """
     inner = dace.SDFG('scratch_body')
     inner.add_array('a', [NX, NY, NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
@@ -40,11 +41,13 @@ def kernel_with_symbolic_scratch() -> dace.SDFG:
                              schedule=dtypes.ScheduleType.Sequential,
                              external_edges=True)
 
-    sdfg = dace.SDFG('kernel_with_symbolic_scratch')
+    sdfg = dace.SDFG(f'kernel_with_symbolic_scratch_halo{halo}')
     sdfg.add_array('a', [NX, NY, NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
     sdfg.add_array('out', [NX, NY, NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state('body', is_start_block=True)
-    entry, exit_node = state.add_map('grid', dict(i='0:NX', j='0:NY'), schedule=dtypes.ScheduleType.GPU_Device)
+    entry, exit_node = state.add_map('grid',
+                                     dict(i=f'{halo}:NX-{halo}', j=f'{halo}:NY-{halo}'),
+                                     schedule=dtypes.ScheduleType.GPU_Device)
     nsdfg = state.add_nested_sdfg(inner, {'a'}, {'out'}, symbol_mapping=dict(i='i', j='j', NX=NX, NY=NY, NZ=NZ))
     state.add_memlet_path(state.add_read('a'), entry, nsdfg, dst_conn='a', memlet=dace.Memlet('a[0:NX, 0:NY, 0:NZ]'))
     state.add_memlet_path(nsdfg,
@@ -70,8 +73,46 @@ def test_symbolic_kernel_scratch_is_promoted_out_of_the_kernel():
         assert len(desc.shape) == 3, desc.shape
 
 
+@pytest.mark.parametrize('halo', [0, 1])
+def test_symbolic_kernel_scratch_indices_stay_inside_the_lifted_buffer(halo):
+    """Every kernel iteration must address its own slice INSIDE the lifted buffer.
+
+    The lift sizes each new dimension by the map's trip count -- ``NX - 2`` for the interior sweep
+    ``1:NX-1`` -- so an access counts from the map's first iteration. Indexed by the raw map
+    parameter, the last iteration wrote one row past the allocation (BOUT++ Hasegawa-Wakatani
+    faulted on the GPU). Checked on evaluated flat offsets, not on their spelling.
+    """
+    from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import (GPUCodegenPreprocessPipeline)
+
+    sdfg = kernel_with_symbolic_scratch(halo)
+    GPUCodegenPreprocessPipeline().apply_pass(sdfg, {})
+
+    nx, ny, nz = 6, 5, 3
+    sizes = {'NX': nx, 'NY': ny, 'NZ': nz}
+    body = next(nested for nested in sdfg.all_sdfgs_recursive() if nested.name == 'scratch_body')
+    desc = body.arrays['tmp']
+    total = int(dace.symbolic.evaluate(desc.total_size, sizes))
+    strides = [int(dace.symbolic.evaluate(s, sizes)) for s in desc.strides]
+
+    def flat_offset(corner, values):
+        return sum(int(dace.symbolic.evaluate(bound, values)) * s for bound, s in zip(corner, strides))
+
+    accesses = [e.data.subset for state in body.all_states() for e in state.edges() if e.data.data == 'tmp']
+    assert accesses, 'the definition site holds no access to the scratch buffer'
+    iterations = [(i, j) for i in range(halo, nx - halo) for j in range(halo, ny - halo)]
+    for subset in accesses:
+        for i, j in iterations:
+            for k in range(nz):
+                values = {**sizes, 'i': i, 'j': j, 'k': k}
+                lo, hi = flat_offset(subset.min_element(), values), flat_offset(subset.max_element(), values)
+                assert 0 <= lo and hi < total, f'{subset} at (i={i}, j={j}, k={k}) reaches {lo}..{hi} of {total}'
+        firsts = {flat_offset(subset.min_element(), {**sizes, 'i': i, 'j': j, 'k': 0}) for i, j in iterations}
+        assert len(firsts) == len(iterations), f'{subset}: two iterations share one slice'
+
+
 @pytest.mark.gpu
-def test_symbolic_kernel_scratch_computes_the_right_values():
+@pytest.mark.parametrize('halo', [0, 1])
+def test_symbolic_kernel_scratch_computes_the_right_values(halo):
     """Structure is not enough here: the shape was already right when the numbers were wrong.
 
     The stale-body bug reshaped the descriptor and the memlets correctly, compiled cleanly, and
@@ -82,14 +123,17 @@ def test_symbolic_kernel_scratch_computes_the_right_values():
     nx, ny, nz = 5, 4, 7
     rng = np.random.default_rng(0)
     host_a = rng.random((nx, ny, nz))
-    expected = host_a[:, :, ::-1] * 2.0 + 1.0
+    expected = np.zeros((nx, ny, nz))
+    interior = (slice(halo, nx - halo), slice(halo, ny - halo))
+    expected[interior] = host_a[interior][:, :, ::-1] * 2.0 + 1.0
 
     out = cupy.zeros((nx, ny, nz))
-    kernel_with_symbolic_scratch()(a=cupy.asarray(host_a), out=out, NX=nx, NY=ny, NZ=nz)
+    kernel_with_symbolic_scratch(halo)(a=cupy.asarray(host_a), out=out, NX=nx, NY=ny, NZ=nz)
 
     assert np.allclose(cupy.asnumpy(out), expected)
 
 
 if __name__ == '__main__':
     test_symbolic_kernel_scratch_is_promoted_out_of_the_kernel()
-    test_symbolic_kernel_scratch_computes_the_right_values()
+    test_symbolic_kernel_scratch_indices_stay_inside_the_lifted_buffer(1)
+    test_symbolic_kernel_scratch_computes_the_right_values(1)
