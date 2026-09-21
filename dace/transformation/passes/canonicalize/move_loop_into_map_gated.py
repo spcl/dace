@@ -47,7 +47,9 @@ strip-mines it into lanes. That rule is gone.
 **GPU** ignores all of this and always interchanges: one outer parallel map
 launches a single kernel whose threads each run the sequential loop in
 registers, instead of the loop re-launching a fresh kernel every iteration --
-the kernel-launch saving dominates (``tests/ab_perf`` interchange A/B).
+the kernel-launch saving dominates (``tests/ab_perf`` interchange A/B). The GPU
+specialization stage takes the loops left over, whose bodies are control flow
+over several maps, under the mirrored rule :func:`interchange_coalesces`.
 
 The stride ranking reuses
 :func:`~dace.transformation.passes.minimize_stride_permutation.score_indexed_strides`
@@ -57,12 +59,28 @@ boundary that the map-only and loop-only stride passes cannot cross.
 from typing import Any, Dict, Optional
 
 from dace import SDFG, properties
-from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap
+from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap, lane_maps
 from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
+
+
+def stride_costs(loop: LoopRegion, sdfg: SDFG) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Contiguity scores ``(min_home_stride, total_home_stride)`` of the loop variable and of the best parameter of
+    the maps in ``loop``'s body (smaller is more contiguous), or ``None`` without a map."""
+    lanes = lane_maps(loop)
+    if not lanes:
+        return None
+    itervar = loop.loop_variable
+    mparams = [p for _, entry in lanes for p in entry.map.params]
+    edges = [
+        e for state, entry in lanes for e in state.scope_subgraph(entry, include_entry=True, include_exit=True).edges()
+    ]
+    scores = score_indexed_strides(edges, sdfg, [itervar] + mparams)
+    loop_cost = (_to_float(scores[itervar][0]), _to_float(scores[itervar][1]))
+    map_cost = min((_to_float(scores[p][0]), _to_float(scores[p][1])) for p in mparams)
+    return loop_cost, map_cost
 
 
 def interchange_lowers_stride(loop: LoopRegion, sdfg: SDFG) -> bool:
@@ -80,15 +98,15 @@ def interchange_lowers_stride(loop: LoopRegion, sdfg: SDFG) -> bool:
     :param sdfg: The owning SDFG (for array strides).
     :returns: True if the interchange decreases the innermost stride.
     """
-    body = loop.nodes()[0]
-    map_entry = next(n for n in body.nodes() if isinstance(n, nodes.MapEntry))
-    itervar = loop.loop_variable
-    mparams = list(map_entry.map.params)
-    subgraph = body.scope_subgraph(map_entry, include_entry=True, include_exit=True)
-    scores = score_indexed_strides(subgraph.edges(), sdfg, [itervar] + mparams)
-    loop_cost = (_to_float(scores[itervar][0]), _to_float(scores[itervar][1]))
-    map_cost = min((_to_float(scores[p][0]), _to_float(scores[p][1])) for p in mparams)
+    loop_cost, map_cost = stride_costs(loop, sdfg)
     return loop_cost < map_cost
+
+
+def interchange_coalesces(loop: LoopRegion, sdfg: SDFG) -> bool:
+    """The GPU mirror of :func:`interchange_lowers_stride`: True if a map parameter is strictly more contiguous than
+    the loop variable, so threads over the map axis coalesce once the map is outermost."""
+    costs = stride_costs(loop, sdfg)
+    return costs is not None and costs[1] < costs[0]
 
 
 @properties.make_properties
