@@ -141,8 +141,11 @@ class ScalarFission(ppl.Pass):
             if any(w is not None and self.is_wcr_write(w[0], w[1]) for w in write_scope_dict):
                 continue
 
-            # If there is only one (dominating) scope, no further fission is needed.
-            if len([w for w in write_scope_dict if w is not None]) <= 1:
+            # One dominating scope needs no fission unless undominated accesses share its name: a dead
+            # initializer before a loop that rewrites the temporary every iteration keeps the loop's
+            # accesses tied to the outer scope, and LoopToMap refuses them.
+            dominated = [w for w in write_scope_dict if w is not None]
+            if len(dominated) == 0 or (len(dominated) == 1 and None not in write_scope_dict):
                 continue
 
             for write, shadowed_reads in write_scope_dict.items():
