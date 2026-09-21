@@ -1418,15 +1418,16 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
     # The explicit new_exit.map fix-up below only repairs the OUTERMOST pair; nested maps need this.
     memo = {}
-    # Rename only a scope-lifetime transient local to the scope. One the scope never writes holds a value
-    # from outside it, and one accessed outside it too carries its value across the boundary: a replica
-    # renaming either reads a container nothing writes or writes one nothing reads.
+    # Rename only a scope- or state-lifetime transient local to the scope. One the scope never writes holds a
+    # value from outside it, and one accessed outside it too carries its value across the boundary: a replica
+    # renaming either reads a container nothing writes or writes one nothing reads. A longer lifetime keeps
+    # its value across calls, so it keeps its name.
     scope_nodes = OrderedSet(scope.nodes())
-    scope_local: OrderedSet[str] = OrderedSet(n.data for n in scope_nodes
-                                              if isinstance(n, nodes.AccessNode) and n.desc(sdfg).transient
-                                              and n.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope and any(
-                                                  e.data is not None and not e.data.is_empty()
-                                                  for e in state.in_edges(n)))
+    local_lifetimes = (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.State)
+    scope_local: OrderedSet[str] = OrderedSet(
+        n.data for n in scope_nodes
+        if isinstance(n, nodes.AccessNode) and n.desc(sdfg).transient and n.desc(sdfg).lifetime in local_lifetimes
+        and any(e.data is not None and not e.data.is_empty() for e in state.in_edges(n)))
     scope_local -= OrderedSet(n.data for n in state.data_nodes() if n not in scope_nodes)
     if scope_local:
         scope_local -= OrderedSet(sdfg.shared_transients(check_toplevel=False))
