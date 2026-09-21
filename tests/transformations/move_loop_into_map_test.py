@@ -1,13 +1,19 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
-from dace.sdfg.state import LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import MoveLoopIntoMap
+from dace.transformation.interstate.move_loop_into_map import analyze_lanes
+from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
 import copy
+import json
 import numpy as np
 
 I = dace.symbol("I")
 J = dace.symbol("J")
+K = dace.symbol("K")
+N = dace.symbol("N")
 
 
 # forward loop with loop carried dependency
@@ -337,6 +343,174 @@ def test_more_than_a_map_4():
     assert count == 0
 
 
+# ``for k { map i; if c[k]: map i }``: every map writes only its own lane ``i``, so the loop can run per lane.
+@dace.program
+def branching_column(a: dace.float64[K, N], b: dace.float64[N], w: dace.float64[K], c: dace.float64[K]):
+    for k in range(1, K):
+        s = w[k] * 2.0
+        for i in dace.map[0:N]:
+            a[k, i] = a[k - 1, i] + b[i] * s
+        if c[k] > 0.5:
+            for i in dace.map[0:N]:
+                b[i] = b[i] * 0.5 + a[k, i]
+
+
+# Lane ``i`` reads the row lane ``i + 1`` wrote one trip earlier: a dependence between lanes.
+@dace.program
+def lane_shift(a: dace.float64[K, N], b: dace.float64[N], c: dace.float64[K]):
+    for k in range(1, K):
+        for i in dace.map[0:N - 1]:
+            a[k, i] = a[k - 1, i + 1] + b[i]
+        if c[k] > 0.5:
+            for i in dace.map[0:N - 1]:
+                b[i] = b[i] * 0.5 + a[k, i]
+
+
+# The branch condition reads what lane 0 wrote this trip, so every lane depends on lane 0.
+@dace.program
+def lane_guard(a: dace.float64[K, N], b: dace.float64[N]):
+    for k in range(1, K):
+        for i in dace.map[0:N]:
+            a[k, i] = a[k - 1, i] + b[i]
+        if a[k, 0] > 0.5:
+            for i in dace.map[0:N]:
+                b[i] = b[i] * 0.5
+
+
+# The branch inside the first map puts its body in a nested SDFG, bound per lane by its connector memlets.
+@dace.program
+def nested_column(a: dace.float64[K, N], b: dace.float64[N], c: dace.float64[K]):
+    for k in range(1, K):
+        for i in dace.map[0:N]:
+            if b[i] > 0.5:
+                a[k, i] = a[k - 1, i] + b[i]
+            else:
+                a[k, i] = a[k - 1, i] * 0.5
+        if c[k] > 0.5:
+            for i in dace.map[0:N]:
+                b[i] = b[i] * 0.75 + a[k, i] * 0.125
+
+
+def lane_loop(prog):
+    sdfg = prog.to_sdfg(simplify=True)
+    return sdfg, next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+
+
+def branching_inputs():
+    rng = np.random.default_rng(0)
+    return dict(a=rng.random((7, 13)), b=rng.random(13), w=rng.random(7), c=rng.random(7), K=7, N=13)
+
+
+def graph_digest(sdfg):
+    drop = {'guid', 'cfg_list_id', 'hash', 'transformation_hist', 'orig_sdfg'}
+
+    def strip(o):
+        if isinstance(o, dict):
+            return {k: strip(v) for k, v in o.items() if k not in drop}
+        return [strip(v) for v in o] if isinstance(o, list) else o
+
+    return json.dumps(strip(sdfg.to_json()), sort_keys=True)
+
+
+def test_a_loop_over_branching_maps_moves_into_one_map_over_their_lanes():
+    sdfg, loop = lane_loop(branching_column)
+    assert any(isinstance(r, ConditionalBlock) for r in loop.all_control_flow_regions())
+    MoveLoopIntoMap.apply_to(sdfg, options={'cfg_body': True}, loop=loop)
+    sdfg.validate()
+
+    assert not any(isinstance(b, LoopRegion) for b in sdfg.nodes())
+    outer = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    assert len(outer) == 1 and str(outer[0].map.range) == '0:N', outer
+    lane = outer[0].map.params[0]
+    inner = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and n is not outer[0]]
+    assert len(inner) == 2 and all(str(m.map.range) == lane for m in inner), [str(m.map.range) for m in inner]
+    nested = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert len(nested) == 1 and nested[0].sdfg is not sdfg
+
+
+def test_a_loop_moved_into_its_lanes_computes_what_the_loop_did():
+    sdfg, loop = lane_loop(branching_column)
+    want = branching_inputs()
+    got = copy.deepcopy(want)
+    copy.deepcopy(sdfg)(**want)
+    MoveLoopIntoMap.apply_to(sdfg, options={'cfg_body': True}, loop=loop)
+    sdfg(**got)
+    for name in ('a', 'b'):
+        np.testing.assert_allclose(got[name], want[name], rtol=1e-13, atol=0, err_msg=name)
+
+
+def test_a_map_body_behind_a_nested_sdfg_moves_per_lane():
+    sdfg, loop = lane_loop(nested_column)
+    assert any(isinstance(n, dace.nodes.NestedSDFG) for s in loop.all_states() for n in s.nodes())
+    args = branching_inputs()
+    del args['w']
+    want, got = copy.deepcopy(args), copy.deepcopy(args)
+    copy.deepcopy(sdfg)(**want)
+    MoveLoopIntoMap.apply_to(sdfg, options={'cfg_body': True}, loop=loop)
+    assert not any(isinstance(b, LoopRegion) for b in sdfg.nodes())
+    sdfg(**got)
+    for name in ('a', 'b'):
+        np.testing.assert_allclose(got[name], want[name], rtol=1e-13, atol=0, err_msg=name)
+
+
+def test_a_dependence_between_lanes_refuses_the_interchange():
+    sdfg, loop = lane_loop(lane_shift)
+    before = graph_digest(sdfg)
+    assert analyze_lanes(loop, sdfg).refusal == 'a is accessed across lanes'
+    assert sdfg.apply_transformations(MoveLoopIntoMap, options={'cfg_body': True}) == 0
+    assert graph_digest(sdfg) == before
+
+
+def test_a_branch_reading_one_lanes_result_refuses_the_interchange():
+    sdfg, loop = lane_loop(lane_guard)
+    assert analyze_lanes(loop, sdfg).refusal == 'lane-independent code reads a, which the maps write per lane'
+    assert sdfg.apply_transformations(MoveLoopIntoMap, options={'cfg_body': True}) == 0
+
+
+def test_a_branch_condition_naming_lane_data_refuses_the_interchange():
+    """The condition reads ``a`` by name, with no access node anywhere to show the read."""
+    sdfg = dace.SDFG('lane_condition_read')
+    sdfg.add_array('a', (7, 13), dace.float64)
+    sdfg.add_array('b', (13, ), dace.float64)
+    loop = LoopRegion('kloop', 'k < 7', 'k', 'k = 1', 'k = k + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state('shift', is_start_block=True)
+    first.add_mapped_tasklet('shift',
+                             dict(i='0:13'),
+                             dict(__in=dace.Memlet('a[k - 1, i]')),
+                             '__out = __in + 1.0',
+                             dict(__out=dace.Memlet('a[k, i]')),
+                             external_edges=True)
+    guard = ConditionalBlock('guard', sdfg, loop)
+    loop.add_node(guard)
+    loop.add_edge(first, guard, dace.InterstateEdge())
+    body = ControlFlowRegion('guard_body', sdfg, guard)
+    body.add_state('halve', is_start_block=True).add_mapped_tasklet('halve',
+                                                                    dict(i='0:13'),
+                                                                    dict(__in=dace.Memlet('b[i]')),
+                                                                    '__out = __in * 0.5',
+                                                                    dict(__out=dace.Memlet('b[i]')),
+                                                                    external_edges=True)
+    guard.add_branch(CodeBlock('a[k, 0] > 0.5'), body)
+    sdfg.validate()
+    assert analyze_lanes(loop, sdfg).refusal == 'lane-independent code reads a, which the maps write per lane'
+
+
+def test_cfg_body_leaves_the_single_map_interchange_byte_identical():
+    classic, generalized = forward_loop.to_sdfg(simplify=True), forward_loop.to_sdfg(simplify=True)
+    assert classic.apply_transformations(MoveLoopIntoMap) == 1
+    assert generalized.apply_transformations(MoveLoopIntoMap, options={'cfg_body': True}) == 1
+    assert graph_digest(generalized) == graph_digest(classic)
+
+
+def test_the_cpu_interchange_gate_leaves_a_branching_body_alone():
+    """The CPU gate only ever sees the single-map shape; the generalized body is a GPU decision."""
+    sdfg, loop = lane_loop(branching_column)
+    before = graph_digest(sdfg)
+    assert MoveLoopIntoMapGated(target='cpu').apply_pass(sdfg, {}) is None
+    assert graph_digest(sdfg) == before
+
+
 if __name__ == '__main__':
     test_forward_loops_semantic_eq()
     test_backward_loops_semantic_eq()
@@ -351,3 +525,11 @@ if __name__ == '__main__':
     test_more_than_a_map_2()
     test_more_than_a_map_3()
     test_more_than_a_map_4()
+    test_a_loop_over_branching_maps_moves_into_one_map_over_their_lanes()
+    test_a_loop_moved_into_its_lanes_computes_what_the_loop_did()
+    test_a_map_body_behind_a_nested_sdfg_moves_per_lane()
+    test_a_dependence_between_lanes_refuses_the_interchange()
+    test_a_branch_reading_one_lanes_result_refuses_the_interchange()
+    test_a_branch_condition_naming_lane_data_refuses_the_interchange()
+    test_cfg_body_leaves_the_single_map_interchange_byte_identical()
+    test_the_cpu_interchange_gate_leaves_a_branching_body_alone()

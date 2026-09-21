@@ -2,12 +2,16 @@
 """ Moves a loop around a map into the map """
 
 import copy
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+import dataclasses
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 import dace.transformation.helpers as helpers
 from dace import graphlib as nx
+from dace.libraries.standard.nodes.copy import node as copy_node
+from dace.libraries.standard.nodes.fill import node as fill_node
+from dace.ordered import OrderedSet
 from dace.sdfg.scope import ScopeTree
-from dace import Memlet, data as dt, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
-from dace.sdfg import nodes, propagation, utils as sdutil
+from dace import Memlet, data as dt, dtypes, nodes, properties, sdfg as sd, subsets as sbs, symbolic, symbol
+from dace.sdfg import graph as gr, nodes, propagation, utils as sdutil
 from dace.transformation import transformation
 from sympy import diff
 from typing import List, Set, Tuple
@@ -95,19 +99,393 @@ def _differs_on_map_axis(read: sbs.Subset, write: sbs.Subset, mparams: Set[str])
     return False
 
 
+#: Library nodes that act element by element on their memlet subsets, so one lane's share of the node is the node
+#: restricted to that lane's element.
+ELEMENTWISE_LIBRARY_NODES = (copy_node.CopyLibraryNode, fill_node.FillLibraryNode)
+
+#: One lane-indexed dimension of an access: ``(dimension, lane position, offset)``, indexing ``lane + offset``.
+LaneDim = tuple[int, int, symbolic.SymbolicType]
+
+
+@dataclasses.dataclass(slots=True)
+class LaneFacts:
+    """What the lane analysis of a loop body found; ``refusal`` is ``None`` when the interchange is legal."""
+    lanes: list[tuple[SDFGState, nodes.MapEntry]]
+    lane_containers: OrderedSet
+    narrow: list[tuple[gr.MultiConnectorEdge, tuple[LaneDim, ...]]]
+    refusal: str | None = None
+
+
+def single_map_body(loop: LoopRegion) -> SDFGState | None:
+    """The body state if ``loop`` has the one-state, one-map, one-component shape of the classic interchange."""
+    if len(loop.nodes()) != 1 or not isinstance(loop.nodes()[0], SDFGState):
+        return None
+    body = loop.nodes()[0]
+    if len(list(nx.weakly_connected_components(body._nx))) > 1:
+        return None
+    if sum(1 for node in body.nodes() if isinstance(node, nodes.MapEntry)) != 1:
+        return None
+    return body
+
+
+def lane_maps(loop: LoopRegion) -> list[tuple[SDFGState, nodes.MapEntry]]:
+    """Every top-level map of every state in ``loop``'s body, nested control flow included, nested SDFGs not."""
+    found = []
+    for state in loop.all_states():
+        scope = state.scope_dict()
+        found.extend(
+            (state, node) for node in state.nodes() if isinstance(node, nodes.MapEntry) and scope[node] is None)
+    return found
+
+
+def names_of(expr) -> OrderedSet:
+    return OrderedSet(str(s) for s in expr.free_symbols) if symbolic.issymbolic(expr) else OrderedSet()
+
+
+def renamed(expr, rename: dict[str, str]):
+    expr = symbolic.pystr_to_symbolic(expr)
+    if not symbolic.issymbolic(expr):
+        return expr
+    return expr.subs({s: symbolic.symbol(rename[str(s)]) for s in expr.free_symbols if str(s) in rename})
+
+
+def same_value(a, b) -> bool:
+    a, b = symbolic.equalize_symbols(symbolic.pystr_to_symbolic(a), symbolic.pystr_to_symbolic(b))
+    return symbolic.simplify(a - b) == 0
+
+
+def lane_signature(subset: sbs.Range, rename: dict[str, str], lanes: list[str],
+                   invariant: OrderedSet) -> tuple[LaneDim, ...] | None:
+    """The lane dimensions of a map access, its parameters renamed onto the common ``lanes``; ``None`` unless every
+    lane indexes exactly one dimension as ``lane + offset`` with a loop-invariant offset."""
+    dims = []
+    for d, (begin, end, _) in enumerate(subset.ndrange()):
+        begin, end = (renamed(x, rename) for x in (begin, end))
+        hit = [j for j, lane in enumerate(lanes) if lane in names_of(begin) | names_of(end)]
+        if not hit:
+            continue
+        if len(hit) != 1 or not same_value(begin, end):
+            return None
+        lane = next(s for s in begin.free_symbols if str(s) == lanes[hit[0]])
+        offset = symbolic.simplify(begin - lane)
+        if not names_of(offset) <= invariant:
+            return None
+        dims.append((d, hit[0], offset))
+    return tuple(dims) if sorted(j for _, j, _ in dims) == list(range(len(lanes))) else None
+
+
+def footprint_signature(subset: sbs.Range, ref: sbs.Range, invariant: OrderedSet) -> tuple[LaneDim, ...] | None:
+    """The lane dimensions of an elementwise access outside the maps: each non-point dimension must be one lane's
+    range shifted by a loop-invariant offset. ``()`` for an all-point subset, ``None`` for any other range."""
+    dims = []
+    for d, (begin, end, step) in enumerate(subset.ndrange()):
+        if same_value(begin, end):
+            continue
+        hit = [
+            j for j, (rb, re, rs) in enumerate(ref)
+            if same_value(step, 1) and same_value(rs, 1) and same_value(end - begin, re - rb)
+        ]
+        if len(hit) != 1:
+            return None
+        offset = symbolic.simplify(symbolic.pystr_to_symbolic(begin) - symbolic.pystr_to_symbolic(ref[hit[0]][0]))
+        if not names_of(offset) <= invariant:
+            return None
+        dims.append((d, hit[0], offset))
+    return tuple(dims)
+
+
+def same_signature(a: tuple[LaneDim, ...], b: tuple[LaneDim, ...]) -> bool:
+    return len(a) == len(b) and all(x[:2] == y[:2] and same_value(x[2], y[2]) for x, y in zip(a, b))
+
+
+def map_accesses(state: SDFGState, entry: nodes.MapEntry) -> list[tuple[str, sbs.Range, bool]]:
+    """``(container, subset, is_write)`` of every access a map scope makes, nested SDFGs included. A nested
+    SDFG's connector memlet bounds every access behind it, so it stands for them when it pins each
+    dimension a map parameter indexes to one point; any coarser connector memlet is looked through."""
+    found = []
+    scope = state.scope_subgraph(entry)
+    params = OrderedSet(entry.map.params)
+    bound = {}  # nested SDFG -> containers its connector memlets already bind per iteration
+    for e in scope.edges():
+        if e.data.is_empty():
+            continue
+        path = state.memlet_path(e)
+        src, dst = path[0].src, path[-1].dst
+        for nested in (e.src, e.dst):
+            if isinstance(nested, nodes.NestedSDFG):
+                dims = [(b, x) for b, x, _ in e.data.subset.ndrange() if (names_of(b) | names_of(x)) & params]
+                if not dims or not all(same_value(b, x) for b, x in dims):
+                    break
+                bound.setdefault(nested, OrderedSet()).add(e.data.data)
+        else:
+            if isinstance(src, nodes.AccessNode) and src.data == e.data.data:
+                found.append((src.data, e.data.get_src_subset(e, state) or e.data.subset, False))
+            if isinstance(dst, nodes.AccessNode) and dst.data == e.data.data:
+                found.append((dst.data, e.data.get_dst_subset(e, state) or e.data.subset, True))
+    for node in scope.nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            reads, writes = [], []
+            _collect_nested_lane_accesses(state, node, reads, writes)
+            skip = bound.get(node, OrderedSet())
+            found.extend((name, sub, False) for name, sub in reads if name not in skip)
+            found.extend((name, sub, True) for name, sub in writes if name not in skip)
+    return found
+
+
+def assigned_symbols(loop: LoopRegion) -> OrderedSet:
+    names = OrderedSet(k for e in loop.all_interstate_edges() for k in e.data.assignments)
+    names.update(r.loop_variable for r in loop.all_control_flow_regions() if isinstance(r, LoopRegion))
+    return names
+
+
+def escaping_symbol(loop: LoopRegion, sdfg: sd.SDFG) -> str | None:
+    """A symbol the loop assigns that ``nest_sdfg_subgraph`` would export out of the nest, where every lane would
+    race on it. Mirrors that helper's own internal/external split."""
+    use_sites, descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)
+    incoming = sdfg.free_symbols
+    for edge in loop.all_interstate_edges():
+        for name, value in edge.data.assignments.items():
+            if (name in symbolic.free_symbols_and_functions(value) or name in incoming
+                    or loop_analysis.counter_used_outside_loop(name, loop, sdfg, use_sites, descriptor_symbols)):
+                return name
+    for region in loop.all_control_flow_regions():
+        if not isinstance(region, LoopRegion) or not region.loop_variable:
+            continue
+        init = loop_analysis.get_init_assignment(region) if region.init_statement else None
+        outright = not region.init_statement or (init is not None and region.loop_variable
+                                                 not in symbolic.free_symbols_and_functions(init))
+        if not outright or loop_analysis.counter_used_outside_loop(region.loop_variable, region, sdfg, use_sites,
+                                                                   descriptor_symbols):
+            return region.loop_variable
+    return None
+
+
+def names_outside_loop(loop: LoopRegion, sdfg: sd.SDFG) -> OrderedSet:
+    """Containers referenced outside ``loop``, by the same rule ``nest_sdfg_subgraph`` uses to keep them outside."""
+    inside = OrderedSet([loop]) | OrderedSet(loop.all_control_flow_blocks())
+    names = OrderedSet()
+    for block in sdfg.all_control_flow_blocks():
+        if block in inside:
+            continue
+        if isinstance(block, SDFGState):
+            names.update(n.data for n in block.data_nodes())
+        elif isinstance(block, ConditionalBlock):
+            names.update(s for c, _ in block.branches if c is not None for s in c.get_free_symbols())
+        elif isinstance(block, LoopRegion):
+            names.update(block.loop_condition.get_free_symbols())
+    for edge in sdfg.all_interstate_edges():
+        if edge.src not in inside or edge.dst not in inside:
+            names.update(edge.data.free_symbols)
+    return names
+
+
+def control_flow_reads(loop: LoopRegion, sdfg: sd.SDFG) -> OrderedSet:
+    """Containers the loop's conditions, headers and interstate assignments read."""
+    names = OrderedSet(s for e in loop.all_interstate_edges() for s in e.data.free_symbols)
+    for region in loop.all_control_flow_regions():
+        if isinstance(region, ConditionalBlock):
+            names.update(s for c, _ in region.branches if c is not None for s in c.get_free_symbols())
+        elif isinstance(region, LoopRegion):
+            for code in (region.loop_condition, region.init_statement, region.update_statement):
+                if code is not None:
+                    names.update(code.get_free_symbols())
+    return OrderedSet(n for n in names if n in sdfg.arrays)
+
+
+def edge_containers(state: SDFGState, e: gr.MultiConnectorEdge) -> OrderedSet:
+    path = state.memlet_path(e)
+    ends = [n.data for n in (path[0].src, path[-1].dst) if isinstance(n, nodes.AccessNode)]
+    return OrderedSet([e.data.data] + ends)
+
+
+def elementwise_refusal(state: SDFGState, node: nodes.LibraryNode, ref: sbs.Range, invariant: OrderedSet,
+                        accesses: dict, uniform: tuple[OrderedSet, OrderedSet], narrow: list) -> str | None:
+    """Classify one top-level Copy/Fill: lane-shaped edges are narrowed to the lane, all-point edges are uniform."""
+    lane_edges, plain_edges = [], []
+    for e in state.all_edges(node):
+        if e.data.is_empty():
+            continue
+        sig = footprint_signature(e.data.subset, ref, invariant)
+        if sig is None or (sig and sorted(j for _, j, _ in sig) != list(range(len(ref)))):
+            return f'{node.label} covers {e.data.subset}, which is not the lanes'
+        (lane_edges if sig else plain_edges).append((e, sig))
+    if not lane_edges:
+        for e, _ in plain_edges:
+            uniform[e.src is node].update(edge_containers(state, e))
+        return None
+    if any(e.dst_conn != fill_node.FillLibraryNode.VALUE_CONNECTOR_NAME for e, _ in plain_edges):
+        return f'{node.label} mixes lane and non-lane subsets'
+    for e, sig in lane_edges:
+        end = e.dst if e.src is node else e.src
+        if not isinstance(end, nodes.AccessNode) or end.data != e.data.data or e.data.other_subset is not None:
+            return f'{node.label} has an ambiguous memlet {e.data}'
+        if e.data.wcr is not None:
+            return f'{node.label} writes {e.data.data} with a conflict resolution'
+        accesses.setdefault(end.data, []).append((e.src is node, sig))
+        narrow.append((e, sig))
+    for e, _ in plain_edges:
+        uniform[False].update(edge_containers(state, e))
+    return None
+
+
+def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts) -> str | None:
+    """Why ``loop`` cannot become one parallel map over its maps' common range with the loop inside, or ``None``.
+
+    The body may be any control flow of states, branches and loops. Every top-level map in it must span the same
+    range: these are the lanes. A container a map writes must be indexed ``lane + c`` (``c`` loop-invariant) by
+    every access, so no lane ever touches another lane's element; Copy/Fill nodes outside the maps count as maps
+    when their range is exactly the lanes. Everything else must be lane-independent: control flow and code outside
+    the maps may not read what the maps write, and what it writes becomes a private copy per lane, so it must not be
+    observed outside the loop.
+    """
+    for block in loop.all_control_flow_blocks():
+        if not isinstance(block, (SDFGState, AbstractControlFlowRegion)):
+            return f'{type(block).__name__} {block.label} in the body'
+    if not facts.lanes:
+        return 'no map in the body'
+    ref_state, ref_entry = facts.lanes[0]
+    ref = ref_entry.map.range
+    invariant = (OrderedSet(sdfg.symbols) | OrderedSet(sdfg.constants)) - assigned_symbols(loop)
+    for state, entry in facts.lanes:
+        if len(entry.map.range) != len(ref) or not all(
+                same_value(x, y) for r, q in zip(entry.map.range, ref) for x, y in zip(r, q)):
+            return f'map {entry.map.label} spans {entry.map.range}, not {ref}'
+        if any(not c.startswith('IN_') for c in entry.in_connectors):
+            return f'map {entry.map.label} has a dynamic range'
+    if all(same_value(b, e) for b, e, _ in ref):
+        return 'the maps span a single lane'
+    if not OrderedSet(str(s) for s in ref.free_symbols) <= invariant:
+        return f'the lane range {ref} changes inside the loop'
+
+    lanes = list(ref_entry.map.params)
+    accesses: dict[str, list[tuple[bool, tuple[LaneDim, ...] | None]]] = {}
+    uniform = (OrderedSet(), OrderedSet())  # (reads, writes) of lane-independent code
+    top_names = OrderedSet()
+    for state, entry in facts.lanes:
+        rename = dict(zip(entry.map.params, lanes))
+        for data, subset, write in map_accesses(state, entry):
+            accesses.setdefault(data, []).append((write, lane_signature(subset, rename, lanes, invariant)))
+    for state in loop.all_states():
+        scope = state.scope_dict()
+        for node in state.nodes():
+            if scope[node] is not None or isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+                continue
+            if isinstance(node, nodes.AccessNode):
+                top_names.add(node.data)
+                for e in state.out_edges(node):
+                    if isinstance(e.dst, nodes.AccessNode) and not e.data.is_empty():
+                        uniform[0].add(node.data)
+                        uniform[1].add(e.dst.data)
+            elif isinstance(node, ELEMENTWISE_LIBRARY_NODES):
+                reason = elementwise_refusal(state, node, ref, invariant, accesses, uniform, facts.narrow)
+                if reason is not None:
+                    return reason
+            else:
+                for e in state.all_edges(node):
+                    if not e.data.is_empty():
+                        uniform[e.src is node].update(edge_containers(state, e))
+                        if e.src is node and e.data.wcr is not None:
+                            uniform[0].update(edge_containers(state, e))
+    uniform[0].update(control_flow_reads(loop, sdfg))
+
+    lane_written = OrderedSet(d for d, found in accesses.items() if any(w for w, _ in found))
+    outside = names_outside_loop(loop, sdfg)
+    for data in uniform[1] | lane_written:
+        desc = sdfg.arrays[data]
+        private = desc.transient and data not in outside
+        if data in uniform[1]:
+            if data in lane_written:
+                return f'{data} is written both per lane and by lane-independent code'
+            if not private:
+                return f'lane-independent code writes {data}, which is observed outside the loop'
+            continue
+        if isinstance(desc, dt.View):
+            return f'the maps write through the view {data}'
+        if data not in top_names and data not in uniform[0] and private:
+            continue  # map-internal scratch: each lane gets its own copy
+        if data in uniform[0]:
+            return f'lane-independent code reads {data}, which the maps write per lane'
+        signatures = [sig for _, sig in accesses[data]]
+        if signatures[0] is None or not all(s is not None and same_signature(signatures[0], s) for s in signatures):
+            return f'{data} is accessed across lanes'
+        facts.lane_containers.add(data)
+
+    escaped = escaping_symbol(loop, sdfg)
+    if escaped is not None:
+        return f'symbol {escaped}, set in the loop, is read after it'
+    return None
+
+
+def analyze_lanes(loop: LoopRegion, sdfg: sd.SDFG) -> LaneFacts:
+    facts = LaneFacts(lane_maps(loop), OrderedSet(), [])
+    facts.refusal = lane_refusal(loop, sdfg, facts)
+    return facts
+
+
+def move_loop_into_lane_maps(loop: LoopRegion, sdfg: sd.SDFG) -> nodes.MapEntry:
+    """Rewrite ``for(...) { body }`` into ``map(lanes) { for(...) { body' } }``, where ``body'`` runs every map of
+    ``body`` on its own lane only. Each map keeps its scope, narrowed to the one-iteration range ``[lane, lane]``,
+    so no memlet inside it changes. The caller has checked :func:`lane_refusal`.
+
+    :returns: The entry of the new lane map.
+    """
+    facts = analyze_lanes(loop, sdfg)
+    graph = loop.parent_graph
+    ref_state, ref_entry = facts.lanes[0]
+    ref = copy.deepcopy(ref_entry.map.range)
+    types = ref_entry.new_symbols(sdfg, ref_state, sdfg.symbols)
+    taken = OrderedSet(sdfg.symbols) | OrderedSet(sdfg.arrays) | OrderedSet(p for _, e in facts.lanes
+                                                                            for p in e.map.params)
+    lane_syms = [symbolic.symbol(dt.find_new_name(f'{p}_lane', taken), types[p]) for p in ref_entry.map.params]
+
+    state = helpers.nest_sdfg_subgraph(sdfg, gr.SubgraphView(graph, [loop]), keep_outside=facts.lane_containers)
+    nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+    for lane in lane_syms:
+        nsdfg.sdfg.add_symbol(lane.name, lane.dtype)
+        nsdfg.symbol_mapping[lane.name] = lane
+    for _, entry in facts.lanes:
+        entry.map.range = sbs.Range([(lane, lane, 1) for lane in lane_syms])
+    for edge, sig in facts.narrow:
+        dims = list(edge.data.subset.ndrange())
+        for d, j, offset in sig:
+            dims[d] = (lane_syms[j] + offset, lane_syms[j] + offset, 1)
+        edge.data.subset = sbs.Range(dims)
+        edge.data.volume = edge.data.subset.num_elements()
+
+    entry, _ = helpers.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.Default, '_lanes')
+    entry.map.label = f'{loop.label}_lanes'
+    entry.map.params = [lane.name for lane in lane_syms]
+    entry.map.range = ref
+    propagation.propagate_memlets_state(sdfg, state)
+    sdfg.reset_cfg_list()
+    return entry
+
+
+@properties.make_properties
 @transformation.explicit_cf_compatible
 class MoveLoopIntoMap(transformation.MultiStateTransformation):
     """
-    Moves a loop around a map into the map
+    Moves a loop around a map into the map.
+
+    With ``cfg_body`` the body may also be any control flow whose maps share one range (see :func:`lane_refusal`):
+    the loop then moves into one map over that range and every map of the body runs on its own lane. A body of the
+    classic one-state, one-map shape takes the classic path either way.
     """
 
     loop = transformation.PatternNode(LoopRegion)
+
+    cfg_body = properties.Property(dtype=bool,
+                                   default=False,
+                                   desc='Also interchange a loop whose body is control flow over maps of one range')
 
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.loop)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        if self.cfg_body and single_map_body(self.loop) is None:
+            return analyze_lanes(self.loop, sdfg).refusal is None
+
         # If loop information cannot be determined, fail.
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
@@ -277,6 +655,9 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+        if self.cfg_body and single_map_body(self.loop) is None:
+            move_loop_into_lane_maps(self.loop, sdfg)
+            return
         body: sd.SDFGState = self.loop.nodes()[0]
         itervar = self.loop.loop_variable
 

@@ -12,7 +12,7 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
-from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
+from typing import Collection, Dict, Iterable, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
 from dace.sdfg import nodes, utils
@@ -24,13 +24,18 @@ from dace.memlet import Memlet
 from dace import typeclass
 
 
-def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGState] = None) -> SDFGState:
+def nest_sdfg_subgraph(sdfg: SDFG,
+                       subgraph: SubgraphView,
+                       start: Optional[SDFGState] = None,
+                       keep_outside: Collection[str] = ()) -> SDFGState:
     """
     Nests an SDFG subgraph (SDFGStates and InterstateEdges).
 
     :param sdfg: The SDFG containing the subgraph.
     :param subgraph: The SubgraphView description of the subgraph.
     :param start: The start state of the subgraph.
+    :param keep_outside: Transients that stay in ``sdfg`` and cross the boundary as connectors even when
+                         only the subgraph uses them.
     :return: The SDFGState containing the NestedSDFG node (containing the nested SDFG subgraph).
     """
 
@@ -144,7 +149,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 outside_names.update(edge.data.free_symbols)
         unique_set = set()
         for name in rw_set:
-            if sdfg.arrays[name].transient and name not in outside_names:
+            if sdfg.arrays[name].transient and name not in outside_names and name not in keep_outside:
                 unique_set.add(name)
 
         # Find NestedSDFG's connectors. Ordered: these name the nested SDFG's connectors and fix
