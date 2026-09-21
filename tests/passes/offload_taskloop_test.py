@@ -19,7 +19,9 @@ import pytest
 import dace
 from dace import dtypes
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.properties import CodeBlock
 from dace.sdfg import infer_types, nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator
 from dace.transformation.passes.offloading.taskloop import is_taskloop_map, taskloop_maps
 
@@ -557,6 +559,80 @@ def test_an_unmapped_body_reads_its_interstate_arrays_on_the_host(heuristics):
     }
     assert not on_device, f"the body's interstate edge reads device memory from host code: {on_device}"
     sdfg.validate()
+
+
+def body_with_a_sequential_fallback_arm() -> tuple:
+    """The bdf_newton_krylov ``newton_matvec`` shape: a body whose host code writes what its kernel reads.
+
+    Canonicalization guards a loop it can only parallelize at run time and keeps the original loop as
+    the fallback arm, which stays host code by design. Its writes to ``lap`` must be copied down before
+    the kernel reads it, and that copy is placed by the body's own level.
+    """
+    inner = dace.SDFG('fallback_body')
+    inner.add_array('a', [16], dace.float64)
+    inner.add_array('res', [16], dace.float64)
+    inner.add_array('lap', [16], dace.float64, transient=True)
+    inner.add_symbol('n', dace.int64)
+    guard = ConditionalBlock('guard')
+    inner.add_node(guard, is_start_block=True)
+    arm = ControlFlowRegion('sequential_arm', sdfg=inner)
+    guard.add_branch(CodeBlock('n > 0'), arm)
+    loop = LoopRegion('corners', 'k < 16', 'k', 'k = 0', 'k = k + 1')
+    arm.add_node(loop, is_start_block=True)
+    corner = loop.add_state('corner', is_start_block=True)
+    twice = corner.add_tasklet('twice', {'x': None}, {'o': None}, 'o = 2.0 * x')
+    corner.add_edge(corner.add_read('a'), None, twice, 'x', dace.Memlet('a[k]'))
+    corner.add_edge(twice, 'o', corner.add_write('lap'), None, dace.Memlet('lap[k]'))
+    compute = inner.add_state('compute')
+    inner.add_edge(guard, compute, dace.InterstateEdge())
+    compute.add_mapped_tasklet('scale', {'j': '0:16'}, {'inp': dace.Memlet('lap[j]')},
+                               'o = inp * 2.0', {'o': dace.Memlet('res[j]')},
+                               external_edges=True)
+
+    sdfg = dace.SDFG('body_with_a_sequential_fallback_arm')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    sdfg.add_symbol('n', dace.int64)
+    state = sdfg.add_state('body')
+    nested = state.add_nested_sdfg(inner, dict(a=None), dict(res=None), symbol_mapping=dict(n='n'))
+    state.add_edge(state.add_read('A'), None, nested, 'a', dace.Memlet('A[0:16]'))
+    state.add_edge(nested, 'res', state.add_write('B'), None, dace.Memlet('B[0:16]'))
+    sdfg.validate()
+    return sdfg, nested
+
+
+def uploads(sdfg: dace.SDFG) -> set:
+    """Host containers ``sdfg``'s own states copy into device memory."""
+    found = set()
+    for state in sdfg.states():
+        for edge in state.edges():
+            if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode):
+                src, dst = (sdfg.arrays[n.data].storage for n in (edge.src, edge.dst))
+                if src not in GPU_RESIDENT_STORAGES and dst in GPU_RESIDENT_STORAGES:
+                    found.add(edge.src.data)
+    return found
+
+
+@pytest.mark.parametrize('heuristics', [False, True])
+def test_a_body_uploads_what_its_host_fallback_arm_writes(heuristics):
+    sdfg, nested = body_with_a_sequential_fallback_arm()
+    offloaded(sdfg, heuristics=heuristics)
+    sdfg.validate()
+    assert 'lap' in uploads(nested.sdfg), uploads(nested.sdfg)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize('heuristics', [False, True])
+def test_the_kernel_after_a_host_fallback_arm_reads_its_writes(heuristics):
+    sdfg, _ = body_with_a_sequential_fallback_arm()
+    offloaded(sdfg, heuristics=heuristics)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+            node.map.gpu_block_size = [128, 1, 1]
+    A = np.arange(16, dtype=np.float64)
+    B = np.zeros(16)
+    sdfg(A=A, B=B, n=1)
+    np.testing.assert_array_equal(B, 4.0 * A)
 
 
 @pytest.mark.parametrize('heuristics', [False, True])

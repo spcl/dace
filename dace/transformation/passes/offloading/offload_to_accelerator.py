@@ -736,6 +736,7 @@ class OffloadToAccelerator(ppl.Pass):
                 body.taskloops = self.taskloops
                 # The body places its own level, so it needs the state ``apply_pass`` seeds.
                 body.hybrid_overlap = {}
+                body.no_copy_in_needed = body.overwritten_before_any_read(node.sdfg)
                 body.cache_scopes(node.sdfg)
                 body.place_and_copy(node.sdfg)
                 body.offload_host_level_bodies(node.sdfg)
