@@ -229,7 +229,7 @@ template <typename T>
 struct _wcr_fixed<ReductionType::Product, T> {
   static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
 #ifdef DACE_USE_GPU_ATOMICS
-    return wcr_custom<T>::reduce(_wcr_fixed<ReductionType::Product, T>(), ptr, value);
+    return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Product, T>(), ptr, value);
 #elif defined(_OPENMP) && _OPENMP >= 201107
     T old;
 #pragma omp atomic capture
