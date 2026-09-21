@@ -181,8 +181,11 @@ def has_wcr_in_edge(state: SDFGState, anode: nd.AccessNode) -> bool:
 
     A WCR edge accumulates INTO its destination, so the destination's prior value is read even with no
     outgoing edge. Degree alone would call such a node write-only and let liveness drop a live accumulator.
+    A ``Reduce`` with no identity is the same write before expansion: it folds into the output's value.
     """
-    return any(e.data is not None and e.data.wcr is not None for e in state.in_edges(anode))
+    from dace.libraries.standard.nodes.reduce import Reduce
+    return any((e.data is not None and e.data.wcr is not None) or (isinstance(e.src, Reduce) and e.src.identity is None)
+               for e in state.in_edges(anode))
 
 
 @properties.make_properties

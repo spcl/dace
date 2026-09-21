@@ -201,9 +201,12 @@ class ScalarFission(ppl.Pass):
 
         :param state: The state holding ``node``.
         :param node: The written access node.
+        A ``Reduce`` with no identity is the same read-modify-write before it is expanded
+        (:func:`~dace.transformation.passes.analysis.analysis.has_wcr_in_edge`).
+
         :returns: ``True`` if any incoming memlet carries a write-conflict resolution.
         """
-        return any(e.data is not None and e.data.wcr is not None for e in state.in_edges(node))
+        return ap.has_wcr_in_edge(state, node)
 
     @staticmethod
     def _inout_nsdfg_carried(sdfg: SDFG) -> Set[str]:
