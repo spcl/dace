@@ -16,7 +16,9 @@ from dace import data, dtypes
 from dace.codegen.codegen import generate_code
 from dace.config import Config
 from dace.memlet import Memlet
-from dace.sdfg import nodes
+from dace.properties import CodeBlock
+from dace.sdfg import InterstateEdge, nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import (BLOCK_MAP_SYMBOLS, assign_schedules, constant_offload_data,
                                                          offload_cloudsc_to_gpu, readonly_range_scalars,
@@ -104,6 +106,48 @@ def test_a_block_map_over_bare_tasklets_stays_on_the_host():
     sdfg = blocked_sdfg(inner=False)
     offload_cloudsc_to_gpu(sdfg)
     assert map_schedules(sdfg)['blocks'][0] == dtypes.ScheduleType.Sequential
+
+
+def column_behind_an_interstate_guard() -> dace.SDFG:
+    """``for k { map i; flag = flags[k]; if flag: map i }``. GPU specialization moves the loop into one
+    map, so the ``flags[k]`` read on the interstate edge ends up inside the kernel."""
+    sdfg = dace.SDFG('column_interstate_guard')
+    sdfg.add_array('a', (8, 16), dace.float64)
+    sdfg.add_array('flags', (8, ), dace.int32)
+    sdfg.add_symbol('flag', dace.int32)
+    loop = LoopRegion('kloop', 'k < 8', 'k', 'k = 1', 'k = k + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    step = loop.add_state('step', is_start_block=True)
+    step.add_mapped_tasklet('step', {'i': '0:16'}, {'__in': Memlet('a[k - 1, i]')},
+                            '__out = __in + 1.0', {'__out': Memlet('a[k, i]')},
+                            external_edges=True)
+    guard = ConditionalBlock('guard', sdfg, loop)
+    loop.add_node(guard)
+    loop.add_edge(step, guard, InterstateEdge(assignments={'flag': 'flags[k]'}))
+    body = ControlFlowRegion('guard_body', sdfg, guard)
+    body.add_state('halve', is_start_block=True).add_mapped_tasklet('halve', {'i': '0:16'}, {'__in': Memlet('a[k, i]')},
+                                                                    '__out = __in * 0.5', {'__out': Memlet('a[k, i]')},
+                                                                    external_edges=True)
+    guard.add_branch(CodeBlock('flag > 0'), body)
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_interstate_read_inside_the_kernel_binds_device_memory():
+    """Interstate edges inside a kernel evaluate on the device, so the host-only rule for guard data
+    must not keep the nested descriptor on the host."""
+    sdfg = column_behind_an_interstate_guard()
+    offload_cloudsc_to_gpu(sdfg)
+    kernels = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
+    ]
+    assert len(kernels) == 1, kernels
+    readers = [
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) and 'flags' in n.in_connectors
+    ]
+    assert readers, 'the loop was not moved into a kernel'
+    assert all(n.sdfg.arrays['flags'].storage == dtypes.StorageType.GPU_Global for n in readers)
 
 
 def test_maps_below_the_kernel_are_sequential():

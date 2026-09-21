@@ -3,7 +3,9 @@
 
 CloudSC-specific, so it lives with the corpus rather than in ``dace/transformation/passes``. Ported
 from the velocity-tendencies ``OffloadVelocityToGPU`` (SC26-Layout-AD E7) and adapted to CloudSC's
-block structure. Four phases, in order:
+block structure. The pre-offload band of GPU specialization
+(:func:`~dace.transformation.passes.gpu_specialization.pipeline.gpu_specialize`) runs first, then four phases, in
+order:
 
 1. **Assign schedules.** CloudSC's outermost map is the per-block loop (``DO IBL = 1, NBLOCKS``),
    which must NOT become a kernel -- it orchestrates one kernel launch per block. So instead of
@@ -40,6 +42,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites
 from dace.sdfg.sdfg import InterstateEdge
+from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.sdfg.state import SDFGState
 from dace.transformation.passes.analysis.analysis import FindAccessNodes, StateReachability
@@ -75,6 +78,9 @@ def offload_cloudsc_to_gpu(sdfg: dace.SDFG,
     # 1-element buffer for every program output (ngpblks), which gets its copy-out state.
     ConvertLengthOneArraysToScalars(preserve_abi=True, recursive=True).apply_pass(sdfg, {})
     symbolize_readonly_range_scalars(sdfg)
+    # The pre-offload band of GPU specialization: the loops it moves into their maps must be single maps by the
+    # time schedules and storage are assigned below.
+    gpu_specialize(sdfg, validate=False)
     assign_schedules(sdfg, block_symbols)
     mirror_nontransients_to_gpu(sdfg, frozenset(exclude_from_offload))
     mirror_host_needed_transients(sdfg)
@@ -822,15 +828,18 @@ def promote_transients_to_gpu(sdfg: dace.SDFG) -> None:
                 desc.lifetime = dtypes.AllocationLifetime.State
 
 
-def propagate_gpu_storage_into_nested_sdfgs(sdfg: dace.SDFG) -> None:
+def propagate_gpu_storage_into_nested_sdfgs(sdfg: dace.SDFG, inside: Optional[Set[int]] = None) -> None:
     """Give an NSDFG's inner descriptor the ``GPU_Global`` storage of its outer binding, except where
     a host interstate edge reads that name -- interstate edges evaluate on the host, and the validator
-    rejects device data there."""
+    rejects device data there. An NSDFG inside a kernel (a loop moved into its map) evaluates its
+    interstate edges on the device, so there the rule does not apply."""
+    if inside is None:
+        inside = sdfgs_inside_kernels(sdfg)
     for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
                 continue
-            host_only = names_used_on_interstate_edges(node.sdfg)
+            host_only = set() if id(node.sdfg) in inside else names_used_on_interstate_edges(node.sdfg)
             for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
                 if edge.data is None or edge.data.data is None:
                     continue
@@ -843,7 +852,7 @@ def propagate_gpu_storage_into_nested_sdfgs(sdfg: dace.SDFG) -> None:
                 inner = node.sdfg.arrays.get(conn)
                 if isinstance(inner, data.Array):
                     inner.storage = dtypes.StorageType.GPU_Global
-            propagate_gpu_storage_into_nested_sdfgs(node.sdfg)
+            propagate_gpu_storage_into_nested_sdfgs(node.sdfg, inside)
 
 
 def names_used_on_interstate_edges(sdfg: dace.SDFG) -> Set[str]:
