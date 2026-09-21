@@ -241,6 +241,43 @@ tasklet -- and this names the same exemption for the one piece that is an ordina
 """
 
 
+def mark_maps_no_vectorize(sdfg: dace.SDFG, labels: tuple[str, ...]) -> set[str]:
+    """Append :data:`NO_VECTORIZE_MARKER` to every map in ``sdfg`` or its nests labelled one of ``labels``.
+
+    How the orchestrator confines a refusal to the maps it names. A map already marked is skipped, so
+    refusing the same map twice reports no progress and the orchestrator stops retrying.
+
+    :param sdfg: the SDFG whose maps are marked in place.
+    :param labels: map labels to mark.
+    :returns: the labels that matched at least one map; empty when none did.
+    """
+    wanted = set(labels)
+    marked: set[str] = set()
+    if not wanted:
+        return marked
+    for node, _ in sdfg.all_nodes_recursive():
+        if (isinstance(node, dace.nodes.MapEntry) and node.map.label in wanted
+                and not node.map.label.endswith(NO_VECTORIZE_MARKER)):
+            marked.add(node.map.label)
+            node.map.label += NO_VECTORIZE_MARKER
+    return marked
+
+
+def innermost_enclosing_map_label(sdfg: dace.SDFG) -> tuple[str, ...]:
+    """The label of the innermost map around nested SDFG ``sdfg``, as a refusal's ``maps``.
+
+    :param sdfg: a (possibly nested) SDFG holding the refused construct.
+    :returns: a one-label tuple, or ``()`` when no map encloses ``sdfg``.
+    """
+    while sdfg.parent_nsdfg_node is not None:
+        state = sdfg.parent
+        entry = state.entry_node(sdfg.parent_nsdfg_node)
+        if isinstance(entry, dace.nodes.MapEntry):
+            return (entry.map.label, )
+        sdfg = state.sdfg
+    return ()
+
+
 def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | None = None) -> bool:
     """True if an (assumed innermost) ``map_entry`` can be safely tiled/vectorized.
 

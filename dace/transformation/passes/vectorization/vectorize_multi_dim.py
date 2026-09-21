@@ -41,9 +41,13 @@ from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars, )
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
-from dace.transformation.passes.vectorization.utils.pass_invariants import (
-    no_conditional_interstate_assign_on_widened_data, no_lane_collapsing_nested_sdfgs, no_wcr_in_map_body,
-    no_wcr_inside_nested_sdfgs, no_widened_scalar_tasklets)
+from dace.transformation.passes.vectorization.utils.map_predicates import (innermost_enclosing_map_label,
+                                                                           mark_maps_no_vectorize)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (lane_varying_interstate_guard,
+                                                                            no_lane_collapsing_nested_sdfgs,
+                                                                            no_wcr_in_map_body,
+                                                                            no_wcr_inside_nested_sdfgs,
+                                                                            no_widened_scalar_tasklets)
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
     GenerateTileIterationMask, )
@@ -626,9 +630,11 @@ class _AssertTileOpsLowered(ppl.Pass):
         violation = no_lane_collapsing_nested_sdfgs(sdfg, len(self._widths), self._widths)
         if violation is not None:
             raise VectorizeUnsupported(f"nested SDFG collapses the tile to one lane: {violation}")
-        violation = no_conditional_interstate_assign_on_widened_data(sdfg, self._widths)
-        if violation is not None:
-            raise VectorizeUnsupported(f"lane-varying guard over an interstate assignment: {violation}")
+        found = lane_varying_interstate_guard(sdfg, self._widths)
+        if found is not None:
+            block, violation = found
+            raise VectorizeUnsupported(f"lane-varying guard over an interstate assignment: {violation}",
+                                       maps=innermost_enclosing_map_label(block.sdfg))
         return None
 
 
@@ -1238,6 +1244,73 @@ class VectorizeMultiDim(ppl.Pipeline):
         # correct input and leave it un-tiled -- a clean refusal instead of a crash or a
         # half-transformed SDFG. Cheap relative to the compile that follows; taken once per call.
         snapshot = copy.deepcopy(sdfg)
+        # A pre-tiling soundness gate (or a prep pass that cannot produce a valid tileable form)
+        # raises ``VectorizeUnsupported`` for a kernel the tile widener would mis-lower -- e.g. a
+        # nested-reduction body WCR the remainder split leaves in a scalar tail. A refusal that
+        # names its maps leaves just those scalar: they are marked in the pristine snapshot and the
+        # run starts over from it. One that names none, or only maps already marked, refuses THIS
+        # kernel: restore the pristine input (so the caller keeps a valid, correct SDFG) and return
+        # without tiling. Warned, not silent, so a refusal is visible in the log and never mistaken
+        # for a successful vectorization.
+        while True:
+            try:
+                result = self._vectorize_once(sdfg, pipeline_results)
+                break
+            except VectorizeUnsupported as unsupported:
+                marked = mark_maps_no_vectorize(snapshot, unsupported.maps)
+                if not marked:
+                    warnings.warn(f"VectorizeMultiDim: refusing to vectorize {sdfg.name!r}; leaving it "
+                                  f"un-tiled (correct, un-optimized): {unsupported}")
+                    restore_sdfg_in_place(sdfg, snapshot)
+                    return None
+                warnings.warn(f"VectorizeMultiDim: leaving map(s) {sorted(marked)} of {sdfg.name!r} un-tiled "
+                              f"and tiling the rest: {unsupported}")
+                restore_sdfg_in_place(sdfg, copy.deepcopy(snapshot))
+        # An empty emit is not a success, and silence there reads exactly like a tiled run. Every
+        # tile pass selects through ``is_vectorizable_map`` and SKIPS what it refuses, so a map that
+        # never passes that gate (an opaque library node in the body -- canonicalize's ``lift_copy``
+        # ``FillLibraryNode`` is the common one) produces nothing with no ``VectorizeUnsupported``
+        # to report. Counted HERE, before ``expand_library_nodes`` lowers the tile nodes away. Not
+        # worded as a refusal: nothing was restored, and callers grep ``refusing to vectorize``.
+        if not any(isinstance(node, EMITTABLE_TILE_NODE_TYPES) for node, _ in sdfg.all_nodes_recursive()):
+            warnings.warn(
+                f"VectorizeMultiDim: tiled nothing in {sdfg.name!r} -- no map passed the tile-candidate "
+                f"gate, so the SDFG is correct but un-vectorized",
+                stacklevel=2)
+        # Stamp ``target_isa`` + the concrete implementation on every tile lib node
+        # UNCONDITIONALLY, even when expansion is deferred: a deferred SDFG
+        # (``expand_tile_nodes=False``) is expanded later by the caller / ``compile()``, so its
+        # nodes must already carry the chosen ISA (e.g. ``cuda``) to avoid the ``pure`` default.
+        # Cheap + idempotent.
+        self._select_tile_implementations(sdfg)
+        self._align_tile_arrays(sdfg)
+        # Finalize the lifted NON-tile lib nodes (Einsum, Reduce) UNCONDITIONALLY, even when
+        # tile-node expansion is deferred: a deferred GPU SDFG must return with its ``Reduce``
+        # GPU-placed + ``GPUAuto``/cub-stamped so the caller's later ``expand_library_nodes()``
+        # lowers a real GPU reduction, not the host pure fallback. No-op with no non-tile node.
+        self._finalize_lifted_library_nodes(sdfg)
+        # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()`` to the caller
+        # (SDFG returns with tile lib nodes present).
+        if self._expand_tile_nodes:
+            sdfg.expand_library_nodes(predicate=_expandable_during_vectorization)
+        # Runtime check of the nonnegativity SetSymbolNonnegativeAssumptions assumed. parallelize() input has
+        # no guard yet; on canonical input the existing guard makes this a no-op.
+        insert_assumption_guards(sdfg)
+        # Exit sweep + postcondition: passes above mint nested SDFGs (Nest, LoopToMap, lib-node
+        # expansion) that take the property default, which follows the global config.
+        disable_openmp_sections(sdfg)
+        assert not any(nested.openmp_sections for nested in sdfg.all_sdfgs_recursive())
+        # Final validate (gated on the ``validate`` knob, default on): the core passes
+        # (WidenAccesses + tile-lib insertion) leave the SDFG transiently invalid, so the
+        # per-subpass gate skips them; by here they've all completed (and, on the expand path,
+        # lowered to tasklets), so the SDFG must be valid again. This is the whole-pipeline
+        # validity check; ``validate_all`` additionally checks between subpasses.
+        if self._validate:
+            sdfg.validate()
+        return result
+
+    def _vectorize_once(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> int | None:
+        """One attempt: structural prep, then the tile pipeline. Raises ``VectorizeUnsupported``."""
         # Taken AFTER the snapshot so a ``VectorizeUnsupported`` refusal hands the caller back
         # their input untouched.
         disable_openmp_sections(sdfg)
@@ -1305,65 +1378,7 @@ class VectorizeMultiDim(ppl.Pipeline):
                                  wcr_free_output=True).apply_pass(sdfg, {})
         # ExpandNestedSDFGInputs runs as an embedded Pass (see ``_RunExpandNestedSDFGInputs``);
         # it fires after Nest and before MarkTileDims / the walker.
-        #
-        # A pre-tiling soundness gate (or a prep pass that cannot produce a valid tileable form)
-        # raises ``VectorizeUnsupported`` for a kernel the tile widener would mis-lower -- e.g. a
-        # nested-reduction body WCR the remainder split leaves in a scalar tail. Rather than abort
-        # the whole run, refuse THIS kernel: restore the pristine input (so the caller keeps a
-        # valid, correct SDFG) and return without tiling. Warned, not silent, so a refusal is
-        # visible in the log and never mistaken for a successful vectorization.
-        try:
-            result = super().apply_pass(sdfg, pipeline_results)
-        except VectorizeUnsupported as unsupported:
-            warnings.warn(f"VectorizeMultiDim: refusing to vectorize {sdfg.name!r}; leaving it "
-                          f"un-tiled (correct, un-optimized): {unsupported}")
-            # ``snapshot`` is already the throwaway ``restore_sdfg_in_place`` asks for -- it is
-            # never read again on this path -- so hand it over directly rather than paying for a
-            # second whole-SDFG deepcopy of it.
-            restore_sdfg_in_place(sdfg, snapshot)
-            return None
-        # An empty emit is not a success, and silence there reads exactly like a tiled run. Every
-        # tile pass selects through ``is_vectorizable_map`` and SKIPS what it refuses, so a map that
-        # never passes that gate (an opaque library node in the body -- canonicalize's ``lift_copy``
-        # ``FillLibraryNode`` is the common one) produces nothing with no ``VectorizeUnsupported``
-        # to report. Counted HERE, before ``expand_library_nodes`` lowers the tile nodes away. Not
-        # worded as a refusal: nothing was restored, and callers grep ``refusing to vectorize``.
-        if not any(isinstance(node, EMITTABLE_TILE_NODE_TYPES) for node, _ in sdfg.all_nodes_recursive()):
-            warnings.warn(
-                f"VectorizeMultiDim: tiled nothing in {sdfg.name!r} -- no map passed the tile-candidate "
-                f"gate, so the SDFG is correct but un-vectorized",
-                stacklevel=2)
-        # Stamp ``target_isa`` + the concrete implementation on every tile lib node
-        # UNCONDITIONALLY, even when expansion is deferred: a deferred SDFG
-        # (``expand_tile_nodes=False``) is expanded later by the caller / ``compile()``, so its
-        # nodes must already carry the chosen ISA (e.g. ``cuda``) to avoid the ``pure`` default.
-        # Cheap + idempotent.
-        self._select_tile_implementations(sdfg)
-        self._align_tile_arrays(sdfg)
-        # Finalize the lifted NON-tile lib nodes (Einsum, Reduce) UNCONDITIONALLY, even when
-        # tile-node expansion is deferred: a deferred GPU SDFG must return with its ``Reduce``
-        # GPU-placed + ``GPUAuto``/cub-stamped so the caller's later ``expand_library_nodes()``
-        # lowers a real GPU reduction, not the host pure fallback. No-op with no non-tile node.
-        self._finalize_lifted_library_nodes(sdfg)
-        # ``expand_tile_nodes=False`` defers ``sdfg.expand_library_nodes()`` to the caller
-        # (SDFG returns with tile lib nodes present).
-        if self._expand_tile_nodes:
-            sdfg.expand_library_nodes(predicate=_expandable_during_vectorization)
-        # Runtime check of the nonnegativity SetSymbolNonnegativeAssumptions assumed. parallelize() input has
-        # no guard yet; on canonical input the existing guard makes this a no-op.
-        insert_assumption_guards(sdfg)
-        # Exit sweep + postcondition: passes above mint nested SDFGs (Nest, LoopToMap, lib-node
-        # expansion) that take the property default, which follows the global config.
-        disable_openmp_sections(sdfg)
-        assert not any(nested.openmp_sections for nested in sdfg.all_sdfgs_recursive())
-        # Final validate (gated on the ``validate`` knob, default on): the core passes
-        # (WidenAccesses + tile-lib insertion) leave the SDFG transiently invalid, so the
-        # per-subpass gate skips them; by here they've all completed (and, on the expand path,
-        # lowered to tasklets), so the SDFG must be valid again. This is the whole-pipeline
-        # validity check; ``validate_all`` additionally checks between subpasses.
-        if self._validate:
-            sdfg.validate()
-        return result
+        return super().apply_pass(sdfg, pipeline_results)
 
     #: Passes after which the SDFG is intentionally TRANSIENTLY invalid (a later pass in the
     #: same structural sequence repairs it), so the per-subpass validate gate must NOT

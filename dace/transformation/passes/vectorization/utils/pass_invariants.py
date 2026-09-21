@@ -629,6 +629,12 @@ def no_strided_map_param_in_surviving_condition(sdfg: SDFG, K: int) -> str | Non
 
 
 def no_conditional_interstate_assign_on_widened_data(sdfg: SDFG, widths: tuple[int, ...]) -> str | None:
+    """Message form of :func:`lane_varying_interstate_guard`: the violation, or ``None``."""
+    found = lane_varying_interstate_guard(sdfg, widths)
+    return None if found is None else found[1]
+
+
+def lane_varying_interstate_guard(sdfg: SDFG, widths: tuple[int, ...]) -> tuple[ConditionalBlock, str] | None:
     """No ``ConditionalBlock`` guarded by WIDENED data may assign a symbol on an interstate edge.
 
     The lane-varying analogue of :func:`no_strided_map_param_in_surviving_condition`. A symbol holds
@@ -640,7 +646,7 @@ def no_conditional_interstate_assign_on_widened_data(sdfg: SDFG, widths: tuple[i
 
     :param sdfg: the SDFG after widening.
     :param widths: tile widths; a descriptor whose last dim is one of them is a per-lane buffer.
-    :returns: an error string, or ``None`` when the invariant holds.
+    :returns: the first offending block with its error string, or ``None`` when the invariant holds.
     """
     for block in sdfg.all_control_flow_blocks(recursive=True):
         if not isinstance(block, ConditionalBlock):
@@ -658,9 +664,9 @@ def no_conditional_interstate_assign_on_widened_data(sdfg: SDFG, widths: tuple[i
                 if desc is None or not desc.shape or desc.shape[-1] not in widths:
                     continue
                 keys = sorted(k for e in assigned for k in e.data.assignments)
-                return (f"{block.sdfg.name}.{block.label}: conditional on widened ``{name}`` "
-                        f"{desc.shape} assigns {keys} on an interstate edge -- one symbol cannot "
-                        f"hold a per-lane value, so the guard runs for every lane")
+                return block, (f"{block.sdfg.name}.{block.label}: conditional on widened ``{name}`` "
+                               f"{desc.shape} assigns {keys} on an interstate edge -- one symbol cannot "
+                               f"hold a per-lane value, so the guard runs for every lane")
     return None
 
 

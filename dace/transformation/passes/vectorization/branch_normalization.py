@@ -9,6 +9,7 @@ guarded by ``not c0 and ... and ck`` (first-match semantics);
 overlapping-but-not-identical write sets unsupported (``NotImplementedError``).
 No ``ConditionalBlock`` remains afterwards.
 """
+import ast
 import copy
 
 from collections.abc import Callable
@@ -24,7 +25,7 @@ from dace.sdfg.construction_utils import (
     assert_connector_role_matches_edges,
     move_branch_cfg_up_discard_conditions,
 )
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
     SameWriteSetIfElseToITECFG, arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
@@ -315,7 +316,66 @@ class BranchNormalization(ppl.Pass):
             br.remove_node(sb)
             br.start_block = br.node_id(successor)
             hoisted = True
+        # A binding with one value for the whole SDFG moves from ANY edge of an arm: CloudSC's fused
+        # riming + melting map binds ``imelt_index = imelt[0]`` mid-arm under a per-column guard, in two
+        # arms that each read it, and left there the tiler refuses the map.
+        for _c, br in cb.branches:
+            for e in list(br.edges()):
+                constant = {
+                    sym: expr
+                    for sym, expr in e.data.assignments.items()
+                    if sym not in pred_syms and self._sdfg_constant_binding(cb.sdfg, sym, str(expr)) and all(
+                        str(ie.data.assignments.get(sym, expr)) == str(expr) for ie in in_edges)
+                }
+                if not constant:
+                    continue
+                for ie in in_edges:
+                    ie.data.assignments.update(constant)
+                for sym in constant:
+                    del e.data.assignments[sym]
+                hoisted = True
         return hoisted
+
+    @staticmethod
+    def _sdfg_constant_binding(sdfg: dace.SDFG, sym: str, expr: str) -> bool:
+        """Whether ``sym = expr`` gives ``sym`` one value for the whole run of ``sdfg``.
+
+        Every binding of ``sym`` in ``sdfg`` is this expression, and it reads no symbol ``sdfg`` binds
+        and only constant in-bounds elements of containers ``sdfg`` never writes. Evaluating it
+        earlier, or on a path that skipped it, then changes no read and cannot fault.
+
+        :param sdfg: the SDFG whose bindings are inspected (not its nests: they have their own scope).
+        :param sym: the bound symbol.
+        :param expr: the bound expression, as a string.
+        :returns: ``True`` if the binding is constant over ``sdfg``.
+        """
+        if sdfg.parent_nsdfg_node is not None and sym in sdfg.parent_nsdfg_node.symbol_mapping:
+            return False
+        bound = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
+        for edge in sdfg.all_interstate_edges():
+            for lhs, rhs in edge.data.assignments.items():
+                if lhs == sym and str(rhs) != expr:
+                    return False
+                bound.add(lhs)
+        try:
+            tree = ast.parse(expr, mode='eval')
+        except SyntaxError:
+            return False
+        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        if names & bound:
+            return False
+        for sub in (n for n in ast.walk(tree) if isinstance(n, ast.Subscript)):
+            if not (isinstance(sub.value, ast.Name) and sub.value.id in sdfg.arrays):
+                return False
+            index = sub.slice.elts if isinstance(sub.slice, ast.Tuple) else [sub.slice]
+            shape = sdfg.arrays[sub.value.id].shape
+            if len(index) != len(shape) or not all(
+                    isinstance(i, ast.Constant) and isinstance(i.value, int) and not symbolic.issymbolic(d)
+                    and 0 <= i.value < int(d) for i, d in zip(index, shape)):
+                return False
+        read = names & set(sdfg.arrays)
+        return not any(n.data in read and state.in_degree(n) > 0 for state in sdfg.all_states()
+                       for n in state.data_nodes())
 
     @staticmethod
     def _symbol_read_outside_arm(sym: str, arm_body: ControlFlowRegion) -> bool:
@@ -332,7 +392,6 @@ class BranchNormalization(ppl.Pass):
         :param arm_body: the arm whose binding would be hoisted.
         :returns: ``True`` if any read of ``sym`` exists outside ``arm_body``.
         """
-        from dace.sdfg.state import LoopRegion
         sdfg = arm_body.sdfg
         only = {sym}
         inside_regions = set(arm_body.all_control_flow_regions(recursive=True))

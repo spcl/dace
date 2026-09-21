@@ -22,4 +22,11 @@ class VectorizeUnsupported(Exception):
     it decline the kernel instead of aborting the whole run. Only the safe (e.g. perfectly-nested,
     lane-disjoint) reductions the widener DOES lower pass the guard and tile; every unsound shape is
     declined here.
+
+    ``maps`` names the maps the refusal is confined to, when the raiser knows them: the orchestrator
+    then leaves only those scalar and tiles the rest. Empty refuses the whole SDFG.
     """
+
+    def __init__(self, message: str, maps: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.maps = maps
