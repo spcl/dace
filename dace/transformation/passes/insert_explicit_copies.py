@@ -178,6 +178,27 @@ def _carry_write_ordering(state: SDFGState, written: nodes.AccessNode, libnode: 
         state.add_edge(edge.src, None, libnode, None, Memlet())
 
 
+def drop_scope_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bool:
+    """Remove ``inner``, a stage-in access node that only renames the container across the map entry.
+
+    The staging ``edge`` must be its sole producer; its consumers then read the map connector directly.
+    A consumer that is itself an access node would become a new staging copy, so that shape is left to
+    the lift.
+
+    :returns: whether ``inner`` was removed.
+    """
+    consumers = list(state.out_edges(inner))
+    if state.in_degree(inner) != 1 or not consumers or any(isinstance(e.dst, nodes.AccessNode) for e in consumers):
+        return False
+    for e in consumers:
+        if e.data.is_empty():
+            state.add_nedge(edge.src, e.dst, Memlet())
+        else:
+            state.add_edge(edge.src, edge.src_conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
+    state.remove_node(inner)
+    return True
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertExplicitCopies(ppl.Pass):
@@ -406,8 +427,10 @@ class InsertExplicitCopies(ppl.Pass):
             inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
         else:
             inner_subset = copy.deepcopy(inner_subset)
-        # One container over one subset on both sides of the scope is the same memory: nothing moves.
-        if outer.data == inner_node.data and inner_subset == outer_subset:
+        # One container over one subset on both sides of the scope is the same memory: nothing moves,
+        # and a node left for it would still be emitted as a copy onto itself.
+        if stage_in and outer.data == inner_node.data and inner_subset == outer_subset and drop_scope_alias(
+                state, edge, inner_node):
             return None
         key = order.copy_key(edge)
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)

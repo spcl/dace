@@ -1287,6 +1287,7 @@ def test_a_stage_in_of_a_container_into_itself_is_not_a_copy():
     assert _count_copy_nodes(sdfg) == 0, [
         n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode)
     ]
+    _assert_no_copynd(sdfg)
     B = np.zeros(_N_STAGE)
     sdfg(B=B)
     np.testing.assert_array_equal(B, 3.0 + np.arange(_N_STAGE))
