@@ -724,68 +724,114 @@ class OffloadToAccelerator(ppl.Pass):
         return entries
 
     def initialize_device_tables_on_the_device(self, sdfg: SDFG) -> None:
-        """Run the host code filling a table only kernels read as ONE size-1 kernel per state.
+        """Fill a table kernels read on the device too, as ONE size-1 kernel per state: no copy ships it there.
 
-        The table is then born where it is read. Left on the host, the copy analysis ships it down
-        mid-run, because the hybrid resolution only lifts host code that shares a state with a device
-        use of the same data -- not a fill like CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``, which sits
-        beside unrelated kernels and is read by kernels in later states.
+        Left alone, the copy analysis ships a host-filled table down mid-run, because the hybrid
+        resolution only lifts host code that shares a state with a device use of the same data --
+        not a fill like CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``, which sits beside unrelated kernels
+        and is read by kernels in later states. A table the host reads as well keeps its host fill,
+        and the kernel fills a device twin that every device-side state reads instead
+        (CloudSC's ``iphase`` and ``zvqx``, which interstate assignments also read).
         """
-        writers = self.device_table_writers(sdfg)
-        for state, tasklets in writers.items():
-            self._wrap_region_in_size1_map(state, tasklets)
-        if writers:
+        regions: dict[SDFGState, OrderedSet[nodes.Tasklet]] = {}
+        for name, (state, tasklets, twin_states) in self.device_tables(sdfg).items():
+            if twin_states is not None:
+                tasklets = self.fill_device_twin(sdfg, state, tasklets, name, twin_states)
+            regions.setdefault(state, OrderedSet()).update(tasklets)
+        for state, region in regions.items():
+            self._wrap_region_in_size1_map(state, region)
+        if regions:
             self.cache_scopes(sdfg)
 
-    def device_table_writers(self, sdfg: SDFG) -> dict[SDFGState, OrderedSet[nodes.Tasklet]]:
-        """The host tasklets writing a table that only kernels read, keyed by their one state.
+    def device_tables(self, sdfg: SDFG) -> dict[str, tuple[SDFGState, OrderedSet[nodes.Tasklet], Optional[list]]]:
+        """Tables to fill on the device: ``name -> (fill state, fill tasklets, device-side states or None)``.
 
-        The table is a transient array longer than one element; a length-1 one becomes a by-value
-        scalar and needs no copy at all. Outside every kernel of this SDFG:
+        A table is a transient array longer than one element; a length-1 one becomes a by-value
+        scalar and needs no copy at all. Some kernel reads it, and:
 
-        * every read is a GPU map's. A host tasklet, nested SDFG, library node, interstate edge or
-          control-flow condition reading it would need the reverse copy (CloudSC's ``iphase`` and
-          ``zvqx`` feed interstate assignments, ``llfall`` a branch condition);
         * every write is a top-level tasklet with one output that reads only scalars, which a kernel
           takes by value -- so no array is dragged onto the device with it;
-        * those writes sit in ONE state outside every loop, so the one launch that replaces the copy
-          runs once -- not once per iteration, nor once per state a scattered init touches.
+        * those writes sit in ONE state outside every loop, so the launch that replaces the copy runs
+          once -- not once per iteration, nor once per state a scattered fill touches.
 
-        Writes by kernels are fine: they already put the table on the device.
+        Nothing else writes it, a kernel included: the host and device copies must stay equal. The
+        third entry is None when nothing on the host reads it -- the fill then simply moves. Otherwise
+        it lists the states that only kernels touch it in, which read the twin; a state touching it
+        from both sides cannot be split by a rename, so such a table is left alone.
         """
-        refused: OrderedSet[str] = OrderedSet(name for edge in sdfg.all_interstate_edges()
-                                              for name in edge.data.used_arrays(sdfg.arrays))
+        host_read: OrderedSet[str] = OrderedSet(name for edge in sdfg.all_interstate_edges()
+                                                for name in edge.data.used_arrays(sdfg.arrays))
         for region in sdfg.all_control_flow_regions():
-            refused |= OrderedSet(memlet.data for memlet in region.get_meta_read_memlets())
-        read_by_kernels: OrderedSet[str] = OrderedSet()
-        writers: dict[str, dict[SDFGState, OrderedSet[nodes.Tasklet]]] = {}
+            host_read |= OrderedSet(memlet.data for memlet in region.get_meta_read_memlets())
+        refused: OrderedSet[str] = OrderedSet()
+        fills: dict[str, dict[SDFGState, OrderedSet[nodes.Tasklet]]] = {}
+        #: Per table and state, the sides touching it there: True for device code, False for host code.
+        sides: dict[str, dict[SDFGState, set[bool]]] = {}
         for state in sdfg.states():
             scopes = self.cached_scopes[state]
             looped = in_a_loop(state)
             for node in state.data_nodes():
                 desc = sdfg.arrays.get(node.data)
-                if (type(desc) is not data.Array or not desc.transient or self._is_length1_array(node.data, sdfg)
-                        or self.enclosing_kernel(scopes, node)):
+                if type(desc) is not data.Array or not desc.transient or self._is_length1_array(node.data, sdfg):
+                    continue
+                touched = sides.setdefault(node.data, {}).setdefault(state, set())
+                if self.enclosing_kernel(scopes, node):
+                    touched.add(True)
+                    if any(not isinstance(edge.src, nodes.EntryNode) and not edge.data.is_empty()
+                           for edge in state.in_edges(node)):
+                        refused.add(node.data)
                     continue
                 for edge in state.out_edges(node):
                     if isinstance(edge.dst, nodes.MapEntry) and self.has_GPU_schedule(edge.dst):
-                        read_by_kernels.add(node.data)
+                        touched.add(True)
                     elif not edge.data.is_empty():
-                        refused.add(node.data)
+                        touched.add(False)
+                        host_read.add(node.data)
                 for edge in state.in_edges(node):
-                    if edge.data.is_empty() or (isinstance(edge.src, nodes.MapExit)
-                                                and self.has_GPU_schedule(edge.src)):
+                    if edge.data.is_empty():
                         continue
                     if not looped and self.fills_from_scalars(sdfg, state, scopes, edge.src):
-                        writers.setdefault(node.data, {}).setdefault(state, OrderedSet()).add(edge.src)
+                        fills.setdefault(node.data, {}).setdefault(state, OrderedSet()).add(edge.src)
+                        touched.add(False)
                     else:
                         refused.add(node.data)
-        found: dict[SDFGState, OrderedSet[nodes.Tasklet]] = {}
-        for name, per_state in writers.items():
-            if name in read_by_kernels and name not in refused and len(per_state) == 1:
-                (state, tasklets), = per_state.items()
-                found.setdefault(state, OrderedSet()).update(tasklets)
-        return found
+        tables = {}
+        for name, per_state in fills.items():
+            if name in refused or len(per_state) != 1 or not any(True in on for on in sides[name].values()):
+                continue
+            (state, tasklets), = per_state.items()
+            if name not in host_read:
+                tables[name] = (state, tasklets, None)
+            elif all(len(on) < 2 for on in sides[name].values()):
+                tables[name] = (state, tasklets, [other for other, on in sides[name].items() if True in on])
+        return tables
+
+    def fill_device_twin(self, sdfg: SDFG, state: SDFGState, tasklets: OrderedSet[nodes.Tasklet], name: str,
+                         twin_states: list) -> OrderedSet[nodes.Tasklet]:
+        """Clone the fill of ``name`` onto a device twin, point ``twin_states`` at it, return the clones.
+
+        The twin takes the name the copy analysis gives a device copy, so it is exactly that copy --
+        born filled instead of copied.
+        """
+        twin = self._get_gpu_name(name)
+        desc = deepcopy(sdfg.arrays[name])
+        desc.storage = dtypes.StorageType.GPU_Global
+        sdfg.add_datadesc(twin, desc)
+        for other in twin_states:
+            self._insert_copy_names_in_state(other, {name: twin})
+        target = state.add_access(twin)
+        clones: OrderedSet[nodes.Tasklet] = OrderedSet()
+        for tasklet in tasklets:
+            clone = deepcopy(tasklet)
+            state.add_node(clone)
+            for edge in state.in_edges(tasklet):
+                state.add_edge(edge.src, edge.src_conn, clone, edge.dst_conn, deepcopy(edge.data))
+            write = state.out_edges(tasklet)[0]
+            memlet = deepcopy(write.data)
+            memlet.data = twin
+            state.add_edge(clone, write.src_conn, target, None, memlet)
+            clones.add(clone)
+        return clones
 
     def fills_from_scalars(self, sdfg: SDFG, state: SDFGState, scopes: dict, node: nodes.Node) -> bool:
         """A top-level tasklet with one output whose every input is a scalar, or that has none."""
