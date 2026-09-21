@@ -1784,6 +1784,19 @@ class OffloadToAccelerator(ppl.Pass):
         # modifies SDFG in place & inserts all necessary copies
         # Filled after the renaming below, where a host-side write takes the host name.
         written: OrderedSet[str] = OrderedSet()
+        # Directions each container is already copied in at one program point, keyed (block, side). Loop tails
+        # and IR edges resolve to the same block -- every branch of a conditional ends at the ConditionalBlock --
+        # and each one stacked another identical copy state there (24 in a row after one CLOUDSC branch).
+        placed: dict[tuple[Any, str], dict[str, set[bool]]] = {}
+
+        def place_copy(before, after, array_names, to_gpu: bool):
+            point = (after, 'before') if after is not None else (before, 'after')
+            directions = placed.setdefault(point, {})
+            fresh = OrderedSet(name for name in array_names if directions.get(name) != {to_gpu})
+            for name in fresh:
+                directions.setdefault(name, set()).add(to_gpu)
+            if fresh:
+                self.create_interstate_copy(sdfg, before, after, fresh, to_gpu=to_gpu)
 
         def insert_copies(node, next, node_block, next_block):
             # Copying BACK to the device is about host-side modifications. A name whose host copy is
@@ -1797,11 +1810,11 @@ class OffloadToAccelerator(ppl.Pass):
                 and name not in self.no_copy_in_needed
             }
             if gpu_copies:
-                self.create_interstate_copy(sdfg, node_block, next_block, gpu_copies, to_gpu=True)
+                place_copy(node_block, next_block, gpu_copies, to_gpu=True)
 
             cpu_copies = node.gpu_set & next.cpu_set
             if cpu_copies:
-                self.create_interstate_copy(sdfg, node_block, next_block, cpu_copies, to_gpu=False)
+                place_copy(node_block, next_block, cpu_copies, to_gpu=False)
 
         def eval(node: OffloadingIRNode):
             for next in node.next:
@@ -1832,17 +1845,17 @@ class OffloadToAccelerator(ppl.Pass):
                 if gpu_copies:
                     for tail in tails:
                         if tail.type == OffloadingIRNode.CLOSE:  # and bottom.type == OffloadingIRNode.CLOSE:
-                            self.create_interstate_copy(sdfg, tail.open.block, None, gpu_copies, to_gpu=True)
+                            place_copy(tail.open.block, None, gpu_copies, to_gpu=True)
                         else:
-                            self.create_interstate_copy(sdfg, tail.block, None, gpu_copies, to_gpu=True)
+                            place_copy(tail.block, None, gpu_copies, to_gpu=True)
 
                 cpu_copies = bottom.gpu_set & top.cpu_set
                 if cpu_copies:
                     for tail in tails:
                         if tail.type == OffloadingIRNode.CLOSE:
-                            self.create_interstate_copy(sdfg, tail.open.block, None, cpu_copies, to_gpu=False)
+                            place_copy(tail.open.block, None, cpu_copies, to_gpu=False)
                         else:
-                            self.create_interstate_copy(sdfg, tail.block, None, cpu_copies, to_gpu=False)
+                            place_copy(tail.block, None, cpu_copies, to_gpu=False)
 
         self._correct_transient_storage_locations(sdfg, IR)
         self._insert_copy_names(sdfg, IR)
