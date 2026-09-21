@@ -1824,12 +1824,12 @@ class OffloadToAccelerator(ppl.Pass):
                         f"state {node.debug_name} uses {node.cpu_set & node.gpu_set} on both the CPU and "
                         f"the GPU; this pass cannot place a copy inside a single state")
 
-                # edge case: if this condition is true, both blocks are None, can't insert
-                if node.type == OffloadingIRNode.CLOSE and next.type == OffloadingIRNode.CLOSE:
-                    insert_copies(node, next, node.open.block, None)
-
-                elif next.type == OffloadingIRNode.EDGE:  # then I want the copy AFTER the node, not before
-                    insert_copies(node, next, node.block, None)
+                # A CLOSE node has no block of its own: a copy after it goes after the region it closes.
+                # Before an interstate edge, or between two CLOSEs, there is no next block: copy AFTER the node.
+                after = node.open.block if node.type == OffloadingIRNode.CLOSE else node.block
+                if next.type == OffloadingIRNode.EDGE or (node.type == OffloadingIRNode.CLOSE
+                                                          and next.type == OffloadingIRNode.CLOSE):
+                    insert_copies(node, next, after, None)
 
                 else:  # the usual: copies between node -> next
                     insert_copies(node, next, node.block, next.block)
