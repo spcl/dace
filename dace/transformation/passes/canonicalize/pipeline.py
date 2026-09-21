@@ -8,7 +8,7 @@ computation.
 import os
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from dace import SDFG, symbolic, properties
+from dace import SDFG, data, symbolic, properties
 from dace.ordered import OrderedSet
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import helpers as xfh
@@ -2161,10 +2161,11 @@ class CanonicalizationPipeline(ppl.Pass):
     :param normalize_loop_and_map_origin: Run ``NormalizeLoopAndMapOrigin`` right before the
                                           ``loop_to_x`` stage. ``None`` (default) -> per-target
                                           preset (off on both targets; see ``CPU_DEFAULTS``).
-    :param specialize_constants: Optional ``{symbol: value}`` map (e.g. CloudSC's
-                             ``{'nclv': 5}``, or a kernel's shape symbols like
-                             ``{'Norb': 3}``) baked into the SDFG via
-                             ``specialize_symbols`` (recursively, dropping the symbol)
+    :param specialize_constants: Optional ``{symbol or scalar argument: value}`` map (e.g.
+                             CloudSC's ``{'nclv': 5, 'yrecldp_nssopt': 1}``, or a kernel's shape
+                             symbols like ``{'Norb': 3}``) baked into the SDFG via
+                             ``specialize_symbols`` (recursively, dropping the symbol) or
+                             ``specialize_scalars`` (folding the reads, keeping the argument)
                              BEFORE canonicalization -- the same specialization the
                              cloudsc parallelization pipeline does. Symbolic trip
                              counts that become concrete then unroll under
@@ -2374,8 +2375,15 @@ class CanonicalizationPipeline(ppl.Pass):
         # bodies -- the bulk of a real cloudsc build -- unspecialized. Baking the whole
         # set in one call costs one graph walk per SDFG instead of one per symbol.
         if self._specialize_constants:
-            from dace.sdfg.utils import specialize_symbols
-            specialize_symbols(sdfg, self._specialize_constants)
+            from dace.sdfg.utils import specialize_scalars, specialize_symbols
+            # A scalar argument (a run-time flag such as CloudSC's ``yrecldp_nssopt``) is data, not a
+            # symbol, so it folds through ``specialize_scalars``; the argument stays in the signature.
+            scalars = {
+                name: value
+                for name, value in self._specialize_constants.items() if isinstance(sdfg.arrays.get(name), data.Scalar)
+            }
+            specialize_scalars(sdfg, scalars)
+            specialize_symbols(sdfg, {n: v for n, v in self._specialize_constants.items() if n not in scalars})
         stages = self.build_stages()
         if self.stages is not None:
             known_labels = OrderedSet(label for label, _ in stages)
@@ -2514,9 +2522,9 @@ def canonicalize(sdfg: SDFG,
                                  the pass stopped grouping through ``LoopFission``; the
                                  fission-stage comment records what that changed and which gate
                                  is still outstanding. Pass ``False`` to keep bodies undistributed.
-    :param specialize_constants: Optional ``{symbol: value}`` baked in via
-                             ``specialize_symbols`` (cloudsc-style, recursive into nested
-                             SDFGs) before canonicalization, so symbolic trip counts
+    :param specialize_constants: Optional ``{symbol or scalar argument: value}`` baked in via
+                             ``specialize_symbols`` / ``specialize_scalars`` (cloudsc-style,
+                             recursive into nested SDFGs) before canonicalization, so symbolic trip counts
                              unroll (e.g. ``{'nclv': 5}``) and concrete matmul extents
                              (e.g. ``{'Norb': 3}``) enable the small-GEMM ``'pure'`` path.
     :param lift: Lift tensor-contraction maps (matmul chains) to ``Einsum`` library
