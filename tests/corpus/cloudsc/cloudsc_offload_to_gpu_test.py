@@ -18,8 +18,9 @@ from dace.config import Config
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 
-from tests.corpus.cloudsc.offload_cloudsc_to_gpu import (constant_offload_data, offload_cloudsc_to_gpu,
-                                                         readonly_range_scalars, symbolize_readonly_range_scalars)
+from tests.corpus.cloudsc.offload_cloudsc_to_gpu import (BLOCK_MAP_SYMBOLS, assign_schedules, constant_offload_data,
+                                                         offload_cloudsc_to_gpu, readonly_range_scalars,
+                                                         symbolize_readonly_range_scalars)
 
 nblocks = dace.symbol('nblocks')
 klev = dace.symbol('klev')
@@ -66,6 +67,13 @@ def blocked_sdfg(inner: bool = True) -> dace.SDFG:
     return sdfg
 
 
+def scheduled(sdfg: dace.SDFG) -> dace.SDFG:
+    """``sdfg`` with the schedules the offload assigns before it classifies constants: which side writes
+    an array is read off them, so an unscheduled graph has no kernel side at all."""
+    assign_schedules(sdfg, frozenset(BLOCK_MAP_SYMBOLS))
+    return sdfg
+
+
 def map_schedules(sdfg: dace.SDFG):
     """``{map label: (schedule, is_top_level_in_its_own_state)}`` over the whole tree."""
     out = {}
@@ -90,12 +98,12 @@ def test_block_map_stays_host_and_inner_map_is_offloaded(build):
     assert inner and all(s == dtypes.ScheduleType.GPU_Device for s in inner), schedules
 
 
-def test_leaf_map_over_blocks_is_still_offloaded():
-    """The block-symbol name signal alone is not enough: a map with nothing inside it to offload is
-    the kernel itself, so it must not be demoted to the host."""
+def test_a_block_map_over_bare_tasklets_stays_on_the_host():
+    """Canon flattens the per-block orchestrator's body to bare tasklets. Reading that body as a leaf
+    compute map would launch the whole block loop as one grid, so the block symbol alone decides."""
     sdfg = blocked_sdfg(inner=False)
     offload_cloudsc_to_gpu(sdfg)
-    assert map_schedules(sdfg)['blocks'][0] == dtypes.ScheduleType.GPU_Device
+    assert map_schedules(sdfg)['blocks'][0] == dtypes.ScheduleType.Sequential
 
 
 def test_maps_below_the_kernel_are_sequential():
@@ -179,7 +187,7 @@ def test_read_only_input_is_dual_resident():
     """``pin`` is never written: mirror it once in the head state, keep the host original, emit no
     copy-out. ``pout`` is written, so it round-trips."""
     sdfg = blocked_sdfg()
-    assert constant_offload_data(sdfg, {'pin', 'pout'}) == {'pin': None}
+    assert constant_offload_data(scheduled(sdfg), {'pin', 'pout'}) == {'pin': None}
     offload_cloudsc_to_gpu(sdfg)
 
     assert sdfg.arrays['gpu_pin'].storage == dtypes.StorageType.GPU_Global
@@ -213,7 +221,7 @@ def test_write_once_full_copy_is_constant():
     exit_.add_in_connector('IN_out')
     exit_.add_out_connector('OUT_out')
 
-    assert constant_offload_data(sdfg, {'tab', 'out'}) == {'tab': produce}
+    assert constant_offload_data(scheduled(sdfg), {'tab', 'out'}) == {'tab': produce}
     offload_cloudsc_to_gpu(sdfg)
     states = {s.label: s for s in sdfg.states()}
     assert {e.dst.data for e in states['gpu_const_copy_in'].edges()} == {'gpu_tab'}
@@ -244,13 +252,13 @@ def test_partial_write_is_not_constant():
     exit_.add_in_connector('IN_out')
     exit_.add_out_connector('OUT_out')
 
-    assert constant_offload_data(sdfg, {'tab', 'out'}) == {}
+    assert constant_offload_data(scheduled(sdfg), {'tab', 'out'}) == {}
 
 
 def test_device_written_data_is_not_constant():
     """``pout`` is produced inside the kernel, so the host copy is stale and dual residency would be
     wrong -- it must round-trip instead."""
-    assert 'pout' not in constant_offload_data(blocked_sdfg(), {'pin', 'pout'})
+    assert 'pout' not in constant_offload_data(scheduled(blocked_sdfg()), {'pin', 'pout'})
 
 
 def with_kernel_written_scratch(sdfg: dace.SDFG) -> nodes.AccessNode:

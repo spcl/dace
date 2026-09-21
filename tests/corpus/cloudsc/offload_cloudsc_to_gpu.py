@@ -257,6 +257,9 @@ def constant_offload_data(sdfg: dace.SDFG, candidates: Set[str]) -> Dict[str, Op
     Under-approximation is the safe direction here: a partial or unprovable write leaves the name out
     of the result, and it is then mirrored with the normal copy-in/copy-out round trip.
 
+    ``sdfg`` must already carry its schedules (:func:`assign_schedules`): a write is device-side only
+    through the map it runs under, so on an unscheduled graph every write reads as a host write.
+
     Reuses :class:`~dace.transformation.passes.analysis.analysis.FindAccessNodes` (read/write access
     nodes per state), :class:`~dace.transformation.passes.analysis.analysis.StateReachability`
     (write-before-read ordering) and
