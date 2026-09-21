@@ -15,6 +15,7 @@ from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization import vectorize_multi_dim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import TILE_MAIN_MARKER
 from dace.transformation.passes.vectorization.utils.map_predicates import (NO_VECTORIZE_MARKER,
                                                                            innermost_enclosing_map_label)
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -109,4 +110,24 @@ def test_a_map_refused_again_after_marking_refuses_the_whole_sdfg(monkeypatch):
     sdfg, _, messages = vectorized(monkeypatch, always=True)
     assert any('refusing to vectorize' in m for m in messages), messages
     assert tile_nodes(sdfg) == [], 'a whole-SDFG refusal must hand back the untiled input'
+    check_numbers(sdfg)
+
+
+def test_a_refusal_naming_a_tiled_region_marks_the_map_it_was_split_from(monkeypatch):
+    """The gate runs after the remainder split, so on CloudSC's GPU leg it named ``..._map__tile_main``,
+    a label the pristine snapshot does not have: nothing was marked and all ~500 maps were refused."""
+    sdfg = two_maps.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    label = label_of_map_writing(sdfg, 'b')
+    monkeypatch.setattr(vectorize_multi_dim, 'lane_varying_interstate_guard', refuse_once(label))
+    real = vectorize_multi_dim.innermost_enclosing_map_label
+    monkeypatch.setattr(vectorize_multi_dim, 'innermost_enclosing_map_label',
+                        lambda graph: tuple(f'{one}{TILE_MAIN_MARKER}' for one in real(graph)))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=detect_host_isa())).apply_pass(sdfg, {})
+    messages = [str(w.message) for w in caught if 'VectorizeMultiDim' in str(w.message)]
+    assert not any('refusing to vectorize' in m for m in messages), messages
+    assert label_of_map_writing(sdfg, 'b') == label + NO_VECTORIZE_MARKER
+    assert tile_nodes(sdfg), 'the map nobody refused was not tiled'
     check_numbers(sdfg)

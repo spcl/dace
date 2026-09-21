@@ -69,6 +69,22 @@ MASKED_TAIL_MARKER = "__masked_tail"
 # emission when opted in via ``scalar_remainder_emit="tile"`` on the orchestrator.
 TILE_K1_TAIL_MARKER = "__tile_k1_tail"
 
+#: Every suffix this pass appends to a region's map label.
+REGION_MARKERS = (TILE_MAIN_MARKER, SCALAR_TAIL_MARKER, MASKED_TAIL_MARKER, TILE_K1_TAIL_MARKER)
+
+
+def source_map_label(label: str) -> str:
+    """The label ``label`` had before this pass split its map into regions.
+
+    A refusal raised after the split names the region (``m__tile_main``); the orchestrator marks the
+    pristine snapshot, which only has ``m``.
+    """
+    for marker in REGION_MARKERS:
+        if label.endswith(marker):
+            return label[:-len(marker)]
+    return label
+
+
 # Label of the state holding this pass's runtime divisibility guards. That state IS the record
 # the alignment proof reads back (:func:`guarded_stride_divisors`), so a fact can never outlive
 # the abort-on-violation check that establishes it.

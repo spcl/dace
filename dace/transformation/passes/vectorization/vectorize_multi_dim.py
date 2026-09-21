@@ -84,7 +84,8 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
     StrideMapByTileWidths, )
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SplitMapForTileRemainder,
+                                                                                   source_map_label)
 # Walker-primary pipeline. The walker (InsertTileLoadStore + PreparePerLaneIndices) stages tile
 # transients and emits the TileLoad / TileStore / TileMaskGen boundary; ConvertTaskletsToTileOps
 # then rewrites the raw tasklets between staged tiles into TileBinop / TileITE / TileReduce.
@@ -633,8 +634,9 @@ class _AssertTileOpsLowered(ppl.Pass):
         found = lane_varying_interstate_guard(sdfg, self._widths)
         if found is not None:
             block, violation = found
-            raise VectorizeUnsupported(f"lane-varying guard over an interstate assignment: {violation}",
-                                       maps=innermost_enclosing_map_label(block.sdfg))
+            raise VectorizeUnsupported(
+                f"lane-varying guard over an interstate assignment: {violation}",
+                maps=tuple(source_map_label(label) for label in innermost_enclosing_map_label(block.sdfg)))
         return None
 
 
