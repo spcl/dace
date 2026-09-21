@@ -28,6 +28,7 @@ from dace.frontend.python import astutils
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import scopes
@@ -241,6 +242,36 @@ def _rewrite_memlets_with_offset(inner_sdfg: SDFG, inner_name: str, offset_dims:
                 edge.data = new_memlet
 
 
+def reaches_further(state: SDFGState, edge: MultiConnectorEdge, other: MultiConnectorEdge) -> bool:
+    """True if ``edge``'s memlet path leaves more scopes than ``other``'s, so it keeps the connector.
+
+    A path ending at an access node inside the enclosing map publishes nothing past it: keeping that
+    one strands the node beyond the MapExit without a producer, and its readers (CloudSC's ``pfsqrf``
+    device-to-host copy) run before the kernel.
+    """
+    return len(state.memlet_path(edge)) > len(state.memlet_path(other))
+
+
+def fold_duplicate_boundary_edge(state: SDFGState, edge: MultiConnectorEdge, is_input: bool) -> None:
+    """Remove ``edge``'s whole memlet path (a partial removal dangles the scope's ``IN_x``/``OUT_x``).
+
+    The access node at the far end of the path can outlive it, still inside its scope and still
+    ordering whatever reads or writes it. Its last hop is restated as an empty memlet, which keeps
+    it in its scope and after (for a write) or before (for a read) the nested SDFG.
+    """
+    path = state.memlet_path(edge)
+    end, hop = (path[0].src, path[0].dst) if is_input else (path[-1].dst, path[-1].src)
+    state.remove_memlet_path(edge, remove_orphans=True)
+    nodes_left = state.nodes()
+    if end not in nodes_left or hop not in nodes_left:
+        return
+    # A fresh Memlet per edge -- never the object the old edge carried.
+    if is_input:
+        state.add_nedge(end, hop, Memlet())
+    else:
+        state.add_nedge(hop, end, Memlet())
+
+
 def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
                                       state: SDFGState,
                                       inner_name: str,
@@ -451,48 +482,39 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     # Replace connectors. If ``outer_name`` already has an edge on this side (a previous
     # iteration merged another connector binding the same outer array, e.g. ``A[1,i,j]`` →
     # ``__tmp_a`` AND ``A[0,i,j]`` → ``__tmp_b`` both bind outer ``A``), keep ONE merged edge and
-    # REMOVE the duplicate. Its subset is the full-array ``_full_subset`` so the post-widening
-    # contract holds regardless of which connector contributed which slice.
+    # fold the other away. Its subset is the full-array ``_full_subset`` so the post-widening
+    # contract holds regardless of which connector contributed which slice. The two edges are
+    # interchangeable as transfers, NOT as dependences: see :func:`reaches_further`.
     assert direction in ('in', 'out')
-    if direction == 'in':
-        existing_target = any(e.dst_conn == outer_name and e.dst_conn != inner_name for e in state.in_edges(nsdfg_node))
-        for iedge in list(state.in_edges(nsdfg_node)):
-            if iedge.dst_conn == inner_name:
-                if existing_target:
-                    # Drop this edge -- existing ``outer_name`` edge already covers the full
-                    # subset. Remove the whole memlet PATH: the source is typically a MapEntry
-                    # pass-through (``ME.OUT_x -> NSDFG``), so dropping only the NSDFG-incident
-                    # edge dangles ``ME``'s ``IN_x``/``OUT_x`` + feeding edge (invalid SDFG).
-                    # symm (``A[i,k]`` + ``A[k,i]`` through two connectors) hits this.
-                    state.remove_memlet_path(iedge, remove_orphans=True)
-                else:
-                    iedge.dst_conn = outer_name
-                    iedge.data.subset = _full_subset(state.sdfg, outer_name)
-                    # Inner descriptor now mirrors the full outer array; inner memlets carry the
-                    # offset (above). Any ``other_subset`` described the OLD collapsed inner shape
-                    # (K>=2 broadcast ``a[i//2] -> inner_a[0]``, inner ``(1,)``) → stale after
-                    # widening. Clear it for a clean full-array passthrough (design 2.4).
-                    iedge.data.other_subset = None
-        # ``remove_memlet_path`` already dropped the connector on the dedup branch; guard the
-        # idempotent explicit removal.
+    is_input = direction == 'in'
+    boundary = state.in_edges(nsdfg_node) if is_input else state.out_edges(nsdfg_node)
+    existing = [
+        e for e in boundary if (e.dst_conn if is_input else e.src_conn) == outer_name and outer_name != inner_name
+    ]
+    for edge in [e for e in boundary if (e.dst_conn if is_input else e.src_conn) == inner_name]:
+        if existing and not all(reaches_further(state, edge, other) for other in existing):
+            fold_duplicate_boundary_edge(state, edge, is_input)
+            continue
+        for other in existing:
+            fold_duplicate_boundary_edge(state, other, is_input)
+        existing = []
+        if is_input:
+            edge.dst_conn = outer_name
+        else:
+            edge.src_conn = outer_name
+        edge.data.subset = _full_subset(state.sdfg, outer_name)
+        # Inner descriptor now mirrors the full outer array; inner memlets carry the offset
+        # (above). Any ``other_subset`` described the OLD collapsed inner shape (K>=2 broadcast
+        # ``a[i//2] -> inner_a[0]``, inner ``(1,)``) → stale after widening. Clear it for a clean
+        # full-array passthrough (design 2.4).
+        edge.data.other_subset = None
+    # A fold already dropped its connector; guard the idempotent explicit removal.
+    if is_input:
         if inner_name in nsdfg_node.in_connectors:
             nsdfg_node.remove_in_connector(inner_name)
         if outer_name not in nsdfg_node.in_connectors:
             nsdfg_node.add_in_connector(outer_name, force=True)
     else:
-        existing_target = any(e.src_conn == outer_name and e.src_conn != inner_name
-                              for e in state.out_edges(nsdfg_node))
-        for oedge in list(state.out_edges(nsdfg_node)):
-            if oedge.src_conn == inner_name:
-                if existing_target:
-                    # Drop the whole path (mirrors in-edge dedup): the sink is typically a
-                    # MapExit pass-through, so removing only the NSDFG-incident edge dangles its
-                    # ``IN_x``/``OUT_x``.
-                    state.remove_memlet_path(oedge, remove_orphans=True)
-                else:
-                    oedge.src_conn = outer_name
-                    oedge.data.subset = _full_subset(state.sdfg, outer_name)
-                    oedge.data.other_subset = None  # stale after widening (see in-edge note)
         if inner_name in nsdfg_node.out_connectors:
             nsdfg_node.remove_out_connector(inner_name)
         if outer_name not in nsdfg_node.out_connectors:

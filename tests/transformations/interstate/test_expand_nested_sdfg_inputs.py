@@ -650,3 +650,90 @@ def test_threads_scalar_connector_scatter_index():
     ref = np.zeros(n)
     ref[idx] = src * scale
     assert np.allclose(dst, ref), f"scatter diverged, max|diff|={np.abs(dst - ref).max():.3e}"
+
+
+# CloudSC's flux body writes ``pfsqrf[jk, jl]``, reads it back and writes it again. Nesting the column
+# map body binds ``pfsqrf`` twice: once through an access node INSIDE the map (the write-then-reread)
+# and once through the MapExit (the final write). Folding the two onto one connector must keep the
+# MapExit path, or the write never leaves the map and whatever reads ``pfsqrf`` after it -- a copy
+# out to the host -- no longer waits for the kernel.
+FLUX_ROWS, FLUX_COLS = 6, 8
+
+
+def flux_reread_body():
+    """``rf[jk, jl] = lf[jk-1, jl] + rf[0, jl]``, re-read, ``rf[jk, jl] = 2 * that + 1``, then the
+    written rows are copied to ``snap``. ``rf`` row 0 is seeded in the same state, so the map reads it
+    through the MapEntry as well as through the in-scope access node. The result node is added first:
+    once it loses its producer it is a source, and the copy out of it is emitted before the map."""
+    sdfg = dace.SDFG('flux_reread')
+    for name in ('lf', 'rf'):
+        sdfg.add_array(name, [FLUX_ROWS + 1, FLUX_COLS], dace.float64)
+    sdfg.add_array('seed', [FLUX_COLS], dace.float64)
+    sdfg.add_array('snap', [FLUX_ROWS, FLUX_COLS], dace.float64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+    st = sdfg.add_state('main')
+    result = st.add_access('rf')
+    snap = st.add_write('snap')
+    seeded = st.add_access('rf')
+    st.add_nedge(st.add_read('seed'), seeded, dace.Memlet(f'seed[0:{FLUX_COLS}]', other_subset=f'0, 0:{FLUX_COLS}'))
+    ome, omx = st.add_map('rows', {'jk': f'1:{FLUX_ROWS + 1}'})
+    ime, imx = st.add_map('cols', {'jl': f'0:{FLUX_COLS}'}, schedule=dace.ScheduleType.Sequential)
+    first = st.add_tasklet('first', {'_in': None, '_row0': None}, {'_out': None}, '_out = _in + _row0')
+    mid = st.add_access('rf')
+    reread = st.add_tasklet('reread', {'_in': None}, {'_out': None}, '_out = _in')
+    scalar = st.add_access('s')
+    update = st.add_tasklet('update', {'_in': None}, {'_out': None}, '_out = _in * 2.0 + 1.0')
+    st.add_memlet_path(st.add_read('lf'), ome, ime, first, dst_conn='_in', memlet=dace.Memlet('lf[jk - 1, jl]'))
+    st.add_memlet_path(seeded, ome, ime, first, dst_conn='_row0', memlet=dace.Memlet('rf[0, jl]'))
+    st.add_edge(first, '_out', mid, None, dace.Memlet('rf[jk, jl]'))
+    st.add_edge(mid, None, reread, '_in', dace.Memlet('rf[jk, jl]'))
+    st.add_edge(reread, '_out', scalar, None, dace.Memlet('s[0]'))
+    st.add_edge(scalar, None, update, '_in', dace.Memlet('s[0]'))
+    st.add_memlet_path(update, imx, omx, result, src_conn='_out', memlet=dace.Memlet('rf[jk, jl]'))
+    st.add_nedge(result, snap,
+                 dace.Memlet(f'rf[1:{FLUX_ROWS + 1}, 0:{FLUX_COLS}]', other_subset=f'0:{FLUX_ROWS}, 0:{FLUX_COLS}'))
+    sdfg.validate()
+    return sdfg
+
+
+def nest_and_expand_flux_body():
+    from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
+    sdfg = flux_reread_body()
+    NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
+    nsdfg = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    state = sdfg.states()[0]
+    written = [e for e in state.out_edges(nsdfg) if e.data.data == 'rf']
+    assert len(written) == 2, f"fixture must bind 'rf' through two out-connectors, got {written}"
+    PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    return sdfg, state
+
+
+def map_node(state, kind, label):
+    return next(n for n in state.nodes() if isinstance(n, kind) and n.map.label == label)
+
+
+def test_a_folded_write_connector_keeps_the_path_that_leaves_the_map():
+    sdfg, state = nest_and_expand_flux_body()
+    exit_data = [e.data.data for e in state.out_edges(map_node(state, nodes.MapExit, 'rows'))]
+    assert exit_data == ['rf'], f"the map's write of 'rf' no longer leaves the map: {exit_data}"
+
+
+def test_a_folded_read_connector_keeps_the_path_that_enters_the_map():
+    """The row-0 seed is written in the same state; without the MapEntry path the map is no longer
+    ordered after it."""
+    sdfg, state = nest_and_expand_flux_body()
+    entry_data = sorted(e.data.data for e in state.in_edges(map_node(state, nodes.MapEntry, 'rows')))
+    assert entry_data == ['lf', 'rf'], f"the map's read of 'rf' no longer enters the map: {entry_data}"
+
+
+def test_a_copy_out_after_folded_connectors_sees_the_map_result():
+    sdfg, _ = nest_and_expand_flux_body()
+    rng = np.random.default_rng(0)
+    lf = rng.random((FLUX_ROWS + 1, FLUX_COLS))
+    seed = rng.random(FLUX_COLS)
+    rf = np.zeros((FLUX_ROWS + 1, FLUX_COLS))
+    snap = np.zeros((FLUX_ROWS, FLUX_COLS))
+    sdfg(lf=lf, rf=rf, seed=seed, snap=snap)
+    want = (lf[:-1] + seed) * 2.0 + 1.0
+    assert np.allclose(snap, want, rtol=0, atol=1e-14), f"max|diff|={np.abs(snap - want).max():.3e}"
