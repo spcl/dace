@@ -12,6 +12,7 @@ from dace import dtypes
 
 from dace import Memlet
 from dace.libraries.lapack import Potrf
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
@@ -59,12 +60,18 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     potrf_node = Potrf('potrf', lower=node.lower)
     potrf_node.implementation = implementation
 
+    # The triangle it zeroes lives in the OPERAND's storage, so a device-resident factorization
+    # needs a device map: the default schedule is host code writing GPU_Global memory, which
+    # validation rejects (cegterg's canon GPU run, at the __inl18_chol edge).
+    uzero_schedule = (dtypes.ScheduleType.GPU_Device
+                      if storage in GPU_RESIDENT_STORAGES else dtypes.ScheduleType.Default)
     _, me, mx = state.add_mapped_tasklet('_uzero_',
                                          dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
                                          dict(_inp=Memlet.simple('_b', '__i, __j')),
                                          '_out = (__i < __j) ? 0 : _inp;',
                                          dict(_out=Memlet.simple('_b', '__i, __j')),
                                          language=dace.dtypes.Language.CPP,
+                                         schedule=uzero_schedule,
                                          external_edges=True)
 
     ain = state.add_read('_a')

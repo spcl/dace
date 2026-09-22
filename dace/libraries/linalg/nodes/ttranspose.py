@@ -7,6 +7,8 @@ from dace.data import core as datacore
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.sdfg.scope import is_devicelevel_gpu
 from numbers import Number
 from dace.libraries.linalg import environments
 import warnings
@@ -56,7 +58,23 @@ class ExpandPure(ExpandTransformation):
         if node.beta != 0:
             inputs["_inout"] = out_mem
             code = f"_out = {node.alpha} * _inp + {node.beta} * _inout"
-        state.add_mapped_tasklet(f"{node.label}_tasklet", map_rng, inputs, code, outputs, external_edges=True)
+        # A device-resident operand needs a device map: the default schedule is host code, which
+        # cannot touch GPU_Global memory (ls3df_scf's double tensor transpose, which reaches this
+        # expansion because hipTensor permutes no doubles). Inside a kernel the same map would be a
+        # nested kernel, so there it stays sequential.
+        if is_devicelevel_gpu(parent_sdfg, parent_state, node):
+            schedule = dtypes.ScheduleType.Sequential
+        elif out_tensor.storage in GPU_RESIDENT_STORAGES:
+            schedule = dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dtypes.ScheduleType.Default
+        state.add_mapped_tasklet(f"{node.label}_tasklet",
+                                 map_rng,
+                                 inputs,
+                                 code,
+                                 outputs,
+                                 schedule=schedule,
+                                 external_edges=True)
 
         return sdfg
 
