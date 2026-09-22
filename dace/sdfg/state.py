@@ -3227,7 +3227,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                                  parent_first=True) -> Iterator['AbstractControlFlowRegion']:
         """ Iterate over this and all nested control flow regions. """
         if parent_first:
-            yield self
+            yield from self.control_flow_regions_preorder(recursive, load_ext)
+            return
         for block in self.nodes():
             if isinstance(block, SDFGState) and recursive:
                 for node in block.nodes():
@@ -3247,6 +3248,35 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                                                           parent_first=parent_first)
         if not parent_first:
             yield self
+
+    def control_flow_regions_preorder(self, recursive: bool, load_ext: bool) -> Iterator['AbstractControlFlowRegion']:
+        """``all_control_flow_regions(parent_first=True)`` walked with an explicit stack.
+
+        Same regions, same order, and each ``nodes()`` list is taken when its owner is reached, as in
+        the recursive form; a generator per nesting level made every region cost its depth in resumes,
+        and ``reset_cfg_list`` runs this walk after most graph edits.
+        """
+        yield self
+        # (remaining items, the state they belong to or None for a region's blocks)
+        stack: List[Tuple[Iterator[Any], Optional[SDFGState]]] = [(iter(self.nodes()), None)]
+        while stack:
+            items, owner = stack[-1]
+            item = next(items, None)
+            if item is None:
+                stack.pop()
+            elif owner is not None:
+                if isinstance(item, nd.NestedSDFG):
+                    if not item.sdfg and load_ext:
+                        item.load_external(owner)
+                    if item.sdfg:
+                        yield item.sdfg
+                        stack.append((iter(item.sdfg.nodes()), None))
+            elif isinstance(item, SDFGState):
+                if recursive:
+                    stack.append((iter(item.nodes()), item))
+            elif isinstance(item, AbstractControlFlowRegion):
+                yield item
+                stack.append((iter(item.nodes()), None))
 
     def all_sdfgs_recursive(self, load_ext=False) -> Iterator['SDFG']:
         """ Iterate over this and all nested SDFGs. """
