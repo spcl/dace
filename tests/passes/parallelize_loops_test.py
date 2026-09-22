@@ -524,3 +524,112 @@ def test_a_sweep_rebuilds_the_cfg_list_once(monkeypatch) -> None:
     assert len(lists) == 2, len(lists)
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
     sdfg.validate()
+
+
+@dace.program
+def many_sibling_sweeps(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N]):
+    for i in range(N):
+        for j in range(N):
+            a[i, j] = b[i, j] * 2.0
+    for i in range(N):
+        c[i] = a[i, i] + 1.0
+    for i in range(N):
+        for j in range(N):
+            b[i, j] = a[i, j] - c[j]
+    for i in range(N):
+        c[i] = c[i] * b[i, 0]
+    for i in range(N):
+        for j in range(N):
+            a[i, j] = a[i, j] + b[j, i]
+
+
+def test_a_sweep_patches_its_context_instead_of_rebuilding_it_per_lift(monkeypatch) -> None:
+    """Rebuilding the context walks the whole SDFG once per lift: quadratic in the loop count, 22% of
+    the parallelize stage on warpx_field_gather (3300 lifts in one SDFG)."""
+    from dace.transformation.passes import parallelize_loops
+    sdfg = many_sibling_sweeps.to_sdfg(simplify=True)
+    built: List[dace.SDFG] = []
+    original = parallelize_loops.build_lift_context
+
+    def recorded(sd, *args, **kwargs):
+        built.append(sd)
+        return original(sd, *args, **kwargs)
+
+    monkeypatch.setattr(parallelize_loops, 'build_lift_context', recorded)
+    lifted = ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    assert lifted and lifted >= 5, lifted
+    assert len(built) == len(set(map(id, built))), f'a context was rebuilt: {[sd.label for sd in built]}'
+
+
+def test_a_patched_context_is_the_context_a_rebuild_builds(monkeypatch) -> None:
+    """A patched context that drifted from the graph hands the next probe a wrong access index or a
+    wrong "used after the loop" answer, which is a miscompile."""
+    from dace.transformation.passes import parallelize_loops
+    from dace.transformation.interstate.loop_to_map import symbol_bindings
+    sdfg = many_sibling_sweeps.to_sdfg(simplify=True)
+    checked = []
+    original_context, original_candidates = parallelize_loops.patch_context, parallelize_loops.patch_candidates
+
+    def checked_context(ctx, sd, loop, region, site, added):
+        patched = original_context(ctx, sd, loop, region, site, added)
+        if patched:
+            fresh = build_lift_context(sd, ctx.invariants)
+            assert [id(b) for b in ctx.block_order] == [id(b) for b in fresh.block_order]
+            assert ({
+                k: set(map(id, v))
+                for k, v in ctx.access_states.items() if v
+            } == {
+                k: set(map(id, v))
+                for k, v in fresh.access_states.items() if v
+            })
+            assert set(ctx.sdfg_free_symbols) == set(fresh.sdfg_free_symbols)
+            if ctx.edge_assignments is not None:
+                assert +ctx.edge_assignments == +symbol_bindings(fresh, sd)[0]
+            checked.append(loop)
+        return patched
+
+    def checked_candidates(candidates, loop, region, site, added):
+        patched = original_candidates(candidates, loop, region, site, added)
+        assert [id(r) for r in patched] == [id(r) for r in candidate_loops(sdfg)]
+        return patched
+
+    monkeypatch.setattr(parallelize_loops, 'patch_context', checked_context)
+    monkeypatch.setattr(parallelize_loops, 'patch_candidates', checked_candidates)
+    ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    assert len(checked) >= 5, 'no context was patched, so nothing was exercised'
+
+
+def iterator_read_after(kill: bool) -> Tuple[dace.SDFG, LoopRegion]:
+    """A loop whose iterator a later state reads, with or without an edge reassigning it in between."""
+    sdfg = dace.SDFG('iterator_read_after')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('b', [1], dace.float64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    loop = LoopRegion('loop', f'i < {N}', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop)
+    body = loop.add_state('body', is_start_block=True)
+    body.add_mapped_tasklet('w', {'k': '0:1'}, {}, 'o = 1.0', {'o': dace.Memlet('a[i]')}, external_edges=True)
+    sdfg.add_edge(entry, loop, dace.InterstateEdge())
+    middle = sdfg.add_state('middle')
+    sdfg.add_edge(loop, middle, dace.InterstateEdge())
+    after = sdfg.add_state('after')
+    sdfg.add_edge(middle, after, dace.InterstateEdge(assignments={'i': '0'} if kill else None))
+    after.add_mapped_tasklet('r', {'k': '0:1'}, {'x': dace.Memlet('a[i]')},
+                             'o = x', {'o': dace.Memlet('b[0]')},
+                             external_edges=True)
+    return sdfg, loop
+
+
+@pytest.mark.parametrize('kill', [False, True])
+def test_the_use_index_decides_as_the_walk_does(kill: bool) -> None:
+    """``used_after_loop`` replaces the block-order walk for a probe that has a context; a disagreement
+    lifts a loop whose iterator is read after it."""
+    verdicts = []
+    for with_context in (False, True):
+        sdfg, loop = iterator_read_after(kill)
+        xform = LoopToMap()
+        if with_context:
+            xform.lift_context = build_lift_context(sdfg, build_lift_invariants(sdfg))
+        xform.setup_match(sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
+        verdicts.append(xform.can_be_applied(sdfg, 0, sdfg))
+    assert verdicts[0] == verdicts[1] == kill, verdicts
