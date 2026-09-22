@@ -195,6 +195,11 @@ class LiftEinsum(xf.SingleStateTransformation):
             symexpr = pystr_to_symbolic(astutils.unparse(expr.value))
         except (TypeError, sympy.SympifyError):
             return False
+        # Only a product of the operands is an einsum. A comparison or a logical op parses to a
+        # sympy ``Boolean`` (``LessThan``, ``And``), which has no quotient -- CP2K's broadcast
+        # ``zi <= si`` mask reached the ratio test below and raised a ``TypeError`` there.
+        if not isinstance(symexpr, sympy.Expr):
+            return False
 
         expected = 1
         for iconn in self.tasklet.in_connectors:
