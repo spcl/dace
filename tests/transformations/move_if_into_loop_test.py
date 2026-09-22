@@ -214,9 +214,9 @@ def many_guarded_loops(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1])
             b[i] = a[i] - 3.0
 
 
-def test_the_cfg_list_is_rebuilt_once_per_pass_not_once_per_added_block(monkeypatch):
+def test_the_cfg_list_is_never_rebuilt_by_the_pass(monkeypatch):
     """Every block a move adds used to rebuild the CFG list of the whole tree -- 11808 rebuilds, 83% of
-    the pass on warpx_field_gather -- although nothing in the pass reads the list."""
+    the pass on warpx_field_gather. The graph operations keep it exact in place."""
     sdfg = many_guarded_loops.to_sdfg(simplify=True)
     lists = [sdfg.cfg_list]
     original = dace.sdfg.state.AbstractControlFlowRegion.reset_cfg_list
@@ -229,7 +229,7 @@ def test_the_cfg_list_is_rebuilt_once_per_pass_not_once_per_added_block(monkeypa
 
     monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'reset_cfg_list', recorded)
     assert MoveIfIntoLoop().apply_pass(sdfg, {}) == 3
-    assert len(lists) == 2, len(lists)
+    assert len(lists) == 1, len(lists)
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
     sdfg.validate()
 

@@ -63,9 +63,10 @@ def test_map2for_scalar_dynamic_range():
     assert np.allclose(A, expected)
 
 
-def test_lowering_one_map_rebuilds_the_cfg_list_once(monkeypatch):
+def test_lowering_one_map_never_rebuilds_the_cfg_list(monkeypatch):
     """Nesting, the loop region and the inline each rebuilt the CFG list of the whole tree -- six
-    whole-tree walks per map, the cost of the canonicalization ``lower`` stage on warpx_field_gather."""
+    whole-tree walks per map, the cost of the canonicalization ``lower`` stage on warpx_field_gather.
+    The graph operations keep it exact in place."""
     sdfg = map2for_scalar_range.to_sdfg(simplify=True)
     lists = [sdfg.cfg_list]
     original = dace.sdfg.state.AbstractControlFlowRegion.reset_cfg_list
@@ -78,7 +79,7 @@ def test_lowering_one_map_rebuilds_the_cfg_list_once(monkeypatch):
 
     monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'reset_cfg_list', recorded)
     assert sdfg.apply_transformations(MapToForLoop) == 1
-    assert len(lists) == 2, len(lists)
+    assert len(lists) == 1, len(lists)
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
     sdfg.validate()
 

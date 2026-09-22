@@ -2026,7 +2026,6 @@ class LoopToMap(xf.MultiStateTransformation):
         if lift_ctx is not None and (frees_nothing or not unique_set):
             lift_ctx.post_lift_free_symbols = post_free_symbols
 
-        sdfg.reset_cfg_list()
         # Every nested SDFG of the tree, as ``all_nodes_recursive`` reaches them, without yielding every
         # dataflow node of every state on the way (7% of a lift on warpx_field_gather).
         pending = [sdfg]

@@ -389,9 +389,9 @@ def test_fusing_copied_branches_leaves_every_region_addressable():
         assert out[0] == expected, f'c={c} d={d}: got {out[0]}, want {expected}'
 
 
-def test_an_application_rebuilds_the_cfg_list_once(monkeypatch):
+def test_an_application_never_rebuilds_the_cfg_list(monkeypatch):
     """Every branch a fusion adds used to rebuild the CFG list of the whole tree -- 94% of the
-    ``fuse`` stage's ``ConditionFusion`` on warpx_field_gather -- though nothing in between reads it."""
+    ``fuse`` stage's ``ConditionFusion`` on warpx_field_gather. The graph operations keep it exact in place."""
 
     @dace.program
     def tester(a: dace.float64[3]):
@@ -426,7 +426,7 @@ def test_an_application_rebuilds_the_cfg_list_once(monkeypatch):
     sdfg.apply_transformations_repeated(ConditionFusion)
     sdfg.validate()
     assert applications == [1, 1, 1], applications
-    assert len(lists) == 1 + len(applications), len(lists)
+    assert len(lists) == 1, len(lists)
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
 
 

@@ -505,9 +505,9 @@ def test_a_refused_smt_write_reaches_z3_once_however_often_its_loop_is_reprobed(
     assert questions == [(f'Min(i, {N - 1} - i)', 'i', '0', str(N - 1))], f'z3 was asked again: {questions}'
 
 
-def test_a_sweep_rebuilds_the_cfg_list_once(monkeypatch) -> None:
-    """Every lift rebuilt the CFG list of the whole tree, and the sweep never reads it: 9% of the
-    parallelize stage on warpx_field_gather (3300 lifts in one SDFG)."""
+def test_a_sweep_never_rebuilds_the_cfg_list(monkeypatch) -> None:
+    """Every lift rebuilt the CFG list of the whole tree: 9% of the parallelize stage on warpx_field_gather
+    (3300 lifts in one SDFG). The graph operations keep it exact in place."""
     sdfg = three_independent_sweeps.to_sdfg(simplify=True)
     lists = [sdfg.cfg_list]
     original = dace.sdfg.state.AbstractControlFlowRegion.reset_cfg_list
@@ -521,7 +521,7 @@ def test_a_sweep_rebuilds_the_cfg_list_once(monkeypatch) -> None:
     monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'reset_cfg_list', recorded)
     lifted = ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     assert lifted and lifted > 1, lifted
-    assert len(lists) == 2, len(lists)
+    assert len(lists) == 1, len(lists)
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
     sdfg.validate()
 

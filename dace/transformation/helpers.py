@@ -874,8 +874,6 @@ def nest_state_subgraph(sdfg: SDFG,
         if node in present and state.degree(node) == 0:
             state.remove_node(node)
 
-    sdfg.reset_cfg_list()
-
     return nested_sdfg
 
 

@@ -224,11 +224,8 @@ class ParallelizeLoops(ppl.Pass):
         # order reaches 5, because lifting an outer loop can put a sibling behind a NestedSDFG
         # whose propagated memlet then fails the ``a*i+b`` write check. Sweeping graph order once
         # more afterwards costs one probe round and recovers those.
-        # Every lift resets the CFG list of the whole tree; no probe or lift reads it (matches bind the
-        # loop by object), so one reset after the last lift does.
-        with sdfg.deferred_cfg_list_reset():
-            for order in (loop_order_key, None):
-                applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
+        for order in (loop_order_key, None):
+            applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
 
         if applied:
             self.finish(sdfg)

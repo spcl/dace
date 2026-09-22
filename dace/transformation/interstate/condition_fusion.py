@@ -161,20 +161,10 @@ class ConditionFusion(xf.MultiStateTransformation):
         return False
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        # Every branch added resets the CFG list of the whole tree, 94% of this transformation on
-        # warpx_field_gather; nothing here reads the list, so the reset below is the only one made.
-        with sdfg.deferred_cfg_list_reset():
-            if self.expr_index == 0:
-                self.fuse_consecutive_conditions(sdfg, self.cblck1, self.cblck2)
-            elif self.expr_index == 1:
-                self.fuse_nested_conditions(sdfg, self.cblck1)
-            # Both forms graft DEEP COPIES of regions into the tree (a spliced body, an else arm, the
-            # cartesian branch product), and a copy carries no usable CFG list: ``SDFG.__deepcopy__``
-            # leaves a nested copy's ``_cfg_list`` empty on purpose, and ``ControlFlowBlock`` skips the
-            # attribute altogether -- both leave it to whoever grafts the copy in. Without this the
-            # first ``cfg_id`` asked of a copied region raises (``SDFG (loop_body) is not in list``),
-            # which is how the CloudSC parallelize pipeline died in the fuse phase.
-            sdfg.reset_cfg_list()
+        if self.expr_index == 0:
+            self.fuse_consecutive_conditions(sdfg, self.cblck1, self.cblck2)
+        elif self.expr_index == 1:
+            self.fuse_nested_conditions(sdfg, self.cblck1)
 
     def fuse_consecutive_conditions(self, sdfg: sd.SDFG, cblck1: ConditionalBlock, cblck2: ConditionalBlock):
         """Merge ``cblck2`` into ``cblck1``.
