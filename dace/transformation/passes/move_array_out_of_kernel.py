@@ -428,10 +428,15 @@ class MoveArrayOutOfKernel(Pass):
         # of enumerating every complete path (exponential in fan-in/out). The incoming/outgoing
         # flag distinguishes the dst-subset vs src-subset rewrite on a direct edge to/from the node.
         visited: Set[MultiConnectorEdge[Memlet]] = set()
+        # One rewrite per STATE, not per access node: the bodies belong to the state, so a state
+        # holding three access nodes of the array used to receive the prefix three times over and
+        # ended up with a rank-11 subscript on a rank-5 array (npbench ``examinimd``).
+        bodies_to_rewrite: Set[SDFGState] = set()
         for access_node in access_nodes:
             state = self._node_to_state_cache[access_node]
             if state.sdfg not in reshaped_sdfgs:
                 continue
+            bodies_to_rewrite.add(state)
             incoming = [(edge, True) for edge in state.edge_bfs(access_node, reverse=True)]
             outgoing = [(edge, False) for edge in state.edge_bfs(access_node)]
             for edge, is_incoming in incoming + outgoing:
@@ -446,6 +451,7 @@ class MoveArrayOutOfKernel(Pass):
                 elif not is_incoming and edge.src is access_node and edge.data.src_subset is not None:
                     edge.data.src_subset = Range(params_as_ranges + edge.data.src_subset.ndrange())
                     visited.add(edge)
+        for state in bodies_to_rewrite:
             self.update_inlined_tasklet_accesses(state, array_name, params_as_ranges)
         for sdfg in reshaped_sdfgs:
             self.update_interstate_accesses(sdfg, array_name, params_as_ranges)

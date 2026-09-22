@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests that ``_tile_extent`` returns the static tile width for a tiled inner-map extent so the
 lifted transient's shape does not leak an out-of-scope outer-loop symbol into ``cudaMalloc``."""
+import ast
+
 import numpy as np
 import pytest
 import sympy
@@ -8,6 +10,7 @@ import sympy
 import dace
 from dace import dtypes
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
 from dace.transformation.passes.move_array_out_of_kernel import (_prepend_subscript_indices, _tile_extent,
                                                                  MoveArrayOutOfKernel)
 
@@ -469,8 +472,97 @@ def test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping():
     assert 'M' not in args, f"the nested SDFG's local symbol leaked into the outer call signature: {list(args)}"
 
 
+#: Three access nodes of the scratch in ONE state -- the chain ``fill -> tmp -> scale -> tmp -> shift
+#: -> tmp -> use`` examinimd's force loop produces after fusion.
+SCRATCH_READERS = 3
+
+
+def kernel_with_several_scratch_access_nodes():
+    """``a[i] = ((i + 1) * 2 + 3)`` computed through a scratch element read and written three times.
+
+    Every stage names the SAME transient, so the state holds ``SCRATCH_READERS`` access nodes for it
+    and each tasklet body carries a subscript on it once
+    :class:`~dace.transformation.passes.inline_tasklet_connectors.InlineTaskletConnectors` has run.
+    """
+    sdfg = dace.SDFG('several_scratch_access_nodes')
+    sdfg.add_array('a', [KERNEL_EXTENT], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('tmp', [SCRATCH_EXTENT], dace.float64, transient=True, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('grid', is_start_block=True)
+    kernel_entry, kernel_exit = state.add_map('kernel',
+                                              dict(i=f'0:{KERNEL_EXTENT}'),
+                                              schedule=dtypes.ScheduleType.GPU_Device)
+
+    fill = state.add_tasklet('fill', {}, {'__out'}, '__out = i + 1.0')
+    state.add_nedge(kernel_entry, fill, dace.Memlet())
+    previous = state.add_access('tmp')
+    state.add_edge(fill, '__out', previous, None, dace.Memlet('tmp[1]'))
+    for step, body in enumerate(('__out = __in * 2.0', '__out = __in + 3.0')):
+        stage = state.add_tasklet(f'stage{step}', {'__in'}, {'__out'}, body)
+        state.add_edge(previous, None, stage, '__in', dace.Memlet('tmp[1]'))
+        previous = state.add_access('tmp')
+        state.add_edge(stage, '__out', previous, None, dace.Memlet('tmp[1]'))
+
+    use = state.add_tasklet('use', {'__in'}, {'__out'}, '__out = __in')
+    state.add_edge(previous, None, use, '__in', dace.Memlet('tmp[1]'))
+    state.add_memlet_path(use, kernel_exit, state.add_write('a'), src_conn='__out', memlet=dace.Memlet('a[i]'))
+    sdfg.validate()
+    assert len([n for n in state.data_nodes() if n.data == 'tmp']) == SCRATCH_READERS
+    return sdfg, kernel_entry
+
+
+def scratch_subscripts_in_tasklet_bodies(sdfg: dace.SDFG):
+    """Every ``tmp[...]`` subscript AST appearing in a tasklet body of ``sdfg``."""
+    subscripts = []
+    for node, _ in sdfg.all_nodes_recursive():
+        if not isinstance(node, dace.nodes.Tasklet) or node.code.language is not dtypes.Language.Python:
+            continue
+        for item in ast.walk(ast.parse(node.code.as_string)):
+            if isinstance(item, ast.Subscript) and getattr(item.value, 'id', None) == 'tmp':
+                subscripts.append(item)
+    return subscripts
+
+
+def test_an_inlined_body_gains_the_lift_prefix_exactly_once():
+    """A body subscript must end up with as many indices as the lifted buffer has dimensions.
+
+    The body rewrite used to run once per ACCESS NODE rather than once per state, so a state with
+    three access nodes of the scratch prefixed each body three times over. On npbench ``examinimd``
+    that left an 11-index subscript on a rank-5 array, which the generator emits verbatim as an
+    ``operator[]`` on a raw pointer -- a compile error at the end of the GPU canonicalize column.
+    """
+    sdfg, kernel_entry = kernel_with_several_scratch_access_nodes()
+    InlineTaskletConnectors().apply_pass(sdfg, {})
+    assert scratch_subscripts_in_tasklet_bodies(sdfg), 'no body names the scratch, so this covers nothing'
+
+    MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, 'tmp')
+
+    rank = len(sdfg.arrays['tmp'].shape)
+    assert rank == 2, f'the scratch was not lifted: shape {sdfg.arrays["tmp"].shape}'
+    for subscript in scratch_subscripts_in_tasklet_bodies(sdfg):
+        indices = subscript.slice.elts if isinstance(subscript.slice, ast.Tuple) else [subscript.slice]
+        assert len(indices) == rank, f'{ast.unparse(subscript)} indexes a rank-{rank} buffer'
+
+
+def test_the_lifted_scratch_chain_still_computes_its_values():
+    """End to end on the CPU: the three-stage chain returns ``(i + 1) * 2 + 3`` per kernel row."""
+    sdfg, kernel_entry = kernel_with_several_scratch_access_nodes()
+    InlineTaskletConnectors().apply_pass(sdfg, {})
+    MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, 'tmp')
+    for desc in sdfg.arrays.values():
+        desc.storage = dtypes.StorageType.Default
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry):
+            node.map.schedule = dtypes.ScheduleType.Sequential
+
+    a = np.zeros(KERNEL_EXTENT)
+    sdfg(a=a)
+    assert np.allclose(a, (np.arange(KERNEL_EXTENT) + 1.0) * 2.0 + 3.0), a
+
+
 if __name__ == '__main__':
     test_lift_leaves_descendant_nested_sdfgs_at_their_own_rank()
     test_lifted_scratch_below_a_nested_sdfg_computes_the_right_values()
     test_lift_does_not_bind_a_name_the_nest_assigns_itself()
     test_lifted_kernel_declares_a_nested_loop_counter()
+    test_an_inlined_body_gains_the_lift_prefix_exactly_once()
+    test_the_lifted_scratch_chain_still_computes_its_values()
