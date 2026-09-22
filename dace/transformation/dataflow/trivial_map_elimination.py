@@ -78,6 +78,7 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
     def remove_empty_map(self, graph, sdfg):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
+        ordering = self.ordering_pairs(graph, map_entry, map_exit)
 
         # Redirect map entry's out edges
         write_only_map = True
@@ -104,5 +105,34 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
                     if outer_entry is not None:
                         graph.add_edge(outer_entry, None, edge.src, None, Memlet())
 
+        for src, dst in ordering:
+            if not graph.edges_between(src, dst):
+                graph.add_edge(src, None, dst, None, Memlet())
+
         # Remove map
         graph.remove_nodes_from([map_entry, map_exit])
+
+    @staticmethod
+    def ordering_pairs(graph, map_entry, map_exit):
+        """Carry the order the scope nodes impose across their removal: an empty edge ends at the entry or starts at
+        the exit only to order the WHOLE body, and a body node the entry reaches only by an empty edge runs after
+        everything the entry waits for. Both vanish with the scope nodes unless re-attached to the body."""
+        preds = [e.src for e in graph.in_edges(map_entry)]
+        succs = [e.dst for e in graph.out_edges(map_exit)]
+        heads = [e.dst for e in graph.out_edges(map_entry) if e.dst is not map_exit]
+        tails = [e.src for e in graph.in_edges(map_exit) if e.src is not map_entry]
+        pairs = []
+        for e in graph.in_edges(map_entry):
+            if e.data.is_empty():
+                pairs += [(e.src, head) for head in heads]
+        for e in graph.out_edges(map_entry):
+            if e.data.is_empty() and e.dst is not map_exit:
+                pairs += [(pred, e.dst) for pred in preds]
+        for e in graph.out_edges(map_exit):
+            if e.data.is_empty():
+                pairs += [(tail, e.dst) for tail in tails]
+        for e in graph.in_edges(map_exit):
+            if e.data.is_empty() and e.src is not map_entry:
+                pairs += [(e.src, succ) for succ in succs]
+        return [(src, dst) for src, dst in pairs
+                if src not in (map_entry, map_exit) and dst not in (map_entry, map_exit)]
