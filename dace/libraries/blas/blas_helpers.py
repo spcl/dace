@@ -280,3 +280,62 @@ def validate_level1_vector_to_scalar(node, sdfg, state, op_name: str):
     if out_edges[0].data.subset.num_elements() != 1:
         raise ValueError(f"Output of {op_name} must be a single element")
     return (desc_x, stride_x), desc_res, n
+
+
+def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
+    """Feed ``node`` a copy of every operand on ``connectors`` whose element type is not ``dtype``,
+    cast to ``dtype``.
+
+    A vendor BLAS routine takes ONE element type for all its matrices, and the expansions name it
+    after one operand while casting every pointer to it. A real matrix times a complex one (npbench
+    cegterg's ``deeq @ ps``) then reads the real buffer as complex numbers: the OpenBLAS build rejects
+    the pointer, the rocBLAS/cuBLAS C-style casts compile and return wrong numbers. NumPy promotes
+    the operands to the result type, so the copy is exactly that promotion. The copy covers the
+    memlet's subset only, with the same size, so every shape and matrix-view rule reading the
+    connector sees what it saw before; it is contiguous, so the leading dimension is its own.
+
+    :param node: The library node whose inputs are promoted.
+    :param state: The state containing ``node``.
+    :param connectors: The input connectors that carry matrix or vector operands.
+    :param dtype: The element type the vendor call computes in.
+    """
+    from dace import Memlet  # Avoid import loop
+    from dace.symbolic import symstr
+    sdfg = state.sdfg
+    for edge in [e for e in state.in_edges(node) if e.dst_conn in connectors]:
+        src_desc = sdfg.arrays[edge.data.data]
+        if src_desc.dtype == dtype:
+            continue
+        subset = edge.data.subset
+        shape = subset.size()
+        name, desc = sdfg.add_transient(f'{node.label}{edge.dst_conn}_as_{dtype.to_string()}',
+                                        shape,
+                                        dtype,
+                                        storage=src_desc.storage,
+                                        find_new_name=True)
+        params = [f'__promote{d}' for d in range(len(shape))]
+        index = ', '.join(f'{symstr(begin)} + ({symstr(step)}) * {p}'
+                          for (begin, _, step), p in zip(subset.ranges, params))
+        # A device-resident operand is cast by a kernel: host code cannot read GPU_Global memory.
+        schedule = (dtypes.ScheduleType.GPU_Device
+                    if src_desc.storage == dtypes.StorageType.GPU_Global else dtypes.ScheduleType.Default)
+        entry, exit_ = state.add_map(f'{name}_cast', {
+            p: f'0:{symstr(n)}'
+            for p, n in zip(params, shape)
+        },
+                                     schedule=schedule)
+        cast = state.add_tasklet(f'{name}_cast', {'__inp'}, {'__out'}, '__out = __inp')
+        promoted = state.add_access(name)
+        state.add_memlet_path(edge.src,
+                              entry,
+                              cast,
+                              src_conn=edge.src_conn,
+                              dst_conn='__inp',
+                              memlet=Memlet(data=edge.data.data, subset=index))
+        state.add_memlet_path(cast,
+                              exit_,
+                              promoted,
+                              src_conn='__out',
+                              memlet=Memlet(data=name, subset=', '.join(params)))
+        state.add_edge(promoted, None, node, edge.dst_conn, Memlet.from_array(name, desc))
+        state.remove_edge(edge)

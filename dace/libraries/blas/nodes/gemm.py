@@ -802,6 +802,10 @@ class ExpandGemmPBLAS(ExpandTransformation):
         return _gemm_pblas.to_sdfg()
 
 
+#: The Gemm expansions that index the operands themselves, so each keeps its own element type.
+LOOP_IMPLEMENTATIONS = ('pure', 'rowwise')
+
+
 @dace.library.node
 class Gemm(dace.sdfg.nodes.LibraryNode):
     """Executes alpha * (A @ B) + beta * C. C should be unidirectionally
@@ -885,6 +889,17 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         self.cin = cin
         self.alpha_input = alpha_input
         self.beta_input = beta_input
+
+    def expand(self, state_or_sdfg, state_or_impl=None, **kwargs) -> str:
+        # A BLAS call computes in one element type; see ``promote_operands``. The loop expansions
+        # read each operand in its own type and need no copy -- one inside a kernel could not
+        # even allocate it.
+        state = state_or_sdfg if isinstance(state_or_sdfg, SDFGState) else state_or_impl
+        impl = state_or_impl if isinstance(state_or_impl, str) else kwargs.get('implementation', self.implementation)
+        if (impl or dace.Config.get('library', 'blas', 'default_implementation')) not in LOOP_IMPLEMENTATIONS:
+            out_edge = next(e for e in state.out_edges(self) if e.src_conn == '_c')
+            blas_helpers.promote_operands(self, state, ('_a', '_b', '_c'), state.sdfg.arrays[out_edge.data.data].dtype)
+        return super().expand(state_or_sdfg, state_or_impl, **kwargs)
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
