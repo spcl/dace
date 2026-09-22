@@ -7,6 +7,7 @@ from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import graph as gr
 from dace.sdfg.scope import is_devicelevel_gpu
+from dace.sdfg.state import LoopRegion
 from dace.memlet import Memlet
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -78,19 +79,63 @@ def uniform_subset(edges: List[gr.MultiConnectorEdge[Memlet]]) -> Optional[subse
     return shared
 
 
-def device_level_accesses(sdfg: SDFG, state: SDFGState, edges: List[gr.MultiConnectorEdge[Memlet]]) -> bool:
-    """Whether every edge in ``edges`` runs in device code, under a ``GPU_Device`` map.
+def device_level_accesses(sdfg: SDFG, accesses: List[Tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]]) -> bool:
+    """Whether every access in ``accesses`` runs in device code, under a ``GPU_Device`` map.
 
-    A ``GPU_Global`` transient confined to one map body is only resizable there: shrunk under a
-    kernel it becomes thread-private, while under a host map it would still be one device buffer
-    that the host loop's iterations share.
+    A ``GPU_Global`` transient is only resizable there: shrunk under a kernel it becomes
+    thread-private, while under a host map it would still be one device buffer that the host
+    loop's iterations share.
 
-    :param sdfg: SDFG owning ``state``.
-    :param state: The state holding the edges.
-    :param edges: Edges naming the descriptor.
+    :param sdfg: SDFG owning the states.
+    :param accesses: ``(state, edge)`` pairs naming the descriptor.
     :returns: ``True`` when every edge is device-level.
     """
-    return all(is_devicelevel_gpu(sdfg, state, edge.dst) for edge in edges)
+    return all(is_devicelevel_gpu(sdfg, state, edge.dst) for state, edge in accesses)
+
+
+def nest_invariant_accesses(sdfg: SDFG, name: str) -> Optional[List[Tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]]]:
+    """Every access to ``name`` when ``sdfg`` is a nested SDFG and all of them sit outside any map.
+
+    The other shape a per-iteration buffer takes: a map body nested into its own SDFG, so the
+    buffer is a top-level transient of the nest, indexed by a symbol the nest receives from the
+    enclosing map (``tx_times_tx[_loop_it_27]`` in npbench warpx_boris_push). Each nest instance
+    then touches one box, provided nothing inside the nest reassigns the symbols the box names --
+    :func:`box_is_invariant` checks that part.
+
+    :param sdfg: SDFG owning the descriptor.
+    :param name: Descriptor name.
+    :returns: ``(state, edge)`` pairs, or ``None`` when ``sdfg`` is the root or an access is in a map.
+    """
+    if sdfg.parent_nsdfg_node is None:
+        return None
+    found: List[Tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]] = []
+    for state in sdfg.states():
+        sdict = state.scope_dict()
+        if any(sdict[n] is not None for n in state.data_nodes() if n.data == name):
+            return None
+        for edge in state.edges():
+            if edge.data.data != name:
+                continue
+            if sdict[edge.src] is not None or sdict[edge.dst] is not None:
+                return None
+            found.append((state, edge))
+    return found or None
+
+
+def box_is_invariant(sdfg: SDFG, box: subsets.Range) -> bool:
+    """Whether the symbols ``box`` names keep one value for a whole execution of ``sdfg``.
+
+    :param sdfg: SDFG whose control flow is checked (its own regions only).
+    :param box: The subset every access names.
+    :returns: ``False`` when an interstate edge assigns one of them or a loop iterates over one.
+    """
+    assigned = set()
+    for edge in sdfg.all_interstate_edges():
+        assigned.update(edge.data.assignments.keys())
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            assigned.add(region.loop_variable)
+    return not ({str(sym) for sym in box.free_symbols} & assigned)
 
 
 def shrinks_the_buffer(desc: data.Array, size: Tuple[Any, ...]) -> bool:
@@ -122,6 +167,10 @@ class ShrinkMapLocalTransients(ppl.Pass):
     Only the buffer shrinks. The accesses stay private to the iteration that makes them -- each
     one writes the box and reads it back within its own iteration, which is what makes rewriting
     the subset to the origin an identity on the values.
+
+    A map body nested into its own SDFG is the same case one level down: the buffer is a
+    top-level transient of the nest and the box is named by symbols the nest receives, so it is
+    shrunk when every access names that one box and nothing in the nest reassigns its symbols.
     """
 
     CATEGORY: str = 'Canonicalization'
@@ -144,14 +193,20 @@ class ShrinkMapLocalTransients(ppl.Pass):
             for name, desc in list(sd.arrays.items()):
                 if not self.is_candidate(sd, name, desc):
                     continue
-                accesses = map_local_accesses(sd, name)
-                if accesses is None:
-                    continue
+                in_map = map_local_accesses(sd, name)
+                if in_map is not None:
+                    accesses = [(in_map[0], edge) for edge in in_map[1]]
+                else:
+                    accesses = nest_invariant_accesses(sd, name)
+                    if accesses is None:
+                        continue
                 on_device = desc.storage == dtypes.StorageType.GPU_Global
-                if on_device and not device_level_accesses(sd, *accesses):
+                if on_device and not device_level_accesses(sd, accesses):
                     continue
-                shared = uniform_subset(accesses[1])
+                shared = uniform_subset([edge for _, edge in accesses])
                 if shared is None:
+                    continue
+                if in_map is None and not box_is_invariant(sd, shared):
                     continue
                 size = tuple(shared.size())
                 if len(size) != len(desc.shape) or not shrinks_the_buffer(desc, size):
@@ -160,11 +215,11 @@ class ShrinkMapLocalTransients(ppl.Pass):
                     continue
                 desc.set_shape(size)
                 if on_device:
-                    # Thread-private by construction: every access sits in one map body under a
-                    # kernel and names one iteration's box. Left in GPU_Global it would be one
+                    # Thread-private by construction: every access sits under a kernel and names
+                    # one iteration's box. Left in GPU_Global it would be one
                     # buffer shared by every thread.
                     desc.storage = dtypes.StorageType.Register
-                for edge in accesses[1]:
+                for _, edge in accesses:
                     edge.data.subset = subsets.Range([(0, dim - 1, 1) for dim in size])
                     edge.data.volume = edge.data.subset.num_elements()
                 shrunk += 1
