@@ -635,6 +635,12 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
         # beta != 0) is a distinct connector from the C write (`_conn_c`). A/B/C are additionally
         # staged through GPU_Global transients when they are not already resident on the device
         # (`needs_copy`); when they already are, the nested arrays pass straight through.
+        # Each nested array is the box its connector's memlet names, in the caller's strides: the
+        # connector points at that box's first element, and a whole-array shape runs past the end
+        # of the caller's array as soon as the box starts at an offset (an out-of-bounds memlet
+        # once the wrapper is inlined).
+        boxes = {e.dst_conn: e.data.subset for e in state.in_edges(node) if e.dst_conn in ('_a', '_b')}
+        boxes['_c'] = next(e for e in state.out_edges(node) if e.src_conn == '_c').data.subset
         nsdfg = dace.SDFG('nested_gemm')
         for name, desc in [('_a', adesc), ('_b', bdesc), ('_c', cdesc)]:
             if isinstance(desc, dt.View):
@@ -642,6 +648,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             else:
                 dcopy = dc(desc)
             dcopy.transient = False
+            dcopy.set_shape(boxes[name].size(), strides=desc.strides)
             nsdfg.add_datadesc(name, dcopy)
             if needs_copy:
                 dcopy_gpu = dc(dcopy)
@@ -666,20 +673,20 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             src = nstate.add_read(name)
             if needs_copy:
                 gpu = nstate.add_access(name + '_gpu')
-                nstate.add_nedge(src, gpu, dace.Memlet.from_array(name, desc))
+                nstate.add_nedge(src, gpu, dace.Memlet.from_array(name, nsdfg.arrays[name]))
                 nstate.add_edge(gpu, None, tasklet, '_conn' + name,
                                 dace.Memlet.from_array(name + '_gpu', nsdfg.arrays[name + '_gpu']))
             else:
-                nstate.add_edge(src, None, tasklet, '_conn' + name, dace.Memlet.from_array(name, desc))
+                nstate.add_edge(src, None, tasklet, '_conn' + name, dace.Memlet.from_array(name, nsdfg.arrays[name]))
 
         # C output, with a device-to-host copyback when C was staged.
         cout = nstate.add_write('_c')
         if needs_copy:
             gc = nstate.add_access('_c_gpu')
             nstate.add_edge(tasklet, '_conn_c', gc, None, dace.Memlet.from_array('_c_gpu', nsdfg.arrays['_c_gpu']))
-            nstate.add_nedge(gc, cout, dace.Memlet.from_array('_c', cdesc))
+            nstate.add_nedge(gc, cout, dace.Memlet.from_array('_c', nsdfg.arrays['_c']))
         else:
-            nstate.add_edge(tasklet, '_conn_c', cout, None, dace.Memlet.from_array('_c', cdesc))
+            nstate.add_edge(tasklet, '_conn_c', cout, None, dace.Memlet.from_array('_c', nsdfg.arrays['_c']))
 
         # Runtime coefficient scalars pass straight to the tasklet -- no host<->device staging,
         # so a host scalar stays on the host and a device scalar stays on the device.
@@ -700,11 +707,11 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             rc = nstate.add_read('_c')
             if needs_copy:
                 rgc = nstate.add_access('_c_gpu')
-                nstate.add_nedge(rc, rgc, dace.Memlet.from_array('_c', cdesc))
+                nstate.add_nedge(rc, rgc, dace.Memlet.from_array('_c', nsdfg.arrays['_c']))
                 nstate.add_edge(rgc, None, tasklet, '_conn_cin',
                                 dace.Memlet.from_array('_c_gpu', nsdfg.arrays['_c_gpu']))
             else:
-                nstate.add_edge(rc, None, tasklet, '_conn_cin', dace.Memlet.from_array('_c', cdesc))
+                nstate.add_edge(rc, None, tasklet, '_conn_cin', dace.Memlet.from_array('_c', nsdfg.arrays['_c']))
 
         return nsdfg
 
