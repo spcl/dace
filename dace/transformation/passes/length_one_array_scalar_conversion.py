@@ -40,7 +40,7 @@ import re
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import dace
-from dace import Memlet, dtypes, properties, subsets
+from dace import Memlet, dtypes, properties, subsets, symbolic
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, nodes, utils as sdutil
@@ -102,7 +102,14 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
                 text = value if isinstance(value, str) else str(value)
                 rewritten = rewrite(text)
                 if rewritten != text:
-                    node.symbol_mapping[key] = rewritten
+                    # Parsed back, not stored as the text ``rewrite`` returns: the mapping is
+                    # declared to hold symbolic expressions, and readers that ask a raw string
+                    # whether it is symbolic are told no. ``ConstantPropagation`` then took the
+                    # text ``'nat * nh'`` for a constant and substituted the CALLER's symbol names
+                    # into a nest that has no mapping for them (npbench ``vexx_k``). The rewrite is
+                    # an AST round trip, so it reprints even an untouched value and this branch is
+                    # taken far more often than a rename actually happens.
+                    node.symbol_mapping[key] = symbolic.pystr_to_symbolic(rewritten)
 
 
 class ScalarRefRewriter(ast.NodeTransformer):

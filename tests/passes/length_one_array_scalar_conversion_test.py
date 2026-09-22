@@ -606,3 +606,44 @@ def test_staged_scalar_of_a_kernel_written_array_keeps_device_storage():
     ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
 
     assert sdfg.arrays['scal_res'].storage is dace.StorageType.GPU_Global
+
+
+def test_a_rewritten_symbol_mapping_stays_symbolic():
+    """A nest's symbol mapping must come out of the rewrite as an expression, not as its text.
+
+    ``rewrite_code_slots`` reprints every mapping value through an AST round trip, so even a value
+    it renames nothing in comes back as a string. Readers ask that value whether it is symbolic and
+    a raw string answers no: ``ConstantPropagation`` took ``'nat * nh'`` for a constant, substituted
+    the CALLER's names into the nest and left it naming symbols nothing binds. npbench ``vexx_k``
+    failed the GPU canonicalize column that way, with ``Missing symbols on nested SDFG``.
+    """
+    import sympy
+
+    from dace.transformation.passes.length_one_array_scalar_conversion import (rewrite_code_slots,
+                                                                               rewrite_refs_to_element)
+
+    rows, cols = (dace.symbol(name, dtype=dace.int64) for name in ('rows', 'cols'))
+    stride = dace.symbol('stride', dtype=dace.int64)
+
+    inner = dace.SDFG('view_a_row')
+    inner.add_array('src', [4], dace.float64, strides=[stride])
+    inner.add_array('dst', [4], dace.float64)
+    body = inner.add_state('copy', is_start_block=True)
+    body.add_nedge(body.add_read('src'), body.add_write('dst'), dace.Memlet('src[0:4]'))
+
+    sdfg = dace.SDFG('mapping_stays_symbolic')
+    sdfg.add_array('a', [4], dace.float64)
+    sdfg.add_array('out', [4], dace.float64)
+    state = sdfg.add_state('call', is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {'src': None}, {'dst': None}, symbol_mapping={'stride': rows * cols})
+    state.add_edge(state.add_read('a'), None, nest, 'src', dace.Memlet('a[0:4]'))
+    state.add_edge(nest, 'dst', state.add_write('out'), None, dace.Memlet('out[0:4]'))
+
+    # The pass's own rewrite, renaming a name this SDFG does not use: nothing is substituted,
+    # and the value still comes back reprinted because the rewrite parses and unparses it.
+    rewrite_code_slots(sdfg, lambda text: rewrite_refs_to_element(text, {'unrelated': 'scal_unrelated'}))
+
+    value = nest.symbol_mapping['stride']
+    assert isinstance(value, sympy.Basic), f'the mapping came back as {type(value).__name__}: {value!r}'
+    assert {str(sym) for sym in value.free_symbols} == {'rows', 'cols'}, value
+    assert int(value.subs({sympy.Symbol('rows'): 3, sympy.Symbol('cols'): 5})) == 15, value
