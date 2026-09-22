@@ -105,6 +105,14 @@ class EinsumParser(object):
         # unbatched dot ``i,i->`` has no batched index and keeps its (working) BLAS path.
         if self.a_batch and not self.a_only and not self.b_only:
             return False
+        # The GEMM path strides the batch as the OUTERMOST dimension of every operand (``sAB`` is the
+        # extent after the last batch index). A batch index after a matrix index -- ``ij,kj->ikj``,
+        # an outer product per innermost ``j`` -- leaves no unit-stride matrix dimension, which no
+        # BLAS call takes (``get_gemm_opts``: "sCM or sCN should be 1").
+        for batch, rest in ((self.a_batch, self.a_only + self.a_sum), (self.b_batch, self.b_only + self.b_sum),
+                            (self.c_batch, self.c_a_only + self.c_b_only)):
+            if batch and rest and max(batch) > min(rest):
+                return False
         for key, val in self.fields().items():
             if not _is_sequential(val):
                 return False
