@@ -198,6 +198,67 @@ def same_signature(a: tuple[LaneDim, ...], b: tuple[LaneDim, ...]) -> bool:
     return len(a) == len(b) and all(x[:2] == y[:2] and same_value(x[2], y[2]) for x, y in zip(a, b))
 
 
+def viewed_name(state: SDFGState, access: nodes.AccessNode) -> str:
+    """The container ``access`` stands for: the viewed one when ``access`` is a whole-array view of it (same shape,
+    full subset), so indices into the view are indices into the container; else ``access``'s own."""
+    arrays = state.sdfg.arrays
+    if not isinstance(arrays[access.data], dt.View):
+        return access.data
+    edge = sdutil.get_view_edge(state, access)
+    viewed = sdutil.get_view_node(state, access)
+    if edge is None or not isinstance(viewed, nodes.AccessNode) or isinstance(arrays[viewed.data], dt.View):
+        return access.data
+    whole = sbs.Range.from_array(arrays[viewed.data])
+    same_shape = len(arrays[access.data].shape) == len(arrays[viewed.data].shape) and all(
+        same_value(x, y) for x, y in zip(arrays[access.data].shape, arrays[viewed.data].shape))
+    covers = edge.data.data == viewed.data and all(
+        same_value(x, y) for r, q in zip(edge.data.subset, whole) for x, y in zip(r, q))
+    return viewed.data if same_shape and covers else access.data
+
+
+def is_view_binding(state: SDFGState, edge: gr.MultiConnectorEdge) -> bool:
+    ends = [n for n in (edge.src, edge.dst) if isinstance(n, nodes.AccessNode)]
+    return any(isinstance(state.sdfg.arrays[n.data], dt.View) and sdutil.get_view_edge(state, n) is edge for n in ends)
+
+
+def ends_in_nested_sdfg(state: SDFGState, edge: gr.MultiConnectorEdge) -> nodes.NestedSDFG | None:
+    path = state.memlet_path(edge)
+    return next((n for n in (path[0].src, path[-1].dst) if isinstance(n, nodes.NestedSDFG)), None)
+
+
+def nested_accesses(state: SDFGState, nsdfg: nodes.NestedSDFG, outer_name, subs: dict) -> list:
+    """``(container, subset, is_write)`` of the accesses inside ``nsdfg`` and every SDFG nested deeper, in the
+    symbols of the scope that holds ``nsdfg``: a connector memlet is coarse, only the innermost memlets are exact."""
+    outer = {}
+    for e in state.all_edges(nsdfg):
+        conn = e.dst_conn if e.dst is nsdfg else e.src_conn
+        path = state.memlet_path(e)
+        end = path[0].src if e.dst is nsdfg else path[-1].dst
+        if conn and isinstance(end, nodes.AccessNode) and outer_name(end.data) is not None:
+            outer[conn] = outer_name(end.data)
+    inner_subs = {symbol(k): symbolic.pystr_to_symbolic(v).subs(subs) for k, v in nsdfg.symbol_mapping.items()}
+    found = []
+    for inner in nsdfg.sdfg.all_states():
+        for node in inner.data_nodes():
+            name = outer.get(node.data)
+            if name is None:
+                continue
+            for edge in inner.all_edges(node):
+                if edge.data.is_empty() or ends_in_nested_sdfg(inner, edge) is not None:
+                    continue
+                write = edge.dst is node
+                sub = edge.data.get_dst_subset(edge, inner) if write else edge.data.get_src_subset(edge, inner)
+                sub = sub if sub is not None else edge.data.subset
+                rewritten = [
+                    tuple(symbolic.pystr_to_symbolic(t).subs(inner_subs) for t in dim) for dim in sub.ndrange()
+                ]
+                found.append((name, sbs.Range(rewritten), write))
+        for node in inner.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                found.extend(nested_accesses(inner, node, outer.get, inner_subs))
+    return found
+
+
 def map_accesses(state: SDFGState, entry: nodes.MapEntry) -> list[tuple[str, sbs.Range, bool]]:
     """``(container, subset, is_write)`` of every access a map scope makes, nested SDFGs included. A nested
     SDFG's connector memlet bounds every access behind it, so it stands for them when it pins each
@@ -211,24 +272,28 @@ def map_accesses(state: SDFGState, entry: nodes.MapEntry) -> list[tuple[str, sbs
             continue
         path = state.memlet_path(e)
         src, dst = path[0].src, path[-1].dst
-        for nested in (e.src, e.dst):
-            if isinstance(nested, nodes.NestedSDFG):
-                dims = [(b, x) for b, x, _ in e.data.subset.ndrange() if (names_of(b) | names_of(x)) & params]
-                if not dims or not all(same_value(b, x) for b, x in dims):
-                    break
-                bound.setdefault(nested, OrderedSet()).add(e.data.data)
-        else:
-            if isinstance(src, nodes.AccessNode) and src.data == e.data.data:
-                found.append((src.data, e.data.get_src_subset(e, state) or e.data.subset, False))
-            if isinstance(dst, nodes.AccessNode) and dst.data == e.data.data:
-                found.append((dst.data, e.data.get_dst_subset(e, state) or e.data.subset, True))
+        nested = ends_in_nested_sdfg(state, e)
+        if nested is not None:
+            at = path[0] if src is nested else path[-1]
+            dims = [(b, x) for b, x, _ in at.data.subset.ndrange() if (names_of(b) | names_of(x)) & params]
+            if not dims or not all(same_value(b, x) for b, x in dims):
+                continue
+            bound.setdefault(nested, OrderedSet()).add(at.data.data)
+        if is_view_binding(state, e):
+            continue  # the view's binding to its container, not an access
+        if isinstance(e.src, nodes.AccessNode) and isinstance(state.sdfg.arrays[e.src.data], dt.View):
+            src = e.src
+        if isinstance(e.dst, nodes.AccessNode) and isinstance(state.sdfg.arrays[e.dst.data], dt.View):
+            dst = e.dst
+        if isinstance(src, nodes.AccessNode) and src.data == e.data.data:
+            found.append((viewed_name(state, src), e.data.get_src_subset(e, state) or e.data.subset, False))
+        if isinstance(dst, nodes.AccessNode) and dst.data == e.data.data:
+            found.append((viewed_name(state, dst), e.data.get_dst_subset(e, state) or e.data.subset, True))
     for node in scope.nodes():
         if isinstance(node, nodes.NestedSDFG):
-            reads, writes = [], []
-            _collect_nested_lane_accesses(state, node, reads, writes)
             skip = bound.get(node, OrderedSet())
-            found.extend((name, sub, False) for name, sub in reads if name not in skip)
-            found.extend((name, sub, True) for name, sub in writes if name not in skip)
+            found.extend(access for access in nested_accesses(state, node, lambda name: name, {})
+                         if access[0] not in skip)
     return found
 
 

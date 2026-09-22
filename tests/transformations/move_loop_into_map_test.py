@@ -512,6 +512,99 @@ def test_a_fill_wider_than_the_lanes_is_refused_when_its_rest_is_read():
     assert analyze_lanes(loop, sdfg).refusal == 'tmp, filled beyond the lanes, is read outside them in read_after'
 
 
+def twice_nested_loop(name: str) -> tuple:
+    """``for k { map i { nest { nest { a[k, i] = a[k-1, i] + 1 } } }; map i { b[i] = a[k, i] } }`` where both nested
+    SDFG boundaries carry whole-array memlets, as they do before memlet propagation reaches them."""
+    inner = dace.SDFG(f'{name}_inner')
+    inner.add_array('a', (7, 13), dace.float64)
+    inner.add_symbol('i', dace.int64)
+    inner.add_symbol('k', dace.int64)
+    istate = inner.add_state('add', is_start_block=True)
+    tasklet = istate.add_tasklet('add', {'x'}, {'y'}, 'y = x + 1.0')
+    istate.add_edge(istate.add_read('a'), None, tasklet, 'x', dace.Memlet('a[k - 1, i]'))
+    istate.add_edge(tasklet, 'y', istate.add_write('a'), None, dace.Memlet('a[k, i]'))
+    middle = dace.SDFG(f'{name}_middle')
+    middle.add_array('a', (7, 13), dace.float64)
+    middle.add_symbol('i', dace.int64)
+    middle.add_symbol('k', dace.int64)
+    mstate = middle.add_state('nest', is_start_block=True)
+    node = mstate.add_nested_sdfg(inner, {'a': None}, {'a': None}, {'i': 'i', 'k': 'k'})
+    mstate.add_edge(mstate.add_read('a'), None, node, 'a', dace.Memlet('a[0:7, 0:13]'))
+    mstate.add_edge(node, 'a', mstate.add_write('a'), None, dace.Memlet('a[0:7, 0:13]'))
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', (7, 13), dace.float64)
+    sdfg.add_array('b', (13, ), dace.float64)
+    loop = LoopRegion('kloop', 'k < 7', 'k', 'k = 1', 'k = k + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state('step', is_start_block=True)
+    entry, exit_ = first.add_map('step', {'i': '0:13'})
+    node = first.add_nested_sdfg(middle, {'a': None}, {'a': None}, {'i': 'i', 'k': 'k'})
+    first.add_memlet_path(first.add_read('a'), entry, node, dst_conn='a', memlet=dace.Memlet('a[0:7, 0:13]'))
+    first.add_memlet_path(node, exit_, first.add_write('a'), src_conn='a', memlet=dace.Memlet('a[0:7, 0:13]'))
+    second = loop.add_state('store')
+    loop.add_edge(first, second, dace.InterstateEdge())
+    second.add_mapped_tasklet('store', {'i': '0:13'}, {'x': dace.Memlet('a[k, i]')},
+                              'y = x', {'y': dace.Memlet('b[i]')},
+                              external_edges=True)
+    sdfg.validate()
+    return sdfg, loop
+
+
+def test_lane_accesses_behind_two_nested_sdfgs_are_read_at_the_innermost_memlet():
+    """A whole-array connector memlet says nothing about lanes, so the analysis reads through every nesting level."""
+    sdfg, loop = twice_nested_loop('twice_nested_lanes')
+    assert analyze_lanes(loop, sdfg).refusal is None
+    rng = np.random.default_rng(2)
+    want = dict(a=rng.random((7, 13)), b=np.zeros(13))
+    got = copy.deepcopy(want)
+    copy.deepcopy(sdfg)(**want)
+    MoveLoopIntoMap.apply_to(sdfg, options={'cfg_body': True}, loop=loop)
+    assert not any(isinstance(b, LoopRegion) for b in sdfg.nodes())
+    sdfg(**got)
+    for name in ('a', 'b'):
+        np.testing.assert_allclose(got[name], want[name], rtol=1e-13, atol=0, err_msg=name)
+
+
+def viewed_write_loop(name: str) -> tuple:
+    """``for k { map i { view = a; view[k, i] = a[k-1, i] + 1 }; map i { b[i] = a[k, i] } }``: the first map writes
+    through a whole-array view whose binding edge carries the whole array."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', (7, 13), dace.float64)
+    sdfg.add_array('b', (13, ), dace.float64)
+    sdfg.add_view('a_view', (7, 13), dace.float64)
+    loop = LoopRegion('kloop', 'k < 7', 'k', 'k = 1', 'k = k + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state('step', is_start_block=True)
+    entry, exit_ = first.add_map('step', {'i': '0:13'})
+    tasklet = first.add_tasklet('add', {'x'}, {'y'}, 'y = x + 1.0')
+    view = first.add_access('a_view')
+    first.add_memlet_path(first.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[k - 1, i]'))
+    first.add_edge(tasklet, 'y', view, None, dace.Memlet('a_view[k, i]'))
+    first.add_memlet_path(view, exit_, first.add_write('a'), memlet=dace.Memlet('a[0:7, 0:13]'))
+    second = loop.add_state('store')
+    loop.add_edge(first, second, dace.InterstateEdge())
+    second.add_mapped_tasklet('store', {'i': '0:13'}, {'x': dace.Memlet('a[k, i]')},
+                              'y = x', {'y': dace.Memlet('b[i]')},
+                              external_edges=True)
+    sdfg.validate()
+    return sdfg, loop
+
+
+def test_a_lane_write_through_a_whole_array_view_counts_at_the_view_index():
+    """The view's binding edge carries the whole array; the lane index is on the write into the view."""
+    sdfg, loop = viewed_write_loop('viewed_lane_write')
+    assert analyze_lanes(loop, sdfg).refusal is None
+    rng = np.random.default_rng(3)
+    want = dict(a=rng.random((7, 13)), b=np.zeros(13))
+    got = copy.deepcopy(want)
+    copy.deepcopy(sdfg)(**want)
+    MoveLoopIntoMap.apply_to(sdfg, options={'cfg_body': True}, loop=loop)
+    assert not any(isinstance(b, LoopRegion) for b in sdfg.nodes())
+    sdfg(**got)
+    for name in ('a', 'b'):
+        np.testing.assert_allclose(got[name], want[name], rtol=1e-13, atol=0, err_msg=name)
+
+
 def test_a_dependence_between_lanes_refuses_the_interchange():
     sdfg, loop = lane_loop(lane_shift)
     before = graph_digest(sdfg)
@@ -589,6 +682,8 @@ if __name__ == '__main__':
     test_a_map_body_behind_a_nested_sdfg_moves_per_lane()
     test_a_fill_wider_than_the_lanes_shrinks_to_each_lane_when_the_rest_is_dead()
     test_a_fill_wider_than_the_lanes_is_refused_when_its_rest_is_read()
+    test_lane_accesses_behind_two_nested_sdfgs_are_read_at_the_innermost_memlet()
+    test_a_lane_write_through_a_whole_array_view_counts_at_the_view_index()
     test_a_dependence_between_lanes_refuses_the_interchange()
     test_a_branch_reading_one_lanes_result_refuses_the_interchange()
     test_a_branch_condition_naming_lane_data_refuses_the_interchange()
