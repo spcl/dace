@@ -14,6 +14,7 @@ from dace.sdfg import infer_types
 from dace.sdfg.state import ControlFlowBlock
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.analysis.reachability import ReachSet
 from dace.ordered import OrderedSet
 
 PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be erased
@@ -100,7 +101,9 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 # Compute states where memory will no longer be read
                 writes = access_sets[state][1]
                 descendants = reachable[state]
-                descendant_reads = set().union(*(access_sets[succ][0] for succ in descendants))
+                # A union has no order, so a deferred reach set is read off its bitset, not laid out.
+                members = descendants.unordered() if isinstance(descendants, ReachSet) else descendants
+                descendant_reads = set().union(*(access_sets[succ][0] for succ in members))
                 no_longer_used: Set[str] = set(data for data in writes if data not in descendant_reads)
 
                 # Compute dead nodes

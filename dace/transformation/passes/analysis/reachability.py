@@ -42,10 +42,12 @@ class BlockNumbering:
     everything it contains is the span ``[positions[region], ends[region])``.
     """
 
-    __slots__ = ('positions', 'ends', 'states')
+    __slots__ = ('positions', 'ends', 'states', 'order')
 
     def __init__(self, sdfg: SDFG) -> None:
         self.positions: Dict[ControlFlowBlock, int] = {}
+        #: ``order[position]`` is the block at ``position``.
+        self.order: List[ControlFlowBlock] = []
         self.ends: Dict[ControlFlowBlock, int] = {}
         state_positions: List[int] = []
         self.number(sdfg, state_positions)
@@ -55,6 +57,7 @@ class BlockNumbering:
         for block in region.nodes():
             position = len(self.positions)
             self.positions[block] = position
+            self.order.append(block)
             if isinstance(block, SDFGState):
                 state_positions.append(position)
             elif isinstance(block, AbstractControlFlowRegion):
@@ -64,6 +67,14 @@ class BlockNumbering:
     def expanded(self, block: ControlFlowBlock) -> int:
         """``block`` together with every block below it."""
         return span(self.positions[block], self.ends[block])
+
+    def blocks_at(self, bits: int) -> Iterator[ControlFlowBlock]:
+        """The blocks whose positions are set in ``bits``, in position order."""
+        for index, byte in enumerate(bits.to_bytes((bits.bit_length() + 7) // 8, 'little')):
+            while byte:
+                low = byte & -byte
+                yield self.order[(index << 3) + low.bit_length() - 1]
+                byte ^= low
 
     def below(self, block: ControlFlowBlock) -> int:
         """Every block below ``block``, which is ``region.all_control_flow_blocks()`` for a region."""
@@ -119,6 +130,12 @@ class ReachSet(OrderedSet):
     @map.setter
     def map(self, positions: Dict[ControlFlowBlock, int]) -> None:
         self.laid_out_map = positions
+
+    def unordered(self) -> Iterator[ControlFlowBlock]:
+        """The members in no particular order, read off the bitset without laying the items out."""
+        if self.replay is None:
+            return iter(self.laid_out_items)
+        return self.numbering.blocks_at(self.bits)
 
     def __contains__(self, key: object) -> bool:
         if self.replay is None:

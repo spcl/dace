@@ -182,3 +182,33 @@ def test_a_copy_of_an_unlisted_reach_set_has_the_same_items_in_the_same_order():
     reach = block_reach(sdfg)[0][sdfg.start_block]
     copies = (copy.copy(reach), reach.copy())
     assert [[block.label for block in duplicate] for duplicate in copies] == [listed, listed]
+
+
+@pytest.mark.parametrize('analysis', [block_reach, single_level_reach, state_reach],
+                         ids=['block', 'single_level', 'state'])
+def test_unordered_members_of_a_reach_set_are_its_items_without_listing_them(analysis: Callable[[dace.SDFG], Dict]):
+    """``unordered`` reads the members off the bitset: the item set, and the set stays unlisted."""
+    for sdfg in (cyclic_sdfg(), nested_sdfg()):
+        result = analysis(sdfg)
+        for sets in result.values():
+            for reach in sets.values():
+                deferred = reach.replay is not None
+                members = list(reach.unordered())
+                assert (reach.replay is not None) == deferred
+                assert len(members) == len(set(members)) == len(reach)
+                assert set(members) == set(reach)
+                # Once listed, the same members come from the listing.
+                assert set(reach.unordered()) == set(members)
+
+
+def test_dead_dataflow_elimination_does_not_list_the_reach_sets():
+    """Its read-set union has no order, so the reach sets it reads stay deferred."""
+    from dace.transformation import pass_pipeline as ppl
+    from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
+
+    sdfg = nested_sdfg()
+    results = {}
+    ppl.Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, results)
+    reach = results[ControlFlowBlockReachability.__name__]
+    deferred = [r for sets in reach.values() for r in sets.values() if len(r) > 0]
+    assert deferred and all(r.replay is not None for r in deferred)
