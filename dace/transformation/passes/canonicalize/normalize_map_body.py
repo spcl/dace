@@ -17,7 +17,7 @@ all tasklets (no control flow, left untouched) or exactly one NestedSDFG.
 """
 import copy
 from collections import Counter
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from dace import SDFG, data, nodes, properties
 from dace.sdfg import SDFGState
@@ -28,21 +28,23 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import map_scope
 
 
-def _map_body_nsdfgs(state: SDFGState, map_entry: nodes.MapEntry) -> List[nodes.NestedSDFG]:
+def _map_body_nsdfgs(state: SDFGState, map_entry: nodes.MapEntry,
+                     order_of: Callable[[SDFGState], Dict[nodes.Node, int]]) -> List[nodes.NestedSDFG]:
     """The NestedSDFG nodes in ``map_entry``'s OWN scope, in dependency
-    (topological) order so a producer is always merged before its consumer."""
-    # THIS scope only. ``map_body_nodes`` includes the bodies of maps nested inside this one by
-    # design, and merging one of those into this body moves it out of the scope its own MapEntry
-    # opens: the sibling inner map is left holding an exit whose scope parent is a FOREIGN entry,
-    # which every later ``scope_dict`` refuses. The scope dict is already cached, so this is a
-    # lookup per body node.
-    scope = state.scope_dict()
-    body = [n for n in map_scope.map_body_nodes(state, map_entry) if scope[n] is map_entry]
-    order = {n: i for i, n in enumerate(sdutil.dfs_topological_sort(state))}
+    (topological) order so a producer is always merged before its consumer.
+
+    :param order_of: The topological order of a state, memoized by the caller.
+    """
+    # THIS scope only: ``scope_children`` lists exactly the nodes whose scope is ``map_entry``.
+    # Merging the body of a map nested inside this one would move it out of the scope its own
+    # MapEntry opens, leaving the inner map's exit under a FOREIGN entry.
+    nsdfgs = [n for n in state.scope_children()[map_entry] if isinstance(n, nodes.NestedSDFG)]
+    if len(nsdfgs) < 2:
+        return nsdfgs
+    order = order_of(state)
     # Total key: a tie (a body node the topological sort did not cover) decides which sibling becomes the
     # merge base, so break it on the node id rather than on traversal order.
-    return sorted((n for n in body if isinstance(n, nodes.NestedSDFG)),
-                  key=lambda n: (order.get(n, len(order)), state.node_id(n)))
+    return sorted(nsdfgs, key=lambda n: (order.get(n, len(order)), state.node_id(n)))
 
 
 def _map_body_size(state: SDFGState, map_entry: nodes.MapEntry) -> int:
@@ -228,10 +230,19 @@ class NormalizeMapBody(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         merged = 0
+        # One topological order per state and run: a state can hold many map entries, and each used
+        # to sort the whole state again. A merge rewires its state, so that state's order is dropped.
+        orders: Dict[SDFGState, Dict[nodes.Node, int]] = {}
+
+        def order_of(state: SDFGState) -> Dict[nodes.Node, int]:
+            if state not in orders:
+                orders[state] = {n: i for i, n in enumerate(sdutil.dfs_topological_sort(state))}
+            return orders[state]
+
         for n, g in list(sdfg.all_nodes_recursive()):
             if not (isinstance(n, nodes.MapEntry) and isinstance(g, SDFGState)):
                 continue
-            body_nsdfgs = _map_body_nsdfgs(g, n)
+            body_nsdfgs = _map_body_nsdfgs(g, n, order_of)
             # Only consolidate when at least one nested SDFG is present AND the
             # body is not already a single nested SDFG (nothing else beside it).
             if not body_nsdfgs:
@@ -242,6 +253,7 @@ class NormalizeMapBody(ppl.Pass):
                 continue  # 1 nsdfg + tasklets: handled by wrapping (future); skip for now
             if self._merge_siblings(g, body_nsdfgs):
                 merged += 1
+                orders.pop(g, None)
         return merged or None
 
     def _merge_siblings(self, state: SDFGState, siblings: List[nodes.NestedSDFG]) -> bool:

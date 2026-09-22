@@ -18,7 +18,9 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock
+from dace.properties import CodeBlock
+from dace.sdfg import utils as sdutil
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
@@ -443,3 +445,71 @@ def test_a_sibling_inner_map_keeps_the_nested_sdfg_that_forms_its_body():
     for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.label.startswith('inner_')]:
         owned = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and scope[n] is entry]
         assert len(owned) == 1, f'{entry.map.label} owns {len(owned)} nested SDFGs, expected 1'
+
+
+def guarded_scalar_body(name: str, taken_condition: str) -> dace.SDFG:
+    """A nested SDFG whose whole control-flow graph is one ``ConditionalBlock``:
+    ``if <taken_condition>: o = x + 1 else: o = x - 1``, the shape a guarded map body reaches the pass in."""
+    inner = dace.SDFG(name)
+    inner.add_array('x', [1], dace.float64)
+    inner.add_array('o', [1], dace.float64)
+    cond = ConditionalBlock('cond', inner)
+    inner.add_node(cond, is_start_block=True)
+    for label, condition, code in (('taken', CodeBlock(taken_condition), 'r = i + 1.0'), ('otherwise', None,
+                                                                                          'r = i - 1.0')):
+        branch = ControlFlowRegion(label, inner)
+        st = branch.add_state(f'{label}_body', is_start_block=True)
+        t = st.add_tasklet(label, {'i'}, {'r'}, code)
+        st.add_edge(st.add_read('x'), None, t, 'i', dace.Memlet('x[0]'))
+        st.add_edge(t, 'r', st.add_write('o'), None, dace.Memlet('o[0]'))
+        cond.add_branch(condition, branch)
+    return inner
+
+
+def guarded_siblings_sdfg(maps: int, siblings: int) -> dace.SDFG:
+    """``maps`` maps in one state; each body holds ``siblings`` guarded nested SDFGs writing A<k>/B<k>."""
+    sdfg = dace.SDFG(f'guarded_siblings_{maps}_{siblings}')
+    sdfg.add_array('X', [N], dace.float64)
+    state = sdfg.add_state()
+    rd = state.add_read('X')
+    for k in range(maps):
+        me, mx = state.add_map(f'm{k}', {'i': '0:N'})
+        for s in range(siblings):
+            out = f'O{k}_{s}'
+            sdfg.add_array(out, [N], dace.float64)
+            body = state.add_nested_sdfg(guarded_scalar_body(f'body{k}_{s}', '1 > 0' if s == 0 else '0 > 0'), {'x'},
+                                         {'o'})
+            state.add_memlet_path(rd, me, body, dst_conn='x', memlet=dace.Memlet('X[i]'))
+            state.add_memlet_path(body, mx, state.add_write(out), src_conn='o', memlet=dace.Memlet(f'{out}[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_map_with_one_nested_body_never_sorts_its_state(monkeypatch):
+    """Each map entry used to sort its whole state, even with nothing to merge: once per map, over
+    every node of the state, the common case of a canonicalize run."""
+    calls = []
+    sort = sdutil.dfs_topological_sort
+    monkeypatch.setattr(sdutil, 'dfs_topological_sort', lambda *a, **k: calls.append(1) or sort(*a, **k))
+    assert NormalizeMapBody().apply_pass(guarded_siblings_sdfg(maps=4, siblings=1), {}) is None
+    assert calls == [], f'the state was sorted {len(calls)} times for maps with nothing to merge'
+
+
+def test_merging_conditional_block_siblings_keeps_the_cfg_list_of_a_fresh_reset():
+    """A sibling whose body IS a ``ConditionalBlock`` moves region blocks into the merge base; the
+    CFG list the moves leave must equal what a fresh ``reset_cfg_list`` builds, or ``cfg_id`` disagrees
+    with the tree the next time anything resets it."""
+    sdfg = guarded_siblings_sdfg(maps=1, siblings=2)
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, 'the two siblings should merge'
+    merged = [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
+    assert len(merged) == 1
+    assert len([b for b in merged[0].sdfg.nodes() if isinstance(b, ConditionalBlock)]) == 2
+    before = list(sdfg.cfg_list)
+    sdfg.reset_cfg_list()
+    assert before == sdfg.cfg_list, 'the CFG list differs from a fresh reset'
+    sdfg.validate()
+
+    x = np.random.default_rng(0).random(8)
+    a, b = np.zeros(8), np.zeros(8)
+    sdfg(X=x, O0_0=a, O0_1=b, N=8)
+    assert np.allclose(a, x + 1.0) and np.allclose(b, x - 1.0)
