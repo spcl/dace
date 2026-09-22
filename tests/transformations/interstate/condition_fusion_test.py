@@ -2,9 +2,12 @@
 import copy
 
 import numpy as np
+import pytest
 
 import dace
+from dace import symbolic
 from dace.transformation.interstate import ConditionFusion
+from dace.transformation.interstate.condition_fusion import simplify_conjunction
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
@@ -425,6 +428,39 @@ def test_an_application_rebuilds_the_cfg_list_once(monkeypatch):
     assert applications == [1, 1, 1], applications
     assert len(lists) == 1 + len(applications), len(lists)
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
+
+
+@pytest.mark.parametrize('conjunction', [
+    '(not ((b == 1) and (d == 3))) and (b == 1) and (d == 3)',
+    '(d == 2) and (d == 3)',
+    '(d != 3) and (d == 3)',
+    '(a < 1) and (a >= 1)',
+    '(c > 10) and (not (c > 10))',
+])
+def test_an_unsatisfiable_cross_term_simplifies_to_false(conjunction):
+    """A cross-term the branch product builds and does not prune is copied into every later product:
+    warpx_field_gather's guard chain grew 9 -> 31 -> ... -> 12573 branches."""
+    assert simplify_conjunction(conjunction) == 'False'
+
+
+@pytest.mark.parametrize('conjunction', [
+    '(not ((b == 1) and (d != 3))) and (b == 1) and (d == 3)',
+    '(d == 2) and (e == 3)',
+    '(a > 1) and (a > 2)',
+])
+def test_a_satisfiable_conjunction_is_kept(conjunction):
+    assert simplify_conjunction(conjunction) != 'False'
+
+
+def test_a_deduplicated_negation_stays_a_logical_not():
+    """``str`` of a sympy negation is ``~x``, which parses back as a BITWISE invert: ``~True`` is -2,
+    which is true, so the fused branch runs exactly when it must not."""
+    simplified = simplify_conjunction('(not ((a > 1) and (b > 1))) and (c > 1) and (c > 1)')
+    assert 'invert' not in str(symbolic.pystr_to_symbolic(simplified)), simplified
+    reparsed = symbolic.pystr_to_symbolic(simplified)
+    for a, b in ((0, 0), (0, 2), (2, 0), (2, 2)):
+        want = not (a > 1 and b > 1)
+        assert bool(reparsed.subs({'a': a, 'b': b, 'c': 2})) == want, (simplified, a, b)
 
 
 if __name__ == "__main__":

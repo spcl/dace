@@ -32,17 +32,70 @@ def simplify_conjunction(cond_str: str) -> str:
     conjuncts = flatten_and(expr)
     if len(conjuncts) <= 1:
         return cond_str
-    for i, ci in enumerate(conjuncts):
-        neg = sympy.Not(ci)
-        if any(j != i and neg == cj for j, cj in enumerate(conjuncts)):
-            return 'False'
+    if unsatisfiable(expr):
+        return 'False'
     uniq = []
     for c in conjuncts:
         if not any(c == u for u in uniq):
             uniq.append(c)
     if len(uniq) == len(conjuncts):
         return cond_str
-    return ' and '.join(f'({u})' for u in uniq)
+    # ``symstr``, not ``str``: sympy prints a negation as ``~x``, which parses back as a BITWISE invert
+    # (``~True`` is -2, which is true) and hides the negation from the next simplification.
+    return ' and '.join(f'({symbolic.symstr(u, cpp_mode=False)})' for u in uniq)
+
+
+def constant_equality(conjunct: sympy.Basic):
+    """``(x, c)`` for a conjunct ``x == c`` with ``c`` a number, else ``None``."""
+    if not isinstance(conjunct, sympy.Eq):
+        return None
+    lhs, rhs = conjunct.args
+    if rhs.is_Number and not lhs.is_Number:
+        return lhs, rhs
+    if lhs.is_Number and not rhs.is_Number:
+        return rhs, lhs
+    return None
+
+
+def propositional(expr: sympy.Basic, atoms: dict) -> sympy.Basic:
+    """``expr`` over boolean atoms: every relation becomes a variable, ``!=`` / ``<`` / ``<=`` the negation
+    of the ``==`` / ``>=`` / ``>`` it negates, and anything else opaque an independent variable."""
+    if isinstance(expr, (sympy.And, symbolic.AND)):
+        return sympy.And(*(propositional(a, atoms) for a in expr.args))
+    if isinstance(expr, (sympy.Or, symbolic.OR)):
+        return sympy.Or(*(propositional(a, atoms) for a in expr.args))
+    if isinstance(expr, sympy.Not):
+        return sympy.Not(propositional(expr.args[0], atoms))
+    if expr in (sympy.true, sympy.false):
+        return expr
+    if isinstance(expr, (sympy.Ne, sympy.Lt, sympy.Le)):
+        return sympy.Not(propositional(expr.negated, atoms))
+    if expr not in atoms:
+        atoms[expr] = sympy.Symbol(f'__atom{len(atoms)}')
+    return atoms[expr]
+
+
+def unsatisfiable(expr: sympy.Basic) -> bool:
+    """Whether ``expr`` is provably false: unsatisfiable as a propositional formula over its relations,
+    given only that one expression cannot equal two different numbers. Every relation is otherwise a free
+    variable, so a satisfiable answer can be wrong but an unsatisfiable one cannot.
+
+    The cartesian branch product of consecutive fusions builds these cross-terms, and one that survives
+    unpruned is copied into every later product: over a chain of guards the branch count grows
+    geometrically (warpx_field_gather: 9 -> 31 -> 98 -> ... -> 12573).
+    """
+    atoms: dict = {}
+    formula = propositional(expr, atoms)
+    pinned: dict = {}
+    for relation, variable in atoms.items():
+        equality = constant_equality(relation)
+        if equality is not None:
+            pinned.setdefault(equality[0], []).append(variable)
+    exclusive = [
+        sympy.Not(sympy.And(a, b)) for variables in pinned.values() for k, a in enumerate(variables)
+        for b in variables[k + 1:]
+    ]
+    return sympy.satisfiable(sympy.And(formula, *exclusive)) is False
 
 
 @properties.make_properties
