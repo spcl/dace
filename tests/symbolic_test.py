@@ -57,6 +57,21 @@ def test_refold_booleans_folds_literal_arms():
     assert str(folded.func) == 'AND'
 
 
+def test_and_or_of_two_symbolic_booleans_keep_both_operands():
+    """``AND``/``OR`` evaluated two symbolic booleans with Python's ``and``/``or``, which returns one
+    operand: ``(not p) and (not q)`` became ``not q``. ConditionFusion writes simplified guards back
+    from these trees, so the dropped conjunct reached the generated code."""
+    import sympy
+    from dace.symbolic import pystr_to_symbolic
+    p, q = sympy.symbols('p q')
+    for text, want in (('(not p) and (not q)', sympy.And(~p, ~q)), ('(not p) or (not q)', sympy.Or(~p, ~q)),
+                       ('p and ((not p) and (not q))', sympy.false)):
+        parsed = pystr_to_symbolic(text)
+        for pv in (False, True):
+            for qv in (False, True):
+                assert parsed.subs({p: pv, q: qv}) == want.subs({p: pv, q: qv}), (text, parsed, pv, qv)
+
+
 def test_floordiv_on_a_symbol_is_int_floor():
     """One extent must have ONE spelling. ``pystr_to_symbolic`` maps ``//`` to ``int_floor`` and
     ``SymExpr`` routes it there too; a symbol inheriting sympy's ``floor(x/y)`` made the Python
@@ -125,5 +140,6 @@ if __name__ == "__main__":
     test_simplify_ext_min()
     test_shapes_equal_compares_by_name()
     test_refold_booleans_folds_literal_arms()
+    test_and_or_of_two_symbolic_booleans_keep_both_operands()
     test_floordiv_on_a_symbol_is_int_floor()
     test_relax_int_floor_hands_the_solver_a_head_it_can_invert()
