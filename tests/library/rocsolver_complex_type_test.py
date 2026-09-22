@@ -1,17 +1,24 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A rocSOLVER call casts its operands to the rocBLAS complex type, not the CUDA one.
+"""A ROCm vendor call casts its operands to the rocBLAS complex type, not a CUDA or HIP one.
 
-The GPU solver expansions take their vendor C type from ``cublas_type_metadata``, which names the
-CUDA types. ``float`` and ``double`` are spelled the same in both dialects, so the real paths were
-fine and the complex ones emitted ``(cuDoubleComplex*)`` into a ROCm build, where that type does
-not exist: quatrex_rgf's complex128 ``Inv`` reached hipcc and failed with ``'cuDoubleComplex' was
-not declared in this scope`` on the canon GPU column.
+The GPU expansions take their vendor C type from ``cublas_type_metadata``, which names the CUDA
+types. ``float`` and ``double`` are spelled the same in every dialect, so the real paths were fine
+and the complex ones were not: the solvers emitted ``(cuDoubleComplex*)``, a type ROCm does not
+declare at all, and GEMM emitted ``(hipDoubleComplex*)``, which compiles as a type but does not
+match the call. Measured against ROCm 6.3: ``rocblas_zgeam`` and ``rocblas_zgemm`` both reject a
+``hipDoubleComplex*`` operand and accept ``rocblas_double_complex*``, because rocBLAS declares its
+complex parameters as ``rocblas_complex_num<T>`` in C++.
+
+quatrex_rgf carries all three on the canon GPU column: an ``Inv`` (getrf + getrs), a transpose
+(``geam``) and complex GEMMs.
 """
 import pytest
 
 import dace
 from dace import dtypes
+from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.lapack import Getrf, Getrs
+from dace.libraries.linalg.nodes.transpose import Transpose
 
 N = 8
 #: What rocSOLVER calls the two complex types, against what CUDA calls them.
@@ -76,3 +83,44 @@ def test_a_real_rocsolver_call_keeps_its_plain_c_type(build):
     """float64 is spelled the same in both dialects, so the cast is unchanged there."""
     code = build(dace.float64)
     assert '(double*)' in code, code
+
+
+def gemm_code(dtype: dace.typeclass) -> str:
+    """The tasklet code the rocBLAS GEMM expands to."""
+    sdfg = dace.SDFG(f'gemm_{dtype.to_string()}')
+    for name in ('A', 'B', 'C'):
+        sdfg.add_array(name, [N, N], dtype, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Gemm('gemm')
+    node.implementation = 'rocBLAS'
+    state.add_node(node)
+    state.add_edge(state.add_read('A'), None, node, '_a', dace.Memlet(f'A[0:{N}, 0:{N}]'))
+    state.add_edge(state.add_read('B'), None, node, '_b', dace.Memlet(f'B[0:{N}, 0:{N}]'))
+    state.add_edge(node, '_c', state.add_write('C'), None, dace.Memlet(f'C[0:{N}, 0:{N}]'))
+    return node.expand(state) and _tasklet_code(sdfg)
+
+
+def transpose_code(dtype: dace.typeclass) -> str:
+    """The tasklet code the rocBLAS transpose (``geam``) expands to."""
+    sdfg = dace.SDFG(f'transpose_{dtype.to_string()}')
+    sdfg.add_array('A', [N, N], dtype, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('B', [N, N], dtype, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Transpose('transpose', dtype=dtype)
+    node.implementation = 'rocBLAS'
+    state.add_node(node)
+    state.add_edge(state.add_read('A'), None, node, '_inp', dace.Memlet(f'A[0:{N}, 0:{N}]'))
+    state.add_edge(node, '_out', state.add_write('B'), None, dace.Memlet(f'B[0:{N}, 0:{N}]'))
+    return node.expand(state) and _tasklet_code(sdfg)
+
+
+@pytest.mark.parametrize('build', [gemm_code, transpose_code], ids=['gemm', 'transpose'])
+@pytest.mark.parametrize('dtype', list(ROCBLAS_SPELLING), ids=lambda d: d.to_string())
+def test_a_rocblas_call_casts_to_the_rocblas_complex_type(build, dtype):
+    """Neither the CUDA name (undeclared on ROCm) nor the hip vector type (declared, wrong type)."""
+    rocblas_name, cuda_name = ROCBLAS_SPELLING[dtype]
+    code = build(dtype)
+    hip_name = cuda_name.replace('cu', 'hip')
+    assert cuda_name not in code, code
+    assert hip_name not in code, code
+    assert rocblas_name in code, code

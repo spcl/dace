@@ -14,6 +14,7 @@ rocBLAS is snake_case throughout with lower-case enum values (``rocblas_dgemv``,
 ``rocblas_operation_transpose``), and the transpose flag is not even the same shape of token.
 """
 from typing import Callable, NamedTuple
+from dace.libraries.blas import blas_helpers
 
 
 class GpuBlasDialect(NamedTuple):
@@ -41,6 +42,13 @@ class GpuBlasDialect(NamedTuple):
     #: the letter is not a plain prefix there -- ``Idamax``, ``Scnrm2``, ``Dzasum``. Passing such a
     #: name to :attr:`func` would prepend the letter a second time (``cublasDDnrm2``, measured).
     routine: Callable[[str], str]
+    #: The C type a pointer operand is cast to, from the CUDA spelling
+    #: :func:`~dace.libraries.blas.blas_helpers.cublas_type_metadata` returns. Only the complex
+    #: types differ, and rocBLAS in C++ declares its complex parameters as
+    #: ``rocblas_complex_num<T>``: the hip vector types are a DIFFERENT type there, so a call cast
+    #: to ``hipDoubleComplex*`` does not match (measured against ROCm 6.3's rocblas_zgeam and
+    #: rocblas_zgemm, both of which reject it and accept ``rocblas_double_complex*``).
+    ctype: Callable[[str], str]
     #: Enum spellings. ``op`` takes 'N' or 'T'; the rest take the boolean the node stores.
     op: Callable[[str], str]
     fill: Callable[[bool], str]
@@ -59,6 +67,7 @@ CUBLAS = GpuBlasDialect(
     func=lambda letter, routine: f"cublas{letter}{routine}",
     routine=lambda name: f"cublas{name}",
     strided_batched=lambda name: f"cublas{name}StridedBatched",
+    ctype=lambda cuda_type: cuda_type,
     op=lambda mode: f"CUBLAS_OP_{mode}",
     fill=lambda upper: "CUBLAS_FILL_MODE_UPPER" if upper else "CUBLAS_FILL_MODE_LOWER",
     side=lambda right: "CUBLAS_SIDE_RIGHT" if right else "CUBLAS_SIDE_LEFT",
@@ -76,6 +85,7 @@ ROCBLAS = GpuBlasDialect(
     func=lambda letter, routine: f"rocblas_{letter.lower()}{routine.lower()}",
     routine=lambda name: f"rocblas_{name.lower()}",
     strided_batched=lambda name: f"rocblas_{name.lower()}_strided_batched",
+    ctype=blas_helpers.rocblas_type,
     op=lambda mode: "rocblas_operation_transpose" if mode == "T" else "rocblas_operation_none",
     fill=lambda upper: "rocblas_fill_upper" if upper else "rocblas_fill_lower",
     side=lambda right: "rocblas_side_right" if right else "rocblas_side_left",

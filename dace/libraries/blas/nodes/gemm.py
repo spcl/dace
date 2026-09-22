@@ -8,6 +8,7 @@ from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
+from dace.libraries.blas import blas_helpers
 from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts, _matrix_operand,
                                               _matrix_subset_size)
@@ -440,6 +441,11 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
     environments = []
 
     @classmethod
+    def complex_ctype(cls, double: bool) -> str:
+        """The C type a complex operand pointer is cast to for this vendor."""
+        return f"{cls.dtype_backend}{'Double' if double else ''}Complex"
+
+    @classmethod
     def expansion(cls, node, state, sdfg):
         node.validate(sdfg, state)
 
@@ -485,10 +491,10 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             cdtype = 'double'
             factort = 'Double'
         elif dtype == dace.complex64:
-            cdtype = f'{cls.dtype_backend}Complex'
+            cdtype = cls.complex_ctype(double=False)
             factort = 'Complex64'
         elif dtype == dace.complex128:
-            cdtype = f'{cls.dtype_backend}DoubleComplex'
+            cdtype = cls.complex_ctype(double=True)
             factort = 'Complex128'
         else:
             raise ValueError("Unsupported type: " + str(dtype))
@@ -728,6 +734,14 @@ class ExpandGemmRocBLAS(ExpandGemmGPUBLAS):
     environments = [environments.rocblas.rocBLAS]
     backend = 'roc'
     dtype_backend = 'hip'
+
+    @classmethod
+    def complex_ctype(cls, double: bool) -> str:
+        # rocBLAS in C++ declares its complex parameters as rocblas_complex_num<T>. The hip vector
+        # types are a different type there, so rocblas_zgemm rejects a hipDoubleComplex* operand
+        # (measured on ROCm 6.3); every complex GEMM on ROCm failed to compile.
+        return blas_helpers.rocblas_type('cuDoubleComplex' if double else 'cuComplex')
+
     set_pointer_mode = 'rocblas_set_pointer_mode'
     pointer_host = 'rocblas_pointer_mode_host'
     pointer_device = 'rocblas_pointer_mode_device'

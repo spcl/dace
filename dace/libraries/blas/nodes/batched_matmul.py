@@ -343,6 +343,8 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
             factort = 'Complex128'
         else:
             raise ValueError("Unsupported type: " + str(dtype))
+        # The dialect spells a complex operand's C type; only rocBLAS differs (see GpuBlasDialect).
+        cdtype = cls.dialect.ctype(cdtype)
 
         call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ''

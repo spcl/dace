@@ -268,6 +268,11 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
     environments = []
 
     @classmethod
+    def cast_ctype(cls, cuda_type: str) -> str:
+        """The C type this vendor casts an operand pointer to, from the CUDA spelling."""
+        return cuda_type
+
+    @classmethod
     def expansion(cls, node, state, sdfg, **kwargs):
         node.validate(sdfg, state)
         dtype = node.dtype
@@ -292,6 +297,10 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
             return ExpandTransposePure.expansion(node, state, sdfg, **kwargs)
 
         func = func + 'geam'
+        # Only the complex spellings differ between the two vendors (see GpuBlasDialect.ctype):
+        # rocblas_zgeam rejects a hipDoubleComplex* operand and the CUDA name does not exist there,
+        # which is what quatrex_rgf's complex128 transpose failed on.
+        cdtype = cls.cast_ctype(cdtype)
 
         alpha = f"__state->{cls.handle_field}.Constants().{factort}Pone()"
         beta = f"__state->{cls.handle_field}.Constants().{factort}Zero()"
@@ -333,6 +342,11 @@ class ExpandTransposeRocBLAS(ExpandTransposeGPUBLAS):
     environments = [blas_environments.rocblas.rocBLAS]
     handle = "__dace_rocblas_handle"
     handle_field = "rocblas_handle"
+
+    @classmethod
+    def cast_ctype(cls, cuda_type: str) -> str:
+        return blas_helpers.rocblas_type(cuda_type)
+
     check_error = "dace::blas::CheckRocblasError"
 
     @classmethod
