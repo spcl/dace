@@ -21,6 +21,7 @@ from dace import dtypes
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.properties import CodeBlock
 from dace.sdfg import infer_types, nodes
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator
 from dace.transformation.passes.offloading.taskloop import is_taskloop_map, taskloop_maps
@@ -71,6 +72,50 @@ def map_over_reduce() -> dace.SDFG:
     state.add_memlet_path(state.add_read('A'), entry, row, memlet=dace.Memlet('A[i, 0:16]', other_subset='0:16'))
     state.add_edge(row, None, reduce_node, '_in', dace.Memlet('row[0:16]'))
     state.add_memlet_path(reduce_node, exit_node, state.add_write('B'), memlet=dace.Memlet('B[i]'), src_conn='_out')
+    sdfg.validate()
+    return sdfg
+
+
+def map_over_reduce_beside_a_tasklet() -> dace.SDFG:
+    """One state: a kernel fills ``T`` from ``A``; a row map reduces ``T``'s rows into ``B`` and,
+    beside the reduce, scales ``T[i, 0]`` into ``U``; a kernel copies ``U`` into ``C``.
+
+    The reduce makes the row map a taskloop, so its scope is host code, while ``T`` and ``U`` are
+    touched by kernels in the same state -- a hybrid state. The side tasklet reaches both arrays
+    straight through the map's entry and exit, with no access node of its own. That is the shape
+    npbench cp2k_density_matrix_trs4 reaches on the GPU canonicalize column once a row-wise ``* 3``
+    is fused beside a loop body that reduces.
+    """
+    sdfg = dace.SDFG('map_over_reduce_beside_a_tasklet')
+    for name, shape in (('A', [8, 16]), ('B', [8]), ('C', [8])):
+        sdfg.add_array(name, shape, dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('T', [8, 16], dace.float64, transient=True)
+    sdfg.add_array('U', [8], dace.float64, transient=True)
+    sdfg.add_array('row', [16], dace.float64, transient=True)
+    state = sdfg.add_state('body')
+    scratch = state.add_access('T')
+    state.add_mapped_tasklet('fill',
+                             dict(j='0:8', k='0:16'), {'a': dace.Memlet('A[j, k]')},
+                             't = a + 1', {'t': dace.Memlet('T[j, k]')},
+                             input_nodes={'A': state.add_read('A')},
+                             output_nodes={'T': scratch},
+                             external_edges=True)
+    entry, exit_node = state.add_map('rows', dict(i='0:8'))
+    reduce_node = state.add_reduce('lambda a, b: a + b', None, 0.0)
+    row = state.add_access('row')
+    state.add_memlet_path(scratch, entry, row, memlet=dace.Memlet('T[i, 0:16]', other_subset='0:16'))
+    state.add_edge(row, None, reduce_node, '_in', dace.Memlet('row[0:16]'))
+    state.add_memlet_path(reduce_node, exit_node, state.add_write('B'), memlet=dace.Memlet('B[i]'), src_conn='_out')
+    scale = state.add_tasklet('scale', {'x'}, {'u'}, 'u = x * 3')
+    state.add_memlet_path(scratch, entry, scale, dst_conn='x', memlet=dace.Memlet('T[i, 0]'))
+    scaled = state.add_access('U')
+    state.add_memlet_path(scale, exit_node, scaled, src_conn='u', memlet=dace.Memlet('U[i]'))
+    state.add_mapped_tasklet('copy',
+                             dict(m='0:8'), {'v': dace.Memlet('U[m]')},
+                             'c = v', {'c': dace.Memlet('C[m]')},
+                             input_nodes={'U': scaled},
+                             output_nodes={'C': state.add_write('C')},
+                             external_edges=True)
     sdfg.validate()
     return sdfg
 
@@ -238,6 +283,22 @@ def test_the_staged_row_of_a_launched_library_node_is_device_memory():
     assert storages(sdfg)['row'] == dtypes.StorageType.GPU_Global
 
 
+@pytest.mark.parametrize('heuristics', [True, False])
+def test_a_tasklet_beside_a_launched_library_node_becomes_a_kernel(heuristics):
+    """The tasklet may not stay host code reading a device array: it gets a size-1 kernel.
+
+    The wrapper judged it scalar-only because it looked for access nodes, and a tasklet inside a
+    scope reaches its arrays through the scope's entry and exit instead. It was left on the host,
+    and validation rejected the graph: ``stored as StorageType.GPU_Global but accessed on host``.
+    """
+    sdfg = offloaded(map_over_reduce_beside_a_tasklet(), heuristics)
+    assert map_schedule(sdfg, 'rows') == dtypes.ScheduleType.Sequential
+    state, scale = next((state, node) for node, state in sdfg.all_nodes_recursive()
+                        if isinstance(node, nodes.Tasklet) and node.label == 'scale')
+    assert is_devicelevel_gpu(state.sdfg, state, scale), 'the side tasklet stayed host code'
+    sdfg.validate()
+
+
 def test_a_fill_does_not_make_its_parent_a_taskloop():
     """A fill is data movement, not a device-wide call, so the map around it is still the kernel."""
     sdfg = map_over_fill()
@@ -364,6 +425,18 @@ def test_a_launched_library_node_computes_what_the_kernel_computes(heuristics):
     B = np.zeros(8)
     sdfg(A=A, B=B)
     assert np.allclose(B, A.sum(axis=1))
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize('heuristics', [True, False])
+def test_a_tasklet_beside_a_launched_library_node_computes_its_values(heuristics):
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+    sdfg = offloaded(map_over_reduce_beside_a_tasklet(), heuristics)
+    A = np.random.default_rng(3).random((8, 16))
+    arrays = {'A': cupy.asarray(A), 'B': cupy.zeros(8), 'C': cupy.zeros(8)}
+    sdfg(**arrays)
+    assert np.allclose(arrays['B'].get(), (A + 1).sum(axis=1))
+    assert np.allclose(arrays['C'].get(), (A[:, 0] + 1) * 3)
 
 
 @pytest.mark.gpu

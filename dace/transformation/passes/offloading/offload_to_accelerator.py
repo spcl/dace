@@ -2460,12 +2460,15 @@ class OffloadToAccelerator(ppl.Pass):
         ctr = 0
         for partition in partitions:
 
-            # if only scalars are accessed, then no wrap is needed
-            array_access = False
-            for node in partition:
-                if isinstance(node, nodes.AccessNode) and node.data and not self._is_scalar(node.data, sdfg):
-                    array_access = True
-                    break
+            # If only scalars are accessed, no wrap is needed. Read from the memlets, not only from
+            # access nodes: inside a scope a tasklet reaches its arrays through the scope's entry and
+            # exit, so a partition holding just that tasklet has no access node at all. Counting
+            # those as scalar-only left npbench cp2k_density_matrix_trs4's ``row_of * 3`` on the host
+            # inside a taskloop, reading a device array.
+            array_access = any(
+                (isinstance(node, nodes.AccessNode) and node.data and not self._is_scalar(node.data, sdfg)) or any(
+                    edge.data.data and not self._is_scalar(edge.data.data, sdfg) for edge in state.all_edges(node))
+                for node in partition)
             if not array_access:
                 continue
 
