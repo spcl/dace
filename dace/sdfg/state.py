@@ -806,10 +806,20 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             start_block = None
         if isinstance(start_block, AbstractControlFlowRegion):
             update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
+        # ``new_symbols(sdfg, ...)`` rebuilds its type environment -- the symbols overridden by every
+        # array's dtype -- per edge. Keep that environment alongside ``defined_syms`` instead: once
+        # per SDFG rather than once per assigning edge (2.4 s per call on warpx_field_gather).
+        array_types = {k: v.dtype for k, v in sdfg.arrays.items()}
+        environment = {**defined_syms, **array_types}
         for edge in sdfg.all_interstate_edges():
-            update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
+            if edge.data.assignments:
+                defined = {k: v for k, v in edge.data.new_symbols(None, environment).items() if v is not None}
+                defined_syms.update(defined)
+                environment.update((k, array_types.get(k, v)) for k, v in defined.items())
             if isinstance(edge.dst, AbstractControlFlowRegion):
-                update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
+                defined = {k: v for k, v in edge.dst.new_symbols(defined_syms).items() if v is not None}
+                defined_syms.update(defined)
+                environment.update((k, array_types.get(k, v)) for k, v in defined.items())
         regions = []
         region = state.parent_graph
         while region is not None and region is not sdfg:
