@@ -294,11 +294,12 @@ class ExpandGPUTensorDot(ExpandTransformation):
         left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
-        if dtype not in cls.environments[0].TYPE_MAP:
-            # hipTensor has no double contraction (cp2k_grid_integrate, ls3df_scf); the pure
+        supported = cls.environments[0].CONTRACTION_TYPE_MAP
+        if dtype not in supported:
+            # A dtype the vendor library cannot contract (hipTensor takes no complex one); the pure
             # expansion over GPU-resident operands is still a device map, as the environment says.
             return ExpandPure.expansion(node, parent_state, parent_sdfg)
-        tensor_dtype, compute_desc, scalar_type = cls.environments[0].TYPE_MAP[dtype]
+        tensor_dtype, compute_desc, scalar_type = supported[dtype]
 
         alpha = f"({scalar_type})1.0"
         beta = f"({scalar_type})0.0"

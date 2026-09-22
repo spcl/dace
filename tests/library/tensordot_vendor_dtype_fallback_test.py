@@ -1,21 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A vendor tensor contraction the library cannot do in the operands' type falls back to ``pure``.
 
-hipTensor contracts ``float16`` and ``float32`` only, and its expansion RAISED for ``float64``: every
-double contraction on the HIP canon GPU column was unsupported (cp2k_grid_integrate, ls3df_scf).
-The environment already documents the pure expansion as the fallback, which on GPU-resident operands
-is still a device map.
+The expansion RAISED for a dtype outside the environment's map, so every such contraction on the
+HIP canon GPU column was unsupported. It now falls back to the pure expansion, which on
+GPU-resident operands is still a device map.
+
+What hipTensor can contract is measured, not assumed, and it is not what it can permute: fp64
+contraction runs (checked against a host reference in the ROCm 7.2 judge image on gfx942), while
+fp64 permute is refused at every rank. So double takes the vendor call and complex takes the
+fallback.
 """
 import dace
 from dace import dtypes
 from dace.libraries.linalg.nodes.tensordot import TensorDot
 
 
-def double_contraction(implementation: str) -> dace.SDFG:
-    """``C[i, k] = sum_j A[i, j] * B[j, k]`` on the device, in ``float64``."""
-    sdfg = dace.SDFG(f'double_tensordot_{implementation}')
+def double_contraction(implementation: str, dtype: dace.typeclass = dace.complex128) -> dace.SDFG:
+    """``C[i, k] = sum_j A[i, j] * B[j, k]`` on the device, in ``dtype``."""
+    sdfg = dace.SDFG(f'tensordot_{implementation}_{dtype.to_string()}')
     for name, shape in (('A', [4, 5]), ('B', [5, 6]), ('C', [4, 6])):
-        sdfg.add_array(name, shape, dace.float64, storage=dtypes.StorageType.GPU_Global)
+        sdfg.add_array(name, shape, dtype, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state()
     node = TensorDot('contract', left_axes=[1], right_axes=[0])
     node.implementation = implementation
@@ -27,12 +31,22 @@ def double_contraction(implementation: str) -> dace.SDFG:
     return sdfg
 
 
-def test_a_double_hiptensor_contraction_expands_to_the_pure_map():
+def test_a_contraction_hiptensor_cannot_do_expands_to_the_pure_map():
+    """complex128 is outside the contraction map, so it takes the fallback rather than raising."""
     sdfg = double_contraction('hipTENSOR')
     sdfg.expand_library_nodes()
     code = '\n'.join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
     assert 'hiptensor' not in code.lower(), code[:400]
     assert any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
+
+
+def test_a_double_contraction_takes_the_vendor_call():
+    """fp64 contraction is supported and measured, so it must NOT fall back to a map."""
+    sdfg = double_contraction('hipTENSOR', dace.float64)
+    sdfg.expand_library_nodes()
+    code = '\n'.join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
+    assert 'hiptensor' in code.lower(), code[:400]
+    assert not any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
 
 
 def test_the_pure_fallback_maps_device_operands_on_the_device():

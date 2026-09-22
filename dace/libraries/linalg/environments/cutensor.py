@@ -37,6 +37,10 @@ class cuTensor:
         dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
     }
 
+    #: cuTENSOR contracts every type it permutes, so the contraction map is the same one. hipTensor
+    #: is where the two differ; see its environment.
+    CONTRACTION_TYPE_MAP = TYPE_MAP
+
     @staticmethod
     def handle_setup_code(node):
         return dace.library.reject_gpu_location(node) + """\
