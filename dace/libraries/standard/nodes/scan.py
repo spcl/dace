@@ -314,58 +314,6 @@ def seed_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int):
     return None if edge is None else sdfg.arrays[edge.data.data]
 
 
-def future_value_type(ctype: str) -> str:
-    """The ``gpucub::FutureValue`` type :func:`future_value` constructs over a ``ctype`` seed."""
-    return f'::gpucub::FutureValue<{ctype}, const {ctype}*>'
-
-
-def future_value(ctype: str, expr: str) -> str:
-    """``gpucub::FutureValue`` over a seed the host must not dereference.
-
-    The ITERATOR type is named, not defaulted. Both backends declare
-    ``FutureValue<T, Iter = T*>`` and take the iterator by ``const Iter``, so the default binds
-    ``T* const`` -- which a ``const T*`` seed pointer cannot convert to ("would lose const
-    qualifier"). rocPRIM rejects it outright, and the whole translation unit fails to compile
-    (tsvc_2_s318's scan, gfx942). Naming ``const T*`` accepts a seed that is const and one that is
-    not, on CUB and rocPRIM alike.
-    """
-    return f'{future_value_type(ctype)}({expr})'
-
-
-def device_seed_prologue(ctype: str) -> str:
-    """Bind ``__sc_seed`` to the device-resident seed at ``__sc_init``, per backend.
-
-    CUB reads a ``FutureValue`` inside the scan's kernels, so on CUDA the future goes straight to
-    the call and the seed may still be in flight. rocPRIM does not: measured on ROCm 7.2.3, its
-    ``inclusive_scan`` evaluates the future's iterator on the HOST at call time, so a seed the
-    kernel enqueued just ahead of the scan is still writing is read before it exists. That is a
-    silent wrong answer, not a failure: the scan runs with whatever the buffer held, so tsvc s323,
-    whose lifted recurrence seeds the scan from ``b[0]``, came out short by exactly that seed on
-    some calls and not others. Staging the value first is what a future exists to avoid, so only
-    the backend that needs it pays the synchronisation.
-    """
-    return ('#if defined(__HIPCC__) || defined(WITH_HIP)\n'
-            f'    {ctype} __sc_staged;\n'
-            f'    gpuError_t _sc_fetch = gpuMemcpyAsync(&__sc_staged, __sc_init, sizeof(__sc_staged), '
-            'gpuMemcpyDeviceToHost, __sc_stream);\n'
-            '    if (_sc_fetch != gpuSuccess) return _sc_fetch;\n'
-            '    _sc_fetch = gpuStreamSynchronize(__sc_stream);\n'
-            '    if (_sc_fetch != gpuSuccess) return _sc_fetch;\n'
-            f'    {ctype} __sc_seed = __sc_staged;\n'
-            '#else\n'
-            f'    {future_value_type(ctype)} __sc_seed(__sc_init);\n'
-            '#endif\n')
-
-
-def seed_arg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int) -> str:
-    """The ``init_value`` argument of the cub call for chain ``chain``."""
-    conn = init_connector(chain)
-    desc = seed_desc(node, state, sdfg, chain)
-    if desc is None or desc.storage not in GPU_RESIDENT_STORAGES:
-        return conn
-    return future_value(desc.dtype.base_type.ctype, conn)
-
-
 def coef_desc(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int = 0):
     """Descriptor behind chain ``chain``'s ``_scan_coef``; affine scans always wire one."""
     conn = coef_connector(chain)
@@ -1229,32 +1177,47 @@ class ExpandCUDA(ExpandTransformation):
                 call = 'ExclusiveScan'
                 extra = f', {seed_expr}'
             elif _has_init(node, chain):
-                # Inclusive scan with init. ``gpucub::DeviceScan::InclusiveScanInit`` is the
-                # direct API (CUB >= 2.0 / CUDA 12+); on older CUB it'd need an
-                # ``ExclusiveScan`` + tail-add fallback, which can be added when
-                # supporting CUDA 11 becomes a requirement.
-                # A seed the host cannot read is passed as a ``gpucub::FutureValue``, which cub
-                # dereferences on the device; a host-resident one goes by value as before.
+                # Inclusive scan with a seed ``s`` is the plain inclusive scan of ``in`` with
+                # ``s op in[0]`` in place of ``in[0]``. A transform iterator computes that element as
+                # the scan reads it, so there is no extra kernel and no staging buffer, and it is the
+                # same call on every backend: ``DeviceScan::InclusiveScanInit`` exists only from
+                # CUB 2.0 / hipCUB on ROCm 7, so ROCm 6.3 failed to compile every seeded scan. A
+                # device-resident seed is read by pointer INSIDE the kernel, so the scan orders after
+                # whatever wrote it without the host sync a ``FutureValue`` needs on rocPRIM.
                 desc = seed_desc(node, state, sdfg, chain)
                 seed_ctype = desc.dtype.base_type.ctype
-                if desc is not None and desc.storage in GPU_RESIDENT_STORAGES:
-                    seed_param = f', const {seed_ctype}* __sc_init'
-                    seed_prologue = device_seed_prologue(seed_ctype)
-                    extra = ', __sc_seed'
-                else:
-                    seed_param = f', {seed_ctype} __sc_init'
-                    extra = ', __sc_init'
+                on_device = desc is not None and desc.storage in GPU_RESIDENT_STORAGES
+                seed_param = f', const {seed_ctype}* __sc_init' if on_device else f', {seed_ctype} __sc_init'
+                seed_value = '*seed' if on_device else 'seed'
+                seed_field = f'const {seed_ctype}* seed' if on_device else f'{seed_ctype} seed'
+                first = f'{idstr}_c{chain}_seeded'
+                sdfg.append_global_code(
+                    f'struct {first} {{\n'
+                    f'    const {in_ctype}* in;\n'
+                    f'    {seed_field};\n'
+                    f'    __host__ __device__ __forceinline__ {out_ctype} operator()(long long i) const {{\n'
+                    f'        {out_ctype} v = static_cast<{out_ctype}>(in[i]);\n'
+                    f'        return i == 0 ? {op_cub}(static_cast<{out_ctype}>({seed_value}), v) : v;\n'
+                    f'    }}\n'
+                    f'}};\n', 'cuda')
+                seed_prologue = (f'    ::gpucub::TransformInputIterator<{out_ctype}, {first}, '
+                                 f'::gpucub::CountingInputIterator<long long>> __sc_items('
+                                 f'::gpucub::CountingInputIterator<long long>(0), {first}{{__sc_in, __sc_init}});\n')
                 seed_actual = f', {init_connector(chain)}'
-                call = 'InclusiveScanInit'
+                call = 'InclusiveScan'
+                extra = ''
+                scan_input = '__sc_items'
             else:
                 call = 'InclusiveScan'
                 extra = ''
+            if not _has_init(node, chain) or node.exclusive:
+                scan_input = '__sc_in'
 
             wrapper = f'__dace_scan_{idstr}_c{chain}'
             params = (f'const {in_ctype}* __sc_in, {out_ctype}* __sc_out{seed_param}, '
                       f'long long __sc_n, gpuStream_t __sc_stream')
             prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
-            args = f'__sc_in, __sc_out, {op_cub}{extra}, __sc_n, __sc_stream'
+            args = f'{scan_input}, __sc_out, {op_cub}{extra}, __sc_n, __sc_stream'
             sdfg.append_global_code(prototype + '\n')
             sdfg.append_global_code(
                 f'{prototype}\n'

@@ -5,8 +5,12 @@ A vendor call reads a coefficient or a seed through a host pointer as happily as
 placement prefers the host (nothing to copy before the launch) -- but a value a kernel already wrote
 on the device must NOT be dragged back, and the expansion has to read it where it lies. These pin
 both halves: the by-value path for host memory, the pointer path (``POINTER_MODE_DEVICE`` for
-cuBLAS, ``cub::FutureValue`` for cub) for device memory.
+cuBLAS, a seed pointer the scan's own input iterator dereferences in the kernel for cub) for device
+memory.
 """
+import numpy as np
+import pytest
+
 import dace
 from dace import dtypes
 from dace.libraries.blas.nodes.syrk import Syrk
@@ -105,21 +109,30 @@ def test_a_host_seed_goes_to_cub_by_value():
     assert 'FutureValue' not in code, 'a host seed needs no future'
 
 
-def test_a_device_seed_goes_to_cub_as_a_future():
-    """``cub::FutureValue`` is the documented way to hand ``DeviceScan`` a seed it must read itself."""
+def test_a_device_seed_is_read_inside_the_kernel():
+    """The kernel dereferences the seed itself, so a value an earlier kernel is still writing is
+    ordered by the stream, not by a host round trip (rocPRIM reads a ``FutureValue`` on the host)."""
     sdfg, _, _ = scan_with_seed(dtypes.StorageType.GPU_Global)
     code = expanded_code(sdfg)
-    assert 'FutureValue' in code, code[:400]
+    assert 'const double* seed;' in code, code[:600]
+    assert 'static_cast<double>(*seed)' in code, code[:600]
     sdfg.validate()
 
 
-def test_the_future_names_a_const_iterator():
-    """The seed reaches the wrapper as ``const T*``, so the future's ITERATOR must be ``const T*``.
-
-    Both backends declare ``FutureValue<T, Iter = T*>`` and take the iterator by ``const Iter``.
-    Left to default, that is ``T* const``, which a ``const T*`` cannot convert to; rocPRIM rejects
-    it and the translation unit does not compile at all.
-    """
-    sdfg, _, _ = scan_with_seed(dtypes.StorageType.GPU_Global)
+@pytest.mark.parametrize('storage', [dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global])
+def test_a_seeded_scan_calls_only_what_every_backend_has(storage):
+    """``DeviceScan::InclusiveScanInit`` exists only from CUB 2.0 / hipCUB on ROCm 7: on ROCm 6.3 every
+    seeded scan failed to compile (nine LLR kernels on the canon GPU column)."""
+    sdfg, _, _ = scan_with_seed(storage)
     code = expanded_code(sdfg)
-    assert 'FutureValue<double, const double*>' in code, code[:400]
+    assert 'InclusiveScanInit' not in code and 'FutureValue' not in code, code[:600]
+
+
+@pytest.mark.gpu
+def test_a_seeded_device_scan_adds_the_seed_once():
+    import cupy
+    sdfg, _, _ = scan_with_seed(dtypes.StorageType.GPU_Global)
+    a = np.arange(1, N + 1, dtype=np.float64)
+    b = cupy.zeros(N)
+    sdfg(A=cupy.asarray(a), B=b, seed=cupy.asarray([5.0]))
+    np.testing.assert_array_equal(cupy.asnumpy(b), 5.0 + np.cumsum(a))
