@@ -6,7 +6,7 @@ import dace.properties
 import dace.sdfg.nodes
 import numpy as np
 from dace import Memlet
-from dace.libraries.standard.helper import host_accessible_info_storage
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, host_accessible_info_storage
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.libraries.linalg.nodes.solve import gesv_core_program, restride
 from dace.transformation.transformation import ExpandTransformation
@@ -125,11 +125,16 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         bin_name = '_aout'
         bout = state.add_access('_aout')
 
+    # The identity is written into the operand's own storage, so on the device it is a kernel: a host
+    # map over ``GPU_Global`` memory is invalid (quatrex_rgf's rocSOLVER inverse).
+    eye_schedule = (dace.dtypes.ScheduleType.GPU_Device
+                    if operand_storage in GPU_RESIDENT_STORAGES else dace.dtypes.ScheduleType.Default)
     _, _, mx = state.add_mapped_tasklet('_eye_',
                                         dict(__i0=f"0:{n}", __i1=f"0:{n}"), {},
                                         '_out = (__i0 == __i1) ? 1 : 0;',
                                         dict(_out=Memlet.simple(bin_name, '__i0, __i1')),
                                         language=dace.dtypes.Language.CPP,
+                                        schedule=eye_schedule,
                                         external_edges=True)
     bin = state.out_edges(mx)[0].dst
 
