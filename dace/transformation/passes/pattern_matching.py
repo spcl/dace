@@ -395,18 +395,44 @@ def type_or_class_match(node_a, node_b):
     return isinstance(node_a['node'], type(node_b['node']))
 
 
-def _try_to_match_transformation(
-        graph: Union[ControlFlowRegion, SDFGState],
-        collapsed_graph: nx.DiGraph,
-        subgraph: Dict[int, int],
-        sdfg: SDFG,
-        xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
-        expr_idx: int,
-        nxpattern: nx.DiGraph,
-        state_id: int,
-        permissive: bool,
-        options: Dict[str, Any],
-        pipeline_results: Optional[Dict[str, Any]] = None) -> Optional[xf.PatternTransformation]:
+class CfgIds:
+    """``cfg_id`` of every region of one CFG tree, from one pass over its ``cfg_list``.
+
+    ``ControlFlowRegion.cfg_id`` is ``cfg_list.index(self)``, a linear scan; asked per candidate it
+    made a matcher sweep quadratic in the region count (warpx_field_gather: 13000 regions, 3960
+    ``ConditionFusion`` candidates per sweep). A region holding another list resolves as before.
+    """
+    __slots__ = ('cfg_list', 'index')
+
+    def __init__(self, sdfg: SDFG) -> None:
+        self.cfg_list = sdfg.cfg_list
+        #: Built on the first lookup: a sweep that matches its first candidate needs one scan at most.
+        self.index: Optional[Dict[ControlFlowRegion, int]] = None
+
+    def cfg_id(self, region: ControlFlowRegion) -> int:
+        """``region.cfg_id``, without the scan when ``region`` shares the indexed list."""
+        if region.cfg_list is not self.cfg_list:
+            return region.cfg_id
+        if self.index is None:
+            self.index = {}
+            for i, cfg in enumerate(self.cfg_list):
+                self.index.setdefault(cfg, i)
+        found = self.index.get(region)
+        return region.cfg_id if found is None else found
+
+
+def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState],
+                                 collapsed_graph: nx.DiGraph,
+                                 subgraph: Dict[int, int],
+                                 sdfg: SDFG,
+                                 xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
+                                 expr_idx: int,
+                                 nxpattern: nx.DiGraph,
+                                 state_id: int,
+                                 permissive: bool,
+                                 options: Dict[str, Any],
+                                 pipeline_results: Optional[Dict[str, Any]] = None,
+                                 cfg_ids: Optional['CfgIds'] = None) -> Optional[xf.PatternTransformation]:
     """
     Helper function that tries to instantiate a pattern match into a
     transformation object.
@@ -416,6 +442,7 @@ def _try_to_match_transformation(
                              read a cached analysis instead of recomputing it per candidate. This
                              is what issue#1911 is about; ``setup_match`` resets the member, so it
                              has to be set after that call.
+    :param cfg_ids: The CFG list indexed once by the caller, to resolve the region's ``cfg_id``.
     """
     # `collapse_multigraph_to_nx` numbers the nodes in the order of `graph.nodes()`, so the index of
     # a node in the collapsed graph is its node ID; `graph.node_id` would find it by a linear scan.
@@ -448,7 +475,8 @@ def _try_to_match_transformation(
                               'for more information.')
                 return None
 
-        cfg_id = graph.parent_graph.cfg_id if isinstance(graph, SDFGState) else graph.cfg_id
+        region = graph.parent_graph if isinstance(graph, SDFGState) else graph
+        cfg_id = region.cfg_id if cfg_ids is None else cfg_ids.cfg_id(region)
         match.setup_match(sdfg, cfg_id, state_id, subgraph, expr_idx, options=options)
         # After setup_match, which resets it to None.
         match._pipeline_results = pipeline_results
@@ -592,6 +620,7 @@ def match_patterns(sdfg: SDFG,
 
     # Collect SDFG and nested SDFGs
     cfrs = sdfg.all_control_flow_regions(recursive=True)
+    cfg_ids = CfgIds(sdfg)
 
     # Try to find transformations on each SDFG
     for cfr in cfrs:
@@ -604,7 +633,7 @@ def match_patterns(sdfg: SDFG,
         for xform, expr_idx, nxpattern, matcher, opts in interstate_transformations:
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
                 match = _try_to_match_transformation(cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, -1,
-                                                     permissive, opts, pipeline_results)
+                                                     permissive, opts, pipeline_results, cfg_ids)
                 if match is not None:
                     yield match
 
@@ -622,7 +651,7 @@ def match_patterns(sdfg: SDFG,
             for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
                 for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
                     match = _try_to_match_transformation(state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern,
-                                                         state_id, permissive, opts, pipeline_results)
+                                                         state_id, permissive, opts, pipeline_results, cfg_ids)
                     if match is not None:
                         yield match
 
