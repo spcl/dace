@@ -48,7 +48,7 @@ class PruneConnectors(pm.SingleStateTransformation):
         if connectors_used_by_dataflow(self.nsdfg):
             return False
 
-        prune_in, prune_out = self._get_prune_sets(graph)
+        prune_in, prune_out, _ = self._get_prune_sets(graph)
         if not prune_in and not prune_out:
             return False
 
@@ -59,13 +59,13 @@ class PruneConnectors(pm.SingleStateTransformation):
 
         return True
 
-    def _get_prune_sets(self, state: SDFGState) -> Tuple[Set[str], Set[str]]:
+    def _get_prune_sets(self, state: SDFGState) -> Tuple[Set[str], Set[str], Set[str]]:
         """Computes the set of the input and output connectors that can be removed.
 
         Returns:
-            A tuple of two sets, the first set contains the name of all input
-            connectors that can be removed and the second the name of all output
-            connectors that can be removed.
+            A tuple of the input connectors that can be removed, the output connectors that can be
+            removed, and every data name the nested SDFG's dataflow reads or writes (its caller also
+            needs that union, and it is the same whole-body walk this method already pays for).
         """
         nsdfg = self.nsdfg
 
@@ -76,6 +76,7 @@ class PruneConnectors(pm.SingleStateTransformation):
         #  output connector is retained, except the output is a WCR, then the input
         #  is also retained.
         read_set, write_set = nsdfg.sdfg.read_and_write_sets()
+        all_data_used = read_set | write_set
         prune_in = nsdfg.in_connectors.keys() - read_set
         prune_out = nsdfg.out_connectors.keys() - write_set
 
@@ -119,24 +120,21 @@ class PruneConnectors(pm.SingleStateTransformation):
             prune_in -= symbolic_uses
             prune_out -= symbolic_uses
 
-        return prune_in, prune_out
+        return prune_in, prune_out, all_data_used
 
     def apply(self, state: SDFGState, sdfg: SDFG):
         nsdfg = self.nsdfg
 
-        # Determine which connectors can be removed.
-        prune_in, prune_out = self._get_prune_sets(state)
+        # Determine which connectors can be removed. ``all_data_used`` (below) is exactly the read/write
+        # union this call already computed internally -- no second ``read_and_write_sets()`` walk of the
+        # nested SDFG's whole body needed for it, and nothing between here and its use mutates ``nsdfg.sdfg``.
+        prune_in, prune_out, all_data_used = self._get_prune_sets(state)
 
         # If the nested SDFG is at global scope, check if it can be isolated.
         if state.scope_dict()[nsdfg] is None:
             _, nsdfg_state, _ = helpers.isolate_nested_sdfg(state=state, nsdfg_node=nsdfg)
         else:
             nsdfg_state = state
-
-        # Detect which nodes are used, so we can delete unused nodes after the
-        # connectors have been pruned
-        read_set, write_set = nsdfg.sdfg.read_and_write_sets()
-        all_data_used = read_set | write_set
 
         for conn in prune_in:
             for e in nsdfg_state.in_edges_by_connector(nsdfg, conn):
