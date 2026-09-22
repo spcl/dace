@@ -403,7 +403,7 @@ def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnector
     A folded WRITE goes further: its outer access node is left with no producer at all, because the
     write it received is now covered by ``kept``'s widened memlet on a DIFFERENT node. Anything
     ordered after the stranded node is then ordered after nothing. The constraint has not gone away,
-    it has moved -- to whichever node absorbed the write -- so the ordering edges move with it.
+    it has moved -- to the scope that now delivers the write -- so the ordering edges move with it.
     ``u[:, 0] = 0; u[:, -1] = 0; u[-1, :] = 1`` is the case: both column writes fold onto one node,
     and the lid's ordering edges are left hanging off the other, so the lid ran first and zeroed
     corners came out where ones belong.
@@ -427,21 +427,27 @@ def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnector
     # body ends at the enclosing MapExit, while the access node the write lands on -- and whose
     # ordering edges are what go stale -- sits beyond it. Taken before the removal, which is what
     # strands it.
-    path_end = state.memlet_path(edge)[0].src if is_input else state.memlet_path(edge)[-1].dst
-    kept_end = state.memlet_path(kept)[0].src if is_input else state.memlet_path(kept)[-1].dst
+    path = state.memlet_path(edge)
+    path_end = path[0].src if is_input else path[-1].dst
+    # What delivered the folded write to ``path_end``: the last hop's source, or the nested SDFG when
+    # ``edge`` is that hop. NOT ``kept``'s access node -- it may have other writers ordered after
+    # ``path_end`` (CloudSC: a later map writes the same node), so anchoring there closes a cycle.
+    anchor = nested_sdfg if path[-1] is edge else path[-1].src
     utils.remove_edge_and_dangling_path(state, edge)
-    if utils.reanchor_stranded_ordering(state, path_end, kept_end, is_input):
-        return
-    # A dropped path can take its own root with it, and an endpoint nothing else uses carries no
-    # constraint worth restating.
-    if outer not in state.nodes() or state.degree(outer) == 0:
-        return
-    # A fresh Memlet per edge -- never the object the old edge carried.
     if is_input:
-        if not any(e.dst is nested_sdfg for e in state.out_edges(outer)):
+        # A dropped path can take its own root with it, and an endpoint nothing else uses carries no
+        # constraint worth restating. A fresh Memlet per edge -- never the object the old edge carried.
+        if outer in state.nodes() and state.degree(outer) > 0 and not any(e.dst is nested_sdfg
+                                                                          for e in state.out_edges(outer)):
             state.add_nedge(outer, nested_sdfg, Memlet())
-    elif not any(e.src is nested_sdfg for e in state.in_edges(outer)):
-        state.add_nedge(nested_sdfg, outer, Memlet())
+        return
+    if utils.reanchor_stranded_ordering(state, path_end, anchor, is_input):
+        return
+    # ``path_end`` keeps other writers or readers, and it still happens after the folded write.
+    present = state.nodes()
+    if anchor in present and path_end in present and state.degree(path_end) > 0 and not any(
+            e.src is anchor for e in state.in_edges(path_end)):
+        state.add_nedge(anchor, path_end, Memlet())
 
 
 def nest_state_subgraph(sdfg: SDFG,

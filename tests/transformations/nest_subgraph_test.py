@@ -10,6 +10,7 @@ from dace.transformation.passes.scalar_fission import ScalarFission
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, StateSubgraphView
+import networkx as nx
 import numpy as np
 
 
@@ -551,6 +552,50 @@ def test_input_edge_on_the_whole_container_gets_no_inner_copy():
     _run(sdfg)
 
 
+def test_folded_write_ordering_is_not_reanchored_into_a_cycle():
+    """A folded body write hands its ordering to the scope that delivers it, not to a shared node.
+
+    ``fold`` writes ``B`` twice, to ``kept`` and ``stranded``; ``stranded`` orders ``m2``, which also
+    writes ``kept``. Nesting ``fold``'s body folds both writes onto ``kept``. Moving ``stranded``'s
+    ordering onto ``kept`` closed ``kept -> m2 -> kept`` (CloudSC GPU, single_state_body_85).
+    """
+    sdfg = dace.SDFG('nest_folded_write_ordering')
+    sdfg.add_array('B', [10], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    me1, mx1 = state.add_map('fold', dict(i='0:1'))
+    t1 = state.add_tasklet('t1', {}, {'out': None}, '\n'.join(f'out[{k}] = 1.0' for k in range(4)))
+    t2 = state.add_tasklet('t2', {}, {'out': None}, '\n'.join(f'out[{k}] = 2.0' for k in range(2)))
+    state.add_nedge(me1, t1, dace.Memlet())
+    state.add_nedge(me1, t2, dace.Memlet())
+    mx1.add_scope_connectors('1')
+    mx1.add_scope_connectors('2')
+    state.add_edge(t1, 'out', mx1, 'IN_1', dace.Memlet('B[0:4]'))
+    state.add_edge(t2, 'out', mx1, 'IN_2', dace.Memlet('B[4:6]'))
+    kept = state.add_access('B')
+    stranded = state.add_access('B')
+    state.add_edge(mx1, 'OUT_1', kept, None, dace.Memlet('B[0:4]'))
+    state.add_edge(mx1, 'OUT_2', stranded, None, dace.Memlet('B[4:6]'))
+    me2, mx2 = state.add_map('m2', dict(j='0:1'))
+    state.add_nedge(stranded, me2, dace.Memlet())
+    t3 = state.add_tasklet('t3', {}, {'out': None}, '\n'.join(f'out[{k}] = 3.0' for k in range(4)))
+    state.add_nedge(me2, t3, dace.Memlet())
+    mx2.add_scope_connectors('3')
+    state.add_edge(t3, 'out', mx2, 'IN_3', dace.Memlet('B[6:10]'))
+    state.add_edge(mx2, 'OUT_3', kept, None, dace.Memlet('B[6:10]'))
+    sdfg.validate()
+
+    nest_state_subgraph(sdfg, state, SubgraphView(state, [t1, t2]))
+
+    sdfg.validate()
+    nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert list(nsdfg.out_connectors) == ['B'] and state.out_degree(nsdfg) == 1
+    assert nx.has_path(state._nx, mx1, me2), 'the fold dropped the ordering of m2 after fold'
+    assert [n for n in state.data_nodes()] == [kept]
+    got = np.zeros(10)
+    sdfg(B=got)
+    assert np.array_equal(got, np.array([1, 1, 1, 1, 2, 2, 3, 3, 3, 3], dtype=np.float64))
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -569,3 +614,4 @@ if __name__ == '__main__':
     test_boundary_memlet_naming_a_moved_container_is_reanchored()
     test_boundary_carried_access_node_gets_no_second_interface()
     test_input_edge_on_the_whole_container_gets_no_inner_copy()
+    test_folded_write_ordering_is_not_reanchored_into_a_cycle()
