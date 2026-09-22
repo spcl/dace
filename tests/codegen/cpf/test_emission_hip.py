@@ -282,12 +282,15 @@ def test_a_device_resident_scan_seed_is_read_where_it_lives():
     assert '__global__ void cpf_affine_pack_kernel' in code, 'the map-packing kernel is part of the unit'
 
 
-def test_a_device_scan_seed_is_declared_at_its_type_on_both_backends():
-    """The HIP arm stages the seed as the element type; the CUDA arm passes the future itself."""
+def test_a_device_scan_seed_is_read_at_its_type_inside_the_kernel():
+    """The scan's input iterator reads the device seed at the element type inside the kernel, the
+    same on both backends: no host staging, no ``FutureValue``, and no ``InclusiveScanInit``, which
+    hipCUB on ROCm 6.3 does not have."""
     code = cpf.cpf(device_scan_sdfg('cpf_hip_seeded_scan', ScanOp.SUM, seed=True), language='hip')
     assert_standalone_device(code, 'cpf_hip_seeded_scan')
-    assert 'double __sc_seed = __sc_staged;' in code, code
-    assert '::gpucub::FutureValue<double, const double*> __sc_seed(__sc_init);' in code, code
+    assert 'const double* seed;' in code, code
+    assert 'static_cast<double>(*seed)' in code, code
+    assert 'InclusiveScanInit' not in code and 'FutureValue' not in code, code
 
 
 def test_a_device_product_scan_multiplies_through_a_typed_functor():
