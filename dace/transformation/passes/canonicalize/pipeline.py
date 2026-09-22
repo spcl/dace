@@ -972,10 +972,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # in-state producer->consumer edge is never severed by the map->loop round-trip.
     s += [('lower', RevertNonReductionWCR())]
     # lower: every map -> LoopRegion (MapToLoop = reuse MapToForLoop), then
-    # structural cleanup (no SimplifyPass).
+    # structural cleanup (no SimplifyPass). ``MapToForLoop`` is state-local, so the matcher resumes
+    # in the region of each lowering instead of re-walking the SDFG: quadratic in the map count
+    # otherwise (warpx_field_gather lowers 3300 maps).
     lower_maps = MapToForLoop()
     lower_maps.keep_reductions_parallel = True  # canon preference, off in the transformation's default contract
-    s += [('lower', PatternApplyOnceEverywhere([lower_maps]))]
+    s += [('lower', PatternApplyOnceEverywhere([lower_maps], state_local=True))]
     # The pipeline's only ``InlineMultistateSDFG``: lowering mints the nestings here.
     s += [('lower', PatternApplyOnceEverywhere([PruneConnectors()]))]
     s += [('lower', InlineSDFGs())]
