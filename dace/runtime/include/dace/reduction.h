@@ -223,6 +223,36 @@ struct _wcr_fixed<ReductionType::Sum, uint64_t> {
 
   DACE_HDFI uint64_t operator()(const uint64_t& a, const uint64_t& b) const { return a + b; }
 };
+
+// A complex sum on the device: no atomic takes a 16-byte operand, and the CAS fallback has none
+// to compare-and-swap either, so each component is added atomically on its own. The components
+// never interact under +, so the final value is exact; only the returned ``old`` is not one
+// consistent snapshot of the pair.
+template <typename C, typename R>
+static DACE_HDFI C complex_atomic_add(C* ptr, const C& value) {
+  R* parts = reinterpret_cast<R*>(ptr);
+  R old_real = atomicAdd(parts, value.real());
+  R old_imag = atomicAdd(parts + 1, value.imag());
+  return C(old_real, old_imag);
+}
+
+template <>
+struct _wcr_fixed<ReductionType::Sum, complex64> {
+  static DACE_HDFI complex64 reduce_atomic(complex64* ptr, const complex64& value) {
+    return complex_atomic_add<complex64, float>(ptr, value);
+  }
+
+  DACE_HDFI complex64 operator()(const complex64& a, const complex64& b) const { return a + b; }
+};
+
+template <>
+struct _wcr_fixed<ReductionType::Sum, complex128> {
+  static DACE_HDFI complex128 reduce_atomic(complex128* ptr, const complex128& value) {
+    return complex_atomic_add<complex128, double>(ptr, value);
+  }
+
+  DACE_HDFI complex128 operator()(const complex128& a, const complex128& b) const { return a + b; }
+};
 #endif
 
 template <typename T>
@@ -470,6 +500,42 @@ struct _wcr_fixed<ReductionType::Logical_Or, T> {
   DACE_HDFI T operator()(const T& a, const T& b) const { return a || b; }
 };
 
+#if defined(DACE_USE_GPU_ATOMICS)
+// No device atomic takes a byte, so a bool is updated through the aligned 32-bit word that holds
+// it, with a mask that touches only its byte. A bool byte holds 0 or 1: OR-ing in a 1 sets it, and
+// AND-ing its byte to 0 clears it, which is exactly logical or/and. GPUs are little-endian, so byte
+// k of the word is bits 8k..8k+7.
+static DACE_HDFI unsigned int* bool_word(bool* ptr, unsigned int* shift) {
+  size_t address = reinterpret_cast<size_t>(ptr);
+  *shift = 8 * static_cast<unsigned int>(address & 3);
+  return reinterpret_cast<unsigned int*>(address & ~static_cast<size_t>(3));
+}
+
+template <>
+struct _wcr_fixed<ReductionType::Logical_Or, bool> {
+  static DACE_HDFI bool reduce_atomic(bool* ptr, const bool& value) {
+    unsigned int shift;
+    unsigned int* word = bool_word(ptr, &shift);
+    unsigned int old = atomicOr(word, value ? (1u << shift) : 0u);
+    return ((old >> shift) & 0xFFu) != 0;
+  }
+
+  DACE_HDFI bool operator()(const bool& a, const bool& b) const { return a || b; }
+};
+
+template <>
+struct _wcr_fixed<ReductionType::Logical_And, bool> {
+  static DACE_HDFI bool reduce_atomic(bool* ptr, const bool& value) {
+    unsigned int shift;
+    unsigned int* word = bool_word(ptr, &shift);
+    unsigned int old = atomicAnd(word, value ? 0xFFFFFFFFu : ~(0xFFu << shift));
+    return ((old >> shift) & 0xFFu) != 0;
+  }
+
+  DACE_HDFI bool operator()(const bool& a, const bool& b) const { return a && b; }
+};
+#endif
+
 template <typename T>
 struct _wcr_fixed<ReductionType::Bitwise_Or, T> {
   static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
@@ -582,6 +648,26 @@ struct wcr_fixed {
                                                                                      value);
   }
 };
+
+#if defined(DACE_USE_GPU_ATOMICS)
+// A complex sum is not a scalar type, but it has a device atomic (above): use it rather than the
+// CAS fallback, which cannot swap a 16-byte value.
+template <typename T>
+struct wcr_fixed<ReductionType::Sum, T,
+                 typename std::enable_if<std::is_same<T, complex64>::value || std::is_same<T, complex128>::value>::type> {
+  static DACE_HDFI T reduce(T* ptr, const T& value) {
+    T old = *ptr;
+    *ptr = old + value;
+    return old;
+  }
+
+  static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
+    return _wcr_fixed<ReductionType::Sum, T>::reduce_atomic(ptr, value);
+  }
+
+  DACE_HDFI T operator()(const T& a, const T& b) const { return a + b; }
+};
+#endif
 
 // When atomics are supported, use _wcr_fixed normally
 template <ReductionType REDTYPE, typename T>
