@@ -26,6 +26,8 @@ from dace.config import Config
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.libraries.blas.environments import openblas
+from dace.libraries.blas.nodes.gemm import Gemm
+from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _matrix_operand
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage, find_fast_library,
                                                     libnode_is_sequential, make_transients_persistent,
                                                     move_small_arrays_to_stack, set_fast_implementations)
@@ -70,6 +72,21 @@ def _all_matmul_extents_small(state, node, limit: int) -> bool:
             except (TypeError, ValueError):
                 return False  # symbolic extent -> unknown size, treat as not-small
     return saw
+
+
+def blas_addresses(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
+    """Whether a BLAS call can take every matrix operand of ``node`` as it is laid out.
+
+    BLAS names a matrix by a pointer and ONE leading dimension, so each operand needs a unit stride
+    on one of its two matrix axes (what ``get_gemm_opts`` requires). A strided view of both axes --
+    cegterg's canonicalized ``Gemm`` -- has no such form, and the BLAS expansion raised
+    ``sAM or sAK should be 1`` at codegen.
+    """
+    try:
+        operands = _get_matmul_operands(node, state, sdfg)
+    except ValueError:
+        return True
+    return all(any(symbolic.equal_valued(1, s) for s in _matrix_operand(operand)[3]) for operand in operands)
 
 
 def canonicalize_fast_library_priority(device: dtypes.DeviceType):
@@ -159,6 +176,13 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         # forbids. Pinning it single-core keeps the whole expanded subtree serial.
         if sequential and node.schedule != dtypes.ScheduleType.Sequential:
             node.schedule = dtypes.ScheduleType.Sequential
+
+        # A GEMM no BLAS call can address takes the expansion that indexes its operands directly.
+        if isinstance(node, Gemm) and not blas_addresses(node, state, sdfg):
+            node.implementation = 'rowwise' if device == dtypes.DeviceType.CPU and 'rowwise' in impls else 'pure'
+            if device == dtypes.DeviceType.GPU and not libnode_is_device_code(node, state, sdfg):
+                node.schedule = dtypes.ScheduleType.GPU_Device
+            continue
 
         # The CPU parallel-lowering rule for Reduce / ArgReduce / Scan / Copy / Fill lives in
         # :func:`~dace.transformation.auto.auto_optimize.apply_cpu_library_parallelism`, shared with
