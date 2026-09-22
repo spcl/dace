@@ -923,7 +923,7 @@ def test_promoting_a_held_fill_removes_both_ends_of_its_scope():
     exits = {n.map for n in state.nodes() if isinstance(n, nd.MapExit)}
     assert entries == exits, f'unpaired scope ends: {sorted(m.label for m in entries ^ exits)}'
 
-    out = np.zeros((8, 4), dtype=np.float64, order='F')
+    out = np.zeros((8, 4), dtype=np.float64)
     sdfg(B=out)
     assert np.array_equal(out, np.ones((8, 4))), f'got {out}'
 

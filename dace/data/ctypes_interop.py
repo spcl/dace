@@ -42,6 +42,26 @@ def _owns_its_buffer_through_a_proxy(arg: np.ndarray, argtype: 'Data') -> bool:
         return False
 
 
+def contradicts_packed_order(arg: np.ndarray, argtype: 'Data') -> bool:
+    """Whether ``arg`` is packed in the other memory order than the packed order ``argtype`` declares.
+
+    The call hands the SDFG only the data pointer, and the SDFG walks it with the DESCRIPTOR's
+    strides. A Fortran-ordered array bound to a C-strided descriptor is therefore read transposed,
+    and ``np.asfortranarray`` or ``np.copy`` of a transposed view both own their buffer, so the view
+    check does not see them. Only the two packed orders are compared: the array flags and the
+    descriptor's cached packed strides settle that without evaluating a symbol.
+    """
+    if arg.ndim != len(argtype.shape):
+        return False
+    only_fortran = arg.flags.f_contiguous and not arg.flags.c_contiguous
+    only_c = arg.flags.c_contiguous and not arg.flags.f_contiguous
+    if only_fortran:
+        return argtype.is_packed_c_strides() and not argtype.is_packed_fortran_strides()
+    if only_c:
+        return argtype.is_packed_fortran_strides() and not argtype.is_packed_c_strides()
+    return False
+
+
 def make_ctypes_argument(arg: Any,
                          argtype: 'Data',
                          name: Optional[str] = None,
@@ -145,6 +165,13 @@ def make_ctypes_argument(arg: Any,
         else:
             warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {argtype.dtype.type}')
             result = argtype.dtype.type(arg)
+
+    if is_dtArray and is_ndarray and contradicts_packed_order(arg, argtype):
+        order = 'Fortran' if arg.flags.f_contiguous else 'C'
+        raise TypeError(f'Passing a {order}-ordered array to argument "{a}", whose descriptor declares the '
+                        f'other memory order (strides {tuple(argtype.strides)}): the SDFG would read it '
+                        'with the wrong strides. Convert it with "numpy.ascontiguousarray(...)" or '
+                        '"numpy.asfortranarray(...)" to match the descriptor.')
 
     # Call a wrapper function to make NumPy arrays from pointers.
     if isinstance(argtype.dtype, dtypes.callback):
