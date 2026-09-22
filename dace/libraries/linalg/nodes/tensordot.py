@@ -4,11 +4,13 @@ import collections
 import dace
 
 from dace.libraries.linalg import environments
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace import library, nodes, properties, symbolic
 from dace.utils import prod as _prod
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.ordered import OrderedSet
+from dace.sdfg.scope import is_devicelevel_gpu
 
 
 @library.expansion
@@ -41,6 +43,17 @@ class ExpandPure(ExpandTransformation):
                                     out_tensor.storage,
                                     strides=out_tensor.strides)
 
+        # A device-resident operand needs device maps: the default schedule is host code, which
+        # cannot touch GPU_Global memory (ls3df_scf's double contraction, which falls back here
+        # because hipTENSOR contracts no doubles). Inside a kernel the same map would be a nested
+        # kernel, so there it stays sequential.
+        if is_devicelevel_gpu(parent_sdfg, parent_state, node):
+            schedule = dace.dtypes.ScheduleType.Sequential
+        elif out_tensor.storage in GPU_RESIDENT_STORAGES:
+            schedule = dace.dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dace.dtypes.ScheduleType.Default
+
         init_state = sdfg.add_state(f"{node.label}_init", is_start_block=True)
         init_state.add_mapped_tasklet(
             f"{node.label}_init_tasklet", {
@@ -49,6 +62,7 @@ class ExpandPure(ExpandTransformation):
             }, {},
             '__out = 0',
             {'__out': dace.Memlet(expr=f"_out_tensor[{','.join(['__i%d' % i for i in range(len(out_arr.shape))])}]")},
+            schedule=schedule,
             external_edges=True)
 
         state = sdfg.add_state(f"{node.label}_state")
@@ -89,6 +103,7 @@ class ExpandPure(ExpandTransformation):
                                  inputs,
                                  code,
                                  outputs,
+                                 schedule=schedule,
                                  external_edges=True)
 
         return sdfg
