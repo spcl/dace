@@ -182,6 +182,18 @@ def test_nest_scalar_with_none_subset_boundary():
     sdfg.validate()
 
 
+def test_nesting_a_top_level_subgraph_consolidates_nothing(monkeypatch):
+    """A subgraph at the top of its state has no enclosing scope to consolidate, and the call scanned
+    every state of the SDFG to find that out -- once per map ``MapToForLoop`` lowers."""
+    from dace.sdfg import utils
+    sdfg, state, t, me, mx = create_sdfg()
+    calls = []
+    monkeypatch.setattr(utils, 'consolidate_edges', lambda *args, **kwargs: calls.append(args))
+    nest_state_subgraph(sdfg, state, SubgraphView(state, [me, t, mx]))
+    assert calls == []
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_simple_program()
     test_simple_sdfg()
