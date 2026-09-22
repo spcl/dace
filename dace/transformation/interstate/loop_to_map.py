@@ -1962,8 +1962,15 @@ class LoopToMap(xf.MultiStateTransformation):
             lift_ctx.post_lift_free_symbols = post_free_symbols
 
         sdfg.reset_cfg_list()
-        for n, p in sdfg.all_nodes_recursive():
-            if isinstance(n, nodes.NestedSDFG):
-                n.sdfg.parent = p
-                n.sdfg.parent_nsdfg_node = n
-                n.sdfg.parent_sdfg = p.sdfg
+        # Every nested SDFG of the tree, as ``all_nodes_recursive`` reaches them, without yielding every
+        # dataflow node of every state on the way (7% of a lift on warpx_field_gather).
+        pending = [sdfg]
+        while pending:
+            for state in pending.pop().all_states():
+                for n in state.nodes():
+                    if isinstance(n, nodes.NestedSDFG):
+                        n.sdfg.parent = state
+                        n.sdfg.parent_nsdfg_node = n
+                        n.sdfg.parent_sdfg = state.sdfg
+                        if n.sdfg:
+                            pending.append(n.sdfg)
