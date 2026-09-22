@@ -762,7 +762,7 @@ class SDFG(ControlFlowRegion):
         for k, v in self.__dict__.items():
             # Skip derivative attributes and GUID
             if k in ('_start_block', '_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg',
-                     '_parent_nsdfg_node', '_cfg_list', '_transformation_hist', 'guid'):
+                     '_parent_nsdfg_node', '_cfg_list', 'cfg_list_reset_pending', '_transformation_hist', 'guid'):
                 continue
             setattr(result, k, copy_graph_field(self, k, v, memo))
         # Copy edges and nodes

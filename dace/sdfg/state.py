@@ -4,6 +4,7 @@
 import ast
 import abc
 import collections.abc
+import contextlib
 import copy
 import re
 import inspect
@@ -1432,7 +1433,8 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k in ('_parent_graph', '_sdfg', '_cfg_list', 'guid'):  # Skip derivative attributes and GUID
+            # Skip derivative attributes and GUID
+            if k in ('_parent_graph', '_sdfg', '_cfg_list', 'cfg_list_reset_pending', 'guid'):
                 continue
             setattr(result, k, copy_graph_field(self, k, v, memo))
 
@@ -2853,6 +2855,10 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     start blocks there are, etc.
     """
 
+    #: On a CFG tree's root while :meth:`deferred_cfg_list_reset` holds its resets: whether one was
+    #: requested since. ``None`` outside such a block.
+    cfg_list_reset_pending: Optional[bool] = None
+
     def __init__(self,
                  label: str = '',
                  sdfg: Optional['SDFG'] = None,
@@ -2924,12 +2930,44 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             return self.parent_sdfg.reset_cfg_list()
         elif self._parent_graph is not None:
             return self._parent_graph.reset_cfg_list()
+        elif self.cfg_list_reset_pending is not None:
+            self.cfg_list_reset_pending = True
         else:
             # Propagate new CFG list to all children
             all_cfgs = list(self.all_control_flow_regions(recursive=True))
             for g in all_cfgs:
                 g._cfg_list = all_cfgs
         return self._cfg_list
+
+    @contextlib.contextmanager
+    def deferred_cfg_list_reset(self) -> Iterator[None]:
+        """
+        Hold every ``reset_cfg_list`` of this CFG tree until the block ends, then reset once if any
+        was requested.
+
+        A reset walks the whole tree, and a rewrite that adds regions resets once per region and once
+        more at its end. Inside the block ``cfg_list`` and ``cfg_id`` are stale, so nothing in it may
+        read them. Nests: an inner block leaves the reset to the outermost one.
+        """
+        root = self
+        while True:
+            if isinstance(root, dace.SDFG) and root.parent_sdfg is not None:
+                root = root.parent_sdfg
+            elif root._parent_graph is not None:
+                root = root._parent_graph
+            else:
+                break
+        if root.cfg_list_reset_pending is not None:
+            yield
+            return
+        root.cfg_list_reset_pending = False
+        try:
+            yield
+        finally:
+            requested = root.cfg_list_reset_pending
+            root.cfg_list_reset_pending = None
+            if requested:
+                root.reset_cfg_list()
 
     def update_cfg_list(self, cfg_list):
         """
