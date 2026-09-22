@@ -463,6 +463,38 @@ def test_a_deduplicated_negation_stays_a_logical_not():
         assert bool(reparsed.subs({'a': a, 'b': b, 'c': 2})) == want, (simplified, a, b)
 
 
+def test_fusing_two_if_else_chains_builds_exactly_their_product():
+    """The clone loop re-read the growing branch list, so fusing an ``if/elif`` into another left extra
+    branches with bare conditions behind the product -- unreachable, and copied again by every later
+    fusion: warpx_field_gather's guard chain doubled to 2120 branches."""
+
+    @dace.program
+    def tester(a: dace.float64[4], b: dace.int64, d: dace.int64):
+        s = 0.0
+        if b == 1 and d == 2:
+            s += 1.0
+        elif b == 1 and d != 2:
+            s += 2.0
+        if b == 1 and d == 2:
+            s += 4.0
+        elif b == 1 and d != 2:
+            s += 8.0
+        a[3] = s
+
+    base = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated(ConditionFusion)
+    sdfg.validate()
+    cbs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
+    assert len(cbs) == 1, len(cbs)
+    assert len(cbs[0].branches) <= 3, [c.as_string if c else None for c, _ in cbs[0].branches]
+    for bv, dv in ((1, 2), (1, 3), (0, 2)):
+        ref, out = np.zeros(4), np.zeros(4)
+        copy.deepcopy(base)(a=ref, b=bv, d=dv)
+        sdfg(a=out, b=bv, d=dv)
+        assert np.allclose(out, ref), (bv, dv, out, ref)
+
+
 if __name__ == "__main__":
     test_consecutive_conditions()
     test_consecutive_conditions2()

@@ -240,10 +240,13 @@ class ConditionFusion(xf.MultiStateTransformation):
                 if cnd is None:
                     cblck.branches[i] = (CodeBlock(cond_string), cfg)
 
-        # Clone each branch of cblck1
+        # Clone each ORIGINAL branch of cblck1 once per further branch of cblck2. Re-reading the grown
+        # list doubled it per round instead: the branches past the product kept their bare cblck1
+        # conditions, unreachable behind the product, and the next fusion copied them again.
         orig_blck1_branches = len(cblck1.branches)
+        originals = list(cblck1.branches)
         for _ in range(len(cblck2.branches) - 1):
-            for cnd, cfg in list(cblck1.branches):
+            for cnd, cfg in originals:
                 cnd2 = copy.deepcopy(cnd)
                 cfg2 = copy.deepcopy(cfg)
                 cblck1.add_branch(cnd2, cfg2)
