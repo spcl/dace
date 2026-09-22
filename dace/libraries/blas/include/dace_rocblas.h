@@ -1,6 +1,9 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
+// hip*Complex is what the constants are BUILT with (make_hipDoubleComplex); they are handed to
+// rocBLAS as rocblas_*_complex, which is what its C++ API declares. The two are layout-compatible
+// but distinct types there, and passing the hip one does not compile.
 #include <hip/hip_complex.h>  // for hip*Complex; the public header, not the amd_detail one
 #include <hip/hip_fp16.h>     // for __float2half
 #include <hip/hip_runtime.h>
@@ -37,30 +40,30 @@ class _RocblasConstants {
   __half const* HalfZero() const { return (__half*)zero_; }
   float const* FloatZero() const { return (float*)zero_; }
   double const* DoubleZero() const { return (double*)zero_; }
-  hipComplex const* Complex64Zero() const { return (hipComplex*)zero_; }
-  hipDoubleComplex const* Complex128Zero() const {
-    return (hipDoubleComplex*)zero_;
+  rocblas_float_complex const* Complex64Zero() const { return (rocblas_float_complex*)zero_; }
+  rocblas_double_complex const* Complex128Zero() const {
+    return (rocblas_double_complex*)zero_;
   }
   __half const* HalfPone() const { return half_pone_; }
   float const* FloatPone() const { return float_pone_; }
   double const* DoublePone() const { return double_pone_; }
-  hipComplex const* Complex64Pone() const { return complex64_pone_; }
-  hipDoubleComplex const* Complex128Pone() const { return complex128_pone_; }
+  rocblas_float_complex const* Complex64Pone() const { return (rocblas_float_complex*)complex64_pone_; }
+  rocblas_double_complex const* Complex128Pone() const { return (rocblas_double_complex*)complex128_pone_; }
 
   __half* HalfAlpha() const { return (__half*)custom_alpha_; }
   float* FloatAlpha() const { return (float*)custom_alpha_; }
   double* DoubleAlpha() const { return (double*)custom_alpha_; }
-  hipComplex* Complex64Alpha() const { return (hipComplex*)custom_alpha_; }
-  hipDoubleComplex* Complex128Alpha() const {
-    return (hipDoubleComplex*)custom_alpha_;
+  rocblas_float_complex* Complex64Alpha() const { return (rocblas_float_complex*)custom_alpha_; }
+  rocblas_double_complex* Complex128Alpha() const {
+    return (rocblas_double_complex*)custom_alpha_;
   }
 
   __half* HalfBeta() const { return (__half*)custom_beta_; }
   float* FloatBeta() const { return (float*)custom_beta_; }
   double* DoubleBeta() const { return (double*)custom_beta_; }
-  hipComplex* Complex64Beta() const { return (hipComplex*)custom_beta_; }
-  hipDoubleComplex* Complex128Beta() const {
-    return (hipDoubleComplex*)custom_beta_;
+  rocblas_float_complex* Complex64Beta() const { return (rocblas_float_complex*)custom_beta_; }
+  rocblas_double_complex* Complex128Beta() const {
+    return (rocblas_double_complex*)custom_beta_;
   }
 
   _RocblasConstants() {
