@@ -195,6 +195,10 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
         except TypeError as ex:
             warnings.warn(f'{ex}. Falling back to pure expansion')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
+        # The vendor's own spelling, for the coefficients AND the operands: the connectors are
+        # dace::complex128 pointers, which convert to neither cuDoubleComplex* nor
+        # rocblas_double_complex*.
+        ctype = cls.dialect.ctype(ctype)
         scal_func = func + 'scal'
         func += 'gemv'
         call_prefix = cls.environments[0].handle_setup_code(node)
@@ -232,8 +236,8 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
             beta = constants[node.beta]
 
         call = f"""
-{cls.dialect.check_error}({cls.dialect.routine(func)}({cls.dialect.handle}, {trans}, {m}, {n}, {alpha}, _A, {lda},
-             _x, {strides_x[0]}, {beta}, _y, {strides_y[0]}));
+{cls.dialect.check_error}({cls.dialect.routine(func)}({cls.dialect.handle}, {trans}, {m}, {n}, {alpha}, ({ctype} *)_A, {lda},
+             ({ctype} *)_x, {strides_x[0]}, {beta}, ({ctype} *)_y, {strides_y[0]}));
                 """
         # Same empty-contraction hazard as the cblas path, scaled on the device: cuBLAS also
         # returns early for a zero dimension and leaves ``_y`` unwritten. ``scal`` applies the
@@ -241,7 +245,7 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
         y_len, contracted = (n, m) if trans == cls.dialect.op('T') else (m, n)
         if zero_extent_may_occur(contracted):
             scal = f"""
-{cls.dialect.check_error}({cls.dialect.routine(scal_func)}({cls.dialect.handle}, {y_len}, {beta}, _y, {strides_y[0]}));
+{cls.dialect.check_error}({cls.dialect.routine(scal_func)}({cls.dialect.handle}, {y_len}, {beta}, ({ctype} *)_y, {strides_y[0]}));
                 """
             call = f"if (({contracted}) <= 0) {{{scal}}} else {{{call}}}"
         code = (call_prefix + call + call_suffix)

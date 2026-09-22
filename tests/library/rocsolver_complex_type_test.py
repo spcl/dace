@@ -17,6 +17,7 @@ import pytest
 import dace
 from dace import dtypes
 from dace.libraries.blas.nodes.gemm import Gemm
+from dace.libraries.blas.nodes.gemv import Gemv
 from dace.libraries.lapack import Getrf, Getrs
 from dace.libraries.linalg.nodes.transpose import Transpose
 
@@ -124,3 +125,35 @@ def test_a_rocblas_call_casts_to_the_rocblas_complex_type(build, dtype):
     assert cuda_name not in code, code
     assert hip_name not in code, code
     assert rocblas_name in code, code
+
+
+def gemv_code(dtype: dace.typeclass, alpha=1) -> str:
+    """The tasklet code the rocBLAS matrix-vector product expands to.
+
+    ``alpha=1`` takes the handle's device constants; any other value is built on the host and
+    handed over under host pointer mode, which is the branch npbench ``vexx_k`` hit.
+    """
+    sdfg = dace.SDFG(f'gemv_{dtype.to_string()}_{alpha}')
+    sdfg.add_array('A', [N, N], dtype, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('x', [N], dtype, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('y', [N], dtype, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Gemv('gemv', alpha=alpha)
+    node.implementation = 'rocBLAS'
+    state.add_node(node)
+    state.add_edge(state.add_read('A'), None, node, '_A', dace.Memlet(f'A[0:{N}, 0:{N}]'))
+    state.add_edge(state.add_read('x'), None, node, '_x', dace.Memlet(f'x[0:{N}]'))
+    state.add_edge(node, '_y', state.add_write('y'), None, dace.Memlet(f'y[0:{N}]'))
+    return node.expand(state) and _tasklet_code(sdfg)
+
+
+@pytest.mark.parametrize('alpha', [1, 2], ids=['device-constant', 'host-coefficient'])
+@pytest.mark.parametrize('dtype', list(ROCBLAS_SPELLING), ids=lambda d: d.to_string())
+def test_a_rocblas_gemv_casts_coefficients_and_operands_to_the_rocblas_type(dtype, alpha):
+    """``(cuDoubleComplex *)&alpha`` does not compile on ROCm, and neither does handing
+    ``rocblas_zgemv`` the ``dace::complex128`` connector pointers without a cast."""
+    rocblas_name, cuda_name = ROCBLAS_SPELLING[dtype]
+    code = gemv_code(dtype, alpha)
+    assert cuda_name not in code, code
+    for operand in ('_A', '_x', '_y'):
+        assert f'({rocblas_name} *){operand}' in code, code
