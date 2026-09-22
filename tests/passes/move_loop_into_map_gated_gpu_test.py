@@ -13,6 +13,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize import finalize
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated, launches_saved
+from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
 
 K = dace.symbol('K')
 N = dace.symbol('N')
@@ -127,3 +128,68 @@ def test_the_column_form_runs_as_one_kernel_and_matches_numpy():
         sdfg(**args, K=7, N=33)
     np.testing.assert_allclose(cupy.asnumpy(args['a']), want_a, rtol=1e-13, atol=0)
     np.testing.assert_allclose(cupy.asnumpy(args['b']), want_b, rtol=1e-13, atol=0)
+
+
+def carry_through_single_iteration_kernel(name: str, lanes: str = '0:1') -> dace.SDFG:
+    """``for j: a[j] += a[j - 1]`` whose body is one ``GPU_Device`` map over ``lanes``, the shape the offload's hybrid
+    resolution leaves around a sequential carry (npbench ``seidel_2d``'s ``j`` loop): one launch per trip."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', (16, ), dace.float64, storage=dace.StorageType.GPU_Global)
+    loop = LoopRegion('jloop', 'j < 16', 'j', 'j = 1', 'j = j + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state('body', is_start_block=True)
+    state.add_mapped_tasklet('carry', {'w': lanes}, {
+        'prev': dace.Memlet('a[j - 1]'),
+        'cur': dace.Memlet('a[j]')
+    },
+                             'out = cur + prev', {'out': dace.Memlet('a[j]')},
+                             schedule=dace.ScheduleType.GPU_Device,
+                             external_edges=True)
+    return sdfg
+
+
+def device_kernels(sdfg: dace.SDFG) -> list:
+    return [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device
+    ]
+
+
+def test_a_loop_around_a_single_iteration_kernel_moves_into_it():
+    """The GPU specialization of an offloaded graph runs the loop inside the one-thread kernel: one launch instead of
+    one per trip. A single-iteration map has no thread axis to coalesce, so the loop axis being the contiguous one
+    does not veto it, and with one lane the interchange cannot reorder anything."""
+    sdfg = carry_through_single_iteration_kernel('size1_carry')
+    finalize.gpu_specialize_offloaded(sdfg)
+    assert top_level_loops(sdfg) == []
+    kernels = device_kernels(sdfg)
+    assert len(kernels) == 1 and str(kernels[0].map.range) == '0', kernels
+    nested = [n for n in sdfg.start_block.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert len(nested) == 1
+    assert [r.loop_variable for r in nested[0].sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)] == ['j']
+    sdfg.validate()
+
+
+def test_the_offloaded_graph_stage_leaves_a_loop_around_a_wide_kernel_alone():
+    """Only single-iteration kernels are taken after the offload: a loop around a map with threads was already weighed
+    by the canonicalize-time interchange, and its coalescing veto is not revisited here."""
+    sdfg = carry_through_single_iteration_kernel('wide_carry', lanes='0:4')
+    assert MoveLoopIntoMapGated(target='gpu', single_iteration_only=True).apply_pass(sdfg, {}) is None
+    assert len(top_level_loops(sdfg)) == 1
+
+
+@pytest.mark.gpu
+def test_the_carry_in_a_single_iteration_kernel_matches_numpy():
+    import cupy  # Only present on GPU runners.
+    sdfg = carry_through_single_iteration_kernel('size1_carry_run')
+    select_gpu_device_block_size(sdfg)  # What ``offload_to_gpu`` leaves on every kernel.
+    finalize.gpu_specialize_offloaded(sdfg)
+    assert len(device_kernels(sdfg)) == 1
+    a = np.random.default_rng(0).random(16)
+    want = a.copy()
+    for j in range(1, 16):
+        want[j] += want[j - 1]
+    dev = cupy.asarray(a)
+    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        sdfg(a=dev)
+    np.testing.assert_allclose(cupy.asnumpy(dev), want, rtol=1e-13, atol=0)

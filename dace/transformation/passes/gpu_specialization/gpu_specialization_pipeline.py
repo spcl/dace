@@ -3,7 +3,7 @@
 
 :func:`gpu_specialize_offloaded` resolves the device schedules of an offloaded graph
 (``finalize_for_target('gpu')`` calls it; the loop<->map interchange runs earlier, in
-``canonicalize(target='gpu')``). :class:`GPUCodegenPreprocessPipeline` is the codegen target's
+``canonicalize(target='gpu')``, and again here only for the single-iteration kernels the offload made). :class:`GPUCodegenPreprocessPipeline` is the codegen target's
 one-shot codegen-preparation pipeline; :class:`GPUStreamPipeline` runs just the stream
 scheduler + wirer on a post-expansion SDFG. Both act on the root SDFG only.
 """
@@ -12,6 +12,7 @@ from typing import Optional
 from dace import SDFG
 from dace.config import Config
 from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
                                                                                  GPUStreamSchedulingStrategy)
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
@@ -28,6 +29,8 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
     :param sdfg: An offloaded SDFG.
     :returns: The same ``sdfg`` instance.
     """
+    # A loop around a single-iteration kernel launches it once per trip; running the loop inside is one launch.
+    MoveLoopIntoMapGated(target='gpu', single_iteration_only=True).apply_pass(sdfg, {})
     # For ``map JK { work; map JL }``, ContiguousAxisToThreads makes JL a thread dimension. It runs first
     # because SequentializeNestedDeviceScopes would otherwise pin JL sequential.
     ContiguousAxisToThreads().apply_pass(sdfg, {})

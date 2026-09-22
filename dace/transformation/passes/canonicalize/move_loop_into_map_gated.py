@@ -54,6 +54,12 @@ large size (a numeric trip count is exact, a symbolic one is large). Coalescing 
 interchange when the loop axis is strictly more contiguous than every map axis: the unit-stride
 access belongs on the threads, and moving the loop inside would turn it into a serial walk
 within each thread while adjacent threads access strided addresses.
+A body whose maps all run one iteration has no threads to coalesce, so the veto does not
+apply there. The offload wraps host-side work beside device data in exactly such maps, after
+this pass ran in ``canonicalize``, so
+:func:`~dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline.gpu_specialize_offloaded`
+runs it again with ``single_iteration_only``. Without that, npbench ``seidel_2d``'s sequential
+``j`` loop launched one size-1 kernel per element, ``N**2`` launches per time step.
 
 The stride ranking reuses
 :func:`~dace.transformation.passes.minimize_stride_permutation.score_indexed_strides`
@@ -124,10 +130,21 @@ def launches_saved(loop: LoopRegion) -> float:
     return max(int(trips), 0) * maps - 1
 
 
+def single_iteration_lanes(loop: LoopRegion) -> bool:
+    """Whether ``loop``'s body has maps and every one of them runs exactly one iteration."""
+    lanes = lane_maps(loop)
+    return bool(lanes) and all(symbolic.simplify(entry.map.range.num_elements()) == 1 for _, entry in lanes)
+
+
 def interchange_pays_on_gpu(loop: LoopRegion, sdfg: SDFG) -> bool:
-    """The GPU rule of the module docstring: launches saved, unless the loop axis is the contiguous one."""
+    """The GPU rule of the module docstring: launches saved, unless the loop axis is the contiguous one.
+
+    Single-iteration maps have no thread axis to coalesce, so the contiguity veto does not apply to them.
+    """
     costs = stride_costs(loop, sdfg)
-    return costs is not None and launches_saved(loop) > 0 and not costs[0] < costs[1]
+    if costs is None or launches_saved(loop) <= 0:
+        return False
+    return single_iteration_lanes(loop) or not costs[0] < costs[1]
 
 
 @properties.make_properties
@@ -148,9 +165,16 @@ class MoveLoopIntoMapGated(ppl.Pass):
         choices=['cpu', 'gpu'],
         desc="Per-target interchange policy ('gpu' when launches drop; 'cpu' when stride drops).")
 
-    def __init__(self, target: str = 'cpu'):
+    single_iteration_only = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Only consider loops whose maps all run one iteration (the offload wraps host-side work in '
+        'such maps; the pass then runs on the offloaded graph)')
+
+    def __init__(self, target: str = 'cpu', single_iteration_only: bool = False):
         super().__init__()
         self.target = target
+        self.single_iteration_only = single_iteration_only
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -176,6 +200,8 @@ class MoveLoopIntoMapGated(ppl.Pass):
         while changed:
             changed = False
             for loop in [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]:
+                if self.single_iteration_only and not single_iteration_lanes(loop):
+                    continue
                 if gpu and not interchange_pays_on_gpu(loop, loop.sdfg):
                     continue
                 if not MoveLoopIntoMap.can_be_applied_to(loop.sdfg, options=options, loop=loop):
