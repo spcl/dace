@@ -341,6 +341,9 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
         # through ``float`` rounds to 2**63 and overflows the cast.
         if np.issubdtype(acc_desc.dtype.type, np.integer):
             identity_literal = f'{ctype}({int(identity)})'
+        elif np.issubdtype(acc_desc.dtype.type, np.complexfloating):
+            # Both parts: ``float()`` of a complex identity drops the imaginary one (and warns).
+            identity_literal = f'{ctype}({complex(identity).real!r}, {complex(identity).imag!r})'
         else:
             identity_literal = f'{ctype}({float(identity)!r})'
         out.append({
