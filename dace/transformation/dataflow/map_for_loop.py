@@ -217,6 +217,13 @@ class MapToForLoop(transformation.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
         """ Applies the transformation and returns a tuple with the new nested
             SDFG node and the main state in the for-loop. """
+        # Nesting, the loop region and the inline each reset the CFG list of the whole tree, six
+        # whole-tree walks per map; nothing in between reads the list, so one reset at the end does.
+        with sdfg.deferred_cfg_list_reset():
+            return self.lower_map(graph, sdfg)
+
+    def lower_map(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
+        """ The body of :meth:`apply`, run with the CFG-list resets deferred. """
 
         # Avoid import loop
         from dace.transformation.helpers import nest_state_subgraph
