@@ -386,6 +386,47 @@ def test_fusing_copied_branches_leaves_every_region_addressable():
         assert out[0] == expected, f'c={c} d={d}: got {out[0]}, want {expected}'
 
 
+def test_an_application_rebuilds_the_cfg_list_once(monkeypatch):
+    """Every branch a fusion adds used to rebuild the CFG list of the whole tree -- 94% of the
+    ``fuse`` stage's ``ConditionFusion`` on warpx_field_gather -- though nothing in between reads it."""
+
+    @dace.program
+    def tester(a: dace.float64[3]):
+        s = 0
+        a0 = a[0]
+        a1 = a[1]
+        if a0 + 2 > 10:
+            if a1 + 2 > 10:
+                if a0 > 10:
+                    if a1 > 10:
+                        s += 2
+        a[2] = s
+
+    sdfg = tester.to_sdfg(simplify=True)
+    lists = [sdfg.cfg_list]
+    applications = []
+    original_reset = dace.sdfg.state.AbstractControlFlowRegion.reset_cfg_list
+    original_apply = ConditionFusion.apply
+
+    def recorded_reset(self):
+        result = original_reset(self)
+        if sdfg.cfg_list is not lists[-1]:
+            lists.append(sdfg.cfg_list)
+        return result
+
+    def recorded_apply(self, graph, sd):
+        applications.append(self.expr_index)
+        return original_apply(self, graph, sd)
+
+    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'reset_cfg_list', recorded_reset)
+    monkeypatch.setattr(ConditionFusion, 'apply', recorded_apply)
+    sdfg.apply_transformations_repeated(ConditionFusion)
+    sdfg.validate()
+    assert applications == [1, 1, 1], applications
+    assert len(lists) == 1 + len(applications), len(lists)
+    assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
+
+
 if __name__ == "__main__":
     test_consecutive_conditions()
     test_consecutive_conditions2()
