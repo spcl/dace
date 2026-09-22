@@ -74,6 +74,30 @@ def test_interstate_accessor_is_stripped():
     assert list(sdfg.all_interstate_edges())[0].data.assignments["k"] == "a + 1"
 
 
+@pytest.mark.parametrize('preserve_abi', [False, True], ids=['transient', 'staged-argument'])
+def test_interstate_accessor_with_a_computed_index_is_stripped(preserve_abi):
+    """``a[j - 1]`` on a length-one array still names element 0 and must collapse like ``a[0]``.
+
+    Only a literal ``0`` used to collapse, so a computed index was left subscripting the new
+    scalar. npbench ``vexx_k`` reads a one-element k-point table this way at the fuzzed preset and
+    the host code failed to compile: ``scal_index_xk[dace::int64(index_xkq_index)]``.
+    """
+    sdfg = dace.SDFG(f"istrip_computed_{preserve_abi}")
+    s0, s1 = sdfg.add_state("s0"), sdfg.add_state("s1")
+    sdfg.add_array("a", [1], dace.int64, transient=not preserve_abi)
+    sdfg.add_symbol("j", dace.int64)
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"k": "a[j - 1] + 1"}))
+    ConvertLengthOneArraysToScalars(preserve_abi=preserve_abi).apply_pass(sdfg, {})
+
+    for edge in sdfg.all_interstate_edges():
+        if "k" in edge.data.assignments:
+            value = edge.data.assignments["k"]
+            assert "[" not in value, f"the scalar is still subscripted: {value}"
+            break
+    else:
+        pytest.fail("the assignment of k vanished")
+
+
 def test_scalarize_keeps_overlapping_name_subscript():
     """A scalarized name that is a suffix of another array must not eat that array's literal ``[0]``
     (scalarized ``ar`` vs multi-element ``bar``)."""
