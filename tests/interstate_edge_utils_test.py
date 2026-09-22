@@ -136,6 +136,32 @@ def test_region_check_does_not_reject_a_plain_symbol_assignment():
     sdfg.validate()
 
 
+@pytest.mark.parametrize('assignments, names', [
+    ({}, []),
+    ({
+        'a': '1'
+    }, ['a']),
+    ({
+        'i': 'i + 1'
+    }, []),
+    ({
+        'a': 'b',
+        'b': 'a'
+    }, ['a']),
+    ({
+        'x': 'n * 2',
+        'y': 'x + 1',
+        'n': '0'
+    }, ['x', 'y']),
+])
+def test_new_symbol_names_are_the_keys_new_symbols_types(assignments, names):
+    """Inlining reads only these names, and a mismatch with ``new_symbols`` renames a symbol that
+    should have been kept (or keeps one that clashes)."""
+    edge = dace.InterstateEdge(assignments=assignments)
+    assert list(edge.new_symbol_names()) == names
+    assert list(edge.new_symbols(None, {'n': dace.int64, 'b': dace.int64})) == names
+
+
 if __name__ == "__main__":
     test_read_symbols()
     test_used_symbols()

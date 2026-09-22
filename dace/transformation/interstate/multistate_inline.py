@@ -3,7 +3,7 @@
 
 from copy import deepcopy as dc
 import itertools
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Set, Tuple
 
 from dace import Memlet, symbolic, subsets
 from dace.sdfg import nodes
@@ -15,7 +15,7 @@ from dace.sdfg.tasklet_utils import tasklet_replace_code, token_replace_dict
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, CodeBlock
 from dace import data
-from dace.sdfg.state import LoopRegion, ReturnBlock
+from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ReturnBlock
 
 
 def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
@@ -35,6 +35,43 @@ def _trailing_returns(nsdfg: SDFG) -> List[ReturnBlock]:
     return [
         blk for blk in nsdfg.nodes() if isinstance(blk, ReturnBlock) and nsdfg.out_degree(blk) == 0 and blk is not start
     ]
+
+
+def outer_names(sdfg: SDFG) -> Tuple[Dict[str, Any], Set[str], Set[str]]:
+    """The names ``sdfg`` already uses that inlining must not reuse, from ONE walk of its tree.
+
+    :param sdfg: The SDFG the nested SDFG is inlined into.
+    :returns: ``sdfg``'s symbols plus those its interstate edges define (untyped), every interstate
+              assignment target and loop variable of ``sdfg`` itself, and the label of every block
+              in its tree, nested SDFGs included.
+    """
+    symbols = {str(k): v for k, v in sdfg.symbols.items()}
+    assignments: Set[str] = set()
+    labels: Set[str] = set()
+    # Pre-order, as ``all_control_flow_regions(recursive=True)`` walks; a region reached through a
+    # nested SDFG only contributes labels.
+    stack: List[Tuple[AbstractControlFlowRegion, bool]] = [(sdfg, True)]
+    while stack:
+        region, own = stack.pop()
+        children = []
+        for block in region.nodes():
+            labels.add(block.label)
+            if isinstance(block, SDFGState):
+                children.extend(
+                    (node.sdfg, False) for node in block.nodes() if isinstance(node, nodes.NestedSDFG) and node.sdfg)
+            elif isinstance(block, AbstractControlFlowRegion):
+                children.append((block, own))
+                if own and isinstance(block, LoopRegion) and block.loop_variable is not None:
+                    assignments.add(block.loop_variable)
+        stack.extend(reversed(children))
+        if not own:
+            continue
+        for ise in region.edges():
+            if ise.data.assignments:
+                assignments |= ise.data.assignments.keys()
+                # Only the names are ever read, so the types ``new_symbols`` would infer are not.
+                symbols.update(ise.data.new_symbol_names())
+    return symbols, assignments, labels
 
 
 def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: Set[str]) -> None:
@@ -228,22 +265,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 if isinstance(node, nodes.CodeNode):
                     node.environments |= nsdfg_node.environments
 
-        # Symbols
-        outer_symbols = {str(k): v for k, v in sdfg.symbols.items()}
-        # `new_symbols` rebuilds the {name: dtype} environment over `sdfg.arrays` on every call,
-        # but the keys it returns depend only on the assignments. Build the environment once and
-        # pass it as `symbols` with a `None` SDFG, and skip edges that assign nothing.
-        symbol_types = None
-        for ise in sdfg.all_interstate_edges():
-            if not ise.data.assignments:
-                continue
-            if symbol_types is None:
-                symbol_types = dict(outer_symbols)
-                symbol_types.update({k: v.dtype for k, v in sdfg.arrays.items()})
-            defined = ise.data.new_symbols(None, symbol_types)
-            outer_symbols.update(defined)
-            symbol_types.update(defined)
-
         # Isolate the nested SDFG in a separate state.
         predecessor_state, nsdfg_state, successor_state = helpers.isolate_nested_sdfg(state=outer_state,
                                                                                       nsdfg_node=nsdfg_node)
@@ -290,13 +311,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Collect and modify interstate edges as necessary
 
-        outer_assignments = set()
-        for e in sdfg.all_interstate_edges():
-            outer_assignments |= e.data.assignments.keys()
-        for b in sdfg.all_control_flow_blocks():
-            if isinstance(b, LoopRegion):
-                if b.loop_variable is not None:
-                    outer_assignments.add(b.loop_variable)
+        # One walk for every outer name below. Isolating the nested SDFG only moves interstate edges
+        # (and adds assignment-free ones), so the symbols the edges define are the same here as before it.
+        outer_symbols, outer_assignments, node_names = outer_names(sdfg)
 
         inner_assignments = set()
         for e in nsdfg.all_interstate_edges():
@@ -390,7 +407,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
 
         # Make unique names for all control-flow blocks
-        node_names = set(cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True))
         for node in nsdfg.all_control_flow_blocks(recursive=True):
             if node.label in node_names:
                 node_name = data.find_new_name(node.label, node_names)

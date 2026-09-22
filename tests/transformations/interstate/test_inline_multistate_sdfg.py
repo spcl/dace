@@ -23,7 +23,8 @@ import pytest
 
 from dace import Memlet, dtypes
 from dace.sdfg import SDFG, nodes
-from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+from dace.sdfg.state import LoopRegion
+from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG, outer_names
 
 N = dace.symbol('N')
 
@@ -297,10 +298,57 @@ def test_inline_refuses_inside_map_scope():
         pytest.skip('frontend did not produce a Map-scoped NSDFG for this kernel')
 
 
+def outer_names_by_walks(sdfg: SDFG):
+    """The three walks ``outer_names`` replaced, as ``InlineMultistateSDFG.apply`` made them."""
+    symbols = {str(k) for k in sdfg.symbols}
+    for edge in sdfg.all_interstate_edges():
+        symbols |= edge.data.new_symbols(sdfg, dict(sdfg.symbols)).keys()
+    assignments = set()
+    for edge in sdfg.all_interstate_edges():
+        assignments |= edge.data.assignments.keys()
+    assignments |= {b.loop_variable for b in sdfg.all_control_flow_blocks() if isinstance(b, LoopRegion)}
+    labels = {b.label for b in sdfg.all_control_flow_blocks(recursive=True)}
+    return symbols, assignments, labels
+
+
+def sdfg_with_names_everywhere() -> SDFG:
+    inner = SDFG('inner')
+    inner.add_symbol('m', dace.int64)
+    first = inner.add_state('inner_first', is_start_block=True)
+    inner_loop = LoopRegion('inner_loop', 'q < m', 'q', 'q = 0', 'q = q + 1')
+    inner_loop.add_state('inner_body', is_start_block=True)
+    inner.add_node(inner_loop)
+    inner.add_edge(first, inner_loop, dace.InterstateEdge(assignments={'inner_only': '1'}))
+
+    sdfg = SDFG('outer')
+    sdfg.add_symbol('n', dace.int64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    loop = LoopRegion('outer_loop', 'i < n', 'i', 'i = 0', 'i = i + 1')
+    body = loop.add_state('outer_body', is_start_block=True)
+    body.add_nested_sdfg(inner, {}, {}, symbol_mapping={'m': 'n'})
+    sdfg.add_node(loop)
+    after = sdfg.add_state('after')
+    sdfg.add_edge(entry, loop, dace.InterstateEdge(assignments={'k': 'n + 1', 'j': 'j + 1'}))
+    sdfg.add_edge(loop, after, dace.InterstateEdge(assignments={'t': 'k * 2'}))
+    return sdfg
+
+
+def test_outer_names_are_what_the_three_walks_collected():
+    """``outer_names`` decides which inlined symbols and blocks get renamed; one name more or less
+    than before and the inlined graph comes out differently named."""
+    sdfg = sdfg_with_names_everywhere()
+    symbols, assignments, labels = outer_names(sdfg)
+    assert (set(symbols), assignments, labels) == outer_names_by_walks(sdfg)
+    assert 'inner_only' not in assignments and 'q' not in assignments
+    assert {'inner_first', 'inner_loop', 'inner_body'} <= labels
+    assert 'j' not in symbols and 'k' in symbols
+
+
 if __name__ == '__main__':
     test_inline_preserves_pre_and_post_numerics()
     test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment()
     test_inline_renames_inner_connector_to_outer_array_name()
     test_inline_keeps_library_node_connectors_but_renames_tasklet_ones()
     test_inline_refuses_inside_map_scope()
+    test_outer_names_are_what_the_three_walks_collected()
     print('all ok')
