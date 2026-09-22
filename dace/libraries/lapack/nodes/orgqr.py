@@ -105,9 +105,10 @@ class ExpandOrgqrRocSolver(ExpandOrgqrGPUSolver):
         # camel-case name, so the letter alone does not determine the routine here.
         letter = func[0].lower()
         routine = "ungqr" if letter in ("c", "z") else "orgqr"
+        ctype = blas_helpers.rocblas_type(ctype)
         return f"""
             dace::lapack::CheckRocsolverError(rocsolver_{letter}{routine}(
-                __dace_rocblas_handle, {m}, {n}, {k}, _aout, {lda}, _tau));
+                __dace_rocblas_handle, {m}, {n}, {k}, ({ctype}*)_aout, {lda}, ({ctype}*)_tau));
             DACE_GPU_CHECK(gpuMemsetAsync(_res, 0, sizeof(int), __dace_current_stream));
             """
 

@@ -65,7 +65,7 @@ class ExpandPotrsGPUSolver(ExpandTransformation):
     def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
         (desc_A, lda, n_A), (desc_B, ldb_in, ldb_out, nrhs) = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
-        func, _, _ = blas_helpers.cublas_type_metadata(dt)
+        func, ctype, _ = blas_helpers.cublas_type_metadata(dt)
         func = func + 'potrs'
         # Both vendor solvers are column-major only, so a row-major lower factor is the
         # column-major UPPER one, and the leading dimension of B is its row count.
@@ -77,7 +77,7 @@ class ExpandPotrsGPUSolver(ExpandTransformation):
         code = cls.environments[0].handle_setup_code(node) + f"""
             gpuMemcpyAsync(_bout, _bin, sizeof({dt.ctype}) * ({n_A}) * ({ldb_in}),
                             gpuMemcpyDeviceToDevice, __dace_current_stream);
-            """ + cls.call(func, uplo, n_A, nrhs, lda, n_A)
+            """ + cls.call(func, ctype, uplo, n_A, nrhs, lda, n_A)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -97,7 +97,7 @@ class ExpandPotrsCuSolverDn(ExpandPotrsGPUSolver):
         return "CUBLAS_FILL_MODE_LOWER" if lower else "CUBLAS_FILL_MODE_UPPER"
 
     @classmethod
-    def call(cls, func, uplo, n_a, nrhs, lda, ldb) -> str:
+    def call(cls, func, ctype, uplo, n_a, nrhs, lda, ldb) -> str:
         return f"""
             cusolverDn{func}(
                 __dace_cusolverDn_handle, {uplo}, {n_a}, {nrhs},
@@ -114,13 +114,14 @@ class ExpandPotrsRocSolver(ExpandPotrsGPUSolver):
         return "rocblas_fill_lower" if lower else "rocblas_fill_upper"
 
     @classmethod
-    def call(cls, func, uplo, n_a, nrhs, lda, ldb) -> str:
+    def call(cls, func, ctype, uplo, n_a, nrhs, lda, ldb) -> str:
         # rocsolver_?potrs takes no info argument -- it cannot fail on a factored matrix -- so the
         # status code the caller reads is written here rather than by the solver.
+        ctype = blas_helpers.rocblas_type(ctype)
         return f"""
             dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
                 __dace_rocblas_handle, {uplo}, {n_a}, {nrhs},
-                _a, {lda}, _bout, {ldb}));
+                ({ctype}*)_a, {lda}, ({ctype}*)_bout, {ldb}));
             DACE_GPU_CHECK(gpuMemsetAsync(_res, 0, sizeof(int), __dace_current_stream));
             """
 

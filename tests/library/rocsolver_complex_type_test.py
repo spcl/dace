@@ -19,6 +19,7 @@ from dace import dtypes
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.gemv import Gemv
 from dace.libraries.lapack import Getrf, Getrs
+from dace.libraries.lapack.nodes import Geqrf, Orgqr, Potrf, Potrs
 from dace.libraries.linalg.nodes.transpose import Transpose
 
 N = 8
@@ -157,3 +158,73 @@ def test_a_rocblas_gemv_casts_coefficients_and_operands_to_the_rocblas_type(dtyp
     assert cuda_name not in code, code
     for operand in ('_A', '_x', '_y'):
         assert f'({rocblas_name} *){operand}' in code, code
+
+
+def solver_code(node: dace.nodes.LibraryNode, dtype: dace.typeclass, reads: dict, writes: dict) -> str:
+    """The tasklet code the rocSOLVER expansion of ``node`` produces; ``reads``/``writes`` map each
+    connector to ``(container, subset)``, and every container is an ``N x N`` (or ``N``) device array."""
+    sdfg = dace.SDFG(f'{node.label}_{dtype.to_string()}')
+    for container, subset in list(reads.values()) + list(writes.values()):
+        if container not in sdfg.arrays:
+            if container == 'info':
+                sdfg.add_array(container, [1], dace.int32, storage=dtypes.StorageType.GPU_Global)
+            else:
+                shape = [N] if subset.count(':') == 1 else [N, N]
+                sdfg.add_array(container, shape, dtype, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node.implementation = 'rocSOLVER'
+    state.add_node(node)
+    for connector, (container, subset) in reads.items():
+        state.add_edge(state.add_read(container), None, node, connector, dace.Memlet(f'{container}[{subset}]'))
+    for connector, (container, subset) in writes.items():
+        state.add_edge(node, connector, state.add_write(container), None, dace.Memlet(f'{container}[{subset}]'))
+    return node.expand(state) and _tasklet_code(sdfg)
+
+
+SQUARE, VECTOR = f'0:{N}, 0:{N}', f'0:{N}'
+#: The solvers ``cegterg`` (Cholesky) and the QR users reach, each with the connectors it takes.
+SOLVERS = {
+    'potrf':
+    lambda: (Potrf('potrf'), {
+        '_xin': ('A', SQUARE)
+    }, {
+        '_xout': ('A', SQUARE),
+        '_res': ('info', '0')
+    }),
+    'potrs':
+    lambda: (Potrs('potrs'), {
+        '_a': ('A', SQUARE),
+        '_bin': ('B', f'0:{N}, 0:1')
+    }, {
+        '_bout': ('X', f'0:{N}, 0:1'),
+        '_res': ('info', '0')
+    }),
+    'geqrf':
+    lambda: (Geqrf('geqrf'), {
+        '_ain': ('A', SQUARE)
+    }, {
+        '_aout': ('A', SQUARE),
+        '_tau': ('tau', VECTOR),
+        '_res': ('info', '0')
+    }),
+    'orgqr':
+    lambda: (Orgqr('orgqr'), {
+        '_ain': ('A', SQUARE),
+        '_tau': ('tau', VECTOR)
+    }, {
+        '_aout': ('A', SQUARE),
+        '_res': ('info', '0')
+    }),
+}
+
+
+@pytest.mark.parametrize('solver', list(SOLVERS))
+@pytest.mark.parametrize('dtype', list(ROCBLAS_SPELLING), ids=lambda d: d.to_string())
+def test_every_rocsolver_call_casts_its_complex_operands(solver, dtype):
+    """rocSOLVER takes ``rocblas_double_complex*``, which a ``dace::complex128*`` connector does not
+    convert to: ``cegterg``'s Cholesky failed to compile on the GPU canonicalize column."""
+    rocblas_name, cuda_name = ROCBLAS_SPELLING[dtype]
+    node, reads, writes = SOLVERS[solver]()
+    code = solver_code(node, dtype, reads, writes)
+    assert cuda_name not in code, code
+    assert f'({rocblas_name}*)' in code, code

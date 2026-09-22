@@ -136,9 +136,10 @@ class ExpandPotrfRocSolver(ExpandPotrfGPUSolver):
     @classmethod
     def call(cls, func, ctype, uplo, rows, stride) -> str:
         # No workspace: rocSOLVER manages its own, so there is nothing to size, allocate or free.
+        ctype = blas_helpers.rocblas_type(ctype)
         return f"""
                 dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
-                    __dace_rocblas_handle, {uplo}, {rows}, _xin, {stride}, _res));
+                    __dace_rocblas_handle, {uplo}, {rows}, ({ctype}*)_xin, {stride}, _res));
                 """
 
 

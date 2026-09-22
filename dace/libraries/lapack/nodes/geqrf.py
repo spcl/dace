@@ -107,9 +107,10 @@ class ExpandGeqrfRocSolver(ExpandGeqrfGPUSolver):
     def call(cls, func, ctype, m, n, lda) -> str:
         # rocSOLVER manages its own workspace and reports no info code, so the status the caller
         # reads is written here rather than by the solver.
+        ctype = blas_helpers.rocblas_type(ctype)
         return f"""
             dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
-                __dace_rocblas_handle, {m}, {n}, _aout, {lda}, _tau));
+                __dace_rocblas_handle, {m}, {n}, ({ctype}*)_aout, {lda}, ({ctype}*)_tau));
             DACE_GPU_CHECK(gpuMemsetAsync(_res, 0, sizeof(int), __dace_current_stream));
             """
 
