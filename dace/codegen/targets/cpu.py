@@ -2318,6 +2318,18 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(ptr, is_global=True)
         var_type, ctypedef = types
+        # declared_arrays holds the HOST declaration, which carries no ``const``, while a kernel
+        # argument the launch declares ``const`` is registered that way in defined_vars. Taking the
+        # host spelling for a symbol-shaped array then aliased a ``const int*`` parameter as
+        # ``int*``, which does not compile: xsbench's indirection into index_grid on the canon GPU
+        # column. Keep the qualifier the parameter actually has.
+        if types and not ctypedef.startswith('const '):
+            try:
+                _, defined_ctype = self._dispatcher.defined_vars.get(ptr, is_global=True)
+            except KeyError:
+                defined_ctype = ctypedef
+            if defined_ctype.startswith('const '):
+                ctypedef = defined_ctype
 
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self)
