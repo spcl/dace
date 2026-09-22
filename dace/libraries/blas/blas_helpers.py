@@ -63,6 +63,16 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
         raise TypeError('Type %s not supported in BLAS operations' % str(dtype))
 
 
+def rocblas_type(ctype: str) -> str:
+    """The rocBLAS spelling of a vendor C type :func:`cublas_type_metadata` names for CUDA.
+
+    Only the complex types differ; ``float`` and ``double`` are the same C type in both. A
+    rocSOLVER call that took the CUDA spelling emitted ``(cuDoubleComplex*)`` into a ROCm build,
+    where that type does not exist -- quatrex_rgf's complex128 ``Inv`` failed to compile on it.
+    """
+    return {'cuComplex': 'rocblas_float_complex', 'cuDoubleComplex': 'rocblas_double_complex'}.get(ctype, ctype)
+
+
 def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
     types = {
         dtypes.float16: 'CUDA_R_16F',

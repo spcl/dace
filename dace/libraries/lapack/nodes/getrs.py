@@ -147,6 +147,7 @@ class ExpandGetrsRocSolver(ExpandGetrsGPUSolver):
     @classmethod
     def call(cls, func, ctype, rows_a, cols_rhs, stride_a, stride_rhs) -> str:
         # rocsolver_?getrs reports no info code, so the status the caller reads is written here.
+        ctype = blas_helpers.rocblas_type(ctype)
         return f"""
                 dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
                     __dace_rocblas_handle, rocblas_operation_none, {rows_a}, {cols_rhs},
