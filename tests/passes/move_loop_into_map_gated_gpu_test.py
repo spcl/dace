@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The GPU specialization stage: a loop over maps becomes one kernel that runs the loop per thread, when the fork/join
-cost model says the launches it saves pay and the loop axis is not the contiguous one."""
+"""``MoveLoopIntoMapGated(target='gpu')`` inside ``canonicalize(target='gpu')``: a loop over maps becomes one kernel that
+runs the loop per thread, when the fork/join cost model says the launches it saves pay and the loop axis is not the
+contiguous one."""
 import contextlib
 import os
 
@@ -11,8 +12,7 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize import finalize
-from dace.transformation.passes.gpu_specialization.gpu_loop_interchange import launches_saved
-from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize
+from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated, launches_saved
 
 K = dace.symbol('K')
 N = dace.symbol('N')
@@ -26,6 +26,14 @@ def rows(a: dace.float64[K, N], b: dace.float64[N], w: dace.float64[K], c: dace.
         if c[k] > 0.5:
             for i in dace.map[0:N]:
                 b[i] = b[i] * 0.5 + a[k, i]
+
+
+# A single map whose loop axis ``k`` is the contiguous one.
+@dace.program
+def single_map_columns(a: dace.float64[N, K], b: dace.float64[N]):
+    for k in range(1, K):
+        for i in dace.map[0:N]:
+            a[i, k] = a[i, k - 1] + b[i]
 
 
 # The same recurrence stored transposed: the loop axis ``k`` is now the contiguous one.
@@ -50,19 +58,18 @@ def top_level_loops(sdfg: dace.SDFG) -> list:
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
 
 
-def test_the_loop_moves_into_the_maps_when_their_axis_is_contiguous():
+def test_canonicalize_moves_a_loop_over_branching_maps_into_one_map():
     sdfg = canonical(rows)
-    assert len(top_level_loops(sdfg)) == 1
-    gpu_specialize(sdfg)
     assert top_level_loops(sdfg) == []
     outer = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.MapEntry)]
     assert len(outer) == 1 and str(outer[0].map.range) == '0:N', outer
 
 
-def test_the_loop_stays_outside_when_its_own_axis_is_contiguous():
-    """Threads over ``i`` would stride by ``K``; one kernel per trip keeps them coalesced."""
-    sdfg = canonical(columns)
-    gpu_specialize(sdfg)
+@pytest.mark.parametrize('prog', [columns, single_map_columns], ids=['branching', 'single_map'])
+def test_the_loop_stays_outside_when_its_own_axis_is_contiguous(prog):
+    """Threads over ``i`` would stride by ``K``; one kernel per trip keeps them coalesced. The single-map shape follows
+    the same rule, no longer interchanged unconditionally."""
+    sdfg = canonical(prog)
     assert len(top_level_loops(sdfg)) == 1
 
 
@@ -86,13 +93,13 @@ def loop_over_maps(name: str, trips: str, maps: int) -> tuple:
 @pytest.mark.parametrize('trips, maps, saved', [('1', 1, 0), ('1', 2, 1), ('3', 2, 5), ('K', 1, float('inf'))])
 def test_the_cost_model_counts_the_kernel_launches_the_interchange_saves(trips, maps, saved):
     """One launch per map per trip before, one after; a symbolic trip count is as large as any other extent."""
-    _, loop = loop_over_maps(f'launches_{trips}_{maps}', trips, maps)
+    loop = loop_over_maps(f'launches_{trips}_{maps}', trips, maps)[1]
     assert launches_saved(loop) == saved
 
 
 def test_a_single_launch_loop_is_not_worth_a_kernel_of_its_own():
-    sdfg, _ = loop_over_maps('single_launch', '1', 1)
-    gpu_specialize(sdfg)
+    sdfg = loop_over_maps('single_launch', '1', 1)[0]
+    assert MoveLoopIntoMapGated(target='gpu').apply_pass(sdfg, {}) is None
     assert len(top_level_loops(sdfg)) == 1
 
 
@@ -100,11 +107,10 @@ def test_a_single_launch_loop_is_not_worth_a_kernel_of_its_own():
 def test_the_column_form_runs_as_one_kernel_and_matches_numpy():
     import cupy  # Only present on GPU runners.
     sdfg = canonical(rows)
-    gpu_specialize(sdfg)
     finalize.offload_to_gpu(sdfg)
     finalize.finalize_for_target(sdfg, 'gpu')
     kernels = [
-        n for n, _ in sdfg.all_nodes_recursive()
+        n for n, parent in sdfg.all_nodes_recursive()
         if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device
     ]
     assert len(kernels) == 1, [k.map.label for k in kernels]

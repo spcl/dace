@@ -44,26 +44,31 @@ was unit-stride on the grounds that the vectorizer would recover the contiguity.
 It does not: once hoisted the axis is no longer innermost, so nothing
 strip-mines it into lanes. That rule is gone.
 
-**GPU** ignores all of this and always interchanges: one outer parallel map
-launches a single kernel whose threads each run the sequential loop in
-registers, instead of the loop re-launching a fresh kernel every iteration --
-the kernel-launch saving dominates (``tests/ab_perf`` interchange A/B). The GPU
-specialization stage takes the loops left over, whose bodies are control flow
-over several maps, under a fork/join cost model
-(:mod:`~dace.transformation.passes.gpu_specialization.gpu_loop_interchange`).
+**GPU** decides by fork/join count (:func:`interchange_pays_on_gpu`), for every loop shape --
+a single-map body and, through ``MoveLoopIntoMap(cfg_body=True)``, a body of control flow
+over several maps of one range. Every top-level map is one kernel launch: a loop of ``K``
+trips over ``M`` maps pays ``K * M`` launches, the interchanged ``map { for }`` pays one.
+Threads keep the same lane axis and the same total work, so work and parallelism cancel and
+the launches decide: interchange when ``K * M > 1``, with every symbol taken as the same
+large size (a numeric trip count is exact, a symbolic one is large). Coalescing vetoes: when
+the LOOP axis is strictly more contiguous than every map axis, the unit-stride access belongs
+on the threads, and moving the loop inside would fix it as a per-thread serial walk over
+strided threads.
 
 The stride ranking reuses
 :func:`~dace.transformation.passes.minimize_stride_permutation.score_indexed_strides`
 -- the same scorer that orders map nests -- now applied across the loop<->map
 boundary that the map-only and loop-only stride passes cannot cross.
 """
+import math
 from typing import Any, Dict, Optional
 
-from dace import SDFG, properties
+from dace import SDFG, properties, symbolic
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap, lane_maps
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
 
 
@@ -103,22 +108,45 @@ def interchange_lowers_stride(loop: LoopRegion, sdfg: SDFG) -> bool:
     return loop_cost < map_cost
 
 
+def launches_saved(loop: LoopRegion) -> float:
+    """Kernel launches the GPU interchange saves, ``trips * maps - 1``; ``inf`` for a symbolic trip count.
+
+    Every map in the body counts, branches included (an upper bound on a trip's launches).
+    """
+    maps = len(lane_maps(loop))
+    start, end, step = (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
+                        loop_analysis.get_loop_stride(loop))
+    if maps == 0 or start is None or end is None or step is None:
+        return math.inf if maps else 0
+    trips = symbolic.simplify((end - start) / step + 1)
+    if not trips.is_Number:
+        return math.inf
+    return max(int(trips), 0) * maps - 1
+
+
+def interchange_pays_on_gpu(loop: LoopRegion, sdfg: SDFG) -> bool:
+    """The GPU rule of the module docstring: launches saved, unless the loop axis is the contiguous one."""
+    costs = stride_costs(loop, sdfg)
+    return costs is not None and launches_saved(loop) > 0 and not costs[0] < costs[1]
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MoveLoopIntoMapGated(ppl.Pass):
     """Apply :class:`MoveLoopIntoMap` only where the cost model approves.
 
-    See the module docstring for the rule. ``target='gpu'`` always interchanges
-    an applicable loop; ``target='cpu'`` interchanges only when doing so lowers
-    the innermost iterated stride.
+    See the module docstring for the rules. ``target='gpu'`` interchanges any legal loop, control-flow
+    bodies included, that saves kernel launches without giving up a contiguous thread axis;
+    ``target='cpu'`` interchanges a single-map body only when doing so lowers the innermost stride.
     """
 
     CATEGORY: str = 'Optimization Preparation'
 
-    target = properties.Property(dtype=str,
-                                 default='cpu',
-                                 choices=['cpu', 'gpu'],
-                                 desc="Per-target interchange policy ('gpu' always; 'cpu' only when stride drops).")
+    target = properties.Property(
+        dtype=str,
+        default='cpu',
+        choices=['cpu', 'gpu'],
+        desc="Per-target interchange policy ('gpu' when launches drop; 'cpu' when stride drops).")
 
     def __init__(self, target: str = 'cpu'):
         super().__init__()
@@ -139,6 +167,8 @@ class MoveLoopIntoMapGated(ppl.Pass):
         :param sdfg: The SDFG to transform in place.
         :returns: The number of interchanges applied, or ``None`` if none.
         """
+        gpu = self.target == 'gpu'
+        options = {'cfg_body': gpu}
         applied = 0
         # Re-scan after each apply: MoveLoopIntoMap rewrites the CFG (removes the
         # loop, nests a new one), invalidating the iterator.
@@ -146,11 +176,13 @@ class MoveLoopIntoMapGated(ppl.Pass):
         while changed:
             changed = False
             for loop in [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]:
-                if not MoveLoopIntoMap.can_be_applied_to(loop.sdfg, loop=loop):
+                if gpu and not interchange_pays_on_gpu(loop, loop.sdfg):
                     continue
-                if self.target != 'gpu' and not interchange_lowers_stride(loop, loop.sdfg):
+                if not MoveLoopIntoMap.can_be_applied_to(loop.sdfg, options=options, loop=loop):
                     continue
-                MoveLoopIntoMap.apply_to(loop.sdfg, loop=loop, verify=False)
+                if not gpu and not interchange_lowers_stride(loop, loop.sdfg):
+                    continue
+                MoveLoopIntoMap.apply_to(loop.sdfg, options=options, loop=loop, verify=False)
                 applied += 1
                 changed = True
                 break

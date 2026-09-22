@@ -14,7 +14,7 @@ import pytest
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.transformation.passes.gpu_specialization.contiguous_axis_to_threads import ContiguousAxisToThreads
-from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize_offloaded
+from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
     SequentializeNestedDeviceScopes)
 

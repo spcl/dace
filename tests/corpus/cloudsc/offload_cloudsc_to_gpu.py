@@ -3,8 +3,7 @@
 
 CloudSC-specific, so it lives with the corpus rather than in ``dace/transformation/passes``. Ported
 from the velocity-tendencies ``OffloadVelocityToGPU`` (SC26-Layout-AD E7) and adapted to CloudSC's
-block structure. GPU specialization is a separate stage the caller runs BEFORE this one
-(:func:`~dace.transformation.passes.gpu_specialization.pipeline.gpu_specialize`). Four phases, in order:
+block structure. Four phases, in order:
 
 1. **Assign schedules.** CloudSC's outermost map is the per-block loop (``DO IBL = 1, NBLOCKS``),
    which must NOT become a kernel -- it orchestrates one kernel launch per block. So instead of

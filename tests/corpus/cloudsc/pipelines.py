@@ -50,7 +50,6 @@ from dace.sdfg import nodes
 from dace.sdfg.utils import specialize_symbols
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize.pipeline import _build_stages
-from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize
 from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT
 from dace.transformation.passes.parallelize import ParallelizePipeline
 from dace.transformation.passes.pattern_matching import PatternMatchAndApply
@@ -187,14 +186,14 @@ def load_offload_pass() -> Callable[[dace.SDFG], None]:
 
 
 def offload_stage() -> List[Stage]:
-    """GPU specialization, then the GPU-offload phase: schedule the outermost non-block map as a kernel and
-    mirror host data to the device (see :mod:`tests.corpus.cloudsc.offload_cloudsc_to_gpu`). Terminal by construction --
+    """The GPU-offload phase: schedule the outermost non-block map as a kernel and mirror host data to
+    the device (see :mod:`tests.corpus.cloudsc.offload_cloudsc_to_gpu`). Terminal by construction --
     nothing in the recipe runs after it."""
 
     def apply(sdfg):
         load_offload_pass()(sdfg)
 
-    return [('gpu_specialize', gpu_specialize), ('offload_to_gpu', apply)]
+    return [('offload_to_gpu', apply)]
 
 
 def generate_cuda_code(sdfg: dace.SDFG) -> int:

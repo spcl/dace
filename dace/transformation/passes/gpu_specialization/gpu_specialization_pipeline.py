@@ -1,19 +1,37 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """GPU specialization pipelines.
 
-:class:`GPUCodegenPreprocessPipeline` is the codegen target's one-shot
-codegen-preparation pipeline; :class:`GPUStreamPipeline` runs just the stream
+:func:`gpu_specialize_offloaded` resolves the device schedules of an offloaded graph
+(``finalize_for_target('gpu')`` calls it; the loop<->map interchange runs earlier, in
+``canonicalize(target='gpu')``). :class:`GPUCodegenPreprocessPipeline` is the codegen target's
+one-shot codegen-preparation pipeline; :class:`GPUStreamPipeline` runs just the stream
 scheduler + wirer on a post-expansion SDFG. Both act on the root SDFG only.
 """
 from typing import Optional
 
+from dace import SDFG
 from dace.config import Config
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoSingleStreamGPUScheduler,
                                                                                  GPUStreamSchedulingStrategy)
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
 from dace.transformation.passes.gpu_specialization.lift_shared_out_of_nsdfg import LiftSharedOutOfNestedSDFG
+from dace.transformation.passes.gpu_specialization.contiguous_axis_to_threads import ContiguousAxisToThreads
+from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
+    SequentializeNestedDeviceScopes)
 from dace.transformation.passes.promote_gpu_scalars_to_arrays import InferDefaultSchedulesAndStorages
+
+
+def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
+    """Resolve the device schedules of an offloaded ``sdfg``, in place.
+
+    :param sdfg: An offloaded SDFG.
+    :returns: The same ``sdfg`` instance.
+    """
+    # ``map JK { work; map JL }`` makes JL a thread dimension first: pinned sequential below, it would not be one.
+    ContiguousAxisToThreads().apply_pass(sdfg, {})
+    SequentializeNestedDeviceScopes().apply_pass(sdfg, {})
+    return sdfg
 
 
 class GPUStreamPipeline(Pipeline):
