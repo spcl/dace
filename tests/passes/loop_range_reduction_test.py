@@ -13,13 +13,16 @@ from dace.transformation.passes.loop_range_reduction import LoopRangeReduction
 N = dace.symbol('N')
 M = dace.symbol('M')
 
+_ONE_LOOP = {'reduced_loops': 1, 'reduced_maps': 0}
+_ONE_MAP = {'reduced_loops': 0, 'reduced_maps': 1}
+
 
 def _loops(sdfg: dace.SDFG) -> List[LoopRegion]:
-    return [n for n in sdfg.all_control_flow_blocks() if isinstance(n, LoopRegion)]
+    return [n for n in sdfg.all_control_flow_blocks(recursive=True) if isinstance(n, LoopRegion)]
 
 
 def _conditionals(sdfg: dace.SDFG) -> List[ConditionalBlock]:
-    return [n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)]
+    return [n for n in sdfg.all_control_flow_blocks(recursive=True) if isinstance(n, ConditionalBlock)]
 
 
 def _header(loop: LoopRegion) -> str:
@@ -94,7 +97,7 @@ def _apply(sdfg: dace.SDFG) -> Optional[Dict[str, int]]:
 
 def test_symbolic_lower_and_upper_bound():
     sdfg = _make_sdfg('i >= 1 and i < M')
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_conditionals(sdfg)) == 0
     (loop, ) = _loops(sdfg)
     assert loop.init_statement.as_string == 'i = 1'
@@ -137,14 +140,14 @@ def test_symbolic_guard_split_count():
 
 def test_contradiction_removes_loop():
     sdfg = _make_sdfg('i > 100', condition='i < 20')
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_loops(sdfg)) == 0 and len(_conditionals(sdfg)) == 0
     assert np.allclose(_run(sdfg, N=20, M=0), np.zeros(20))
 
 
 def test_symbolic_descending_loop():
     sdfg = _make_sdfg('i < M and i >= 2', init='i = N - 1', condition='i >= 0', update='i = i - 1')
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     (loop, ) = _loops(sdfg)
     assert 'Min' in loop.init_statement.as_string
     assert loop.loop_condition.as_string == '(i >= 2)'
@@ -154,7 +157,7 @@ def test_symbolic_descending_loop():
 
 def test_symbolic_strided_loop():
     sdfg = _make_sdfg('i >= 3 and i < M', init='i = 1', condition='i < N', update='i = i + 2')
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     (loop, ) = _loops(sdfg)
     assert loop.init_statement.as_string == 'i = 3'
     for n, m in ((20, 11), (20, 30), (20, 12)):
@@ -163,7 +166,7 @@ def test_symbolic_strided_loop():
 
 def test_symbolic_lower_bound_start_symbolic_stride():
     sdfg = _make_sdfg('i >= 6', init='i = M', condition='i < N', update='i = i + 3')
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     (loop, ) = _loops(sdfg)
     assert 'int_ceil' in loop.init_statement.as_string
     for n, m in ((20, 1), (20, 2), (20, 7), (20, 19)):
@@ -172,7 +175,7 @@ def test_symbolic_lower_bound_start_symbolic_stride():
 
 def test_residual_data_guard_is_kept():
     sdfg = _make_sdfg('i >= 2 and A[i] > 4.5 and i < M')
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     (loop, ) = _loops(sdfg)
     (guard, ) = _conditionals(sdfg)
     assert loop.init_statement.as_string == 'i = 2'
@@ -182,7 +185,7 @@ def test_residual_data_guard_is_kept():
 
 def test_scalar_constant_bound():
     sdfg = _make_sdfg('i < K', condition='i < 20', constants={'K': np.int64(6)})
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     (loop, ) = _loops(sdfg)
     assert loop.loop_condition.as_string == '(i < 6)'
     assert np.allclose(_run(sdfg, N=20, M=0), _reference(np.arange(6)))
@@ -197,7 +200,7 @@ CSTARR = np.array([0, 0, 0, 1, 1, 0, 0, 2], dtype=np.int32)
 
 def test_constant_array_guard_constant_loop():
     sdfg = _make_sdfg('cstarr[i] > 0', condition='i < 8', size=8, constants={'cstarr': CSTARR})
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     loops = _loops(sdfg)
     assert len(loops) == 2 and len(_conditionals(sdfg)) == 0
     assert _header(loops[0]) == 'i = 3 ; (i < 5) ; i = (i + 1)'
@@ -208,7 +211,7 @@ def test_constant_array_guard_constant_loop():
 def test_constant_array_guard_symbolic_loop():
     """With a symbolic trip count the domain comes from the array bounds and the loop range is clipped in."""
     sdfg = _make_sdfg('cstarr[i] > 0', size=8, constants={'cstarr': CSTARR})
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_loops(sdfg)) == 2 and len(_conditionals(sdfg)) == 0
     for n in (8, 5, 4, 2):
         assert np.allclose(_run(sdfg, size=8, N=n, M=0), _reference(np.array([k for k in (3, 4, 7) if k < n], int), 8))
@@ -229,7 +232,7 @@ def test_constant_array_guard_forms():
 def test_constant_array_guard_strided_loop():
     arr = np.array([1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1], dtype=np.int64)
     sdfg = _make_sdfg('cst[i] > 0', condition='i < 12', update='i = i + 2', size=12, constants={'cst': arr})
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     loops = _loops(sdfg)
     # Only visited iterates matter: 0, 2, 4 form one run although cst[1] == cst[3] == 0.
     assert [_header(l) for l in loops] == ['i = 0 ; (i < 5) ; i = (i + 2)']
@@ -240,13 +243,13 @@ def test_constant_2d_array_guard():
     arr = np.zeros((3, 6), dtype=np.int32)
     arr[1, 2:4] = 1
     sdfg = _make_sdfg('cst[1, i] == 1', condition='i < 6', size=6, constants={'cst': arr})
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert [_header(l) for l in _loops(sdfg)] == ['i = 2 ; (i < 4) ; i = (i + 1)']
 
 
 def test_constant_array_all_false_removes_loop():
     sdfg = _make_sdfg('cstarr[i] > 5', condition='i < 8', size=8, constants={'cstarr': CSTARR})
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_loops(sdfg)) == 0
     assert np.allclose(_run(sdfg, size=8, N=8, M=0), np.zeros(8))
 
@@ -268,14 +271,14 @@ def test_too_many_ranges_bails():
 
 def test_empty_states_around_guard():
     sdfg = _make_sdfg('i >= 3', condition='i < 20', empty_states=True)
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_conditionals(sdfg)) == 0
     assert np.allclose(_run(sdfg, N=20, M=0), _reference(np.arange(3, 20)))
 
 
 def test_empty_else_branch():
     sdfg = _make_sdfg('i >= 3', condition='i < 20', with_else=True)
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_conditionals(sdfg)) == 0
     assert np.allclose(_run(sdfg, N=20, M=0), _reference(np.arange(3, 20)))
 
@@ -287,7 +290,7 @@ def test_live_else_branch():
     # Swap the bodies: the else arm now carries the computation and the if arm is empty.
     (cond, body), (_, els) = guard.branches
     guard._branches = [(cond, els), (None, body)]
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_conditionals(sdfg)) == 0
     (loop, ) = _loops(sdfg)
     assert loop.init_statement.as_string == 'i = 3'
@@ -307,7 +310,7 @@ def test_frontend_generated_loop():
         # The Python frontend does not register a symbol that only appears in an ``if`` condition.
         sdfg.add_symbol('M', dace.int64)
     assert len(_conditionals(sdfg)) == 1
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_conditionals(sdfg)) == 0
     for n, m in ((16, 9), (16, 40)):
         a = np.random.rand(n)
@@ -329,7 +332,7 @@ def test_nested_loops_inner_and_outer():
                         B[i, j] = A[i, j] + 1.0
 
     sdfg = prog.to_sdfg(simplify=True)
-    assert _apply(sdfg) == {'reduced_loops': 2}
+    assert _apply(sdfg) == {'reduced_loops': 2, 'reduced_maps': 0}
     assert len(_conditionals(sdfg)) == 0
     n = 7
     a = np.random.rand(n, n)
@@ -355,7 +358,7 @@ def test_multi_range_with_nested_sdfg_body():
                 inner(A, B, i)
 
     sdfg = prog.to_sdfg(simplify=False)
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_conditionals(sdfg)) == 0
     assert len(_loops(sdfg)) == 2
     a = np.random.rand(20)
@@ -438,7 +441,7 @@ def test_break_with_single_range_applied():
     brk = dace.sdfg.state.BreakBlock('brk', sdfg=sdfg, parent=body)
     body.add_node(brk)
     body.add_edge(body_state, brk, dace.InterstateEdge(condition='i == 12'))
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_conditionals(sdfg)) == 0
     assert np.allclose(_run(sdfg, N=20, M=0), _reference(np.arange(3, 13)))
 
@@ -465,7 +468,7 @@ def test_inverted_loop_untouched():
 
 def test_no_op_returns_none_and_is_idempotent():
     sdfg = _make_sdfg('i >= 3 and i < M')
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert _apply(sdfg) is None
 
 
@@ -493,7 +496,7 @@ def test_frontend_array_promoted_to_constant():
     assert 'cstarr' in sdfg.arrays
     sdfg.add_constant('cstarr', CSTARR)
     assert 'cstarr' in sdfg.constants
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     loops = _loops(sdfg)
     assert len(loops) == 2 and len(_conditionals(sdfg)) == 0
     assert [(l.init_statement.as_string, l.loop_condition.as_string) for l in loops] == [('i = 3', '(i < 5)'),
@@ -518,7 +521,7 @@ def test_frontend_compiletime_constant_array():
     sdfg = prog.to_sdfg(cstarr=CSTARR, simplify=True)
     (closure_name, ) = [name for name in sdfg.arrays if name.endswith('cstarr')]
     sdfg.add_constant(closure_name, CSTARR)
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert len(_loops(sdfg)) == 2 and len(_conditionals(sdfg)) == 0
     a = np.arange(8, dtype=np.float64)
     b = np.zeros(8)
@@ -544,7 +547,7 @@ def _make_prologue_sdfg(guard: str, assignments: Dict[str, str], body_code: str 
 
 def test_prologue_with_residual_drops_assignment():
     sdfg = _make_prologue_sdfg('t > 0 and A[i] > 3.5', {'t': 'cstarr[i]'})
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     loops = _loops(sdfg)
     assert len(loops) == 2
     assert all(not _assignments_in(l) for l in loops)
@@ -558,7 +561,7 @@ def test_prologue_with_residual_drops_assignment():
 
 def test_prologue_symbol_read_in_body_keeps_assignment():
     sdfg = _make_prologue_sdfg('t > 0', {'t': 'cstarr[i]'}, body_code='b = a + t')
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     loops = _loops(sdfg)
     assert len(loops) == 2 and len(_conditionals(sdfg)) == 0
     assert all(_assignments_in(l) == [{'t': 'cstarr[i]'}] for l in loops)
@@ -581,7 +584,7 @@ def test_prologue_chain_is_composed():
     loop.remove_edge(edge)
     loop.add_edge(edge.src, mid, dace.InterstateEdge(assignments={'t': 'cstarr[i]'}))
     loop.add_edge(mid, guard_block, dace.InterstateEdge(assignments={'u': 't + 1'}))
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     assert [_header(l) for l in _loops(sdfg)] == ['i = 3 ; (i < 5) ; i = (i + 1)']
     assert not _assignments_in(_loops(sdfg)[0])
 
@@ -598,7 +601,7 @@ def test_prologue_runtime_array_stays_residual():
     """Without the constant, ``cstarr[i]`` is runtime data: the guard stays (now reading the array directly)."""
     sdfg = _make_prologue_sdfg('t > 0 and i >= 4', {'t': 'cstarr[i]'})
     del sdfg.constants_prop['cstarr']
-    assert _apply(sdfg) == {'reduced_loops': 1}
+    assert _apply(sdfg) == _ONE_LOOP
     (loop, ) = _loops(sdfg)
     (guard, ) = _conditionals(sdfg)
     assert loop.init_statement.as_string == 'i = 4'
@@ -608,6 +611,365 @@ def test_prologue_runtime_array_stays_residual():
     b = np.zeros(8)
     sdfg(A=a, B=b, cstarr=CSTARR, N=8, M=0)
     assert np.allclose(b, _reference(np.array([4, 7]), size=8))
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Branches inside map scopes (nested SDFG bodies)
+# ---------------------------------------------------------------------------------------------------------------------
+
+
+def _maps(sdfg: dace.SDFG) -> List[dace.nodes.MapEntry]:
+    return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+
+
+def _map_ranges(sdfg: dace.SDFG) -> List[str]:
+    return sorted(str(m.map.range) for m in _maps(sdfg))
+
+
+def test_map_symbolic_guard():
+
+    @dace.program
+    def prog(A: dace.float64[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            if i >= 1 and i < M:
+                B[i] = A[i] * 2.0
+
+    sdfg = prog.to_sdfg(simplify=True)
+    if 'M' not in sdfg.symbols:
+        sdfg.add_symbol('M', dace.int64)
+    assert _apply(sdfg) == _ONE_MAP
+    assert len(_conditionals(sdfg)) == 0
+    (entry, ) = _maps(sdfg)
+    (begin, end, step), = entry.map.range.ranges
+    assert str(begin) == '1' and 'Min' in str(end) and str(step) == '1'
+    for n, m in ((16, 9), (16, 40), (16, 1)):
+        a = np.random.rand(n)
+        b = np.zeros(n)
+        sdfg(A=a, B=b, N=n, M=m)
+        expected = np.zeros(n)
+        expected[1:min(n, m)] = a[1:min(n, m)] * 2.0
+        assert np.allclose(b, expected)
+
+
+def test_map_constant_array_guard():
+    """An array argument promoted to a constant: the guard reads it through an input scalar of the nested SDFG fed
+    by ``cstarr[i]``; the map splits into ``3:4`` and ``7:7``."""
+
+    @dace.program
+    def prog(A: dace.float64[8], B: dace.float64[8], cstarr: dace.int32[8]):
+        for i in dace.map[0:8]:
+            if cstarr[i] > 0:
+                B[i] = A[i] + 1.0
+
+    sdfg = prog.to_sdfg(simplify=True)
+    sdfg.add_constant('cstarr', CSTARR)
+    assert _apply(sdfg) == _ONE_MAP
+    assert len(_conditionals(sdfg)) == 0
+    assert _map_ranges(sdfg) == ['3:5', '7']  # A single-element range prints as its only index
+    a = np.arange(8, dtype=np.float64)
+    b = np.zeros(8)
+    sdfg(A=a, B=b, cstarr=CSTARR)
+    assert np.allclose(b, _reference(np.array([3, 4, 7]), size=8))
+
+
+def test_map_constant_guard_unsimplified():
+    """Before simplification the guard is a dataflow-computed scalar (``__tmp0``) rather than a symbol: not reachable."""
+
+    @dace.program
+    def prog(A: dace.float64[8], B: dace.float64[8], cstarr: dace.int32[8]):
+        for i in dace.map[0:8]:
+            if cstarr[i] > 0:
+                B[i] = A[i] + 1.0
+
+    sdfg = prog.to_sdfg(simplify=False)
+    sdfg.add_constant('cstarr', CSTARR)
+    assert _apply(sdfg) is None
+
+
+def test_map_runtime_data_residual():
+
+    @dace.program
+    def prog(A: dace.float64[N], B: dace.float64[N]):
+        for i in dace.map[0:N]:
+            if i >= 2 and A[i] > 4.5:
+                B[i] = A[i] + 1.0
+
+    sdfg = prog.to_sdfg(simplify=True)
+    assert _apply(sdfg) == _ONE_MAP
+    (entry, ) = _maps(sdfg)
+    assert str(entry.map.range) == '2:N'
+    (guard, ) = _conditionals(sdfg)
+    assert 'A' not in guard.branches[0][0].as_string  # The residual stays in the nested SDFG's own names
+    assert '4.5' in guard.branches[0][0].as_string
+    a = np.arange(20, dtype=np.float64)
+    b = np.zeros(20)
+    sdfg(A=a, B=b, N=20)
+    assert np.allclose(b, _reference(np.arange(5, 20)))
+
+
+def test_map_two_dimensional_guard_on_both_params():
+
+    @dace.program
+    def prog(A: dace.float64[N, N], B: dace.float64[N, N]):
+        for i, j in dace.map[0:N, 0:N]:
+            if i >= 2 and j < M:
+                B[i, j] = A[i, j] + 1.0
+
+    sdfg = prog.to_sdfg(simplify=True)
+    if 'M' not in sdfg.symbols:
+        sdfg.add_symbol('M', dace.int64)
+    # Both parameters are reduced within a single application.
+    assert _apply(sdfg) == {'reduced_loops': 0, 'reduced_maps': 2}
+    assert len(_conditionals(sdfg)) == 0
+    (entry, ) = _maps(sdfg)
+    assert str(entry.map.range.ranges[0][0]) == '2' and 'Min' in str(entry.map.range.ranges[1][1])
+    n, m = 6, 4
+    a = np.random.rand(n, n)
+    b = np.zeros((n, n))
+    sdfg(A=a, B=b, N=n, M=m)
+    expected = np.zeros((n, n))
+    expected[2:, :m] = a[2:, :m] + 1.0
+    assert np.allclose(b, expected)
+
+
+def test_map_guard_relating_two_params_stays():
+
+    @dace.program
+    def prog(A: dace.float64[N, N], B: dace.float64[N, N]):
+        for i, j in dace.map[0:N, 0:N]:
+            if j < i:
+                B[i, j] = A[i, j] + 1.0
+
+    sdfg = prog.to_sdfg(simplify=True)
+    assert _apply(sdfg) is None
+
+
+def test_map_contradiction_removes_scope():
+
+    @dace.program
+    def prog(A: dace.float64[8], B: dace.float64[8]):
+        for i in dace.map[0:8]:
+            if i > 100:
+                B[i] = A[i] + 1.0
+
+    sdfg = prog.to_sdfg(simplify=True)
+    assert _apply(sdfg) == _ONE_MAP
+    assert len(_maps(sdfg)) == 0
+    sdfg.validate()
+
+
+def test_map_inside_loop_and_loop_inside_map():
+    """Loops nested in map bodies are handled before the map, and maps nested in loop bodies leave the loop's own
+    guard analysis untouched."""
+
+    @dace.program
+    def prog(A: dace.float64[N, N], B: dace.float64[N, N]):
+        for i in dace.map[0:N]:
+            if i >= 1:
+                for j in range(N):
+                    if j < M:
+                        B[i, j] = A[i, j] + 1.0
+
+    sdfg = prog.to_sdfg(simplify=True)
+    if 'M' not in sdfg.symbols:
+        sdfg.add_symbol('M', dace.int64)
+    result = _apply(sdfg)
+    assert result == {'reduced_loops': 1, 'reduced_maps': 1}
+    assert len(_conditionals(sdfg)) == 0
+    n, m = 6, 4
+    a = np.random.rand(n, n)
+    b = np.zeros((n, n))
+    sdfg(A=a, B=b, N=n, M=m)
+    expected = np.zeros((n, n))
+    expected[1:, :m] = a[1:, :m] + 1.0
+    assert np.allclose(b, expected)
+
+
+def _guarded_map_body(sdfg: dace.SDFG) -> dace.SDFG:
+    """Nested SDFG ``flag = (c_in > 0); if flag: u_out = t_in + 1`` -- the shape the frontend emits for a guarded map
+    body, with the guard read through an input scalar."""
+    inner = dace.SDFG('body')
+    inner.add_scalar('t_in', dace.float64)
+    inner.add_scalar('c_in', dace.int32)
+    inner.add_scalar('u_out', dace.float64)
+    inner.add_symbol('flag', dace.int32)
+    pre = inner.add_state('pre', is_start_block=True)
+    guard = ConditionalBlock('guard', sdfg=inner, parent=inner)
+    inner.add_node(guard)
+    inner.add_edge(pre, guard, dace.InterstateEdge(assignments={'flag': '(c_in > 0)'}))
+    branch = ControlFlowRegion('branch', sdfg=inner, parent=guard)
+    guard.add_branch(CodeBlock('flag'), branch)
+    state = branch.add_state('compute', is_start_block=True)
+    tasklet = state.add_tasklet('t', {'t'}, {'u'}, 'u = t + 1')
+    state.add_edge(state.add_read('t_in'), None, tasklet, 't', dace.Memlet('t_in[0]'))
+    state.add_edge(tasklet, 'u', state.add_write('u_out'), None, dace.Memlet('u_out[0]'))
+    return inner
+
+
+def test_map_split_inside_fused_dataflow():
+    """The split map is in the middle of one state: it consumes a transient a producer map wrote and feeds a consumer
+    map. Both replicas must read the producer's output and both must complete before the consumer runs. The state is
+    built by hand so the layout does not depend on the frontend's state fusion."""
+    sdfg = dace.SDFG('fused')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64)
+    sdfg.add_array('cstarr', [8], dace.int32)
+    sdfg.add_constant('cstarr', CSTARR)
+    sdfg.add_transient('T', [8], dace.float64)
+    sdfg.add_transient('U', [8], dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    a_node, t_node, u_node, b_node = (state.add_access(name) for name in ('A', 'T', 'U', 'B'))
+    c_node = state.add_access('cstarr')
+    state.add_mapped_tasklet('producer', {'i': '0:8'}, {'a': dace.Memlet('A[i]')},
+                             't = a * 3.0', {'t': dace.Memlet('T[i]')},
+                             external_edges=True,
+                             input_nodes={'A': a_node},
+                             output_nodes={'T': t_node})
+    entry, exit_node = state.add_map('guarded', {'i': '0:8'})
+    nsdfg = state.add_nested_sdfg(_guarded_map_body(sdfg), {
+        't_in': dace.float64,
+        'c_in': dace.int32
+    }, {'u_out': dace.float64}, {'i': 'i'})
+    state.add_memlet_path(t_node, entry, nsdfg, dst_conn='t_in', memlet=dace.Memlet('T[i]'))
+    state.add_memlet_path(c_node, entry, nsdfg, dst_conn='c_in', memlet=dace.Memlet('cstarr[i]'))
+    state.add_memlet_path(nsdfg, exit_node, u_node, src_conn='u_out', memlet=dace.Memlet('U[i]'))
+    state.add_mapped_tasklet('consumer', {'i': '0:8'}, {'u': dace.Memlet('U[i]')},
+                             'b = u * 2.0', {'b': dace.Memlet('B[i]')},
+                             external_edges=True,
+                             input_nodes={'U': u_node},
+                             output_nodes={'B': b_node})
+
+    assert _apply(sdfg) == _ONE_MAP
+    assert len(_conditionals(sdfg)) == 0
+    maps = [n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    assert sorted(str(m.map.range) for m in maps) == ['0:8', '0:8', '3:5', '7']
+    replicas = [m for m in maps if m.map.label.startswith('guarded')]
+    assert len(replicas) == 2
+    for replica in replicas:
+        # Every replica reads the producer's output and the constant array and writes the consumer's input.
+        sources = {e.src for e in state.in_edges(replica)}
+        assert sources == {t_node, c_node}
+        assert {e.dst for e in state.out_edges(state.exit_node(replica))} == {u_node}
+        # ... and its nested SDFG body has no conditional left and no dead prologue symbol.
+        (body, ) = [n for n in state.scope_children()[replica] if isinstance(n, dace.nodes.NestedSDFG)]
+        assert 'flag' not in body.sdfg.symbols
+        assert all(not e.data.assignments for e in body.sdfg.edges())
+    a = np.arange(8, dtype=np.float64)
+    b = np.zeros(8)
+    sdfg(A=a, B=b, cstarr=CSTARR)
+    selected = [3, 4, 7]
+    assert np.allclose(b[selected], (a[selected] * 3.0 + 1.0) * 2.0)  # Other entries of ``U`` are uninitialized
+
+
+def test_map_split_with_inout_and_multiple_inputs():
+    """Replicas of a map that reads and writes the same array (``B[i] = B[i] + ...``) and reads two inputs."""
+
+    @dace.program
+    def prog(A: dace.float64[8], B: dace.float64[8], C: dace.float64[8], cstarr: dace.int32[8]):
+        for i in dace.map[0:8]:
+            if cstarr[i] > 0:
+                B[i] = B[i] + A[i] * C[i]
+
+    sdfg = prog.to_sdfg(simplify=True)
+    sdfg.add_constant('cstarr', CSTARR)
+    assert _apply(sdfg) == _ONE_MAP
+    assert len(_conditionals(sdfg)) == 0
+    assert _map_ranges(sdfg) == ['3:5', '7']
+    a = np.arange(8, dtype=np.float64)
+    c = np.arange(8, dtype=np.float64) + 10.0
+    b = np.ones(8)
+    sdfg(A=a, B=b, C=c, cstarr=CSTARR)
+    expected = np.ones(8)
+    expected[[3, 4, 7]] += a[[3, 4, 7]] * c[[3, 4, 7]]
+    assert np.allclose(b, expected)
+
+
+def test_map_split_with_reduction_output():
+    """Both replicas accumulate into the same write-conflict-resolved output."""
+
+    @dace.program
+    def prog(A: dace.float64[8], s: dace.float64[1], cstarr: dace.int32[8]):
+        for i in dace.map[0:8]:
+            if cstarr[i] > 0:
+                s[0] += A[i]
+
+    sdfg = prog.to_sdfg(simplify=True)
+    sdfg.add_constant('cstarr', CSTARR)
+    assert _apply(sdfg) == _ONE_MAP
+    assert len(_conditionals(sdfg)) == 0
+    a = np.arange(8, dtype=np.float64)
+    s = np.array([100.0])
+    sdfg(A=a, s=s, cstarr=CSTARR)
+    assert np.allclose(s, 100.0 + a[[3, 4, 7]].sum())
+
+
+def test_map_split_nested_in_outer_map():
+    """The guarded map is the body of an outer map (i.e., inside a nested SDFG); it is split there and the replicas
+    connect to the outer scope's connectors."""
+
+    @dace.program
+    def prog(A: dace.float64[N, 8], B: dace.float64[N, 8], cstarr: dace.int32[8]):
+        for i in dace.map[0:N]:
+            for j in dace.map[0:8]:
+                if cstarr[j] > 0:
+                    B[i, j] = A[i, j] + 1.0
+
+    sdfg = prog.to_sdfg(simplify=True)
+    sdfg.add_constant('cstarr', CSTARR)
+    result = _apply(sdfg)
+    assert result is not None and result['reduced_maps'] == 1
+    assert len(_conditionals(sdfg)) == 0
+    n = 5
+    a = np.random.rand(n, 8)
+    b = np.zeros((n, 8))
+    sdfg(A=a, B=b, N=n, cstarr=CSTARR)
+    expected = np.zeros((n, 8))
+    expected[:, [3, 4, 7]] = a[:, [3, 4, 7]] + 1.0
+    assert np.allclose(b, expected)
+
+
+def test_map_split_inside_loop_body():
+    """A split map inside a loop region's state, with the loop variable in the map's memlets."""
+
+    @dace.program
+    def prog(A: dace.float64[N, 8], B: dace.float64[N, 8], cstarr: dace.int32[8]):
+        for i in range(N):
+            for j in dace.map[0:8]:
+                if cstarr[j] > 0:
+                    B[i, j] = A[i, j] + i
+
+    sdfg = prog.to_sdfg(simplify=True)
+    sdfg.add_constant('cstarr', CSTARR)
+    result = _apply(sdfg)
+    assert result is not None and result['reduced_maps'] == 1
+    assert len(_conditionals(sdfg)) == 0
+    n = 5
+    a = np.random.rand(n, 8)
+    b = np.zeros((n, 8))
+    sdfg(A=a, B=b, N=n, cstarr=CSTARR)
+    expected = np.zeros((n, 8))
+    for i in range(n):
+        expected[i, [3, 4, 7]] = a[i, [3, 4, 7]] + i
+    assert np.allclose(b, expected)
+
+
+def test_map_split_three_ranges_symbolic_disjunction():
+    """A symbolic guard with three disjoint clauses yields three replicas of the map in one state."""
+
+    @dace.program
+    def prog(A: dace.float64[20], B: dace.float64[20]):
+        for i in dace.map[0:20]:
+            if i < 2 or i == 8 or i > 15:
+                B[i] = A[i] + 1.0
+
+    sdfg = prog.to_sdfg(simplify=True)
+    assert _apply(sdfg) == _ONE_MAP
+    assert len(_conditionals(sdfg)) == 0
+    assert _map_ranges(sdfg) == ['0:2', '16:20', '8']
+    a = np.arange(20, dtype=np.float64)
+    b = np.zeros(20)
+    sdfg(A=a, B=b)
+    assert np.allclose(b, _reference(np.array([0, 1, 8, 16, 17, 18, 19])))
 
 
 if __name__ == '__main__':

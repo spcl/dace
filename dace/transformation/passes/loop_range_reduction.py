@@ -4,12 +4,13 @@ import ast
 import copy
 import itertools
 from functools import cmp_to_key
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import sympy
 
-from dace import SDFG, dtypes, symbolic
+from dace import SDFG, dtypes, subsets, symbolic
+from dace import data as dt
 from dace.frontend.python import astutils
 from dace.properties import CodeBlock, Property, make_properties
 from dace.sdfg import InterstateEdge
@@ -18,7 +19,7 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
                              SDFGState)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
+from dace.transformation.helpers import is_symbol_unused, move_branch_cfg_up_discard_conditions, replicate_scope
 from dace.transformation.passes.analysis import loop_analysis
 
 # Comparison operators the range analysis understands, with their negation and their mirror image (for when the
@@ -73,14 +74,15 @@ class _Interval(NamedTuple):
 _UNBOUNDED = _Interval(None, None)
 
 
-class _LoopInfo(NamedTuple):
-    loop: LoopRegion
+class _IterInfo(NamedTuple):
+    """One iteration space: a loop, or one dimension of a map."""
+    sdfg: SDFG  # The SDFG whose symbols and constants the bounds are expressed in
     itervar: str
     start: sympy.Expr
     end: sympy.Expr  # Inclusive last iterate under normal termination
     stride: int
-    op: type  # Comparison operator class of the original loop condition, with the iteration variable on the left
-    body_defined: Set[str]  # Symbols (re-)assigned anywhere inside the loop body
+    op: type  # Comparison operator class of a loop condition, with the iteration variable on the left
+    body_defined: Set[str]  # Symbols that vary while the iteration space runs (assigned in the body, other map params)
 
     @property
     def ascending(self) -> bool:
@@ -100,11 +102,11 @@ class _Range(NamedTuple):
 
 
 class _Guard(NamedTuple):
-    """The conditional guarding a loop body, as found by ``_find_guard``."""
+    """The conditional guarding a loop body (or a nested SDFG in a map), as found by ``_find_guard``."""
     block: ConditionalBlock
     branch: ControlFlowRegion  # The single branch that has any effect
     condition: ast.expr  # Effective condition of that branch, with the prologue assignments substituted in
-    prologue: List[Any]  # Inter-state edges on the path from the loop start to the conditional, in order
+    prologue: List[Any]  # Inter-state edges on the path from the region start to the conditional, in order
     prologue_symbols: Set[str]  # Symbols assigned on those edges
 
 
@@ -246,7 +248,7 @@ def _symbolic_namespace(sdfg: SDFG, names: Set[str]) -> Optional[Dict[str, Any]]
     return namespace
 
 
-def _symbolic_atom(atom: ast.expr, info: _LoopInfo) -> Optional[List[_Interval]]:
+def _symbolic_atom(atom: ast.expr, info: _IterInfo) -> Optional[List[_Interval]]:
     """Intervals of the iteration variable on which ``atom`` holds, for atoms of the shape ``i <cmp> C`` or
     ``C <cmp> i`` with a loop-invariant, integer, symbolic ``C``. ``None`` if the atom is not of that shape."""
     if not isinstance(atom, ast.Compare) or len(atom.ops) != 1:
@@ -276,7 +278,7 @@ def _symbolic_atom(atom: ast.expr, info: _LoopInfo) -> Optional[List[_Interval]]
     names = _names(other)
     if names & info.body_defined:
         return None  # Depends on a symbol that changes inside the loop.
-    namespace = _symbolic_namespace(info.loop.sdfg, names)
+    namespace = _symbolic_namespace(info.sdfg, names)
     if namespace is None:
         return None
     try:
@@ -301,7 +303,7 @@ def _symbolic_atom(atom: ast.expr, info: _LoopInfo) -> Optional[List[_Interval]]
     return [_Interval(None, bound - 1), _Interval(bound + 1, None)]  # NotEq
 
 
-def _index_domain(index: ast.expr, extent: int, info: _LoopInfo, constants: Dict[str, Any]) -> Optional[_Interval]:
+def _index_domain(index: ast.expr, extent: int, info: _IterInfo, constants: Dict[str, Any]) -> Optional[_Interval]:
     """Iterates for which the constant-array index expression ``index`` (``a * i + b``) is within ``[0, extent)``.
     ``None`` if the index is not affine in the iteration variable with integer coefficients."""
     namespace = dict(_SYMBOLIC_FUNCTIONS)
@@ -323,12 +325,12 @@ def _index_domain(index: ast.expr, extent: int, info: _LoopInfo, constants: Dict
     return _Interval(sympy.ceiling(first), sympy.floor(last))
 
 
-def _constant_atom(atom: ast.expr, info: _LoopInfo, max_enumeration: int) -> Optional[List[_Interval]]:
+def _constant_atom(atom: ast.expr, info: _IterInfo, max_enumeration: int) -> Optional[List[_Interval]]:
     """Intervals of the iteration variable on which ``atom`` holds, for atoms whose only inputs are the iteration
     variable and compile-time constants (``sdfg.constants``), e.g. ``cst[i] > 0``. The atom is evaluated for every
     iterate in its finite domain and consecutive true iterates form the intervals. ``None`` if the atom is not
     of that kind or its domain cannot be bounded."""
-    constants = info.loop.sdfg.constants
+    constants = info.sdfg.constants
     itervar = info.itervar
     if any(not isinstance(n, _CONSTANT_ATOM_NODES) for n in ast.walk(atom)):
         return None
@@ -457,7 +459,7 @@ def _symbols_defined_in(loop: LoopRegion) -> Set[str]:
     return defined
 
 
-def _loop_info(loop: LoopRegion) -> Optional[_LoopInfo]:
+def _loop_info(loop: LoopRegion) -> Optional[_IterInfo]:
     """Iteration variable, bounds and (constant, non-zero) stride of a canonical for-loop, or ``None``."""
     if loop.inverted or not loop.loop_variable or loop.sdfg is None:
         return None
@@ -495,31 +497,46 @@ def _loop_info(loop: LoopRegion) -> Optional[_LoopInfo]:
     # symbols they depend on must not change inside the loop.
     if any(str(s) in body_defined for s in itertools.chain(start.free_symbols, end.free_symbols)):
         return None
-    return _LoopInfo(loop, itervar, start, end, stride, op, body_defined)
+    return _IterInfo(loop.sdfg, itervar, start, end, stride, op, body_defined)
 
 
-def _find_guard(loop: LoopRegion) -> Optional[_Guard]:
-    """The conditional that guards the whole loop body, its single live branch and that branch's effective condition.
+def _map_dim_info(state: SDFGState, entry: nd.MapEntry, dim: int) -> Optional[_IterInfo]:
+    """Iteration space of one map dimension (ascending, constant step), or ``None``."""
+    sdfg = state.sdfg
+    param = entry.map.params[dim]
+    begin, end, step = entry.map.range.ranges[dim]
+    step_value = symbolic.resolve_symbol_to_constant(step, sdfg)
+    if step_value is None or float(step_value) != int(step_value) or int(step_value) <= 0:
+        return None
+    others = {p for p in entry.map.params if p != param}
+    if any(str(s) in others or str(s) == param for s in itertools.chain(begin.free_symbols, end.free_symbols)):
+        return None
+    return _IterInfo(sdfg, param, begin, end, int(step_value), ast.LtE, others)
 
-    The loop body must consist of exactly one ``ConditionalBlock`` plus, possibly, empty states connected by
-    unconditional edges. Edges on the path from the loop start to the conditional may carry symbol assignments (a
+
+def _find_guard(region: ControlFlowRegion) -> Optional[_Guard]:
+    """The conditional that guards a whole region (a loop body or a nested SDFG), its single live branch and that
+    branch's effective condition.
+
+    The region must consist of exactly one ``ConditionalBlock`` plus, possibly, empty states connected by
+    unconditional edges. Edges on the path from the region start to the conditional may carry symbol assignments (a
     guard prologue, e.g. ``cstarr_index = cstarr[i]`` as produced by the Python frontend); those are substituted into
     the condition. Exactly one branch of the conditional may have any effect.
     """
-    conditionals = [n for n in loop.nodes() if isinstance(n, ConditionalBlock)]
+    conditionals = [n for n in region.nodes() if isinstance(n, ConditionalBlock)]
     if len(conditionals) != 1:
         return None
     guard = conditionals[0]
-    if any(n is not guard and not _is_plain_empty_state(n) for n in loop.nodes()):
+    if any(n is not guard and not _is_plain_empty_state(n) for n in region.nodes()):
         return None
-    if any(not e.data.is_unconditional() for e in loop.edges()):
+    if any(not e.data.is_unconditional() for e in region.edges()):
         return None
     if any(cond is not None and cond.language != dtypes.Language.Python for cond, _ in guard.branches):
         return None
 
-    # The linear path from the loop start to the conditional.
+    # The linear path from the region start to the conditional.
     try:
-        node = loop.start_block
+        node = region.start_block
     except ValueError:
         return None
     prologue = []
@@ -528,13 +545,13 @@ def _find_guard(loop: LoopRegion) -> Optional[_Guard]:
         if id(node) in seen:
             return None
         seen.add(id(node))
-        out_edges = loop.out_edges(node)
+        out_edges = region.out_edges(node)
         if len(out_edges) != 1:
             return None
         prologue.append(out_edges[0])
         node = out_edges[0].dst
     prologue_ids = {id(e) for e in prologue}
-    if any(e.data.assignments and id(e) not in prologue_ids for e in loop.edges()):
+    if any(e.data.assignments and id(e) not in prologue_ids for e in region.edges()):
         return None
 
     live = [(k, cond, branch) for k, (cond, branch) in enumerate(guard.branches) if not _is_empty_region(branch)]
@@ -560,6 +577,47 @@ def _find_guard(loop: LoopRegion) -> Optional[_Guard]:
                 return None
             prologue_symbols.add(name)
     return _Guard(guard, branch, condition, prologue, prologue_symbols)
+
+
+def _map_body(state: SDFGState, entry: nd.MapEntry) -> Optional[nd.NestedSDFG]:
+    """The nested SDFG that makes up the entire body of a map scope, or ``None``."""
+    exit_node = state.exit_node(entry)
+    children = [n for n in state.scope_children()[entry] if n is not exit_node]
+    if len(children) != 1 or not isinstance(children[0], nd.NestedSDFG) or children[0].sdfg is None:
+        return None
+    return children[0]
+
+
+def _map_translation(state: SDFGState, entry: nd.MapEntry, nsdfg: nd.NestedSDFG) -> Dict[str, str]:
+    """How names inside the nested SDFG of a map body read from the outside: inner symbols through the symbol
+    mapping, and input scalars that are fed one element of a compile-time constant array through that element.
+    The replacement expressions are strings, the currency of ``ASTFindReplace`` (see ``LoopUnroll``)."""
+    inner = nsdfg.sdfg
+    constants = state.sdfg.constants
+    translation = {name: symbolic.symstr(expr) for name, expr in nsdfg.symbol_mapping.items()}
+    _, written = inner.read_and_write_sets()
+    for edge in state.in_edges(nsdfg):
+        name, memlet = edge.dst_conn, edge.data
+        if (edge.src is not entry or name is None or name in nsdfg.out_connectors or name in written
+                or memlet.data is None or not isinstance(constants.get(memlet.data, None), np.ndarray)
+                or memlet.subset is None or memlet.subset.num_elements() != 1):
+            continue
+        if not isinstance(inner.arrays.get(name, None), dt.Scalar):
+            continue
+        indices = ', '.join(symbolic.symstr(index) for index in memlet.subset.min_element())
+        translation[name] = f'{memlet.data}[{indices}]'
+    # Constants are shared with the parent SDFG; names that are not shadowed inside read the same from outside.
+    for name in constants:
+        if name not in translation and name not in inner.arrays and name not in inner.symbols:
+            translation[name] = name
+    return translation
+
+
+def _translate_atom(atom: ast.expr, translation: Dict[str, str]) -> Optional[ast.expr]:
+    """``atom`` rewritten in terms of the enclosing state, or ``None`` if it reads something only visible inside."""
+    if not _names(atom) <= set(translation):
+        return None
+    return astutils.ASTFindReplace(dict(translation)).visit(astutils.copy_tree(atom))
 
 
 def _symbol_used_outside(loop: LoopRegion, symbol: str) -> bool:
@@ -616,32 +674,38 @@ def _reparent(block, sdfg: SDFG) -> None:
                 node.sdfg.parent_nsdfg_node = node
 
 
-def _new_header(info: _LoopInfo, interval: _Interval) -> Tuple[Optional[str], Optional[str]]:
-    """Init statement and condition of the loop restricted to ``interval`` (``None`` where unchanged)."""
-    itervar, start, end, stride = info.itervar, info.start, info.end, info.stride
-    init = condition = None
+def _first_iterate(info: _IterInfo, interval: _Interval) -> Optional[sympy.Expr]:
+    """The first iterate of the iteration space that lies within ``interval``, or ``None`` if unchanged."""
+    start, stride = info.start, info.stride
     if info.ascending:
-        if interval.lo is not None:
-            if stride == 1:
-                first = sympy.Max(start, interval.lo)
-            else:
-                # First visited iterate at or above the lower bound. ``Max`` keeps the numerator non-negative,
-                # which the C++ ``int_ceil`` requires.
-                first = start + stride * symbolic.int_ceil(sympy.Max(0, interval.lo - start), stride)
-            init = f'{itervar} = {symbolic.symstr(first)}'
+        if interval.lo is None:
+            return None
+        if stride == 1:
+            return sympy.Max(start, interval.lo)
+        # First visited iterate at or above the lower bound. ``Max`` keeps the numerator non-negative, which the
+        # C++ ``int_ceil`` requires.
+        return start + stride * symbolic.int_ceil(sympy.Max(0, interval.lo - start), stride)
+    if interval.hi is None:
+        return None
+    if stride == -1:
+        return sympy.Min(start, interval.hi)
+    return start + stride * symbolic.int_ceil(sympy.Max(0, start - interval.hi), -stride)
+
+
+def _new_header(info: _IterInfo, interval: _Interval) -> Tuple[Optional[str], Optional[str]]:
+    """Init statement and condition of the loop restricted to ``interval`` (``None`` where unchanged)."""
+    itervar, end = info.itervar, info.end
+    init = condition = None
+    first = _first_iterate(info, interval)
+    if first is not None:
+        init = f'{itervar} = {symbolic.symstr(first)}'
+    if info.ascending:
         if interval.hi is not None:
             if info.op is ast.Lt:
                 condition = f'{itervar} < {symbolic.symstr(sympy.Min(end + 1, interval.hi + 1))}'
             else:
                 condition = f'{itervar} <= {symbolic.symstr(sympy.Min(end, interval.hi))}'
     else:
-        step = -stride
-        if interval.hi is not None:
-            if step == 1:
-                first = sympy.Min(start, interval.hi)
-            else:
-                first = start - step * symbolic.int_ceil(sympy.Max(0, start - interval.hi), step)
-            init = f'{itervar} = {symbolic.symstr(first)}'
         if interval.lo is not None:
             if info.op is ast.Gt:
                 condition = f'{itervar} > {symbolic.symstr(sympy.Max(end - 1, interval.lo - 1))}'
@@ -650,48 +714,58 @@ def _new_header(info: _LoopInfo, interval: _Interval) -> Tuple[Optional[str], Op
     return init, condition
 
 
-def _specialize_loop(new_loop: LoopRegion, info: _LoopInfo, rng: _Range) -> None:
+def _specialize_guard(region: ControlFlowRegion, rng: _Range) -> None:
+    """Strip the folded guard of ``region`` (a loop body or nested SDFG), leaving only the residual condition."""
+    guard = next(n for n in region.nodes() if isinstance(n, ConditionalBlock))
+    live_branch = next(b for _, b in guard.branches if not _is_empty_region(b))
+    if rng.residual:
+        # Keep the conditional, guarded only by what could not be folded into the range.
+        guard._branches = [(_code_block(_conjunction(rng.residual)), live_branch)]
+        return
+    existing = {n.label for n in region.nodes()}
+    before = {id(n) for n in region.nodes()}
+    move_branch_cfg_up_discard_conditions(guard, live_branch)
+    sdfg = region if isinstance(region, SDFG) else region.sdfg
+    for moved in [n for n in region.nodes() if id(n) not in before]:
+        if moved.label in existing:
+            moved.label = region._ensure_unique_block_name(moved.label)
+        existing.add(moved.label)
+        _reparent(moved, sdfg)
+
+
+def _specialize_loop(new_loop: LoopRegion, info: _IterInfo, rng: _Range) -> None:
     """Restrict ``new_loop`` (the original or a deep copy of it) to one range and strip the folded guard."""
     init, condition = _new_header(info, rng.interval)
     if init is not None:
         new_loop.init_statement = CodeBlock(init)
     if condition is not None:
         new_loop.loop_condition = CodeBlock(condition)
-
-    guard = next(n for n in new_loop.nodes() if isinstance(n, ConditionalBlock))
-    live_branch = next(b for _, b in guard.branches if not _is_empty_region(b))
-    if rng.residual:
-        # Keep the conditional, guarded only by what could not be folded into the range.
-        guard._branches = [(_code_block(_conjunction(rng.residual)), live_branch)]
-        return
-    existing = {n.label for n in new_loop.nodes()}
-    before = {id(n) for n in new_loop.nodes()}
-    move_branch_cfg_up_discard_conditions(guard, live_branch)
-    for moved in [n for n in new_loop.nodes() if id(n) not in before]:
-        if moved.label in existing:
-            moved.label = new_loop._ensure_unique_block_name(moved.label)
-        existing.add(moved.label)
-        _reparent(moved, new_loop.sdfg)
+    _specialize_guard(new_loop, rng)
 
 
-def _drop_dead_prologue_assignments(guard: _Guard) -> None:
-    """Remove prologue assignments that only fed the guard condition, which has been folded into the loop range."""
+def _drop_dead_prologue_assignments(guard: _Guard, sdfg: SDFG) -> None:
+    """Remove prologue assignments that only fed the guard condition, which has been folded into the range, and
+    the symbols that thereby fall out of use (a nested SDFG treats every declared symbol as one it must be given)."""
     needed = set(guard.branch.used_symbols(all_symbols=True))
     remaining = [(edge, name, rhs) for edge in guard.prologue for name, rhs in edge.data.assignments.items()]
+    dropped: Set[str] = set()
     while True:
         referenced = set(needed)
         for _, _, rhs in remaining:
             referenced |= _names(ast.parse(rhs))
         dead = [entry for entry in remaining if entry[1] not in referenced]
         if not dead:
-            return
+            break
         for edge, name, _ in dead:
             edge.data.assignments = {k: v for k, v in edge.data.assignments.items() if k != name}
+            dropped.add(name)
         remaining = [entry for entry in remaining if entry[1] in referenced]
+    for name in dropped:
+        if name in sdfg.symbols and is_symbol_unused(sdfg, name):
+            sdfg.remove_symbol(name)
 
 
-def _rewrite(info: _LoopInfo, guard: _Guard, ranges: List[_Range]) -> None:
-    loop = info.loop
+def _rewrite_loop(loop: LoopRegion, info: _IterInfo, guard: _Guard, ranges: List[_Range]) -> None:
     parent = loop.parent_graph
     sdfg = loop.sdfg
     try:
@@ -711,7 +785,7 @@ def _rewrite(info: _LoopInfo, guard: _Guard, ranges: List[_Range]) -> None:
 
     # The residual guards are expressed in terms of the iteration start (prologue assignments substituted), so a
     # prologue assignment is only still needed if the branch body reads it.
-    _drop_dead_prologue_assignments(guard)
+    _drop_dead_prologue_assignments(guard, sdfg)
 
     # The original loop object becomes the first loop of the chain (keeping its incoming edges and start-block
     # status); the remaining ranges get deep copies, taken before the original is modified.
@@ -734,6 +808,47 @@ def _rewrite(info: _LoopInfo, guard: _Guard, ranges: List[_Range]) -> None:
             parent.add_edge(pred, succ, InterstateEdge())
 
 
+def _rewrite_map(state: SDFGState, entry: nd.MapEntry, nsdfg: nd.NestedSDFG, dim: int, info: _IterInfo, guard: _Guard,
+                 ranges: List[_Range]) -> None:
+    sdfg = state.sdfg
+    scope = state.scope_subgraph(entry)
+    if not ranges:
+        # The body never runs: drop the whole scope, and the access nodes that only served it.
+        exit_node = state.exit_node(entry)
+        neighbors = {e.src for e in state.in_edges(entry)} | {e.dst for e in state.out_edges(exit_node)}
+        state.remove_nodes_from(scope.nodes())
+        state.remove_nodes_from([n for n in neighbors if state.in_degree(n) == 0 and state.out_degree(n) == 0])
+        return
+
+    _drop_dead_prologue_assignments(guard, nsdfg.sdfg)
+
+    # One scope per range: the original keeps the first, replicas (taken before the original is modified) the rest.
+    scopes = [scope]
+    for k in range(1, len(ranges)):
+        replica = replicate_scope(sdfg, state, scope)
+        for node in replica.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                # Deep-copying a nested SDFG detaches it from the enclosing SDFG, which sits outside the copied
+                # subtree; give the copy a distinct name as well, as the map unroller does.
+                node.sdfg.parent = state
+                node.sdfg.parent_sdfg = sdfg
+                node.sdfg.parent_nsdfg_node = node
+                node.sdfg.name = f'{node.sdfg.name}_{k}'
+                node.label = f'{node.label}_{k}'
+        scopes.append(replica)
+
+    for new_scope, rng in zip(scopes, ranges):
+        new_entry: nd.MapEntry = new_scope.entry
+        first = _first_iterate(info, rng.interval)
+        last = info.end if rng.interval.hi is None else sympy.Min(info.end, rng.interval.hi)
+        new_ranges = [rng_ + (tile, ) for rng_, tile in zip(new_entry.map.range.ranges, new_entry.map.range.tile_sizes)]
+        begin, _, step, tile = new_ranges[dim]
+        new_ranges[dim] = (begin if first is None else first, last, step, tile)
+        new_entry.map.range = subsets.Range(new_ranges)
+        nsdfg = next(n for n in new_scope.nodes() if isinstance(n, nd.NestedSDFG))
+        _specialize_guard(nsdfg.sdfg, rng)
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # The pass
 # ----------------------------------------------------------------------------------------------------------------------
@@ -742,11 +857,12 @@ def _rewrite(info: _LoopInfo, guard: _Guard, ranges: List[_Range]) -> None:
 @make_properties
 @transformation.explicit_cf_compatible
 class LoopRangeReduction(ppl.Pass):
-    """Turn a conditional that guards an entire loop body into a reduced iteration range.
+    """Turn a conditional that guards an entire loop or map body into a reduced iteration range.
 
-    For a loop whose body is a single ``ConditionalBlock``, the pass computes the set of iterates on which the
-    guarding condition holds and replaces the loop by one loop per contiguous run of such iterates, without the
-    conditional. The condition may restrict the iteration variable
+    For a loop whose body is a single ``ConditionalBlock``, or a map whose body is a nested SDFG consisting of a
+    single ``ConditionalBlock``, the pass computes the set of iterates on which the guarding condition holds and
+    replaces the loop (map) by one loop (map) per contiguous run of such iterates, without the conditional. The
+    condition may restrict the iteration variable
 
     * symbolically (``i >= 1 and i < M`` turns ``for i in range(N)`` into ``for i in range(1, min(N, M))``), or
     * through compile-time constant data in ``sdfg.constants`` (``cstarr[i] > 0`` with ``cstarr = [0,0,0,1,1,0,0,2]``
@@ -756,10 +872,12 @@ class LoopRangeReduction(ppl.Pass):
     the reduced loop. Symbol assignments on the path from the loop start to the conditional (such as the
     ``cstarr_index = cstarr[i]`` prologue the Python frontend emits for ``if cstarr[i] > 0``) are folded into the
     condition first, and dropped once nothing else reads them. An array that is also registered in
-    ``sdfg.constants`` is analyzed through its constant value. The transformation is only applied when it is provably
-    value-preserving: the loop must be a canonical for-loop with a constant stride, its iteration variable must not
-    be modified inside the body nor be read after the loop, and a body containing a ``break`` is only split when a
-    single range results.
+    ``sdfg.constants`` is analyzed through its constant value. Inside a map body, inner symbols are read through the
+    nested SDFG's symbol mapping and input scalars fed one element of a constant array through that element; a map
+    is split into copies of its scope, which is safe because the ranges are provably disjoint. The transformation is
+    only applied when it is provably value-preserving: the loop must be a canonical for-loop with a constant stride,
+    its iteration variable must not be modified inside the body nor be read after the loop, and a body containing a
+    ``break`` is only split when a single range results.
     """
 
     CATEGORY: str = 'Optimization Preparation'
@@ -773,41 +891,50 @@ class LoopRangeReduction(ppl.Pass):
                                'reads compile-time constant data.')
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.CFG
+        return ppl.Modifies.CFG | ppl.Modifies.Scopes | ppl.Modifies.NestedSDFGs
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return bool(modified & ppl.Modifies.CFG)
+        return bool(modified & (ppl.Modifies.CFG | ppl.Modifies.Scopes))
 
     def depends_on(self):
         return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, int]]:
         """
-        Reduce the range of every guarded loop in ``sdfg`` (and its nested SDFGs), innermost loops first.
+        Reduce the range of every guarded loop and map in ``sdfg`` (and its nested SDFGs), innermost loops first.
+        Repeats until nothing changes, so a map guarded on several of its parameters is reduced in all of them.
 
         :param sdfg: The SDFG to modify in place.
         :param pipeline_results: Results of prior passes in the pipeline (unused).
-        :return: ``{'reduced_loops': <count>}`` with the number of loops rewritten, or ``None`` if nothing changed.
+        :return: ``{'reduced_loops': <loops>, 'reduced_maps': <maps>}``, or ``None`` if nothing changed.
         """
-        loops = [
-            region for region in sdfg.all_control_flow_regions(recursive=True, parent_first=False)
-            if isinstance(region, LoopRegion)
-        ]
-        count = 0
-        for loop in loops:
-            if self._reduce(loop):
-                count += 1
-        if count == 0:
+        reduced_loops = reduced_maps = 0
+        # Every application strictly shrinks the guard, so this converges; the cap only bounds a bug.
+        for _ in range(_MAX_CLAUSES):
+            loops = [
+                region for region in sdfg.all_control_flow_regions(recursive=True, parent_first=False)
+                if isinstance(region, LoopRegion)
+            ]
+            loops_now = sum(1 for loop in loops if self._reduce_loop(loop))
+            maps = [(state, node) for sd in sdfg.all_sdfgs_recursive() for state in sd.states()
+                    for node in state.nodes() if isinstance(node, nd.MapEntry)]
+            maps_now = sum(1 for state, entry in maps if entry in state.nodes() and self._reduce_map(state, entry))
+            reduced_loops += loops_now
+            reduced_maps += maps_now
+            if loops_now == 0 and maps_now == 0:
+                break
+        if reduced_loops == 0 and reduced_maps == 0:
             return None
         sdfg.reset_cfg_list()
-        return {'reduced_loops': count}
+        return {'reduced_loops': reduced_loops, 'reduced_maps': reduced_maps}
 
     def report(self, pass_retval: Optional[Dict[str, int]]) -> str:
         if not pass_retval:
             return 'No loop ranges reduced.'
-        return f'Reduced the range of {pass_retval["reduced_loops"]} loops.'
+        return (f'Reduced the range of {pass_retval["reduced_loops"]} loops and '
+                f'{pass_retval["reduced_maps"]} maps.')
 
-    def _reduce(self, loop: LoopRegion) -> bool:
+    def _reduce_loop(self, loop: LoopRegion) -> bool:
         if loop.parent_graph is None:
             return False
         guard = _find_guard(loop)
@@ -821,18 +948,49 @@ class LoopRangeReduction(ppl.Pass):
             return False
         if len(ranges) != 1 and loop.has_break:
             return False  # A break would also have to skip the remaining loops.
-        if any(not r.residual for r in ranges):
-            # Splicing the branch body into the loop needs a unique exit block.
-            if len([n for n in guard.branch.nodes() if guard.branch.out_degree(n) == 0]) != 1:
-                return False
+        if not self._can_specialize(guard, ranges):
+            return False
         if any(_symbol_used_outside(loop, symbol) for symbol in {info.itervar} | guard.prologue_symbols):
             return False
-        _rewrite(info, guard, ranges)
+        _rewrite_loop(loop, info, guard, ranges)
         return True
 
-    def _analyze(self, condition: ast.expr, info: _LoopInfo) -> Optional[List[_Range]]:
-        """The reduced ranges implied by ``condition``, in iteration order, or ``None`` if the loop must be left
-        alone (nothing to gain, or ranges that cannot be proven disjoint)."""
+    def _reduce_map(self, state: SDFGState, entry: nd.MapEntry) -> bool:
+        nsdfg = _map_body(state, entry)
+        if nsdfg is None:
+            return False
+        guard = _find_guard(nsdfg.sdfg)
+        if guard is None:
+            return False
+        translation = _map_translation(state, entry, nsdfg)
+        for dim in range(len(entry.map.params)):
+            info = _map_dim_info(state, entry, dim)
+            if info is None:
+                continue
+            ranges = self._analyze(guard.condition, info, lambda atom: _translate_atom(atom, translation))
+            if ranges is None or not self._can_specialize(guard, ranges):
+                continue
+            _rewrite_map(state, entry, nsdfg, dim, info, guard, ranges)
+            return True
+        return False
+
+    @staticmethod
+    def _can_specialize(guard: _Guard, ranges: List[_Range]) -> bool:
+        # Splicing the branch body into the enclosing region needs a unique exit block.
+        if any(not r.residual for r in ranges):
+            return len([n for n in guard.branch.nodes() if guard.branch.out_degree(n) == 0]) == 1
+        return True
+
+    def _analyze(self,
+                 condition: ast.expr,
+                 info: _IterInfo,
+                 translate: Optional[Callable[[ast.expr], Optional[ast.expr]]] = None) -> Optional[List[_Range]]:
+        """The reduced ranges implied by ``condition``, in iteration order, or ``None`` if the iteration space must be
+        left alone (nothing to gain, or ranges that cannot be proven disjoint).
+
+        :param translate: Optional rewriting of an atom into the names ``info`` is expressed in (``None`` if the atom
+                          cannot be expressed there). Residual guards keep the original atoms.
+        """
         clauses = _dnf(condition)
         if clauses is None:
             return None
@@ -844,9 +1002,10 @@ class LoopRangeReduction(ppl.Pass):
             if not clause:
                 changed = True  # A literal tautology: the guard can go.
             for atom in clause:
-                atom_intervals = _symbolic_atom(atom, info)
-                if atom_intervals is None:
-                    atom_intervals = _constant_atom(atom, info, self.max_enumeration)
+                analyzed = translate(atom) if translate is not None else atom
+                atom_intervals = None if analyzed is None else _symbolic_atom(analyzed, info)
+                if atom_intervals is None and analyzed is not None:
+                    atom_intervals = _constant_atom(analyzed, info, self.max_enumeration)
                 if atom_intervals is None:
                     residual.append(atom)
                     continue
