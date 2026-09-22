@@ -56,3 +56,47 @@ def test_the_strided_gemm_computes_what_numpy_computes():
     with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
         sdfg(A=a, B=b, C=c, N=n)
     np.testing.assert_allclose(c, a @ b, rtol=1e-12, atol=0)
+
+
+def nested_gemm(a_strides) -> tuple:
+    """The same GEMM, one nesting level down, reached through a NestedSDFG."""
+    inner = dace.SDFG('inner_gemm')
+    inner.add_array('a', [N, N], dace.float64, strides=a_strides)
+    inner.add_array('b', [N, N], dace.float64)
+    inner.add_array('c', [N, N], dace.float64)
+    inner_state = inner.add_state()
+    node = Gemm('gemm')
+    inner_state.add_node(node)
+    inner_state.add_edge(inner_state.add_read('a'), None, node, '_a', dace.Memlet('a[0:N, 0:N]'))
+    inner_state.add_edge(inner_state.add_read('b'), None, node, '_b', dace.Memlet('b[0:N, 0:N]'))
+    inner_state.add_edge(node, '_c', inner_state.add_write('c'), None, dace.Memlet('c[0:N, 0:N]'))
+
+    outer = dace.SDFG('outer_gemm')
+    outer.add_array('A', [N, N], dace.float64, strides=a_strides)
+    outer.add_array('B', [N, N], dace.float64)
+    outer.add_array('C', [N, N], dace.float64)
+    state = outer.add_state()
+    nested = state.add_nested_sdfg(inner, {'a': None, 'b': None}, {'c': None})
+    state.add_edge(state.add_read('A'), None, nested, 'a', dace.Memlet('A[0:N, 0:N]'))
+    state.add_edge(state.add_read('B'), None, nested, 'b', dace.Memlet('B[0:N, 0:N]'))
+    state.add_edge(nested, 'c', state.add_write('C'), None, dace.Memlet('C[0:N, 0:N]'))
+    outer.validate()
+    return outer, node
+
+
+def test_a_nested_gemm_reads_its_own_arrays():
+    """The operand names live in the nested SDFG, not the one the pass was called on.
+
+    Looking them up in the top-level SDFG raised ``KeyError: Data descriptor with name "__inl4_ps"
+    not found in SDFG`` and took down the whole canonicalize run (cegterg and
+    warpx_esirkepov_deposition, on both the CPU and the GPU column).
+    """
+    sdfg, node = nested_gemm([2 * N, 2])
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
+    assert node.implementation in ('rowwise', 'pure'), node.implementation
+
+
+def test_a_nested_contiguous_gemm_still_gets_blas():
+    sdfg, node = nested_gemm([N, 1])
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
+    assert node.implementation not in ('rowwise', 'pure'), node.implementation

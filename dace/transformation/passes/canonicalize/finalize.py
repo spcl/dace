@@ -74,16 +74,20 @@ def _all_matmul_extents_small(state, node, limit: int) -> bool:
     return saw
 
 
-def blas_addresses(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
+def blas_addresses(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether a BLAS call can take every matrix operand of ``node`` as it is laid out.
 
     BLAS names a matrix by a pointer and ONE leading dimension, so each operand needs a unit stride
     on one of its two matrix axes (what ``get_gemm_opts`` requires). A strided view of both axes --
     cegterg's canonicalized ``Gemm`` -- has no such form, and the BLAS expansion raised
     ``sAM or sAK should be 1`` at codegen.
+
+    The operands are read from the SDFG that owns ``state``: a nested node's arrays are its own, and
+    looking them up in the top-level SDFG raised ``KeyError`` on every kernel whose GEMM sits in a
+    nested SDFG (cegterg, warpx_esirkepov_deposition).
     """
     try:
-        operands = _get_matmul_operands(node, state, sdfg)
+        operands = _get_matmul_operands(node, state, state.sdfg)
     except ValueError:
         return True
     return all(any(symbolic.equal_valued(1, s) for s in _matrix_operand(operand)[3]) for operand in operands)
@@ -178,7 +182,7 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
             node.schedule = dtypes.ScheduleType.Sequential
 
         # A GEMM no BLAS call can address takes the expansion that indexes its operands directly.
-        if isinstance(node, Gemm) and not blas_addresses(node, state, sdfg):
+        if isinstance(node, Gemm) and not blas_addresses(node, state):
             node.implementation = 'rowwise' if device == dtypes.DeviceType.CPU and 'rowwise' in impls else 'pure'
             if device == dtypes.DeviceType.GPU and not libnode_is_device_code(node, state, sdfg):
                 node.schedule = dtypes.ScheduleType.GPU_Device
