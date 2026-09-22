@@ -462,22 +462,25 @@ class MoveIfIntoLoop(ppl.Pass):
         :returns: Number of guards moved, or ``None`` if none.
         """
         count = 0
-        while True:
-            m = _match(sdfg)
-            if m is not None:
-                self._move(*m)
-                count += 1
-                continue
-            m = _match_imperfect(sdfg)
-            if m is not None:
-                self._move_imperfect(*m)
-                count += 1
-                continue
-            break
-        if count:
-            # _move / _move_imperfect deepcopy + re-add blocks; any nested
-            # SDFG carried along keeps stale parent references until repaired.
-            set_nested_sdfg_parent_references(sdfg)
+        # Every block a move adds resets the CFG list of the whole tree, and so does the parent repair
+        # per nested SDFG; nothing here reads the list, so one reset at the end does.
+        with sdfg.deferred_cfg_list_reset():
+            while True:
+                m = _match(sdfg)
+                if m is not None:
+                    self._move(*m)
+                    count += 1
+                    continue
+                m = _match_imperfect(sdfg)
+                if m is not None:
+                    self._move_imperfect(*m)
+                    count += 1
+                    continue
+                break
+            if count:
+                # _move / _move_imperfect deepcopy + re-add blocks; any nested
+                # SDFG carried along keeps stale parent references until repaired.
+                set_nested_sdfg_parent_references(sdfg)
         return count or None
 
     @staticmethod
