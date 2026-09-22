@@ -288,11 +288,12 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # create object field for external nsdfg access
         self.nsdfg = nsdfg
 
-        sdfg.reset_cfg_list()
         # Ensure the SDFG is marked as containing CFG regions
         sdfg.root_sdfg.using_explicit_control_flow = True
 
-        if self.inline_after:
+        if not self.inline_after:
+            sdfg.reset_cfg_list()
+        else:
             # Flatten the wrapping NSDFG so the resulting LoopRegion
             # ends up directly at the parent CFR. The widening step is
             # the InlineMultistateSDFG prerequisite (its can_be_applied
@@ -355,12 +356,14 @@ class MapToForLoop(transformation.SingleStateTransformation):
                     if was_start:
                         parent_cfr.start_block = parent_cfr.node_id(graph)
                     self.target_state = target_state
+                # Rebuilds the CFG list as its last step, which covers every edit above too.
                 inline.apply(target_state, sdfg)
                 # After inline, the NSDFG node is gone and the LoopRegion
                 # has been hoisted into the parent CFR. Clear the stale
                 # nsdfg reference; ``self.loop_region`` is still valid
                 # (it was reparented, not destroyed).
                 self.nsdfg = None
-            sdfg.reset_cfg_list()
+            else:
+                sdfg.reset_cfg_list()
 
         return node, nstate
