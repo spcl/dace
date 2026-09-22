@@ -82,11 +82,16 @@ def test_block_atomic_compiles():
 
 @pytest.mark.gpu
 def test_block_atomic_runs():
+    """On the device: ``A`` and ``B`` are read and written by the kernel, so they are device
+    arrays here. Host buffers under a ``GPU_Device`` map are a memory-access fault on a discrete GPU."""
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
     sdfg = _build_block_atomic_sum_sdfg()
+    for name in ('A', 'B'):
+        sdfg.arrays[name].storage = dace.StorageType.GPU_Global
     A = np.random.rand(128).astype(np.float32)
-    B = np.zeros(1, dtype=np.float32)
-    sdfg(A=A, B=B)
-    assert abs(B[0] - np.sum(A)) / 128.0 <= 1e-4
+    arrays = {'A': cupy.asarray(A), 'B': cupy.zeros(1, dtype=np.float32)}
+    sdfg(**arrays)
+    assert abs(arrays['B'].get()[0] - np.sum(A)) / 128.0 <= 1e-4
 
 
 def last_negative_index_sdfg() -> dace.SDFG:
