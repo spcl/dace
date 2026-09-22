@@ -1464,7 +1464,41 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
             candidates.append((state, e, e.dst.data, copy.deepcopy(e.data.subset)))
     if len(candidates) != 1:
         return None
+    _state, wcr_edge, accum_name, accum_subset = candidates[0]
+    if slot_accessed_besides(loop, wcr_edge, accum_name, accum_subset):
+        return None
     return candidates[0]
+
+
+def slot_accessed_besides(loop: LoopRegion, wcr_edge, accum_name: str, accum_subset: subsets.Subset) -> bool:
+    """True iff the loop reads or writes ``accum_name[accum_subset]`` through any edge but ``wcr_edge``.
+
+    The retarget redirects ``wcr_edge`` alone to the private scalar and writes that scalar back over
+    the slot after the loop. Every other access keeps using the original array: a plain
+    read-modify-write chain on the slot accumulates there and the writeback then overwrites it, and a
+    read sees a value that is missing this loop's WCR terms. seissol_tensor_contraction has the first
+    case: after ``ShortLoopUnroll`` its ``l`` loop body holds nine accumulations into one output slot,
+    only the last of which ``AccumulatorCopyChainToWCR`` turned into a WCR write.
+
+    :param loop: the loop being considered for retargeting, nested regions included.
+    :param wcr_edge: the WCR write the retarget would redirect.
+    :param accum_name: the accumulator's data name.
+    :param accum_subset: the slot ``wcr_edge`` writes.
+    """
+    for state in loop.all_states():
+        for node in state.data_nodes():
+            if node.data != accum_name:
+                continue
+            touched = [(e, e.data.get_dst_subset(e, state)) for e in state.in_edges(node) if e is not wcr_edge]
+            touched += [(e, e.data.get_src_subset(e, state)) for e in state.out_edges(node)]
+            for edge, subset in touched:
+                if edge.data.is_empty():
+                    continue
+                # ``intersects`` answers False for a missing subset and None when it cannot decide;
+                # both count as an access here, since a wrong retarget drops terms silently.
+                if subset is None or subsets.intersects(subset, accum_subset) is not False:
+                    return True
+    return False
 
 
 def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_state: SDFGState, wcr_edge,

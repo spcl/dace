@@ -1982,6 +1982,61 @@ def test_accumulator_initialized_before_the_loop_is_still_retargeted():
     assert np.allclose(out[0], src.sum()), 'retargeting changed the carried sum'
 
 
+def wcr_write_beside_plain_chain_loop() -> dace.SDFG:
+    """``for jl: acc[0] = acc[0] + src[0, jl]; acc[0] += src[1, jl] (WCR)`` on a non-transient ``acc``.
+
+    The shape ``ShortLoopUnroll`` + ``AccumulatorCopyChainToWCR`` leave in seissol_tensor_contraction's
+    ``l`` loop: the unrolled ``q`` terms each accumulate into one output slot, and only the last one
+    was collapsed to a WCR write. The others stay plain read-modify-write chains on the same slot.
+    """
+    sdfg = dace.SDFG('wcr_write_beside_plain_chain')
+    sdfg.add_array('src', [2, N], dace.float64)
+    sdfg.add_array('acc', [1], dace.float64)
+    loop = LoopRegion('jl_loop',
+                      condition_expr='jl < N',
+                      loop_var='jl',
+                      initialize_expr='jl = 0',
+                      update_expr='jl = jl + 1')
+    sdfg.add_node(loop, is_start_block=True)
+
+    plain = loop.add_state('plain_accumulate', is_start_block=True)
+    task = plain.add_tasklet('add', {'in_a': None, 'in_b': None}, {'__out': None}, '__out = in_a + in_b')
+    plain.add_edge(plain.add_read('acc'), None, task, 'in_a', mm.Memlet('acc[0]'))
+    plain.add_edge(plain.add_read('src'), None, task, 'in_b', mm.Memlet('src[0, jl]'))
+    plain.add_edge(task, '__out', plain.add_write('acc'), None, mm.Memlet('acc[0]'))
+
+    wcr = loop.add_state('wcr_accumulate')
+    task = wcr.add_tasklet('term', {'in_b': None}, {'__out': None}, '__out = in_b')
+    wcr.add_edge(wcr.add_read('src'), None, task, 'in_b', mm.Memlet('src[1, jl]'))
+    wcr.add_edge(task, '__out', wcr.add_write('acc'), None, mm.Memlet('acc[0]', wcr='lambda a, b: a + b'))
+    loop.add_edge(plain, wcr, dace.InterstateEdge())
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_wcr_write_beside_a_plain_chain_on_the_same_slot_is_not_retargeted():
+    """The retarget redirects the WCR write only; another access to the slot keeps the original array.
+
+    ``_extract_wcr_body`` found the single WCR write on ``acc[0]`` and privatized it, while the plain
+    ``acc[0] = acc[0] + src[0, jl]`` chain in the other state went on accumulating into ``acc``. The
+    writeback after the loop then overwrote ``acc[0]`` with the private scalar, dropping every
+    ``src[0, :]`` term. On seissol_tensor_contraction 8 of the 9 unrolled terms were dropped this way
+    and 107032401 of 108321948 outputs were wrong.
+    """
+    sdfg = wcr_write_beside_plain_chain_loop()
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, 'a slot also accessed by a plain chain was retargeted'
+    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    sdfg.validate()
+
+    n = 32
+    rng = np.random.default_rng(4118)
+    src = rng.standard_normal((2, n))
+    acc = np.array([0.5])
+    sdfg(src=src, acc=acc, N=n)
+    assert np.allclose(acc[0], 0.5 + src.sum()), 'the two accumulations into acc[0] diverged from the oracle'
+
+
 def test_loop_to_reduce_doesnt_lift_break_loop():
     """LoopToReduce must not pick up a break-loop -- in either emit mode, and without mutating.
 
