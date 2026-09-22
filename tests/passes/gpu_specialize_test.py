@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The GPU specialization stage: a loop over maps becomes one kernel that runs the loop per thread, taken only when
-the maps' axis is the contiguous one."""
+"""The GPU specialization stage: a loop over maps becomes one kernel that runs the loop per thread, when the fork/join
+cost model says the launches it saves pay and the loop axis is not the contiguous one."""
 import contextlib
 import os
 
@@ -11,6 +11,7 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize import finalize
+from dace.transformation.passes.gpu_specialization.gpu_loop_interchange import launches_saved
 from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize
 
 K = dace.symbol('K')
@@ -65,10 +66,41 @@ def test_the_loop_stays_outside_when_its_own_axis_is_contiguous():
     assert len(top_level_loops(sdfg)) == 1
 
 
+def loop_over_maps(name: str, trips: str, maps: int) -> tuple:
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', (4, 16), dace.float64)
+    loop = LoopRegion('kloop', f'k < {trips}', 'k', 'k = 0', 'k = k + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    previous = None
+    for m in range(maps):
+        state = loop.add_state(f'step{m}', is_start_block=previous is None)
+        state.add_mapped_tasklet(f'step{m}', {'i': '0:16'}, {'__in': dace.Memlet('a[k, i]')},
+                                 '__out = __in + 1.0', {'__out': dace.Memlet('a[k, i]')},
+                                 external_edges=True)
+        if previous is not None:
+            loop.add_edge(previous, state, dace.InterstateEdge())
+        previous = state
+    return sdfg, loop
+
+
+@pytest.mark.parametrize('trips, maps, saved', [('1', 1, 0), ('1', 2, 1), ('3', 2, 5), ('K', 1, float('inf'))])
+def test_the_cost_model_counts_the_kernel_launches_the_interchange_saves(trips, maps, saved):
+    """One launch per map per trip before, one after; a symbolic trip count is as large as any other extent."""
+    _, loop = loop_over_maps(f'launches_{trips}_{maps}', trips, maps)
+    assert launches_saved(loop) == saved
+
+
+def test_a_single_launch_loop_is_not_worth_a_kernel_of_its_own():
+    sdfg, _ = loop_over_maps('single_launch', '1', 1)
+    gpu_specialize(sdfg)
+    assert len(top_level_loops(sdfg)) == 1
+
+
 @pytest.mark.gpu
 def test_the_column_form_runs_as_one_kernel_and_matches_numpy():
     import cupy  # Only present on GPU runners.
     sdfg = canonical(rows)
+    gpu_specialize(sdfg)
     finalize.offload_to_gpu(sdfg)
     finalize.finalize_for_target(sdfg, 'gpu')
     kernels = [

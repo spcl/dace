@@ -50,6 +50,7 @@ from dace.sdfg import nodes
 from dace.sdfg.utils import specialize_symbols
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize
 from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT
 from dace.transformation.passes.parallelize import ParallelizePipeline
 from dace.transformation.passes.pattern_matching import PatternMatchAndApply
@@ -154,6 +155,7 @@ def strict_fp_device_build():
         with set_temporary('compiler', 'cuda', key, value=f'{strict} {dace.Config.get("compiler", "cuda", key)}'):
             yield
 
+
 #: Host FP rules shared by BOTH legs: no fast-math, no FMA contraction, so the SDFG matches
 #: strict-IEEE gfortran. Carries NO optimization level -- ``compiler.build_type`` is the single
 #: source of that, and an ``-O`` here does not work anyway: CMake emits
@@ -185,14 +187,14 @@ def load_offload_pass() -> Callable[[dace.SDFG], None]:
 
 
 def offload_stage() -> List[Stage]:
-    """The GPU-offload phase: schedule the outermost non-block map as a kernel and mirror host data to
-    the device (see :mod:`tests.corpus.cloudsc.offload_cloudsc_to_gpu`). Terminal by construction --
+    """GPU specialization, then the GPU-offload phase: schedule the outermost non-block map as a kernel and
+    mirror host data to the device (see :mod:`tests.corpus.cloudsc.offload_cloudsc_to_gpu`). Terminal by construction --
     nothing in the recipe runs after it."""
 
     def apply(sdfg):
         load_offload_pass()(sdfg)
 
-    return [('offload_to_gpu', apply)]
+    return [('gpu_specialize', gpu_specialize), ('offload_to_gpu', apply)]
 
 
 def generate_cuda_code(sdfg: dace.SDFG) -> int:

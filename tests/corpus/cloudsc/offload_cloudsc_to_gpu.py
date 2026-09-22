@@ -3,9 +3,8 @@
 
 CloudSC-specific, so it lives with the corpus rather than in ``dace/transformation/passes``. Ported
 from the velocity-tendencies ``OffloadVelocityToGPU`` (SC26-Layout-AD E7) and adapted to CloudSC's
-block structure. The pre-offload band of GPU specialization
-(:func:`~dace.transformation.passes.gpu_specialization.pipeline.gpu_specialize`) runs first, then four phases, in
-order:
+block structure. GPU specialization is a separate stage the caller runs BEFORE this one
+(:func:`~dace.transformation.passes.gpu_specialization.pipeline.gpu_specialize`). Four phases, in order:
 
 1. **Assign schedules.** CloudSC's outermost map is the per-block loop (``DO IBL = 1, NBLOCKS``),
    which must NOT become a kernel -- it orchestrates one kernel launch per block. So instead of
@@ -42,7 +41,6 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites
 from dace.sdfg.sdfg import InterstateEdge
-from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.sdfg.state import SDFGState
 from dace.transformation.passes.analysis.analysis import FindAccessNodes, StateReachability
@@ -78,9 +76,6 @@ def offload_cloudsc_to_gpu(sdfg: dace.SDFG,
     # 1-element buffer for every program output (ngpblks), which gets its copy-out state.
     ConvertLengthOneArraysToScalars(preserve_abi=True, recursive=True).apply_pass(sdfg, {})
     symbolize_readonly_range_scalars(sdfg)
-    # The pre-offload band of GPU specialization: the loops it moves into their maps must be single maps by the
-    # time schedules and storage are assigned below.
-    gpu_specialize(sdfg, validate=False)
     assign_schedules(sdfg, block_symbols)
     mirror_nontransients_to_gpu(sdfg, frozenset(exclude_from_offload))
     mirror_host_needed_transients(sdfg)

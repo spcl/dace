@@ -36,7 +36,7 @@ from dace.transformation.passes.cpu_specialization.band_carried_loops import Ban
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
-from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize, gpu_specialize_offloaded
+from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.libraries.standard.nodes.scan import Scan
@@ -355,8 +355,9 @@ def offload_to_gpu(sdfg: SDFG) -> None:
 
     A SEPARATE step from :func:`finalize_for_target`, not part of canonicalization: the device move
     is where a caller's own scheduling decisions belong, so the pipeline is
-    ``canonicalize(s, target='gpu')`` -> *(any passes the caller needs on a device-agnostic graph)*
-    -> ``offload_to_gpu(s)`` -> ``finalize_for_target(s, 'gpu')``. Callers with their own offload
+    ``canonicalize(s, target='gpu')`` -> ``gpu_specialize(s)`` (its own stage, see
+    :mod:`~dace.transformation.passes.gpu_specialization.pipeline`) -> *(any passes the caller needs on
+    a device-agnostic graph)* -> ``offload_to_gpu(s)`` -> ``finalize_for_target(s, 'gpu')``. Callers with their own offload
     recipe (CloudSC schedules the inner maps and keeps the nblocks map sequential) substitute it
     here and never call this function. Four steps, mirroring ``auto_optimize``'s GPU tail:
 
@@ -371,11 +372,7 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     1. **Recompute-fuse** (:func:`recompute_fuse_for_gpu`): collapse producer chains into one map
        before the device move, so the single fused map is what lands on the device (register
        recompute beats the global-memory round-trip of materialized intermediates). CPU keeps the
-       materialized maps, which is why this lives here and not in ``finalize_for_target``. The
-       pre-offload band of GPU specialization
-       (:func:`~dace.transformation.passes.gpu_specialization.pipeline.gpu_specialize`) follows on the
-       fused, still device-neutral graph: it moves loops into the maps they wrap, which the offload
-       must see before it assigns kernels and storage.
+       materialized maps, which is why this lives here and not in ``finalize_for_target``.
     2. **Full offload** (unconditional): put non-transient arrays in GPU global storage
        (:func:`apply_gpu_storage`) and run ``apply_gpu_transformations`` (host<->device copies +
        ``GPU_Device`` schedules on every eligible map). Run unconditionally -- a partially-offloaded
@@ -401,7 +398,6 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     Config.set('compiler', 'cuda', 'max_concurrent_streams', value=-1)
     run_structural_cleanup(sdfg)
     recompute_fuse_for_gpu(sdfg)
-    gpu_specialize(sdfg, validate=False)
     apply_gpu_storage(sdfg)
     sdfg.apply_gpu_transformations()
     # Between the offload and the block-size choice, and it has to be exactly here. The offload
@@ -539,7 +535,7 @@ def finalize_for_target(sdfg: SDFG,
     # runs here -- BEFORE library selection, so libnode_is_sequential sees the corrected schedules.
     # On CPU that is the whole cpu_specialize stage (calibration, anti-dependence chunking,
     # oversized-intermediate recompute, the fork/join cost model, transfer specialization); on GPU
-    # it is the post-offload band of gpu specialization (the pre-offload band ran in the offload).
+    # it is the post-offload band of gpu specialization (``gpu_specialize`` ran before the offload).
     # Both are idempotent, so finalizing an already-specialized graph re-confirms the same verdicts
     # rather than compounding them.
     if device == dtypes.DeviceType.GPU:

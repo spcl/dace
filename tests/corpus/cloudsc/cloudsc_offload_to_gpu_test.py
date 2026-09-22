@@ -19,6 +19,7 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge, nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize
 
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import (BLOCK_MAP_SYMBOLS, assign_schedules, constant_offload_data,
                                                          offload_cloudsc_to_gpu, readonly_range_scalars,
@@ -137,6 +138,7 @@ def test_an_interstate_read_inside_the_kernel_binds_device_memory():
     """Interstate edges inside a kernel evaluate on the device, so the host-only rule for guard data
     must not keep the nested descriptor on the host."""
     sdfg = column_behind_an_interstate_guard()
+    gpu_specialize(sdfg)
     offload_cloudsc_to_gpu(sdfg)
     kernels = [
         n for n, _ in sdfg.all_nodes_recursive()

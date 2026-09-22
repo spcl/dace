@@ -49,7 +49,8 @@ launches a single kernel whose threads each run the sequential loop in
 registers, instead of the loop re-launching a fresh kernel every iteration --
 the kernel-launch saving dominates (``tests/ab_perf`` interchange A/B). The GPU
 specialization stage takes the loops left over, whose bodies are control flow
-over several maps, under the mirrored rule :func:`interchange_coalesces`.
+over several maps, under a fork/join cost model
+(:mod:`~dace.transformation.passes.gpu_specialization.gpu_loop_interchange`).
 
 The stride ranking reuses
 :func:`~dace.transformation.passes.minimize_stride_permutation.score_indexed_strides`
@@ -100,13 +101,6 @@ def interchange_lowers_stride(loop: LoopRegion, sdfg: SDFG) -> bool:
     """
     loop_cost, map_cost = stride_costs(loop, sdfg)
     return loop_cost < map_cost
-
-
-def interchange_coalesces(loop: LoopRegion, sdfg: SDFG) -> bool:
-    """The GPU mirror of :func:`interchange_lowers_stride`: True if a map parameter is strictly more contiguous than
-    the loop variable, so threads over the map axis coalesce once the map is outermost."""
-    costs = stride_costs(loop, sdfg)
-    return costs is not None and costs[1] < costs[0]
 
 
 @properties.make_properties

@@ -37,15 +37,15 @@ def test_gate_defaults_off(variant):
 
 @pytest.mark.parametrize('variant', OFFLOAD_VARIANTS)
 def test_gate_on_appends_offload_phase(variant):
-    """The offload phase is terminal, holds exactly the one stage, and leaves the plan before it
-    untouched -- so every earlier phase is still numeric-checked exactly as before."""
+    """The offload phase is terminal, holds GPU specialization then the offload, and leaves the plan
+    before it untouched -- so every earlier phase is still numeric-checked exactly as before."""
     off = variant_phases(variant, offload=False)
     on = variant_phases(variant, offload=True)
     assert len(on) == len(off) + 1
     assert [(name, len(stages)) for name, stages in on[:-1]] == [(name, len(stages)) for name, stages in off]
     name, stages = on[-1]
     assert name == OFFLOAD_PHASE
-    assert [label for label, _ in stages] == ['offload_to_gpu']
+    assert [label for label, _ in stages] == ['gpu_specialize', 'offload_to_gpu']
 
 
 def test_every_variant_is_offloadable():
@@ -64,12 +64,12 @@ def test_every_variant_is_offloadable():
 
 @pytest.mark.parametrize('variant', OFFLOAD_VARIANTS)
 def test_offload_stage_offloads_and_generates_cuda(variant):
-    """Applying the appended stage to a CloudSC-shaped blocked SDFG leaves a validating,
+    """Applying the appended stages to a CloudSC-shaped blocked SDFG leaves a validating,
     device-scheduled graph that code-generates a CUDA kernel -- the check the offload phase runs in
     place of ``numeric_check``."""
     sdfg = blocked_sdfg()
-    _label, apply_fn = variant_phases(variant, offload=True)[-1][1][0]
-    apply_fn(sdfg)
+    for _label, apply_fn in variant_phases(variant, offload=True)[-1][1]:
+        apply_fn(sdfg)
     sdfg.validate()
     assert 'gpu_pin' in sdfg.arrays and 'gpu_pout' in sdfg.arrays
     assert generate_cuda_code(sdfg) == 1
