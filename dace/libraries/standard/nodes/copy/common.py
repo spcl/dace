@@ -12,7 +12,7 @@ import dace
 from dace import data, nodes, dtypes, subsets, symbolic
 from dace.codegen.common import sym2cpp, get_gpu_backend
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES,
-                                            collapse_shape_and_strides)
+                                            collapse_shape_and_strides, collapse_to_elements)
 from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu
 
 if TYPE_CHECKING:
@@ -132,8 +132,8 @@ def _make_expansion_sdfg(node: "CopyLibraryNode",
                                                                         parent_state,
                                                                         allow_cross_storage=allow_cross_storage)
 
-    in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
-    out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+    in_shape_collapsed, in_strides_collapsed = collapse_to_elements(in_subset, inp.strides)
+    out_shape_collapsed, out_strides_collapsed = collapse_to_elements(out_subset, out.strides)
 
     # The label is built from data names, and a struct member carries a '.' -- the SDFG name reaches
     # C++ as an identifier (``dace/sdfg/sdfg.py`` sanitizes data names the same way).

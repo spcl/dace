@@ -71,6 +71,20 @@ def test_fill_pure_1d_cpu():
     assert np.all(B[50:100] == 0)
 
 
+@pytest.mark.parametrize('subset', ['3', '2, 5'], ids=['index', 'point_2d'])
+def test_fill_pure_writes_a_single_element(subset):
+    """A one-element subset (a loop moved into its lanes narrows a Fill to this) collapses to no dimension at all."""
+    shape = (8, ) if ',' not in subset else (4, 8)
+    sdfg = make_fill_sdfg('pure', shape, subset, gpu=False, name=f"fill_pure_one_{len(shape)}d", value=7.0)
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    B = np.ones(shape, dtype=np.float64)
+    sdfg(B=B)
+    want = np.ones(shape)
+    want[tuple(int(i) for i in subset.split(','))] = 7.0
+    np.testing.assert_array_equal(B, want)
+
+
 def test_fill_pure_3d_cpu():
     """``pure`` zeros the 3D CPU sub-block, leaving the rest unchanged."""
     sdfg = _get_multi_dim_sdfg("pure", gpu=False)

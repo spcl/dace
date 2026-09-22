@@ -66,6 +66,15 @@ def collapse_shape_and_strides(
     return collapsed_shape, collapsed_strides
 
 
+def collapse_to_elements(
+        subset: dace.subsets.Range,
+        strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
+    """:func:`collapse_shape_and_strides` for an expansion that writes element by element: a single-element
+    subset keeps one length-1 dimension instead of none, so the expansion has an index to write through."""
+    shape, strides = collapse_shape_and_strides(subset, strides)
+    return (shape, strides) if shape else ([1], [1])
+
+
 def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> bool:
     """False only when ``num_elements`` is a compile-time constant below
     ``compiler.cpu.parallel_transfer_min_elements``; a symbolic (unknown-at-compile-time) size

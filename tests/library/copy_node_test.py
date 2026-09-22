@@ -150,6 +150,24 @@ def test_copy_pure_cpu():
     assert np.all(B[100:] == 0)
 
 
+def test_copy_pure_moves_a_single_element():
+    """A one-element copy (a loop moved into its lanes narrows a Copy to this) collapses to no dimension at all."""
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=[4, 8], storage=dace.dtypes.StorageType.CPU_Heap, subset="2, 5", name="A"),
+        _ArraySpec(shape=[8], storage=dace.dtypes.StorageType.CPU_Heap, subset="3", name="B"),
+        implementation="MappedTasklet",
+        name="copy_pure_one",
+    )
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    A = np.arange(32, dtype=np.float64).reshape(4, 8)
+    B = np.zeros(8, dtype=np.float64)
+    sdfg(A=A, B=B)
+    want = np.zeros(8)
+    want[3] = A[2, 5]
+    np.testing.assert_array_equal(B, want)
+
+
 def test_copy_cpu_memcpy():
     """CPU expansion (std::memcpy) on CPU_Heap -> CPU_Heap."""
     sdfg, _ = _make_copy_sdfg(

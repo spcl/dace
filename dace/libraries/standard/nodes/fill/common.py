@@ -9,7 +9,7 @@ import numpy as np
 
 import dace
 from dace import cpf_lowering
-from dace.libraries.standard.helper import collapse_shape_and_strides
+from dace.libraries.standard.helper import collapse_to_elements
 
 if TYPE_CHECKING:
     from dace.libraries.standard.nodes.fill.node import FillLibraryNode
@@ -112,7 +112,7 @@ def make_fill_skeleton(node: "FillLibraryNode",
     :returns: ``(sdfg, state, out_name, out, map_lengths)``.
     """
     out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
-    out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+    out_shape_collapsed, out_strides_collapsed = collapse_to_elements(out_subset, out.strides)
 
     sdfg = dace.SDFG(f"{node.label}_sdfg")
     sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
