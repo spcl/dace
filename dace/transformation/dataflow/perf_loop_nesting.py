@@ -246,14 +246,46 @@ def _child_data_io(state: SDFGState, child: nodes.Node) -> Tuple[Set[str], Set[s
         scope = {child}
     reads: Set[str] = set()
     writes: Set[str] = set()
+    operands: Set[nodes.Node] = set()
+    results: Set[nodes.Node] = set()
     for e in state.edges():
         if e.data is None or e.data.data is None:
             continue
         if e.dst in scope and e.src not in scope:
             reads.add(e.data.data)
+            operands.add(e.src)
         if e.src in scope and e.dst not in scope:
             writes.add(e.data.data)
+            results.add(e.dst)
+    # The copies an operand arrives through and a result leaves through belong to the child, since
+    # fission keeps them in its duplicate (``_child_subgraph``): the container they end at is the
+    # one the child really reads or writes.
+    reads.update(n.data for n in _copy_chain(state, operands, downstream=False))
+    writes.update(n.data for n in _copy_chain(state, results, downstream=True))
     return reads, writes
+
+
+def _copy_chain(state: SDFGState, starts, downstream: bool) -> Set[nodes.AccessNode]:
+    """The top-level ``AccessNode`` s reached from ``starts`` through ``AccessNode``-to-``AccessNode``
+    copies, following the data forward (``downstream``) or back to where it came from.
+
+    :param state: The inner state to walk.
+    :param starts: The nodes to walk from; only ``AccessNode`` s continue the walk.
+    :param downstream: Follow out-edges when ``True``, in-edges otherwise.
+    :returns: The reached ``AccessNode`` s, ``starts`` excluded.
+    """
+    scope = state.scope_dict()
+    reached: Set[nodes.AccessNode] = set()
+    frontier = [n for n in starts if isinstance(n, nodes.AccessNode)]
+    while frontier:
+        node = frontier.pop()
+        edges = state.out_edges(node) if downstream else state.in_edges(node)
+        for e in edges:
+            other = e.dst if downstream else e.src
+            if isinstance(other, nodes.AccessNode) and scope[other] is None and other not in reached:
+                reached.add(other)
+                frontier.append(other)
+    return reached
 
 
 def _ordered_top_children(state: SDFGState, types=(nodes.MapEntry, nodes.Tasklet)) -> List[nodes.Node]:
@@ -537,9 +569,10 @@ def _copy_state_contents(src: SDFGState, dst: SDFGState) -> Dict[nodes.Node, nod
 def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> Set[nodes.Node]:
     """Subgraph belonging to one child map: its MapEntry, MapExit, every
     node scoped under the MapEntry, the top-level AccessNodes directly
-    connected to the entry's in-edges or exit's out-edges, and -- for an
-    imperfect nest -- the transitive top-level producer chain of any such
-    input AccessNode (the sunk intervening chain)."""
+    connected to the entry's in-edges or exit's out-edges, the copies those
+    output AccessNodes flow on through, and -- for an imperfect nest -- the
+    transitive top-level producer chain of any such input AccessNode (the
+    sunk intervening chain)."""
     ch_exit = inner_state.exit_node(ch_entry)
     scope = inner_state.scope_dict()  # Nothing below mutates `inner_state`.
     keep: Set[nodes.Node] = {ch_entry, ch_exit}
@@ -552,6 +585,10 @@ def _child_subgraph(inner_state: SDFGState, ch_entry: nodes.MapEntry) -> Set[nod
     for e in inner_state.out_edges(ch_exit):
         if isinstance(e.dst, nodes.AccessNode):
             keep.add(e.dst)
+    # A result that reaches its container through a copy (``tasklet -> transient -> hc``, npbench
+    # cegterg's ``hc[i, j] = np.conj(hc[j, i])``) takes the copy along: without it the duplicate
+    # computes the transient and never writes the container.
+    keep.update(_copy_chain(inner_state, [e.dst for e in inner_state.out_edges(ch_exit)], downstream=True))
     # Pull in the producer chain feeding kept top-level input AccessNodes so
     # the sunk intervening computation travels into every duplicate.
     while frontier:

@@ -477,3 +477,83 @@ if __name__ == "__main__":
     test_velocity_for_it_35_pattern_fissions_into_two_parents()
     test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg()
     print("OK")
+
+
+def _copied_out_children(chained: bool):
+    """``for j in map: b[j] = 2 * a[j]; d[j] = 3 * (b if chained else c)[j]``, each statement a bare
+    tasklet whose result reaches its container through a transient and a copy -- the frontend shape
+    of npbench cegterg's ``hc[i, j] = np.conj(hc[j, i]); sc[i, j] = np.conj(sc[j, i])``.
+    """
+    second_src = 'b' if chained else 'c'
+    inputs = ['a', second_src]
+    outputs = ['b', 'd']
+    inner = SDFG('copied_out_body')
+    for name in ('a', 'b', 'c', 'd'):
+        if name in inputs or name in outputs:
+            inner.add_array(name, [N], dace.float64)
+    istate = inner.add_state('body', is_start_block=True)
+    for src, dst, factor in (('a', 'b', 2), (second_src, 'd', 3)):
+        inner.add_array(f'{src}_index', [1], dace.float64, transient=True)
+        inner.add_array(f'{dst}_value', [1], dace.float64, transient=True)
+        index = istate.add_access(f'{src}_index')
+        value = istate.add_access(f'{dst}_value')
+        tasklet = istate.add_tasklet(f'scale_{dst}', {'__in'}, {'__out'}, f'__out = {factor} * __in')
+        istate.add_edge(istate.add_read(src), None, index, None, mm.Memlet(f'{src}[j]', other_subset='0'))
+        istate.add_edge(index, None, tasklet, '__in', mm.Memlet(f'{src}_index[0]'))
+        istate.add_edge(tasklet, '__out', value, None, mm.Memlet(f'{dst}_value[0]'))
+        istate.add_edge(value, None, istate.add_write(dst), None, mm.Memlet(f'{dst}_value[0]', other_subset='j'))
+
+    outer = SDFG('copied_out_chained' if chained else 'copied_out')
+    for name in ('a', 'b', 'c', 'd'):
+        outer.add_array(name, [N], dace.float64)
+    state = outer.add_state('main', is_start_block=True)
+    nsdfg = state.add_nested_sdfg(inner,
+                                  dict.fromkeys(inputs),
+                                  dict.fromkeys(outputs),
+                                  symbol_mapping={
+                                      'j': 'j',
+                                      'N': 'N'
+                                  })
+    entry, exit_ = state.add_map('parent', {'j': '0:N'})
+    for name in inputs:
+        state.add_memlet_path(state.add_read(name), entry, nsdfg, dst_conn=name, memlet=mm.Memlet(f'{name}[0:N]'))
+    for name in outputs:
+        state.add_memlet_path(nsdfg, exit_, state.add_write(name), src_conn=name, memlet=mm.Memlet(f'{name}[0:N]'))
+    outer.validate()
+    return outer, state
+
+
+def test_a_result_written_through_a_copy_survives_the_fission():
+    """Each duplicate kept its tasklet and the transient it writes, and dropped the copy on to the
+    container: cegterg never Hermitianized ``hc`` and ``sc`` and got every eigenvalue wrong."""
+    sdfg, state = _copied_out_children(chained=False)
+    assert sdfg.apply_transformations_repeated(PerfLoopNesting) == 1
+    sdfg.validate()
+    assert len(_top_level_map_entries(state)) == 2
+
+    _force_sequential_maps(sdfg)
+    a, c = np.arange(1.0, 6.0), np.arange(10.0, 15.0)
+    b, d = np.zeros(5), np.zeros(5)
+    sdfg(a=a, b=b, c=c, d=d, N=5)
+    np.testing.assert_array_equal(b, 2 * a)
+    np.testing.assert_array_equal(d, 3 * c)
+
+
+def test_a_container_written_through_a_copy_orders_its_reader_after_it():
+    """The second statement reads ``b``, which the first writes only through its copy. The conflict
+    is on the container at the end of the copy, not on the transient before it, so the reading
+    duplicate must still be ordered after the writing one."""
+    sdfg, state = _copied_out_children(chained=True)
+    assert sdfg.apply_transformations_repeated(PerfLoopNesting) == 1
+    sdfg.validate()
+    entries = _top_level_map_entries(state)
+    assert len(entries) == 2
+    ordering = [(e.src, e.dst) for e in state.edges() if e.data.is_empty() and isinstance(e.src, nodes.MapExit)]
+    assert len(ordering) == 1 and ordering[0][1] in entries, ordering
+
+    _force_sequential_maps(sdfg)
+    a = np.arange(1.0, 6.0)
+    b, c, d = np.zeros(5), np.zeros(5), np.zeros(5)
+    sdfg(a=a, b=b, c=c, d=d, N=5)
+    np.testing.assert_array_equal(b, 2 * a)
+    np.testing.assert_array_equal(d, 6 * a)
