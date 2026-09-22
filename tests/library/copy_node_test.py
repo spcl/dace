@@ -1974,6 +1974,13 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
 
     sdfg = gbar_prog.to_sdfg()
     sdfg.apply_gpu_transformations()
+    # ``a`` is updated by a host-scheduled tasklet between kernel launches (an ordinary, correct
+    # placement: ``OffloadToAccelerator`` no longer claims a scalar as device-written just because
+    # an ordering edge follows a kernel, see 4301f15e6). GPUPersistentKernel does not promote
+    # storage on its callers' behalf either -- gpu_scalar_execution_context_test.py's own scalar
+    # tester sets its accumulator's storage before applying the transform, and every thread here
+    # recomputes the same ``a`` sequence redundantly, so Register (one copy per thread) is exact.
+    sdfg.arrays['a'].storage = dace.StorageType.Register
     # The compute states, named rather than positional: the offloading places its transfers where
     # the control flow wants them, not only at the start and the sink, and a persistent kernel that
     # swallowed one would be a kernel doing its own host copy.
