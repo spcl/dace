@@ -596,7 +596,6 @@ def move_loop_into_lane_maps(loop: LoopRegion, sdfg: sd.SDFG) -> nodes.MapEntry:
     entry.map.params = [lane.name for lane in lane_syms]
     entry.map.range = ref
     propagation.propagate_memlets_state(sdfg, state)
-    sdfg.reset_cfg_list()
     return entry
 
 
