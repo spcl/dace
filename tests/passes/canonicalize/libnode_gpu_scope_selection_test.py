@@ -174,8 +174,9 @@ def test_a_contiguous_arg_reduce_takes_the_cub_expansion():
 
 
 def cuda_unit(sdfg):
+    # By target, not language: on a HIP host the same device unit is emitted as ``cpp`` for hipcc.
     with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
-        return '\n'.join(obj.clean_code for obj in sdfg.generate_code() if obj.language == 'cu')
+        return '\n'.join(obj.clean_code for obj in sdfg.generate_code() if obj.title == 'CUDA')
 
 
 def test_a_strided_arg_reduce_still_takes_the_cub_expansion():
