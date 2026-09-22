@@ -278,6 +278,41 @@ def test_fill_register_inside_kernel_routes_to_sequential():
     assert any(isinstance(n, dace.nodes.Tasklet) for n, _ in sdfg.all_nodes_recursive())
 
 
+def pure_fill_in_kernel_sdfg(name: str) -> dace.SDFG:
+    """``map i (GPU_Device) { gpuB[i, 0:4] = 5 }`` with the Fill pinned to ``pure``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('gpuB', [8, 4], dace.float64, dace.StorageType.GPU_Global)
+    state = sdfg.add_state('s')
+    me, mx = state.add_map('kernel', dict(i='0:8'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    fill_node = FillLibraryNode(name='fill_row', value=5.0)
+    fill_node.implementation = 'pure'
+    state.add_memlet_path(me, fill_node, memlet=dace.Memlet())
+    state.add_memlet_path(fill_node,
+                          mx,
+                          state.add_write('gpuB'),
+                          src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+                          memlet=dace.Memlet('gpuB[i, 0:4]'))
+    return sdfg
+
+
+def test_fill_pure_inside_a_kernel_expands_to_a_sequential_map():
+    """A device map inside a kernel is a nested kernel; the storage alone must not pick the schedule."""
+    sdfg = pure_fill_in_kernel_sdfg('fill_pure_in_kernel_schedule')
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    schedules = [n.map.schedule for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    assert schedules.count(dace.dtypes.ScheduleType.GPU_Device) == 1, schedules
+
+
+@pytest.mark.gpu
+def test_fill_pure_inside_a_kernel_writes_every_row():
+    import cupy  # Only present on GPU runners.
+    sdfg = pure_fill_in_kernel_sdfg('fill_pure_in_kernel_run')
+    gpuB = cupy.zeros((8, 4), dtype=cupy.float64)
+    sdfg(gpuB=gpuB)
+    np.testing.assert_array_equal(cupy.asnumpy(gpuB), np.full((8, 4), 5.0))
+
+
 def test_fill_single_gpu_shared_inside_kernel_expands_clean():
     """A single-element fill targeting GPU-resident storage *inside* a GPU kernel is valid device
     code (a device-side ``_out = 0``) and must expand cleanly. Regression: the ``tasklet`` guard fired
