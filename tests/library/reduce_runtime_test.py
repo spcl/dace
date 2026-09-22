@@ -427,3 +427,46 @@ def test_openmp_expansion_calls_dace_reduce():
     assert 'reduction(+ : acc)' in header
     # No runtime nesting check exists any more: SCOPE picks the shape statically in the expansion.
     assert 'omp_in_parallel' not in header
+
+
+_COMPLEX_FOLD_DRIVER = r'''
+#include <dace/dace.h>
+
+#include <cstdio>
+
+int main() {
+  const long n = 4096;
+  dace::complex128 wide(0.0, 0.0);
+  dace::complex64 narrow(0.0f, 0.0f);
+#pragma omp parallel for
+  for (long i = 0; i < n; ++i) {
+    dace::_wcr_fixed<dace::ReductionType::Sum, dace::complex128>::reduce_atomic(
+        &wide, dace::complex128(1.0, 2.0));
+    dace::wcr_fixed<dace::ReductionType::Sum, dace::complex64>::reduce_atomic(
+        &narrow, dace::complex64(1.0f, -1.0f));
+  }
+  printf("%.1f %.1f %.1f %.1f\n", wide.real(), wide.imag(), narrow.real(), narrow.imag());
+  return 0;
+}
+'''
+
+
+def test_a_complex_atomic_sum_compiles_and_folds_under_openmp(tmp_path):
+    """The host half of a device compile instantiates ``_wcr_fixed<Sum, complex>`` too, and there
+    it fell to ``#pragma omp atomic capture``, which OpenMP rejects for a complex operand: the HIP
+    unit of npbench vexx_k failed to compile on the GPU canonicalize column. Run on the host here,
+    where the same header serves an OpenMP build."""
+    cxx = _cxx('g++')
+    assert cxx is not None, 'g++ is required to compile the runtime header'
+    src = tmp_path / 'complex_fold.cpp'
+    src.write_text(_COMPLEX_FOLD_DRIVER)
+    exe = tmp_path / 'complex_fold'
+    proc = subprocess.run(
+        [cxx, '-std=c++20', '-fopenmp', '-O2', '-I', _INCLUDE,
+         str(src), '-o', str(exe)],
+        capture_output=True,
+        text=True)
+    assert proc.returncode == 0, proc.stderr
+    env = dict(os.environ, OMP_NUM_THREADS='8')
+    out = subprocess.run([str(exe)], check=True, capture_output=True, text=True, env=env).stdout.split()
+    assert [float(v) for v in out] == [4096.0, 8192.0, 4096.0, -4096.0], out

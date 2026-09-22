@@ -223,17 +223,30 @@ struct _wcr_fixed<ReductionType::Sum, uint64_t> {
 
   DACE_HDFI uint64_t operator()(const uint64_t& a, const uint64_t& b) const { return a + b; }
 };
+#endif
 
-// A complex sum on the device: no atomic takes a 16-byte operand, and the CAS fallback has none
-// to compare-and-swap either, so each component is added atomically on its own. The components
-// never interact under +, so the final value is exact; only the returned ``old`` is not one
-// consistent snapshot of the pair.
+// A complex sum. On the device no atomic takes a 16-byte operand, and the CAS fallback has none
+// to compare-and-swap either, so each component is added atomically on its own: the components
+// never interact under +, so the final value is exact, and only the returned ``old`` is not one
+// consistent snapshot of the pair. On the host it is a critical section, as for any non-scalar
+// type -- OpenMP's ``atomic`` takes scalars only. Both passes of a device compile instantiate it,
+// so it is declared in both.
 template <typename C, typename R>
 static DACE_HDFI C complex_atomic_add(C* ptr, const C& value) {
+#ifdef DACE_USE_GPU_ATOMICS
   R* parts = reinterpret_cast<R*>(ptr);
   R old_real = atomicAdd(parts, value.real());
   R old_imag = atomicAdd(parts + 1, value.imag());
   return C(old_real, old_imag);
+#else
+  C old;
+#pragma omp critical
+  {
+    old = *ptr;
+    *ptr = old + value;
+  }
+  return old;
+#endif
 }
 
 template <>
@@ -253,7 +266,6 @@ struct _wcr_fixed<ReductionType::Sum, complex128> {
 
   DACE_HDFI complex128 operator()(const complex128& a, const complex128& b) const { return a + b; }
 };
-#endif
 
 template <typename T>
 struct _wcr_fixed<ReductionType::Product, T> {
@@ -649,9 +661,8 @@ struct wcr_fixed {
   }
 };
 
-#if defined(DACE_USE_GPU_ATOMICS)
-// A complex sum is not a scalar type, but it has a device atomic (above): use it rather than the
-// CAS fallback, which cannot swap a 16-byte value.
+// A complex sum is not a scalar type, but it has an atomic of its own (above): use it rather than
+// the CAS fallback, which cannot swap a 16-byte value on the device.
 template <typename T>
 struct wcr_fixed<ReductionType::Sum, T,
                  typename std::enable_if<std::is_same<T, complex64>::value || std::is_same<T, complex128>::value>::type> {
@@ -667,7 +678,6 @@ struct wcr_fixed<ReductionType::Sum, T,
 
   DACE_HDFI T operator()(const T& a, const T& b) const { return a + b; }
 };
-#endif
 
 // When atomics are supported, use _wcr_fixed normally
 template <ReductionType REDTYPE, typename T>
