@@ -12,6 +12,7 @@ from dace import dtypes, subsets, symbolic
 from dace.utils import prod
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.memlet import Memlet
 
 
@@ -353,6 +354,17 @@ def _create_einsum_internal(sdfg: SDFG,
         # Fall back to "pure" SDFG einsum with conflict resolution
         c = state.add_write(output)
 
+        # A GPU-resident output needs device maps: the default schedule is host code, which cannot
+        # write GPU_Global memory, and validation rejects the graph (cp2k_density_matrix_trs4 on
+        # the canon GPU column, at the einsum_reset edge). Inside a kernel the same map would be a
+        # nested kernel, so there it stays sequential.
+        if is_devicelevel_gpu(sdfg, state, c):
+            schedule = dtypes.ScheduleType.Sequential
+        elif sdfg.arrays[output].storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
+            schedule = dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dtypes.ScheduleType.Default
+
         # Add state before this one to initialize the output value
         if to_init:
             # The einsum state may live in a control-flow region (a loop body), not directly in the
@@ -375,6 +387,7 @@ def _create_einsum_internal(sdfg: SDFG,
                                                                for k in einsum.output},
                                               inputs,
                                               code, {'out_%s' % output: Memlet.simple(output, output_index)},
+                                              schedule=schedule,
                                               external_edges=True)
             else:  # Scalar output
                 t = init_state.add_tasklet('einsum_reset', inputs_scalar, {'out_%s' % output}, code)
@@ -399,6 +412,7 @@ def _create_einsum_internal(sdfg: SDFG,
                                  {'out_%s' % output: Memlet.simple(output, output_index, wcr_str=wcr)},
                                  input_nodes=input_nodes,
                                  output_nodes={output: c},
+                                 schedule=schedule,
                                  external_edges=True)
     else:
         # Represent einsum as a GEMM or batched GEMM (using library nodes)
