@@ -110,8 +110,11 @@ class ParallelizeLoops(ppl.Pass):
         # order reaches 5, because lifting an outer loop can put a sibling behind a NestedSDFG
         # whose propagated memlet then fails the ``a*i+b`` write check. Sweeping graph order once
         # more afterwards costs one probe round and recovers those.
-        for order in (loop_order_key, None):
-            applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
+        # Every lift resets the CFG list of the whole tree; no probe or lift reads it (matches bind the
+        # loop by object), so one reset after the last lift does.
+        with sdfg.deferred_cfg_list_reset():
+            for order in (loop_order_key, None):
+                applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
 
         if applied:
             self.finish(sdfg)
@@ -141,18 +144,14 @@ class ParallelizeLoops(ppl.Pass):
         """
         sd = loop.sdfg
         graph = loop.parent_graph
-        ctx: Optional[LiftContext] = vars(xform).get('lift_context')
         # ``override=True`` with the loop OBJECT, the way ``fuse_states`` sets up its own
         # matches: ``PatternNode.__get__`` returns a non-int subgraph value as-is, so the
         # match resolves by identity instead of through ``cfg_list[cfg_id].node(node_id)``.
         # That drops two linear scans per candidate -- ``graph.node_id(loop)`` and the
         # ``cfg_list.index()`` inside ``cfg_id`` -- and removes any chance of a stale index
-        # resolving to the wrong block. ``LoopToMap`` never reads ``cfg_id``, so a match with no
-        # context passes -1 rather than scanning for a region a caller may not have indexed yet.
-        cfg_id = -1 if ctx is None else ctx.cfg_ids.get(graph)
-        if cfg_id is None:
-            cfg_id = graph.cfg_id  # context predates this region; fall back to the scan
-        xform.setup_match(sd, cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+        # resolving to the wrong block. ``LoopToMap`` never reads ``cfg_id``, so the match passes -1
+        # rather than resolving a list the sweep keeps stale until its last lift.
+        xform.setup_match(sd, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
         xform._pipeline_results = pipeline_results
         if not proven and not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
             return False
@@ -211,17 +210,12 @@ class ParallelizeLoops(ppl.Pass):
                 # nested SDFG; the one thing it touches outside is the ``symbol_mapping`` of the node
                 # nesting ``sd`` (``remove_symbol`` and the newly-free entries), which only the parent's
                 # free symbols read. Every other SDFG keeps its states, access nodes, blocks and
-                # nested-node mappings, so its context stays exact -- except the cfg ids, which
-                # ``reset_cfg_list`` renumbers tree-wide. The invariants are never stale. The per-loop
+                # nested-node mappings, so its context stays exact. The invariants are never stale. The per-loop
                 # body facts sit in between -- only a loop whose body now contains this lift changes.
                 del contexts[sd]
                 if mapping_keys is not None and mapping_keys != tuple(pnode.symbol_mapping.keys()):
                     contexts.pop(sd.parent_sdfg, None)
                     fresh_free_symbols.pop(sd.parent_sdfg, None)
-                if contexts:
-                    cfg_ids = {cfg: i for i, cfg in enumerate(sdfg.cfg_list)}
-                    for kept in contexts.values():
-                        kept.cfg_ids = cfg_ids
                 loop_facts.pop(loop, None)
                 # An enclosing region's read/write sets are PATCHED, not dropped. A lift adds no
                 # access -- it re-homes the ones it finds behind a nested node that re-exposes them

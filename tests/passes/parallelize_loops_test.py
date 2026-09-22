@@ -503,3 +503,24 @@ def test_a_refused_smt_write_reaches_z3_once_however_often_its_loop_is_reprobed(
     assert len(refused) == 1 and map_count(sdfg) == 1, 'the colliding scatter must stay a loop, the other lift'
     assert probes.count(refused[0]) >= 3, 'the refused loop was not re-probed, so nothing was exercised'
     assert questions == [(f'Min(i, {N - 1} - i)', 'i', '0', str(N - 1))], f'z3 was asked again: {questions}'
+
+
+def test_a_sweep_rebuilds_the_cfg_list_once(monkeypatch) -> None:
+    """Every lift rebuilt the CFG list of the whole tree, and the sweep never reads it: 9% of the
+    parallelize stage on warpx_field_gather (3300 lifts in one SDFG)."""
+    sdfg = three_independent_sweeps.to_sdfg(simplify=True)
+    lists = [sdfg.cfg_list]
+    original = dace.sdfg.state.AbstractControlFlowRegion.reset_cfg_list
+
+    def recorded(self):
+        result = original(self)
+        if sdfg.cfg_list is not lists[-1]:
+            lists.append(sdfg.cfg_list)
+        return result
+
+    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'reset_cfg_list', recorded)
+    lifted = ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    assert lifted and lifted > 1, lifted
+    assert len(lists) == 2, len(lists)
+    assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
+    sdfg.validate()
