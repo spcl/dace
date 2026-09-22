@@ -223,6 +223,91 @@ def test_dealias_interstate_edge():
     assert 'B[4]' in nodes[-1].value.as_string
 
 
+def test_dealias_interstate_edge_scalar_connector():
+    """
+    A nested SDFG reads single array elements through scalar connectors and references them by name (no subscript)
+    in an inter-state edge. The flattened tree must use the full indexed access of the outer array.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [20], dace.float64)
+
+    nsdfg = dace.SDFG('nester')
+    nsdfg.add_scalar('a', dace.float64)
+    nsdfg.add_scalar('b', dace.float64)
+    nsdfg.add_symbol('m', dace.float64)
+    nstate1 = nsdfg.add_state()
+    nstate2 = nsdfg.add_state()
+    nsdfg.add_edge(nstate1, nstate2, dace.InterstateEdge(condition='b > 0', assignments=dict(m='a + 1')))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'a': None, 'b': None}, {})
+    state.add_edge(state.add_read('A'), None, nsdfg_node, 'a', dace.Memlet('A[3]'))
+    state.add_edge(state.add_read('B'), None, nsdfg_node, 'b', dace.Memlet('B[7]'))
+
+    sdfg.validate()
+    stree = as_schedule_tree(sdfg)
+    nodes = list(stree.preorder_traversal())[1:]
+    assert [type(n) for n in nodes] == [tn.StateIfScope, tn.GotoNode, tn.AssignNode]
+    assert '(B[7] > 0)' in nodes[0].condition.as_string
+    assert nodes[-1].value.as_string == '(A[3] + 1)'
+
+
+def test_dealias_interstate_edge_scalar_connector_samearray():
+    """
+    Same as ``test_dealias_interstate_edge_scalar_connector``, but both scalar connectors read the same outer array,
+    which exercises the same-array path of dealiasing.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20], dace.float64)
+
+    nsdfg = dace.SDFG('nester')
+    nsdfg.add_scalar('a', dace.float64)
+    nsdfg.add_scalar('b', dace.float64)
+    nsdfg.add_symbol('m', dace.float64)
+    nstate1 = nsdfg.add_state()
+    nstate2 = nsdfg.add_state()
+    nsdfg.add_edge(nstate1, nstate2, dace.InterstateEdge(condition='b > 0', assignments=dict(m='a + 1')))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'a': None, 'b': None}, {})
+    state.add_edge(state.add_read('A'), None, nsdfg_node, 'a', dace.Memlet('A[3]'))
+    state.add_edge(state.add_read('A'), None, nsdfg_node, 'b', dace.Memlet('A[7]'))
+
+    sdfg.validate()
+    stree = as_schedule_tree(sdfg)
+    nodes = list(stree.preorder_traversal())[1:]
+    assert [type(n) for n in nodes] == [tn.StateIfScope, tn.GotoNode, tn.AssignNode]
+    assert '(A[7] > 0)' in nodes[0].condition.as_string
+    assert nodes[-1].value.as_string == '(A[3] + 1)'
+
+
+def test_dealias_interstate_edge_scalar_connector_in_map():
+    """
+    Frontend-generated variant: the condition of an ``if`` inside a map reads an array element, which the frontend
+    passes into the nested SDFG through a scalar connector and evaluates on an inter-state edge.
+    """
+
+    @dace.program
+    def map_cst(A: dace.float64[8], B: dace.float64[8], cstarr: dace.int32[8]):
+        for i in dace.map[0:8]:
+            if cstarr[i] > 0:
+                B[i] = A[i] + 1.0
+
+    @dace.program
+    def map_cst_and(A: dace.float64[8], B: dace.float64[8]):
+        for i in dace.map[0:8]:
+            if i >= 2 and A[i] > 4.5:
+                B[i] = A[i] + 1.0
+
+    for prog, expected in ((map_cst, 'cstarr[i]'), (map_cst_and, 'A[i]')):
+        stree = as_schedule_tree(prog.to_sdfg(simplify=True))
+        assigns = [n for n in stree.preorder_traversal() if isinstance(n, tn.AssignNode)]
+        assert len(assigns) == 1
+        assert expected in assigns[0].value.as_string
+        assert stree.as_string().count(f'({expected} > ') == 1
+
+
 if __name__ == '__main__':
     test_stree_mpath_multiscope()
     test_stree_mpath_multiscope_dependent()
@@ -236,3 +321,6 @@ if __name__ == '__main__':
     test_dealias_memlet_composition(False)
     test_dealias_memlet_composition(True)
     test_dealias_interstate_edge()
+    test_dealias_interstate_edge_scalar_connector()
+    test_dealias_interstate_edge_scalar_connector_samearray()
+    test_dealias_interstate_edge_scalar_connector_in_map()
