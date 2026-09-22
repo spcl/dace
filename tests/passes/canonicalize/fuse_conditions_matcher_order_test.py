@@ -113,3 +113,23 @@ def test_an_sdfg_without_conditionals_is_left_alone():
     sdfg = dace.SDFG('no_guards')
     sdfg.add_state('only')
     assert FuseConditions(matcher_order=True).apply_pass(sdfg, {}) is None
+
+
+def test_the_walk_lists_no_region_tree_per_fusion(monkeypatch):
+    """Listing every region of the SDFG after each fusion to find where to resume was half of the second
+    ``fuse`` stage on warpx_field_gather (978 fusions over 13000 regions); the walk resumes in place."""
+    count = 12
+    sdfg = refused_then_fusable(count)
+    walks = []
+    original = dace.sdfg.state.AbstractControlFlowRegion.all_control_flow_regions
+
+    def counted(self, recursive=False, load_ext=False, parent_first=True):
+        if self is sdfg and recursive:
+            walks.append(self)
+        return original(self, recursive, load_ext, parent_first)
+
+    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'all_control_flow_regions', counted)
+    fused = FuseConditions(matcher_order=True).apply_pass(sdfg, {})
+    monkeypatch.undo()
+    assert fused and fused >= count - 1, fused
+    assert walks == [], len(walks)

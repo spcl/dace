@@ -20,6 +20,7 @@ from dace.config import Config
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.condition_fusion import ConditionFusion
+from dace.transformation.passes.pattern_matching import child_regions
 
 #: ``ConditionFusion.expressions()`` index for the consecutive-pair match.
 CONSECUTIVE = 0
@@ -166,13 +167,23 @@ class FuseConditions(ppl.Pass):
         """
         xform = ConditionFusion()
         fused = 0
-        regions: List[AbstractControlFlowRegion] = list(sdfg.all_control_flow_regions(recursive=True))
-        index = 0
-        while index < len(regions):
-            region = regions[index]
+        # The walk as a stack of ``[region, child regions or None while its own candidates are probed, next
+        # child]`` frames, so it resumes in place instead of listing the whole tree after each fusion. A
+        # fusion rewrites only the resumed region's subtree, so every frame above it stays exact.
+        stack: List[list] = [[sdfg, None, 0]]
+        while stack:
+            frame = stack[-1]
+            region, children, index = frame
+            if children is not None:
+                if index == len(children):
+                    stack.pop()
+                else:
+                    frame[2] = index + 1
+                    stack.append([children[index], None, 0])
+                continue
             match = next((m for m in matcher_candidates(region) if self.accepts(xform, region, *m)), None)
             if match is None:
-                index += 1
+                frame[1] = child_regions(region)
                 continue
             expr_index, binding = match
             self.bind(xform, region, expr_index, binding)
@@ -180,9 +191,13 @@ class FuseConditions(ppl.Pass):
             resume = region if expr_index == CONSECUTIVE else region.parent_graph
             xform.apply(region, region.sdfg)
             fused += 1
-            regions = list(sdfg.all_control_flow_regions(recursive=True))
+            if expr_index != CONSECUTIVE:
+                stack.pop()
             earlier = any(self.accepts(xform, owner, e, b) for owner, e, b in chain_candidates(resume))
-            index = 0 if earlier else next(i for i, r in enumerate(regions) if r is resume)
+            if earlier or not stack or stack[-1][0] is not resume:
+                stack = [[sdfg, None, 0]]
+            else:
+                stack[-1] = [resume, None, 0]
         return fused or None
 
     @staticmethod
