@@ -645,6 +645,9 @@ class StateFlow:
     def __init__(self, sdfg: SDFG) -> None:
         self.succ: Dict[Tuple[str, int], List[Tuple[str, int]]] = defaultdict(list)
         self.states: Dict[int, SDFGState] = {}
+        #: ``(src id, kill id, nodes reached)`` of the last :meth:`reaches_avoiding` search: its callers
+        #: ask about one (write, kill) pair for every access in a scope, one after the other.
+        self.last_avoiding: Optional[Tuple[int, int, Set[Tuple[str, int]]]] = None
         self.add_region(sdfg)
 
     def link(self, src: Tuple[str, ControlFlowBlock], dst: Tuple[str, ControlFlowBlock]) -> None:
@@ -689,20 +692,25 @@ class StateFlow:
 
     def reaches_avoiding(self, src: SDFGState, dst: SDFGState, kill: SDFGState) -> bool:
         """Whether ``dst`` can start executing after ``src`` on a path that never runs ``kill``."""
-        target, blocked = ('in', id(dst)), ('in', id(kill))
+        last = self.last_avoiding
+        if last is None or last[0] != id(src) or last[1] != id(kill):
+            last = self.last_avoiding = (id(src), id(kill), self.reached_avoiding(src, kill))
+        return ('in', id(dst)) in last[2]
+
+    def reached_avoiding(self, src: SDFGState, kill: SDFGState) -> Set[Tuple[str, int]]:
+        """Every node a path from the exit of ``src`` reaches without running ``kill`` (``kill``'s entry included)."""
+        blocked = ('in', id(kill))
         seen = {('out', id(src))}
         work = deque(seen)
         while work:
             node = work.popleft()
-            if node == target:
-                return True
             if node == blocked:
                 continue
             for nxt in self.succ.get(node, ()):
                 if nxt not in seen:
                     seen.add(nxt)
                     work.append(nxt)
-        return False
+        return seen
 
 
 def diverting_exit_inside(region: AbstractControlFlowRegion) -> bool:
