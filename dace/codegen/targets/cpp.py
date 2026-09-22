@@ -375,7 +375,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             # Reachable through a view of a constant-folded array, so it needs ``simplify=0`` to
             # survive: np.vstack of two np.zeros/np.ones rows (tests/numpy/concat_test.py).
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
-                typedef = make_const(typedef) + '*'
+                typedef = make_const(typedef)
             elif is_write is False and const_read_only_array:
                 # Read-only array reference -> pointer-to-const, mirroring the read-only
                 # scalar branch above (a device function that only reads its array input

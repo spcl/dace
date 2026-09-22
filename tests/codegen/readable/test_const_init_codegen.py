@@ -285,10 +285,48 @@ def test_const_binding_stays_in_scope_of_its_readers():
     assert np.array_equal(res_exp, res_legacy) and np.array_equal(res_exp, X.sum(axis=0))
 
 
+TableN = dace.symbol('TableN')
+TableK = dace.symbol('TableK')
+
+
+@dace.program
+def table_two_nest_levels(a: dace.float64[TableN, 3], out: dace.float64[TableN, 3]):
+    tbl = np.ndarray([3], dtype=np.int32)
+    tbl[0] = 2
+    tbl[1] = 3
+    tbl[2] = -1
+    for i in dace.map[0:TableN]:
+        for k in range(TableK):
+            for j in dace.map[0:3]:
+                for t in range(k + 1):
+                    out[i, j] = out[i, j] + a[i, j] * tbl[(j + t) % 3] + t
+
+
+def test_constexpr_table_passed_through_two_nested_sdfg_levels():
+    """A constexpr table reaching a nested SDFG's nested SDFG whole stays a ``const T*`` parameter."""
+    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'), \
+            set_temporary('compiler', 'cpu', 'codegen_params', 'const_init', value='on'):
+        sdfg = table_two_nest_levels.to_sdfg(simplify=True)
+        code = sdfg.generate_code()[0].clean_code
+        assert re.search(r'constexpr\s+int\s+tbl\[3\]\s*=\s*\{2, 3, -1\}', code)
+        assert 'int**' not in code
+        a = np.random.default_rng(0).random((5, 3))
+        out = np.zeros((5, 3))
+        sdfg(a=a, out=out, TableN=5, TableK=4)
+    tbl = np.array([2, 3, -1])
+    ref = np.zeros((5, 3))
+    for k in range(4):
+        for j in range(3):
+            for t in range(k + 1):
+                ref[:, j] += a[:, j] * tbl[(j + t) % 3] + t
+    assert np.allclose(out, ref)
+
+
 if __name__ == '__main__':
     test_scalar_constexpr_no_memset()
     test_array_constexpr_full_no_memset()
     test_array_constexpr_partial_zerofill()
     test_scalar_constant_subscript_lowered_to_bare_name()
     test_const_binding_stays_in_scope_of_its_readers()
+    test_constexpr_table_passed_through_two_nested_sdfg_levels()
     print('ok')

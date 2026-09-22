@@ -1236,10 +1236,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         outside_symbols = sdfg.arglist(free_symbols=top_used_symbols) if is_top_level else set()
 
-        # Define constants as top-level-allocated
+        # Define constants as top-level-allocated. A constexpr array registers its POINTER ctype, as every
+        # allocation site does: a nested SDFG's parameter bound to it registers the pointer too, so the
+        # element ctype here made one consumer add the ``*`` itself and the next level add it again.
         for cname, (ctype, _) in sdfg.constants_prop.items():
             if isinstance(ctype, data.Array):
-                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, ctype.dtype.ctype)
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer,
+                                                 'const ' + dtypes.pointer(ctype.dtype).ctype)
             else:
                 self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
 
