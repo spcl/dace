@@ -2989,8 +2989,12 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         """
         # TODO: Refactor
         sub_cfg_list = self._cfg_list
+        # By identity through a set: ``g not in sub_cfg_list`` scanned the whole list per CFG, quadratic
+        # when a nested SDFG joins a tree of thousands of regions (warpx_field_gather, once per lift).
+        present = {id(g) for g in sub_cfg_list}
         for g in cfg_list:
-            if g not in sub_cfg_list:
+            if id(g) not in present:
+                present.add(id(g))
                 sub_cfg_list.append(g)
         ptarget = None
         if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:

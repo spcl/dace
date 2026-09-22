@@ -117,7 +117,32 @@ def test_copied_nested_sdfg_is_registered_when_added():
     assert [id(cfg) for cfg in sdfg.cfg_list] == before
 
 
+class CountingList(list):
+    """A CFG list that counts membership scans."""
+    scans = 0
+
+    def __contains__(self, item):
+        CountingList.scans += 1
+        return super().__contains__(item)
+
+
+def test_joining_a_nested_sdfg_scans_no_cfg_list_per_region():
+    """``update_cfg_list`` asked ``g not in cfg_list`` per region, a scan of the whole tree's list each:
+    quadratic once a tree holds thousands of regions (warpx_field_gather, once per LoopToMap lift)."""
+    outer = dace.SDFG('outer')
+    state = outer.add_state('host', is_start_block=True)
+    inner = nested_with_conditional('inner')
+    outer._cfg_list = CountingList(outer._cfg_list)
+    CountingList.scans = 0
+    state.add_nested_sdfg(inner, {}, {})
+    # One scan is the node's own "already registered?" check, whatever the size of ``inner``.
+    assert CountingList.scans <= 1, CountingList.scans
+    outer.reset_cfg_list()
+    assert_all_registered(outer)
+
+
 if __name__ == '__main__':
     test_regions_are_registered_when_added()
     test_registration_survives_serialization_round_trip()
     test_copied_nested_sdfg_is_registered_when_added()
+    test_joining_a_nested_sdfg_scans_no_cfg_list_per_region()
