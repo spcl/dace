@@ -215,8 +215,8 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
 
     ``SymbolSSA`` is deliberately NOT here. State fusion does union the interstate assignments of
     the states it merges, so the phase can mint a chain assigning one symbol several times over --
-    but versioning those at every boundary buys nothing the single run after ``ShortLoopUnroll``
-    has not already bought, and this phase runs at nine of them.
+    but versioning those at every boundary buys nothing the runs after ``ShortLoopUnroll`` and at
+    ``ssa`` have not already bought, and this phase runs at nine of them.
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs, in order.
@@ -1371,6 +1371,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # the CFG; MUST precede LoopToMap. Re-unique the iterators (ssa) so the
     # distributed siblings are independent.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp()), ('ssa', unique_loop_iterators_ssa)]
+    # Symbol webs get one name each before any dependence question is asked: peeling and fission
+    # copied bodies that reassign the body's own ``idx = arr[k]``, so a loop and its peeled copy
+    # share names and the loop appears to export them (CloudSC's ``llfall_index_*`` blocked
+    # MoveLoopIntoMap). Every later canon pass may assume one defining web per interstate symbol.
+    s += [('ssa', SymbolSSA())]
 
     # NOTE: MoveLoopInvariantIfUp is deliberately NOT wired here. It is the dual of
     # the earlier ``MoveIfIntoLoop`` stage, so hoisting guards back out here would
