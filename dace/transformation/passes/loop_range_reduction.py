@@ -9,8 +9,8 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 import numpy as np
 import sympy
 
-import dace
 from dace import SDFG, dtypes, symbolic
+from dace.frontend.python import astutils
 from dace.properties import CodeBlock, Property, make_properties
 from dace.sdfg import InterstateEdge
 from dace.sdfg import nodes as nd
@@ -40,9 +40,25 @@ _MIRRORED_OP = {
     ast.NotEq: ast.NotEq,
 }
 
-# Functions that may appear in a symbolic loop bound (they are understood by ``pystr_to_symbolic`` and by code
-# generation of loop headers).
-_SYMBOLIC_FUNCTIONS = {'min', 'max', 'Min', 'Max', 'int_ceil', 'int_floor', 'abs', 'Abs', 'ceiling', 'floor'}
+# Functions that may appear in a symbolic bound, mapped to their symbolic counterparts (all of them are understood by
+# the code generator in loop headers).
+_SYMBOLIC_FUNCTIONS = {
+    'min': sympy.Min,
+    'max': sympy.Max,
+    'Min': sympy.Min,
+    'Max': sympy.Max,
+    'int_ceil': symbolic.int_ceil,
+    'int_floor': symbolic.int_floor,
+    'abs': sympy.Abs,
+    'Abs': sympy.Abs,
+    'ceiling': sympy.ceiling,
+    'floor': sympy.floor,
+}
+
+# Node types allowed in a symbolic bound (besides whitelisted calls) and in a constant-evaluated atom.
+_SYMBOLIC_BOUND_NODES = (ast.Name, ast.Constant, ast.BinOp, ast.UnaryOp, ast.operator, ast.unaryop, ast.expr_context)
+_CONSTANT_ATOM_NODES = (ast.Compare, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Name, ast.Constant, ast.Subscript,
+                        ast.Tuple, ast.operator, ast.unaryop, ast.cmpop, ast.boolop, ast.expr_context)
 
 # Upper bound on the number of conjunctive clauses a guard is allowed to expand into.
 _MAX_CLAUSES = 64
@@ -63,7 +79,7 @@ class _LoopInfo(NamedTuple):
     start: sympy.Expr
     end: sympy.Expr  # Inclusive last iterate under normal termination
     stride: int
-    op: str  # Comparison operator of the original loop condition ('<', '<=', '>', '>=')
+    op: type  # Comparison operator class of the original loop condition, with the iteration variable on the left
     body_defined: Set[str]  # Symbols (re-)assigned anywhere inside the loop body
 
     @property
@@ -92,22 +108,10 @@ class _Guard(NamedTuple):
     prologue_symbols: Set[str]  # Symbols assigned on those edges
 
 
-class _Substitute(ast.NodeTransformer):
-    """Replace reads of symbols by expressions."""
-
-    def __init__(self, replacements: Dict[str, ast.expr]):
-        self.replacements = replacements
-
-    def visit_Name(self, node: ast.Name):
-        if isinstance(node.ctx, ast.Load) and node.id in self.replacements:
-            return copy.deepcopy(self.replacements[node.id])
-        return node
-
-
 def _num(expr) -> Optional[sympy.Number]:
     """``expr`` simplified, if it reduces to a concrete number, else ``None``."""
     try:
-        simplified = sympy.simplify(expr)
+        simplified = symbolic.simplify(expr)
     except Exception:
         return None
     return simplified if getattr(simplified, 'is_number', False) else None
@@ -144,15 +148,21 @@ def _provably_before(a: _Interval, b: _Interval) -> bool:
     return gap is not None and gap > 0
 
 
-def _mentions(node: ast.AST, name: str) -> bool:
-    return any(isinstance(n, ast.Name) and n.id == name for n in ast.walk(node))
+def _names(node: ast.AST) -> Set[str]:
+    """Names read in ``node`` (function names excluded)."""
+    return set(symbolic.symbols_in_ast(node))
 
 
 def _expr_of(code: CodeBlock) -> ast.expr:
+    """A private copy of the expression in a single-expression Python code block."""
     node = code.code[0]
     if isinstance(node, ast.Expr):
         node = node.value
-    return copy.deepcopy(node)
+    return astutils.copy_tree(node)
+
+
+def _negated(node: ast.expr) -> ast.expr:
+    return astutils.negate_expr(node).value
 
 
 def _conjunction(atoms: Sequence[ast.expr]) -> ast.expr:
@@ -161,8 +171,8 @@ def _conjunction(atoms: Sequence[ast.expr]) -> ast.expr:
     return ast.BoolOp(op=ast.And(), values=list(atoms))
 
 
-def _unparse(node: ast.AST) -> str:
-    return ast.unparse(ast.fix_missing_locations(copy.deepcopy(node)))
+def _code_block(expr: ast.expr) -> CodeBlock:
+    return CodeBlock([ast.fix_missing_locations(ast.Expr(value=astutils.copy_tree(expr)))])
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -202,18 +212,38 @@ def _dnf(node: ast.AST, negate: bool = False) -> Optional[List[List[ast.expr]]]:
             for k in range(len(node.ops))
         ]
         return _dnf(ast.BoolOp(op=ast.And(), values=atoms), negate)
-    if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+    if astutils.is_constant(node) and isinstance(node.value, bool):
         return [[]] if node.value != negate else []
     if negate:
         if isinstance(node, ast.Compare) and type(node.ops[0]) in _NEGATED_OP:
             return [[ast.Compare(left=node.left, ops=[_NEGATED_OP[type(node.ops[0])]()], comparators=node.comparators)]]
-        node = ast.UnaryOp(op=ast.Not(), operand=node)
+        node = _negated(node)
     return [[node]]
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Atom analysis
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+def _symbolic_namespace(sdfg: SDFG, names: Set[str]) -> Optional[Dict[str, Any]]:
+    """Evaluation namespace that turns an integer expression over ``names`` into a symbolic expression: SDFG symbols
+    become typed symbol objects, scalar constants their values. ``None`` if a name is data or a non-integer symbol."""
+    namespace: Dict[str, Any] = dict(_SYMBOLIC_FUNCTIONS)
+    constants = sdfg.constants
+    for name in names:
+        if name in constants and not isinstance(constants[name], np.ndarray):
+            namespace[name] = constants[name]
+        elif name in sdfg.arrays or name in constants:
+            return None
+        elif name in sdfg.symbols:
+            dtype = sdfg.symbols[name]
+            if not np.issubdtype(dtype.type, np.integer):
+                return None
+            namespace[name] = symbolic.symbol(name, dtype)
+        else:
+            namespace[name] = symbolic.symbol(name)
+    return namespace
 
 
 def _symbolic_atom(atom: ast.expr, info: _LoopInfo) -> Optional[List[_Interval]]:
@@ -226,44 +256,37 @@ def _symbolic_atom(atom: ast.expr, info: _LoopInfo) -> Optional[List[_Interval]]
         return None
     left, right = atom.left, atom.comparators[0]
     itervar = info.itervar
-    if isinstance(left, ast.Name) and left.id == itervar and not _mentions(right, itervar):
+    if isinstance(left, ast.Name) and left.id == itervar and itervar not in _names(right):
         other = right
-    elif isinstance(right, ast.Name) and right.id == itervar and not _mentions(left, itervar):
+    elif isinstance(right, ast.Name) and right.id == itervar and itervar not in _names(left):
         other = left
         opcls = _MIRRORED_OP[opcls]
     else:
         return None
 
-    sdfg = info.loop.sdfg
     for n in ast.walk(other):
-        if isinstance(n, ast.Name):
-            if n.id in sdfg.arrays or n.id in info.body_defined:
-                return None  # Reads data or a symbol that changes inside the loop.
-        elif isinstance(n, ast.Constant):
-            if not isinstance(n.value, int) or isinstance(n.value, bool):
-                return None
-        elif isinstance(n, ast.Call):
+        if isinstance(n, ast.Call):
             if not isinstance(n.func, ast.Name) or n.func.id not in _SYMBOLIC_FUNCTIONS:
                 return None
-        elif not isinstance(n, (ast.BinOp, ast.UnaryOp, ast.operator, ast.unaryop, ast.expr_context)):
+        elif astutils.is_constant(n):
+            if not isinstance(n.value, int) or isinstance(n.value, bool):
+                return None
+        elif not isinstance(n, _SYMBOLIC_BOUND_NODES):
             return None
-    try:
-        bound = symbolic.pystr_to_symbolic(_unparse(other))
-    except Exception:
+    names = _names(other)
+    if names & info.body_defined:
+        return None  # Depends on a symbol that changes inside the loop.
+    namespace = _symbolic_namespace(info.loop.sdfg, names)
+    if namespace is None:
         return None
-    # Fold in scalar compile-time constants.
-    constants = sdfg.constants
-    substitutions = {
-        s: constants[str(s)]
-        for s in bound.free_symbols if str(s) in constants and not isinstance(constants[str(s)], np.ndarray)
-    }
-    if substitutions:
-        bound = bound.subs(substitutions)
+    try:
+        # ``evalnode`` yields a symbolic expression over the DaCe symbols of the namespace (or a plain number,
+        # which ``pystr_to_symbolic`` converts).
+        bound = symbolic.pystr_to_symbolic(astutils.evalnode(other, namespace))
+    except (SyntaxError, TypeError, sympy.SympifyError):
+        return None
     if bound.is_number and not bound.is_integer:
         return None
-    for s in bound.free_symbols:
-        if str(s) in sdfg.symbols and not np.issubdtype(sdfg.symbols[str(s)].type, np.integer):
-            return None
 
     if opcls is ast.Lt:
         return [_Interval(None, bound - 1)]
@@ -278,8 +301,26 @@ def _symbolic_atom(atom: ast.expr, info: _LoopInfo) -> Optional[List[_Interval]]
     return [_Interval(None, bound - 1), _Interval(bound + 1, None)]  # NotEq
 
 
-_CONSTANT_ATOM_NODES = (ast.Compare, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Name, ast.Constant, ast.Subscript,
-                        ast.Tuple, ast.operator, ast.unaryop, ast.cmpop, ast.boolop, ast.expr_context)
+def _index_domain(index: ast.expr, extent: int, info: _LoopInfo, constants: Dict[str, Any]) -> Optional[_Interval]:
+    """Iterates for which the constant-array index expression ``index`` (``a * i + b``) is within ``[0, extent)``.
+    ``None`` if the index is not affine in the iteration variable with integer coefficients."""
+    namespace = dict(_SYMBOLIC_FUNCTIONS)
+    namespace.update({k: v for k, v in constants.items() if not isinstance(v, np.ndarray)})
+    itersym = symbolic.symbol(info.itervar)
+    namespace[info.itervar] = itersym
+    try:
+        expr = symbolic.pystr_to_symbolic(astutils.evalnode(index, namespace))
+        slope = symbolic.simplify(expr.diff(itersym))
+        offset = symbolic.simplify(expr - slope * itersym)
+    except (SyntaxError, sympy.SympifyError, TypeError, AttributeError):
+        return None
+    if not (slope.is_number and slope.is_integer and slope != 0 and offset.is_number and offset.is_integer):
+        return None
+    first = sympy.Rational(-offset, slope)
+    last = sympy.Rational(extent - 1 - offset, slope)
+    if slope < 0:
+        first, last = last, first
+    return _Interval(sympy.ceiling(first), sympy.floor(last))
 
 
 def _constant_atom(atom: ast.expr, info: _LoopInfo, max_enumeration: int) -> Optional[List[_Interval]]:
@@ -287,41 +328,23 @@ def _constant_atom(atom: ast.expr, info: _LoopInfo, max_enumeration: int) -> Opt
     variable and compile-time constants (``sdfg.constants``), e.g. ``cst[i] > 0``. The atom is evaluated for every
     iterate in its finite domain and consecutive true iterates form the intervals. ``None`` if the atom is not
     of that kind or its domain cannot be bounded."""
-    sdfg = info.loop.sdfg
-    constants = sdfg.constants
+    constants = info.loop.sdfg.constants
     itervar = info.itervar
-    for n in ast.walk(atom):
-        if isinstance(n, ast.Name):
-            if n.id != itervar and n.id not in constants:
-                return None
-        elif not isinstance(n, _CONSTANT_ATOM_NODES):
-            return None
-
-    try:
-        code = compile(ast.fix_missing_locations(ast.Expression(body=copy.deepcopy(atom))), '<guard>', 'eval')
-    except Exception:
+    if any(not isinstance(n, _CONSTANT_ATOM_NODES) for n in ast.walk(atom)):
         return None
-    namespace: Dict[str, Any] = dict(constants)
+    names = _names(atom)
+    if not names <= set(constants) | {itervar}:
+        return None
 
-    def evaluate(iterate: Optional[int]) -> Optional[bool]:
-        if iterate is not None:
-            namespace[itervar] = iterate
-        try:
-            return bool(eval(code, {'__builtins__': {}}, namespace))
-        except Exception:
-            return None
-
-    if not _mentions(atom, itervar):
+    if itervar not in names:
         # Loop-invariant constant expression: a tautology or a contradiction.
-        value = evaluate(None)
-        if value is None:
+        try:
+            return [_UNBOUNDED] if astutils.evalnode(atom, dict(constants)) else []
+        except SyntaxError:
             return None
-        return [_UNBOUNDED] if value else []
 
     # Bound the domain of the iteration variable from the constant arrays it indexes (an out-of-bounds index is
     # undefined behavior, so those iterates may be assumed never to be visited), and from a constant loop range.
-    itersym = symbolic.pystr_to_symbolic(itervar)
-    scalar_constants = {symbolic.pystr_to_symbolic(k): v for k, v in constants.items() if not isinstance(v, np.ndarray)}
     domain = _UNBOUNDED
     for n in ast.walk(atom):
         if not isinstance(n, ast.Subscript):
@@ -330,36 +353,22 @@ def _constant_atom(atom: ast.expr, info: _LoopInfo, max_enumeration: int) -> Opt
             return None
         array = constants[n.value.id]
         indices = list(n.slice.elts) if isinstance(n.slice, ast.Tuple) else [n.slice]
-        if len(indices) != array.ndim:
+        if len(indices) != array.ndim or any(isinstance(index, ast.Slice) for index in indices):
             return None
         for dim, index in enumerate(indices):
-            if isinstance(index, ast.Slice):
-                return None
-            if not _mentions(index, itervar):
+            if itervar not in _names(index):
                 # Constant index: it must be in bounds (a negative index would silently wrap in Python).
                 try:
-                    value = eval(
-                        compile(ast.fix_missing_locations(ast.Expression(body=copy.deepcopy(index))), '<index>',
-                                'eval'), {'__builtins__': {}}, dict(constants))
-                except Exception:
+                    value = int(astutils.evalnode(index, dict(constants)))
+                except (SyntaxError, TypeError, ValueError):
                     return None
-                if not (0 <= int(value) < array.shape[dim]):
+                if not (0 <= value < array.shape[dim]):
                     return None
                 continue
-            try:
-                index_expr = symbolic.pystr_to_symbolic(_unparse(index)).subs(scalar_constants)
-                slope = sympy.simplify(index_expr.diff(itersym))
-                offset = sympy.simplify(index_expr - slope * itersym)
-            except Exception:
+            index_domain = _index_domain(index, array.shape[dim], info, constants)
+            if index_domain is None:
                 return None
-            if not (slope.is_number and slope.is_integer and slope != 0 and offset.is_number and offset.is_integer):
-                return None  # Only affine indices ``a * i + b`` with integer ``a``, ``b`` are supported.
-            # In-bounds iterates: 0 <= a * i + b <= shape - 1.
-            first = sympy.Rational(-offset, slope)
-            last = sympy.Rational(array.shape[dim] - 1 - offset, slope)
-            if slope < 0:
-                first, last = last, first
-            domain = _intersect(domain, _Interval(sympy.ceiling(first), sympy.floor(last)))
+            domain = _intersect(domain, index_domain)
     start_num, end_num = _num(info.start), _num(info.end)
     if start_num is not None and end_num is not None:
         domain = _intersect(domain, _Interval(sympy.Min(start_num, end_num), sympy.Max(start_num, end_num)))
@@ -379,14 +388,22 @@ def _constant_atom(atom: ast.expr, info: _LoopInfo, max_enumeration: int) -> Opt
     else:
         candidates = list(range(lo, hi + 1))
 
+    # The atom as a function of the iteration variable, evaluated in a namespace holding only the constants.
+    arguments = ast.arguments(posonlyargs=[], args=[ast.arg(arg=itervar)], kwonlyargs=[], kw_defaults=[], defaults=[])
+    try:
+        predicate = astutils.evalnode(ast.Lambda(args=arguments, body=atom), dict(constants))
+    except SyntaxError:
+        return None
+
     intervals: List[_Interval] = []
     run_start: Optional[int] = None
     previous: Optional[int] = None
     for k in candidates:
-        value = evaluate(k)
-        if value is None:
+        try:
+            holds = bool(predicate(k))
+        except Exception:
             return None
-        if value:
+        if holds:
             if run_start is None:
                 run_start = k
             previous = k
@@ -419,21 +436,6 @@ def _is_empty_region(region: ControlFlowRegion) -> bool:
     return all(e.data.is_unconditional() and not e.data.assignments for e in region.edges())
 
 
-def _has_direct_break(region) -> bool:
-    """Whether ``region`` contains a ``break`` that targets it (breaks of nested loops do not count)."""
-    for block in region.nodes():
-        if isinstance(block, BreakBlock):
-            return True
-        if isinstance(block, LoopRegion):
-            continue
-        if isinstance(block, ConditionalBlock):
-            if any(_has_direct_break(branch) for _, branch in block.branches):
-                return True
-        elif isinstance(block, ControlFlowRegion) and _has_direct_break(block):
-            return True
-    return False
-
-
 def _symbols_defined_in(loop: LoopRegion) -> Set[str]:
     """Symbols assigned anywhere inside the loop body (inter-state edges and nested loop headers)."""
     defined: Set[str] = set()
@@ -449,9 +451,9 @@ def _symbols_defined_in(loop: LoopRegion) -> Set[str]:
             if stmt_block is None or stmt_block.language != dtypes.Language.Python:
                 continue
             for stmt in stmt_block.code:
-                for target in getattr(stmt, 'targets', []):
-                    if isinstance(target, ast.Name):
-                        defined.add(target.id)
+                visitor = astutils.FindAssignment()
+                visitor.visit(stmt)
+                defined.update(visitor.assignments.keys())
     return defined
 
 
@@ -461,45 +463,39 @@ def _loop_info(loop: LoopRegion) -> Optional[_LoopInfo]:
         return None
     if any(code.language != dtypes.Language.Python for code in loop.get_meta_codeblocks()):
         return None
+    itervar = loop.loop_variable
     start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
     stride_expr = loop_analysis.get_loop_stride(loop)
-    if start is None or stride_expr is None:
+    if start is None or end is None or stride_expr is None:
         return None
     stride_value = symbolic.resolve_symbol_to_constant(stride_expr, loop.sdfg)
     if stride_value is None or float(stride_value) != int(stride_value) or int(stride_value) == 0:
         return None
     stride = int(stride_value)
+    if itervar in map(str, start.free_symbols) or itervar in map(str, end.free_symbols):
+        return None
 
-    try:
-        condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
-    except Exception:
+    # ``get_loop_end`` accepts ``i <cmp> bound`` for any of the four inequalities; the direction must match the stride.
+    condition = loop.loop_condition.code[0]
+    if isinstance(condition, ast.Expr):
+        condition = condition.value
+    if not isinstance(condition, ast.Compare) or len(condition.ops) != 1:
         return None
-    itersym = symbolic.pystr_to_symbolic(loop.loop_variable)
-    wild = sympy.Wild('a')
-    op = None
-    for candidate_op, pattern in (('<', itersym < wild), ('<=', itersym <= wild), ('>', itersym > wild), ('>=', itersym
-                                                                                                          >= wild)):
-        match = condition.match(pattern)
-        if match:
-            op = candidate_op
-            bound = match[wild]
-            break
-    if op is None:
+    op = type(condition.ops[0])
+    if not (isinstance(condition.left, ast.Name) and condition.left.id == itervar):
+        op = _MIRRORED_OP.get(op, None)
+    if op not in (ast.Lt, ast.LtE, ast.Gt, ast.GtE) or (stride > 0) != (op in (ast.Lt, ast.LtE)):
         return None
-    if itersym in bound.free_symbols or itersym in start.free_symbols:
-        return None
-    if (stride > 0) != (op in ('<', '<=')):
-        return None
-    end = {'<': bound - 1, '<=': bound, '>': bound + 1, '>=': bound}[op]
 
     body_defined = _symbols_defined_in(loop)
-    if loop.loop_variable in body_defined:
+    if itervar in body_defined:
         return None
     # The reduced loops evaluate the original init expression again (and the guard bounds only once), so the
     # symbols they depend on must not change inside the loop.
     if any(str(s) in body_defined for s in itertools.chain(start.free_symbols, end.free_symbols)):
         return None
-    return _LoopInfo(loop, loop.loop_variable, start, end, stride, op, body_defined)
+    return _LoopInfo(loop, itervar, start, end, stride, op, body_defined)
 
 
 def _find_guard(loop: LoopRegion) -> Optional[_Guard]:
@@ -546,49 +542,24 @@ def _find_guard(loop: LoopRegion) -> Optional[_Guard]:
         return None
     index, cond, branch = live[0]
     # An if/elif/else chain: the live branch runs iff its condition holds and no earlier condition does.
-    atoms: List[ast.expr] = [
-        ast.UnaryOp(op=ast.Not(), operand=_expr_of(c)) for c, _ in guard.branches[:index] if c is not None
-    ]
+    atoms: List[ast.expr] = [_negated(_expr_of(c)) for c, _ in guard.branches[:index] if c is not None]
     if cond is not None:
         atoms.append(_expr_of(cond))
     elif not atoms:
         return None
     condition = _conjunction(atoms)
 
-    # Fold the prologue assignments into the condition, last edge first, so that the condition is expressed in
-    # terms of the values at the start of the iteration.
+    # Fold the prologue assignments into the condition, last assignment first (assignments of one edge are applied
+    # in order), so that the condition is expressed in terms of the values at the start of the iteration.
     prologue_symbols: Set[str] = set()
     for edge in reversed(prologue):
-        assignments = edge.data.assignments
-        if not assignments:
-            continue
-        try:
-            replacements = {name: ast.parse(rhs, mode='eval').body for name, rhs in assignments.items()}
-        except SyntaxError:
-            return None
-        # Assignments of one edge are evaluated together; a right-hand side reading a symbol assigned on the same
-        # edge would make the substitution order-dependent.
-        if any(_mentions(rhs, name) for rhs in replacements.values() for name in replacements):
-            return None
-        condition = _Substitute(replacements).visit(condition)
-        prologue_symbols.update(assignments.keys())
+        for name, rhs in reversed(list(edge.data.assignments.items())):
+            try:
+                condition = astutils.ASTFindReplace({name: rhs}).visit(condition)
+            except SyntaxError:
+                return None
+            prologue_symbols.add(name)
     return _Guard(guard, branch, condition, prologue, prologue_symbols)
-
-
-def _drop_dead_prologue_assignments(guard: _Guard) -> None:
-    """Remove prologue assignments that only fed the guard condition, which has been folded into the loop range."""
-    needed = set(guard.branch.used_symbols(all_symbols=True))
-    remaining = [(edge, name, rhs) for edge in guard.prologue for name, rhs in edge.data.assignments.items()]
-    while True:
-        referenced = set(needed)
-        for _, _, rhs in remaining:
-            referenced |= set(symbolic.free_symbols_and_functions(rhs))
-        dead = [entry for entry in remaining if entry[1] not in referenced]
-        if not dead:
-            return
-        for edge, name, _ in dead:
-            edge.data.assignments = {k: v for k, v in edge.data.assignments.items() if k != name}
-        remaining = [entry for entry in remaining if entry[1] in referenced]
 
 
 def _symbol_used_outside(loop: LoopRegion, symbol: str) -> bool:
@@ -625,25 +596,17 @@ def _symbol_used_outside(loop: LoopRegion, symbol: str) -> bool:
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _reparent_copied_region(region, sdfg: SDFG) -> None:
-    """Restore the pointers ``copy.deepcopy`` drops on a control-flow subtree (see ``LoopUnroll``)."""
-    blocks = [region] + list(region.all_control_flow_blocks())
-    for block in blocks:
-        block.sdfg = sdfg
-    for state in region.all_states():
-        for node in state.nodes():
-            if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
-                node.sdfg.parent = state
-                node.sdfg.parent_sdfg = sdfg
-                node.sdfg.parent_nsdfg_node = node
-
-
-def _repair_moved_block(block, sdfg: SDFG) -> None:
+def _reparent(block, sdfg: SDFG) -> None:
+    """Restore the pointers that copying a control-flow block drops: the ``sdfg`` of every contained block and the
+    parent references of nested SDFGs (see ``LoopUnroll``)."""
+    if isinstance(block, (BreakBlock, ContinueBlock, ReturnBlock)):
+        return
     if isinstance(block, SDFGState):
-        states = [] if isinstance(block, (BreakBlock, ContinueBlock, ReturnBlock)) else [block]
-    elif isinstance(block, (BreakBlock, ContinueBlock, ReturnBlock)):
-        states = []
+        block.sdfg = sdfg
+        states = [block]
     else:
+        for inner in itertools.chain([block], block.all_control_flow_blocks()):
+            inner.sdfg = sdfg
         states = list(block.all_states())
     for state in states:
         for node in state.nodes():
@@ -667,7 +630,7 @@ def _new_header(info: _LoopInfo, interval: _Interval) -> Tuple[Optional[str], Op
                 first = start + stride * symbolic.int_ceil(sympy.Max(0, interval.lo - start), stride)
             init = f'{itervar} = {symbolic.symstr(first)}'
         if interval.hi is not None:
-            if info.op == '<':
+            if info.op is ast.Lt:
                 condition = f'{itervar} < {symbolic.symstr(sympy.Min(end + 1, interval.hi + 1))}'
             else:
                 condition = f'{itervar} <= {symbolic.symstr(sympy.Min(end, interval.hi))}'
@@ -680,7 +643,7 @@ def _new_header(info: _LoopInfo, interval: _Interval) -> Tuple[Optional[str], Op
                 first = start - step * symbolic.int_ceil(sympy.Max(0, start - interval.hi), step)
             init = f'{itervar} = {symbolic.symstr(first)}'
         if interval.lo is not None:
-            if info.op == '>':
+            if info.op is ast.Gt:
                 condition = f'{itervar} > {symbolic.symstr(sympy.Max(end - 1, interval.lo - 1))}'
             else:
                 condition = f'{itervar} >= {symbolic.symstr(sympy.Max(end, interval.lo))}'
@@ -697,19 +660,34 @@ def _specialize_loop(new_loop: LoopRegion, info: _LoopInfo, rng: _Range) -> None
 
     guard = next(n for n in new_loop.nodes() if isinstance(n, ConditionalBlock))
     live_branch = next(b for _, b in guard.branches if not _is_empty_region(b))
-    sdfg = new_loop.sdfg
     if rng.residual:
         # Keep the conditional, guarded only by what could not be folded into the range.
-        guard._branches = [(CodeBlock(_unparse(_conjunction(rng.residual))), live_branch)]
+        guard._branches = [(_code_block(_conjunction(rng.residual)), live_branch)]
         return
     existing = {n.label for n in new_loop.nodes()}
     before = {id(n) for n in new_loop.nodes()}
     move_branch_cfg_up_discard_conditions(guard, live_branch)
     for moved in [n for n in new_loop.nodes() if id(n) not in before]:
         if moved.label in existing:
-            moved.label = dace.utils.find_new_name(moved.label, existing)
+            moved.label = new_loop._ensure_unique_block_name(moved.label)
         existing.add(moved.label)
-        _repair_moved_block(moved, sdfg)
+        _reparent(moved, new_loop.sdfg)
+
+
+def _drop_dead_prologue_assignments(guard: _Guard) -> None:
+    """Remove prologue assignments that only fed the guard condition, which has been folded into the loop range."""
+    needed = set(guard.branch.used_symbols(all_symbols=True))
+    remaining = [(edge, name, rhs) for edge in guard.prologue for name, rhs in edge.data.assignments.items()]
+    while True:
+        referenced = set(needed)
+        for _, _, rhs in remaining:
+            referenced |= _names(ast.parse(rhs))
+        dead = [entry for entry in remaining if entry[1] not in referenced]
+        if not dead:
+            return
+        for edge, name, _ in dead:
+            edge.data.assignments = {k: v for k, v in edge.data.assignments.items() if k != name}
+        remaining = [entry for entry in remaining if entry[1] in referenced]
 
 
 def _rewrite(info: _LoopInfo, guard: _Guard, ranges: List[_Range]) -> None:
@@ -740,10 +718,9 @@ def _rewrite(info: _LoopInfo, guard: _Guard, ranges: List[_Range]) -> None:
     loops: List[LoopRegion] = [loop]
     for k in range(1, len(ranges)):
         new_loop = copy.deepcopy(loop)
-        _reparent_copied_region(new_loop, sdfg)
-        taken = {n.label for n in parent.nodes()} | {l.label for l in loops}
-        new_loop.label = dace.utils.find_new_name(f'{loop.label}_{k}', taken)
-        parent.add_node(new_loop)
+        _reparent(new_loop, sdfg)
+        new_loop.label = f'{loop.label}_{k}'
+        parent.add_node(new_loop, ensure_unique_name=True)
         loops.append(new_loop)
 
     for new_loop, rng in zip(loops, ranges):
@@ -842,7 +819,7 @@ class LoopRangeReduction(ppl.Pass):
         ranges = self._analyze(guard.condition, info)
         if ranges is None:
             return False
-        if len(ranges) != 1 and _has_direct_break(loop):
+        if len(ranges) != 1 and loop.has_break:
             return False  # A break would also have to skip the remaining loops.
         if any(not r.residual for r in ranges):
             # Splicing the branch body into the loop needs a unique exit block.
