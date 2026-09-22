@@ -367,6 +367,21 @@ def type_match(graph_node, pattern_node):
     return isinstance(graph_node['node'], type(pattern_node['node']))
 
 
+def pattern_types_present(nxpattern: nx.DiGraph, present: set) -> bool:
+    """Whether every node of ``nxpattern`` has a node of a matching type (per :func:`type_match`) among
+    the node types ``present`` in a graph -- the precondition for ``nxpattern`` to match there.
+
+    :param nxpattern: A collapsed pattern graph, as :func:`get_transformation_metadata` builds it.
+    :param present: The set of ``type(node)`` over the graph's nodes.
+    """
+    for pnid in nxpattern:
+        pnode = nxpattern.nodes[pnid]['node']
+        required = pnode.node if isinstance(pnode, xf.PatternNode) else type(pnode)
+        if not any(issubclass(t, required) for t in present):
+            return False
+    return True
+
+
 def type_or_class_match(node_a, node_b):
     """
     Checks whether `node_a` is an instance of the same type as `node_b`, or
@@ -616,10 +631,21 @@ def match_patterns(sdfg: SDFG,
             if not isinstance(state, SDFGState) or (states is not None and state not in states):
                 continue
 
+            candidates = singlestate_transformations
+            if node_match is type_match:
+                # A pattern whose node types do not all occur in the state cannot match there.
+                # Checking that first skips the collapse below, which is the whole cost of a scan
+                # over states that hold nothing to match (a restart after every application
+                # re-scans every state before the next match).
+                present = {type(node) for node in state.nodes()}
+                candidates = [entry for entry in candidates if pattern_types_present(entry[2], present)]
+                if not candidates:
+                    continue
+
             # Collapse multigraph into directed graph in order to use VF2
             digraph = collapse_multigraph_to_nx(state)
 
-            for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
+            for xform, expr_idx, nxpattern, matcher, opts in candidates:
                 for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
                     match = _try_to_match_transformation(state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern,
                                                          state_id, permissive, opts, pipeline_results)
