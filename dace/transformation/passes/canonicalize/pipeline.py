@@ -132,7 +132,7 @@ from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
-from dace.transformation.interstate.condition_fusion import ConditionFusion
+from dace.transformation.passes.canonicalize.fuse_conditions import FuseConditions
 from dace.transformation.dataflow.prune_connectors import PruneConnectors
 
 
@@ -1657,7 +1657,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # branch's maps share a state, then vertical+horizontal map fusion in one
     # fixpoint (vertical priority; horizontal can expose further vertical
     # opportunities; no FindSingleUseData).
-    s += [('fuse', PatternApplyOnceEverywhere([ConditionFusion()]))]
+    s += [('fuse', FuseConditions(matcher_order=True))]
     s += [('fuse', LiftTrivialIf())]
     s += _inline_single_state('fuse')
     s += _structural_cleanup('fuse')
@@ -1683,7 +1683,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # merged guard can then hoist out of the map at the terminal hoist_guards
     # stage. Structural cleanup tidies the spliced states.
     s += [('fuse', NormalizeMapBody())]
-    s += [('fuse', PatternApplyOnceEverywhere([ConditionFusion()]))]
+    s += [('fuse', FuseConditions(matcher_order=True))]
     s += _inline_single_state('fuse')
     s += _structural_cleanup('fuse')
 
