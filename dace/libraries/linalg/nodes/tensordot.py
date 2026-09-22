@@ -280,8 +280,9 @@ class ExpandGPUTensorDot(ExpandTransformation):
 
         dtype = out_tensor.dtype.base_type
         if dtype not in cls.environments[0].TYPE_MAP:
-            raise NotImplementedError(f"{cls.vendor} TensorDot does not support dtype {dtype}; supported: "
-                                      f"{sorted(str(t) for t in cls.environments[0].TYPE_MAP)}")
+            # hipTensor has no double contraction (cp2k_grid_integrate, ls3df_scf); the pure
+            # expansion over GPU-resident operands is still a device map, as the environment says.
+            return ExpandPure.expansion(node, parent_state, parent_sdfg)
         tensor_dtype, compute_desc, scalar_type = cls.environments[0].TYPE_MAP[dtype]
 
         alpha = f"({scalar_type})1.0"
