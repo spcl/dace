@@ -3,6 +3,7 @@
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.transformation.interstate import MoveLoopIntoMap
 from dace.transformation.interstate.move_loop_into_map import analyze_lanes
 from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
@@ -453,6 +454,64 @@ def test_a_map_body_behind_a_nested_sdfg_moves_per_lane():
         np.testing.assert_allclose(got[name], want[name], rtol=1e-13, atol=0, err_msg=name)
 
 
+def wide_fill_loop(name: str, read_after: bool) -> tuple:
+    """``tmp[:] = 1; for k { tmp[0:16] = 0; map i in 1:15 { tmp[i] += a[k-1, i] }; map i { a[k, i] = tmp[i] } }``,
+    optionally followed by a read of ``tmp[0]`` -- an element of the fill no lane owns."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('a', (7, 16), dace.float64)
+    sdfg.add_array('out', (1, ), dace.float64)
+    sdfg.add_array('tmp', (16, ), dace.float64, transient=True)
+    init = sdfg.add_state('init', is_start_block=True)
+    init.add_edge(FillLibraryNode('init_tmp', value=1.0), FillLibraryNode.OUTPUT_CONNECTOR_NAME, init.add_write('tmp'),
+                  None, dace.Memlet('tmp[0:16]'))
+    loop = LoopRegion('kloop', 'k < 7', 'k', 'k = 1', 'k = k + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+    first = loop.add_state('accumulate', is_start_block=True)
+    fill = FillLibraryNode('fill_tmp', value=0.0)
+    filled = first.add_access('tmp')
+    first.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, filled, None, dace.Memlet('tmp[0:16]'))
+    first.add_mapped_tasklet('accumulate', {'i': '1:15'}, {
+        '__t': dace.Memlet('tmp[i]'),
+        '__a': dace.Memlet('a[k - 1, i]')
+    },
+                             '__out = __t + 2.0 * __a', {'__out': dace.Memlet('tmp[i]')},
+                             input_nodes={'tmp': filled},
+                             external_edges=True)
+    second = loop.add_state('store')
+    loop.add_edge(first, second, dace.InterstateEdge())
+    second.add_mapped_tasklet('store', {'i': '1:15'}, {'__t': dace.Memlet('tmp[i]')},
+                              '__out = __t + 1.0', {'__out': dace.Memlet('a[k, i]')},
+                              external_edges=True)
+    if read_after:
+        after = sdfg.add_state_after(loop, 'read_after')
+        after.add_nedge(after.add_read('tmp'), after.add_write('out'), dace.Memlet('tmp[0] -> [0]'))
+    sdfg.validate()
+    return sdfg, loop
+
+
+def test_a_fill_wider_than_the_lanes_shrinks_to_each_lane_when_the_rest_is_dead():
+    sdfg, loop = wide_fill_loop('wide_fill_dead_rest', read_after=False)
+    rng = np.random.default_rng(1)
+    want = dict(a=rng.random((7, 16)), out=np.zeros(1))
+    got = copy.deepcopy(want)
+    copy.deepcopy(sdfg)(**want)
+    MoveLoopIntoMap.apply_to(sdfg, options={'cfg_body': True}, loop=loop)
+    sdfg.validate()
+    fills = [
+        e.data.subset for n, s in sdfg.all_nodes_recursive() if isinstance(n, FillLibraryNode) and n.label == 'fill_tmp'
+        for e in s.out_edges(n)
+    ]
+    assert len(fills) == 1 and fills[0].num_elements() == 1, fills
+    sdfg(**got)
+    np.testing.assert_allclose(got['a'], want['a'], rtol=1e-13, atol=0)
+
+
+def test_a_fill_wider_than_the_lanes_is_refused_when_its_rest_is_read():
+    sdfg, loop = wide_fill_loop('wide_fill_read_rest', read_after=True)
+    assert analyze_lanes(loop, sdfg).refusal == 'tmp, filled beyond the lanes, is read outside them in read_after'
+
+
 def test_a_dependence_between_lanes_refuses_the_interchange():
     sdfg, loop = lane_loop(lane_shift)
     before = graph_digest(sdfg)
@@ -528,6 +587,8 @@ if __name__ == '__main__':
     test_a_loop_over_branching_maps_moves_into_one_map_over_their_lanes()
     test_a_loop_moved_into_its_lanes_computes_what_the_loop_did()
     test_a_map_body_behind_a_nested_sdfg_moves_per_lane()
+    test_a_fill_wider_than_the_lanes_shrinks_to_each_lane_when_the_rest_is_dead()
+    test_a_fill_wider_than_the_lanes_is_refused_when_its_rest_is_read()
     test_a_dependence_between_lanes_refuses_the_interchange()
     test_a_branch_reading_one_lanes_result_refuses_the_interchange()
     test_a_branch_condition_naming_lane_data_refuses_the_interchange()

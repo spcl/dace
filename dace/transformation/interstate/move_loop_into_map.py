@@ -299,13 +299,19 @@ def edge_containers(state: SDFGState, e: gr.MultiConnectorEdge) -> OrderedSet:
 
 
 def elementwise_refusal(state: SDFGState, node: nodes.LibraryNode, ref: sbs.Range, invariant: OrderedSet,
-                        accesses: dict, uniform: tuple[OrderedSet, OrderedSet], narrow: list) -> str | None:
-    """Classify one top-level Copy/Fill: lane-shaped edges are narrowed to the lane, all-point edges are uniform."""
+                        accesses: dict, uniform: tuple[OrderedSet, OrderedSet], narrow: list, wide: list) -> str | None:
+    """Classify one top-level Copy/Fill: lane-shaped edges are narrowed to the lane, all-point edges are uniform, and
+    a Fill over whole dimensions goes to ``wide`` for :func:`wide_fill_refusal`."""
     lane_edges, plain_edges = [], []
     for e in state.all_edges(node):
         if e.data.is_empty():
             continue
         sig = footprint_signature(e.data.subset, ref, invariant)
+        if sig is None and isinstance(node, fill_node.FillLibraryNode) and e.src is node:
+            if not isinstance(e.dst, nodes.AccessNode) or e.data.wcr is not None or e.data.other_subset is not None:
+                return f'{node.label} has an ambiguous memlet {e.data}'
+            wide.append((node, e))
+            continue
         if sig is None or (sig and sorted(j for _, j, _ in sig) != list(range(len(ref)))):
             return f'{node.label} covers {e.data.subset}, which is not the lanes'
         (lane_edges if sig else plain_edges).append((e, sig))
@@ -328,13 +334,74 @@ def elementwise_refusal(state: SDFGState, node: nodes.LibraryNode, ref: sbs.Rang
     return None
 
 
+def provably_nonnegative(expr) -> bool:
+    value = symbolic.simplify(symbolic.pystr_to_symbolic(expr))
+    return value.is_Number and value >= 0
+
+
+def wide_fill_refusal(loop: LoopRegion, sdfg: sd.SDFG, node: nodes.LibraryNode, edge: gr.MultiConnectorEdge,
+                      sig: tuple[LaneDim, ...] | None, ref: sbs.Range) -> str | None:
+    """A Fill wider than the lanes may shrink to each lane's element when the part outside the lanes is dead: the
+    container is a transient the maps index per lane (``sig``), the Fill spans its whole lane dimensions (so it
+    covers every lane), and every read of it anywhere in ``sdfg`` stays within the lanes."""
+    data = edge.dst.data
+    desc = sdfg.arrays[data]
+    if sig is None or not desc.transient:
+        return f'{node.label} fills {data} beyond the lanes'
+    dims = list(edge.data.subset.ndrange())
+    lane_dims = {d for d, _, _ in sig}
+    for d, (begin, end, _) in enumerate(dims):
+        whole = same_value(begin, 0) and same_value(end, desc.shape[d] - 1)
+        if (d in lane_dims and not whole) or (d not in lane_dims and not same_value(begin, end)):
+            return f'{node.label} fills {data}[{edge.data.subset}], neither the lanes nor whole dimensions'
+    if data in control_flow_reads_outside(loop, sdfg):
+        return f'{data}, filled beyond the lanes, is read by control flow outside the loop'
+    inside = OrderedSet(loop.all_states())
+    for state in sdfg.all_states():
+        if state in inside:
+            continue
+        for access in state.data_nodes():
+            if access.data != data:
+                continue
+            reads = [(e, e.data.get_src_subset(e, state)) for e in state.out_edges(access) if not e.data.is_empty()]
+            reads += [(e, e.data.get_dst_subset(e, state)) for e in state.in_edges(access) if e.data.wcr is not None]
+            for e, sub in reads:
+                sub = sub if sub is not None else e.data.subset
+                for d, j, offset in sig:
+                    begin, end, _ = sub.ndrange()[d]
+                    if not (provably_nonnegative(begin - ref[j][0] - offset)
+                            and provably_nonnegative(ref[j][1] + offset - end)):
+                        return f'{data}, filled beyond the lanes, is read outside them in {state.label}'
+    return None
+
+
+def control_flow_reads_outside(loop: LoopRegion, sdfg: sd.SDFG) -> OrderedSet:
+    """Containers read by conditions and interstate edges outside ``loop``."""
+    inside = OrderedSet([loop]) | OrderedSet(loop.all_control_flow_blocks())
+    names = OrderedSet()
+    for edge in sdfg.all_interstate_edges():
+        if edge.src not in inside or edge.dst not in inside:
+            names.update(edge.data.free_symbols)
+    for region in sdfg.all_control_flow_regions():
+        if region in inside:
+            continue
+        if isinstance(region, ConditionalBlock):
+            names.update(s for c, _ in region.branches if c is not None for s in c.get_free_symbols())
+        elif isinstance(region, LoopRegion):
+            for code in (region.loop_condition, region.init_statement, region.update_statement):
+                if code is not None:
+                    names.update(code.get_free_symbols())
+    return OrderedSet(n for n in names if n in sdfg.arrays)
+
+
 def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts) -> str | None:
     """Why ``loop`` cannot become one parallel map over its maps' common range with the loop inside, or ``None``.
 
     The body may be any control flow of states, branches and loops. Every top-level map in it must span the same
     range: these are the lanes. A container a map writes must be indexed ``lane + c`` (``c`` loop-invariant) by
     every access, so no lane ever touches another lane's element; Copy/Fill nodes outside the maps count as maps
-    when their range is exactly the lanes. Everything else must be lane-independent: control flow and code outside
+    when their range is exactly the lanes, or is a whole-dimension Fill whose remainder is dead
+    (:func:`wide_fill_refusal`). Everything else must be lane-independent: control flow and code outside
     the maps may not read what the maps write, and what it writes becomes a private copy per lane, so it must not be
     observed outside the loop.
     """
@@ -361,6 +428,7 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts) -> str | Non
     accesses: dict[str, list[tuple[bool, tuple[LaneDim, ...] | None]]] = {}
     uniform = (OrderedSet(), OrderedSet())  # (reads, writes) of lane-independent code
     top_names = OrderedSet()
+    wide = []
     for state, entry in facts.lanes:
         rename = dict(zip(entry.map.params, lanes))
         for data, subset, write in map_accesses(state, entry):
@@ -377,7 +445,7 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts) -> str | Non
                         uniform[0].add(node.data)
                         uniform[1].add(e.dst.data)
             elif isinstance(node, ELEMENTWISE_LIBRARY_NODES):
-                reason = elementwise_refusal(state, node, ref, invariant, accesses, uniform, facts.narrow)
+                reason = elementwise_refusal(state, node, ref, invariant, accesses, uniform, facts.narrow, wide)
                 if reason is not None:
                     return reason
             else:
@@ -409,6 +477,12 @@ def lane_refusal(loop: LoopRegion, sdfg: sd.SDFG, facts: LaneFacts) -> str | Non
         if signatures[0] is None or not all(s is not None and same_signature(signatures[0], s) for s in signatures):
             return f'{data} is accessed across lanes'
         facts.lane_containers.add(data)
+    for node, edge in wide:
+        sig = next((s for _, s in accesses.get(edge.dst.data, ()) if s), None)
+        reason = wide_fill_refusal(loop, sdfg, node, edge, sig if edge.dst.data in facts.lane_containers else None, ref)
+        if reason is not None:
+            return reason
+        facts.narrow.append((edge, sig))
 
     escaped = escaping_symbol(loop, sdfg)
     if escaped is not None:
