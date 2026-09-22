@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import graph as gr
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.memlet import Memlet
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -77,6 +78,21 @@ def uniform_subset(edges: List[gr.MultiConnectorEdge[Memlet]]) -> Optional[subse
     return shared
 
 
+def device_level_accesses(sdfg: SDFG, state: SDFGState, edges: List[gr.MultiConnectorEdge[Memlet]]) -> bool:
+    """Whether every edge in ``edges`` runs in device code, under a ``GPU_Device`` map.
+
+    A ``GPU_Global`` transient confined to one map body is only resizable there: shrunk under a
+    kernel it becomes thread-private, while under a host map it would still be one device buffer
+    that the host loop's iterations share.
+
+    :param sdfg: SDFG owning ``state``.
+    :param state: The state holding the edges.
+    :param edges: Edges naming the descriptor.
+    :returns: ``True`` when every edge is device-level.
+    """
+    return all(is_devicelevel_gpu(sdfg, state, edge.dst) for edge in edges)
+
+
 def shrinks_the_buffer(desc: data.Array, size: Tuple[Any, ...]) -> bool:
     """Whether a descriptor of extent ``size`` is provably smaller than ``desc``.
 
@@ -131,6 +147,9 @@ class ShrinkMapLocalTransients(ppl.Pass):
                 accesses = map_local_accesses(sd, name)
                 if accesses is None:
                     continue
+                on_device = desc.storage == dtypes.StorageType.GPU_Global
+                if on_device and not device_level_accesses(sd, *accesses):
+                    continue
                 shared = uniform_subset(accesses[1])
                 if shared is None:
                     continue
@@ -140,6 +159,11 @@ class ShrinkMapLocalTransients(ppl.Pass):
                 if named_in_text(sd, name):
                     continue
                 desc.set_shape(size)
+                if on_device:
+                    # Thread-private by construction: every access sits in one map body under a
+                    # kernel and names one iteration's box. Left in GPU_Global it would be one
+                    # buffer shared by every thread.
+                    desc.storage = dtypes.StorageType.Register
                 for edge in accesses[1]:
                     edge.data.subset = subsets.Range([(0, dim - 1, 1) for dim in size])
                     edge.data.volume = edge.data.subset.num_elements()
@@ -160,4 +184,4 @@ class ShrinkMapLocalTransients(ppl.Pass):
             return False
         if desc.lifetime != dtypes.AllocationLifetime.Scope:
             return False
-        return desc.storage in RESIZABLE_STORAGE
+        return desc.storage in RESIZABLE_STORAGE or desc.storage == dtypes.StorageType.GPU_Global

@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A map-body-local transient must shrink to the box its accesses name."""
 import numpy as np
+import pytest
 
 import dace
 from dace.transformation.passes.canonicalize.finalize import finalize_transient_storage
@@ -65,6 +66,61 @@ def test_finalize_leaves_no_symbolically_sized_stack_array():
     assert np.allclose(b, a * 2.0 + 1.0)
 
 
+def scratch_inside_a_kernel(schedule: dace.ScheduleType) -> dace.SDFG:
+    """``out[i] = (a[i] * 2) + 1`` through a FULL-extent ``GPU_Global`` scratch, under ``schedule``.
+
+    The shape the GPU offload leaves after a fusion pulls a producer into its consumer: npbench
+    warpx_boris_push carries three such ``(np_particles,)`` buffers per kernel.
+    """
+    sdfg = dace.SDFG(f'kernel_local_scratch_{schedule.name}')
+    sdfg.add_array('A', [N], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('B', [N], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_transient('scratch', [N], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('body', dict(i='0:N'), schedule=schedule)
+    produce = state.add_tasklet('produce', {'a'}, {'s'}, 's = a * 2.0')
+    consume = state.add_tasklet('consume', {'s'}, {'b'}, 'b = s + 1.0')
+    scratch = state.add_access('scratch')
+    state.add_memlet_path(state.add_read('A'), entry, produce, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_edge(produce, 's', scratch, None, dace.Memlet('scratch[i]'))
+    state.add_edge(scratch, None, consume, 's', dace.Memlet('scratch[i]'))
+    state.add_memlet_path(consume, exit_node, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+    return sdfg
+
+
+def test_a_kernel_local_device_scratch_shrinks_to_a_register():
+    """Skipped as not resizable, the scratch kept its full extent, and the codegen hoist then gave
+    every kernel iteration a whole slice: an ``np_particles * np_particles`` device buffer that
+    faulted warpx_boris_push on the GPU canonicalize column."""
+    sdfg = scratch_inside_a_kernel(dace.ScheduleType.GPU_Device)
+    assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) == 1
+    desc = sdfg.arrays['scratch']
+    assert tuple(int(s) for s in desc.shape) == (1, )
+    assert desc.storage == dace.StorageType.Register, 'a shrunk device scratch shared by every thread'
+    sdfg.validate()
+
+
+def test_a_host_map_leaves_its_device_scratch_alone():
+    """Under a host map the buffer is not thread-private, so it keeps its extent and storage."""
+    sdfg = scratch_inside_a_kernel(dace.ScheduleType.Sequential)
+    assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) is None
+    assert sdfg.arrays['scratch'].storage == dace.StorageType.GPU_Global
+
+
+@pytest.mark.gpu
+def test_a_shrunk_kernel_scratch_computes_the_values():
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+    sdfg = scratch_inside_a_kernel(dace.ScheduleType.GPU_Device)
+    ShrinkMapLocalTransients().apply_pass(sdfg, {})
+    size = 1 << 16
+    a = np.random.default_rng(2).random(size)
+    arrays = {'A': cupy.asarray(a), 'B': cupy.zeros(size)}
+    sdfg(**arrays, N=size)
+    assert np.allclose(arrays['B'].get(), a * 2.0 + 1.0)
+
+
 if __name__ == '__main__':
     test_map_body_local_transient_shrinks_to_the_box_it_names()
     test_finalize_leaves_no_symbolically_sized_stack_array()
+    test_a_kernel_local_device_scratch_shrinks_to_a_register()
+    test_a_host_map_leaves_its_device_scratch_alone()
