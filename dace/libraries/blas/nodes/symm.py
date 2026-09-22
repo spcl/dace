@@ -347,6 +347,8 @@ class Symm(dace.sdfg.nodes.LibraryNode):
         "rocBLAS": ExpandSymmRocBLAS,
     }
     default_implementation = None
+    #: The vendor calls read a runtime coefficient through a host or a device pointer alike.
+    host_or_device_connectors = frozenset({'_alpha', '_beta'})
 
     side = properties.Property(dtype=str,
                                default="L",

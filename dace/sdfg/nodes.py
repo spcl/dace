@@ -1481,6 +1481,14 @@ class LibraryNode(CodeNode):
     #: reason as ``expand_before_peers``: it describes the node type, not a serialised value.
     host_connectors: frozenset = frozenset()
 
+    #: Connector names whose single-element operand the device expansions read from EITHER memory
+    #: space, so an offloader may leave it on the host. A vendor BLAS call takes ``alpha``/``beta``
+    #: through a host or a device pointer (the pointer mode follows the storage); an expansion that
+    #: is a device map, like ``MergeLibraryNode``'s, dereferences every operand inside the kernel,
+    #: where a host pointer faults (QE vexx_k's ``np.where(nonsing, fac, -exxdiv)``). Unlike
+    #: :attr:`host_connectors` this is a permission, not a pin. Same class-level-attribute rationale.
+    host_or_device_connectors: frozenset = frozenset()
+
     #: Whether device auto-selection (``auto_optimize.set_fast_implementations``) may overwrite
     #: :attr:`implementation`. False for nodes whose lowering is chosen DELIBERATELY by a
     #: transformation rather than by the target device -- the tile ops, whose backend is picked from

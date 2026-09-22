@@ -1140,15 +1140,17 @@ class OffloadToAccelerator(ppl.Pass):
     def host_preferred_arrays(self, sdfg: SDFG, state: SDFGState, node: nodes.LibraryNode) -> OrderedSet[str]:
         """Single-element INPUTS of a device library node, which are cheaper to leave on the host.
 
-        A vendor call reads a coefficient or a seed through a host pointer just as happily as a
-        device one, so moving one element to the device buys nothing and costs a transfer before the
-        launch. This is a preference, not a pin: a value some kernel already writes on the device
-        stays there and the expansion takes the device-pointer path instead. Outputs are excluded --
-        the call writes those on the device.
+        A vendor call reads a coefficient through a host pointer just as happily as a device one, so
+        moving one element to the device buys nothing and costs a transfer before the launch. Only
+        the connectors a node declares in ``LibraryNode.host_or_device_connectors`` qualify: an
+        expansion that is a device map reads every operand inside the kernel, and a host pointer
+        there is a memory access fault at run time (QE vexx_k's ``np.where(match, jv, np.max(jv))``,
+        whose reduced ``max_jv`` was copied back to the host only for the select's kernel to read).
+        Outputs are excluded -- the call writes those on the device.
         """
         preferred: OrderedSet[str] = OrderedSet()
         for edge in state.in_edges(node):
-            if edge.dst_conn is None or edge.data is None or edge.data.is_empty():
+            if edge.dst_conn not in node.host_or_device_connectors or edge.data is None or edge.data.is_empty():
                 continue
             name = edge.data.data
             # Length-1 ARRAYS only: a scalar is never placed at all (the pass asserts as much), so

@@ -27,6 +27,8 @@ from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
 from dace.libraries.standard.nodes.find_first import FindFirst, INDEX_NAME, OUTPUT_CONNECTOR_NAME
+from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
+from dace.libraries.standard.nodes.reduce import Reduce
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadingIRNode as MonolithIRNode
@@ -310,6 +312,117 @@ def test_a_scalar_operand_never_enters_the_placement_sets():
     sdfg = scan_with_a_scalar_seed()
     sdfg.apply_gpu_transformations(validate=False, simplify=False)  # the assertion fires inside
     sdfg.validate()
+
+
+def select_with_a_single_element_fallback(state: dace.SDFGState, fallback: dace.nodes.AccessNode, t: str, mask: str,
+                                          out: str) -> None:
+    """``out = np.where(mask, t, fallback[0])`` as the frontend builds it: one ``MergeLibraryNode``."""
+    node = MergeLibraryNode('where')
+    state.add_node(node)
+    state.add_edge(state.add_read(t), None, node, MergeLibraryNode.TRUE_CONNECTOR_NAME, dace.Memlet(f'{t}[0:64]'))
+    state.add_edge(state.add_read(mask), None, node, MergeLibraryNode.MASK_CONNECTOR_NAME, dace.Memlet(f'{mask}[0:64]'))
+    state.add_edge(fallback, None, node, MergeLibraryNode.FALSE_CONNECTOR_NAME, dace.Memlet(f'{fallback.data}[0]'))
+    state.add_edge(node, MergeLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write(out), None,
+                   dace.Memlet(f'{out}[0:64]'))
+
+
+def where_with_a_host_computed_fallback() -> dace.SDFG:
+    """``out = np.where(nonsing, fac, -x)``: a host tasklet computes the length-1 fallback.
+
+    QE vexx_k's ``fac = np.where(nonsing, fac, -exxdiv)`` in ``g2_convolution``.
+    """
+    sdfg = dace.SDFG('where_with_a_host_computed_fallback')
+    sdfg.add_array('fac', [64], dace.float64)
+    sdfg.add_array('nonsing', [64], dace.bool_)
+    sdfg.add_scalar('x', dace.float64)
+    sdfg.add_array('out', [64], dace.float64)
+    sdfg.add_array('neg_x', [1], dace.float64, transient=True)
+    state = sdfg.add_state()
+    usub = state.add_tasklet('usub', {'inp'}, {'res'}, 'res = -inp')
+    neg_x = state.add_access('neg_x')
+    state.add_edge(state.add_read('x'), None, usub, 'inp', dace.Memlet('x[0]'))
+    state.add_edge(usub, 'res', neg_x, None, dace.Memlet('neg_x[0]'))
+    select_with_a_single_element_fallback(state, neg_x, 'fac', 'nonsing', 'out')
+    sdfg.validate()
+    return sdfg
+
+
+def where_with_a_device_reduced_fallback() -> dace.SDFG:
+    """``out = np.where(match, jv, np.max(jv))``: a reduction in one state, the select in the next.
+
+    QE vexx_k's ``jmin = np.min(np.where(match, jv, np.max(jv)))``.
+    """
+    sdfg = dace.SDFG('where_with_a_device_reduced_fallback')
+    sdfg.add_array('jv', [64], dace.int32)
+    sdfg.add_array('match', [64], dace.bool_)
+    sdfg.add_array('out', [64], dace.int32)
+    sdfg.add_scalar('max_jv', dace.int32, transient=True)
+    reduce_state = sdfg.add_state('reduce')
+    reduce = Reduce('max', wcr='lambda a, b: max(a, b)', axes=None, identity=None)
+    reduce_state.add_node(reduce)
+    reduce_state.add_edge(reduce_state.add_read('jv'), None, reduce, '_in', dace.Memlet('jv[0:64]'))
+    reduce_state.add_edge(reduce, '_out', reduce_state.add_write('max_jv'), None, dace.Memlet('max_jv[0]'))
+    select_state = sdfg.add_state_after(reduce_state, 'select')
+    select_with_a_single_element_fallback(select_state, select_state.add_read('max_jv'), 'jv', 'match', 'out')
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize('build', [where_with_a_host_computed_fallback, where_with_a_device_reduced_fallback])
+def test_a_select_kernel_reads_its_single_element_fallback_from_the_device(build):
+    """A ``MergeLibraryNode`` expands to a device map, which dereferences ``_mrg_f`` in the kernel.
+
+    The host preference for single-element inputs of a device library node exists for vendor calls,
+    which take a host pointer as happily as a device one. Applied to the select, it handed the
+    kernel a host address: the reduced ``max_jv`` was copied back to ``max_jv_host`` only for the
+    select to read it there, and the host-computed ``-exxdiv`` never left the host. QE vexx_k on the
+    DaCe GPU canonicalize column faulted with "Memory access fault by GPU ... on address 0x26326000".
+    """
+    sdfg = build()
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+
+    selects = [(node, state) for node, state in sdfg.all_nodes_recursive() if isinstance(node, MergeLibraryNode)]
+    assert len(selects) == 1
+    node, state = selects[0]
+    assert node.schedule == dtypes.ScheduleType.GPU_Device
+    fallback = next(e for e in state.in_edges(node) if e.dst_conn == MergeLibraryNode.FALSE_CONNECTOR_NAME)
+    desc = state.sdfg.arrays[fallback.data.data]
+    assert desc.storage in GPU_RESIDENT_STORAGES, (f'the select kernel reads {fallback.data.data} from '
+                                                   f'{desc.storage}, a host pointer')
+
+
+def test_a_vendor_coefficient_may_stay_on_the_host():
+    """The permission is per connector: Gemm's runtime ``_alpha``/``_beta`` keep it, the select has none."""
+    from dace.libraries.blas.nodes.gemm import Gemm
+    assert Gemm.host_or_device_connectors == frozenset({'_alpha', '_beta'})
+    assert MergeLibraryNode.host_or_device_connectors == frozenset()
+
+
+@pytest.mark.gpu
+def test_a_select_with_a_host_computed_fallback_runs_on_the_device():
+    """The same program, run: no host pointer reaches the kernel, and every masked-out slot is -x."""
+    sdfg = where_with_a_host_computed_fallback()
+    sdfg.apply_gpu_transformations()
+    rng = np.random.default_rng(3)
+    fac = rng.random(64)
+    nonsing = rng.random(64) > 0.5
+    out = np.zeros(64)
+    sdfg(fac=fac, nonsing=nonsing, x=1.5, out=out)
+    assert np.array_equal(out, np.where(nonsing, fac, -1.5))
+
+
+@pytest.mark.gpu
+def test_a_select_with_a_device_reduced_fallback_runs_on_the_device():
+    """The same program, run: the reduced maximum is read where the reduction wrote it."""
+    sdfg = where_with_a_device_reduced_fallback()
+    sdfg.apply_gpu_transformations()
+    rng = np.random.default_rng(5)
+    jv = rng.integers(-100, 100, 64).astype(np.int32)
+    match = rng.random(64) > 0.5
+    out = np.zeros(64, dtype=np.int32)
+    sdfg(jv=jv, match=match, out=out)
+    assert np.array_equal(out, np.where(match, jv, jv.max()))
 
 
 def host_tasklet_behind_an_interstate_read() -> dace.SDFG:

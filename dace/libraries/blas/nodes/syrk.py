@@ -220,6 +220,8 @@ class Syrk(dace.sdfg.nodes.LibraryNode):
         "rocBLAS": ExpandSyrkRocBLAS,
     }
     default_implementation = None
+    #: The vendor calls read a runtime coefficient through a host or a device pointer alike.
+    host_or_device_connectors = frozenset({'_alpha', '_beta'})
 
     uplo = properties.Property(dtype=str,
                                default="L",

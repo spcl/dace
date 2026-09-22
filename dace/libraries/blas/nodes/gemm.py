@@ -819,6 +819,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "PBLAS": ExpandGemmPBLAS,
     }
     default_implementation = None
+    #: The vendor calls read a runtime coefficient through a host or a device pointer alike.
+    host_or_device_connectors = frozenset({'_alpha', '_beta'})
 
     # Object fields
     transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
