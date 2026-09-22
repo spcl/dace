@@ -82,9 +82,9 @@ def uniform_subset(edges: List[gr.MultiConnectorEdge[Memlet]]) -> Optional[subse
 def device_level_accesses(sdfg: SDFG, accesses: List[Tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]]) -> bool:
     """Whether every access in ``accesses`` runs in device code, under a ``GPU_Device`` map.
 
-    A ``GPU_Global`` transient is only resizable there: shrunk under a kernel it becomes
-    thread-private, while under a host map it would still be one device buffer that the host
-    loop's iterations share.
+    A ``GPU_Global`` transient is resizable only there. Shrunk under a kernel, it becomes
+    thread-private; under a host map it would stay one device buffer shared by the host loop's
+    iterations.
 
     :param sdfg: SDFG owning the states.
     :param accesses: ``(state, edge)`` pairs naming the descriptor.
@@ -96,11 +96,11 @@ def device_level_accesses(sdfg: SDFG, accesses: List[Tuple[SDFGState, gr.MultiCo
 def nest_invariant_accesses(sdfg: SDFG, name: str) -> Optional[List[Tuple[SDFGState, gr.MultiConnectorEdge[Memlet]]]]:
     """Every access to ``name`` when ``sdfg`` is a nested SDFG and all of them sit outside any map.
 
-    The other shape a per-iteration buffer takes: a map body nested into its own SDFG, so the
-    buffer is a top-level transient of the nest, indexed by a symbol the nest receives from the
-    enclosing map (``tx_times_tx[_loop_it_27]`` in npbench warpx_boris_push). Each nest instance
-    then touches one box, provided nothing inside the nest reassigns the symbols the box names --
-    :func:`box_is_invariant` checks that part.
+    A per-iteration buffer also appears in a map body nested into its own SDFG, as a top-level
+    transient of the nest indexed by a symbol the nest receives from the enclosing map
+    (``tx_times_tx[_loop_it_27]`` in npbench warpx_boris_push). Each nest instance then touches one
+    box if nothing inside the nest reassigns the symbols the box names. :func:`box_is_invariant`
+    checks that condition.
 
     :param sdfg: SDFG owning the descriptor.
     :param name: Descriptor name.

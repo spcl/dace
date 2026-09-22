@@ -28,7 +28,8 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
     :param sdfg: An offloaded SDFG.
     :returns: The same ``sdfg`` instance.
     """
-    # ``map JK { work; map JL }`` makes JL a thread dimension first: pinned sequential below, it would not be one.
+    # For ``map JK { work; map JL }``, ContiguousAxisToThreads makes JL a thread dimension. It runs first
+    # because SequentializeNestedDeviceScopes would otherwise pin JL sequential.
     ContiguousAxisToThreads().apply_pass(sdfg, {})
     SequentializeNestedDeviceScopes().apply_pass(sdfg, {})
     return sdfg

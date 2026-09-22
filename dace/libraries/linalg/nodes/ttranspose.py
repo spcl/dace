@@ -59,9 +59,9 @@ class ExpandPure(ExpandTransformation):
             inputs["_inout"] = out_mem
             code = f"_out = {node.alpha} * _inp + {node.beta} * _inout"
         # A device-resident operand needs a device map: the default schedule is host code, which
-        # cannot touch GPU_Global memory (ls3df_scf's double tensor transpose, which reaches this
-        # expansion because hipTensor permutes no doubles). Inside a kernel the same map would be a
-        # nested kernel, so there it stays sequential.
+        # cannot touch GPU_Global memory. ls3df_scf's double tensor transpose hits this case; it
+        # reaches this expansion because hipTensor does not permute doubles. Inside a kernel the
+        # same map would be a nested kernel, so there it stays sequential.
         if is_devicelevel_gpu(parent_sdfg, parent_state, node):
             schedule = dtypes.ScheduleType.Sequential
         elif out_tensor.storage in GPU_RESIDENT_STORAGES:

@@ -37,8 +37,8 @@ class cuTensor:
         dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
     }
 
-    #: cuTENSOR contracts every type it permutes, so the contraction map is the same one. hipTensor
-    #: is where the two differ; see its environment.
+    #: cuTENSOR contracts every type it permutes, so the contraction map is TYPE_MAP itself. In hipTensor
+    #: the two maps differ; see its environment.
     CONTRACTION_TYPE_MAP = TYPE_MAP
 
     @staticmethod

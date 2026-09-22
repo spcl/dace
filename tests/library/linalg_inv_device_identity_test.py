@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The identity a device ``Inv`` solves against is filled by a kernel, not by the host.
+"""The identity a device ``Inv`` solves against is filled by a GPU kernel.
 
 The getrs path writes ``I`` into the right-hand side before ``getrs`` overwrites it with the inverse.
 That buffer lives in the operand's storage, and the fill map took the default schedule: on

@@ -44,8 +44,8 @@ class GpuBlasDialect(NamedTuple):
     routine: Callable[[str], str]
     #: The C type a pointer operand is cast to, from the CUDA spelling
     #: :func:`~dace.libraries.blas.blas_helpers.cublas_type_metadata` returns. Only the complex
-    #: types differ, and rocBLAS in C++ declares its complex parameters as
-    #: ``rocblas_complex_num<T>``: the hip vector types are a DIFFERENT type there, so a call cast
+    #: types differ. rocBLAS in C++ declares its complex parameters as
+    #: ``rocblas_complex_num<T>``, a distinct type from the hip vector types, so a call cast
     #: to ``hipDoubleComplex*`` does not match (measured against ROCm 6.3's rocblas_zgeam and
     #: rocblas_zgemm, both of which reject it and accept ``rocblas_double_complex*``).
     ctype: Callable[[str], str]

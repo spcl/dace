@@ -428,9 +428,9 @@ class MoveArrayOutOfKernel(Pass):
         # of enumerating every complete path (exponential in fan-in/out). The incoming/outgoing
         # flag distinguishes the dst-subset vs src-subset rewrite on a direct edge to/from the node.
         visited: Set[MultiConnectorEdge[Memlet]] = set()
-        # One rewrite per STATE, not per access node: the bodies belong to the state, so a state
-        # holding three access nodes of the array used to receive the prefix three times over and
-        # ended up with a rank-11 subscript on a rank-5 array (npbench ``examinimd``).
+        # Tasklet bodies belong to the state, so they are rewritten once per state. Rewriting them per
+        # access node would prepend the prefix once for each access node of the array: in npbench
+        # ``examinimd`` a state with three such nodes got a rank-11 subscript on a rank-5 array.
         bodies_to_rewrite: Set[SDFGState] = set()
         for access_node in access_nodes:
             state = self._node_to_state_cache[access_node]
@@ -480,8 +480,8 @@ class MoveArrayOutOfKernel(Pass):
                 node.code = CodeBlock(rewritten, dtypes.Language.Python)
 
     def update_interstate_accesses(self, sdfg: SDFG, array_name: str, params_as_ranges) -> None:
-        """Prepend the lift's new leading indices to ``array_name`` subscripts read by CONTROL FLOW
-        -- interstate-edge assignments and conditions, loop headers, branch conditions.
+        """Prepend the lift's new leading indices to ``array_name`` subscripts read by control flow:
+        interstate-edge assignments and conditions, loop headers and branch conditions.
 
         Control flow reads an array element by subscript (``__rdo0_index = row_idx[it]``) and the
         lift reshapes the descriptor underneath it, so the stale rank-1 subscript now names a whole

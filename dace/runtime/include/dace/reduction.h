@@ -226,11 +226,11 @@ struct _wcr_fixed<ReductionType::Sum, uint64_t> {
 #endif
 
 // A complex sum. On the device no atomic takes a 16-byte operand, and the CAS fallback has none
-// to compare-and-swap either, so each component is added atomically on its own: the components
-// never interact under +, so the final value is exact, and only the returned ``old`` is not one
+// to compare-and-swap either, so each component is added atomically on its own. The components
+// never interact under +, so the final value is exact; the returned ``old`` may not be one
 // consistent snapshot of the pair. On the host it is a critical section, as for any non-scalar
-// type -- OpenMP's ``atomic`` takes scalars only. Both passes of a device compile instantiate it,
-// so it is declared in both.
+// type, because OpenMP's ``atomic`` takes scalars only. Both passes of a device compile instantiate
+// it, so it is declared in both.
 template <typename C, typename R>
 static DACE_HDFI C complex_atomic_add(C* ptr, const C& value) {
 #ifdef DACE_USE_GPU_ATOMICS
@@ -661,8 +661,9 @@ struct wcr_fixed {
   }
 };
 
-// A complex sum is not a scalar type, but it has an atomic of its own (above): use it rather than
-// the CAS fallback, which cannot swap a 16-byte value on the device.
+// A complex type is not scalar, so the generic wcr_fixed would send a complex sum to the CAS
+// fallback, which cannot swap a 16-byte value on the device. This specialization uses the complex
+// atomic defined above.
 template <typename T>
 struct wcr_fixed<ReductionType::Sum, T,
                  typename std::enable_if<std::is_same<T, complex64>::value || std::is_same<T, complex128>::value>::type> {

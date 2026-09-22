@@ -114,9 +114,10 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
 
     @staticmethod
     def ordering_pairs(graph, map_entry, map_exit):
-        """Carry the order the scope nodes impose across their removal: an empty edge ends at the entry or starts at
-        the exit only to order the WHOLE body, and a body node the entry reaches only by an empty edge runs after
-        everything the entry waits for. Both vanish with the scope nodes unless re-attached to the body."""
+        """Return the (src, dst) pairs that keep the order the scope nodes impose after they are removed. An empty
+        edge that ends at the entry or starts at the exit exists only to order the whole body, and a body node that
+        the entry reaches only by an empty edge runs after everything the entry waits for. Both orderings vanish
+        with the scope nodes unless they are re-attached to the body."""
         preds = [e.src for e in graph.in_edges(map_entry)]
         succs = [e.dst for e in graph.out_edges(map_exit)]
         heads = [e.dst for e in graph.out_edges(map_entry) if e.dst is not map_exit]

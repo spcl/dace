@@ -199,8 +199,8 @@ def same_signature(a: tuple[LaneDim, ...], b: tuple[LaneDim, ...]) -> bool:
 
 
 def viewed_name(state: SDFGState, access: nodes.AccessNode) -> str:
-    """The container ``access`` stands for: the viewed one when ``access`` is a whole-array view of it (same shape,
-    full subset), so indices into the view are indices into the container; else ``access``'s own."""
+    """The container ``access`` stands for. A whole-array view (same shape, full subset) stands for the container it
+    views, since indices into the view are indices into that container; any other access stands for itself."""
     arrays = state.sdfg.arrays
     if not isinstance(arrays[access.data], dt.View):
         return access.data
@@ -228,7 +228,8 @@ def ends_in_nested_sdfg(state: SDFGState, edge: gr.MultiConnectorEdge) -> nodes.
 
 def nested_accesses(state: SDFGState, nsdfg: nodes.NestedSDFG, outer_name, subs: dict) -> list:
     """``(container, subset, is_write)`` of the accesses inside ``nsdfg`` and every SDFG nested deeper, in the
-    symbols of the scope that holds ``nsdfg``: a connector memlet is coarse, only the innermost memlets are exact."""
+    symbols of the scope that holds ``nsdfg``. Subsets come from the innermost memlets, which are exact; a connector
+    memlet is coarse."""
     outer = {}
     for e in state.all_edges(nsdfg):
         conn = e.dst_conn if e.dst is nsdfg else e.src_conn
@@ -280,7 +281,7 @@ def map_accesses(state: SDFGState, entry: nodes.MapEntry) -> list[tuple[str, sbs
                 continue
             bound.setdefault(nested, OrderedSet()).add(at.data.data)
         if is_view_binding(state, e):
-            continue  # the view's binding to its container, not an access
+            continue  # binds the view to its container and accesses no data
         if isinstance(e.src, nodes.AccessNode) and isinstance(state.sdfg.arrays[e.src.data], dt.View):
             src = e.src
         if isinstance(e.dst, nodes.AccessNode) and isinstance(state.sdfg.arrays[e.dst.data], dt.View):

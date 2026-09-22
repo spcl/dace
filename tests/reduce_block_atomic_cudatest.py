@@ -82,8 +82,8 @@ def test_block_atomic_compiles():
 
 @pytest.mark.gpu
 def test_block_atomic_runs():
-    """On the device: ``A`` and ``B`` are read and written by the kernel, so they are device
-    arrays here. Host buffers under a ``GPU_Device`` map are a memory-access fault on a discrete GPU."""
+    """Runs on the device. ``A`` and ``B`` are read and written by the kernel, so they are device
+    arrays here. Host buffers under a ``GPU_Device`` map cause a memory-access fault on a discrete GPU."""
     import cupy  # GPU-only dependency; a CPU collection of this file must not need it
     sdfg = _build_block_atomic_sum_sdfg()
     for name in ('A', 'B'):

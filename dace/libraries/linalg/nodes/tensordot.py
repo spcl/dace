@@ -44,8 +44,8 @@ class ExpandPure(ExpandTransformation):
                                     strides=out_tensor.strides)
 
         # A device-resident operand needs device maps: the default schedule is host code, which
-        # cannot touch GPU_Global memory (ls3df_scf's double contraction, which falls back here
-        # because hipTENSOR contracts no doubles). Inside a kernel the same map would be a nested
+        # cannot touch GPU_Global memory. For example, ls3df_scf's double contraction falls back here
+        # because hipTENSOR contracts no doubles. Inside a kernel the same map would be a nested
         # kernel, so there it stays sequential.
         if is_devicelevel_gpu(parent_sdfg, parent_state, node):
             schedule = dace.dtypes.ScheduleType.Sequential
@@ -296,8 +296,8 @@ class ExpandGPUTensorDot(ExpandTransformation):
         dtype = out_tensor.dtype.base_type
         supported = cls.environments[0].CONTRACTION_TYPE_MAP
         if dtype not in supported:
-            # A dtype the vendor library cannot contract (hipTensor takes no complex one); the pure
-            # expansion over GPU-resident operands is still a device map, as the environment says.
+            # The vendor library cannot contract this dtype (hipTensor takes no complex one). The pure
+            # expansion over GPU-resident operands is still a device map, as the environment documents.
             return ExpandPure.expansion(node, parent_state, parent_sdfg)
         tensor_dtype, compute_desc, scalar_type = supported[dtype]
 

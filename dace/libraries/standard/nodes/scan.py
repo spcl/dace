@@ -1179,10 +1179,10 @@ class ExpandCUDA(ExpandTransformation):
             elif _has_init(node, chain):
                 # Inclusive scan with a seed ``s`` is the plain inclusive scan of ``in`` with
                 # ``s op in[0]`` in place of ``in[0]``. A transform iterator computes that element as
-                # the scan reads it, so there is no extra kernel and no staging buffer, and it is the
+                # the scan reads it, so there is no extra kernel and no staging buffer. It is also the
                 # same call on every backend: ``DeviceScan::InclusiveScanInit`` exists only from
                 # CUB 2.0 / hipCUB on ROCm 7, so ROCm 6.3 failed to compile every seeded scan. A
-                # device-resident seed is read by pointer INSIDE the kernel, so the scan orders after
+                # device-resident seed is read by pointer inside the kernel, so the scan orders after
                 # whatever wrote it without the host sync a ``FutureValue`` needs on rocPRIM.
                 desc = seed_desc(node, state, sdfg, chain)
                 seed_ctype = desc.dtype.base_type.ctype

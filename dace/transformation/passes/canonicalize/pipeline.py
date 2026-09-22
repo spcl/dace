@@ -1372,7 +1372,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # distributed siblings are independent.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp()), ('ssa', unique_loop_iterators_ssa)]
     # Symbol webs get one name each before any dependence question is asked: peeling and fission
-    # copied bodies that reassign the body's own ``idx = arr[k]``, so a loop and its peeled copy
+    # copy bodies that reassign their own ``idx = arr[k]``, so a loop and its peeled copy
     # share names and the loop appears to export them (CloudSC's ``llfall_index_*`` blocked
     # MoveLoopIntoMap). Every later canon pass may assume one defining web per interstate symbol.
     s += [('ssa', SymbolSSA())]

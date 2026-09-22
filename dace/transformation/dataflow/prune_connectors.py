@@ -64,8 +64,8 @@ class PruneConnectors(pm.SingleStateTransformation):
 
         Returns:
             A tuple of the input connectors that can be removed, the output connectors that can be
-            removed, and every data name the nested SDFG's dataflow reads or writes (its caller also
-            needs that union, and it is the same whole-body walk this method already pays for).
+            removed, and every data name the nested SDFG's dataflow reads or writes. ``apply`` needs that
+            union too, and returning it reuses the whole-body walk this method already performs.
         """
         nsdfg = self.nsdfg
 
@@ -125,9 +125,9 @@ class PruneConnectors(pm.SingleStateTransformation):
     def apply(self, state: SDFGState, sdfg: SDFG):
         nsdfg = self.nsdfg
 
-        # Determine which connectors can be removed. ``all_data_used`` (below) is exactly the read/write
-        # union this call already computed internally -- no second ``read_and_write_sets()`` walk of the
-        # nested SDFG's whole body needed for it, and nothing between here and its use mutates ``nsdfg.sdfg``.
+        # Determine which connectors can be removed. The call also returns ``all_data_used``, the read/write
+        # union it already computed, so the nested SDFG's body needs no second ``read_and_write_sets()`` walk.
+        # Nothing between here and its use mutates ``nsdfg.sdfg``.
         prune_in, prune_out, all_data_used = self._get_prune_sets(state)
 
         # If the nested SDFG is at global scope, check if it can be isolated.

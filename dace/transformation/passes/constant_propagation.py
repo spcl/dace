@@ -227,11 +227,11 @@ class ConstantPropagation(ppl.Pass):
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         nested_id = node.sdfg.cfg_id
-                        # Parsed before it is judged: a mapping value may be a STRING, and
-                        # ``issymbolic`` calls an unparsed ``'nat * nh'`` non-symbolic. Propagating
-                        # that into the nest substitutes the CALLER's symbol names into descriptors
-                        # the nest has no mapping for -- ``Missing symbols on nested SDFG``, which
-                        # npbench ``vexx_k`` hit on a batched-matmul nest whose strides name one.
+                        # Parse each mapping value before testing it: a value may be a string, and
+                        # ``issymbolic`` treats an unparsed ``'nat * nh'`` as non-symbolic. Propagating
+                        # that into the nest substitutes the caller's symbol names into descriptors
+                        # the nest has no mapping for. The result is ``Missing symbols on nested SDFG``,
+                        # which npbench ``vexx_k`` hit on a batched-matmul nest whose strides name one.
                         const_syms = {
                             k: v
                             for k, v in node.symbol_mapping.items()

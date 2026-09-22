@@ -102,22 +102,22 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
                 text = value if isinstance(value, str) else str(value)
                 rewritten = rewrite(text)
                 if rewritten != text:
-                    # Parsed back, not stored as the text ``rewrite`` returns: the mapping is
-                    # declared to hold symbolic expressions, and readers that ask a raw string
-                    # whether it is symbolic are told no. ``ConstantPropagation`` then took the
-                    # text ``'nat * nh'`` for a constant and substituted the CALLER's symbol names
-                    # into a nest that has no mapping for them (npbench ``vexx_k``). The rewrite is
-                    # an AST round trip, so it reprints even an untouched value and this branch is
-                    # taken far more often than a rename actually happens.
+                    # Parse the text that ``rewrite`` returns into a symbolic expression before storing
+                    # it. The mapping is declared to hold symbolic expressions, and code that asks a raw
+                    # string whether it is symbolic is told no. Stored as text, ``'nat * nh'`` looks
+                    # like a constant to ``ConstantPropagation``, which then substitutes the caller's
+                    # symbol names into a nest that has no mapping for them (npbench ``vexx_k``). The
+                    # rewrite is an AST round trip, so it reprints even an untouched value and this
+                    # branch is taken far more often than a rename actually happens.
                     node.symbol_mapping[key] = symbolic.pystr_to_symbolic(rewritten)
 
 
 class ScalarRefRewriter(ast.NodeTransformer):
     """Collapse ``old[i]`` to ``new`` and rename a bare ``old`` to ``new``.
 
-    Any single index collapses, not only a literal ``0``: the array has one element, so whatever the
-    index expression is, it names element 0. A computed index left in place subscripts the new
-    scalar -- ``scal_index_xk[index_xkq_index]`` on npbench ``vexx_k``, which does not compile.
+    Any single index collapses, literal or computed: the array has one element, so whatever the
+    index expression is, it names element 0. A computed index left in place would subscript the new
+    scalar, as in ``scal_index_xk[index_xkq_index]`` on npbench ``vexx_k``, which does not compile.
 
     :param rename: Mapping from each rewritten descriptor's old name to its new name.
     """

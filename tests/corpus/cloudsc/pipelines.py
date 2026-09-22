@@ -187,7 +187,7 @@ def load_offload_pass() -> Callable[[dace.SDFG], None]:
 
 def offload_stage() -> List[Stage]:
     """The GPU-offload phase: schedule the outermost non-block map as a kernel and mirror host data to
-    the device (see :mod:`tests.corpus.cloudsc.offload_cloudsc_to_gpu`). Terminal by construction --
+    the device (see :mod:`tests.corpus.cloudsc.offload_cloudsc_to_gpu`). Terminal by construction:
     nothing in the recipe runs after it."""
 
     def apply(sdfg):

@@ -635,9 +635,9 @@ def test_dependency_change_same_edge(extra_state):
 def nest_with_a_string_symbol_mapping() -> dace.SDFG:
     """``out[i] = inner[i]`` through a nest whose stride symbol is mapped to ``'rows * cols'``.
 
-    Written as a STRING, which any pass rewriting the mapping as text leaves behind. The stride is
-    the only place the symbol is used, so a reader that mistakes the text for a constant substitutes
-    the two OUTER names into the nest's own descriptor.
+    The value is a string, which is what any pass rewriting the mapping as text leaves behind. The
+    stride is the only place the symbol is used, so a reader that mistakes the text for a constant
+    substitutes the two outer names into the nest's own descriptor.
     """
     rows, cols = (dace.symbol(name, dtype=dace.int64) for name in ('rows', 'cols'))
     stride = dace.symbol('stride', dtype=dace.int64)
@@ -655,8 +655,8 @@ def nest_with_a_string_symbol_mapping() -> dace.SDFG:
     nest = state.add_nested_sdfg(inner, {'src': None}, {'dst': None}, symbol_mapping={'stride': rows * cols})
     state.add_edge(state.add_read('a'), None, nest, 'src', dace.Memlet('a[0:4]'))
     state.add_edge(nest, 'dst', state.add_write('out'), None, dace.Memlet('out[0:4]'))
-    # Item assignment, which is how a string gets in: the constructor coerces, a pass rewriting the
-    # mapping in place does not go through it.
+    # Item assignment is how a string gets in. The constructor coerces the value; a pass that rewrites
+    # the mapping in place bypasses it.
     nest.symbol_mapping['stride'] = 'rows * cols'
     sdfg.validate()
     return sdfg
@@ -667,9 +667,9 @@ def test_a_symbolic_string_mapping_is_not_a_constant():
 
     ``issymbolic`` on the unparsed string ``'rows * cols'`` answers "not symbolic", so the pass used
     to push it into the nest as an initial constant, rewrite the nest's stride to ``rows*cols`` and
-    then drop ``stride`` from the mapping. The nest is left naming two symbols nothing binds --
-    ``Missing symbols on nested SDFG: ['rows', 'cols']``, which is what npbench ``vexx_k`` hit on
-    the GPU canonicalize column.
+    then drop ``stride`` from the mapping. The nest was left naming two symbols that nothing binds
+    (``Missing symbols on nested SDFG: ['rows', 'cols']``). npbench ``vexx_k`` hit this on the GPU
+    canonicalize column.
     """
     sdfg = nest_with_a_string_symbol_mapping()
     ConstantPropagation().apply_pass(sdfg, {})

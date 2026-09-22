@@ -42,7 +42,7 @@ class ExpandPure(ExpandTransformation):
         # whose spelling carries one comes back as bogus tokens.
         map_rng = {i: (0, s - 1, 1) for i, s in zip(map_params, map_lengths)}
         outputs = {inner_out: dace.memlet.Memlet(f"{out_name}[{','.join(map_params)}]")}
-        # Inside a kernel a device-scheduled map would be a nested kernel; the storage says nothing there.
+        # Inside a kernel a device-scheduled map would be a nested kernel, so the storage cannot pick the schedule.
         if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
             schedule = dace.dtypes.ScheduleType.Sequential
         elif out.storage == dace.dtypes.StorageType.GPU_Global:

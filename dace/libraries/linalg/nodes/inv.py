@@ -125,8 +125,8 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         bin_name = '_aout'
         bout = state.add_access('_aout')
 
-    # The identity is written into the operand's own storage, so on the device it is a kernel: a host
-    # map over ``GPU_Global`` memory is invalid (quatrex_rgf's rocSOLVER inverse).
+    # The identity is written into the operand's own storage. When that storage is on the device, the map must
+    # run as a kernel because a host map over ``GPU_Global`` memory is invalid (quatrex_rgf's rocSOLVER inverse).
     eye_schedule = (dace.dtypes.ScheduleType.GPU_Device
                     if operand_storage in GPU_RESIDENT_STORAGES else dace.dtypes.ScheduleType.Default)
     _, _, mx = state.add_mapped_tasklet('_eye_',

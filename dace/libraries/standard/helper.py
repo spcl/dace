@@ -69,8 +69,9 @@ def collapse_shape_and_strides(
 def collapse_to_elements(
         subset: dace.subsets.Range,
         strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
-    """:func:`collapse_shape_and_strides` for an expansion that writes element by element: a single-element
-    subset keeps one length-1 dimension instead of none, so the expansion has an index to write through."""
+    """:func:`collapse_shape_and_strides` for an expansion that writes element by element. A single-element
+    subset collapses to zero dimensions; this helper returns one length-1 dimension for it, so the expansion
+    has an index to write through."""
     shape, strides = collapse_shape_and_strides(subset, strides)
     return (shape, strides) if shape else ([1], [1])
 

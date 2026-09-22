@@ -342,7 +342,7 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
         if np.issubdtype(acc_desc.dtype.type, np.integer):
             identity_literal = f'{ctype}({int(identity)})'
         elif np.issubdtype(acc_desc.dtype.type, np.complexfloating):
-            # Both parts: ``float()`` of a complex identity drops the imaginary one (and warns).
+            # Emit both parts: ``float()`` of a complex identity drops the imaginary part and warns.
             identity_literal = f'{ctype}({complex(identity).real!r}, {complex(identity).imag!r})'
         else:
             identity_literal = f'{ctype}({float(identity)!r})'
@@ -2321,11 +2321,11 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(ptr, is_global=True)
         var_type, ctypedef = types
-        # declared_arrays holds the HOST declaration, which carries no ``const``, while a kernel
-        # argument the launch declares ``const`` is registered that way in defined_vars. Taking the
-        # host spelling for a symbol-shaped array then aliased a ``const int*`` parameter as
-        # ``int*``, which does not compile: xsbench's indirection into index_grid on the canon GPU
-        # column. Keep the qualifier the parameter actually has.
+        # declared_arrays holds the host declaration, which carries no ``const``. A kernel argument
+        # that the launch declares ``const`` is registered with that qualifier in defined_vars. Using
+        # the host spelling for a symbol-shaped array would alias a ``const int*`` parameter as ``int*``,
+        # which does not compile (xsbench's indirection into index_grid on the canon GPU column).
+        # Keep the qualifier the parameter has.
         if types and not ctypedef.startswith('const '):
             try:
                 _, defined_ctype = self._dispatcher.defined_vars.get(ptr, is_global=True)

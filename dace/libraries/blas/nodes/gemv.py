@@ -195,9 +195,8 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
         except TypeError as ex:
             warnings.warn(f'{ex}. Falling back to pure expansion')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
-        # The vendor's own spelling, for the coefficients AND the operands: the connectors are
-        # dace::complex128 pointers, which convert to neither cuDoubleComplex* nor
-        # rocblas_double_complex*.
+        # Use the vendor's type name for both the coefficients and the operands. The connectors are
+        # dace::complex128 pointers, which do not convert to cuDoubleComplex* or rocblas_double_complex*.
         ctype = cls.dialect.ctype(ctype)
         scal_func = func + 'scal'
         func += 'gemv'

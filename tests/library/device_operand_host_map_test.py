@@ -1,14 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""An expansion over device-resident operands builds device maps, never host ones.
+"""An expansion over device-resident operands schedules its own maps as GPU_Device.
 
-Each of these expansions builds a map of its own beside the vendor call it wraps, and each took
-the default schedule: on GPU_Global operands that is host code touching device memory, which
-validation rejects and which took down two canon GPU kernels.
+Each of these expansions builds a map of its own beside the vendor call it wraps. That map took
+the default schedule, which on GPU_Global operands is host code touching device memory.
+Validation rejects it, and it broke two canon GPU kernels.
 
-* ``Cholesky`` zeroes the unused triangle after the factorization -- cegterg died at the
+* ``Cholesky`` zeroes the unused triangle after the factorization; cegterg died at the
   ``__inl18_chol`` edge.
 * ``TensorTranspose`` falls back to a mapped permute for a dtype hipTensor does not permute (it
-  permutes no doubles) -- ls3df_scf died at the ``moveaxis_expr_0_1`` edge.
+  permutes no doubles); ls3df_scf died at the ``moveaxis_expr_0_1`` edge.
 
 The identity fill in ``Inv`` and the zero-init in the pure ``TensorDot`` are the same rule, tested
 next to their own nodes.

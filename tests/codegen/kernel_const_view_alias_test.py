@@ -2,8 +2,8 @@
 """A pointer alias of a read-only kernel argument keeps the argument's ``const``.
 
 A kernel argument nothing writes is declared ``const T*`` in the launch signature, and the
-dispatcher registers it that way. A VIEW of such an array takes its ctype from the host
-declaration instead, which has no qualifier, so an alias of it was emitted as ``T*`` and hipcc
+dispatcher registers it that way. A View of such an array takes its ctype from the host
+declaration, which has no qualifier, so an alias of it was emitted as ``T*`` and hipcc
 rejected the initialization: xsbench's indirection into ``index_grid`` on the canon GPU column
 failed with ``cannot initialize a variable of type 'int *__restrict' with an rvalue of type
 'const int *'``.

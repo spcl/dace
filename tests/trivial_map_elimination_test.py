@@ -133,7 +133,7 @@ def trivial_map_pseudo_init_sdfg():
 
 
 def ordered_trivial_map_sdfg():
-    """``A[0] = 1`` (access node A1), then a one-iteration map reading ``A[0]`` through a SECOND access node A2 and
+    """``A[0] = 1`` (access node A1), then a one-iteration map reading ``A[0]`` through a second access node A2 and
     writing ``B[0]``, then ``A[0] = 2`` through A3; the two hazards on A are held only by empty ordering edges
     ``A1 -> map entry`` and ``map exit -> writer of A3``."""
     sdfg = dace.SDFG('trivial_map_ordering')

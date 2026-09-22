@@ -187,7 +187,7 @@ class SymbolSSA(ppl.Pass):
 
     Reaching definitions are solved per SDFG over :class:`FlatControlFlow`; a use unites every
     definition reaching it into one web, so a join or a loop-carried value stays one web (no phi)
-    and keeps its name. Exactly one defining web keeps the original name: the one merged with the
+    under one name. Exactly one defining web keeps the original name: the one merged with the
     incoming value if any, else the last one live at the SDFG exit (the final version of a chain),
     else the first. Every other web is renamed. Loop variables, symbols in descriptor shapes, and
     symbols an edge both assigns and reads in another assignment are left alone.

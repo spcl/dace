@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A ROCm vendor call casts its operands to the rocBLAS complex type, not a CUDA or HIP one.
+"""A ROCm vendor call casts its complex operands to the rocBLAS complex type.
 
 The GPU expansions take their vendor C type from ``cublas_type_metadata``, which names the CUDA
-types. ``float`` and ``double`` are spelled the same in every dialect, so the real paths were fine
-and the complex ones were not: the solvers emitted ``(cuDoubleComplex*)``, a type ROCm does not
+types. ``float`` and ``double`` are spelled the same in every dialect, so only the complex paths
+broke: the solvers emitted ``(cuDoubleComplex*)``, a type ROCm does not
 declare at all, and GEMM emitted ``(hipDoubleComplex*)``, which compiles as a type but does not
 match the call. Measured against ROCm 6.3: ``rocblas_zgeam`` and ``rocblas_zgemm`` both reject a
 ``hipDoubleComplex*`` operand and accept ``rocblas_double_complex*``, because rocBLAS declares its
@@ -119,7 +119,8 @@ def transpose_code(dtype: dace.typeclass) -> str:
 @pytest.mark.parametrize('build', [gemm_code, transpose_code], ids=['gemm', 'transpose'])
 @pytest.mark.parametrize('dtype', list(ROCBLAS_SPELLING), ids=lambda d: d.to_string())
 def test_a_rocblas_call_casts_to_the_rocblas_complex_type(build, dtype):
-    """Neither the CUDA name (undeclared on ROCm) nor the hip vector type (declared, wrong type)."""
+    """The cast uses the rocBLAS type. ROCm does not declare the CUDA name, and the hip vector type
+    compiles but does not match the call."""
     rocblas_name, cuda_name = ROCBLAS_SPELLING[dtype]
     code = build(dtype)
     hip_name = cuda_name.replace('cu', 'hip')

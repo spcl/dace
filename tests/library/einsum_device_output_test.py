@@ -2,7 +2,7 @@
 """A pure einsum whose output lives on the device builds device maps.
 
 ``create_einsum_sdfg`` falls back to mapped tasklets whenever the contraction is not a plain
-(batched) GEMM, and both maps it builds, the reset and the contraction, took the default schedule.
+(batched) GEMM, and both maps it builds (the reset and the contraction) took the default schedule.
 On a GPU-resident output that is host code writing GPU_Global memory, which validation rejects:
 cp2k_density_matrix_trs4's canon GPU run died on ``Data container "__out" is stored as
 StorageType.GPU_Global but accessed on host`` at the ``einsum_reset`` edge.

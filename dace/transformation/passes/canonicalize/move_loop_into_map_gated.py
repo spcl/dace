@@ -44,16 +44,16 @@ was unit-stride on the grounds that the vectorizer would recover the contiguity.
 It does not: once hoisted the axis is no longer innermost, so nothing
 strip-mines it into lanes. That rule is gone.
 
-**GPU** decides by fork/join count (:func:`interchange_pays_on_gpu`), for every loop shape --
+**GPU** decides by fork/join count (:func:`interchange_pays_on_gpu`) for every loop shape:
 a single-map body and, through ``MoveLoopIntoMap(cfg_body=True)``, a body of control flow
 over several maps of one range. Every top-level map is one kernel launch: a loop of ``K``
 trips over ``M`` maps pays ``K * M`` launches, the interchanged ``map { for }`` pays one.
 Threads keep the same lane axis and the same total work, so work and parallelism cancel and
 the launches decide: interchange when ``K * M > 1``, with every symbol taken as the same
-large size (a numeric trip count is exact, a symbolic one is large). Coalescing vetoes: when
-the LOOP axis is strictly more contiguous than every map axis, the unit-stride access belongs
-on the threads, and moving the loop inside would fix it as a per-thread serial walk over
-strided threads.
+large size (a numeric trip count is exact, a symbolic one is large). Coalescing vetoes the
+interchange when the loop axis is strictly more contiguous than every map axis: the unit-stride
+access belongs on the threads, and moving the loop inside would turn it into a serial walk
+within each thread while adjacent threads access strided addresses.
 
 The stride ranking reuses
 :func:`~dace.transformation.passes.minimize_stride_permutation.score_indexed_strides`

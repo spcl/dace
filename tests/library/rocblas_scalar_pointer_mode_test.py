@@ -1,17 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Where a vendor BLAS call's alpha/beta live decides the handle's pointer mode.
 
-``cublasSetPointerMode`` / ``rocblas_set_pointer_mode`` is HANDLE-WIDE, and both handles are
-created in DEVICE mode (``dace_cublas.h`` / ``dace_rocblas.h``). So:
+``cublasSetPointerMode`` / ``rocblas_set_pointer_mode`` is handle-wide, and both handles are
+created in device mode (``dace_cublas.h`` / ``dace_rocblas.h``). So:
 
-* a compile-time 1.0 / 0.0 rides on the preallocated DEVICE constants and must not touch the mode;
+* a compile-time 1.0 / 0.0 uses the preallocated device constants and must not touch the mode;
 * a runtime coefficient read on the host is passed by host address, which needs host mode for the
   call and device mode restored after, or the GPU dereferences a host pointer;
 * a device-resident coefficient is passed as a device pointer and stays in device mode.
 
-The constants themselves are handed to rocBLAS as ``rocblas_*_complex``: that is what its C++ API
-declares, and the hip vector types are a different type there, which is what quatrex_rgf's complex
-GEMM failed to compile against.
+The constants are handed to rocBLAS as ``rocblas_*_complex``, the type its C++ API declares. The
+hip vector types are a distinct type in C++, so quatrex_rgf's complex GEMM failed to compile when the
+constants used them.
 """
 import pathlib
 
@@ -61,7 +61,7 @@ def test_a_host_coefficient_switches_the_mode_and_restores_it():
 
 
 def test_the_mode_is_restored_after_every_host_coefficient_call():
-    """Leaving the handle in host mode would make the NEXT call read its device constant wrong."""
+    """Leaving the handle in host mode would make the next call misread its device constant."""
     code = gemm_code(2.5)
     assert code.rstrip().endswith(';'), code[-200:]
     assert code.count('rocblas_pointer_mode_device') >= 1, code
@@ -71,7 +71,7 @@ def test_the_mode_is_restored_after_every_host_coefficient_call():
 def test_the_constants_are_declared_in_the_rocblas_complex_types(spelling: str):
     """rocBLAS declares its complex parameters as rocblas_complex_num<T> in C++.
 
-    The constants are BUILT with the hip vector types (``make_hipDoubleComplex``) and handed over as
+    The constants are built with the hip vector types (``make_hipDoubleComplex``) and handed over as
     the rocBLAS ones; declaring the accessors as the hip types made every complex rocBLAS call fail
     to compile with ``cannot convert 'const hipDoubleComplex*' to 'const rocblas_double_complex*'``.
     """

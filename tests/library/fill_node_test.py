@@ -73,7 +73,7 @@ def test_fill_pure_1d_cpu():
 
 @pytest.mark.parametrize('subset', ['3', '2, 5'], ids=['index', 'point_2d'])
 def test_fill_pure_writes_a_single_element(subset):
-    """A one-element subset (a loop moved into its lanes narrows a Fill to this) collapses to no dimension at all."""
+    """A one-element subset, which a Fill gets when a loop moves into its lanes, collapses to zero dimensions."""
     shape = (8, ) if ',' not in subset else (4, 8)
     sdfg = make_fill_sdfg('pure', shape, subset, gpu=False, name=f"fill_pure_one_{len(shape)}d", value=7.0)
     sdfg.expand_library_nodes()

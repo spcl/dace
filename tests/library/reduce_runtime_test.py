@@ -452,10 +452,10 @@ int main() {
 
 
 def test_a_complex_atomic_sum_compiles_and_folds_under_openmp(tmp_path):
-    """The host half of a device compile instantiates ``_wcr_fixed<Sum, complex>`` too, and there
-    it fell to ``#pragma omp atomic capture``, which OpenMP rejects for a complex operand: the HIP
-    unit of npbench vexx_k failed to compile on the GPU canonicalize column. Run on the host here,
-    where the same header serves an OpenMP build."""
+    """The host half of a device compile also instantiates ``_wcr_fixed<Sum, complex>``. There it
+    fell back to ``#pragma omp atomic capture``, which OpenMP rejects for a complex operand, so the
+    HIP unit of npbench vexx_k failed to compile on the GPU canonicalize column. The test runs on the
+    host, where the same header serves an OpenMP build."""
     cxx = _cxx('g++')
     assert cxx is not None, 'g++ is required to compile the runtime header'
     src = tmp_path / 'complex_fold.cpp'

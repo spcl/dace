@@ -633,12 +633,12 @@ def test_staged_scalar_of_a_kernel_written_array_keeps_device_storage():
 
 
 def test_a_rewritten_symbol_mapping_stays_symbolic():
-    """A nest's symbol mapping must come out of the rewrite as an expression, not as its text.
+    """A nest's symbol mapping must come out of the rewrite as a symbolic expression.
 
     ``rewrite_code_slots`` reprints every mapping value through an AST round trip, so even a value
-    it renames nothing in comes back as a string. Readers ask that value whether it is symbolic and
-    a raw string answers no: ``ConstantPropagation`` took ``'nat * nh'`` for a constant, substituted
-    the CALLER's names into the nest and left it naming symbols nothing binds. npbench ``vexx_k``
+    it renames nothing in comes back as a string. Readers check whether that value is symbolic, and
+    a raw string is not: ``ConstantPropagation`` took ``'nat * nh'`` for a constant, substituted
+    the caller's names into the nest and left it naming symbols nothing binds. npbench ``vexx_k``
     failed the GPU canonicalize column that way, with ``Missing symbols on nested SDFG``.
     """
     import sympy

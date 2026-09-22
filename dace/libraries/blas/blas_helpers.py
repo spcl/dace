@@ -64,11 +64,11 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
 
 
 def rocblas_type(ctype: str) -> str:
-    """The rocBLAS spelling of a vendor C type :func:`cublas_type_metadata` names for CUDA.
+    """Map a CUDA vendor C type from :func:`cublas_type_metadata` to its rocBLAS spelling.
 
     Only the complex types differ; ``float`` and ``double`` are the same C type in both. A
     rocSOLVER call that took the CUDA spelling emitted ``(cuDoubleComplex*)`` into a ROCm build,
-    where that type does not exist -- quatrex_rgf's complex128 ``Inv`` failed to compile on it.
+    where that type does not exist, so quatrex_rgf's complex128 ``Inv`` failed to compile there.
     """
     return {'cuComplex': 'rocblas_float_complex', 'cuDoubleComplex': 'rocblas_double_complex'}.get(ctype, ctype)
 

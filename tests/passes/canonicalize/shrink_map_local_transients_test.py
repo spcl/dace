@@ -67,7 +67,7 @@ def test_finalize_leaves_no_symbolically_sized_stack_array():
 
 
 def scratch_inside_a_kernel(schedule: dace.ScheduleType) -> dace.SDFG:
-    """``out[i] = (a[i] * 2) + 1`` through a FULL-extent ``GPU_Global`` scratch, under ``schedule``.
+    """``out[i] = (a[i] * 2) + 1`` through a full-extent ``GPU_Global`` scratch, under ``schedule``.
 
     The shape the GPU offload leaves after a fusion pulls a producer into its consumer: npbench
     warpx_boris_push carries three such ``(np_particles,)`` buffers per kernel.
@@ -89,9 +89,9 @@ def scratch_inside_a_kernel(schedule: dace.ScheduleType) -> dace.SDFG:
 
 
 def test_a_kernel_local_device_scratch_shrinks_to_a_register():
-    """Skipped as not resizable, the scratch kept its full extent, and the codegen hoist then gave
-    every kernel iteration a whole slice: an ``np_particles * np_particles`` device buffer that
-    faulted warpx_boris_push on the GPU canonicalize column."""
+    """When the pass skipped the scratch as not resizable, the scratch kept its full extent, and the
+    codegen hoist then gave every kernel iteration a whole slice: an ``np_particles * np_particles``
+    device buffer that faulted warpx_boris_push on the GPU canonicalize column."""
     sdfg = scratch_inside_a_kernel(dace.ScheduleType.GPU_Device)
     assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) == 1
     desc = sdfg.arrays['scratch']
@@ -120,11 +120,11 @@ def test_a_shrunk_kernel_scratch_computes_the_values():
 
 
 def scratch_inside_a_nested_body(reassign: bool = False) -> dace.SDFG:
-    """``B[i] = A[i] * 2 + 1`` with the map body nested into its own SDFG, which owns a FULL-extent
+    """``B[i] = A[i] * 2 + 1`` with the map body nested into its own SDFG, which owns a full-extent
     scratch indexed by the symbol ``k`` the map binds to ``i``.
 
-    :param reassign: Add a second state after an interstate edge that assigns ``k``, so the box the
-        accesses name is not one element for the whole nest.
+    :param reassign: Add a second state after an interstate edge that assigns ``k``, so the
+        accesses name more than one element across the nest.
     """
     body = dace.SDFG('nested_body')
     body.add_array('A', [N], dace.float64)

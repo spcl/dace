@@ -77,9 +77,9 @@ def _all_matmul_extents_small(state, node, limit: int) -> bool:
 def blas_addresses(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether a BLAS call can take every matrix operand of ``node`` as it is laid out.
 
-    BLAS names a matrix by a pointer and ONE leading dimension, so each operand needs a unit stride
-    on one of its two matrix axes (what ``get_gemm_opts`` requires). A strided view of both axes --
-    cegterg's canonicalized ``Gemm`` -- has no such form, and the BLAS expansion raised
+    BLAS names a matrix by a pointer and a single leading dimension, so each operand needs a unit
+    stride on one of its two matrix axes (what ``get_gemm_opts`` requires). A strided view of both
+    axes (cegterg's canonicalized ``Gemm``) has no such form, and the BLAS expansion raised
     ``sAM or sAK should be 1`` at codegen.
 
     The operands are read from the SDFG that owns ``state``: a nested node's arrays are its own, and

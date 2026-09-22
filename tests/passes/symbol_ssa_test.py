@@ -498,7 +498,7 @@ def peel_after_loop_sdfg() -> dace.SDFG:
 
 
 def test_symbol_ssa_renames_a_peel_apart_from_its_loop_body():
-    """Loop body and peel end on two names; each use, the peel's guard condition included, reads its own."""
+    """The loop body and the peel get distinct names; each use reads its own, the peel's guard condition included."""
     sdfg = peel_after_loop_sdfg()
     expected = run_gather(copy.deepcopy(sdfg))
     result = SymbolSSA().apply_pass(sdfg, {})
@@ -549,7 +549,7 @@ def test_symbol_ssa_keeps_a_branch_join_on_one_name():
 
 
 def test_symbol_ssa_leaves_a_value_carried_into_a_loop_region_alone():
-    """A body read before the body's own redefinition sees the pre-loop value AND the back edge: one web."""
+    """A body read before the body's own redefinition sees both the pre-loop value and the back edge: one web."""
     sdfg = dace.SDFG('carried_into_loop_region')
     gather_arrays(sdfg)
     init = sdfg.add_state('init', is_start_block=True)

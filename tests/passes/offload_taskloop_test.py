@@ -81,7 +81,7 @@ def map_over_reduce_beside_a_tasklet() -> dace.SDFG:
     beside the reduce, scales ``T[i, 0]`` into ``U``; a kernel copies ``U`` into ``C``.
 
     The reduce makes the row map a taskloop, so its scope is host code, while ``T`` and ``U`` are
-    touched by kernels in the same state -- a hybrid state. The side tasklet reaches both arrays
+    touched by kernels in the same state (a hybrid state). The side tasklet reaches both arrays
     straight through the map's entry and exit, with no access node of its own. That is the shape
     npbench cp2k_density_matrix_trs4 reaches on the GPU canonicalize column once a row-wise ``* 3``
     is fused beside a loop body that reduces.
@@ -287,8 +287,8 @@ def test_the_staged_row_of_a_launched_library_node_is_device_memory():
 def test_a_tasklet_beside_a_launched_library_node_becomes_a_kernel(heuristics):
     """The tasklet may not stay host code reading a device array: it gets a size-1 kernel.
 
-    The wrapper judged it scalar-only because it looked for access nodes, and a tasklet inside a
-    scope reaches its arrays through the scope's entry and exit instead. It was left on the host,
+    The wrapper judged it scalar-only because it looked for access nodes, but a tasklet inside a
+    scope reaches its arrays through the scope's entry and exit. It was left on the host,
     and validation rejected the graph: ``stored as StorageType.GPU_Global but accessed on host``.
     """
     sdfg = offloaded(map_over_reduce_beside_a_tasklet(), heuristics)

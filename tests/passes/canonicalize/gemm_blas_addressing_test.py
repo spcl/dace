@@ -52,7 +52,7 @@ def test_the_strided_gemm_computes_what_numpy_computes():
     a = wide[:, ::2]
     b = rng.random((n, n))
     c = np.zeros((n, n))
-    # ``a`` IS the strided view the descriptor declares, which is the point of the test.
+    # ``a`` is the strided view the descriptor declares, which is the point of the test.
     with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
         sdfg(A=a, B=b, C=c, N=n)
     np.testing.assert_allclose(c, a @ b, rtol=1e-12, atol=0)
@@ -85,7 +85,7 @@ def nested_gemm(a_strides) -> tuple:
 
 
 def test_a_nested_gemm_reads_its_own_arrays():
-    """The operand names live in the nested SDFG, not the one the pass was called on.
+    """The operand names live in the nested SDFG that holds the ``Gemm``.
 
     Looking them up in the top-level SDFG raised ``KeyError: Data descriptor with name "__inl4_ps"
     not found in SDFG`` and took down the whole canonicalize run (cegterg and

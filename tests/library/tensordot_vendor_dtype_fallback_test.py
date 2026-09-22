@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A vendor tensor contraction the library cannot do in the operands' type falls back to ``pure``.
 
-The expansion RAISED for a dtype outside the environment's map, so every such contraction on the
+The expansion raised for a dtype outside the environment's map, so every such contraction on the
 HIP canon GPU column was unsupported. It now falls back to the pure expansion, which on
 GPU-resident operands is still a device map.
 
-What hipTensor can contract is measured, not assumed, and it is not what it can permute: fp64
+What hipTensor can contract is measured, and it differs from what it can permute: fp64
 contraction runs (checked against a host reference in the ROCm 7.2 judge image on gfx942), while
 fp64 permute is refused at every rank. So double takes the vendor call and complex takes the
 fallback.
@@ -32,7 +32,7 @@ def double_contraction(implementation: str, dtype: dace.typeclass = dace.complex
 
 
 def test_a_contraction_hiptensor_cannot_do_expands_to_the_pure_map():
-    """complex128 is outside the contraction map, so it takes the fallback rather than raising."""
+    """complex128 is outside the contraction map, so it takes the fallback without raising."""
     sdfg = double_contraction('hipTENSOR')
     sdfg.expand_library_nodes()
     code = '\n'.join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
@@ -41,7 +41,7 @@ def test_a_contraction_hiptensor_cannot_do_expands_to_the_pure_map():
 
 
 def test_a_double_contraction_takes_the_vendor_call():
-    """fp64 contraction is supported and measured, so it must NOT fall back to a map."""
+    """fp64 contraction is supported and measured, so it must not fall back to a map."""
     sdfg = double_contraction('hipTENSOR', dace.float64)
     sdfg.expand_library_nodes()
     code = '\n'.join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))

@@ -472,15 +472,15 @@ def test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping():
     assert 'M' not in args, f"the nested SDFG's local symbol leaked into the outer call signature: {list(args)}"
 
 
-#: Three access nodes of the scratch in ONE state -- the chain ``fill -> tmp -> scale -> tmp -> shift
-#: -> tmp -> use`` examinimd's force loop produces after fusion.
+#: Three access nodes of the scratch in one state: the chain ``fill -> tmp -> scale -> tmp -> shift
+#: -> tmp -> use`` that examinimd's force loop produces after fusion.
 SCRATCH_READERS = 3
 
 
 def kernel_with_several_scratch_access_nodes():
     """``a[i] = ((i + 1) * 2 + 3)`` computed through a scratch element read and written three times.
 
-    Every stage names the SAME transient, so the state holds ``SCRATCH_READERS`` access nodes for it
+    Every stage names the same transient, so the state holds ``SCRATCH_READERS`` access nodes for it
     and each tasklet body carries a subscript on it once
     :class:`~dace.transformation.passes.inline_tasklet_connectors.InlineTaskletConnectors` has run.
     """
@@ -525,10 +525,10 @@ def scratch_subscripts_in_tasklet_bodies(sdfg: dace.SDFG):
 def test_an_inlined_body_gains_the_lift_prefix_exactly_once():
     """A body subscript must end up with as many indices as the lifted buffer has dimensions.
 
-    The body rewrite used to run once per ACCESS NODE rather than once per state, so a state with
+    The body rewrite must run once per state. It used to run once per access node, so a state with
     three access nodes of the scratch prefixed each body three times over. On npbench ``examinimd``
     that left an 11-index subscript on a rank-5 array, which the generator emits verbatim as an
-    ``operator[]`` on a raw pointer -- a compile error at the end of the GPU canonicalize column.
+    ``operator[]`` on a raw pointer (a compile error at the end of the GPU canonicalize column).
     """
     sdfg, kernel_entry = kernel_with_several_scratch_access_nodes()
     InlineTaskletConnectors().apply_pass(sdfg, {})

@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A kernel-local buffer that CONTROL FLOW reads, lifted out of the kernel.
+"""A kernel-local buffer that control flow reads, lifted out of the kernel.
 
 ``MoveArrayOutOfKernel`` gives a kernel-local buffer one slice per kernel iteration, so every
 subscript of it grows a leading index. Memlets and inlined tasklet bodies were rewritten; an
 interstate-edge assignment that reads one element of the buffer (``sel = order[0]``) was not, so
 the stale rank-1 subscript ended up naming a whole row of the rank-2 buffer. Code generation
-rejects that outright -- ``SyntaxError: Range subscripts disallowed in interstate edges``, which is
-what npbench ``rayleigh_ritz_rotation`` hit on the GPU canonicalize column.
+rejects that with ``SyntaxError: Range subscripts disallowed in interstate edges``, the error
+npbench ``rayleigh_ritz_rotation`` hit on the GPU canonicalize column.
 
 Built by hand: the frontend does not produce a kernel-local buffer that an interstate edge reads.
 """
@@ -25,7 +25,7 @@ NX, NZ = (dace.symbol(s, dtype=dace.int64) for s in ('NX', 'NZ'))
 def kernel_with_interstate_buffer_read() -> dace.SDFG:
     """``out[i] = a[i, order[i, 0]]`` where ``order`` is a symbolically-sized kernel-local buffer.
 
-    ``order`` is filled from ``a`` -- a constant fill is folded away and the buffer with it -- and
+    ``order`` is filled from ``a`` (a constant fill is folded away, and the buffer with it) and
     then read by the interstate edge that carries ``sel`` into the consuming state. The symbolic
     extent is what forces the lift: such a buffer has no device-local form (a VLA in device code)
     and no per-thread register form either.
@@ -74,7 +74,7 @@ def buffer_reads_on_interstate_edges(sdfg: dace.SDFG):
 
 
 def test_lifted_buffer_interstate_read_gains_the_kernel_index():
-    """The read must keep naming ONE element: as many indices as the lifted buffer has dimensions."""
+    """The read must keep naming one element: as many indices as the lifted buffer has dimensions."""
     sdfg = kernel_with_interstate_buffer_read()
     GPUCodegenPreprocessPipeline().apply_pass(sdfg, {})
 
@@ -89,7 +89,7 @@ def test_lifted_buffer_interstate_read_gains_the_kernel_index():
 
 
 def test_lifted_buffer_interstate_read_generates_code():
-    """The end the defect was found by: a range subscript on an interstate edge stops code generation."""
+    """The defect surfaced in code generation: a range subscript on an interstate edge stops it."""
     sdfg = kernel_with_interstate_buffer_read()
     GPUCodegenPreprocessPipeline().apply_pass(sdfg, {})
     sdfg.generate_code()
@@ -97,7 +97,7 @@ def test_lifted_buffer_interstate_read_generates_code():
 
 @pytest.mark.gpu
 def test_lifted_buffer_interstate_read_computes_the_right_values():
-    """Structure is not enough: a stale index that stays rank-correct compiles and returns garbage."""
+    """The structural checks miss a stale index that stays rank-correct; it compiles and returns garbage."""
     cupy = pytest.importorskip('cupy')
 
     nx, nz = 5, 7

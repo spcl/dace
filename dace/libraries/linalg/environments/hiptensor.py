@@ -47,13 +47,13 @@ class hipTensor:
         dace.float32: ('HIPTENSOR_R_32F', 'HIPTENSOR_COMPUTE_DESC_32F', 'float'),
     }
 
-    #: What CONTRACTION supports, which is more than permute does. Measured the same way, in the
-    #: ROCm 7.2 judge image on gfx942: a real ``hiptensorContract`` over fp64 returns SUCCESS and
-    #: matches a host reference exactly, while ``hiptensorPermute`` refuses fp64 at every rank. The
-    #: two operations therefore carry their own maps instead of one conservative intersection, so a
-    #: double contraction runs on the vendor library rather than falling back to a map
-    #: (cp2k_grid_integrate, ls3df_scf on the canon GPU column). complex64 and complex128 stay out
-    #: until a contraction in each is measured the same way.
+    #: :attr:`TYPE_MAP` extended for contraction, which accepts more dtypes than permute. Measured the
+    #: same way, in the ROCm 7.2 judge image on gfx942: a real ``hiptensorContract`` over fp64 returns
+    #: SUCCESS and matches a host reference exactly, while ``hiptensorPermute`` refuses fp64 at every
+    #: rank. The two operations therefore carry separate maps; one shared map would be their
+    #: intersection and drop fp64. With its own map, a double contraction runs on the vendor library
+    #: and does not fall back to a map (cp2k_grid_integrate, ls3df_scf on the canon GPU column).
+    #: complex64 and complex128 stay out until a contraction in each is measured the same way.
     CONTRACTION_TYPE_MAP = {
         **TYPE_MAP,
         dace.float64: ('HIPTENSOR_R_64F', 'HIPTENSOR_COMPUTE_DESC_64F', 'double'),

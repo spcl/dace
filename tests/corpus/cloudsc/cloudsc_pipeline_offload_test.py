@@ -37,8 +37,8 @@ def test_gate_defaults_off(variant):
 
 @pytest.mark.parametrize('variant', OFFLOAD_VARIANTS)
 def test_gate_on_appends_offload_phase(variant):
-    """The offload phase is terminal, holds exactly the one stage, and leaves the plan before it
-    untouched -- so every earlier phase is still numeric-checked exactly as before."""
+    """The offload phase is terminal, holds only the offload stage, and leaves the plan before it
+    untouched, so every earlier phase is still numeric-checked exactly as before."""
     off = variant_phases(variant, offload=False)
     on = variant_phases(variant, offload=True)
     assert len(on) == len(off) + 1

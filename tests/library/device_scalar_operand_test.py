@@ -110,8 +110,8 @@ def test_a_host_seed_goes_to_cub_by_value():
 
 
 def test_a_device_seed_is_read_inside_the_kernel():
-    """The kernel dereferences the seed itself, so a value an earlier kernel is still writing is
-    ordered by the stream, not by a host round trip (rocPRIM reads a ``FutureValue`` on the host)."""
+    """The kernel dereferences the seed itself, so the stream orders the read after any earlier kernel
+    still writing it; rocPRIM reads a ``FutureValue`` on the host, which needs a host round trip."""
     sdfg, _, _ = scan_with_seed(dtypes.StorageType.GPU_Global)
     code = expanded_code(sdfg)
     assert 'const double* seed;' in code, code[:600]

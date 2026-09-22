@@ -151,7 +151,7 @@ def test_copy_pure_cpu():
 
 
 def test_copy_pure_moves_a_single_element():
-    """A one-element copy (a loop moved into its lanes narrows a Copy to this) collapses to no dimension at all."""
+    """A Copy narrowed to one element (as moving a loop into its lanes does) collapses to no dimension at all."""
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=[4, 8], storage=dace.dtypes.StorageType.CPU_Heap, subset="2, 5", name="A"),
         _ArraySpec(shape=[8], storage=dace.dtypes.StorageType.CPU_Heap, subset="3", name="B"),
@@ -1995,8 +1995,8 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
     # ``a`` is updated by a host-scheduled tasklet between kernel launches (an ordinary, correct
     # placement: ``OffloadToAccelerator`` no longer claims a scalar as device-written just because
     # an ordering edge follows a kernel, see 4301f15e6). GPUPersistentKernel does not promote
-    # storage on its callers' behalf either -- gpu_scalar_execution_context_test.py's own scalar
-    # tester sets its accumulator's storage before applying the transform, and every thread here
+    # storage on its callers' behalf either; gpu_scalar_execution_context_test.py's own scalar
+    # tester sets its accumulator's storage before applying the transform. Every thread here
     # recomputes the same ``a`` sequence redundantly, so Register (one copy per thread) is exact.
     sdfg.arrays['a'].storage = dace.StorageType.Register
     # The compute states, named rather than positional: the offloading places its transfers where

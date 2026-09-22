@@ -1,9 +1,9 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
-// hip*Complex is what the constants are BUILT with (make_hipDoubleComplex); they are handed to
-// rocBLAS as rocblas_*_complex, which is what its C++ API declares. The two are layout-compatible
-// but distinct types there, and passing the hip one does not compile.
+// The constants are built as hip*Complex (make_hipDoubleComplex) and handed to rocBLAS as
+// rocblas_*_complex, the type its C++ API declares. The two are layout-compatible but distinct
+// C++ types, so passing a hip*Complex pointer does not compile.
 #include <hip/hip_complex.h>  // for hip*Complex; the public header, not the amd_detail one
 #include <hip/hip_fp16.h>     // for __float2half
 #include <hip/hip_runtime.h>
