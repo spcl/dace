@@ -12,6 +12,7 @@ caller's own offload) -> ``finalize_for_target(s, 'gpu')``; the caller runs each
    the device maps the offload created.
 """
 from dace import SDFG
+from dace.transformation.passes.gpu_specialization.contiguous_axis_to_threads import ContiguousAxisToThreads
 from dace.transformation.passes.gpu_specialization.gpu_loop_interchange import GPULoopInterchange
 from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
     SequentializeNestedDeviceScopes)
@@ -36,7 +37,7 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
     :param sdfg: An offloaded SDFG.
     :returns: The same ``sdfg`` instance.
     """
-    # SLOT: the pass that gives ``map JK { work; map JL }`` nests JL as a thread dimension goes HERE, before the
-    # nested JL map is pinned sequential below.
+    # ``map JK { work; map JL }`` makes JL a thread dimension first: pinned sequential below, it would not be one.
+    ContiguousAxisToThreads().apply_pass(sdfg, {})
     SequentializeNestedDeviceScopes().apply_pass(sdfg, {})
     return sdfg

@@ -14,6 +14,7 @@ import pytest
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.transformation.passes.gpu_specialization.contiguous_axis_to_threads import ContiguousAxisToThreads
+from dace.transformation.passes.gpu_specialization.pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
     SequentializeNestedDeviceScopes)
 
@@ -164,6 +165,16 @@ def test_the_unit_stride_axis_becomes_the_fastest_thread_index(builder):
     assert entry.map.params == ['k', 'l'], entry.map.params
     nested = [n for n in state.scope_subgraph(entry).nodes() if isinstance(n, nodes.MapEntry) and n is not entry]
     assert not nested, nested
+
+
+def test_the_gpu_finalization_band_makes_the_unit_stride_axis_a_thread_index():
+    """``finalize_for_target('gpu')`` runs this band; a pass it does not call never reaches CloudSC."""
+    sdfg = bare_nest()
+    sdfg.apply_gpu_transformations(simplify=False)
+    gpu_specialize_offloaded(sdfg)
+    sdfg.validate()
+    entry, _ = only_kernel(sdfg)
+    assert entry.map.params == ['k', 'l'], entry.map.params
 
 
 def test_a_forwarded_scalar_is_read_through_the_kernel_entry():
