@@ -10,7 +10,7 @@ import sympy
 import dace
 from dace import SDFG, SDFGState, dtypes, data as dt
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.properties import CodeBlock, make_properties
 from dace.transformation import transformation, helpers
 from dace.transformation.pass_pipeline import Pass
@@ -63,6 +63,21 @@ def _prepend_subscript_indices(body: str, array_name: str, prefix: List[str]) ->
         return None
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
+
+
+def _point_index_prefix(params_as_ranges) -> List[str]:
+    """The leading indices a lift adds, as index expressions, or ``[]`` if they are not indices.
+
+    A subscript written in a tasklet body or in a control flow expression is an element access: it
+    cannot carry a range. A dimension that came back as a full range therefore means the access is
+    not per-iteration, and prepending it would be wrong, so such a prefix is rejected whole.
+    """
+    prefix: List[str] = []
+    for start, end, _stride in params_as_ranges:
+        if start != end:
+            return []
+        prefix.append(dace.symbolic.symstr(start))
+    return prefix
 
 
 def _assigns_symbol(sdfg: SDFG, name: str) -> bool:
@@ -432,6 +447,8 @@ class MoveArrayOutOfKernel(Pass):
                     edge.data.src_subset = Range(params_as_ranges + edge.data.src_subset.ndrange())
                     visited.add(edge)
             self.update_inlined_tasklet_accesses(state, array_name, params_as_ranges)
+        for sdfg in reshaped_sdfgs:
+            self.update_interstate_accesses(sdfg, array_name, params_as_ranges)
 
     def update_inlined_tasklet_accesses(self, state: SDFGState, array_name: str, params_as_ranges) -> None:
         """Prepend the lift's new leading indices to ``array_name`` subscripts written into tasklet
@@ -444,15 +461,9 @@ class MoveArrayOutOfKernel(Pass):
         ``arr_idx(...)`` access, and emits the stale subscript verbatim. Every kernel iteration then
         writes the same leading slice, which compiles, validates and returns wrong numbers.
 
-        Only point indices are prepended, which is what the lift adds for a node inside the map; a
-        body subscript cannot carry a range. A dimension that came back as a full range means the
-        access is not per-iteration, and rewriting it would be wrong, so those are left alone.
+        Only point indices are prepended (see :func:`_point_index_prefix`).
         """
-        prefix = []
-        for start, end, _stride in params_as_ranges:
-            if start != end:
-                return
-            prefix.append(dace.symbolic.symstr(start))
+        prefix = _point_index_prefix(params_as_ranges)
         if not prefix:
             return
         for node in state.nodes():
@@ -461,6 +472,51 @@ class MoveArrayOutOfKernel(Pass):
             rewritten = _prepend_subscript_indices(node.code.as_string, array_name, prefix)
             if rewritten is not None:
                 node.code = CodeBlock(rewritten, dtypes.Language.Python)
+
+    def update_interstate_accesses(self, sdfg: SDFG, array_name: str, params_as_ranges) -> None:
+        """Prepend the lift's new leading indices to ``array_name`` subscripts read by CONTROL FLOW
+        -- interstate-edge assignments and conditions, loop headers, branch conditions.
+
+        Control flow reads an array element by subscript (``__rdo0_index = row_idx[it]``) and the
+        lift reshapes the descriptor underneath it, so the stale rank-1 subscript now names a whole
+        row of a rank-2 array. Code generation rejects that outright (``Range subscripts disallowed
+        in interstate edges``); where the stale subscript happens to stay rank-correct it is worse,
+        because every kernel iteration then reads the same slice and the numbers are silently wrong.
+
+        :param sdfg: One SDFG whose descriptor for ``array_name`` gained the leading dimensions.
+            Its own control flow is rewritten; a nested SDFG keeps its own descriptor and its own
+            control flow, and is reached separately when it is reshaped too.
+        """
+        prefix = _point_index_prefix(params_as_ranges)
+        if not prefix:
+            return
+
+        def rewritten(block: Optional[CodeBlock]) -> Optional[CodeBlock]:
+            """``block`` with the prefix prepended, or ``None`` when it needs no rewrite."""
+            if block is None or block.language is not dtypes.Language.Python:
+                return None
+            new_code = _prepend_subscript_indices(block.as_string, array_name, prefix)
+            return None if new_code is None else CodeBlock(new_code, dtypes.Language.Python)
+
+        for cfg in sdfg.all_control_flow_regions():
+            for edge in cfg.edges():
+                for var, value in list(edge.data.assignments.items()):
+                    new_value = _prepend_subscript_indices(str(value), array_name, prefix)
+                    if new_value is not None:
+                        edge.data.assignments[var] = new_value
+                new_condition = rewritten(edge.data.condition)
+                if new_condition is not None:
+                    edge.data.condition = new_condition
+            if isinstance(cfg, LoopRegion):
+                for attr in ('init_statement', 'loop_condition', 'update_statement'):
+                    new_statement = rewritten(getattr(cfg, attr))
+                    if new_statement is not None:
+                        setattr(cfg, attr, new_statement)
+            elif isinstance(cfg, ConditionalBlock):
+                for index, (condition, _branch) in enumerate(cfg.branches):
+                    new_condition = rewritten(condition)
+                    if new_condition is not None:
+                        cfg.branches[index] = (new_condition, cfg.branches[index][1])
 
     # Array, symbol and renaming related helper functions
     def get_new_shape_info(self, array_desc: dt.Array, map_exit_chain: List[nodes.MapEntry]):
