@@ -499,7 +499,6 @@ class LoopToConditionalReduce(ppl.Pass):
         #    the unique non-empty block, the loop body is a clean single-
         #    state accumulator that ``reduction_to_wcr_map`` lifts.
         self._collapse_empty_wrappers(loop)
-        sdfg.reset_cfg_list()
         return True
 
     def _build_mask_body(self, cond_expr: str, identity_value) -> str:

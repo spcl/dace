@@ -8,6 +8,7 @@ AccessNode-sourced map-exit-WCR shape that survives downstream canonicalization.
 be value-preserving on the untransformed baseline for every kernel it touches, and a
 no-op on a second run.
 """
+import copy
 import os
 
 # Four threads, not one: a reduction lowered onto a Map that carries a dependence is right on one
@@ -30,6 +31,16 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.corpus import corpus_suite as CS
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
 
 
 def _write_only_scalar_wcr_conns(sdfg: dace.SDFG):
@@ -269,6 +280,7 @@ def test_micro_single_accumulator_sum():
     sdfg = _build_masked_reduction('lambda x, y: x + y', seed_outer=True)
     res = NormalizeWCR().apply_pass(sdfg, {})
     assert res is not None
+    assert_cfg_list_matches_reset(sdfg)
     assert not _write_only_scalar_wcr_conns(sdfg)
     sdfg.validate()
 

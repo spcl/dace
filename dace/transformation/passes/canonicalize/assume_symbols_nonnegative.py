@@ -310,7 +310,6 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     if not checks:
         if not lead_with_assumption_guard(sdfg):
             return None
-        sdfg.reset_cfg_list()
         return 1
 
     # ``add_state_before`` prepends the guard before the current start and
@@ -338,7 +337,6 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
         # ``StateFusionExtended`` refuses to fuse a state carrying an ordered side effect -- the
         # refusal that names "a trap guard" -- so the guard survives as its own dominating block.
     lead_with_assumption_guard(sdfg)
-    sdfg.reset_cfg_list()
     return 1
 
 

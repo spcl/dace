@@ -253,7 +253,6 @@ class ControlFlowRaising(ppl.Pass):
         n_cond_regions_post = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
         lifted = n_cond_regions_post - n_cond_regions_pre
         if lifted:
-            sdfg.reset_cfg_list()
             sdfg.root_sdfg.using_explicit_control_flow = True
         return lifted
 
@@ -324,7 +323,6 @@ class ControlFlowRaising(ppl.Pass):
 
                 lifted += 1
 
-                sdfg.reset_cfg_list()
         return lifted
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Optional[Tuple[int, int, int]]:
@@ -345,7 +343,6 @@ class ControlFlowRaising(ppl.Pass):
         if (removed_blocks == 0 and lifted_branches == 0 and lifted_loops == 0 and lifted_unstructured == 0
                 and lifted_returns == 0):
             return None
-        top_sdfg.reset_cfg_list()
         return lifted_returns, lifted_loops, lifted_branches, lifted_unstructured
 
     def report(self, pass_retval: Optional[Tuple[int, int, int]]):

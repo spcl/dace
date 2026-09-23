@@ -10,6 +10,17 @@ from dace.transformation.passes.canonicalize.move_loop_into_map_gated import Mov
 import copy
 import json
 import numpy as np
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 I = dace.symbol("I")
 J = dace.symbol("J")
@@ -87,6 +98,7 @@ def _semantic_eq(program):
 
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count > 0
+    assert_cfg_list_matches_reset(sdfg)
     sdfg(A2, I=A2.shape[0], J=A2.shape[1])
 
     assert np.allclose(A1, A2)

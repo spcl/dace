@@ -351,7 +351,6 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                                                    for x in symbolic.pystr_to_symbolic(str(dim)).free_symbols}
                    for dim in desc.shape):
                 desc.lifetime = dtypes.AllocationLifetime.State
-    sdfg.reset_cfg_list()
 
 
 def recompute_fuse_for_gpu(sdfg: SDFG) -> int:

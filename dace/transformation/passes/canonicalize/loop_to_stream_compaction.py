@@ -700,7 +700,6 @@ class LoopToStreamCompaction(ppl.Pass):
             parent.remove_edge(edge)
             parent.add_edge(exit_state, edge.dst, edge.data)
         parent.remove_node(root)
-        sdfg.reset_cfg_list()
 
         self.parallelize(mask_nest, sdfg, permissive=False)
         self.parallelize(scatter_nest, sdfg, permissive=True)

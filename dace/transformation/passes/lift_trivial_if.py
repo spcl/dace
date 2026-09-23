@@ -429,8 +429,6 @@ class LiftTrivialIf(ppl.Pass):
         rmed_count = self._detect_trivial_ifs_and_rm_cfg(sdfg)
         if not rmed_count:
             return None
-        # Refresh the global CFG-list index once, only when regions actually changed. Parent references
-        # were already repaired incrementally per splice (scoped to the moved subtree) -- no whole-SDFG
-        # walk, and nothing to do when the pass removed nothing.
-        sdfg.reset_cfg_list()
+        # ``add_node`` / ``remove_node`` / ``remove_branch`` keep the CFG list exact per splice, and the
+        # parent references were repaired per splice too: nothing left to rebuild.
         return {'lifted_conditionals': rmed_count}

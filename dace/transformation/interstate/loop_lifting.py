@@ -233,4 +233,3 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         graph.add_edge(to_connect, after, InterstateEdge(assignments=exit_edge.data.assignments))
 
         sdfg.root_sdfg.using_explicit_control_flow = True
-        sdfg.reset_cfg_list()

@@ -11,6 +11,7 @@ per refusal in the pass's contract.
 The pass runs inside the canonicalize pipeline's ``loop_to_x`` stage, so every test drives the
 full pipeline: a refusal that only holds when the pass is run in isolation is not a refusal.
 """
+import copy
 import numpy as np
 import pytest
 
@@ -23,6 +24,17 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.cpu_specialization import cpu_specialize
 from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (LoopToStreamCompaction, NestLevel,
                                                                                IDX_PREFIX, MASK_PREFIX, TOTAL_PREFIX)
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 N = dace.symbol('N', dtype=dace.int64)
 M = dace.symbol('M', dtype=dace.int64)
@@ -410,6 +422,7 @@ def test_guard_as_body_start_block():
 
     assert LoopToStreamCompaction().apply_pass(sdfg, {}) == 1
     sdfg.validate()
+    assert_cfg_list_matches_reset(sdfg)
     assert num_loops(sdfg) == 0
     assert num_maps(sdfg) >= 2
 

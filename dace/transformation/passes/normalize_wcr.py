@@ -304,7 +304,6 @@ class NormalizeWCR(ppl.Pass):
                 wcr_state.remove_node(old_sink)
             self._seed_state(inner, priv, priv_desc, op)
             self._copyback_state(inner, priv, oc, oc_desc)
-            inner.reset_cfg_list()
 
         # Rewrite the map level: put the reduction on the accumulator edge chain.
         # The WCR must source from an AccessNode: a WCR left on the NestedSDFG->MapExit
@@ -646,6 +645,5 @@ class NormalizeWCR(ppl.Pass):
         n = self._apply(sdfg)
         if n == 0:
             return None
-        sdfg.reset_cfg_list()
         sdfg.validate()
         return {'normalized_nested_reductions': {str(n)}}

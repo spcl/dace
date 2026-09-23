@@ -1,11 +1,23 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``LiftTrivialIf`` simplification pass."""
+import copy
 import dace
 from dace import InterstateEdge
 from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
 from dace import ControlFlowRegion
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 import pytest
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 # Conditions the pass must recognize as constant ``True``. One per syntactic family (bool literal,
 # relational fold, unary ``not``, function call): the pass runs the same single check on all of them,
@@ -165,6 +177,7 @@ def test_single_condition(condition: str):
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
+    assert_cfg_list_matches_reset(sdfg)
 
 
 @pytest.mark.parametrize("condition", _CANT_EVAL)
