@@ -832,7 +832,7 @@ def rows_with_an_unranked_gather(agg: dace.int64[ROWS], w: dace.float64[ROWS], o
             out[j] = out[j] + acc[j]
 
 
-def copies_inside_loops(sdfg: dace.SDFG) -> list:
+def copies_inside_loops(sdfg: dace.SDFG) -> list[str]:
     return [
         b.label for loop in sdfg.all_control_flow_blocks(recursive=True) if isinstance(loop, LoopRegion)
         for b in loop.all_control_flow_blocks(recursive=True) if is_copy_state(sdfg, b)
