@@ -181,3 +181,24 @@ def test_einsum_coefficients_survive_a_json_round_trip_of_the_expanded_gemm():
     a, b, c = rng.random((n, n)), rng.random((n, n)), np.zeros((n, n))
     loaded(a=a, b=b, c=c)
     assert np.allclose(c, 2.0 * (a @ b)), c
+
+
+@pytest.mark.parametrize('subscripts, shapes', [
+    ('ij,kj->ikj', ((3, 5), (4, 5))),
+    ('jb,kb->jkb', ((3, 5), (4, 5))),
+])
+def test_a_batch_index_after_a_matrix_index_compiles_and_computes(subscripts, shapes):
+    """A batch index after a matrix index leaves no unit-stride matrix dimension, so the batched GEMM
+    lowering raised at compile ("sCM or sCN should be 1"): warpx_field_gather's lifted ``ij,kj->ikj``
+    outer product per particle."""
+    (m, n), (k, _) = shapes
+
+    @dace.program
+    def outer(a: dace.float64[m, n], b: dace.float64[k, n], c: dace.float64[m, k, n]):
+        c[:] = np.einsum(subscripts, a, b)
+
+    rng = np.random.default_rng(0)
+    a, b = rng.random(shapes[0]), rng.random(shapes[1])
+    c = np.zeros((m, k, n))
+    outer(a=a, b=b, c=c)
+    np.testing.assert_allclose(c, np.einsum(subscripts, a, b), rtol=1e-12)

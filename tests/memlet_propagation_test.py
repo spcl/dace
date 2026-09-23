@@ -236,6 +236,21 @@ def test_matching_rank_widens_only_the_inner_symbol_dimension():
     assert str(widened) == '0:N, 0:16', str(widened)
 
 
+def test_a_nested_connector_is_judged_once_whatever_else_its_mapping_renames():
+    """The verdict depends only on the mapping entries the inner extents use; keyed on the whole mapping,
+    the memo missed for every nested SDFG whose mapping differed elsewhere, and ``symbolic.equal``'s
+    assumption solver ran again (warpx_field_gather: 271 extent pairs asked 3718 times)."""
+    from dace.sdfg.propagation import extents_provably_differ, reshaped_across_boundary
+    from dace import subsets
+    inner = dace.data.Array(dace.float64, [dace.symbol('M') + 1])
+    outer = subsets.Range([(0, dace.symbol('P'), 1)])
+    extents_provably_differ.cache_clear()
+    verdicts = [reshaped_across_boundary(inner, outer, {'M': 'P', f'unused{k}': 'P'}) for k in range(5)]
+    assert verdicts == [False] * 5, verdicts
+    info = extents_provably_differ.cache_info()
+    assert info.misses == 1 and info.hits == 4, info
+
+
 if __name__ == '__main__':
     test_conditional()
     test_conditional_nested()
