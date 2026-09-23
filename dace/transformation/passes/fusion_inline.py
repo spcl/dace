@@ -234,10 +234,7 @@ class InlineControlFlowRegions(ppl.Pass):
                 break
             inlined += inlined_in_iteration
 
-        if inlined:
-            sdfg.reset_cfg_list()
-            return inlined
-        return None
+        return inlined or None
 
     def report(self, pass_retval: int) -> str:
         return f'Inlined {pass_retval} regions.'

@@ -1705,8 +1705,6 @@ def inline_control_flow_regions(sdfg: SDFG,
         from dace.transformation.passes.dead_state_elimination import DeadStateElimination
         DeadStateElimination().apply_pass(sdfg, {})
 
-    sdfg.reset_cfg_list()
-
     return count
 
 

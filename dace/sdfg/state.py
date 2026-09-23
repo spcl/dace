@@ -3220,11 +3220,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                         parent.add_edge(node, end_state, dace.InterstateEdge(condition='False'))
                     else:
                         parent.add_edge(node, end_state, dace.InterstateEdge())
-            # Remove the original control flow region (self) from the parent graph.
+            # Remove the original control flow region (self) from the parent graph. The CFG list follows
+            # every block move and the removal in place.
             parent.remove_node(self)
-
-            sdfg = parent if isinstance(parent, dace.SDFG) else parent.sdfg
-            sdfg.reset_cfg_list()
 
             return True, end_state
 
