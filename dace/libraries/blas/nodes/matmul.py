@@ -162,13 +162,19 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     """ Get option map for GEMM code generation (with column-major order). """
     # Avoid import loops
     from dace.codegen.common import sym2cpp
-    from dace.libraries.blas.blas_helpers import get_gemm_opts
+    from dace.libraries.blas.blas_helpers import get_gemm_opts, packed_unit_extent
 
-    # M/N/K and the leading dimensions come from the matrix view the dispatcher matched.
+    from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
+
+    # M/N/K and the leading dimensions come from the matrix view the dispatcher matched. A batched
+    # product keeps its batch dimensions, which that view's squeeze would fold into rows: the
+    # (A, 1, B) row block an ``abij,ab->aij`` einsum lowers to became an (A, B) matrix, and every batch
+    # multiplied the same rows. The pure expansion already reads the raw operands.
     adata, bdata, cdata = _get_matmul_operands(node, state, sdfg)
-    _, _, ashape, astride = _matrix_operand(adata)
-    _, _, bshape, bstride = _matrix_operand(bdata)
-    _, _, cshape, cstride = _matrix_operand(cdata)
+    view = (lambda operand: operand[:4]) if isinstance(node, BatchedMatMul) else _matrix_operand
+    _, _, ashape, astride = view(adata)
+    _, _, bshape, bstride = view(bdata)
+    _, _, cshape, cstride = view(cdata)
 
     if node.transA:
         ashape = list(reversed(ashape))
@@ -177,7 +183,8 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
         bshape = list(reversed(bshape))
         bstride = list(reversed(bstride))
 
-    opt = get_gemm_opts(astride, bstride, cstride)
+    opt = get_gemm_opts(packed_unit_extent(ashape, astride), packed_unit_extent(bshape, bstride),
+                        packed_unit_extent(cshape, cstride))
     bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cshape, cstride)
 
     opt['x'] = '_a'

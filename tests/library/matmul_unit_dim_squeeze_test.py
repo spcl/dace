@@ -11,6 +11,9 @@ import numpy as np
 import pytest
 
 import dace
+from dace.library import change_default
+from dace.libraries import blas
+from dace.libraries.blas.blas_helpers import packed_unit_extent
 from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul
@@ -122,6 +125,66 @@ def test_unit_batch_keeps_alpha():
     a, bmat, c = rng.random((b, m, k)), rng.random((k, n)), np.zeros((b, m, n))
     sdfg(A=a, B=bmat, C=c)
     assert np.allclose(c[0], 2.0 * (a[0] @ bmat))
+
+
+A_, B_, I_, J_ = (dace.symbol(s, dtype=dace.int64) for s in ('A_', 'B_', 'I_', 'J_'))
+
+
+@dace.program
+def contract_rows(qr: dace.complex128[A_, B_, I_, J_], vc: dace.complex128[A_, B_], out: dace.complex128[A_, I_, J_]):
+    out[:] = np.einsum('abij,ab->aij', qr, vc)
+
+
+@dace.program
+def contract_columns(bp: dace.complex128[A_, J_], aux: dace.complex128[A_, I_, J_], out: dace.complex128[A_, I_]):
+    out[:] = np.einsum('aj,aij->ai', bp, aux)
+
+
+def test_a_unit_matrix_extent_gets_the_stride_of_a_packed_matrix():
+    """BLAS checks a leading dimension against the other extent even when one row is all there is."""
+    assert packed_unit_extent([1, 5], [1, 1]) == [5, 1]
+    assert packed_unit_extent([3, 1], [1, 1]) == [1, 3]
+    assert packed_unit_extent([2, 3, 5], [15, 5, 1]) == [15, 5, 1]
+    # A (M, K) operand of the einsum batch GEMM with both strides 1 and K = 1 only at run time.
+    m, k = dace.symbol('M'), dace.symbol('K')
+    assert packed_unit_extent([7, m, k], [m, 1, 1]) == [m, k, 1]
+
+
+VENDOR_BLAS = [
+    pytest.param('OpenBLAS',
+                 marks=[
+                     pytest.mark.openblas,
+                     pytest.mark.skipif(not blas.environments.OpenBLAS.is_installed(), reason='OpenBLAS not installed')
+                 ]),
+    pytest.param('MKL',
+                 marks=[
+                     pytest.mark.mkl,
+                     pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(), reason='MKL not installed')
+                 ]),
+]
+
+
+@pytest.mark.parametrize('impl', VENDOR_BLAS)
+@pytest.mark.parametrize('program', [contract_rows, contract_columns])
+def test_a_batched_product_of_a_unit_row_block_keeps_its_batch(impl, program):
+    """``abij,ab->aij`` lowers to a batched product of an (A, 1, B) row block. The vendor expansions read
+    it through the squeezed matrix view, as an (A, B) matrix every batch multiplied, and with
+    ``lda = 1`` on the one row, which OpenBLAS refused without computing: npbench vexx_k's real-space
+    augmentation was wrong on every canonicalize column."""
+    a, b, i, j = 2, 27, 2, 3
+    rng = np.random.default_rng(0)
+    c = lambda *shape: rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+    if program is contract_rows:
+        args = dict(qr=c(a, b, i, j), vc=c(a, b), out=np.zeros((a, i, j), np.complex128))
+        expected = np.einsum('abij,ab->aij', args['qr'], args['vc'])
+    else:
+        args = dict(bp=c(a, j), aux=c(a, i, j), out=np.zeros((a, i), np.complex128))
+        expected = np.einsum('aj,aij->ai', args['bp'], args['aux'])
+    sdfg = program.to_sdfg()
+    with change_default(blas, impl):
+        sdfg.expand_library_nodes()
+    sdfg(**args, A_=a, B_=b, I_=i, J_=j)
+    assert np.allclose(args['out'], expected)
 
 
 if __name__ == '__main__':
