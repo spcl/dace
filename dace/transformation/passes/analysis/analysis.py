@@ -635,6 +635,10 @@ def dominated_through_region(block: ControlFlowBlock, other: ControlFlowBlock,
     return False
 
 
+#: Dominator trees :class:`StateFlow` keeps, one per source state.
+DOMINANCE_MEMO = 64
+
+
 class StateFlow:
     """State-level control flow of one SDFG, flattened across regions, for kill-aware reachability.
 
@@ -645,9 +649,12 @@ class StateFlow:
     def __init__(self, sdfg: SDFG) -> None:
         self.succ: Dict[Tuple[str, int], List[Tuple[str, int]]] = defaultdict(list)
         self.states: Dict[int, SDFGState] = {}
-        #: ``(src id, kill id, nodes reached)`` of the last :meth:`reaches_avoiding` search: its callers
-        #: ask about one (write, kill) pair for every access in a scope, one after the other.
-        self.last_avoiding: Optional[Tuple[int, int, Set[Tuple[str, int]]]] = None
+        #: Node numbers and numbered successor / predecessor lists, built on the first query.
+        self.index: Dict[Tuple[str, int], int] = {}
+        self.succ_ids: List[List[int]] = []
+        self.pred_ids: List[List[int]] = []
+        #: Per source state id, its dominator tree as DFS entry / exit times (see :meth:`dominator_tree`).
+        self.dominance: Dict[int, Tuple[List[int], List[int]]] = {}
         self.add_region(sdfg)
 
     def link(self, src: Tuple[str, ControlFlowBlock], dst: Tuple[str, ControlFlowBlock]) -> None:
@@ -691,26 +698,112 @@ class StateFlow:
             self.add_region(block)
 
     def reaches_avoiding(self, src: SDFGState, dst: SDFGState, kill: SDFGState) -> bool:
-        """Whether ``dst`` can start executing after ``src`` on a path that never runs ``kill``."""
-        last = self.last_avoiding
-        if last is None or last[0] != id(src) or last[1] != id(kill):
-            last = self.last_avoiding = (id(src), id(kill), self.reached_avoiding(src, kill))
-        return ('in', id(dst)) in last[2]
+        """Whether ``dst`` can start executing after ``src`` on a path that never runs ``kill``.
 
-    def reached_avoiding(self, src: SDFGState, kill: SDFGState) -> Set[Tuple[str, int]]:
-        """Every node a path from the exit of ``src`` reaches without running ``kill`` (``kill``'s entry included)."""
-        blocked = ('in', id(kill))
-        seen = {('out', id(src))}
-        work = deque(seen)
-        while work:
-            node = work.popleft()
-            if node == blocked:
-                continue
-            for nxt in self.succ.get(node, ()):
-                if nxt not in seen:
-                    seen.add(nxt)
-                    work.append(nxt)
-        return seen
+        A path from the exit of ``src`` to the entry of ``dst`` avoids the entry of ``kill`` exactly when that
+        entry does not dominate ``dst``'s in the flow rooted at ``src``'s exit, so every kill asked about one
+        source is answered from that source's dominator tree instead of one search per (source, kill) pair.
+        ``kill``'s own entry counts as reached."""
+        index = self.numbered()
+        root, target = index.get(('out', id(src))), index.get(('in', id(dst)))
+        if root is None or target is None:
+            return False
+        entry, leave = self.dominator_tree(root)
+        if entry[target] < 0:
+            return False
+        blocked = index.get(('in', id(kill)))
+        if blocked is None or blocked == target or entry[blocked] < 0:
+            return True
+        return not (entry[blocked] <= entry[target] and leave[target] <= leave[blocked])
+
+    def numbered(self) -> Dict[Tuple[str, int], int]:
+        if not self.index:
+            for node, targets in list(self.succ.items()):
+                for key in (node, *targets):
+                    if key not in self.index:
+                        self.index[key] = len(self.index)
+            self.succ_ids = [[] for _ in self.index]
+            self.pred_ids = [[] for _ in self.index]
+            for node, targets in self.succ.items():
+                number = self.index[node]
+                for key in targets:
+                    self.succ_ids[number].append(self.index[key])
+                    self.pred_ids[self.index[key]].append(number)
+        return self.index
+
+    def dominator_tree(self, root: int) -> Tuple[List[int], List[int]]:
+        """DFS entry and exit times of the dominator tree rooted at ``root`` (``-1``: unreachable).
+
+        Iterative Cooper-Harvey-Kennedy over a reverse postorder; ``a`` dominates ``b`` iff ``b``'s interval
+        nests in ``a``'s. Kept for the last :data:`DOMINANCE_MEMO` roots: a caller asks about one write's
+        state for every other write of the container, and returns to it for the next container."""
+        known = self.dominance.get(root)
+        if known is not None:
+            return known
+        succ, pred = self.succ_ids, self.pred_ids
+        size = len(succ)
+        post = [-1] * size
+        order: List[int] = []
+        seen = bytearray(size)
+        seen[root] = 1
+        stack = [(root, iter(succ[root]))]
+        while stack:
+            node, children = stack[-1]
+            for child in children:
+                if not seen[child]:
+                    seen[child] = 1
+                    stack.append((child, iter(succ[child])))
+                    break
+            else:
+                stack.pop()
+                post[node] = len(order)
+                order.append(node)
+        idom = [-1] * size
+        idom[root] = root
+        rpo = order[-2::-1]
+        changed = True
+        while changed:
+            changed = False
+            for node in rpo:
+                new = -1
+                for parent in pred[node]:
+                    if idom[parent] < 0:
+                        continue
+                    if new < 0:
+                        new = parent
+                        continue
+                    a, b = parent, new
+                    while a != b:
+                        while post[a] < post[b]:
+                            a = idom[a]
+                        while post[b] < post[a]:
+                            b = idom[b]
+                    new = a
+                if idom[node] != new:
+                    idom[node] = new
+                    changed = True
+        children_of: List[List[int]] = [[] for _ in range(size)]
+        for node in rpo:
+            children_of[idom[node]].append(node)
+        entry, leave = [-1] * size, [-1] * size
+        clock = 0
+        entry[root] = clock
+        walk = [(root, iter(children_of[root]))]
+        while walk:
+            node, children = walk[-1]
+            child = next(children, None)
+            if child is None:
+                walk.pop()
+                clock += 1
+                leave[node] = clock
+            else:
+                clock += 1
+                entry[child] = clock
+                walk.append((child, iter(children_of[child])))
+        if len(self.dominance) >= DOMINANCE_MEMO:
+            del self.dominance[next(iter(self.dominance))]
+        self.dominance[root] = (entry, leave)
+        return entry, leave
 
 
 def diverting_exit_inside(region: AbstractControlFlowRegion) -> bool:

@@ -1,13 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``StateFlow.reaches_avoiding`` answers from one search per (source, kill) pair: the same answers
-as a search per query, over loops, branches and a kill on the only path."""
+"""``StateFlow.reaches_avoiding`` answers from one dominator tree per source: the same answers as a
+search per query, over loops, branches, breaks and a kill on the only path."""
 import itertools
 from collections import deque
 from unittest import mock
 
 import dace
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis.analysis import StateFlow
 
 
@@ -68,18 +68,77 @@ def test_answers_match_a_search_per_query():
     assert answers[('tail', 'head', 'a')] and answers[('start', 'end', 'end')]
 
 
-def test_consecutive_queries_for_one_pair_search_once():
+def loops_with_jumps_sdfg() -> dace.SDFG:
+    """start -> outer{ pre -> inner{ x -> if{ break | continue } -> y } -> post } -> mid -> loop{ z } -> end."""
+    sdfg = dace.SDFG('reaches_avoiding_jumps')
+    start = sdfg.add_state('start', is_start_block=True)
+    outer = LoopRegion('outer', 'i < 4', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(outer)
+    pre = outer.add_state('pre', is_start_block=True)
+    inner = LoopRegion('inner', 'j < 4', 'j', 'j = 0', 'j = j + 1')
+    outer.add_node(inner)
+    x = inner.add_state('x', is_start_block=True)
+    cond = ConditionalBlock('jump')
+    inner.add_node(cond)
+    for label, condition, jump in (('br', CodeBlock('j == 2'), BreakBlock), ('co', None, ContinueBlock)):
+        branch = ControlFlowRegion(f'branch_{label}', sdfg=sdfg)
+        branch.add_node(jump(f'{label}_jump'), is_start_block=True)
+        cond.add_branch(condition, branch)
+    y = inner.add_state('y')
+    inner.add_edge(x, cond, dace.InterstateEdge())
+    inner.add_edge(cond, y, dace.InterstateEdge())
+    post = outer.add_state('post')
+    outer.add_edge(pre, inner, dace.InterstateEdge())
+    outer.add_edge(inner, post, dace.InterstateEdge())
+    mid = sdfg.add_state('mid')
+    second = LoopRegion('second', 'k < 4', 'k', 'k = 0', 'k = k + 1')
+    sdfg.add_node(second)
+    second.add_state('z', is_start_block=True)
+    end = sdfg.add_state('end')
+    sdfg.add_edge(start, outer, dace.InterstateEdge())
+    sdfg.add_edge(outer, mid, dace.InterstateEdge())
+    sdfg.add_edge(mid, second, dace.InterstateEdge())
+    sdfg.add_edge(second, end, dace.InterstateEdge())
+    return sdfg
+
+
+def test_answers_match_a_search_per_query_across_breaks_and_sibling_loops():
+    sdfg = loops_with_jumps_sdfg()
+    flow = StateFlow(sdfg)
+    states = list(sdfg.all_states())
+    for s, d, k in itertools.product(states, repeat=3):
+        assert flow.reaches_avoiding(s, d, k) == search_per_query(flow, s, d, k), (s.label, d.label, k.label)
+    labels = {s.label: s for s in states}
+    # The break skips 'y', and 'post' runs after it; 'mid' is the only way into the second loop.
+    assert flow.reaches_avoiding(labels['x'], labels['post'], labels['y'])
+    assert not flow.reaches_avoiding(labels['pre'], labels['z'], labels['mid'])
+
+
+def test_a_foreign_state_reaches_nothing():
+    sdfg = branchy_loop_sdfg()
+    flow = StateFlow(sdfg)
+    other = dace.SDFG('other').add_state('alone', is_start_block=True)
+    states = list(sdfg.all_states())
+    assert not flow.reaches_avoiding(other, states[0], states[1])
+    assert not flow.reaches_avoiding(states[0], other, states[1])
+    assert flow.reaches_avoiding(states[0], states[-1], other)
+
+
+def test_every_kill_for_one_source_shares_one_dominator_tree():
     sdfg = branchy_loop_sdfg()
     flow = StateFlow(sdfg)
     states = {s.label: s for s in sdfg.all_states()}
-    with mock.patch.object(StateFlow, 'reached_avoiding', autospec=True, side_effect=StateFlow.reached_avoiding) as spy:
-        for dst in states.values():
-            flow.reaches_avoiding(states['head'], dst, states['b'])
+    with mock.patch.object(StateFlow, 'dominator_tree', autospec=True, side_effect=StateFlow.dominator_tree) as spy:
+        for dst, kill in itertools.product(states.values(), repeat=2):
+            flow.reaches_avoiding(states['head'], dst, kill)
         flow.reaches_avoiding(states['start'], states['end'], states['b'])
-        flow.reaches_avoiding(states['head'], states['end'], states['b'])
-    assert spy.call_count == 3
+        flow.reaches_avoiding(states['head'], states['end'], states['a'])
+    built = {call.args[1] for call in spy.call_args_list}
+    assert len(built) == 2 and len(flow.dominance) == 2
 
 
 if __name__ == '__main__':
     test_answers_match_a_search_per_query()
-    test_consecutive_queries_for_one_pair_search_once()
+    test_answers_match_a_search_per_query_across_breaks_and_sibling_loops()
+    test_a_foreign_state_reaches_nothing()
+    test_every_kill_for_one_source_shares_one_dominator_tree()
