@@ -1,11 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the schedule-tree guard folding and index-set splitting passes."""
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes import (fold_guards, forward_substitute_conditions,
-                                                     remove_dead_assignments, split_iteration_spaces)
+                                                     pair_complementary_guards, remove_dead_assignments,
+                                                     split_iteration_spaces)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -460,6 +462,72 @@ def test_substitute_skips_lossy_conversion():
     assert remove_dead_assignments(stree) == 0
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Pairing of complementary guards
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _pair_tree(first_condition: str, second_condition: str, first_body: list, trailing: list = None):
+    """``for k in range(8): if <first>: <first_body>; if <second>: B[k] = A[k] * 3; <trailing>``."""
+    sdfg = dace.SDFG('pair_guards')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64)
+    sdfg.add_array('flag', [1], dace.float64)
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+    first = tn.IfScope(condition=dace.properties.CodeBlock(first_condition), children=first_body)
+    second = tn.IfScope(condition=dace.properties.CodeBlock(second_condition), children=[_scale_tasklet('k', 3.0)])
+    loop = dace.sdfg.state.LoopRegion('loop', 'k < 8', 'k', 'k = 0', 'k = k + 1')
+    stree.children = []
+    stree.add_child(tn.ForScope(loop=loop, children=[first, second] + (trailing or [])))
+    return stree
+
+
+@pytest.mark.parametrize('first, second, taken', [
+    ('flag[0] > 0.5', 'not (flag[0] > 0.5)', lambda k, flag: np.full(8, flag > 0.5)),
+    ('k < 4', 'k >= 4', lambda k, flag: k < 4),
+    ('(k < 4) and (flag[0] > 0.5)', '(k >= 4) or (flag[0] <= 0.5)', lambda k, flag: (k < 4) & (flag > 0.5)),
+])
+def test_pair_complementary_guards(first, second, taken):
+    stree = _pair_tree(first, second, [_scale_tasklet('k', 2.0)])
+    assert pair_complementary_guards(stree) == 1
+    assert len(_nodes(stree, tn.IfScope)) == 1 and len(_nodes(stree, tn.ElseScope)) == 1
+    for flag in (0.0, 1.0):
+        a = np.random.rand(8)
+        b = np.zeros(8)
+        _run(stree, A=a, B=b, flag=np.full(1, flag))
+        assert np.allclose(b, np.where(taken(np.arange(8), flag), a * 2.0, a * 3.0))
+
+
+def test_pair_not_when_first_body_writes_condition():
+    clear = _bool_tasklet('flag', '0.0', {})
+    stree = _pair_tree('flag[0] > 0.5', 'not (flag[0] > 0.5)', [_scale_tasklet('k', 2.0), clear])
+    assert pair_complementary_guards(stree) == 0
+    assert len(_nodes(stree, tn.IfScope)) == 2
+
+
+def test_pair_not_for_unrelated_conditions():
+    stree = _pair_tree('k < 4', 'k > 4', [_scale_tasklet('k', 2.0)])
+    assert pair_complementary_guards(stree) == 0
+
+
+def test_pair_not_when_second_guard_has_else():
+    stree = _pair_tree('k < 4', 'k >= 4', [_scale_tasklet('k', 2.0)], trailing=[tn.ElseScope(children=[])])
+    assert pair_complementary_guards(stree) == 0
+
+
+def test_pair_then_fold_uses_negation():
+    """After pairing, guards in the ``else`` are folded with the negated condition as a fact."""
+    stree = _pair_tree('k >= 4', 'k < 4', [_scale_tasklet('k', 2.0)])
+    loop = stree.children[0]
+    undecided = tn.IfScope(condition=dace.properties.CodeBlock('k < 2'), children=[_scale_tasklet('k', 5.0)])
+    decided = tn.IfScope(condition=dace.properties.CodeBlock('k < 6'), children=[_scale_tasklet('k', 7.0)])
+    loop.children[1].add_children([undecided, decided])  # Within ``k < 4``: ``k < 6`` always holds
+    assert pair_complementary_guards(stree) == 1
+    assert _fold(stree) == 1
+    assert _conditions(stree) == ['(k >= 4)', '(k < 2)']
+
+
 if __name__ == '__main__':
     test_fold_atom_implied_by_loop_range()
     test_fold_removes_never_taken_and_splices_always_taken()
@@ -479,3 +547,8 @@ if __name__ == '__main__':
     test_substitute_constant_scalar_from_outer_scope()
     test_substitute_not_across_loop_writing_the_value()
     test_substitute_skips_lossy_conversion()
+    test_pair_complementary_guards('k < 4', 'k >= 4', lambda k, flag: k < 4)
+    test_pair_not_when_first_body_writes_condition()
+    test_pair_not_for_unrelated_conditions()
+    test_pair_not_when_second_guard_has_else()
+    test_pair_then_fold_uses_negation()

@@ -474,6 +474,49 @@ def test_stree_no_fission_for_guard_after_statement_with_invariant_condition():
     assert _reduce(stree) == 0
 
 
+def test_stree_sibling_guards_not_paired_when_first_branch_changes_condition():
+    """``if c: A`` / ``if not c: B`` are not exclusive when ``A`` changes ``c``: here ``A`` clears ``flag`` at
+    ``i == 4``, so both branches run in that iteration. Splitting on ``i >= 4`` must keep ``B`` there."""
+    from dace import data
+    from dace.properties import CodeBlock
+    from dace.sdfg import nodes
+
+    def tasklet(code: str, inputs: dict, output: str) -> tn.TaskletNode:
+        node = nodes.Tasklet('t', set(inputs), {'out'}, f'out = {code}')
+        return tn.TaskletNode(node=node,
+                              in_memlets={
+                                  c: dace.Memlet(m)
+                                  for c, m in inputs.items()
+                              },
+                              out_memlets={'out': dace.Memlet(output)})
+
+    first = tn.IfScope(condition=CodeBlock('(i >= 4) and (flag[0] > 0)'),
+                       children=[tasklet('-1.0', {}, 'flag[0]'),
+                                 tasklet('1.0', {}, 'B[i]')])
+    second = tn.IfScope(condition=CodeBlock('not ((i >= 4) and (flag[0] > 0))'),
+                        children=[tasklet('b + a', {
+                            'a': 'A[i]',
+                            'b': 'B[i]'
+                        }, 'B[i]')])
+    loop = dace.sdfg.state.LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    stree = tn.ScheduleTreeRoot(name='sibling_guards',
+                                containers={
+                                    'A': data.Array(dace.float64, [8]),
+                                    'B': data.Array(dace.float64, [8]),
+                                    'flag': data.Array(dace.float64, [1]),
+                                },
+                                arg_names=['A', 'B', 'flag'],
+                                children=[tn.ForScope(loop=loop, children=[first, second])])
+    tn.validate_children_and_parents_align(stree, root=True)
+    _reduce(stree)
+    a = np.arange(8, dtype=np.float64)
+    b = np.zeros(8)
+    _run(stree, A=a, B=b, flag=np.ones(1))
+    expected = a.copy()
+    expected[4] += 1.0
+    assert np.allclose(b, expected)
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-x', '-q']))

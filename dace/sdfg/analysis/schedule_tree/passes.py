@@ -387,8 +387,7 @@ def reduce_loop_ranges(stree: tn.ScheduleTreeScope, max_ranges: int = 32, max_en
                         Group([node, following], [(condition, node.children),
                                                   (negated(condition), following.children)]))
                     k += 1
-                elif (isinstance(following, tn.IfScope)
-                      and ast.dump(negated(condition)) == ast.dump(expr(following.condition))):
+                elif _complementary(node, following, root.containers):
                     items.append(
                         Group([node, following], [(condition, node.children),
                                                   (expr(following.condition), following.children)]))
@@ -1161,3 +1160,86 @@ def remove_dead_assignments(stree: tn.ScheduleTreeScope) -> int:
         removed += count
         if count == 0:
             return removed
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Pairing of complementary guards
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _negation_of(condition: ast.expr, other: ast.expr) -> bool:
+    """Whether ``other`` is syntactically the negation of ``condition``, up to normalizing both (negations pushed into
+    comparisons, disjunctive normal form)."""
+    from dace.frontend.python import astutils  # Avoid import loops
+    if ast.dump(astutils.negate_expr(condition).value) == ast.dump(other):
+        return True
+    lrr = _lrr()
+
+    def normalized(clauses) -> Optional[frozenset]:
+        return None if clauses is None else frozenset(
+            frozenset(ast.dump(atom) for atom in clause) for clause in clauses)
+
+    negated = normalized(lrr.disjunctive_normal_form(condition, negate=True))
+    return negated is not None and negated == normalized(lrr.disjunctive_normal_form(other))
+
+
+def _complementary(first: tn.ScheduleTreeNode, second: tn.ScheduleTreeNode, containers: Dict[str, data.Data]) -> bool:
+    """Whether ``if c: A`` (``first``) directly followed by ``if not c: B`` (``second``) runs exactly one of the two
+    bodies, i.e., may become ``if c: A else: B``. The conditions must be pure and negations of each other, and ``A``
+    must not change what ``c`` reads: it writes none of its names, creates no aliases (views, references) and does not
+    jump away (a ``goto`` could re-enter before ``second``)."""
+    if not all(isinstance(n, tn.IfScope) and not isinstance(n, tn.StateIfScope) for n in (first, second)):
+        return False
+    condition, other = _condition(first), _condition(second)
+    if condition is None or other is None or not (_pure(condition) and _pure(other)):
+        return False
+    if not _negation_of(condition, other):
+        return False
+    read = set(symbolic.symbols_in_ast(condition))
+    written = _in_subtrees([first], _names_written)
+    if read & written:
+        return False
+    for name in read | written:
+        if isinstance(containers.get(name, None), (data.View, data.Reference)):
+            return False
+    for node in first.preorder_traversal():
+        if isinstance(node, (tn.ViewNode, tn.RefSetNode, tn.GotoNode)):
+            return False
+        if isinstance(node, (tn.TaskletNode, tn.LibraryCall)) and getattr(node.node, 'side_effects', False):
+            return False  # E.g., a callback that may write anything
+    return True
+
+
+def pair_complementary_guards(stree: tn.ScheduleTreeScope) -> int:
+    """
+    Turn a guard followed directly by its negation (``if c: A`` then ``if not c: B``) into ``if c: A else: B``.
+
+    The two are only exclusive if running ``A`` cannot change the outcome of ``c``: ``A`` may not write anything
+    ``c`` reads, nor create aliases or jump away (see :func:`_complementary`). The conditions are compared after
+    normalization, so ``if i < 4`` / ``if i >= 4`` and ``if mask`` / ``if not mask`` are both recognized. The
+    resulting ``else`` lets later passes use the condition's negation as a fact without re-deriving it.
+
+    :param stree: The schedule tree (or subtree) to transform in place.
+    :return: The number of pairs formed.
+    """
+    containers = stree.get_root().containers
+    paired = 0
+    for scope in [n for n in stree.preorder_traversal() if isinstance(n, tn.ScheduleTreeScope)]:
+        children, result, k, before = scope.children, [], 0, paired
+        while k < len(children):
+            node = children[k]
+            following = children[k + 1] if k + 1 < len(children) else None
+            after = children[k + 2] if k + 2 < len(children) else None
+            # ``node`` must end its chain (``following`` is an ``if``), and ``following`` must be a chain of its own
+            if (following is not None and not isinstance(after, (tn.ElifScope, tn.ElseScope))
+                    and _complementary(node, following, containers)):
+                result += [node, tn.ElseScope(children=following.children)]
+                paired += 1
+                k += 2
+            else:
+                result.append(node)
+                k += 1
+        if paired > before:
+            scope.children = []
+            scope.add_children(result)
+    return paired
