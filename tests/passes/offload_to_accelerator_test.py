@@ -227,8 +227,38 @@ def test_a_host_pinned_library_node_keeps_its_operands_on_the_host():
 
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
-    assert not [name for name in sdfg.arrays if name.endswith('_host')
-                ], ('a host-pinned library node must keep its operands on the host')
+    for node, state in sdfg.all_nodes_recursive():
+        if type(node).__name__ != 'ScatterConflictCheck':
+            continue
+        for edge in state.in_edges(node) + state.out_edges(node):
+            connector = edge.dst_conn if edge.dst is node else edge.src_conn
+            if connector in node.host_connectors:
+                assert state.sdfg.arrays[edge.data.data].storage not in GPU_RESIDENT_STORAGES, \
+                    f'{connector} ({edge.data.data}) was moved off the host'
+
+
+def test_a_scatter_dispatcher_copies_only_inside_its_sequential_arm():
+    """The scatter guard runs the parallel Map unless the index array collides, then the original
+    loop on the host. Only that fallback pays host copies, in and back out inside itself: s4113 ran
+    the arm first in the IR and the conditional closed on the host, so the parallel arm copied ``a``
+    to the host and the program copied it back after the guard on every execution."""
+    sdfg = canonicalized_with_gpu_inputs('s4113_d_single')
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+
+    guard = guard_block(sdfg)
+    sequential = next(region for _c, region in guard.branches if any(
+        isinstance(b, LoopRegion) and b.pinned_sequential for b in region.nodes()))
+    in_arm = set(sequential.all_control_flow_blocks(recursive=True))
+    stray = [
+        b.label for b in sdfg.all_control_flow_blocks(recursive=True) if is_copy_state(sdfg, b) and b not in in_arm
+    ]
+    assert not stray, f'copies outside the sequential arm, paid on every execution: {stray}'
+    order = list(sequential.bfs_nodes(sequential.start_block))
+    loop = next(b for b in order if isinstance(b, LoopRegion))
+    copies = [b for b in order if is_copy_state(sdfg, b)]
+    assert copies and order.index(copies[0]) < order.index(loop) < order.index(copies[-1]), \
+        'the arm must copy in before its loop and back out after it'
 
 
 def find_first_kernel_with_gpu_inputs() -> dace.SDFG:
@@ -662,6 +692,77 @@ def test_a_trivial_kernel_map_is_never_eliminated():
     labels = {n.map.label for n in sdfg.states()[0].nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)}
     assert labels == {'device', 'once'}, f'a GPU-scheduled map was eliminated: {labels}'
     assert isinstance(sdfg.arrays['acc'], dace.data.Array), 'a kernel output was scalarized'
+
+
+ROWS = dace.symbol('ROWS')
+
+
+@dace.program
+def rows_with_a_small_gather(agg: dace.int64[ROWS], w: dace.float64[ROWS], out: dace.float64[4]):
+    """amg_setup's shape: a host loop over every row updates ``acc`` on the host, and a map over a few
+    entries reads it every row."""
+    acc = np.zeros([ROWS], dtype=np.float64)
+    for i in range(ROWS):
+        c = agg[i]
+        if w[i] >= 0:
+            acc[c] = acc[c] + w[i]
+        for j in dace.map[0:4]:
+            out[j] = out[j] + acc[j]
+
+
+@dace.program
+def rows_with_a_full_stencil(agg: dace.int64[ROWS], w: dace.float64[ROWS], acc: dace.float64[ROWS]):
+    """The same loop around a map over ALL of ``acc``: the map moves what the loop would copy."""
+    for i in range(ROWS):
+        c = agg[i]
+        if w[i] >= 0:
+            acc[c] = acc[c] + w[i]
+        for j in dace.map[0:ROWS]:
+            acc[j] = acc[j] * 0.5
+
+
+def copies_inside_loops(sdfg: dace.SDFG) -> list:
+    return [
+        b.label for loop in sdfg.all_control_flow_blocks(recursive=True) if isinstance(loop, LoopRegion)
+        for b in loop.all_control_flow_blocks(recursive=True) if is_copy_state(sdfg, b)
+    ]
+
+
+def test_a_small_map_in_a_host_loop_stays_on_the_host():
+    """Offloaded, the gather copied the whole ``acc`` host<->device on every row: O(rows^2) traffic,
+    amg_setup at 344 s per call against 0.8 s on the CPU."""
+    sdfg = rows_with_a_small_gather.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+    assert not copies_inside_loops(sdfg), copies_inside_loops(sdfg)
+    gather = [
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.range.num_elements() == 4
+    ]
+    assert gather and all(n.map.schedule == dtypes.ScheduleType.Sequential for n in gather)
+
+
+def test_a_map_over_the_whole_shared_array_stays_a_kernel():
+    sdfg = rows_with_a_full_stencil.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+    full = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    assert full and all(n.map.schedule == dtypes.ScheduleType.GPU_Device for n in full)
+
+
+@pytest.mark.gpu
+def test_a_small_map_kept_on_the_host_computes_what_numpy_computes():
+    sdfg = rows_with_a_small_gather.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    agg = np.array([0, 2, 1, 3, 0, 5, 7, 2], dtype=np.int64)
+    w = np.arange(8, dtype=np.float64)
+    out = np.zeros(4)
+    sdfg(agg=agg, w=w, out=out, ROWS=8)
+    acc, want = np.zeros(8), np.zeros(4)
+    for i in range(8):
+        acc[agg[i]] += w[i]
+        want += acc[:4]
+    np.testing.assert_allclose(out, want)
 
 
 if __name__ == '__main__':

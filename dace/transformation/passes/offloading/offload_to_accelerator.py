@@ -29,7 +29,7 @@ from dace.transformation.passes.offloading.offloading_helpers import (link_early
                                                                       separate_early_returns)
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.offloading.taskloop import is_device_wide_libnode, sdfg_only_launches, taskloop_maps
-from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps
+from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps, maps_pinned_by_host_loops
 
 PRINT_NAMES = 500
 
@@ -170,26 +170,27 @@ class OffloadingIRNode:
 
 
 def in_sequential_specialization_arm(block) -> bool:
-    """Whether ``block`` is inside the sequential arm of a guarded specialization.
+    """Whether ``block`` is, or is inside, the sequential arm of a guarded specialization.
 
     Canonicalization emits a loop it can only parallelize under a runtime condition as both arms of
-    one ConditionalBlock -- a Map for the parallel case, the original LoopRegion for the fallback.
-    That fallback IS host code, and it owns the copies that bring its inputs down; lifting its
-    tasklets into size-1 kernels would delete the copies and defeat the arm. The parallel arm has no
-    such loop, so a hybrid there is resolved the usual way.
+    one ConditionalBlock -- a Map for the parallel case, the original LoopRegion for the fallback,
+    which it marks ``pinned_sequential`` (``specialize_loop_under_condition`` and the scatter
+    guard's dispatcher). That fallback IS host code, and it owns the copies that bring its inputs
+    down; lifting its tasklets into size-1 kernels, or hoisting its copies to the program entry,
+    would make every execution pay what only the rarely-taken arm needs.
 
-    A sequential loop that is not a specialization arm (npbench nbody's ``for_48``) is ordinary host
-    code around device work and is NOT this: the LoopRegion has to be reached before a
-    ConditionalBlock for the block to be a fallback.
+    Recognized by that marker on a loop at the top level of a branch, not by "a loop under a
+    conditional": amg_setup's loops under its source-level ``if n > 100`` are ordinary host code
+    around device work, and wavefront skew pins loops that are no fallback at all.
     """
-    seen_loop = False
-    current = getattr(block, 'parent_graph', None)
+    current = block
     while current is not None:
-        if isinstance(current, LoopRegion):
-            seen_loop = True
-        elif isinstance(current, ConditionalBlock):
-            return seen_loop
-        current = getattr(current, 'parent_graph', None)
+        # A branch is the arm when its own top level holds the pinned fallback loop; the arm's copy
+        # states sit beside that loop, not inside it.
+        if isinstance(current, ControlFlowRegion) and isinstance(current.parent_graph, ConditionalBlock) and any(
+                isinstance(b, LoopRegion) and b.pinned_sequential for b in current.nodes()):
+            return True
+        current = current.parent_graph
     return False
 
 
@@ -229,6 +230,10 @@ class OffloadToAccelerator(ppl.Pass):
         self.taskloop_overrides = dict(taskloop_overrides) if taskloop_overrides else {}
         self._host_maps = host_maps
         self._host_map_entries = OrderedSet()
+        self._host_pinned = OrderedSet()
+        self._host_only_loops: dict = {}
+        #: Containers :meth:`place_single_sided_data` duplicated at entry: valid on both sides all run.
+        self._read_only_duplicates: OrderedSet = OrderedSet()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -519,11 +524,39 @@ class OffloadToAccelerator(ppl.Pass):
             return self.get_schedule(node) in dtypes.GPU_SCHEDULES
         # A nested SDFG holds its own scopes, so answer for it the way that cannot be wrong in the
         # direction that matters: calling it device keeps its containers out of the host staging.
+        # Under a pinned map it is host code by decision (see ``maps_pinned_by_host_loops``).
         if isinstance(node, nodes.NestedSDFG):
-            return True
+            return not self.under_pinned_map(scopes, node)
         if isinstance(node, nodes.LibraryNode):
             return self.has_GPU_schedule(node)
         return self.enclosing_kernel(scopes, node) is not None
+
+    def in_host_only_loop(self, state: SDFGState) -> bool:
+        """Whether the innermost loop around ``state`` holds no device work at all.
+
+        Such a loop is a serial host algorithm, and it stays host code: the arrays it touches are
+        copied at its boundary, not lifted element by element into size-1 kernels. srad's region
+        sum, a host double loop over ``J`` inside the time loop, launched one kernel and made two
+        single-element copies per element of the region.
+        """
+        region = state.parent_graph
+        while region is not None and not isinstance(region, SDFG):
+            if isinstance(region, LoopRegion):
+                if region not in self._host_only_loops:
+                    self._host_only_loops[region] = not any(
+                        self.is_device_work(node) for body in region.all_states() for node in body.nodes())
+                return self._host_only_loops[region]
+            region = region.parent_graph
+        return False
+
+    def under_pinned_map(self, scopes: dict, node: nodes.Node) -> bool:
+        """Whether a map pinned to the host by :func:`maps_pinned_by_host_loops` encloses ``node``."""
+        scope = scopes[node]
+        while scope is not None:
+            if scope in self._host_pinned:
+                return True
+            scope = scopes[scope]
+        return False
 
     def data_sides(self, sdfg: SDFG) -> tuple[OrderedSet[str], OrderedSet[str], OrderedSet[str]]:
         """Which side of the machine touches each top-level container, and what is written.
@@ -614,6 +647,7 @@ class OffloadToAccelerator(ppl.Pass):
                 # Read on both sides and written by neither, so the two copies can never disagree:
                 # one copy at entry, and the per-state renaming already points the host reads at it.
                 self.create_interstate_copy(sdfg, None, sdfg.start_block, OrderedSet([name]), to_gpu=False)
+                self._read_only_duplicates.add(name)
             elif not self.stage_on_host(sdfg, name, write_back=name in written):
                 continue
 
@@ -965,6 +999,8 @@ class OffloadToAccelerator(ppl.Pass):
         # Kept apart from ``taskloops``: a host map is only a map that does not become the kernel, so
         # it must not pick up the taskloop-specific handling those carry elsewhere in this pass.
         self._host_map_entries = host_maps(sdfg, self._host_maps)
+        # A host map launches the kernels under it; a pinned map keeps its whole subtree host code.
+        self._host_pinned = maps_pinned_by_host_loops(sdfg)
 
     def assign_schedules(self, sdfg: SDFG, host_level: bool = True) -> None:
         """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.
@@ -975,10 +1011,12 @@ class OffloadToAccelerator(ppl.Pass):
         def walk(state: SDFGState, entry, host_level: bool) -> None:
             for node in self.cached_scope_children[state].get(entry, ()):
                 if isinstance(node, nodes.MapEntry):
-                    is_kernel = host_level and node not in self.taskloops and node not in self._host_map_entries
+                    pinned = node in self._host_pinned
+                    is_kernel = (host_level and not pinned and node not in self.taskloops
+                                 and node not in self._host_map_entries)
                     self.set_schedule(node,
                                       dtypes.ScheduleType.GPU_Device if is_kernel else dtypes.ScheduleType.Sequential)
-                    walk(state, node, host_level and not is_kernel)
+                    walk(state, node, host_level and not is_kernel and not pinned)
 
                 elif isinstance(node, nodes.LibraryNode):
                     self.set_schedule(node,
@@ -1429,7 +1467,7 @@ class OffloadToAccelerator(ppl.Pass):
         # The sequential arm of a guarded specialization is the exception -- see
         # :func:`in_sequential_specialization_arm`.
         resident: OrderedSet[str] = OrderedSet()
-        if not in_sequential_specialization_arm(state):
+        if not in_sequential_specialization_arm(state) and not self.in_host_only_loop(state):
             resident = OrderedSet(name for name in free_tasklet_data
                                   if name in sdfg.arrays and sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global)
         overlap = (gpu_set & cpu_set) | (resident - pinned)
@@ -1455,10 +1493,18 @@ class OffloadToAccelerator(ppl.Pass):
                 cpu_set.add(memlet.data)
 
         # add array accesses in branches
-        for _, branch in block.branches:
-            g, c = self.get_data_locations_of_cfregion(sdfg, branch)
-            gpu_set |= g
-            cpu_set |= c
+        sides = [(branch, *self.get_data_locations_of_cfregion(sdfg, branch)) for _, branch in block.branches]
+        for branch, g, c in sides:
+            if any(isinstance(b, LoopRegion) and b.pinned_sequential for b in branch.nodes()):
+                # A fallback arm copies in and out inside itself (:func:`in_sequential_specialization_arm`),
+                # so what the other arms keep on the device is device data at this block's boundary too;
+                # reported as host, every execution would round-trip it for the rarely-taken arm.
+                device_elsewhere = OrderedSet(name for other, og, _oc in sides if other is not branch for name in og)
+                gpu_set |= g | (c & device_elsewhere)
+                cpu_set |= c - device_elsewhere
+            else:
+                gpu_set |= g
+                cpu_set |= c
 
         return gpu_set, cpu_set
 
@@ -1806,7 +1852,15 @@ class OffloadToAccelerator(ppl.Pass):
         # all arrays which aren't used by this state retain their previous status
         # ASSUMPTION: arrays are either gpu or cpu within a state
         def propagate(node):
+            # A fallback arm's tail does not decide where the block it closes leaves its data: the arm
+            # copies back inside itself, so the other arms' locations hold after the conditional. Taken
+            # first-come, an arm listed first made every execution copy to the host and back.
+            block = node.open.block if node.type == OffloadingIRNode.CLOSE and node.open else node.block
+            arm_tail = isinstance(block, ControlFlowBlock) and in_sequential_specialization_arm(block)
             for next in node.next:
+                if arm_tail and next.type == OffloadingIRNode.CLOSE and not in_sequential_specialization_arm(
+                        next.open.block):
+                    continue
                 next_arrays = next.cpu_set | next.gpu_set
 
                 for array in node.cpu_set:
@@ -1936,7 +1990,8 @@ class OffloadToAccelerator(ppl.Pass):
             # blocks: the end-of-iteration copies of a loop came through without it, and polybench
             # nussinov copied ``seq_host -> seq`` after every ``j`` of its O(N^2) host loop nest.
             array_names = OrderedSet(name for name in array_names
-                                     if self.is_array_stored_on_GPU(sdfg, name) != to_gpu or twin_of(name) in written)
+                                     if (self.is_array_stored_on_GPU(sdfg, name) != to_gpu or twin_of(name) in written)
+                                     and name not in self._read_only_duplicates)
             # A fill of the twin of a container that NEITHER side writes copies the same bytes each
             # time, so the first fill is the only one that carries anything. The IR still moves such
             # a container back and forth around a loop -- that is what it records, not whether the
@@ -1945,6 +2000,9 @@ class OffloadToAccelerator(ppl.Pass):
             # and lavamd refilled all of ``box_offsets_host`` once per box, O(n_boxes^2) bytes. Its
             # value on entry is its value throughout, so one fill at the entry serves every reader.
             constant = OrderedSet(name for name in array_names if name not in written and twin_of(name) not in written)
+            # Except inside a fallback arm, whose copies exist so the parallel arm pays none.
+            if in_sequential_specialization_arm(after if after is not None else before):
+                constant = OrderedSet()
             entry_fills[to_gpu] |= constant
             array_names = OrderedSet(name for name in array_names if name not in constant)
             point = (after, 'before') if after is not None else (before, 'after')
@@ -2470,8 +2528,9 @@ class OffloadToAccelerator(ppl.Pass):
         """
         scope_children = state.scope_children()
         members = scope_children[scope_entry]
-        partition_nodes = OrderedSet(node for node in members if self.is_device_work(node) or (
-            isinstance(node, nodes.MapEntry) and (node in self.taskloops or node in self._host_map_entries)))
+        partition_nodes = OrderedSet(
+            node for node in members if self.is_device_work(node) or (isinstance(node, nodes.MapEntry) and (
+                node in self.taskloops or node in self._host_map_entries or node in self._host_pinned)))
         partition_nodes |= OrderedSet(
             state.exit_node(node) for node in partition_nodes if isinstance(node, nodes.MapEntry))
         if scope_entry is not None:

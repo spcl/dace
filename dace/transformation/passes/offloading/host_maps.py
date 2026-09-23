@@ -5,13 +5,16 @@ The offloading otherwise makes every top-level map a ``GPU_Device`` kernel. That
 whose purpose is to LAUNCH work rather than do it -- ICON's shape, an ``nblks`` map over one nested
 SDFG of ``nproma``/``nlev`` maps -- Which maps those are is named by the caller, or derived structurally; see :func:`host_maps`.
 """
+import itertools
 from typing import Dict, List, Optional, Union
+
+import sympy
 
 from dace.ordered import OrderedSet
 
 from dace import symbolic
 from dace.sdfg import nodes, SDFG
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
@@ -167,3 +170,82 @@ def host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet:
                                                                     pinned_entries, nested, callback_names):
                     found.add(node)
     return found
+
+
+def host_code_containers(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet:
+    """Containers the host code under ``region`` touches: tasklets outside every map, interstate
+    edges, and the conditions of its loops and branches."""
+    touched: OrderedSet = OrderedSet()
+    for state in region.all_states():
+        scopes = state.scope_dict()
+        for node in state.nodes():
+            if isinstance(node, nodes.Tasklet) and scopes[node] is None:
+                touched |= OrderedSet(e.data.data for e in state.all_edges(node) if e.data.data is not None)
+    for edge in region.all_interstate_edges(recursive=True):
+        touched |= OrderedSet(m.data for m in edge.data.get_read_memlets(sdfg.arrays))
+    for block in itertools.chain([region], region.all_control_flow_blocks(recursive=True)):
+        if isinstance(block, (LoopRegion, ConditionalBlock)):
+            touched |= OrderedSet(m.data for m in block.get_meta_read_memlets())
+    return touched
+
+
+def map_containers_and_traffic(state: SDFGState, entry: nodes.MapEntry):
+    """The containers a top-level map reads or writes, and the elements it moves (dynamic memlets count 0)."""
+    names: OrderedSet = OrderedSet()
+    traffic = 0
+    for edge in itertools.chain(state.in_edges(entry), state.out_edges(state.exit_node(entry))):
+        if edge.data.data is None:
+            continue
+        names.add(edge.data.data)
+        if not edge.data.dynamic:
+            traffic = traffic + edge.data.volume
+    return names, traffic
+
+
+def provably_at_least(value, bound) -> bool:
+    """Whether ``value >= bound`` holds for every positive assignment of the extents they mention."""
+    difference = sympy.sympify(value) - sympy.sympify(bound)
+    positive = {sym: sympy.Symbol(sym.name, positive=True, integer=True) for sym in difference.free_symbols}
+    return bool(symbolic.simplify(difference.subs(positive)).is_nonnegative)
+
+
+def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
+    """Top-level maps inside a host loop that keep their whole subtree on the host.
+
+    A host loop's own code runs on the host every iteration. Offloading a map beside it that shares
+    a non-scalar container copies that container host<->device every iteration, and when the map
+    moves fewer elements than those containers hold, the copies are the loop's cost: amg_setup's
+    gather over a row's touched entries, inside the sequential loop over all ``n`` rows, copied the
+    whole ``acc`` and ``touched`` arrays both ways per row and ran 344 s against 0.8 s on the CPU.
+    Such a map stays on the host, which pulls its own containers to the host side too, so the rule
+    runs to a fixed point. A map that moves at least what it shares (a stencil over the whole
+    array) keeps the device, and so does a loop that shares only single-element containers.
+    Only this SDFG's own loops are read: a loop in a nested SDFG under a map is kernel code. And
+    only a map that is its state's sole device work: the offload gives a state ONE location, so a
+    host map beside a kernel over the same containers would read device memory from the host
+    (polybench durbin's flip map beside its update kernels).
+    """
+    pinned: OrderedSet = OrderedSet()
+    for loop in sdfg.all_control_flow_regions():
+        if not isinstance(loop, LoopRegion):
+            continue
+        host = host_code_containers(sdfg, loop)
+        candidates = []
+        for state in loop.all_states():
+            work = [n for n in state.scope_children()[None] if isinstance(n, (nodes.MapEntry, nodes.LibraryNode))]
+            if len(work) == 1 and isinstance(work[0], nodes.MapEntry):
+                candidates.append((state, work[0]))
+        changed = True
+        while changed:
+            changed = False
+            for state, entry in candidates:
+                if entry in pinned:
+                    continue
+                names, traffic = map_containers_and_traffic(state, entry)
+                shared = [n for n in names & host if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
+                if not shared or provably_at_least(traffic, sum(sdfg.arrays[n].total_size for n in shared)):
+                    continue
+                pinned.add(entry)
+                host |= names
+                changed = True
+    return pinned

@@ -1510,9 +1510,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # tasklet has no connectors (the symbol-only convention is satisfied).
     # ``assume_parallel_guards`` skips the sort + duplicate-count guard entirely
     # and lifts each scatter unconditionally (caller asserts every idx array is a
-    # permutation); default keeps the sound sort-based guard.
+    # permutation); default keeps the sound sort-based guard. A collision takes the
+    # sequential clone rather than aborting: the guard dispatches between the parallel
+    # Map and the original loop, and on GPU the fallback's host copies stay inside it.
     if scatter_to_guarded_maps:
-        s += [('scatter', ScatterToGuardedMaps(assume_no_conflicts=assume_parallel_guards))]
+        s += [('scatter',
+               ScatterToGuardedMaps(emit_unparallelized_else_branch=True, assume_no_conflicts=assume_parallel_guards))]
 
     # post_l2m: insert assign tasklets at map boundary, then inline the single-state bodies
     # LoopToMap left -- after LoopToMap. State fusion waits for the ``fuse`` cleanup phase.
