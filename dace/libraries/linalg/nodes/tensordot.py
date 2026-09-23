@@ -329,8 +329,10 @@ class ExpandGPUTensorDot(ExpandTransformation):
         extents = f"std::vector<int64_t> extent({len(left_ext) + len(right_ext)});\n"
         for i, s in zip(left_modes, left_ext):
             extents += f"extent[{i}] = {sym2cpp(s)};\n"
-        for i, s in zip(right_modes, right_ext):
-            if i in node.right_axes:
+        # A contracted right axis shares its left partner's mode, whose extent is already set. The
+        # test is on the AXIS index: a free right mode id can equal a contracted axis index.
+        for axis, (i, s) in enumerate(zip(right_modes, right_ext)):
+            if axis in node.right_axes:
                 continue
             extents += f"extent[{i}] = {sym2cpp(s)};\n"
         extents += f"""
