@@ -110,5 +110,8 @@ class RecomputeOversizedIntermediates(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Apply to fixpoint; returns how many chains were collapsed, or ``None``."""
-        applied = sdfg.apply_transformations_repeated(OversizedIntermediateOTFFusion, validate_all=False)
+        # ``cpu_specialize`` validates once at its end; a validation per pass would walk the SDFG again.
+        applied = sdfg.apply_transformations_repeated(OversizedIntermediateOTFFusion,
+                                                      validate=False,
+                                                      validate_all=False)
         return applied or None

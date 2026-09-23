@@ -10,11 +10,22 @@ The split has a hazard: everything in the GPU branch of the finalize tail reads 
 ``GPU_Global`` arrays an offload creates, so on a host graph each step is a no-op and the result is a
 CPU graph wearing a GPU label. :func:`assert_offloaded` turns that into a raise.
 """
+import copy
 import pytest
 
 import dace
 from dace import dtypes
 from dace.transformation.passes.canonicalize.finalize import assert_offloaded, finalize_for_target, offload_to_gpu
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
 
 
 def elementwise_sdfg(name='fin_offload'):
@@ -91,6 +102,7 @@ def test_offload_then_finalize_is_the_supported_order():
     sdfg = elementwise_sdfg('fin_offload_ok')
     offload_to_gpu(sdfg)
     assert has_device_map(sdfg), 'offload_to_gpu left the map on the host'
+    assert_cfg_list_matches_reset(sdfg)
     finalize_for_target(sdfg, 'gpu')  # must not raise
     assert has_device_map(sdfg)
 
@@ -99,6 +111,7 @@ def test_cpu_target_unaffected():
     """The CPU tail never consulted the guard; it still finalizes a plain host graph."""
     sdfg = elementwise_sdfg('fin_cpu')
     finalize_for_target(sdfg, 'cpu')
+    assert_cfg_list_matches_reset(sdfg)
     assert not has_device_map(sdfg)
 
 
