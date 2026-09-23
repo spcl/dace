@@ -104,7 +104,7 @@ def _standalone_libopenblas():
     lib = _scan_ld_library_path()
     if lib:
         return lib, _include_dir_for(os.path.dirname(lib))
-    root = _spack_openblas_prefix()
+    root = spack_install_prefix('openblas')
     if root:
         for libdir in (os.path.join(root, 'lib'), os.path.join(root, 'lib64')):
             lib = _libopenblas_in(libdir)
@@ -113,25 +113,25 @@ def _standalone_libopenblas():
     return None, None
 
 
-@functools.lru_cache(maxsize=1, typed=True)
-def _spack_openblas_prefix() -> str | None:
-    """Install prefix of a spack-managed OpenBLAS, or ``None``.
+@functools.lru_cache(maxsize=None, typed=True)
+def spack_install_prefix(package: str) -> str | None:
+    """Install prefix of a spack-managed ``package``, or ``None``.
 
-    Last resort, after the env vars and the loader paths: an OpenBLAS that is merely *installed*
+    Last resort, after the env vars and the loader paths: a library that is merely *installed*
     under spack, never ``spack load``ed, is on no search path at all and every earlier probe misses
-    it. Asking spack costs a subprocess, so it runs once per process and only once nothing cheaper
-    found a library. A spack that is absent, slow, or reports several matching installs leaves the
-    detection exactly where it was.
+    it. Asking spack costs a subprocess, so it runs once per package and process and only once
+    nothing cheaper found a library. The ``spack`` on ``PATH`` is asked first, then the one under
+    ``SPACK_ROOT`` (set by spack's shell setup, which does not always put ``spack`` on ``PATH``). A
+    spack that is absent, slow, or reports several matching installs leaves the detection exactly
+    where it was.
     """
-    exe = shutil.which('spack')
+    root = os.environ.get('SPACK_ROOT')
+    root_exe = os.path.join(root, 'bin', 'spack') if root else None
+    exe = shutil.which('spack') or (root_exe if root_exe and os.access(root_exe, os.X_OK) else None)
     if not exe:
         return None
     try:
-        out = subprocess.run([exe, 'location', '-i', 'openblas'],
-                             capture_output=True,
-                             text=True,
-                             timeout=30,
-                             check=False)
+        out = subprocess.run([exe, 'location', '-i', package], capture_output=True, text=True, timeout=30, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     prefix = out.stdout.strip()
