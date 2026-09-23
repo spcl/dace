@@ -8,8 +8,6 @@ SDFG of ``nproma``/``nlev`` maps -- Which maps those are is named by the caller,
 import itertools
 from typing import Dict, List, Optional, Union
 
-import sympy
-
 from dace.ordered import OrderedSet
 
 from dace import symbolic
@@ -190,10 +188,10 @@ def host_code_containers(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet:
 
 
 def map_containers_and_traffic(state: SDFGState,
-                               entry: nodes.MapEntry) -> tuple[OrderedSet[str], symbolic.SymbolicType]:
+                               entry: nodes.MapEntry) -> tuple[OrderedSet[str], symbolic.SymbolicType | int]:
     """The containers a top-level map reads or writes, and the elements it moves (dynamic memlets count 0)."""
     names: OrderedSet[str] = OrderedSet()
-    traffic: symbolic.SymbolicType = sympy.Integer(0)
+    traffic: symbolic.SymbolicType | int = 0
     for edge in itertools.chain(state.in_edges(entry), state.out_edges(state.exit_node(entry))):
         if edge.data.data is None:
             continue
@@ -203,11 +201,15 @@ def map_containers_and_traffic(state: SDFGState,
     return names, traffic
 
 
-def provably_at_least(value: symbolic.SymbolicType, bound: symbolic.SymbolicType) -> bool:
-    """Whether ``value >= bound`` holds for every positive assignment of the extents they mention."""
-    difference = sympy.sympify(value) - sympy.sympify(bound)
-    positive = {sym: sympy.Symbol(sym.name, positive=True, integer=True) for sym in difference.free_symbols}
-    return bool(symbolic.simplify(difference.subs(positive)).is_nonnegative)
+def provably_moves_less(traffic: symbolic.SymbolicType | int, size: symbolic.SymbolicType | int) -> bool:
+    """Whether ``traffic`` is provably below ``size``; undecidable answers False, keeping the map a kernel.
+
+    A symbolic extent is taken as big enough, so a constant count is below any symbolic ``size``.
+    """
+    if not symbolic.issymbolic(traffic):
+        return symbolic.issymbolic(size) or symbolic.provably_nonnegative(size - traffic - 1)
+    return (symbolic.provably_nonnegative(size - traffic, assume_symbols_nonnegative=True)
+            and not symbolic.provably_nonnegative(traffic - size, assume_symbols_nonnegative=True))
 
 
 def in_fallback_loop(loop: LoopRegion) -> bool:
@@ -221,29 +223,28 @@ def in_fallback_loop(loop: LoopRegion) -> bool:
 
 
 def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
-    """Top-level maps of a host loop that keep their whole subtree on the host.
+    """Top-level maps of a serial host loop, kept on the host with their whole subtree.
 
-    A host loop's own code runs on the host every iteration. Offloading a map beside it that shares
-    a non-scalar container copies that container host<->device every iteration, and when the map
-    moves fewer elements than those containers hold, the copies are the loop's cost: amg_setup's
-    gather over a row's touched entries, inside the sequential loop over all ``n`` rows, copied the
-    whole ``acc`` and ``touched`` arrays both ways per row and ran 344 s against 0.8 s on the CPU.
-
-    Decided per loop, all or nothing: a loop whose device work is ONLY such maps is a serial host
-    algorithm, and its maps stay on the host. A loop with any other kernel -- a map that moves at
-    least what it shares, one that shares nothing, a library call -- is a device loop, and keeps
-    every kernel: cegterg's Davidson iteration shares a small ``ew`` with host code and pinning its
-    maps pulled its main work to the CPU. A pinned map must also be its state's sole device work:
-    the offload gives a state ONE location, so a host map beside a kernel over the same containers
-    would read device memory from the host (polybench durbin). Only this SDFG's own loops are read:
-    a loop in a nested SDFG under a map is kernel code.
+    A specialization's sequential fallback loop is the conflict path, host code by construction:
+    every map in it is pinned, except in a state that also calls a library (a state has one
+    location), so the arm copies only at its own boundary. In any other loop, offloading a map
+    copies each non-scalar container it shares with the loop's host code once per iteration, and
+    when the map provably moves less than those hold the copies dominate (amg_setup: 344 s on GPU
+    against 0.8 s on CPU). Such a loop is pinned all or nothing: any other device work in it (a map
+    not provably smaller, a library call, a second map in a state) keeps every kernel on the device,
+    since the offload gives a state one location. Loops of nested SDFGs are kernel code.
     """
     pinned: OrderedSet = OrderedSet()
     for loop in sdfg.all_control_flow_regions():
-        # A guarded specialization's fallback loop is placed by the arm rules, which copy into the
-        # arm around its own host code; pinning a map there left cegterg's arm reading host twins
-        # of arrays the arm had just written on the device, with no copy in between.
-        if not isinstance(loop, LoopRegion) or in_fallback_loop(loop):
+        if not isinstance(loop, LoopRegion):
+            continue
+        if loop.pinned_sequential:
+            for state in loop.all_states():
+                top = state.scope_children()[None]
+                if not any(isinstance(n, nodes.LibraryNode) for n in top):
+                    pinned |= OrderedSet(n for n in top if isinstance(n, nodes.MapEntry))
+            continue
+        if in_fallback_loop(loop):
             continue
         host = host_code_containers(sdfg, loop)
         candidates: OrderedSet = OrderedSet()
@@ -256,7 +257,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
                     continue
                 names, traffic = map_containers_and_traffic(state, node)
                 shared = [n for n in names & host if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
-                if shared and not provably_at_least(traffic, sum(sdfg.arrays[n].total_size for n in shared)):
+                if shared and provably_moves_less(traffic, sum(sdfg.arrays[n].total_size for n in shared)):
                     candidates.add(node)
                 else:
                     device_loop = True

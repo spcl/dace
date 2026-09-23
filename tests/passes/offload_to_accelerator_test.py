@@ -24,6 +24,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace import dtypes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.auto.auto_optimize import set_fast_implementations
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
 from dace.libraries.standard.nodes.find_first import FindFirst, INDEX_NAME, OUTPUT_CONNECTOR_NAME
@@ -768,6 +769,17 @@ def test_a_trivial_kernel_map_is_never_eliminated():
 
 
 ROWS = dace.symbol('ROWS')
+COLS = dace.symbol('COLS')
+
+
+@dace.program
+def scatter_rows_after_a_row_map(agg: dace.int64[ROWS], x: dace.float64[ROWS, COLS], acc: dace.float64[ROWS],
+                                 tmp: dace.float64[ROWS, COLS]):
+    """amg_setup's shape: the scatter guard's fallback is a row loop with a map in its body."""
+    for i in range(ROWS):
+        for j in dace.map[0:COLS]:
+            tmp[i, j] = x[i, j] * 2.0
+        acc[agg[i]] = acc[agg[i]] + tmp[i, 0] + tmp[i, COLS - 1]
 
 
 @dace.program
@@ -806,6 +818,18 @@ def copy_into_a_host_recurrence(x: dace.float64[ROWS], flag: dace.int64, out: da
         for i in range(1, ROWS):
             u[i] = u[i] + u[i - 1]
     out[:] = u
+
+
+@dace.program
+def rows_with_an_unranked_gather(agg: dace.int64[ROWS], w: dace.float64[ROWS], out: dace.float64[COLS]):
+    """The small gather over another symbol's extent, which no rule may rank against ``ROWS``."""
+    acc = np.zeros([ROWS], dtype=np.float64)
+    for i in range(ROWS):
+        c = agg[i]
+        if w[i] >= 0:
+            acc[c] = acc[c] + w[i]
+        for j in dace.map[0:COLS]:
+            out[j] = out[j] + acc[j]
 
 
 def copies_inside_loops(sdfg: dace.SDFG) -> list:
@@ -856,6 +880,50 @@ def test_a_copy_before_a_host_recurrence_computes_what_numpy_computes():
         out = np.zeros(8)
         sdfg(x=x, flag=flag, out=out, ROWS=8)
         np.testing.assert_allclose(out, want)
+
+
+def test_a_map_whose_size_cannot_be_ranked_stays_a_kernel():
+    sdfg = rows_with_an_unranked_gather.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+    gather = [
+        n for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and parent is not None and 'COLS' in n.map.range.free_symbols
+    ]
+    assert gather and all(n.map.schedule == dtypes.ScheduleType.GPU_Device for n in gather)
+
+
+def offloaded_scatter_rows() -> dace.SDFG:
+    sdfg = scatter_rows_after_a_row_map.to_sdfg(simplify=True)
+    canonicalize(sdfg, target='gpu')
+    offload_to_gpu(sdfg)
+    return finalize_for_target(sdfg, 'gpu')
+
+
+def test_a_scatter_fallback_keeps_its_row_map_on_the_host():
+    sdfg = offloaded_scatter_rows()
+    fallback = [
+        b for b in sdfg.all_control_flow_blocks(recursive=True) if isinstance(b, LoopRegion) and b.pinned_sequential
+    ]
+    assert fallback, 'the scatter no longer canonicalizes to a guarded fallback loop'
+    maps = [
+        n for loop in fallback for st in loop.all_states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry)
+    ]
+    assert maps and all(n.map.schedule not in dtypes.GPU_SCHEDULES for n in maps), [n.map.schedule for n in maps]
+
+
+@pytest.mark.gpu
+def test_a_scatter_fallback_on_the_host_computes_what_numpy_computes():
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+    sdfg = offloaded_scatter_rows()
+    rng = np.random.default_rng(0)
+    for agg in (np.arange(8, dtype=np.int64), np.array([0, 2, 1, 3, 0, 5, 7, 2], dtype=np.int64)):
+        x = rng.random((8, 4))
+        want = np.zeros(8)
+        np.add.at(want, agg, 2 * x[:, 0] + 2 * x[:, 3])
+        acc, tmp = cupy.zeros(8), cupy.zeros((8, 4))
+        sdfg(agg=cupy.asarray(agg), x=cupy.asarray(x), acc=acc, tmp=tmp, ROWS=8, COLS=4)
+        np.testing.assert_allclose(acc.get(), want)
 
 
 @pytest.mark.gpu
