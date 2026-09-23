@@ -181,7 +181,10 @@ def test_pack_mask_compares_every_lane_of_b():
     sdfg = vectorized(pack_kernel, 'pack_struct')
 
     assert str(W) in map_steps(sdfg), 'the pack mask map did not tile'
-    assert comparison_operand_loads(sdfg) == [('Tile', ['b'])]
+    # Every tiled comparison, the mask map's and the scatter map's since the compaction rank's
+    # gather lowers, compares a per-lane load.
+    comparisons = comparison_operand_loads(sdfg)
+    assert comparisons and all(c == ('Tile', ['b']) for c in comparisons), comparisons
 
 
 def test_expand_mask_compares_every_lane_of_a():
@@ -190,7 +193,10 @@ def test_expand_mask_compares_every_lane_of_a():
     sdfg = vectorized(expand_kernel, 'expand_struct')
 
     assert str(W) in map_steps(sdfg), 'the expand mask map did not tile'
-    assert comparison_operand_loads(sdfg) == [('Tile', ['a'])]
+    # Every tiled comparison, the mask map's and the scatter map's since the compaction rank's
+    # gather lowers, compares a per-lane load.
+    comparisons = comparison_operand_loads(sdfg)
+    assert comparisons and all(c == ('Tile', ['a']) for c in comparisons), comparisons
 
 
 def test_invariant_interstate_symbol_still_tiles():

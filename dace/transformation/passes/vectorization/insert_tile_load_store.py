@@ -1040,6 +1040,20 @@ class InsertTileLoadStore(ppl.Pass):
         import dace.symbolic as symbolic
         widths = self.lane_widths(iter_vars)
         parsed = symbolic.pystr_to_symbolic(begin_str)
+        # A symbol defined as arithmetic over an array read stands for that arithmetic: SymbolSSA's
+        # ``j_0 = rank[i] - 1`` makes TSVC s342's ``j_0 + 1`` gather read ``rank[i]``. Substituting it
+        # lets the read be staged below like any inline subscript; the symbol chase follows only a
+        # bare read or a bare-symbol alias.
+        defs = build_symbol_definition_map(inner_sdfg, state=inner_state)
+        arithmetic = {}
+        for s in parsed.free_symbols:
+            d = defs.get(str(s))
+            if d is not None and not isinstance(d, symbolic.Subscript) and not d.is_Symbol and d.atoms(
+                    symbolic.Subscript):
+                arithmetic[s] = d
+        if arithmetic:
+            parsed = parsed.xreplace(arithmetic)
+            begin_str = str(parsed)
         # A bare array read IS the index (``A[idx[ii]]`` -> Range begin ``idx[ii]``), not a hoisted
         # symbol: stage it directly (also covers the unit fixtures that skip frontend hoisting).
         if isinstance(parsed, symbolic.Subscript):
