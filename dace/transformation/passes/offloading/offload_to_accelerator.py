@@ -1747,6 +1747,33 @@ class OffloadToAccelerator(ppl.Pass):
             method(node)
             stack.extend(reversed(node.next))
 
+    def traverse_IR_after_predecessors(self, IR: OffloadingIRNode, method) -> None:
+        """Apply ``method`` to each IR node once all of its predecessors have had it applied.
+
+        The walk :meth:`__traverse_IR` makes, held back at every join until its last in-edge
+        arrives, so arms are still taken in ``node.next`` order.
+        """
+        waiting: dict[OffloadingIRNode, int] = {}
+
+        def count(node: OffloadingIRNode) -> None:
+            for next in node.next:
+                waiting[next] = waiting.get(next, 0) + 1
+
+        self.__traverse_IR(IR, count)
+        stack = [IR]
+        while stack:
+            node = stack.pop()
+            method(node)
+            ready = []
+            for next in node.next:
+                waiting[next] -= 1
+                if waiting[next] == 0:
+                    ready.append(next)
+            stack.extend(reversed(ready))
+        stuck = [node.debug_name for node, pending in waiting.items() if pending]
+        if stuck:
+            raise RuntimeError(f'the offloading IR is not a DAG: {stuck} are never reached by all predecessors')
+
     def __traverse_same_level(self, IR: OffloadingIRNode, method):  #DFS
         queue = IR.next.copy()
         while queue:
@@ -1872,7 +1899,11 @@ class OffloadToAccelerator(ppl.Pass):
                     if array not in next_arrays:
                         next.gpu_set.add(array)
 
-        self.__traverse_IR(IR, propagate)
+        # A node forwards what it holds WHEN visited, so a join must hear from every arm first.
+        # Visited from the first arm alone, whatever only a later arm carries never got past it --
+        # and a fallback arm carries nothing into the close (see above): QE vexx_k renamed an
+        # interstate read onto ``iexx_istart_host`` with no copy anywhere to fill it.
+        self.traverse_IR_after_predecessors(IR, propagate)
 
     def place_copy_destinations(self, node: OffloadingIRNode) -> None:
         """A top-level container-to-container copy writes its destination on its source's side.
