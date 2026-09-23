@@ -349,9 +349,13 @@ class FuseMaps(ppl.Pass):
         # Nested SDFGs whose inside is propagated and unchanged since, shared by the fusions so a nested SDFG
         #  is propagated again only after something inside it changed, not once per fusion of its scope.
         propagated: Dict[SDFG, None] = {}
+        # The last propagation onto each external scope edge, so a fusion re-propagates only the connectors whose
+        #  memlets it changed; `propagate_scope_node()` checks every record against the graph before trusting it.
+        scope_records: mfhelper.ScopeRecords = {}
         for xform, _ in units:
             if isinstance(xform, (dftrans.MapFusionVertical, dftrans.MapFusionHorizontal)):
                 xform.propagated_nsdfgs = propagated
+                xform.scope_records = scope_records
 
         applied: AppliedMap = collections.defaultdict(list)
         for _ in range(FUSE_ROUNDS):
