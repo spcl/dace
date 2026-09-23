@@ -684,6 +684,38 @@ def test_copy_fortran_packed_gpu_falls_back_to_pure():
     cp.testing.assert_array_equal(B, A)
 
 
+def c_to_fortran_device_copy():
+    """A GPU_Global C-packed (6, 7) array copied into a GPU_Global Fortran-packed one."""
+    return _make_copy_sdfg(
+        _ArraySpec(shape=(6, 7), storage=dace.dtypes.StorageType.GPU_Global, strides=(7, 1)),
+        _ArraySpec(shape=(6, 7), storage=dace.dtypes.StorageType.GPU_Global, strides=(1, 6)),
+        name="copy_c_to_fortran_device",
+    )
+
+
+def test_a_device_copy_between_c_and_fortran_layouts_is_not_one_flat_memcpy():
+    """Both ends are contiguous, so the copy kept the one-call ``MemcpyCUDA1D``, which moves the
+    bytes in order and so transposes the elements. npbench vexx_k reshapes with ``order='F'``, and
+    every DFT of its GPU canonicalize column read transposed data."""
+    sdfg, libnode = c_to_fortran_device_copy()
+    sdfg.validate()
+    assert select_copy_implementation(libnode, sdfg.start_state) == 'MappedTasklet'
+
+
+@pytest.mark.gpu
+def test_a_device_copy_between_c_and_fortran_layouts_keeps_the_values():
+    import cupy as cp
+
+    sdfg, _ = c_to_fortran_device_copy()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    host = np.arange(42, dtype=np.float64).reshape(6, 7)
+    src = cp.asarray(host)
+    dst = cp.asfortranarray(cp.zeros((6, 7), dtype=cp.float64))
+    sdfg(src=src, dst=dst)
+    cp.testing.assert_array_equal(dst, src)
+
+
 @pytest.mark.gpu
 def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
     """A cross-CPU/GPU copy of a Fortran-packed array expands and produces correct output."""

@@ -114,10 +114,20 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     return impl or 'MappedTasklet'
 
 
+def _packed_orders_differ(inp: dace.data.Data, out: dace.data.Data) -> bool:
+    """True if one descriptor is packed C only and the other packed Fortran only.
+
+    A 1-D array is both, and a padded one is neither: each keeps the order the other side has.
+    """
+    c_in, f_in = inp.is_packed_c_strides(), inp.is_packed_fortran_strides()
+    c_out, f_out = out.is_packed_c_strides(), out.is_packed_fortran_strides()
+    return (c_in and not f_in and f_out and not c_out) or (f_in and not c_in and c_out and not f_out)
+
+
 def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> Optional[str]:
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
-      both subsets contiguous                       -> ``None`` (keep CUDA1D)
+      both subsets contiguous, same element order    -> ``None`` (keep CUDA1D)
       collapsed rank 2, 2D pitched layout matches    -> ``MemcpyCUDA2D``
       collapsed rank 1, both sides equal length      -> ``MemcpyCUDA2D`` (degenerate ``(1, N)``)
       same-side (no CPU/GPU boundary)                -> ``MappedTasklet`` (per-element loop nest)
@@ -135,7 +145,10 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
     """
     _, inp, in_subset, _, out, out_subset = node.validate(parent_state.sdfg, parent_state, allow_cross_storage=True)
 
-    if in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out):
+    # One flat gpuMemcpyAsync moves the bytes in order. A C-packed and a Fortran-packed array are both
+    # contiguous, but they order their elements differently, so a flat copy between them permutes them.
+    if (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)
+            and not _packed_orders_differ(inp, out)):
         return None
 
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
