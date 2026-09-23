@@ -137,19 +137,62 @@ def intersect(a: Interval, b: Interval) -> Interval:
     return Interval(lo, hi)
 
 
+def _minmax_split(expr) -> Optional[Tuple[Any, Any]]:
+    """``(t, r)`` with ``expr == t + r`` for a sum with a single ``Min``/``Max`` term ``t``, else ``None``."""
+    if not isinstance(expr, sympy.Add):
+        return None
+    terms = [a for a in expr.args if isinstance(a, (sympy.Min, sympy.Max))]
+    if len(terms) != 1:
+        return None
+    return terms[0], expr - terms[0]
+
+
+def provably_ge(a, b, depth: int = 4) -> bool:
+    """Whether ``a >= b`` for all values of the symbols, looking through ``Min``/``Max`` terms (as produced by
+    reduced iteration ranges) where the difference alone does not simplify to a number."""
+    diff = _num(a - b)
+    if diff is not None:
+        return bool(diff >= 0)
+    if depth == 0:
+        return False
+    a, b = sympy.sympify(a), sympy.sympify(b)
+    if isinstance(a, sympy.Min):
+        return all(provably_ge(x, b, depth - 1) for x in a.args)
+    if isinstance(b, sympy.Max):
+        return all(provably_ge(a, y, depth - 1) for y in b.args)
+    if isinstance(a, sympy.Max):
+        return any(provably_ge(x, b, depth - 1) for x in a.args)
+    if isinstance(b, sympy.Min):
+        return any(provably_ge(a, y, depth - 1) for y in b.args)
+    split = _minmax_split(a)
+    if split is not None:
+        return provably_ge(split[0], b - split[1], depth - 1)
+    split = _minmax_split(b)
+    if split is not None:
+        return provably_ge(a - split[1], split[0], depth - 1)
+    return False
+
+
 def provably_empty(iv: Interval) -> bool:
     if iv.lo is None or iv.hi is None:
         return False
-    diff = _num(iv.hi - iv.lo)
-    return diff is not None and bool(diff < 0)
+    return provably_ge(iv.lo, iv.hi + 1)
 
 
 def provably_before(a: Interval, b: Interval) -> bool:
     """Whether every point of ``a`` lies strictly below every point of ``b``."""
     if a.hi is None or b.lo is None:
         return False
-    gap = _num(b.lo - a.hi)
-    return gap is not None and bool(gap > 0)
+    return provably_ge(b.lo, a.hi + 1)
+
+
+def provably_within(inner: Interval, outer: Interval) -> bool:
+    """Whether every point of ``inner`` lies in ``outer``."""
+    if outer.lo is not None and (inner.lo is None or not provably_ge(inner.lo, outer.lo)):
+        return False
+    if outer.hi is not None and (inner.hi is None or not provably_ge(outer.hi, inner.hi)):
+        return False
+    return True
 
 
 def _names(node: ast.AST) -> Set[str]:
@@ -169,7 +212,7 @@ def _negated(node: ast.expr) -> ast.expr:
     return astutils.negate_expr(node).value
 
 
-def _conjunction(atoms: Sequence[ast.expr]) -> ast.expr:
+def conjunction(atoms: Sequence[ast.expr]) -> ast.expr:
     if len(atoms) == 1:
         return atoms[0]
     return ast.BoolOp(op=ast.And(), values=list(atoms))
@@ -184,7 +227,7 @@ def _code_block(expr: ast.expr) -> CodeBlock:
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _dnf(node: ast.AST, negate: bool = False) -> Optional[List[List[ast.expr]]]:
+def disjunctive_normal_form(node: ast.AST, negate: bool = False) -> Optional[List[List[ast.expr]]]:
     """Disjunctive normal form of a Python boolean expression.
 
     :return: A list of clauses, each a list of atoms that must all hold; negation is pushed into the atoms (flipping
@@ -194,9 +237,9 @@ def _dnf(node: ast.AST, negate: bool = False) -> Optional[List[List[ast.expr]]]:
     if isinstance(node, ast.Expr):
         node = node.value
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        return _dnf(node.operand, not negate)
+        return disjunctive_normal_form(node.operand, not negate)
     if isinstance(node, ast.BoolOp):
-        parts = [_dnf(v, negate) for v in node.values]
+        parts = [disjunctive_normal_form(v, negate) for v in node.values]
         if any(p is None for p in parts):
             return None
         # ``and`` is a conjunction, and so is a negated ``or`` (De Morgan).
@@ -215,7 +258,7 @@ def _dnf(node: ast.AST, negate: bool = False) -> Optional[List[List[ast.expr]]]:
             ast.Compare(left=operands[k], ops=[node.ops[k]], comparators=[operands[k + 1]])
             for k in range(len(node.ops))
         ]
-        return _dnf(ast.BoolOp(op=ast.And(), values=atoms), negate)
+        return disjunctive_normal_form(ast.BoolOp(op=ast.And(), values=atoms), negate)
     if astutils.is_constant(node) and isinstance(node.value, bool):
         return [[]] if node.value != negate else []
     if negate:
@@ -433,6 +476,21 @@ def _constant_atom(atom: ast.expr, info: IterationSpace, max_enumeration: int) -
     return intervals
 
 
+def atom_intervals(atom: ast.expr, info: IterationSpace, max_enumeration: int = 1 << 20) -> Optional[List[Interval]]:
+    """Disjoint, ascending intervals of the iteration variable of ``info`` on which the guard atom ``atom`` holds:
+    either a comparison of the iteration variable with a loop-invariant integer expression, or an expression over
+    the iteration variable and compile-time constants only. ``None`` if the atom is of neither kind.
+
+    :param atom: A guard atom (a conjunct of a condition in disjunctive normal form).
+    :param info: The iteration space whose variable the atom is analyzed in.
+    :param max_enumeration: Upper bound on the iterates evaluated for an atom over compile-time constant data.
+    """
+    intervals = _symbolic_atom(atom, info)
+    if intervals is None:
+        intervals = _constant_atom(atom, info, max_enumeration)
+    return intervals
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Loop / structure analysis
 # ----------------------------------------------------------------------------------------------------------------------
@@ -592,7 +650,7 @@ def _find_guard(region: ControlFlowRegion) -> Optional[_Guard]:
         atoms.append(_expr_of(cond))
     elif not atoms:
         return None
-    condition = _conjunction(atoms)
+    condition = conjunction(atoms)
 
     # Fold the prologue assignments into the condition, last assignment first (assignments of one edge are applied
     # in order), so that the condition is expressed in terms of the values at the start of the iteration.
@@ -754,12 +812,12 @@ def reduced_map_range(map_range: subsets.Range, dim: int, info: IterationSpace, 
 
 def residual_guard(rng: ReducedRange) -> Optional[CodeBlock]:
     """The condition that must still guard the body within ``rng``, or ``None`` if the guard was folded entirely."""
-    return _code_block(_conjunction(rng.residual)) if rng.residual else None
+    return _code_block(conjunction(rng.residual)) if rng.residual else None
 
 
 def guard_atoms(condition: ast.expr) -> List[ast.expr]:
     """The conjuncts of ``condition`` if it is a conjunction (negations pushed inwards), else the condition itself."""
-    clauses = _dnf(condition)
+    clauses = disjunctive_normal_form(condition)
     return clauses[0] if clauses is not None and len(clauses) == 1 else [condition]
 
 
@@ -910,7 +968,7 @@ def reduced_ranges(condition: ast.expr,
     :param max_ranges: Give up if the guard splits the space into more than this many ranges.
     :param max_enumeration: Upper bound on the iterates evaluated for an atom over compile-time constant data.
     """
-    clauses = _dnf(condition)
+    clauses = disjunctive_normal_form(condition)
     if clauses is None:
         return None
     ranges: List[ReducedRange] = []
@@ -922,15 +980,13 @@ def reduced_ranges(condition: ast.expr,
             changed = True  # A literal tautology: the guard can go.
         for atom in clause:
             analyzed = translate(atom) if translate is not None else atom
-            atom_intervals = None if analyzed is None else _symbolic_atom(analyzed, info)
-            if atom_intervals is None and analyzed is not None:
-                atom_intervals = _constant_atom(analyzed, info, max_enumeration)
-            if atom_intervals is None:
+            atom_ivs = None if analyzed is None else atom_intervals(analyzed, info, max_enumeration)
+            if atom_ivs is None:
                 residual.append(atom)
                 continue
             changed = True
             intervals = [
-                iv for a in intervals for b in atom_intervals for iv in (intersect(a, b), ) if not provably_empty(iv)
+                iv for a in intervals for b in atom_ivs for iv in (intersect(a, b), ) if not provably_empty(iv)
             ]
             if not intervals:
                 break
