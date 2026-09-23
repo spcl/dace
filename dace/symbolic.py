@@ -1967,8 +1967,8 @@ class OR(DaceFunction):
             return y
         if y is sympy.false:
             return x
-        if x.is_Boolean and y.is_Boolean:
-            return x or y
+        # Nothing else folds: Python's ``x or y`` on two symbolic booleans is ``x`` whenever ``x`` is
+        # truthy, which dropped a disjunct -- ``(not p) or (not q)`` became ``not p``.
 
     def _eval_is_boolean(self):
         return True
@@ -1994,8 +1994,8 @@ class AND(DaceFunction):
             return y
         if y is sympy.true:
             return x
-        if x.is_Boolean and y.is_Boolean:
-            return x and y
+        # Nothing else folds: Python's ``x and y`` on two symbolic booleans is ``y`` whenever ``x`` is
+        # truthy, which dropped a conjunct -- ``(not p) and (not q)`` became ``not q``.
 
     def _eval_is_boolean(self):
         return True

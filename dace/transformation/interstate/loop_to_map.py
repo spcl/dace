@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop to map transformation """
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 import copy
 from re import findall
 from dataclasses import dataclass, field
@@ -856,6 +856,60 @@ class LiftContext:
     #: ones it finds behind a nested node that re-exposes them, so an ancestor's cached sets can be
     #: patched by subtracting these instead of being dropped and walked again.
     internalized_data: Optional[Set[str]] = None
+    #: how many interstate edges of the SDFG (not across nested SDFGs) assign each name, and how many
+    #: loops of the SDFG and every SDFG nested in it bind each name as their iterator: what
+    #: :func:`declare_lifted_symbols` otherwise walks the whole SDFG for, per lift. Built on first use.
+    edge_assignments: Optional[Counter] = None
+    loop_variables: Optional[Counter] = None
+    #: name -> the blocks of ``block_order`` that read it (in their contents or on an out-edge), and the
+    #: blocks all of whose out-edges assign it: the "used after the loop" walk as an index. Entries of
+    #: blocks that left the order are skipped by ``block_index``. Built on first use.
+    symbol_uses: Optional[Dict[str, List[Any]]] = None
+    symbol_kills: Optional[Dict[str, List[Any]]] = None
+
+
+def index_block_symbols(ctx: LiftContext, block) -> None:
+    """Record in ``ctx`` which names ``block`` reads and which all of its out-edges assign."""
+    for name in block_free_symbols(block, ctx):
+        ctx.symbol_uses.setdefault(name, []).append(block)
+    killed = None
+    for e in block.parent_graph.out_edges(block):
+        for name in e.data.read_symbols():
+            ctx.symbol_uses.setdefault(name, []).append(block)
+        killed = set(e.data.assignments.keys()) if killed is None else killed & e.data.assignments.keys()
+    for name in killed or ():
+        ctx.symbol_kills.setdefault(name, []).append(block)
+
+
+def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: Set[str], loop_blocks: Set[Any]) -> bool:
+    """Whether a block after ``loop`` reads one of ``names`` before every out-edge of some block reassigns it:
+    the verdict of the ``block_order`` walk in :meth:`LoopToMap.can_be_applied`, from the index."""
+    if ctx.symbol_uses is None:
+        ctx.symbol_uses, ctx.symbol_kills = {}, {}
+        for block in ctx.block_order:
+            index_block_symbols(ctx, block)
+    index = ctx.block_index
+    start = index[loop]
+    for name in names:
+        kill = None
+        for block in ctx.symbol_kills.get(name, ()):
+            i = index.get(block)
+            if i is not None and i > start and block not in loop_blocks and (kill is None or i < kill):
+                kill = i
+        for block in ctx.symbol_uses.get(name, ()):
+            i = index.get(block)
+            if i is not None and i > start and block not in loop_blocks and (kill is None or i <= kill):
+                return True
+    return False
+
+
+def symbol_bindings(ctx: LiftContext, sdfg: SDFG) -> Tuple[Counter, Counter]:
+    """``(ctx.edge_assignments, ctx.loop_variables)``, built from ``sdfg`` on first use."""
+    if ctx.edge_assignments is None:
+        ctx.edge_assignments = Counter(k for e in sdfg.all_interstate_edges() for k in e.data.assignments)
+        ctx.loop_variables = Counter(r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True)
+                                     if isinstance(r, LoopRegion) and r.loop_variable)
+    return ctx.edge_assignments, ctx.loop_variables
 
 
 def build_lift_context(sdfg: SDFG,
@@ -891,7 +945,7 @@ def build_lift_context(sdfg: SDFG,
                        cfg_ids=cfg_ids)
 
 
-def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion) -> None:
+def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: Optional[LiftContext] = None) -> None:
     """Declare in the lifted body the free symbols whose type the parent SDFG settles without a walk.
 
     ``add_nested_sdfg`` types every symbol the body leaves undeclared from ``defined_symbols``, a walk
@@ -905,11 +959,18 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion) -> None:
     if not free:
         return
     rebound: Set[str] = set()
-    for edge in sdfg.all_interstate_edges():
-        rebound.update(edge.data.assignments.keys())
-    for region in sdfg.all_control_flow_regions(recursive=True):
-        if isinstance(region, LoopRegion) and region is not loop and region.loop_variable:
-            rebound.add(region.loop_variable)
+    if ctx is not None:
+        # The same set from the context's counts: every assigned name, and every iterator some loop
+        # other than ``loop`` binds.
+        edge_assignments, loop_variables = symbol_bindings(ctx, sdfg)
+        rebound.update(name for name, count in edge_assignments.items() if count > 0)
+        rebound.update(name for name, count in loop_variables.items() if count > (name == loop.loop_variable))
+    else:
+        for edge in sdfg.all_interstate_edges():
+            rebound.update(edge.data.assignments.keys())
+        for region in sdfg.all_control_flow_regions(recursive=True):
+            if isinstance(region, LoopRegion) and region is not loop and region.loop_variable:
+                rebound.add(region.loop_variable)
     table: Dict[str, dtypes.typeclass] = dict(sdfg.symbols)
     for desc in sdfg.arrays.values():
         table.update({s.name: s.dtype for s in desc.free_symbols if s.dtype is not None})
@@ -1352,6 +1413,10 @@ class LoopToMap(xf.MultiStateTransformation):
         # Built here, not with ``loop_states`` above: this walk is the only consumer, and most
         # probes return before reaching it.
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
+        # With a context the index answers the walk's question without walking; the walk below then
+        # runs only to name the block of a refusal.
+        if ctx is not None and not used_after_loop(ctx, self.loop, symbols_that_may_be_used, all_loop_blocks):
+            return True
         for block in islice(in_order_blocks, loop_idx + 1, None):
             if block in all_loop_blocks:
                 continue
@@ -1684,7 +1749,7 @@ class LoopToMap(xf.MultiStateTransformation):
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
 
         # Add NestedSDFG node
-        declare_lifted_symbols(nsdfg, sdfg, self.loop)
+        declare_lifted_symbols(nsdfg, sdfg, self.loop, lift_ctx)
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
         if sdfg.parent:
             for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
@@ -1961,9 +2026,15 @@ class LoopToMap(xf.MultiStateTransformation):
         if lift_ctx is not None and (frees_nothing or not unique_set):
             lift_ctx.post_lift_free_symbols = post_free_symbols
 
-        sdfg.reset_cfg_list()
-        for n, p in sdfg.all_nodes_recursive():
-            if isinstance(n, nodes.NestedSDFG):
-                n.sdfg.parent = p
-                n.sdfg.parent_nsdfg_node = n
-                n.sdfg.parent_sdfg = p.sdfg
+        # Every nested SDFG of the tree, as ``all_nodes_recursive`` reaches them, without yielding every
+        # dataflow node of every state on the way (7% of a lift on warpx_field_gather).
+        pending = [sdfg]
+        while pending:
+            for state in pending.pop().all_states():
+                for n in state.nodes():
+                    if isinstance(n, nodes.NestedSDFG):
+                        n.sdfg.parent = state
+                        n.sdfg.parent_nsdfg_node = n
+                        n.sdfg.parent_sdfg = state.sdfg
+                        if n.sdfg:
+                            pending.append(n.sdfg)

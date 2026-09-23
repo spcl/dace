@@ -1,17 +1,136 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lift every parallelizable loop of an SDFG to a Map, outermost-first."""
 
-from typing import Any, Dict, List, Optional, Tuple
+from collections import Counter
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from dace import properties
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG
+from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_to_map import (UNCOMPUTED, LiftContext, LiftInvariants, LoopFacts, LoopToMap,
-                                                        build_lift_context, build_lift_invariants)
+                                                        build_lift_context, build_lift_invariants, index_block_symbols)
+
+
+def candidate_loops(sdfg: SDFG) -> List[LoopRegion]:
+    """Every loop in ``sdfg`` and its nested SDFGs that carries an iteration variable."""
+    return [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable]
+
+
+def edge_assignment_counts(region: ControlFlowRegion) -> Counter:
+    """How many interstate edges of ``region`` and its sub-regions (not across nested SDFGs) assign each name."""
+    return Counter(k for e in region.all_interstate_edges() for k in e.data.assignments)
+
+
+def contains(ancestor: ControlFlowRegion, region: ControlFlowRegion) -> bool:
+    """Whether ``region`` lies in ``ancestor``'s subtree, nested SDFGs included."""
+    while region is not None:
+        if region is ancestor:
+            return True
+        if isinstance(region, SDFG):
+            region = None if region.parent is None else region.parent.parent_graph
+        else:
+            region = region.parent_graph
+    return False
+
+
+@dataclass(slots=True)
+class LiftSite:
+    """What a lift is about to change, read off the graph just before ``LoopToMap.apply``: the loop's
+    region is the only one whose own blocks and edges change, and the loop's subtree moves as a whole."""
+
+    #: the region's own blocks, in block order
+    level_order: List[Any]
+    #: the loop's own entry plus every block of its subtree in the SDFG's block order
+    subtree_size: int
+    loop_states: OrderedSet
+    region_edges: Counter
+    loop_edges: Counter
+    inner_loops: List[LoopRegion]
+
+    @staticmethod
+    def capture(loop: LoopRegion) -> 'LiftSite':
+        region = loop.parent_graph
+        return LiftSite(level_order=list(cfg_analysis.blockorder_topological_sort(region, recursive=False)),
+                        subtree_size=1 + sum(1 for _ in cfg_analysis.blockorder_topological_sort(loop)),
+                        loop_states=OrderedSet(loop.all_states()),
+                        region_edges=Counter(k for e in region.edges() for k in e.data.assignments),
+                        loop_edges=edge_assignment_counts(loop),
+                        inner_loops=[r for r in candidate_loops(loop) if r is not loop])
+
+
+def lifted_blocks(site: LiftSite, loop: LoopRegion, region: ControlFlowRegion) -> Optional[List[SDFGState]]:
+    """The blocks the lift put in ``loop``'s place, if the region's block order is the old one with the loop
+    replaced by them -- the one case in which the SDFG's block order can be patched instead of rebuilt."""
+    level_after = list(cfg_analysis.blockorder_topological_sort(region, recursive=False))
+    before = {id(b) for b in site.level_order}
+    added = [b for b in level_after if id(b) not in before]
+    if not added or not all(isinstance(b, SDFGState) for b in added):
+        return None
+    k = next(i for i, b in enumerate(site.level_order) if b is loop)
+    expected = site.level_order[:k] + added + site.level_order[k + 1:]
+    if len(expected) != len(level_after) or any(a is not b for a, b in zip(expected, level_after)):
+        return None
+    return added
+
+
+def patch_context(ctx: LiftContext, sd: SDFG, loop: LoopRegion, region: ControlFlowRegion, site: LiftSite,
+                  added: List[SDFGState]) -> bool:
+    """Bring ``sd``'s context up to date after ``loop`` was lifted, instead of rebuilding it from the whole SDFG.
+
+    Every field is what :func:`build_lift_context` would compute now: the loop's subtree leaves the
+    block order and the access index, the added states take its place, and the free symbols are the ones
+    the lift handed over (or walked again, when it had none).
+
+    :returns: ``False`` if the context cannot be patched and must be rebuilt.
+    """
+    start = ctx.block_index.get(loop)
+    if start is None:
+        return False
+    ctx.block_order = ctx.block_order[:start] + added + ctx.block_order[start + site.subtree_size:]
+    ctx.block_index = {block: i for i, block in enumerate(ctx.block_order)}
+    for state in site.loop_states:
+        for node in state.data_nodes():
+            holders = ctx.access_states.get(node.data)
+            if holders is not None:
+                holders.discard(state)
+    for state in added:
+        for node in state.data_nodes():
+            ctx.access_states[node.data].add(state)
+    fresh = ctx.post_lift_free_symbols
+    ctx.sdfg_free_symbols = set(sd.free_symbols) if fresh is None else fresh
+    ctx.post_lift_free_symbols = None
+    ctx.internalized_data = None
+    if ctx.edge_assignments is not None:
+        after = Counter(k for e in region.edges() for k in e.data.assignments)
+        ctx.edge_assignments = ctx.edge_assignments - (site.region_edges + site.loop_edges) + after
+    if ctx.symbol_uses is not None:
+        for state in added:
+            index_block_symbols(ctx, state)
+    return True
+
+
+def patch_candidates(candidates: List[LoopRegion], loop: LoopRegion, region: ControlFlowRegion, site: LiftSite,
+                     added: List[SDFGState]) -> List[LoopRegion]:
+    """``candidate_loops`` after ``loop`` was lifted: its inner loops now sit in the new nested SDFG, which
+    the walk reaches through the lifted state -- the region's last block, so after the rest of the region."""
+    gone = {id(loop)} | {id(r) for r in site.inner_loops}
+    at = next(i for i, c in enumerate(candidates) if c is loop)
+    rest = [c for c in candidates if id(c) not in gone]
+    insert = at - sum(1 for c in candidates[:at] if id(c) in gone)
+    while insert < len(rest) and contains(region, rest[insert]):
+        insert += 1
+    moved = [
+        r for state in added for node in state.nodes() if isinstance(node, nodes.NestedSDFG) and node.sdfg
+        for r in candidate_loops(node.sdfg)
+    ]
+    return rest[:insert] + moved + rest[insert:]
 
 
 def loop_order_key(loop: LoopRegion) -> Tuple[int, int]:
@@ -28,11 +147,6 @@ def loop_order_key(loop: LoopRegion) -> Tuple[int, int]:
         depth += 1
         graph = graph.parent_graph
     return (sdfg_level, depth)
-
-
-def candidate_loops(sdfg: SDFG) -> List[LoopRegion]:
-    """Every loop in ``sdfg`` and its nested SDFGs that carries an iteration variable."""
-    return [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable]
 
 
 @properties.make_properties
@@ -132,30 +246,34 @@ class ParallelizeLoops(ppl.Pass):
         self.finish(sdfg)
         return True
 
-    def lift(self, xform: LoopToMap, loop: LoopRegion, pipeline_results: Dict[str, Any], proven: bool = False) -> bool:
+    def lift(self,
+             xform: LoopToMap,
+             loop: LoopRegion,
+             pipeline_results: Dict[str, Any],
+             proven: bool = False,
+             before_apply: Optional[Callable[[], None]] = None) -> bool:
         """Probe ``loop`` against the CURRENT graph and lift it if ``LoopToMap`` accepts it.
 
         :param xform: the instance to match; its ``lift_context``, when set, supplies the shared analysis.
         :param proven: skip the probe, see :meth:`parallelize_loop`.
+        :param before_apply: called once the probe accepted, just before the graph changes.
         :returns: whether ``loop`` was lifted.
         """
         sd = loop.sdfg
         graph = loop.parent_graph
-        ctx: Optional[LiftContext] = vars(xform).get('lift_context')
         # ``override=True`` with the loop OBJECT, the way ``fuse_states`` sets up its own
         # matches: ``PatternNode.__get__`` returns a non-int subgraph value as-is, so the
         # match resolves by identity instead of through ``cfg_list[cfg_id].node(node_id)``.
         # That drops two linear scans per candidate -- ``graph.node_id(loop)`` and the
         # ``cfg_list.index()`` inside ``cfg_id`` -- and removes any chance of a stale index
-        # resolving to the wrong block. ``LoopToMap`` never reads ``cfg_id``, so a match with no
-        # context passes -1 rather than scanning for a region a caller may not have indexed yet.
-        cfg_id = -1 if ctx is None else ctx.cfg_ids.get(graph)
-        if cfg_id is None:
-            cfg_id = graph.cfg_id  # context predates this region; fall back to the scan
-        xform.setup_match(sd, cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+        # resolving to the wrong block. ``LoopToMap`` never reads ``cfg_id``, so the match passes -1
+        # rather than resolving a list the sweep keeps stale until its last lift.
+        xform.setup_match(sd, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
         xform._pipeline_results = pipeline_results
         if not proven and not xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
             return False
+        if before_apply is not None:
+            before_apply()
         xform.apply(graph, sd)
         return True
 
@@ -182,10 +300,17 @@ class ParallelizeLoops(ppl.Pass):
         # One instance, reused: ``setup_match`` overwrites every field a probe reads, and building a
         # ``make_properties`` object per candidate is pure overhead on a graph with hundreds of them.
         xform = LoopToMap()
+        # Kept across sweeps and patched after each lift, like the contexts: rebuilding either walks the
+        # whole SDFG, once per lift.
+        candidates = candidate_loops(sdfg)
+        keys: Dict[LoopRegion, Any] = {}
         while True:
             lifted_one = False
-            candidates = candidate_loops(sdfg)
-            for loop in (candidates if order is None else sorted(candidates, key=order)):
+            if order is not None:
+                for loop in candidates:
+                    if loop not in keys:
+                        keys[loop] = order(loop)
+            for loop in (candidates if order is None else sorted(candidates, key=keys.__getitem__)):
                 sd = loop.sdfg
                 graph = loop.parent_graph
                 inv = invariants.get(sd)
@@ -199,10 +324,14 @@ class ParallelizeLoops(ppl.Pass):
                 # Read before ``lift``, which applies: a lift that edits this mapping moves the parent's free symbols.
                 pnode = sd.parent_nsdfg_node
                 mapping_keys = None if pnode is None else tuple(pnode.symbol_mapping.keys())
-                if not self.lift(xform, loop, pipeline_results):
+                sites: List[LiftSite] = []
+                if not self.lift(
+                        xform, loop, pipeline_results, before_apply=lambda: sites.append(LiftSite.capture(loop))):
                     continue
                 applied += 1
                 lifted_one = True
+                site = sites[0]
+                added = lifted_blocks(site, loop, graph)
                 if ctx.post_lift_free_symbols is None:
                     fresh_free_symbols.pop(sd, None)
                 else:
@@ -211,17 +340,29 @@ class ParallelizeLoops(ppl.Pass):
                 # nested SDFG; the one thing it touches outside is the ``symbol_mapping`` of the node
                 # nesting ``sd`` (``remove_symbol`` and the newly-free entries), which only the parent's
                 # free symbols read. Every other SDFG keeps its states, access nodes, blocks and
-                # nested-node mappings, so its context stays exact -- except the cfg ids, which
-                # ``reset_cfg_list`` renumbers tree-wide. The invariants are never stale. The per-loop
+                # nested-node mappings, so its context stays exact. The invariants are never stale. The per-loop
                 # body facts sit in between -- only a loop whose body now contains this lift changes.
-                del contexts[sd]
+                # The lifted SDFG's context is patched in place when its region's block order allows it;
+                # every enclosing SDFG's context loses the iterator from the loops it counts.
+                if added is None or not patch_context(ctx, sd, loop, graph, site, added):
+                    del contexts[sd]
+                else:
+                    fresh_free_symbols.pop(sd, None)
                 if mapping_keys is not None and mapping_keys != tuple(pnode.symbol_mapping.keys()):
                     contexts.pop(sd.parent_sdfg, None)
                     fresh_free_symbols.pop(sd.parent_sdfg, None)
-                if contexts:
-                    cfg_ids = {cfg: i for i, cfg in enumerate(sdfg.cfg_list)}
-                    for kept in contexts.values():
-                        kept.cfg_ids = cfg_ids
+                owner = sd
+                while owner is not None:
+                    kept = contexts.get(owner)
+                    if kept is not None and kept.loop_variables is not None:
+                        kept.loop_variables = kept.loop_variables - Counter({loop.loop_variable: 1})
+                    owner = owner.parent_sdfg
+                if added is None:
+                    candidates = candidate_loops(sdfg)
+                else:
+                    candidates = patch_candidates(candidates, loop, graph, site, added)
+                for moved in site.inner_loops:
+                    keys.pop(moved, None)
                 loop_facts.pop(loop, None)
                 # An enclosing region's read/write sets are PATCHED, not dropped. A lift adds no
                 # access -- it re-homes the ones it finds behind a nested node that re-exposes them

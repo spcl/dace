@@ -46,7 +46,6 @@ from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge, memlets_in_ast
 from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState)
 from dace.sdfg import nodes, propagation
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.state_fusion import keep_start_block
 from dace.transformation.passes.analysis import loop_analysis
@@ -474,10 +473,6 @@ class MoveIfIntoLoop(ppl.Pass):
                 count += 1
                 continue
             break
-        if count:
-            # _move / _move_imperfect deepcopy + re-add blocks; any nested
-            # SDFG carried along keeps stale parent references until repaired.
-            set_nested_sdfg_parent_references(sdfg)
         return count or None
 
     @staticmethod

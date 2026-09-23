@@ -820,10 +820,20 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             start_block = None
         if isinstance(start_block, AbstractControlFlowRegion):
             update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
+        # ``new_symbols(sdfg, ...)`` rebuilds its type environment -- the symbols overridden by every
+        # array's dtype -- per edge. Keep that environment alongside ``defined_syms`` instead: once
+        # per SDFG rather than once per assigning edge (2.4 s per call on warpx_field_gather).
+        array_types = {k: v.dtype for k, v in sdfg.arrays.items()}
+        environment = {**defined_syms, **array_types}
         for edge in sdfg.all_interstate_edges():
-            update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
+            if edge.data.assignments:
+                defined = {k: v for k, v in edge.data.new_symbols(None, environment).items() if v is not None}
+                defined_syms.update(defined)
+                environment.update((k, array_types.get(k, v)) for k, v in defined.items())
             if isinstance(edge.dst, AbstractControlFlowRegion):
-                update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
+                defined = {k: v for k, v in edge.dst.new_symbols(defined_syms).items() if v is not None}
+                defined_syms.update(defined)
+                environment.update((k, array_types.get(k, v)) for k, v in defined.items())
         regions = []
         region = state.parent_graph
         while region is not None and region is not sdfg:
@@ -1447,7 +1457,8 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k in ('_parent_graph', '_sdfg', '_cfg_list', 'guid'):  # Skip derivative attributes and GUID
+            # Skip derivative attributes and GUID
+            if k in ('_parent_graph', '_sdfg', '_cfg_list', 'guid'):
                 continue
             setattr(result, k, copy_graph_field(self, k, v, memo))
 
@@ -1605,14 +1616,17 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             nested.parent_nsdfg_node = node
         self._clear_scopedict_cache()
         result = super(SDFGState, self).add_node(node)
-        # A deep copy arrives with an empty cfg list: register its subtree in tree order, as an added region is.
-        if nested is not None and self.sdfg is not None and nested not in self.sdfg.cfg_list:
-            self.sdfg.reset_cfg_list()
+        if nested is not None:
+            register_regions(self, node, subtree_regions(node))
         return result
 
     def remove_node(self, node):
         self._clear_scopedict_cache()
+        # A node already added to another state (and so re-parented) moved: nothing leaves the tree.
+        owned = isinstance(node, nd.NestedSDFG) and node.sdfg is not None and node.sdfg.parent is self
+        released = subtree_regions(node) if owned else []
         super(SDFGState, self).remove_node(node)
+        unregister_regions(self, node, released)
 
     def add_edge(self, u, u_connector, v, v_connector, memlet):
         if not isinstance(u, nd.Node):
@@ -1948,8 +1962,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if sdfg is not None:
             sdfg.parent = self
             sdfg.parent_sdfg = self.sdfg
-
-            sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
         if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
@@ -2852,6 +2864,176 @@ def rehome_claimed_block(block: ControlFlowBlock, sdfg: Optional['SDFG']) -> Non
                 node.sdfg.parent_nsdfg_node = node
 
 
+def owned_children(owner: Union['AbstractControlFlowRegion', 'SDFGState']) -> List[Union[ControlFlowBlock, nd.Node]]:
+    """The children the pre-order walk descends into below ``owner`` -- blocks of a region, nested-SDFG nodes
+    of a state -- that ``owner`` still owns. A child moved elsewhere before ``owner`` let go of it (inlining
+    adds the callee's blocks to the caller before dropping the callee) already hangs under its new owner."""
+    if isinstance(owner, SDFGState):
+        return [
+            node for node in owner.nodes()
+            if isinstance(node, nd.NestedSDFG) and node.sdfg is not None and node.sdfg.parent is owner
+        ]
+    return [child for child in owner.nodes() if child.parent_graph is owner]
+
+
+def subtree_regions(unit: Union[ControlFlowBlock, nd.Node]) -> List['AbstractControlFlowRegion']:
+    """The regions below ``unit`` (a block or a nested-SDFG node) in pre-order, through owned children only."""
+    result: List['AbstractControlFlowRegion'] = []
+    stack = [unit]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, nd.NestedSDFG):
+            stack.append(current.sdfg)
+            continue
+        if isinstance(current, AbstractControlFlowRegion):
+            result.append(current)
+        if isinstance(current, (AbstractControlFlowRegion, SDFGState)):
+            stack.extend(reversed(owned_children(current)))
+    return result
+
+
+def contributed_regions(block: ControlFlowBlock) -> List['AbstractControlFlowRegion']:
+    """The regions the pre-order walk reaches through ``block``: its own subtree if it is a region, the
+    subtrees of the nested SDFGs it holds if it is a state."""
+    return subtree_regions(block)
+
+
+def last_region(unit: Union[ControlFlowBlock, nd.Node]) -> Optional['AbstractControlFlowRegion']:
+    """The last region the pre-order walk reaches through ``unit`` (a block or a nested-SDFG node), if any."""
+    if isinstance(unit, nd.NestedSDFG):
+        return last_region(unit.sdfg) if unit.sdfg else None
+    if isinstance(unit, (AbstractControlFlowRegion, SDFGState)):
+        for child in reversed(owned_children(unit)):
+            found = last_region(child)
+            if found is not None:
+                return found
+        return unit if isinstance(unit, AbstractControlFlowRegion) else None
+    return None
+
+
+def cfg_tree_list(region: 'AbstractControlFlowRegion') -> Optional[List['AbstractControlFlowRegion']]:
+    """The CFG list of the tree ``region`` belongs to: its root's, found the way ``reset_cfg_list`` climbs.
+
+    A tree whose root never held a list of its own -- a deep copy, which carries none, or a nested copy,
+    which carries an empty one -- gets its first one built here, and then ``None`` is returned: that list
+    already holds every region of the tree, so there is nothing left to splice.
+    """
+    while True:
+        if isinstance(region, dace.SDFG) and region.parent_sdfg is not None:
+            region = region.parent_sdfg
+        elif region._parent_graph is not None:
+            region = region._parent_graph
+        else:
+            break
+    cfg_list = region.__dict__.get('_cfg_list')
+    if cfg_list and cfg_list[0] is region:
+        return cfg_list
+    cfg_list = list(region.all_control_flow_regions(recursive=True))
+    for listed in cfg_list:
+        listed._cfg_list = cfg_list
+    return None
+
+
+def owning_region(owner: Union['AbstractControlFlowRegion', 'SDFGState']) -> Optional['AbstractControlFlowRegion']:
+    """``owner`` if it is a region, else the region holding the state (``None`` for a detached state)."""
+    return owner if isinstance(owner, AbstractControlFlowRegion) else owner.parent_graph
+
+
+def preceding_region(owner: Union['AbstractControlFlowRegion', 'SDFGState'],
+                     unit: Union[ControlFlowBlock, nd.Node]) -> 'AbstractControlFlowRegion':
+    """The region the pre-order walk reaches right before the regions of ``unit``, a child of ``owner``."""
+    siblings = owned_children(owner)
+    position = next(i for i in range(len(siblings) - 1, -1, -1) if siblings[i] is unit)
+    for sibling in reversed(siblings[:position]):
+        found = last_region(sibling)
+        if found is not None:
+            return found
+    if isinstance(owner, AbstractControlFlowRegion):
+        return owner
+    return preceding_region(owner.parent_graph, owner)
+
+
+def register_regions(owner: Union['AbstractControlFlowRegion', 'SDFGState'], unit: Union[ControlFlowBlock, nd.Node],
+                     regions: List['AbstractControlFlowRegion']) -> None:
+    """Splice ``regions``, just claimed through ``unit`` under ``owner``, into the tree's CFG list in place.
+
+    ``cfg_id`` is a position in the list, so the regions go where a fresh ``reset_cfg_list`` would put them:
+    right after the region the pre-order walk reaches before ``unit``.
+    """
+    region = owning_region(owner)
+    if not regions or region is None:
+        return
+    cfg_list = cfg_tree_list(region)
+    if cfg_list is None:
+        return
+    previous = preceding_region(owner, unit)
+    # A block moved without leaving where it was first (inlining adds the callee's blocks to the caller
+    # before dropping the callee; a lift adds a loop's blocks to its new body) is still listed there, in
+    # this tree or another one: take it out there.
+    previous_list = regions[0].__dict__.get('_cfg_list')
+    if previous_list is not None:
+        drop_listed(previous_list, regions)
+    try:
+        position = cfg_list.index(previous) + 1
+    except ValueError:
+        # The tree was already out of order before this call; only a full walk can place the regions.
+        region.reset_cfg_list()
+        return
+    cfg_list[position:position] = regions
+    for claimed in regions:
+        claimed._cfg_list = cfg_list
+
+
+def drop_listed(cfg_list: List['AbstractControlFlowRegion'], regions: List['AbstractControlFlowRegion']) -> None:
+    """Delete ``regions`` from ``cfg_list`` where they are listed, as one slice when they are contiguous."""
+    try:
+        start = cfg_list.index(regions[0])
+    except ValueError:
+        return  # a subtree is listed as a whole or not at all: its root is not, so neither is the rest
+    if all(start + i < len(cfg_list) and cfg_list[start + i] is r for i, r in enumerate(regions)):
+        del cfg_list[start:start + len(regions)]
+        return
+    for dropped in regions:
+        for i, entry in enumerate(cfg_list):
+            if entry is dropped:
+                del cfg_list[i]
+                break
+
+
+def hangs_under(region: 'AbstractControlFlowRegion', unit: Union[ControlFlowBlock, nd.Node]) -> bool:
+    """Whether ``region`` still hangs below ``unit`` (a block, or a nested-SDFG node) in its tree."""
+    current = region
+    while current is not None:
+        if current is unit or (isinstance(unit, nd.NestedSDFG) and current is unit.sdfg):
+            return True
+        if isinstance(current, dace.SDFG):
+            if current.parent is unit:
+                return True
+            current = None if current.parent is None else current.parent.parent_graph
+        else:
+            current = current.parent_graph
+    return False
+
+
+def unregister_regions(owner: Union['AbstractControlFlowRegion', 'SDFGState'], unit: Union[ControlFlowBlock, nd.Node],
+                       regions: List['AbstractControlFlowRegion']) -> None:
+    """Drop ``regions``, just released with ``unit`` from ``owner``'s tree, from its CFG list in place.
+
+    A region that already moved elsewhere in the tree before ``unit`` left (an inlined callee's blocks) is
+    kept. Released regions keep pointing at the list, as after a fresh ``reset_cfg_list``, which never
+    reaches them.
+    """
+    region = owning_region(owner)
+    if not regions or region is None:
+        return
+    cfg_list = cfg_tree_list(region)
+    if cfg_list is None:
+        return
+    released = [r for r in regions if hangs_under(r, unit)]
+    if released:
+        drop_listed(cfg_list, released)
+
+
 @make_properties
 class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
                                 ControlFlowBlock, abc.ABC):
@@ -2956,8 +3138,12 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         """
         # TODO: Refactor
         sub_cfg_list = self._cfg_list
+        # By identity through a set: ``g not in sub_cfg_list`` scanned the whole list per CFG, quadratic
+        # when a nested SDFG joins a tree of thousands of regions (warpx_field_gather, once per lift).
+        present = {id(g) for g in sub_cfg_list}
         for g in cfg_list:
-            if g not in sub_cfg_list:
+            if id(g) not in present:
+                present.add(id(g))
                 sub_cfg_list.append(g)
         ptarget = None
         if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
@@ -3112,12 +3298,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         # Claims ``node`` itself as well as everything below it, so a bare ``SDFGState`` carrying a
         # nested SDFG -- a cloned body state, say -- is re-homed like a region is.
         rehome_claimed_block(node, sdfg)
-        if isinstance(node, AbstractControlFlowRegion):
-            # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
-            # reports 0 -- the same id as the root and as every other unregistered region.
-            # Appending instead would assign positions in insertion order while this assigns
-            # them in tree order, so the next reset would silently renumber.
-            self.reset_cfg_list()
+        # ``cfg_id`` is a position in ``cfg_list``: the block's regions go where a reset would put them.
+        register_regions(self, node, contributed_regions(node))
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
@@ -3135,7 +3317,10 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             start_block = self.node(self._start_block)
         else:
             start_block = None
+        # A block already added to another region (and so re-parented) moved: nothing leaves the tree.
+        released = contributed_regions(node) if node.parent_graph is self else []
         super().remove_node(node)
+        unregister_regions(self, node, released)
         self._cached_start_block = None
         if start_block is node:
             # The pin named the block just removed. Re-pin to the region's new unique entry:
@@ -3151,7 +3336,13 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         # `_start_block` is an index too, so a permutation moves the pinned block out from under
         # it. Re-resolve by identity, like `remove_node` does.
         start_block = self.node(self._start_block) if self._start_block is not None else None
+        before = contributed_regions(self)
         super().reorder_nodes(order)
+        # The subtree keeps its place in the CFG list; only the order of the children's regions changes.
+        cfg_list = cfg_tree_list(self) or []
+        start = next((i for i, entry in enumerate(cfg_list) if entry is self), None)
+        if start is not None and all(cfg_list[start + i] is r for i, r in enumerate(before)):
+            cfg_list[start:start + len(before)] = contributed_regions(self)
         self._cached_start_block = None
         if start_block is not None:
             self._start_block = self.node_id(start_block)
@@ -4179,10 +4370,12 @@ class ConditionalBlock(AbstractControlFlowRegion):
         # Propagating only ``sdfg`` left the branch's nested SDFGs pointing at whatever they were
         # copied from, which is how ``ConditionFusion`` produced an SDFG that failed validation.
         rehome_claimed_block(branch, self.sdfg)
-        self.reset_cfg_list()
+        register_regions(self, branch, subtree_regions(branch))
 
     def remove_branch(self, branch: ControlFlowRegion):
+        released = subtree_regions(branch) if any(b is branch for _, b in self._branches) else []
         self._branches = [(c, b) for c, b in self._branches if b is not branch]
+        unregister_regions(self, branch, released)
 
     def get_meta_codeblocks(self):
         codes = []

@@ -503,8 +503,10 @@ def nest_state_subgraph(sdfg: SDFG,
     scope = scope_tree[top_scopenode]
     ###
 
-    # Consolidate edges in top scope
-    utils.consolidate_edges(sdfg, scope)
+    # Consolidate edges in top scope. A subgraph at the top level of its state has none: the
+    #  consolidation then matches no state and returns 0 after scanning every state of the SDFG.
+    if scope.entry is not None:
+        utils.consolidate_edges(sdfg, scope)
     snodes = subgraph.nodes()
 
     # Collect inputs and outputs of the nested SDFG
@@ -545,7 +547,8 @@ def nest_state_subgraph(sdfg: SDFG,
     subgraph_edge_ids = {id(e) for e in subgraph.edges()}
     subgraph_node_set = dict.fromkeys(subgraph.nodes())  # hoisted: membership below else rebuilt per scanned node
     other_nodes = {}
-    for s in sdfg.states():
+    # Lazily: the scan mostly stops at the first state, and ``states()`` would list every state first.
+    for s in sdfg.all_states():
         if len(other_nodes) == len(wanted):
             break  # every name already has an occurrence outside; the rest of the scan cannot change an answer
         for n in s.nodes():
@@ -876,8 +879,6 @@ def nest_state_subgraph(sdfg: SDFG,
     for node in dict.fromkeys([*(edge.src for edge in inputs), *(edge.dst for edge in outputs)]):
         if node in present and state.degree(node) == 0:
             state.remove_node(node)
-
-    sdfg.reset_cfg_list()
 
     return nested_sdfg
 
