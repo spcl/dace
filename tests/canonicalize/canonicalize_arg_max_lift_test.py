@@ -4,6 +4,7 @@
 Covers TSVC s314 (max), s316 (min), and refusals on the v1 out-of-scope shapes
 (s3113 -- unary transform on the gather; s315 -- index-tracking variant).
 """
+import copy
 import numpy as np
 import pytest
 
@@ -13,6 +14,16 @@ from dace.libraries.standard.nodes import Reduce
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.libraries.standard.nodes.scan import Scan
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
 
 
 def _num_scan_nodes(sdfg) -> int:
@@ -53,6 +64,7 @@ def test_tsvc_s314_max_value_only():
     res = ArgMaxLift().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
+    assert_cfg_list_matches_reset(sdfg)
     assert _num_loops(sdfg) == 0
     assert _num_reduces(sdfg) == 1
 

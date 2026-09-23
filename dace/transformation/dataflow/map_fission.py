@@ -118,13 +118,10 @@ class MapFission(transformation.SingleStateTransformation):
         if expr_index == 0:  # Map with subgraph
             subgraphs = [graph.scope_subgraph(map_node, include_entry=False, include_exit=False)]
         else:  # Map with nested SDFG
-            nsdfg_node = dcpy(self.nested_sdfg)
+            nsdfg_node = self.nested_sdfg
             # Make sure there are no other internal nodes in the map
             if len(set(e.dst for e in graph.out_edges(map_node))) > 1:
                 return False
-
-            # Get NestedSDFG control flow components
-            nsdfg_node.sdfg.reset_cfg_list()
 
             # Fissioning a component across a conditional needs the branch
             # condition replicated into each fissioned map, currently not supported.
@@ -213,6 +210,8 @@ class MapFission(transformation.SingleStateTransformation):
                 if assign_free & tainted:
                     return False
 
+            # Every check above only reads; the nesting below rewrites, so it runs on a copy.
+            nsdfg_node = dcpy(nsdfg_node)
             helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
 
             subgraphs = list(nsdfg_node.sdfg.nodes())

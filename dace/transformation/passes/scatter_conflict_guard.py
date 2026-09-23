@@ -297,7 +297,6 @@ def insert_scatter_guard(sdfg: SDFG,
                                                                        index_slice=index_slice,
                                                                        region=region)
     _splice_guard_into_cfg(region, idx_name, check_state, trap_state, count_name, trap_sym, def_states, original_start)
-    sdfg.reset_cfg_list()
     return None if emit_trap else trap_sym
 
 

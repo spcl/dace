@@ -5,6 +5,7 @@ Covers TSVC ``s3111`` (the conditional ``+=`` accumulator) and the refusal
 contracts (non-accumulator conditional bodies, multi-write true-branches,
 unsupported ops, etc.).
 """
+import copy
 import numpy as np
 import pytest
 
@@ -13,6 +14,17 @@ from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.sdfg import nodes as nd
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 N = dace.symbol('N')
 
@@ -50,6 +62,7 @@ def test_tsvc_s3111_conditional_sum():
     res = LoopToConditionalReduce().apply_pass(sdfg, {})
     assert res == 1
     sdfg.validate()
+    assert_cfg_list_matches_reset(sdfg)
 
     # The guard is folded into the accumulated value: no ConditionalBlock left.
     assert not any(

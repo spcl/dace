@@ -1835,7 +1835,6 @@ def _rewrite_composite_body(parent: ControlFlowRegion, loop: LoopRegion, info: _
 
     _emit_scan_nested(s_scan, sdfg, synth, delta_buf, scan_buf, trip, inner_var, inner_start, inner_end)
     _emit_seed_add_nested(s_apply, sdfg, synth, scan_buf, trip, inner_var, inner_start, inner_end)
-    sdfg.reset_cfg_list()
     return True
 
 
@@ -3289,7 +3288,6 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
             parent.add_edge(s_apply, e.dst, e.data)
         _emit_scan(s_scan, sdfg, info, delta_buf, scan_buf, trip)
         _emit_seed_add(s_apply, sdfg, info, scan_buf, trip)
-    sdfg.reset_cfg_list()
 
 
 def _is_multi_slot(matched: List[_Scan]) -> bool:
@@ -3364,7 +3362,6 @@ def _rewrite_multi_slot(parent: ControlFlowRegion, loop: LoopRegion, matched: Li
     for e in out_edges:
         parent.remove_edge(e)
         parent.add_edge(prev, e.dst, e.data)
-    sdfg.reset_cfg_list()
 
 
 def _rewrite_nested(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDFG):
@@ -3420,7 +3417,6 @@ def _rewrite_nested(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sd
 
     _emit_scan_nested(s_scan, sdfg, info, delta_buf, scan_buf, trip, inner_var, inner_start, inner_end)
     _emit_seed_add_nested(s_apply, sdfg, info, scan_buf, trip, inner_var, inner_start, inner_end)
-    sdfg.reset_cfg_list()
 
 
 def _nested_axis_kinds(info: _Scan, inner_var: str):
@@ -4226,7 +4222,6 @@ def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _Sc
     parent.remove_node(loop)
     if is_start:
         parent.start_block = parent.node_id(head_state)
-    sdfg.reset_cfg_list()
 
 
 def _emit_scalar_carry_delta_build(state: SDFGState, sdfg: SDFG, info: _ScalarCarryScan, delta_buf: str):
@@ -4747,7 +4742,6 @@ def rewrite_affine_scan(parent: ControlFlowRegion, loop: LoopRegion, info: _Affi
         parent.remove_edge(e)
         parent.add_edge(s_scan, e.dst, e.data)
     emit_affine_scan(s_scan, sdfg, info, delta_buf, coef_buf, trip, direct_delta, direct_coef)
-    sdfg.reset_cfg_list()
 
 
 def emit_affine_build_tasklet(state: SDFGState, info: _AffineScan, label: str, code: str, buf: str, idx: Any) -> None:

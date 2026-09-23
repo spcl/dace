@@ -6,7 +6,7 @@ import sympy
 from dace import sdfg as sd, properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, ConditionalBlock
+from dace.sdfg.state import ControlFlowRegion, ConditionalBlock, rehome_claimed_block
 from dace.transformation import transformation as xf
 
 
@@ -241,15 +241,17 @@ class ConditionFusion(xf.MultiStateTransformation):
                 cfg2 = copy.deepcopy(cfg)
                 cblck1.add_branch(cnd2, cfg2)
 
-        # Add the conditons of cblck2 to cblck1 and copy the cfgs
+        # Add the conditons of cblck2 to cblck1 and copy the cfgs. ``cblck2`` is dropped below, so its
+        # blocks move into the last product branch they join instead of being copied once more.
         for i, (cnd, cfg) in enumerate(cblck2.branches):
             for j in range(orig_blck1_branches):
                 off = orig_blck1_branches * i + j
                 cblck1.branches[off][0].as_string = (f"({cblck1.branches[off][0].as_string}) and ({cnd.as_string})")
 
+                last_use = j == orig_blck1_branches - 1
                 old_new_mapping = {}
                 for node in cfg.nodes():
-                    new_node = copy.deepcopy(node)
+                    new_node = node if last_use else copy.deepcopy(node)
                     old_new_mapping[node] = new_node
                     cblck1.branches[off][1].add_node(new_node)
 
@@ -304,15 +306,9 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix the SDFG a block names. NestedSDFG nodes are excluded: their ``sdfg`` is the nested
-        # graph itself, not a back-reference -- ``add_branch`` and ``add_node`` re-home the three
-        # nested-SDFG back-references when they claim a block, so the blind
-        # ``set_nested_sdfg_parent_references`` sweep this used to run is no longer needed. Blocks
-        # moved by ``remove_branch`` and the relabelling above never pass through either, so they
-        # still do.
-        for node, parent in sdfg.all_nodes_recursive():
-            if isinstance(node, ControlFlowBlock):
-                node.sdfg = parent.sdfg
+        # ``add_branch`` and ``add_node`` re-home every block they claim; only the fused block's own
+        # subtree changed, so re-home that one instead of walking the whole SDFG.
+        rehome_claimed_block(cblck1, cblck1.parent_graph.sdfg)
 
     def merge_matching_guards(self, cblck1: ConditionalBlock, cblck2: ConditionalBlock) -> bool:
         """Merge two single-guard blocks whose guards are equal or opposite. ``False`` if they are not."""
@@ -327,7 +323,7 @@ class ConditionFusion(xf.MultiStateTransformation):
             outer_cfg = cblck1.parent_graph
             self.splice_after(body, other_body, outer_cfg.edges_between(cblck1, cblck2)[0].data)
         elif self.conditions_are_complementary(condition, other_condition):
-            cblck1.add_branch(None, copy.deepcopy(other_body))
+            cblck1.add_branch(None, other_body)  # ``cblck2`` is dropped below: move its body, do not copy it
         else:
             return False
 
@@ -339,17 +335,15 @@ class ConditionFusion(xf.MultiStateTransformation):
 
     @staticmethod
     def splice_after(target: ControlFlowRegion, source: ControlFlowRegion, link: sd.InterstateEdge) -> None:
-        """Append copies of ``source``'s blocks after ``target``'s sink, keeping ``source``'s edges."""
+        """Move ``source``'s blocks after ``target``'s sink, keeping ``source``'s edges; ``source`` is spent."""
         sink = target.sink_nodes()[0]
-        mapping = {}
+        start = source.start_block
         for node in source.nodes():
-            new_node = copy.deepcopy(node)
-            target.add_node(new_node, ensure_unique_name=True)
-            mapping[node] = new_node
-        target.add_edge(sink, mapping[source.start_block], copy.deepcopy(link))
+            target.add_node(node, ensure_unique_name=True)
+        target.add_edge(sink, start, copy.deepcopy(link))
         for node in source.nodes():
             for edge in source.in_edges(node):
-                target.add_edge(mapping[edge.src], mapping[node], copy.deepcopy(edge.data))
+                target.add_edge(edge.src, node, copy.deepcopy(edge.data))
 
     @staticmethod
     def conditions_are_equal(first: CodeBlock, second: CodeBlock) -> bool:
@@ -420,12 +414,12 @@ class ConditionFusion(xf.MultiStateTransformation):
                 break
         assert cond is not None
 
-        # For each branch of cblck1, add a branch to cblckp
-        for cnd1, cfg1 in cblck1.branches:
+        # For each branch of cblck1, add a branch to cblckp. ``cblck1`` leaves with ``nbranch`` below,
+        # so its branch bodies move rather than being copied.
+        for cnd1, cfg1 in list(cblck1.branches):
             cnd2 = copy.deepcopy(cnd1)
             cnd2.as_string = f"({cond.as_string}) and ({cnd2.as_string})"
-            cfg2 = copy.deepcopy(cfg1)
-            cblckp.add_branch(cnd2, cfg2)
+            cblckp.add_branch(cnd2, cfg1)
 
         # Remove original branch from cblckp
         cblckp.remove_branch(nbranch)
@@ -449,12 +443,5 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix the SDFG a block names. NestedSDFG nodes are excluded: their ``sdfg`` is the nested
-        # graph itself, not a back-reference -- ``add_branch`` and ``add_node`` re-home the three
-        # nested-SDFG back-references when they claim a block, so the blind
-        # ``set_nested_sdfg_parent_references`` sweep this used to run is no longer needed. Blocks
-        # moved by ``remove_branch`` and the relabelling above never pass through either, so they
-        # still do.
-        for node, parent in sdfg.all_nodes_recursive():
-            if isinstance(node, ControlFlowBlock):
-                node.sdfg = parent.sdfg
+        # As in ``fuse_consecutive_conditions``: only the parent block's subtree changed.
+        rehome_claimed_block(cblckp, cblckp.parent_graph.sdfg)

@@ -15,6 +15,7 @@ seen as the single 2-D space they are before a diagonal exists to find.
 The tests below pin both halves: what the planner accepts and refuses (structure), and that a
 committed fusion computes the same values (execution).
 """
+import copy
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -30,6 +31,17 @@ import dace
 from dace import symbolic
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import (commit_guarded_fusion, plan_guarded_fusion)
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 N = dace.symbol('N')
 
@@ -152,6 +164,7 @@ def test_commit_leaves_one_loop_over_the_union_with_a_total_partition():
     sdfg = lu_factorization.to_sdfg(simplify=True)
     outer = outer_loop(sdfg, 'i')
     merged = commit_guarded_fusion(plan_guarded_fusion(outer), outer)
+    assert_cfg_list_matches_reset(sdfg)
 
     assert [b for b in outer.nodes() if isinstance(b, LoopRegion)] == [merged]
     assert merged.loop_variable == 'j'

@@ -445,5 +445,4 @@ def commit_guarded_fusion(plan: GuardedFusionPlan, region: ControlFlowRegion) ->
         region.add_edge(merged, e.dst, e.data)
     for loop in plan.loops:
         region.remove_node(loop)
-    region.reset_cfg_list()
     return merged

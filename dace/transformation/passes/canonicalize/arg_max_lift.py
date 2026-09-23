@@ -1034,7 +1034,6 @@ class ArgMaxLift(ppl.Pass):
         argmax_state.add_edge(read, None, node, '_in', in_memlet)
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
-        sdfg.reset_cfg_list()
 
     def _branch_has_content(self, branch) -> bool:
         if not isinstance(branch, ControlFlowRegion):
@@ -1729,7 +1728,6 @@ class ArgMaxLift(ppl.Pass):
         reduce_state.add_edge(read, None, node, '_in', input_memlet)
         output_memlet = mm.Memlet(data=out_name, subset=output_subset)
         reduce_state.add_edge(node, '_out', write, None, output_memlet)
-        sdfg.reset_cfg_list()
 
     def _rewrite_with_index(self, m: _Match, sdfg: SDFG):
         """Replace an argmax/argmin-with-index loop (TSVC s315) with an
@@ -1833,7 +1831,6 @@ class ArgMaxLift(ppl.Pass):
         argmax_state.add_edge(read, None, node, '_in', in_memlet)
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
-        sdfg.reset_cfg_list()
 
     def _rewrite_with_transform(self, m: _Match, sdfg: SDFG):
         """Replace a transformed value-only reduction (TSVC s3113,
@@ -1904,7 +1901,6 @@ class ArgMaxLift(ppl.Pass):
         reduce_state.add_edge(read, None, node, '_in',
                               mm.Memlet(data=buf, subset=subsets.Range([(0, symbolic.simplify(n_elems - 1), 1)])))
         reduce_state.add_edge(node, '_out', write, None, mm.Memlet(data=out_name, subset=subsets.Range([(0, 0, 1)])))
-        sdfg.reset_cfg_list()
 
     def _rewrite_with_transform_and_index(self, m: _Match, sdfg: SDFG):
         """Replace a transformed argmax/argmin-WITH-INDEX over a (possibly
@@ -2026,7 +2022,6 @@ class ArgMaxLift(ppl.Pass):
         argmax_state.add_edge(read, None, node, '_in', in_memlet)
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
-        sdfg.reset_cfg_list()
 
     # predicate index (TSVC s331)
 
@@ -2226,7 +2221,6 @@ class ArgMaxLift(ppl.Pass):
             m.parent.add_edge(bind_state, oe.dst, oe.data)
             m.parent.remove_edge(oe)
         m.parent.remove_node(m.loop)
-        sdfg.reset_cfg_list()
 
 
 __all__ = ['ArgMaxLift']

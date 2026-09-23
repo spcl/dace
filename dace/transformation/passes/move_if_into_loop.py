@@ -486,9 +486,9 @@ class MoveIfIntoLoop(ppl.Pass):
         is_start = parent.start_block is cb
         sunk = sinkable_prep(cb, region, _linear_order(region)[-1])
 
-        # Work on a copy of the branch region; splice the loop's body in
-        # place of the loop so the region becomes  prep... -> body...
-        rc = copy.deepcopy(region)
+        # Splice the loop's body in place of the loop so the region becomes  prep... -> body...
+        # ``cb`` is dropped below, so its branch region is rewritten in place rather than copied.
+        rc = region
         order = _linear_order(rc)
         loop_c = order[-1]
         edge_into_loop = next((e for e in rc.edges() if e.dst is loop_c), None)
@@ -548,7 +548,8 @@ class MoveIfIntoLoop(ppl.Pass):
         out_edges = list(parent.out_edges(cb))
         is_start = parent.start_block is cb
 
-        order = _linear_order(copy.deepcopy(region))
+        # ``_guarded_loop`` / ``_trivial_guarded_loop`` copy each block, and ``cb`` is dropped below.
+        order = _linear_order(region)
         units = [(_guarded_loop(b, cond) if isinstance(b, LoopRegion) else _trivial_guarded_loop(b, cond))
                  for b in order]
 

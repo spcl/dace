@@ -351,7 +351,6 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                                                    for x in symbolic.pystr_to_symbolic(str(dim)).free_symbols}
                    for dim in desc.shape):
                 desc.lifetime = dtypes.AllocationLifetime.State
-    sdfg.reset_cfg_list()
 
 
 def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
@@ -375,7 +374,8 @@ def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
     :param sdfg: The SDFG to fuse in place.
     :returns: The number of ``OTFMapFusion`` applications.
     """
-    return sdfg.apply_transformations_repeated(OTFMapFusion, validate_all=False)
+    # Not validated here: the offload validates once at its end (see :func:`offload_to_gpu`).
+    return sdfg.apply_transformations_repeated(OTFMapFusion, validate=False, validate_all=False)
 
 
 def offload_to_gpu(sdfg: SDFG) -> None:
@@ -426,7 +426,8 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     run_structural_cleanup(sdfg)
     recompute_fuse_for_gpu(sdfg)
     apply_gpu_storage(sdfg)
-    sdfg.apply_gpu_transformations()
+    # One validation for the whole offload, after the last step, instead of one per step.
+    sdfg.apply_gpu_transformations(validate=False)
     # Between the offload and the block-size choice, and it has to be exactly here. The offload
     # assigns every nested scope ``Sequential``, so a map tagged ``is_warp_tile`` cannot become a
     # thread block before this point; and ``select_gpu_device_block_size`` skips a kernel that
@@ -434,6 +435,7 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     # BOTH a declared block size and a thread-block map -- which is the conflict codegen refuses.
     PromoteWarpTiles().apply_pass(sdfg, {})
     select_gpu_device_block_size(sdfg)
+    sdfg.validate()
 
 
 def assert_offloaded(sdfg: SDFG) -> None:

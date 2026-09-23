@@ -8,6 +8,7 @@ negative. The guard must be the first state, be marked side-effecting so simplif
 keeps it, be a no-op when there is nothing signed to guard, and survive the full
 canonicalize pipeline.
 """
+import copy
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -31,6 +32,17 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     AssumeSymbolConstraints, AssumeSymbolsNonnegative, insert_assumption_guards, insert_symbol_nonnegative_guard,
     set_symbol_nonnegative_assumptions, GUARD_STATE_LABEL)
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption, tracked_assumptions
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 N = dace.symbol('N', dtype=dace.int64)
 K = dace.symbol('K', dtype=dace.int64)
@@ -213,6 +225,7 @@ def test_repositioning_alone_is_reported_as_a_change():
     assert sdfg.nodes()[0] is not guard
     assert insert_assumption_guards(sdfg) == 1
     assert sdfg.nodes()[0] is guard
+    assert_cfg_list_matches_reset(sdfg)
     assert insert_assumption_guards(sdfg) is None
 
 

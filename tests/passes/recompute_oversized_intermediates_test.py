@@ -7,6 +7,7 @@ that recomputing never pays. Every "declines" case below asserts that the UNGATE
 would have applied, so a shape change that makes the pattern disappear fails the test instead of
 passing it vacuously.
 """
+import copy
 import numpy as np
 
 import dace
@@ -17,6 +18,17 @@ from dace.transformation.passes.cpu_specialization import RecomputeOversizedInte
 from dace.transformation.passes.cpu_specialization.machine import topology
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (intermediate_outgrows_cache
                                                                                              )
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 N = dace.symbol('N')
 
@@ -87,6 +99,7 @@ def test_oversized_intermediate_is_recomputed():
 
     assert RecomputeOversizedIntermediates().apply_pass(sdfg, {}) == 1
     sdfg.validate()
+    assert_cfg_list_matches_reset(sdfg)
     assert before[0] not in sdfg.arrays
     assert len(top_level_maps(sdfg)) == 1
 

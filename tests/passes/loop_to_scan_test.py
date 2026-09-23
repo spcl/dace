@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`~dace.transformation.passes.loop_to_scan.LoopToScan`."""
+import copy
 import re
 
 import numpy as np
@@ -11,6 +12,17 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 N = dace.symbol('N')
 
@@ -45,6 +57,7 @@ def test_inclusive_sum_1d():
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
+    assert_cfg_list_matches_reset(sdfg)
     # Original loop stays (writes per-iter to ``_scan_in``); post-loop chain adds a Scan
     # libnode + seed-add map. LoopToMap can later lift the remaining loop (not our job).
     assert _num_scan_nodes(sdfg) == 1

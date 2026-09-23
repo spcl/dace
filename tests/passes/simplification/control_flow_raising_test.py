@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
 import pytest
 import dace
 import numpy as np
@@ -7,6 +8,16 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion, UnstructuredControlFlo
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising, region_has_cycle
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
 
 
 def test_a_chain_with_a_diamond_is_acyclic():
@@ -59,6 +70,7 @@ def test_raising_lifts_a_back_edge_loop_into_a_loop_region():
     body.add_edge(writer, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+    assert_cfg_list_matches_reset(sdfg)
 
     loops = [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
     assert len(loops) == 1

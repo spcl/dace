@@ -6,6 +6,7 @@ abort-detection test that runs the SDFG with a duplicate index and verifies the
 program traps. Permutation-index runs are expected to terminate cleanly with the
 correct numerical result (the scatter Map executes after the guard).
 """
+import copy
 import os
 import pathlib
 import subprocess
@@ -23,6 +24,17 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.scatter_conflict_guard import (GuardScatterConflicts, insert_scatter_guard,
                                                                names_are_free_symbols, scatter_index_domain,
                                                                scatter_index_is_provably_injective)
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 N = dace.symbol('N')
 
@@ -96,6 +108,7 @@ def test_s4113_permutation_runs_cleanly():
     insert_scatter_guard(sdfg, 'ip')
     sdfg.validate()
     assert _has_conflict_check(sdfg)
+    assert_cfg_list_matches_reset(sdfg)
 
     n = 64
     ip = _make_permutation(n, seed=0)
