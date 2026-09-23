@@ -2037,6 +2037,45 @@ def test_wcr_write_beside_a_plain_chain_on_the_same_slot_is_not_retargeted():
     assert np.allclose(acc[0], 0.5 + src.sum()), 'the two accumulations into acc[0] diverged from the oracle'
 
 
+def wcr_write_beside_a_read_of_other_elements_loop() -> dace.SDFG:
+    """``for j in range(i): a[i] += bb[j] * a[i - j - 1]`` (WCR): TSVC s118's inner loop.
+
+    The loop reads ``a`` too, but ``a[i - j - 1]`` for ``j`` in ``0..i-1`` is ``a[0:i]``, never the
+    ``a[i]`` slot it accumulates into.
+    """
+    sdfg = dace.SDFG('wcr_write_beside_other_elements')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('bb', [N], dace.float64)
+    sdfg.add_symbol('i', dace.int64)
+    loop = LoopRegion('j_loop', condition_expr='j < i', loop_var='j', initialize_expr='j = 0', update_expr='j = j + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('accumulate', is_start_block=True)
+    task = body.add_tasklet('term', {'x': None, 'y': None}, {'__out': None}, '__out = x * y')
+    body.add_edge(body.add_read('bb'), None, task, 'x', mm.Memlet('bb[j]'))
+    body.add_edge(body.add_read('a'), None, task, 'y', mm.Memlet('a[i - j - 1]'))
+    body.add_edge(task, '__out', body.add_write('a'), None, mm.Memlet('a[i]', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_wcr_write_beside_a_read_of_other_elements_is_retargeted():
+    """The refusal compared each access with the slot one iteration at a time: ``a[i - j - 1]`` against
+    ``a[i]`` is undecidable with ``j`` free, so s118's accumulation stopped being lifted to a reduction.
+    Over the loop's range the read is ``a[0:i]``, disjoint from the slot."""
+    sdfg = wcr_write_beside_a_read_of_other_elements_loop()
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is not None, 'a slot no other access touches was refused'
+    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 1
+    sdfg.validate()
+
+    n, i = 16, 11
+    rng = np.random.default_rng(118)
+    a, bb = rng.standard_normal(n), rng.standard_normal(n)
+    expected = a.copy()
+    expected[i] += sum(bb[j] * a[i - j - 1] for j in range(i))
+    sdfg(a=a, bb=bb, N=n, i=i)
+    assert np.allclose(a, expected)
+
+
 def test_loop_to_reduce_doesnt_lift_break_loop():
     """LoopToReduce must not pick up a break-loop -- in either emit mode, and without mutating.
 

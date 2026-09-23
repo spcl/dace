@@ -22,6 +22,7 @@ import sympy
 from dace import SDFG, SDFGState, data, dtypes, memlet as mm, nodes, properties, subsets, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import graph as gr
+from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic import AND, OR, bitwise_and, bitwise_or, Subscript
 from dace.transformation import pass_pipeline as ppl
@@ -1465,12 +1466,13 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
     if len(candidates) != 1:
         return None
     _state, wcr_edge, accum_name, accum_subset = candidates[0]
-    if slot_accessed_besides(loop, wcr_edge, accum_name, accum_subset):
+    if slot_accessed_besides(loop, wcr_edge, accum_name, accum_subset, sdfg.arrays[accum_name]):
         return None
     return candidates[0]
 
 
-def slot_accessed_besides(loop: LoopRegion, wcr_edge, accum_name: str, accum_subset: subsets.Subset) -> bool:
+def slot_accessed_besides(loop: LoopRegion, wcr_edge, accum_name: str, accum_subset: subsets.Subset,
+                          accum_desc: data.Data) -> bool:
     """True iff the loop reads or writes ``accum_name[accum_subset]`` through any edge but ``wcr_edge``.
 
     The retarget redirects ``wcr_edge`` alone to the private scalar and writes that scalar back over
@@ -1484,7 +1486,14 @@ def slot_accessed_besides(loop: LoopRegion, wcr_edge, accum_name: str, accum_sub
     :param wcr_edge: the WCR write the retarget would redirect.
     :param accum_name: the accumulator's data name.
     :param accum_subset: the slot ``wcr_edge`` writes.
+    :param accum_desc: the accumulator's descriptor.
     """
+    # An access is compared over every iteration of the loop: s118's ``a[i - j - 1]`` read names a
+    # different element than the ``a[i]`` slot for each ``j`` in ``0..i-1``, which the per-iteration
+    # subset alone cannot show.
+    start, end, stride = (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
+                          loop_analysis.get_loop_stride(loop))
+    iterations = None if None in (start, end, stride) else subsets.Range([(start, end, stride)])
     for state in loop.all_states():
         for node in state.data_nodes():
             if node.data != accum_name:
@@ -1496,7 +1505,12 @@ def slot_accessed_besides(loop: LoopRegion, wcr_edge, accum_name: str, accum_sub
                     continue
                 # ``intersects`` answers False for a missing subset and None when it cannot decide;
                 # both count as an access here, since a wrong retarget drops terms silently.
-                if subset is None or subsets.intersects(subset, accum_subset) is not False:
+                if subset is None:
+                    return True
+                if iterations is not None:
+                    subset = propagate_subset([mm.Memlet(data=accum_name, subset=subset)], accum_desc,
+                                              [loop.loop_variable], iterations).subset
+                if subsets.intersects(subset, accum_subset) is not False:
                     return True
     return False
 
