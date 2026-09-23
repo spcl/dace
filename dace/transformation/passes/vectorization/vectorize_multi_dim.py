@@ -1422,6 +1422,16 @@ class VectorizeMultiDim(ppl.Pipeline):
         ``ScheduleType.Default``. Idempotent -- already-set maps are untouched -- so it is safe to
         re-run after a pass mints new maps (LoopToMap) or library nodes."""
         from dace.sdfg import infer_types
+        from dace.sdfg.scope import is_devicelevel_gpu
+
+        # A map minted inside a kernel (ParallelizeLoops over a loop in a GPU_Device body) is a loop of
+        # one thread: inferred, its Default would become GPU_ThreadBlock, and the kernel would carry
+        # thread-block maps beside the gpu_block_size the offload chose, which the GPU code generator
+        # refuses (CloudSC fp64 x 2, kernel ``for_1327_fis0_lanes``).
+        for node, state in sdfg.all_nodes_recursive():
+            if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.Default
+                    and is_devicelevel_gpu(state.sdfg, state, node)):
+                node.map.schedule = dace.ScheduleType.Sequential
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     def _finalize_lifted_library_nodes(self, sdfg: dace.SDFG) -> None:
@@ -1493,10 +1503,19 @@ class VectorizeMultiDim(ppl.Pipeline):
 
         :param sdfg: SDFG whose tile lib nodes are resolved in place.
         """
+        from dace.libraries.tileops._dispatch import CPU_SIMD_ISAS
+        from dace.sdfg.scope import is_devicelevel_gpu
+
+        host_isa = self._target_isa in CPU_SIMD_ISAS | {'SCALAR'}
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, _TILE_NODE_TYPES):
                 node.target_isa = self._target_isa
-                node.implementation = select_tile_implementation(node, parent)
+                # A host ISA's header backend is host functions, which device code cannot call; the
+                # pure expansion is the loop the kernel runs per thread (CloudSC fp64 x 2 on the GPU).
+                if host_isa and is_devicelevel_gpu(parent.sdfg, parent, node):
+                    node.implementation = 'pure'
+                else:
+                    node.implementation = select_tile_implementation(node, parent)
 
     def _align_tile_arrays(self, sdfg: dace.SDFG) -> None:
         """Declare the natural vector alignment on every register tile a tile op touches.
