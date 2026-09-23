@@ -4,6 +4,7 @@ import pytest
 import dace
 import sys
 import os
+import types
 import numpy as np
 import copy
 from dace import SDFGState, SDFG, library
@@ -224,6 +225,18 @@ def test_expansion_with_keyword_arguments():
     assert found_tiled_map2, "Could not find the tiled_map in the second expanded SDFG"
 
 
+def test_change_default_restores_after_exception():
+    """change_default must restore the library's prior default even when the `with` body raises --
+    a plain `yield` with no try/finally leaks the changed default into whatever runs next on the
+    same worker (e.g. a later test picking up 'MKL' left behind by a failed one)."""
+    lib = types.SimpleNamespace(default_implementation='original')
+    with pytest.raises(RuntimeError, match='boom'):
+        with library.change_default(lib, 'temporary'):
+            assert lib.default_implementation == 'temporary'
+            raise RuntimeError('boom')
+    assert lib.default_implementation == 'original'
+
+
 if __name__ == '__main__':
     test_new_library_node_expand_interface()
     test_old_library_node_expand_interface()
@@ -234,3 +247,4 @@ if __name__ == '__main__':
     test_functional_correctness()
     test_implementation_override()
     test_expansion_with_keyword_arguments()
+    test_change_default_restores_after_exception()

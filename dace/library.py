@@ -238,5 +238,7 @@ _DACE_REGISTERED_ENVIRONMENTS = {}
 def change_default(library, implementation):
     old_default = library.default_implementation
     library.default_implementation = implementation
-    yield
-    library.default_implementation = old_default
+    try:
+        yield
+    finally:
+        library.default_implementation = old_default
