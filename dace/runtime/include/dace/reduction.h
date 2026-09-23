@@ -54,6 +54,36 @@ struct _wcr_fixed {
   DACE_HDFI T operator()(const T& a, const T& b) const;
 };
 
+#ifdef __HIP_DEVICE_COMPILE__
+// HIP's atomicCAS takes 32- and 64-bit operands only, and HIP has no atomic at all on the 16-bit
+// floats: CUDA's ``atomicAdd(__half*)`` and 16-bit ``atomicCAS`` have no HIP counterpart. A narrower
+// T is therefore updated by a CAS on the aligned 32-bit word that holds it, splicing the new bits in
+// and writing the neighbouring bytes back as read; a concurrent update to a neighbour changes the
+// word, fails the compare, and retries. Each update is ``wcr(old, value)`` rounded to T, exactly as
+// a native atomic on T would compute it. Returns the old value.
+template <typename T, typename WCR>
+static __device__ __forceinline__ T subword_atomic_update(WCR wcr, T* ptr, const T& value) {
+  static_assert(sizeof(T) < sizeof(unsigned int), "only for operands narrower than an atomic word");
+  const uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+  unsigned int* word = reinterpret_cast<unsigned int*>(addr & ~uintptr_t(sizeof(unsigned int) - 1));
+  const unsigned int shift = 8 * (addr & (sizeof(unsigned int) - 1));
+  const unsigned int mask = ((1u << (8 * sizeof(T))) - 1u) << shift;
+  unsigned int old = *word, assumed;
+  T old_value;
+  do {
+    assumed = old;
+    // AMDGPU is little-endian: T is the low sizeof(T) bytes of the shifted word.
+    const unsigned int old_bits = assumed >> shift;
+    __builtin_memcpy(&old_value, &old_bits, sizeof(T));
+    const T new_value = wcr(old_value, value);
+    unsigned int new_bits = 0;
+    __builtin_memcpy(&new_bits, &new_value, sizeof(T));
+    old = atomicCAS(word, assumed, (assumed & ~mask) | (new_bits << shift));
+  } while (assumed != old);
+  return old_value;
+}
+#endif
+
 // Custom reduction with a lambda function
 template <typename T>
 struct wcr_custom {
@@ -63,13 +93,20 @@ struct wcr_custom {
     // this should only happen in case of unrecognized lambdas
     T old;
 #ifdef DACE_USE_GPU_ATOMICS
-    // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
-    T assumed;
-    old = *ptr;
-    do {
-      assumed = old;
-      old = atomicCAS(ptr, assumed, wcr(assumed, value));
-    } while (assumed != old);
+#ifdef __HIP_DEVICE_COMPILE__
+    if constexpr (sizeof(T) < sizeof(unsigned int)) {
+      old = subword_atomic_update(wcr, ptr, value);
+    } else
+#endif
+    {
+      // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
+      T assumed;
+      old = *ptr;
+      do {
+        assumed = old;
+        old = atomicCAS(ptr, assumed, wcr(assumed, value));
+      } while (assumed != old);
+    }
 #else
 #pragma omp critical
     {
@@ -165,7 +202,14 @@ struct wcr_custom<double> {
 template <typename T>
 struct _wcr_fixed<ReductionType::Sum, T> {
   static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
-#ifdef DACE_USE_GPU_ATOMICS
+#ifdef __HIP_DEVICE_COMPILE__
+    // No HIP atomicAdd below 32 bits (__half, __hip_bfloat16, 8/16-bit integers): CAS fallback.
+    if constexpr (sizeof(T) < sizeof(unsigned int)) {
+      return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Sum, T>(), ptr, value);
+    } else {
+      return atomicAdd(ptr, value);
+    }
+#elif defined(DACE_USE_GPU_ATOMICS)
     return atomicAdd(ptr, value);
 #elif defined(_OPENMP) && _OPENMP >= 201107
     T old;
@@ -293,7 +337,14 @@ struct _wcr_fixed<ReductionType::Product, T> {
 template <typename T>
 struct _wcr_fixed<ReductionType::Min, T> {
   static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
-#ifdef DACE_USE_GPU_ATOMICS
+#ifdef __HIP_DEVICE_COMPILE__
+    // No HIP atomicMin below 32 bits: CAS fallback (see ``subword_atomic_update``).
+    if constexpr (sizeof(T) < sizeof(unsigned int)) {
+      return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Min, T>(), ptr, value);
+    } else {
+      return atomicMin(ptr, value);
+    }
+#elif defined(DACE_USE_GPU_ATOMICS)
     return atomicMin(ptr, value);
 #else
     return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Min, T>(), ptr, value);
@@ -306,7 +357,14 @@ struct _wcr_fixed<ReductionType::Min, T> {
 template <typename T>
 struct _wcr_fixed<ReductionType::Max, T> {
   static DACE_HDFI T reduce_atomic(T* ptr, const T& value) {
-#ifdef DACE_USE_GPU_ATOMICS
+#ifdef __HIP_DEVICE_COMPILE__
+    // No HIP atomicMax below 32 bits: CAS fallback (see ``subword_atomic_update``).
+    if constexpr (sizeof(T) < sizeof(unsigned int)) {
+      return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Max, T>(), ptr, value);
+    } else {
+      return atomicMax(ptr, value);
+    }
+#elif defined(DACE_USE_GPU_ATOMICS)
     return atomicMax(ptr, value);
 #else
     return wcr_custom<T>::reduce_atomic(_wcr_fixed<ReductionType::Max, T>(), ptr, value);
@@ -394,7 +452,8 @@ struct _wcr_fixed<ReductionType::Max, double> {
 };
 
 // half has no CUDA atomicMin/Max overload -> 16-bit CAS (smallest atomic word, sm_70+),
-// mirroring the float/double CAS specializations. Host + pre-sm_70: promote to float
+// mirroring the float/double CAS specializations. HIP has no 16-bit CAS -> 32-bit word CAS
+// (``subword_atomic_update``). Host + pre-sm_70: promote to float
 // (half min/max exact through float -> bit-identical either way).
 template <>
 struct _wcr_fixed<ReductionType::Min, half> {
@@ -407,6 +466,8 @@ struct _wcr_fixed<ReductionType::Min, half> {
       old = atomicCAS(iptr, assumed, __half_as_ushort(half(::min(float(__ushort_as_half(assumed)), float(value)))));
     } while (assumed != old);
     return __ushort_as_half(old);
+#elif defined(__HIP_DEVICE_COMPILE__)
+    return wcr_custom<half>::reduce_atomic(_wcr_fixed<ReductionType::Min, half>(), ptr, value);
 #else
     half old = *ptr;
     *ptr = half(::min(float(old), float(value)));
@@ -428,6 +489,8 @@ struct _wcr_fixed<ReductionType::Max, half> {
       old = atomicCAS(iptr, assumed, __half_as_ushort(half(::max(float(__ushort_as_half(assumed)), float(value)))));
     } while (assumed != old);
     return __ushort_as_half(old);
+#elif defined(__HIP_DEVICE_COMPILE__)
+    return wcr_custom<half>::reduce_atomic(_wcr_fixed<ReductionType::Max, half>(), ptr, value);
 #else
     half old = *ptr;
     *ptr = half(::max(float(old), float(value)));
