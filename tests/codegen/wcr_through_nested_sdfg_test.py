@@ -324,3 +324,93 @@ def test_nest_state_subgraph_wcr_placement():
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
+
+
+def _build_row_reduction_through_window(n: int, m: int, also_accumulate_row_zero: bool) -> dace.SDFG:
+    """``out[i] = sum_j src[i, j]`` for each ``i`` of a parallel map, the body a NestedSDFG.
+
+    The body receives the whole ``out`` through its connector, so the edge leaving it carries the
+    WINDOW ``out[0:n]`` while the body writes only ``out[i]``: it seeds the row and accumulates into
+    it through a WCR out of a sequential map -- the per-row reduction lavamd's canonical form
+    outlines. ``also_accumulate_row_zero`` adds a second WCR into ``out[0]``, which every iteration
+    then shares.
+    """
+    sdfg = dace.SDFG(f'row_reduction_window_{int(also_accumulate_row_zero)}')
+    sdfg.add_array('src', [n, m], dace.float64)
+    sdfg.add_array('out', [n], dace.float64)
+    state = sdfg.add_state('rows')
+
+    body = dace.SDFG('row_body')
+    body.add_symbol('i', dace.int64)
+    body.add_array('src', [n, m], dace.float64)
+    body.add_array('out', [n], dace.float64)
+    bstate = body.add_state('seed_and_reduce')
+    seed = bstate.add_tasklet('seed', {}, {'o'}, 'o = 0')
+    bstate.add_edge(seed, 'o', bstate.add_write('out'), None, dace.Memlet('out[i]'))
+    seeded = bstate.out_edges(seed)[0].dst
+    # The reduction reads the seeded row, so it follows the seed in the same state.
+    reduce_entry, reduce_exit = bstate.add_map('reduce_row', {'j': f'0:{m}'}, schedule=dace.ScheduleType.Sequential)
+    add = bstate.add_tasklet('add', {'v'}, {'o'}, 'o = v')
+    bstate.add_memlet_path(bstate.add_read('src'), reduce_entry, add, dst_conn='v', memlet=dace.Memlet('src[i, j]'))
+    reduced = bstate.add_write('out')
+    bstate.add_memlet_path(add,
+                           reduce_exit,
+                           reduced,
+                           src_conn='o',
+                           memlet=dace.Memlet('out[i]', wcr='lambda a, b: a + b'))
+    bstate.add_nedge(seeded, reduce_entry, dace.Memlet())
+    if also_accumulate_row_zero:
+        shared = bstate.add_tasklet('shared', {'v'}, {'o'}, 'o = v')
+        bstate.add_edge(bstate.add_read('src'), None, shared, 'v', dace.Memlet('src[i, 0]'))
+        bstate.add_edge(shared, 'o', reduced, None, dace.Memlet('out[0]', wcr='lambda a, b: a + b'))
+
+    rows_entry, rows_exit = state.add_map('rows', {'i': f'0:{n}'}, schedule=dace.ScheduleType.CPU_Multicore)
+    node = state.add_nested_sdfg(body, {'src'}, {'out'}, symbol_mapping={'i': 'i'})
+    state.add_memlet_path(state.add_read('src'),
+                          rows_entry,
+                          node,
+                          dst_conn='src',
+                          memlet=dace.Memlet(f'src[0:{n}, 0:{m}]'))
+    state.add_memlet_path(node, rows_exit, state.add_write('out'), src_conn='out', memlet=dace.Memlet(f'out[0:{n}]'))
+    sdfg.validate()
+    return sdfg
+
+
+def _row_reduction_wcr_edge(sdfg: dace.SDFG):
+    """The WCR edge the per-row tasklet writes into ``out[i]`` inside the body, with its state: the
+    edge whose write the code generator resolves."""
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.all_states():
+            for edge in state.edges():
+                if (isinstance(edge.dst, dace.nodes.MapExit) and edge.dst.map.label == 'reduce_row'
+                        and edge.data.wcr is not None):
+                    return state, edge
+    raise AssertionError('the per-row WCR edge is missing')
+
+
+def test_nested_row_reduction_through_a_window_needs_no_atomic():
+    """Each iteration of the parallel map owns ``out[i]``; the window on the body's edge does not
+    make that element shared, so the accumulation needs neither an atomic nor a CAS loop."""
+    from dace.codegen.targets import cpp
+
+    n, m = 37, 23
+    sdfg = _build_row_reduction_through_window(n, m, also_accumulate_row_zero=False)
+    state, edge = _row_reduction_wcr_edge(sdfg)
+    assert not cpp.is_write_conflicted(state, edge)
+    code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
+    assert 'reduce_atomic' not in code
+
+    src = np.random.default_rng(4).uniform(-1.0, 1.0, size=(n, m))
+    out = np.full(n, 7.0)
+    sdfg(src=src, out=out)
+    assert np.allclose(out, src.sum(axis=1))
+
+
+def test_nested_row_reduction_that_also_shares_an_element_stays_atomic():
+    """A second body write into ``out[0]`` meets every other iteration's ``out[i]`` at ``i == 0``,
+    so the per-row accumulation is conflicted again."""
+    from dace.codegen.targets import cpp
+
+    sdfg = _build_row_reduction_through_window(37, 23, also_accumulate_row_zero=True)
+    state, edge = _row_reduction_wcr_edge(sdfg)
+    assert cpp.is_write_conflicted(state, edge)

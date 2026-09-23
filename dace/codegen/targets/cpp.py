@@ -29,7 +29,7 @@ from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, propagation, utils as sdutil
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
-from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, StateSubgraphView
 
 if TYPE_CHECKING:
     from dace.codegen.dispatcher import TargetDispatcher
@@ -701,8 +701,8 @@ def _check_range_conflicts(subset, a, itersym, b, step):
     return found
 
 
-def _check_map_conflicts(map, edge):
-    return not write_conflicted_map_params(map, edge)
+def _check_map_conflicts(map, edge, subset: Optional[subsets.Subset] = None):
+    return not write_conflicted_map_params(map, edge, subset)
 
 
 def _check_neighbor_conflicts(dfg, edge):
@@ -730,18 +730,94 @@ def _check_neighbor_conflicts(dfg, edge):
     return True
 
 
-def write_conflicted_map_params(map, edge):
+def write_conflicted_map_params(map, edge, subset: Optional[subsets.Subset] = None):
+    """The parameters of ``map`` whose iterations may write the same element through ``edge``.
+
+    :param map: the map whose iterations are checked against each other.
+    :param edge: the write edge entering the map's exit.
+    :param subset: what the edge writes per iteration, when that is tighter than its own subset (see
+                   :func:`nested_write_target`); ``None`` reads the edge's subset.
+    """
     result = []
+    written = edge.data.subset if subset is None else subset
     # Symbol identity includes the dtype, so the iterator must be the instance the subset carries.
-    itersyms = symbolic.symbols_in([edge.data.subset])
+    itersyms = symbolic.symbols_in([written])
     for itervar, (_, _, mapskip) in zip(map.params, map.range):
         itersym = symbolic.resolve_symbol(itervar, itersyms)
         a = sp.Wild('a', exclude=[itersym])
         b = sp.Wild('b', exclude=[itersym])
-        if not _check_range_conflicts(edge.data.subset, a, itersym, b, mapskip):
+        if not _check_range_conflicts(written, a, itersym, b, mapskip):
             result.append(itervar)
 
     return result
+
+
+def nested_write_target(inner_sdfg: SDFG, nsdfg: nodes.NestedSDFG, name: str, inner_subset: subsets.Subset,
+                        outer_edge: gr.MultiConnectorEdge) -> Optional[subsets.Range]:
+    """What a nested SDFG writes through its connector ``name``, in the index space of the outer array.
+
+    The memlet on the connector's outer edge is the WINDOW the body may touch, and propagation only
+    ever keeps its minima (``unsqueeze_memlet(..., preserve_minima=True)``): the window is where the
+    body's index 0 sits, so it cannot move without re-offsetting every access inside. A body that
+    writes one element per iteration of the map around it therefore still shows a prefix window --
+    lavamd's per-row reduction writes ``__rdo0[_loop_it_1]`` and its edge reads
+    ``__rdo0[0:_loop_it_1 + 1]`` -- and checked against the map, that window overlaps between
+    iterations, so every accumulation became a compare-and-swap loop. Translating the body's own
+    write to outer indices asks the question about the element the body actually writes.
+
+    Only when the translation is exact:
+
+    * every write to ``name`` anywhere in the body (a nested SDFG's write included) targets the
+      same ``inner_subset``, so no other write in the body can meet another iteration's;
+    * the inner array steps through memory like the outer one (same rank, same strides after the
+      symbol mapping) and the window has unit steps, so inner index ``i`` is outer ``min + i``;
+    * every symbol in ``inner_subset`` is handed in through the symbol mapping and is not
+      reassigned inside the body, so it holds the value the outer map sees.
+
+    :param inner_sdfg: the nested SDFG's graph.
+    :param nsdfg: the nested SDFG node.
+    :param name: the connector (the inner array) the write goes through.
+    :param inner_subset: the subset the write reaches inside the body.
+    :param outer_edge: the connector's edge in the parent state.
+    :returns: the written subset in outer indices, or ``None`` when it cannot be shown exact.
+    """
+    window = outer_edge.data.subset
+    if not isinstance(inner_subset, subsets.Range) or not isinstance(window, subsets.Range):
+        return None
+    if len(inner_subset) != len(window) or any(step != 1 for _, _, step in window):
+        return None
+    parent_sdfg = nsdfg.sdfg.parent_sdfg if nsdfg.sdfg is not None else None
+    if parent_sdfg is None or outer_edge.data.data not in parent_sdfg.arrays:
+        return None
+    inner_strides = inner_sdfg.arrays[name].strides
+    outer_strides = parent_sdfg.arrays[outer_edge.data.data].strides
+    if len(inner_strides) != len(outer_strides):
+        return None
+    mapping = {symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg.symbol_mapping.items()}
+    for inner_stride, outer_stride in zip(inner_strides, outer_strides):
+        renamed = sp.sympify(symbolic.pystr_to_symbolic(inner_stride)).subs(mapping, simultaneous=True)
+        if renamed != outer_stride and symbolic.equal(renamed, outer_stride) is not True:
+            return None
+    free = {str(s) for s in inner_subset.free_symbols}
+    if not free <= set(nsdfg.symbol_mapping.keys()):
+        return None
+    if any(free & set(ie.data.assignments.keys()) for ie in inner_sdfg.all_interstate_edges()):
+        return None
+    for region in inner_sdfg.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable in free:
+            return None
+    for state in inner_sdfg.all_states():
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            for wedge in state.in_edges(node):
+                if wedge.data.is_empty():
+                    continue
+                if wedge.data.get_dst_subset(wedge, state) != inner_subset:
+                    return None
+    translated = mmlt.Memlet(data=outer_edge.data.data, subset=inner_subset.offset_new(window, False))
+    translated.replace(nsdfg.symbol_mapping)
+    return translated.subset
 
 
 def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
@@ -784,6 +860,9 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     # If no conflicts will occur, write without atomics
     # (e.g., if the array has been defined in a non-parallel schedule context)
     followed_view_edges = OrderedSet()
+    # What the body of the nested SDFG just left writes, in this graph's indices; the edge leaving
+    # that nested SDFG only carries the connector's window (see ``nested_write_target``).
+    nested_target = None
     while edge is not None:
         path = dfg.memlet_path(edge)
         for e in path:
@@ -791,7 +870,8 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
                                                        and e.dst.map.schedule != dtypes.ScheduleType.Snitch)):
                 if not _check_neighbor_conflicts(dfg, e):
                     return e.dst
-                if _check_map_conflicts(e.dst.map, e):
+                written = nested_target if isinstance(e.src, nodes.NestedSDFG) else None
+                if _check_map_conflicts(e.dst.map, e, written):
                     # This map is parallel w.r.t. WCR
                     # print('PAR: Continuing from map')
                     continue
@@ -831,9 +911,16 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
         # If this is a nested SDFG and the access leads outside
         if not sdfg.arrays[dst.data].transient:
             if sdfg.parent_nsdfg_node is not None:
+                inner_state = dfg
+                last = path[-1]
                 dfg = sdfg.parent
                 nsdfg = sdfg.parent_nsdfg_node
                 edge = next(iter(dfg.out_edges_by_connector(nsdfg, dst.data)))
+                # Through a view the last edge indexes the view, not the connector.
+                nested_target = None
+                if last.dst is dst:
+                    nested_target = nested_write_target(sdfg, nsdfg, dst.data,
+                                                        last.data.get_dst_subset(last, inner_state), edge)
             else:
                 break
         else:
