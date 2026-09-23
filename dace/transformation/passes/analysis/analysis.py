@@ -124,12 +124,14 @@ class ControlFlowBlockReachability(ppl.Pass):
         """
         top_sdfg.reset_cfg_list()
         blocks = reachability.BlockReachability(top_sdfg)
+        # ``cfg_id`` is a scan of the list just rebuilt; index it once instead of once per block.
+        cfg_ids = {id(cfg): cfg_id for cfg_id, cfg in enumerate(top_sdfg.cfg_list)}
 
         single_level_reachable: Dict[int, Dict[ControlFlowBlock,
                                                OrderedSet[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
             for n, reach in blocks.single_level[cfg].items():
-                single_level_reachable[cfg.cfg_id][n] = reach
+                single_level_reachable[cfg_ids[id(cfg)]][n] = reach
 
         if self.contain_to_single_level:
             return single_level_reachable
@@ -139,10 +141,10 @@ class ControlFlowBlockReachability(ppl.Pass):
             for cfg in sdfg.all_control_flow_regions():
                 result: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = defaultdict(OrderedSet)
                 for block in cfg.nodes():
-                    single = single_level_reachable[block.parent_graph.cfg_id][block]
+                    single = single_level_reachable[cfg_ids[id(block.parent_graph)]][block]
                     if single or block.parent_graph is not sdfg:
                         result[block] = blocks.full_set(block, single, sdfg)
-                reachable[cfg.cfg_id] = result
+                reachable[cfg_ids[id(cfg)]] = result
         return reachable
 
 
