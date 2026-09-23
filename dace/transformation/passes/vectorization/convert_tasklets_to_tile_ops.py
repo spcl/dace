@@ -7,6 +7,7 @@ replace each with the matching tile lib node → post-expansion pure-loop body o
 tile-shape register transients (design 5.1 + 6.7). Handles binary / unary / ITE /
 masked-write / reduction shapes over Tile / Scalar / Symbol operands.
 """
+import copy
 import re
 from typing import Any, Dict, Optional, Tuple
 
@@ -1204,10 +1205,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_assign(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
         """Replace a trivial ``_o = _a`` tasklet with a direct AN→AN edge (DaCe copies
-        array-to-array natively; both edges already have matching tile-shape descriptors).
+        array-to-array natively).
 
         The new memlet references the SOURCE bridge (read side) — a memlet typed against
-        the destination confuses the validator's data-vs-endpoint consistency check.
+        the destination confuses the validator's data-vs-endpoint consistency check — and
+        carries the element the tasklet wrote as its ``other_subset``.
         """
         out_conn, a_conn = detected
         in_edges = data_in_edges(inner_state, tasklet)
@@ -1221,9 +1223,13 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # copy (user 2026-06-14).
         if self._maybe_emit_scalar_broadcast(inner_state, tasklet, a_edge, out_edge):
             return True
-        # Use the input-side memlet so the new edge's memlet.data matches its source.
-        inner_state.add_edge(a_edge.src, a_edge.src_conn, out_edge.dst, out_edge.dst_conn,
-                             dace.Memlet.from_memlet(a_edge.data))
+        # Use the input-side memlet so the new edge's memlet.data matches its source, and keep the
+        # element the tasklet wrote as the destination side: ``zvqx[1] = rvice`` must not land in
+        # ``zvqx[0]``.
+        copy_memlet = dace.Memlet.from_memlet(a_edge.data)
+        if isinstance(a_edge.src, dace.nodes.AccessNode) and isinstance(out_edge.dst, dace.nodes.AccessNode):
+            copy_memlet.other_subset = copy.deepcopy(out_edge.data.get_dst_subset(out_edge, inner_state))
+        inner_state.add_edge(a_edge.src, a_edge.src_conn, out_edge.dst, out_edge.dst_conn, copy_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
         reanchor_order_edges(inner_state, tasklet, out_edge.dst)
