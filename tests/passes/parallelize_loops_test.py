@@ -22,7 +22,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import (LiftContext, LoopToMap, block_free_symbols, build_lift_context,
-                                                        build_lift_invariants)
+                                                        control_flow_reads, build_lift_invariants)
 from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.parallelize_loops import ParallelizeLoops, candidate_loops, loop_order_key
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -633,3 +633,244 @@ def test_the_use_index_decides_as_the_walk_does(kill: bool) -> None:
         xform.setup_match(sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
         verdicts.append(xform.can_be_applied(sdfg, 0, sdfg))
     assert verdicts[0] == verdicts[1] == kill, verdicts
+
+
+@dace.program
+def carried_rows_beside_parallel_rows(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N],
+                                      d: dace.float64[N, N], e: dace.float64[N]):
+    for t in range(1, N):
+        e[t] = e[t - 1] + 1.0
+    for i in range(N):
+        for j in range(N):
+            b[i, j] = c[i, j] * 2.0
+    for i in range(N):
+        for j in range(N):
+            d[i, j] = c[j, i] + b[i, j]
+    for i in range(N):
+        for j in range(1, N):
+            a[i, j] = a[i, j - 1] + 1.0
+
+
+def stale_nested_references(root: dace.SDFG) -> List[str]:
+    stale = []
+    pending = [root]
+    while pending:
+        for state in pending.pop().all_states():
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    inner = node.sdfg
+                    if inner.parent is not state or inner.parent_sdfg is not state.sdfg or inner.parent_nsdfg_node is not node:
+                        stale.append(inner.label)
+                    pending.append(inner)
+    return stale
+
+
+def test_every_lift_of_a_sweep_leaves_the_nested_references_exact() -> None:
+    """A sweep re-derives the nested SDFGs' parent references once per SDFG instead of after every lift; a
+    stale one sends the next lift in that body to the wrong parent mapping."""
+    sdfg = carried_rows_beside_parallel_rows.to_sdfg(simplify=True)
+    real_apply = LoopToMap.apply
+    stale: List[str] = []
+    lifts = 0
+
+    def checking_apply(self: LoopToMap, graph: ControlFlowRegion, inner_sdfg: dace.SDFG) -> Any:
+        out = real_apply(self, graph, inner_sdfg)
+        nonlocal lifts
+        lifts += 1
+        stale.extend(stale_nested_references(sdfg))
+        return out
+
+    LoopToMap.apply = checking_apply
+    try:
+        ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    finally:
+        LoopToMap.apply = real_apply
+
+    assert lifts >= 4, 'too few lifts to reach a nested SDFG twice'
+    assert not stale, f'nested SDFGs with stale parent references: {stale}'
+
+
+def control_flow_read_sites(root: dace.SDFG) -> Dict[Any, set]:
+    sites: Dict[Any, set] = {}
+    for sd in root.all_sdfgs_recursive():
+        for cfg in sd.all_control_flow_regions():
+            for e in cfg.edges():
+                sites[e.data] = (set(e.data.free_symbols), e.data.read_symbols())
+            for block in cfg.nodes():
+                sites[block] = {s for c in block.get_meta_codeblocks() for s in c.get_free_symbols()}
+    return sites
+
+
+def test_a_lift_never_changes_what_a_surviving_edge_or_header_reads() -> None:
+    """The invariant the pass-lifetime ``control_flow_reads`` memo rests on; a stale entry hides a read of
+    a loop-local transient and lets a lift privatize a carried value."""
+    sdfg = carried_rows_beside_parallel_rows.to_sdfg(simplify=True)
+    real_apply = LoopToMap.apply
+    changed: List[str] = []
+    comparisons = 0
+
+    def checking_apply(self: LoopToMap, graph: ControlFlowRegion, inner_sdfg: dace.SDFG) -> Any:
+        before = control_flow_read_sites(sdfg)
+        out = real_apply(self, graph, inner_sdfg)
+        nonlocal comparisons
+        after = control_flow_read_sites(sdfg)
+        for site, names in before.items():
+            if site in after:
+                comparisons += 1
+                if after[site] != names:
+                    changed.append(f'{site}: {names} -> {after[site]}')
+        return out
+
+    LoopToMap.apply = checking_apply
+    try:
+        ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
+    finally:
+        LoopToMap.apply = real_apply
+
+    assert comparisons > 0, 'no edge or header survived a lift, so nothing was exercised'
+    assert not changed, f'a lift changed what a surviving edge or header reads: {changed}'
+
+
+def test_the_memoized_control_flow_reads_are_the_walked_ones() -> None:
+    """``observable_locals`` reads the memo instead of walking; a memo that differs decides a carry wrongly."""
+    sdfg = prefix_max.to_sdfg(simplify=True)
+    ctx = build_lift_context(sdfg, build_lift_invariants(sdfg))
+    for loop in candidate_loops(sdfg):
+        walked = control_flow_reads(loop)
+        assert control_flow_reads(loop, ctx) == walked
+        assert control_flow_reads(loop, ctx) == walked, 'the second, memoized, answer differs'
+        assert walked, 'the loop reads nothing in its control flow, so nothing was exercised'
+
+
+T = 6
+
+
+@dace.program
+def carried_time_steps(x: dace.float64[N], y: dace.float64[T, N], z: dace.float64[N], w: dace.float64[N]):
+    for t in range(T):
+        for i in range(N):
+            x[i] = x[i] + y[t, i]
+        for j in range(N):
+            z[j] = z[j] + x[j]
+        for k in range(N):
+            w[k] = w[k] + z[k]
+
+
+@dace.program
+def carried_rows(a: dace.float64[N, N], b: dace.float64[N, N]):
+    for i in range(1, N):
+        for j in range(N):
+            a[i, j] = a[i - 1, j] + 1.0
+        for k in range(N):
+            b[i, k] = a[i, k] * 2.0
+
+
+def sweep_with_witnesses(sdfg: dace.SDFG, use_witnesses: bool) -> List[Tuple[str, bool]]:
+    """Run the sweep, logging every probe verdict; ``use_witnesses=False`` forces the full analysis."""
+    real_can = LoopToMap.can_be_applied
+    real_witness = LoopToMap.witnessed_refusal
+    log: List[Tuple[str, bool]] = []
+
+    def spy_can(self: LoopToMap,
+                graph: ControlFlowRegion,
+                expr_index: int,
+                inner_sdfg: dace.SDFG,
+                permissive: bool = False) -> bool:
+        verdict = real_can(self, graph, expr_index, inner_sdfg, permissive)
+        log.append((self.loop.label, verdict))
+        return verdict
+
+    LoopToMap.can_be_applied = spy_can
+    if not use_witnesses:
+        LoopToMap.witnessed_refusal = lambda self, *args: None
+    try:
+        ParallelizeLoops().apply_pass(sdfg, {})
+    finally:
+        LoopToMap.can_be_applied = real_can
+        LoopToMap.witnessed_refusal = real_witness
+    return log
+
+
+@pytest.mark.parametrize('program', [carried_time_steps, carried_rows])
+def test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(program) -> None:
+    """A witness is re-checked instead of re-running the analysis; a verdict it got wrong would lift a carried
+    loop (a race) or keep a parallel one."""
+    reference = program.to_sdfg(simplify=True)
+    candidate = copy.deepcopy(reference)
+    want = sweep_with_witnesses(reference, use_witnesses=False)
+    got = sweep_with_witnesses(candidate, use_witnesses=True)
+    assert got == want
+    assert map_count(candidate) == map_count(reference) and loop_count(candidate) == loop_count(reference) == 1
+    candidate.validate()
+
+
+@pytest.mark.parametrize('program, kind', [(carried_time_steps, 'write'), (carried_rows, 'read')])
+def test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(program, kind: str, monkeypatch) -> None:
+    """The loops enclosing each lift are re-probed after it; re-running the whole analysis for a refusal that
+    stands on the same site was 1.3 ks of CloudSC's parallelize stage (8 loops, 3051 probes each)."""
+    sdfg = program.to_sdfg(simplify=True)
+    outer = next(r for r in candidate_loops(sdfg) if loop_order_key(r) == (0, 0))
+    witnessed: List[str] = []
+    real_witness = LoopToMap.witnessed_refusal
+
+    def spy(self: LoopToMap, inner_sdfg: dace.SDFG, facts: Any, *args: Any) -> Optional[str]:
+        reason = real_witness(self, inner_sdfg, facts, *args)
+        if reason is not None and self.loop is outer:
+            witnessed.append(facts.refusal_witness[0])
+        return reason
+
+    monkeypatch.setattr(LoopToMap, 'witnessed_refusal', spy)
+    log = sweep_with_witnesses(sdfg, use_witnesses=True)
+    probes = sum(1 for label, _ in log if label == outer.label)
+    assert candidate_loops(sdfg) == [outer], 'only the carried outer loop stays a loop'
+    assert probes >= 3, 'the outer loop was not re-probed around its inner lifts, so nothing was exercised'
+    # The first probe runs the full analysis and records the witness; every re-probe re-checks it.
+    assert witnessed == [kind] * (probes - 1), (witnessed, probes)
+
+
+@pytest.mark.parametrize('first, second', [('i, i:M', 'i:M, i'), ('i, 0:M', 'i + 1, 0:M'), ('i, 0:M', '0:M, i')])
+def test_a_disjoint_box_verdict_is_asked_of_z3_once(first: str, second: str, monkeypatch) -> None:
+    """A read witness re-asks each of its read-write pairs per re-probe (70 s of CloudSC's parallelize stage);
+    the memoized verdict must be the oracle's own."""
+    from dace import subsets
+    from dace.transformation.interstate import loop_to_map
+    i = dace.symbolic.pystr_to_symbolic('i')
+    boxes = (subsets.Range.from_string(first), subsets.Range.from_string(second))
+    want = loop_to_map._smt_proves_disjoint_boxes(*boxes, i, 0, 'M - 1', 1, set())
+    asked = []
+    real = smt_dependence.prove_disjoint_access_boxes
+
+    def spy(*args: Any, **kwargs: Any) -> Optional[bool]:
+        asked.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(smt_dependence, 'prove_disjoint_access_boxes', spy)
+    verdicts: Dict[Tuple[str, ...], bool] = {}
+    got = [loop_to_map._smt_proves_disjoint_boxes(*boxes, i, 0, 'M - 1', 1, set(), verdicts) for _ in range(3)]
+    assert got == [want] * 3 and len(asked) == 1, (got, want, len(asked))
+
+
+def test_a_declared_body_symbol_has_the_type_the_parent_walk_gives(monkeypatch) -> None:
+    """``declare_lifted_symbols`` spares ``add_nested_sdfg`` its walk over the parent's interstate edges; a type
+    it settled differently would change the lifted body. The enclosing loop's iterator is the case the walk
+    was run for in 145 of 400 CloudSC lifts."""
+    from dace.sdfg.type_inference import infer_expr_type
+    sdfg = carried_time_steps.to_sdfg(simplify=True)
+    outer = next(r for r in candidate_loops(sdfg) if loop_order_key(r) == (0, 0)).loop_variable
+    real_add = dace.SDFGState.add_nested_sdfg
+    mismatches: List[str] = []
+    checked: List[str] = []
+
+    def checking_add(self: dace.SDFGState, inner: dace.SDFG, *args: Any, **kwargs: Any) -> Any:
+        walk = self.defined_symbols()
+        for name in sorted(inner.free_symbols & inner.symbols.keys()):
+            want = infer_expr_type(dace.symbolic.pystr_to_symbolic(name), walk) or dace.dtypes.typeclass(int)
+            checked.append(name)
+            if inner.symbols[name] != want:
+                mismatches.append(f'{name}: {inner.symbols[name]} vs {want}')
+        return real_add(self, inner, *args, **kwargs)
+
+    monkeypatch.setattr(dace.SDFGState, 'add_nested_sdfg', checking_add)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert outer in checked, f'the enclosing iterator {outer} was never declared, so nothing was exercised'
+    assert not mismatches, mismatches

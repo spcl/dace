@@ -359,6 +359,41 @@ def test_outer_names_of_a_nested_sdfg_stop_at_its_subtree():
     assert assignments == {'inner_only', 'q'}
 
 
+def test_outer_names_of_a_nested_sdfg_skip_a_sibling():
+    """The names come off the CFG list, which holds the whole tree: a nested SDFG's names must still be its
+    own subtree's, not its parent's or a sibling's, or an inline into it renames what it need not."""
+    sdfg = sdfg_with_names_everywhere()
+    sibling = SDFG('sibling')
+    sibling.add_state('sibling_only', is_start_block=True)
+    sdfg.nodes()[-1].add_nested_sdfg(sibling, {}, {})
+    inner = next(sd for sd in sdfg.all_sdfgs_recursive() if sd.name == 'inner')
+    symbols, assignments, labels = outer_names(inner)
+    assert (set(symbols), assignments, labels) == outer_names_by_walks(inner)
+    assert labels == {'inner_first', 'inner_loop', 'inner_body'}, labels
+
+
+def test_outer_names_stay_exact_across_lowered_maps():
+    """Lowering maps adds and inlines nested SDFGs one after another; the CFG list the names are read from
+    has to follow every one of those edits."""
+
+    @dace.program
+    def two_maps(a: dace.float64[N], b: dace.float64[N]):
+        for i in dace.map[0:N]:
+            a[i] = a[i] + 1.0
+        for j in dace.map[0:N]:
+            b[j] = a[j] * 2.0
+
+    from dace.transformation.dataflow import MapToForLoop
+    sdfg = two_maps.to_sdfg(simplify=True)
+    lowered = 0
+    while sdfg.apply_transformations(MapToForLoop, validate=False):
+        lowered += 1
+        for sd in sdfg.all_sdfgs_recursive():
+            symbols, assignments, labels = outer_names(sd)
+            assert (set(symbols), assignments, labels) == outer_names_by_walks(sd), sd.label
+    assert lowered == 2, lowered
+
+
 if __name__ == '__main__':
     test_inline_preserves_pre_and_post_numerics()
     test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment()
@@ -367,4 +402,6 @@ if __name__ == '__main__':
     test_inline_refuses_inside_map_scope()
     test_outer_names_are_what_the_three_walks_collected()
     test_outer_names_of_a_nested_sdfg_stop_at_its_subtree()
+    test_outer_names_of_a_nested_sdfg_skip_a_sibling()
+    test_outer_names_stay_exact_across_lowered_maps()
     print('all ok')
