@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 import itertools
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
-from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
+from dace.sdfg import SDFG, SDFGState, graph, nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ReturnBlock
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
@@ -141,6 +141,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         default=False,
         desc="Only consolidate if this does not lead to an extension of the subset.",
     )
+
+    #: Nested SDFGs already propagated and unchanged since, and the last propagation onto each external
+    #:  scope edge, kept by a driving pass (`FuseMaps`) across its fusions; see
+    #:  `map_fusion_helper.propagate_fused_map_scope()`. `None` propagates everything.
+    propagated_nsdfgs: Optional[Dict[SDFG, None]] = None
+    scope_records: Optional[mfhelper.ScopeRecords] = None
 
     def __init__(
         self,
@@ -493,8 +499,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         return not (writing_states and (reading_states - writing_states))
 
     @staticmethod
-    def _split_inout_for_intermediate(graph: dace.SDFGState, sdfg: dace.SDFG, first_map_entry: nodes.MapEntry,
-                                      intermediate_names: Set[str]) -> None:
+    def _split_inout_for_intermediate(graph: dace.SDFGState,
+                                      sdfg: dace.SDFG,
+                                      first_map_entry: nodes.MapEntry,
+                                      intermediate_names: Set[str],
+                                      propagated_nsdfgs: Optional[Dict[SDFG, None]] = None) -> None:
         """For each NestedSDFG inside ``first_map_entry``'s scope whose InOut
         connectors include any of ``intermediate_names``, split the connector:
 
@@ -522,6 +531,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 inner_sdfg = inner.sdfg
                 if inner_sdfg is None or orig not in inner_sdfg.arrays:
                     continue
+                mfhelper.forget_propagated(propagated_nsdfgs, inner_sdfg)
                 # 1. Fresh inner array.
                 new_name = f"__map_fusion_split_{orig}"
                 while new_name in inner_sdfg.arrays:
@@ -606,7 +616,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             for e in (exclusive_outputs | shared_outputs) if isinstance(e.dst, nodes.AccessNode)
         }
         if intermediate_names:
-            self._split_inout_for_intermediate(graph, sdfg, first_map_entry, intermediate_names)
+            self._split_inout_for_intermediate(graph, sdfg, first_map_entry, intermediate_names, self.propagated_nsdfgs)
 
         # Now perform the actual rewiring, we handle each partition separately.
         if len(exclusive_outputs) != 0:
@@ -688,7 +698,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  in case we never consolidated, i.e., all edges were preserved, then we
         #  can skip that step.
         if not self.never_consolidate_edges:
-            propagation.propagate_memlets_map_scope(sdfg, graph, first_map_entry)
+            mfhelper.propagate_fused_map_scope(sdfg, graph, first_map_entry, self.propagated_nsdfgs, self.scope_records)
 
     def partition_first_outputs(
         self,
@@ -2455,6 +2465,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             return
         elif isinstance(inner_desc, data.Array) and inner_desc.shape == (1, ):
             return
+        mfhelper.forget_propagated(self.propagated_nsdfgs, inner_sdfg)
 
         # We now compute the new strides and shape of the inner data descriptor. Since we already
         #  know that the inner data and what is passed from the outside is the same, we use this

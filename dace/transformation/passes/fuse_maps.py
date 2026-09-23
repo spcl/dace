@@ -9,6 +9,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion
 from dace.sdfg.validation import validate_state
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
+from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.transformation import transformation as xf
 from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.iteration_domain import align_maps_to_unit_step
@@ -345,16 +346,27 @@ class FuseMaps(ppl.Pass):
                 continue
             units.append((xform, _pattern_shapes(xform)))
 
+        # Nested SDFGs whose inside is propagated and unchanged since, shared by the fusions so a nested SDFG
+        #  is propagated again only after something inside it changed, not once per fusion of its scope.
+        propagated: Dict[SDFG, None] = {}
+        # The last propagation onto each external scope edge, so a fusion re-propagates only the connectors whose
+        #  memlets it changed; `propagate_scope_node()` checks every record against the graph before trusting it.
+        scope_records: mfhelper.ScopeRecords = {}
+        for xform, _ in units:
+            if isinstance(xform, (dftrans.MapFusionVertical, dftrans.MapFusionHorizontal)):
+                xform.propagated_nsdfgs = propagated
+                xform.scope_records = scope_records
+
         applied: AppliedMap = collections.defaultdict(list)
         for _ in range(FUSE_ROUNDS):
             for cfg in sdfg.all_control_flow_regions(recursive=True):
                 for state_id, state in enumerate(cfg.nodes()):
                     if not isinstance(state, SDFGState):
                         continue
-                    if self.align_step_equivalent_maps:
-                        align_step_equivalent_candidates(state)
+                    if self.align_step_equivalent_maps and align_step_equivalent_candidates(state):
+                        propagated.clear()
                     for xform, shapes in units:
-                        self._drain(xform, shapes, cfg, state, state_id, pipeline_results, applied)
+                        self._drain(xform, shapes, cfg, state, state_id, pipeline_results, applied, propagated)
 
         # Nothing fused means the SDFG is the one the caller passed in; validating THAT is the caller's
         #  contract (canonicalize: its own validate / validate_all), not a check of this pass's work.
@@ -364,7 +376,8 @@ class FuseMaps(ppl.Pass):
         return applied or None
 
     def _drain(self, xform: xf.PatternTransformation, shapes: List[PatternShape], cfg: ControlFlowRegion,
-               state: SDFGState, state_id: int, pipeline_results: Dict[str, Any], applied: AppliedMap) -> None:
+               state: SDFGState, state_id: int, pipeline_results: Dict[str, Any], applied: AppliedMap,
+               propagated: Dict[SDFG, None]) -> None:
         """Apply ``xform`` in ``state`` until nothing matches there any more.
 
         The fusions are single-state rewrites reading one fixed `FindSingleUseData` result, so a
@@ -396,6 +409,12 @@ class FuseMaps(ppl.Pass):
                         continue
                     if not matched:
                         continue
+                    if isinstance(xform, (dftrans.MapFusionVertical, dftrans.MapFusionHorizontal)):
+                        # A fusion rewrites `state`, so `owner` and every SDFG enclosing it change.
+                        mfhelper.forget_propagated(propagated, owner)
+                    else:
+                        # Any other fusion is not known to leave nested SDFGs untouched.
+                        propagated.clear()
                     applied[name].append(xform.apply(state, owner))
                     if self.validate_all:
                         validate_state(state, state_id, owner, initialized_transients=set(owner.arrays.keys()))

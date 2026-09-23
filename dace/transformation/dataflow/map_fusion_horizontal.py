@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import dace
 from dace import properties, transformation
-from dace.sdfg import SDFG, nodes, propagation
+from dace.sdfg import SDFG, nodes
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
 
@@ -89,6 +89,12 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         default=False,
         desc="Only consolidate if this does not lead to an extension of the subset.",
     )
+
+    #: Nested SDFGs already propagated and unchanged since, and the last propagation onto each external
+    #:  scope edge, kept by a driving pass (`FuseMaps`) across its fusions; see
+    #:  `map_fusion_helper.propagate_fused_map_scope()`. `None` propagates everything.
+    propagated_nsdfgs: Optional[Dict[SDFG, None]] = None
+    scope_records: Optional[mfhelper.ScopeRecords] = None
 
     def __init__(
         self,
@@ -316,4 +322,4 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         #  in case we never consolidated, i.e. all edges were preserved, then we
         #  can skip that step.
         if not self.never_consolidate_edges:
-            propagation.propagate_memlets_map_scope(sdfg, graph, first_map_entry)
+            mfhelper.propagate_fused_map_scope(sdfg, graph, first_map_entry, self.propagated_nsdfgs, self.scope_records)
