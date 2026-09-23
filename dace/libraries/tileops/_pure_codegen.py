@@ -143,6 +143,29 @@ def tile_offset(widths: Sequence[int]) -> str:
     return " + ".join(reversed(parts))
 
 
+def lane_invariant_assign(out_conn: str, rhs_expr: str, out_dtype: str, widths: Sequence[int],
+                          mask_elements: int | sympy.Basic | None) -> str:
+    """Body assigning a lane-invariant ``rhs_expr`` to the one-element output ``out_conn``.
+
+    Every lane computes the same value, so under ``_mask`` it is kept when AT LEAST ONE lane is
+    active and takes the masked fill ``out_dtype(0)`` otherwise, like an inactive lane of a tile
+    op. ``_mask`` is a pointer read per lane; only a one-element mask is bound by value.
+
+    :param out_conn: The by-value output connector.
+    :param rhs_expr: The C++ value.
+    :param out_dtype: The output element C++ type.
+    :param widths: Per-tile-dim widths of ``_mask``.
+    :param mask_elements: Element count of the ``_mask`` memlet; ``None`` when unmasked.
+    :returns: The C++ body.
+    """
+    if mask_elements is None:
+        return f"{out_conn} = {rhs_expr};"
+    if mask_elements == 1:
+        return f"{out_conn} = _mask ? ({rhs_expr}) : {out_dtype}(0);"
+    any_lane = nested_loops(widths, f"__any_lane = __any_lane || _mask[{tile_offset(widths)}];")
+    return f"bool __any_lane = false;\n{any_lane}\n{out_conn} = __any_lane ? ({rhs_expr}) : {out_dtype}(0);"
+
+
 def offset_via_strides(
     coeffs: Sequence[int],
     strides: Sequence[str],

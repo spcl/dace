@@ -28,7 +28,7 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
+from .._pure_codegen import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from .. import _isa_codegen
 from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, is_tile_shape, edge_moves_one_element, edge_moves_a_tile,
                          scalar_operand_ref, promotion_ok)
@@ -166,15 +166,9 @@ class ExpandTileFMAPure(ExpandTransformation):
         out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and node.kind_c != TILE
                          and edge_moves_one_element(out_edge))
         if out_is_scalar:
-            # Scalar output: no lane loop; one assignment. A volume-1 output (Scalar
-            # or length-1 Array) is a by-value local (``T _o;``), so it -- and the
-            # volume-1 ``_mask`` gating it -- are referenced bare (``[0]`` is a
-            # memlet concern, never a tasklet-body one).
-            if node.has_mask:
-                body = f"_o = _mask ? ({rhs_expr}) : {out_dtype}(0);"
-            else:
-                body = f"_o = {rhs_expr};"
-            code = body
+            # No lane loop: a one-element output is a by-value local (``T _o;``) assigned once.
+            mask_elements = in_e["_mask"].data.subset.num_elements() if node.has_mask else None
+            code = lane_invariant_assign("_o", rhs_expr, out_dtype, widths, mask_elements)
         else:
             if node.has_mask:
                 body = f"_o[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"

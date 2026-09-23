@@ -20,7 +20,7 @@ from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
+from .._pure_codegen import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
 from .. import _isa_codegen
 from .tile_binop import promotion_ok
 
@@ -175,14 +175,9 @@ class ExpandTileUnopPure(ExpandTransformation):
         out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_c")
         out_is_scalar = (node.kind_a != TILE and edge_moves_one_element(out_edge))
         if out_is_scalar:
-            # A volume-1 output (Scalar / length-1 Array) is a by-value local
-            # (``T _c;``), so it -- and the volume-1 ``_mask`` -- are referenced
-            # bare. ``[0]`` is a memlet concern, never a tasklet-body one.
-            if node.has_mask:
-                body = f"_c = _mask ? ({rhs_expr}) : {out_dtype}(0);"
-            else:
-                body = f"_c = {rhs_expr};"
-            code = body
+            # No lane loop: a one-element output is a by-value local (``T _c;``) assigned once.
+            mask_elements = in_e["_mask"].data.subset.num_elements() if node.has_mask else None
+            code = lane_invariant_assign("_c", rhs_expr, out_dtype, widths, mask_elements)
         else:
             if node.has_mask:
                 body = f"_c[{off}] = _mask[{off}] ? ({rhs_expr}) : {out_dtype}(0);"
