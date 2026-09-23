@@ -718,14 +718,15 @@ def test_nested_memcpy_with_dimension_change_and_strides(expansion_type, xp, ful
 
     A_IN = xp.fromfunction(lambda x: x, (DIM_SIZE, ), dtype=xp.float64).copy()
     B_IN = xp.fromfunction(lambda x, y: x * DIM_SIZE + y, (DIM_SIZE, DIM_SIZE), dtype=xp.float64).copy()
+    # The array's memory order has to be the one pcovptot declares; a C array bound to the
+    # Fortran-strided descriptor is read transposed, which the call now refuses.
+    if fortran_strides:
+        B_IN = xp.asfortranarray(B_IN)
     _expand_and_validate(sdfg, expansion_type)
     sdfg(zcovptot=A_IN, pcovptot=B_IN, kidia=0, kfdia=DIM_SIZE, D=DIM_SIZE)
 
-    if fortran_strides:
-        assert xp.allclose(A_IN, B_IN)
-    else:
-        for j in range(DIM_SIZE):
-            assert xp.allclose(B_IN[0:DIM_SIZE, j], A_IN), f"{j}: {B_IN[0:DIM_SIZE, j] - A_IN}"
+    for j in range(DIM_SIZE):
+        assert xp.allclose(B_IN[0:DIM_SIZE, j], A_IN), f"{j}: {B_IN[0:DIM_SIZE, j] - A_IN}"
 
 
 def test_transpose_map_is_not_lifted_to_memcpy():

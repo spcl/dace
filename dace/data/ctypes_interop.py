@@ -53,6 +53,12 @@ def contradicts_packed_order(arg: np.ndarray, argtype: 'Data') -> bool:
     """
     if arg.ndim != len(argtype.shape):
         return False
+    # A C array of shape (5, n) bound to a Fortran-strided (n, 5) descriptor is the same memory, the
+    # usual Fortran-interop spelling: only an array of the descriptor's own shape is read transposed.
+    # A concrete extent that differs says the caller already transposed the shape.
+    if any(not symbolic.issymbolic(declared) and int(declared) != extent
+           for extent, declared in zip(arg.shape, argtype.shape)):
+        return False
     only_fortran = arg.flags.f_contiguous and not arg.flags.c_contiguous
     only_c = arg.flags.c_contiguous and not arg.flags.f_contiguous
     if only_fortran:

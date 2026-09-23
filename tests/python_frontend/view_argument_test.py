@@ -76,6 +76,16 @@ def test_c_ordered_array_to_fortran_descriptor_raises():
         rowsum_fortran(A, out)
 
 
+def test_a_c_array_of_the_transposed_shape_is_the_fortran_array():
+    """A C array of shape (30, 20) is the column-major (20, 30) array in the same memory, the usual
+    Fortran-interop spelling; the order check refused it (npbench cloudsc's (5, klon) fields in the
+    vectorization kernels) because it compared only the rank."""
+    A = np.random.rand(30, 20)
+    out = np.zeros(20)
+    rowsum_fortran(A, out)
+    assert np.allclose(out, A.T.sum(axis=1))
+
+
 def test_fortran_ordered_array_to_fortran_descriptor():
     """A Fortran-ordered array bound to the column-major descriptor it matches is read correctly."""
     A = np.asfortranarray(np.random.rand(20, 30))
