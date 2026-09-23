@@ -21,6 +21,22 @@ from dace.transformation.dataflow.stream_transient import AccumulateTransient
 from dace.transformation.dataflow.local_storage import OutLocalStorage, InLocalStorage
 
 
+def read_elsewhere(sdfg: SDFG, access_node: nodes.AccessNode) -> bool:
+    """Whether the data ``access_node`` holds is read other than through ``access_node``.
+
+    The fusion recomputes the producer only for the consumer in its own state. Another state that
+    reads the array still needs the producer's write: npbench vexx_k's scatter key and scatter
+    states read ``ikb`` after its producer was fused into an einsum operand and deleted, so the GPU
+    canonicalize column scattered through uninitialized device memory.
+    """
+    name = access_node.data
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
+            if node is not access_node and node.data == name and state.out_degree(node) > 0:
+                return True
+    return any(name in edge.data.read_symbols() for edge in sdfg.all_interstate_edges())
+
+
 @make_properties
 class OTFMapFusion(transformation.SingleStateTransformation):
     """
@@ -366,7 +382,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                     advanced_replace(otf_subgraph, str(param), str(mapping[param]))
 
         # Check if first_map is still consumed by some node
-        if graph.out_degree(intermediate_access_node) == 0:
+        if graph.out_degree(intermediate_access_node) == 0 and not read_elsewhere(sdfg, intermediate_access_node):
             graph.remove_node(intermediate_access_node)
 
             obsolete_nodes = graph.all_nodes_between(first_map_entry,

@@ -922,6 +922,50 @@ def test_advanced_replace_nested_sdfg_symbol_mapping():
     sdfg.validate()
 
 
+def producer_read_by_a_later_state() -> dace.SDFG:
+    """``T = A + 1`` feeds ``B = 2 T`` in one state, and a later state copies ``T`` into ``C``."""
+    sdfg = dace.SDFG('otf_producer_read_later')
+    for name in ('A', 'B', 'C'):
+        sdfg.add_array(name, [16], dace.float64)
+    sdfg.add_transient('T', [16], dace.float64)
+    first = sdfg.add_state('fused')
+    t = first.add_access('T')
+    first.add_mapped_tasklet('produce',
+                             dict(i='0:16'), {'a': dace.Memlet('A[i]')},
+                             'o = a + 1.0', {'o': dace.Memlet('T[i]')},
+                             external_edges=True,
+                             input_nodes={'A': first.add_read('A')},
+                             output_nodes={'T': t})
+    first.add_mapped_tasklet('consume',
+                             dict(j='0:16'), {'x': dace.Memlet('T[j]')},
+                             'y = 2.0 * x', {'y': dace.Memlet('B[j]')},
+                             external_edges=True,
+                             input_nodes={'T': t},
+                             output_nodes={'B': first.add_write('B')})
+    later = sdfg.add_state_after(first, 'later')
+    later.add_mapped_tasklet('copy',
+                             dict(k='0:16'), {'x': dace.Memlet('T[k]')},
+                             'y = x', {'y': dace.Memlet('C[k]')},
+                             external_edges=True)
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_producer_another_state_reads_is_kept():
+    """The fusion deleted the producer once the consumer in its own state stopped reading it,
+    though a later state still read the array: npbench vexx_k's scatter states then read
+    uninitialized device memory on the GPU canonicalize column."""
+    sdfg = producer_read_by_a_later_state()
+    assert sdfg.apply_transformations_repeated(OTFMapFusion) >= 1
+    writers = [n for s in sdfg.all_states() for n in s.data_nodes() if n.data == 'T' and s.in_degree(n) > 0]
+    assert writers, 'the producer of T is gone although the later state reads T'
+    sdfg.validate()
+    a = np.random.rand(16)
+    b, c = np.zeros(16), np.zeros(16)
+    sdfg(A=a, B=b, C=c)
+    assert np.allclose(b, 2.0 * (a + 1.0)) and np.allclose(c, a + 1.0)
+
+
 if __name__ == '__main__':
     # Solver
     test_solve()
