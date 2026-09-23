@@ -28,6 +28,7 @@ K = dace.symbol('K')
 N = dace.symbol('N')
 L = dace.symbol('L')
 P = dace.symbol('P')
+NB = dace.symbol('NB')
 
 
 # C = alpha*A@B + beta*C  (alpha/beta are runtime data scalars)
@@ -168,6 +169,62 @@ def k3mm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[N, P], D:
         f << F[k, j]
         o >> G(1, lambda x, y: x + y, 0)[i, j]
         o = e * f
+
+
+@dace.program
+def bmm_ovr(C: dace.float64[NB, M, N], A: dace.float64[NB, M, K], Bt: dace.float64[NB, K, N]):
+    """C[b] = A[b] @ Bt[b] for every batch b -- OVERWRITE via a fresh zero-initialized accumulator
+    (beta=0), the batched counterpart to k3mm's fresh-transient shape and the coordinator's own
+    ``tmp = np.zeros(...)`` repro: the zero-prior half of the canon batched-accumulate regression."""
+    tmp = dace.define_local([NB, M, N], dtype=dace.float64)
+
+    @dace.map
+    def zerotmp(b: _[0:NB], i: _[0:M], j: _[0:N]):
+        o >> tmp[b, i, j]
+        o = 0.0
+
+    @dace.map
+    def comp(b: _[0:NB], i: _[0:M], k: _[0:K], j: _[0:N]):
+        a << A[b, i, k]
+        bb << Bt[b, k, j]
+        o >> tmp(1, lambda x, y: x + y)[b, i, j]
+        o = a * bb
+
+    C[:] = tmp
+
+
+@dace.program
+def bmm_acc(C: dace.float64[NB, M, N], A: dace.float64[NB, M, K], Bt: dace.float64[NB, K, N]):
+    """C[b] += A[b] @ Bt[b] for every batch b -- C is a pre-filled INPUT with NO in-SDFG
+    initializer (beta=1): the batched counterpart to gemm_acc, and the nonzero-prior half of the
+    canon batched-accumulate regression. LoopToEinsum/LiftEinsum set Einsum.beta=1 whenever the
+    accumulator has a prior writer, which reaches SpecializeMatMul's batched branch and then
+    BatchedMatMul(beta=1)."""
+
+    @dace.map
+    def comp(b: _[0:NB], i: _[0:M], k: _[0:K], j: _[0:N]):
+        a << A[b, i, k]
+        bb << Bt[b, k, j]
+        c >> C(1, lambda x, y: x + y)[b, i, j]
+        c = a * bb
+
+
+@pytest.mark.parametrize("prog, seed", [(bmm_ovr, 8), (bmm_acc, 9)])
+def test_batched_accumulate_via_canon(prog, seed: int):
+    """Regression for the BatchedMatMul beta hazard: canonicalize + finalize_for_target('cpu')
+    lifts a batched contraction to Einsum -> MatMul(beta) -> BatchedMatMul(beta), and
+    set_fast_implementations then picks a BLAS implementation. Both a zero prior (bmm_ovr,
+    beta=0) and a genuinely nonzero prior (bmm_acc, beta=1) must match numpy -- refusing beta !=
+    0 broke the nonzero-prior case with NotImplementedError."""
+    nb, m, k, n = 3, 6, 8, 5
+    rng = np.random.default_rng(seed)
+    inp = dict(C=rng.random((nb, m, n)), A=rng.random((nb, m, k)), Bt=rng.random((nb, k, n)))
+    expected = inp['C'] + (inp['A'] @ inp['Bt']) if prog is bmm_acc else inp['A'] @ inp['Bt']
+
+    sdfg = prog.to_sdfg(simplify=True)
+    sdfg = finalize_for_target(canonicalize(sdfg, validate=True, target='cpu'), 'cpu')
+    sdfg.validate()
+    _run(sdfg, inp, dict(NB=nb, M=m, K=k, N=n), 'C', expected)
 
 
 def _gemm_case():
