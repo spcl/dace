@@ -324,9 +324,12 @@ class ControlFlowRegionPass(Pass):
         for region in sdfg.all_control_flow_regions(recursive=True, parent_first=self.top_down):
             if isinstance(region, ConditionalBlock) and not self.apply_to_conditionals:
                 continue
+            # Read before ``apply``: a pass may remove the region it visits (PruneEmptyConditionalBranches
+            # replaces an emptied ConditionalBlock), and a removed region is no longer in the CFG list.
+            cfg_id = region.cfg_id
             retval = self.apply(region, pipeline_results)
             if retval is not None:
-                result[region.cfg_id] = retval
+                result[cfg_id] = retval
 
         if not result:
             return None

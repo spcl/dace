@@ -266,3 +266,25 @@ def test_a_rewrite_keeps_the_tree_as_a_reset_builds_it_and_computes_the_same(rew
         sdfg(a=a_out, b=b_out, c=c, N=n)
         np.testing.assert_allclose(a_out, a_ref)
         np.testing.assert_allclose(b_out, b_ref)
+
+
+def test_a_region_pass_may_remove_the_region_it_visits():
+    """PruneEmptyConditionalBranches replaces a ConditionalBlock whose branches are all empty, and the
+    region-pass loop then read the removed block's ``cfg_id``: the block is no longer in the CFG list,
+    so canonicalize raised ``list.index(x): x not in list``."""
+    from dace.transformation.passes.simplification.prune_empty_conditional_branches import \
+        PruneEmptyConditionalBranches
+    sdfg = dace.SDFG('prune_the_visited_region')
+    sdfg.add_symbol('n', dace.int64)
+    first = sdfg.add_state('first', is_start_block=True)
+    guard = conditional('guard')
+    sdfg.add_node(guard)
+    sdfg.add_edge(first, guard, dace.InterstateEdge())
+    sdfg.add_edge(guard, sdfg.add_state('last'), dace.InterstateEdge())
+    visited_id = guard.cfg_id
+
+    result = PruneEmptyConditionalBranches().apply_pass(sdfg, {})
+    assert result is not None and visited_id in result, result
+    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.nodes()), 'the empty ConditionalBlock is gone'
+    assert_tree_consistent(sdfg)
+    sdfg.validate()
