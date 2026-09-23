@@ -7,7 +7,7 @@ import sympy
 
 import dace
 from dace import subsets, symbolic
-from dace.sdfg import graph, nodes as nodes, utils as sdutils, validation
+from dace.sdfg import graph, nodes as nodes, propagation, utils as sdutils, validation
 from dace.transformation import helpers
 
 
@@ -379,6 +379,46 @@ def relocate_nodes(
         )
     assert len(from_node.in_connectors) == 0
     assert len(from_node.out_connectors) == 0
+
+
+def propagate_fused_map_scope(
+    sdfg: dace.SDFG,
+    state: dace.SDFGState,
+    map_entry: nodes.MapEntry,
+    propagated_nsdfgs: Optional[Dict[dace.SDFG, None]] = None,
+) -> None:
+    """`propagation.propagate_memlets_map_scope()` of the fused Map, minus redundant nested SDFG passes.
+
+    A nested SDFG in `propagated_nsdfgs` was propagated in full and has not changed since, so propagating
+    its inside again would rewrite every memlet to itself; it is skipped. Every nested SDFG propagated here
+    is added. The caller owns the invariant: it drops an SDFG, and all SDFGs enclosing it, when it mutates
+    one. `None` propagates every nested SDFG, which is exactly `propagate_memlets_map_scope()`.
+    """
+    # Read once: propagation rewrites memlets only, never the symbols, descriptors and interstate edges
+    #  this table is built from, and `symbols_defined_at` otherwise rebuilds it per nested SDFG.
+    scope_symbols = dace.sdfg.state.sdfg_scope_symbols(sdfg)
+    nodes_in_scope = dict.fromkeys(state.scope_subgraph(map_entry).nodes())
+    for node in nodes_in_scope:
+        if not isinstance(node, nodes.NestedSDFG):
+            continue
+        if propagated_nsdfgs is None or node.sdfg not in propagated_nsdfgs:
+            propagation.propagate_memlets_sdfg(node.sdfg)
+            if propagated_nsdfgs is not None:
+                propagated_nsdfgs[node.sdfg] = None
+        propagation.propagate_memlets_nested_sdfg(sdfg, state, node, scope_symbols)
+
+    contained_leaf_scopes = [leaf for leaf in state.scope_leaves() if leaf.entry in nodes_in_scope]
+    assert len(contained_leaf_scopes) > 0
+    propagation.propagate_memlets_scope(sdfg, state, contained_leaf_scopes, scope_symbols=scope_symbols)
+
+
+def forget_propagated(propagated_nsdfgs: Optional[Dict[dace.SDFG, None]], sdfg: dace.SDFG) -> None:
+    """Drop `sdfg` and every SDFG enclosing it from `propagated_nsdfgs`: `sdfg` is about to change."""
+    if propagated_nsdfgs is None:
+        return
+    while sdfg is not None:
+        propagated_nsdfgs.pop(sdfg, None)
+        sdfg = sdfg.parent_sdfg
 
 
 def safe_exit_node(
