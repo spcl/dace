@@ -231,13 +231,21 @@ def parallel_region_trip_count(state: SDFGState, map_entry: nodes.MapEntry) -> s
     forking this region and running all of it on one thread, so the product is the region's work
     either way.
 
+    The guard is evaluated at the pragma, before the region's loops open, so a nested count that
+    reads a name bound inside the nest (a parameter of a map in it, or a dynamic range connector of
+    one) is not available there. The product stops at that level: cegterg's triangular nest, an
+    inner range ``Max(nb1, i + 1):nbase`` under the parallel ``i``, emitted a clause naming ``i``
+    ahead of the loop that declares it, and the kernel no longer compiled.
+
     :param state: the state holding the map.
     :param map_entry: the entry of the map that opens the region.
-    :returns: the product of the trip counts of the perfect nest rooted at ``map_entry``.
+    :returns: the product of the trip counts of the perfect nest rooted at ``map_entry``, up to the
+              first nested map whose count depends on a name bound inside the nest.
     """
     children = state.scope_children()
     trip = map_entry.map.range.num_elements()
     entry = map_entry
+    bound_in_nest = set(map_entry.map.params)
     while True:
         body = [n for n in children[entry] if not isinstance(n, nodes.MapExit)]
         if len(body) != 1 or not isinstance(body[0], nodes.MapEntry):
@@ -245,6 +253,10 @@ def parallel_region_trip_count(state: SDFGState, map_entry: nodes.MapEntry) -> s
         entry = body[0]
         if entry.map.schedule != dtypes.ScheduleType.Sequential:
             return trip
+        bound_in_nest |= set(entry.in_connectors)
+        if entry.map.range.free_symbols & bound_in_nest:
+            return trip
+        bound_in_nest |= set(entry.map.params)
         trip = trip * entry.map.range.num_elements()
 
 

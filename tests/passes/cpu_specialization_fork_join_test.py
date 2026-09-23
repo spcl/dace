@@ -247,6 +247,40 @@ def test_the_runtime_guard_tests_the_whole_nest_after_the_simd_split():
     assert np.array_equal(a, expected)
 
 
+def test_the_runtime_guard_of_a_triangular_nest_names_no_loop_variable():
+    """A nested count that reads the parallel map's own parameter is not part of the guard.
+
+    The guard is evaluated at the pragma, ahead of the loop that declares the parameter. cegterg's
+    triangular nest (inner range ``Max(nb1, i + 1):nbase`` under the parallel ``i``) put ``i`` in
+    the clause, and the generated C++ failed with "'i' was not declared in this scope".
+    """
+    sdfg = dace.SDFG('guarded_triangle')
+    sdfg.add_array('a', [N, M], dace.float64)
+    sdfg.add_array('counts', [1], dace.int64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    body = ControlFlowRegion('body', sdfg=sdfg)
+    map_state(body, sdfg, 'body', ['0:N', '__i0:k'])
+    sdfg.add_node(body)
+    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments={'k': 'counts[0]'}))
+    sdfg.validate()
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+        guarded = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+        assert guarded.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
+        code = sdfg.generate_code()[0].clean_code
+    clause = next(line for line in code.splitlines() if 'if(parallel:' in line)
+    assert '__i0' not in clause, clause
+
+    counts = np.array([5], dtype=np.int64)
+    a = np.zeros((7, 9))
+    with pinned_break_even():
+        sdfg(a=a, counts=counts, N=7, M=9)
+    expected = np.zeros((7, 9))
+    for i in range(7):
+        expected[i, i:5] = 1.0
+    assert np.array_equal(a, expected)
+
+
 def test_parameter_extent_carries_no_runtime_guard():
     """A count written in the SDFG's own parameters keeps today's unguarded parallel form."""
     sdfg = one_map_sdfg('symbolic_param_extent', [N], ['0:N'])
