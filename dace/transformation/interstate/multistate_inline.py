@@ -37,27 +37,26 @@ def _trailing_returns(nsdfg: SDFG) -> List[ReturnBlock]:
     ]
 
 
-def listed_subtree(sdfg: SDFG) -> List[Tuple[AbstractControlFlowRegion, bool]]:
-    """``sdfg`` and every region below it in pre-order, each with whether ``sdfg`` owns it directly.
+def listed_subtree(sdfg: SDFG) -> Dict[AbstractControlFlowRegion, bool]:
+    """``sdfg`` and every region below it in pre-order, each mapped to whether ``sdfg`` owns it directly.
 
     Read off the CFG list, which the graph operations keep in reset order: a subtree is one contiguous
-    slice of it, so no state's dataflow has to be scanned for nested SDFGs.
+    slice of it, and a region's parent is listed before it, so no state's dataflow has to be scanned for
+    nested SDFGs and no ancestor chain has to be climbed.
     """
     cfg_list = cfg_tree_list(sdfg) or sdfg.cfg_list
-    result: List[Tuple[AbstractControlFlowRegion, bool]] = []
-    for region in itertools.islice(cfg_list, sdfg.cfg_id, None):
-        own = True
-        current = region
-        while current is not sdfg:
-            if isinstance(current, SDFG):
-                own = False
-                current = None if current.parent is None else current.parent.parent_graph
-            else:
-                current = current.parent_graph
-            if current is None:
-                return result
-        result.append((region, own))
-    return result
+    owned: Dict[AbstractControlFlowRegion, bool] = {sdfg: True}
+    for region in itertools.islice(cfg_list, sdfg.cfg_id + 1, None):
+        nested = isinstance(region, SDFG)
+        if nested:
+            parent = None if region.parent is None else region.parent.parent_graph
+        else:
+            parent = region.parent_graph
+        parent_owned = owned.get(parent)
+        if parent_owned is None:
+            break
+        owned[region] = parent_owned and not nested
+    return owned
 
 
 def outer_names(sdfg: SDFG) -> Tuple[Dict[str, Any], Set[str], Set[str]]:
@@ -72,13 +71,13 @@ def outer_names(sdfg: SDFG) -> Tuple[Dict[str, Any], Set[str], Set[str]]:
     assignments: Set[str] = set()
     labels: Set[str] = set()
     # A region reached through a nested SDFG only contributes labels.
-    for region, own in listed_subtree(sdfg):
-        for block in region.nodes():
-            labels.add(block.label)
-            if own and isinstance(block, LoopRegion) and block.loop_variable is not None:
-                assignments.add(block.loop_variable)
+    for region, own in listed_subtree(sdfg).items():
+        labels.update([block.label for block in region.nodes()])
         if not own:
             continue
+        # A loop ``sdfg`` owns is a block of a region it owns.
+        if isinstance(region, LoopRegion) and region.loop_variable is not None:
+            assignments.add(region.loop_variable)
         for ise in region.edges():
             if ise.data.assignments:
                 assignments |= ise.data.assignments.keys()
