@@ -17,6 +17,7 @@ from dace import dtypes
 from dace.codegen.common import get_gpu_backend
 from dace.libraries.fft.environments.fftw3 import FFTW3
 from dace.libraries.fft.nodes import FFT, IFFT
+from dace.libraries.fft.nodes.fft import gpu_fft_layout
 from dace.transformation.auto.auto_optimize import find_fast_library
 from dace.transformation.passes.canonicalize.finalize import canonicalize_set_fast_implementations
 
@@ -259,6 +260,76 @@ def test_gpu_fft_falls_back_to_pure_for_a_middle_axis():
     with pytest.warns(UserWarning, match='cannot transform axes'):
         sdfg.expand_library_nodes()
     np.testing.assert_allclose(sdfg(x=x.copy()), np.fft.fft(x, axis=1), rtol=1e-12, atol=1e-12)
+
+
+def strided_array(shape, strides, storage=dtypes.StorageType.GPU_Global) -> dace.data.Array:
+    """A complex128 descriptor of ``shape`` with explicit ``strides``."""
+    return dace.data.Array(dace.complex128, shape, storage=storage, strides=strides)
+
+
+#: (4, 5, 6, 3) laid out column-major, and as cegterg's ``psic.reshape(n1, n2, n3, m, order='F')``
+#: of a C-order ``(n1*n2*n3, m)`` array: the transformed axes column-major, the batch innermost.
+FORTRAN = [1, 4, 20, 120]
+BATCH_INNERMOST = [3, 12, 60, 1]
+C_ORDER = [90, 18, 3, 1]
+
+
+def test_a_gpu_fft_plans_each_side_s_own_dense_block():
+    """One plan reads and writes every layout whose transformed axes form one dense block.
+
+    cegterg's ``ifftn`` over axes (0, 1, 2) reads a batch-innermost view and writes a Fortran-order
+    result. Both were refused, and the separable DFT that ran instead had host maps over device
+    memory, which failed validation.
+    """
+    shape = [4, 5, 6, 3]
+    fortran, innermost = strided_array(shape, FORTRAN), strided_array(shape, BATCH_INNERMOST)
+    assert gpu_fft_layout(fortran, fortran, [0, 1, 2]) == ([6, 5, 4], 1, 120, 1, 120, 3)
+    assert gpu_fft_layout(innermost, fortran, [0, 1, 2]) == ([6, 5, 4], 3, 1, 1, 120, 3)
+    c_order = strided_array(shape, C_ORDER)
+    assert gpu_fft_layout(c_order, c_order, [0, 1, 2]) == ([4, 5, 6], 3, 1, 3, 1, 3)
+    # The two sides order the transformed axes oppositely: no shared plan, so the source is staged.
+    assert gpu_fft_layout(fortran, c_order, [0, 1, 2]) is None
+
+
+def run_strided_fftn(src_strides, out_strides):
+    """``fftn`` over axes (0, 1, 2) of a (4, 5, 6, 3) operand, each side in its own layout, on the GPU."""
+    shape = (4, 5, 6, 3)
+    sdfg = dace.SDFG('strided_fftn')
+    # Device buffers in the host arrays' own layouts, so both transfers are plain copies.
+    for name, strides in (('x', src_strides), ('y', out_strides)):
+        sdfg.add_datadesc(name, strided_array(shape, strides, dtypes.StorageType.Default))
+        device = strided_array(shape, strides)
+        device.transient = True
+        sdfg.add_datadesc(f'g{name}', device)
+    state = sdfg.add_state()
+    node = FFT('fft', axes=[0, 1, 2])
+    node.implementation = gpu_implementation()
+    gx, gy = state.add_access('gx'), state.add_access('gy')
+    state.add_nedge(state.add_read('x'), gx, dace.Memlet.from_array('x', sdfg.arrays['x']))
+    state.add_edge(gx, None, node, '_inp', dace.Memlet.from_array('gx', sdfg.arrays['gx']))
+    state.add_edge(node, '_out', gy, None, dace.Memlet.from_array('gy', sdfg.arrays['gy']))
+    state.add_nedge(gy, state.add_write('y'), dace.Memlet.from_array('gy', sdfg.arrays['gy']))
+    itemsize = np.dtype(np.complex128).itemsize
+    buffer = rng_complex((4 * 5 * 6 * 3, ))
+    x = np.lib.stride_tricks.as_strided(buffer, shape, [s * itemsize for s in src_strides])
+    y_buffer = np.zeros(4 * 5 * 6 * 3, dtype=np.complex128)
+    y = np.lib.stride_tricks.as_strided(y_buffer, shape, [s * itemsize for s in out_strides])
+    # The operands ARE strided views; that layout is the point of the case.
+    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+        run_without_fallback(sdfg, x=x, y=y)
+    np.testing.assert_allclose(y, np.fft.fftn(x, axes=(0, 1, 2)), rtol=1e-12, atol=1e-10)
+
+
+@pytest.mark.gpu
+def test_gpu_batch_innermost_view_into_a_fortran_result_takes_one_plan():
+    """cegterg's layout pair end to end: the vendor plan, no fallback, numpy's numbers."""
+    run_strided_fftn(BATCH_INNERMOST, FORTRAN)
+
+
+@pytest.mark.gpu
+def test_gpu_oppositely_ordered_sides_stage_the_source():
+    """No shared plan: the source is copied into the output's layout on the device, then planned."""
+    run_strided_fftn(FORTRAN, C_ORDER)
 
 
 if __name__ == '__main__':

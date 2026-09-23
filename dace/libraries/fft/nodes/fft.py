@@ -141,9 +141,17 @@ def vendor_fft_sdfg(node: nodes.LibraryNode, parent_state: SDFGState, parent_sdf
     inp, out = _get_input_and_output(parent_state, node)
     indesc, outdesc = parent_sdfg.arrays[inp], parent_sdfg.arrays[out]
     transformed = normalize_fft_axes(len(indesc.shape), node.axes)
+    # A staged copy of the input in the output's dtype AND layout: the cast a real input needs, and the
+    # relayout a source the vendor cannot plan against the output needs (cegterg's ifftn reads a
+    # batch-innermost view into a Fortran-order result). One device copy beats the separable DFT.
+    staged = data.Array(outdesc.dtype, outdesc.shape, storage=outdesc.storage, strides=outdesc.strides)
     cast = indesc.dtype != outdesc.dtype
-    srcdesc = data.Array(outdesc.dtype, outdesc.shape, storage=outdesc.storage) if cast else indesc
-    tasklet = call(srcdesc, outdesc, transformed, is_inverse) if outdesc.dtype in COMPLEX_TYPES else None
+    tasklet = None
+    if outdesc.dtype in COMPLEX_TYPES:
+        tasklet = None if cast else call(indesc, outdesc, transformed, is_inverse)
+        if tasklet is None:
+            tasklet = call(staged, outdesc, transformed, is_inverse)
+            cast = tasklet is not None
     if tasklet is None:
         warnings.warn(
             f'{backend} cannot transform axes {transformed} of {outdesc.dtype}{list(indesc.shape)} '
@@ -174,7 +182,7 @@ def vendor_fft_sdfg(node: nodes.LibraryNode, parent_state: SDFGState, parent_sdf
     source = '_inp'
     state = sdfg.add_state('fft', is_start_block=True)
     if cast:
-        sdfg.add_transient('__cinp', outdesc.shape, outdesc.dtype, storage=outdesc.storage)
+        sdfg.add_transient('__cinp', outdesc.shape, outdesc.dtype, storage=outdesc.storage, strides=outdesc.strides)
         # The cast names the type: ``decltype(o)`` would be a reference to the target element.
         state.add_mapped_tasklet('cast_in',
                                  ranges, {'i': Memlet(data='_inp', subset=subset)},
@@ -236,28 +244,61 @@ def fftw3_call(src: data.Data, out: data.Data, transformed: list[int], is_invers
                          language=dtypes.Language.CPP)
 
 
-def gpu_fft_layout(src: data.Data, out: data.Data, transformed: list[int]) -> tuple[list, Any, Any, Any] | None:
-    """``(extents, stride, distance, batch)`` of ``transformed`` as ONE ``MakePlanMany`` plan, else ``None``.
+def dense_block_order(descs: Sequence[data.Data], axes: Sequence[int]) -> tuple[list[int], list[Any]] | None:
+    """An order of ``axes``, slowest first, in which every descriptor lays them out as ONE dense block.
 
-    A plan transforms up to three adjacent axes of a batch that steps by a single distance, so the
-    transformed axes must be one contiguous run touching either end of a C-contiguous array: the
-    trailing axes (stride 1, the leading axes are the batch) or the leading ones (stride and batch
-    are the extent of the trailing axes). numpy's result does not depend on the axis order, so the
-    axes are sorted first.
+    Returned with each descriptor's element stride (its fastest axis's stride): axis ``order[k]``
+    steps by that stride times the extents of every later axis. The order is shared, since a plan's
+    dimension list maps the same logical axis in the input and the output.
     """
-    ndim = len(src.shape)
-    axes = sorted(transformed)
-    if (len(set(axes)) != len(axes) or len(axes) > MAX_GPU_FFT_RANK or axes != list(range(axes[0], axes[-1] + 1))
-            or (axes[0] != 0 and axes[-1] != ndim - 1)):
+    for order in itertools.permutations(axes):
+        steps = []
+        for desc in descs:
+            step = span = desc.strides[order[-1]]
+            for axis in reversed(order):
+                if symbolic.equal(desc.strides[axis], span) is not True:
+                    break
+                span = span * desc.shape[axis]
+            else:
+                steps.append(step)
+                continue
+            break
+        if len(steps) == len(descs):
+            return list(order), steps
+    return None
+
+
+def gpu_fft_layout(src: data.Data, out: data.Data,
+                   transformed: list[int]) -> tuple[list, Any, Any, Any, Any, Any] | None:
+    """``(extents, istride, idist, ostride, odist, batch)`` of ``transformed`` as ONE ``MakePlanMany`` plan, else ``None``.
+
+    With the embeds equal to the extents, a plan reads element ``(p, q, r)`` of batch ``b`` at
+    ``stride * (p*n1*n2 + q*n2 + r) + dist * b``, separately for input and output. So each side's
+    transformed axes must be one dense block under a single element stride, and its other axes one
+    dense block under a single batch distance, in an axis order both sides share. That covers the
+    C-order trailing and leading runs, a Fortran-order batch (the C-order batch of its reversed
+    axes), and cegterg's batch-innermost view of an ``order='F'`` reshape. numpy's result does not
+    depend on the axis order, so the order is free to choose.
+    """
+    if len(set(transformed)) != len(transformed) or len(transformed) > MAX_GPU_FFT_RANK:
         return None
-    if any(d.storage != dtypes.StorageType.GPU_Global or not d.is_packed_c_strides() for d in (src, out)):
+    if any(d.storage != dtypes.StorageType.GPU_Global for d in (src, out)):
         return None
-    extents = [src.shape[a] for a in axes]
-    if axes[-1] == ndim - 1:
-        return extents, 1, functools.reduce(operator.mul, extents,
-                                            1), functools.reduce(operator.mul, src.shape[:axes[0]], 1)
-    inner = functools.reduce(operator.mul, src.shape[axes[-1] + 1:], 1)
-    return extents, inner, 1, inner
+    block = dense_block_order((src, out), transformed)
+    if block is None:
+        return None
+    order, (istride, ostride) = block
+    extents = [src.shape[a] for a in order]
+    rest = [a for a in range(len(src.shape)) if a not in transformed]
+    if not rest:
+        size = functools.reduce(operator.mul, extents, 1)
+        return extents, istride, istride * size, ostride, ostride * size, 1
+    batched = dense_block_order((src, out), rest)
+    if batched is None:
+        return None
+    batch_order, (idist, odist) = batched
+    return extents, istride, idist, ostride, odist, functools.reduce(operator.mul, (src.shape[a] for a in batch_order),
+                                                                     1)
 
 
 def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
@@ -272,10 +313,12 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
         layout = gpu_fft_layout(src, out, transformed)
         if layout is None:
             return None
-        extents, stride, distance, batch = layout
+        extents, istride, idist, ostride, odist, batch = layout
         plan = f'{dialect.api}_plan_{next(PLAN_IDS)}'
-        key = [cpp.sym2cpp(e) for e in (*extents, stride, distance, batch)]
-        stride_dist = f'__key[{len(extents)}], __key[{len(extents) + 1}]'
+        key = [cpp.sym2cpp(e) for e in (*extents, istride, idist, ostride, odist, batch)]
+        rank = len(extents)
+        in_layout = f'__key[{rank}], __key[{rank + 1}]'
+        out_layout = f'__key[{rank + 2}], __key[{rank + 3}]'
         kind = f'{dialect.enum}{"Z2Z" if out.dtype == dtypes.complex128 else "C2C"}'
         direction = dialect.inverse if is_inverse else f'{dialect.enum}FORWARD'
         check = (f'auto __check = [](const char *what, {dialect.api}Result result) {{ '
@@ -291,11 +334,11 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
             if (__state->{plan}_made)
                 __check("{dialect.api}Destroy", {dialect.api}Destroy(__state->{plan}));
             __check("{dialect.api}Create", {dialect.api}Create(&__state->{plan}));
-            long long __n[{len(extents)}] = {{{', '.join(key[:len(extents)])}}};
+            long long __n[{rank}] = {{{', '.join(key[:rank])}}};
             size_t __work_size = 0;
             // The embeds are the extents themselves: a NULL embed makes the vendor ignore stride and distance.
-            __check("{dialect.api}MakePlanMany64", {dialect.api}MakePlanMany64(__state->{plan}, {len(extents)}, __n,
-                __n, {stride_dist}, __n, {stride_dist}, {kind}, __key[{len(extents) + 2}], &__work_size));
+            __check("{dialect.api}MakePlanMany64", {dialect.api}MakePlanMany64(__state->{plan}, {rank}, __n,
+                __n, {in_layout}, __n, {out_layout}, {kind}, __key[{rank + 4}], &__work_size));
             for (int __k = 0; __k < {len(key)}; ++__k)
                 __state->{plan}_key[__k] = __key[__k];
             __state->{plan}_made = true;
