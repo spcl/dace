@@ -360,6 +360,20 @@ def test_batchmm_beta(implementation: str, dtype, beta: float):
     np.testing.assert_allclose(z, ref, rtol=1e-5)
 
 
+def test_batchmm_symbolic_alpha_pure():
+    """A symbolic alpha (a runtime coefficient, as LiftEinsum's __einsum_alpha) must reach the pure
+    expansion as an expression instead of failing in float()."""
+    b, m, n, k = 2, 4, 5, 3
+    alpha = dace.symbol('alpha', dace.float64)
+    sdfg = create_bmm_sdfg(dace.float64, [b, m, k], [b, k, n], [b, m, n], alpha, 0.0, "pure", "bmm_symbolic_alpha")
+    sdfg.add_symbol('alpha', dace.float64)
+    rng = np.random.default_rng(0)
+    x, y = rng.random((b, m, k)), rng.random((b, k, n))
+    z = np.zeros((b, m, n))
+    sdfg(A=x, B=y, C=z, alpha=2.5)
+    np.testing.assert_allclose(z, 2.5 * (x @ y), rtol=1e-12)
+
+
 if __name__ == "__main__":
     test_batchmm("pure", dace.float32)
     test_batchmm("pure", dace.float64)

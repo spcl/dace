@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
+import numbers
 from dace import dtypes, memlet as mm, properties, data as dt
 from dace.symbolic import symstr, equal, equal_valued
 import dace.library
@@ -56,6 +57,8 @@ def format_scalar_literal(value, ctype: 'dtypes.typeclass') -> str:
     :param ctype: The DaCe typeclass the literal is cast to.
     :return: A ``dace.<type>(...)`` constructor expression, valid inside a Python tasklet body.
     """
+    if not isinstance(value, numbers.Number):
+        return f'dace.{ctype.to_string()}({value})'
     if ctype.is_complex():
         cvalue = complex(value)
         return f'dace.{ctype.to_string()}({cvalue.real}, {cvalue.imag})'
@@ -220,6 +223,10 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         ctype = cdesc.dtype.ctype
 
         def mkl_coeff(value) -> str:
+            if not isinstance(value, numbers.Number):
+                if dtype in (dace.float32, dace.float64):
+                    return f"({dtype.ctype})({value})"
+                return f"{{({dtype.base_type.ctype})({value}), 0}}"
             if dtype == dace.float32:
                 return f"{float(value)}f"
             if dtype == dace.float64:
