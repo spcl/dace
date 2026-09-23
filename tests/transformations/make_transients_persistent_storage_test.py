@@ -48,3 +48,21 @@ def test_a_default_transient_inside_a_map_is_not_persistent(storage, persistent)
     make_transients_persistent(sdfg, dace.DeviceType.CPU, toplevel_only=False)
 
     assert (sdfg.arrays['buffer'].lifetime == PERSISTENT) is persistent
+
+
+def test_each_distinct_extent_is_compared_with_one_once():
+    """Transients sharing extents share one ``symbolic.equal(extent, 1)``; the verdicts are unchanged."""
+    from unittest import mock
+    from dace import symbolic
+
+    sdfg = dace.SDFG('shared_extents')
+    sdfg.add_symbol('N', dace.int64)
+    shapes = {'a': ['N', 5], 'b': [5, 'N'], 'c': [1, 1], 'd': ['N', 1], 'e': [1]}
+    state = sdfg.add_state()
+    for name, shape in shapes.items():
+        sdfg.add_array(name, shape, dace.float64, transient=True)
+        state.add_access(name)
+    with mock.patch.object(symbolic, 'equal', side_effect=symbolic.equal) as spy:
+        make_transients_persistent(sdfg, dace.DeviceType.CPU)
+    assert spy.call_count == 3, spy.call_args_list  # N, 5 and 1
+    assert {name for name, desc in sdfg.arrays.items() if desc.lifetime == PERSISTENT} == {'a', 'b', 'd'}

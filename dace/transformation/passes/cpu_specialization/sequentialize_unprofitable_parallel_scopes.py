@@ -80,18 +80,6 @@ def min_work_per_region() -> int:
     return int(Config.get('compiler', 'cpu', 'parallel_min_work_per_region'))
 
 
-def worth_forking(iterations, threshold: int) -> bool:
-    """Whether a map of ``iterations`` iterations earns its own OpenMP region.
-
-    :param iterations: the map's own iteration count, constant or symbolic.
-    :param threshold: break-even work per region, in elements; 0 disables the model.
-    :returns: ``True`` to keep the region parallel.
-    """
-    if threshold <= 0:
-        return True
-    return symbolic.ask('negative', symbolic.simplify(iterations - threshold)) is not True
-
-
 @properties.make_properties
 class SequentializeUnprofitableParallelScopes(ppl.Pass):
     """Pin every CPU parallel scope the fork/join cost model refuses to ``Sequential``."""
@@ -125,6 +113,9 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         # LoopRegion's bounds, so a verdict computed under one scope stays valid for a sibling
         # transfer under the same loop.
         self.loop_cache: Dict[int, bool] = {}
+        # Trip count -> ``ask('negative', count - threshold)``. Maps share a handful of trip counts
+        # (cloudsc: 2264 queries, 16 distinct), and each query is a sympy SAT problem.
+        self.below_threshold: Dict[Any, Optional[bool]] = {}
         self.visit_region(sdfg, False)
         return (self.pinned + self.guarded) or None
 
@@ -193,6 +184,23 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
             self.params[sdfg.cfg_id] = cached
         return cached
 
+    def fewer_than_threshold(self, count) -> Optional[bool]:
+        """Whether a trip count provably falls short of the break-even work (three-valued).
+
+        :param count: the map's own iteration count, constant or symbolic.
+        :returns: ``symbolic.ask('negative', count - threshold)``, computed once per count.
+        """
+        if count not in self.below_threshold:
+            self.below_threshold[count] = symbolic.ask('negative', symbolic.simplify(count - self.threshold))
+        return self.below_threshold[count]
+
+    def worth_forking(self, count) -> bool:
+        """Whether a map of ``count`` iterations earns its own OpenMP region (``True`` keeps it parallel).
+
+        :param count: the map's own iteration count, constant or symbolic.
+        """
+        return self.threshold <= 0 or self.fewer_than_threshold(count) is not True
+
     def wants_runtime_guard(self, node: nodes.MapEntry, sdfg: SDFG) -> bool:
         """Whether ``node``'s trip count is a value the program computes rather than a parameter.
 
@@ -203,7 +211,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         count = node.map.range.num_elements()
         if self.threshold <= 0 or not symbolic.issymbolic(count):
             return False
-        if symbolic.ask('negative', symbolic.simplify(count - self.threshold)) is False:
+        if self.fewer_than_threshold(count) is False:
             return False
         params = self.parameter_names(sdfg)
         return any(str(sym) not in params for sym in count.free_symbols)
@@ -223,7 +231,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
                 node.map.schedule = dtypes.ScheduleType.Sequential
                 self.pinned += 1
             return True
-        if worth_forking(node.map.range.num_elements(), self.threshold):
+        if self.worth_forking(node.map.range.num_elements()):
             if self.wants_runtime_guard(node, sdfg):
                 node.map.omp_min_parallel_iterations = self.threshold
                 self.guarded += 1

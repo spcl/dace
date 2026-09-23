@@ -388,6 +388,27 @@ def test_strided_re_entered_copy_is_sequential_but_not_memcpy():
     assert node.implementation in (None, 'Auto')
 
 
+def test_each_distinct_trip_count_is_asked_once():
+    """Maps sharing a trip count share one sympy verdict, and every map still gets its own decision."""
+    from unittest import mock
+    from dace import symbolic
+
+    sdfg = dace.SDFG('shared_trip_counts')
+    sdfg.add_array('a', [ABOVE_BREAK_EVEN], dace.float64)
+    extents = [BELOW_BREAK_EVEN, 'N', BELOW_BREAK_EVEN, 'N', ABOVE_BREAK_EVEN, BELOW_BREAK_EVEN]
+    for index, extent in enumerate(extents):
+        map_state(sdfg, sdfg, f'm{index}', [f'0:{extent}'])
+    for first, second in zip(sdfg.nodes(), sdfg.nodes()[1:]):
+        sdfg.add_edge(first, second, dace.InterstateEdge())
+    sdfg.validate()
+    with pinned_break_even():
+        with mock.patch.object(symbolic, 'ask', side_effect=symbolic.ask) as spy:
+            SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    assert spy.call_count == 3, spy.call_args_list
+    seq, par = dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default
+    assert schedules(sdfg) == {f'm{i}_map': seq if e == BELOW_BREAK_EVEN else par for i, e in enumerate(extents)}
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-q']))

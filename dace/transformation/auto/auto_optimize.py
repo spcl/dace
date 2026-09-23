@@ -726,6 +726,15 @@ def make_transients_persistent(sdfg: SDFG,
     :return: A dictionary mapping SDFG IDs to a set of transient arrays that were made persistent.
     """
     result: Dict[int, Set[str]] = {}
+    # extent -> ``symbolic.equal(extent, 1) is True``: a few distinct extents recur across every
+    # transient (cloudsc: 5516 queries, 6 distinct), and each query can reach sympy's SAT solver.
+    unit_extents: Dict[Any, bool] = {}
+
+    def is_unit(extent) -> bool:
+        if extent not in unit_extents:
+            unit_extents[extent] = symbolic.equal(extent, 1) is True
+        return unit_extents[extent]
+
     for nsdfg in sdfg.all_sdfgs_recursive():
         fsyms: Set[str] = nsdfg.free_symbols
         persistent: Set[str] = set()
@@ -751,7 +760,7 @@ def make_transients_persistent(sdfg: SDFG,
                 if not desc.transient or type(desc) is not dt.Array:
                     not_persistent.add(dnode.data)
                     continue
-                if all(symbolic.equal(s, 1) is True for s in desc.shape):
+                if all(is_unit(s) for s in desc.shape):
                     not_persistent.add(dnode.data)
                     continue
                 if desc.storage not in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global,
