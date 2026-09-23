@@ -2,8 +2,10 @@
 import sympy
 
 import dace
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.sdfg import utils as sdutils
+from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
+from tests.cfg_tree import assert_tree_matches_a_reset, conditional, inner_sdfg, loop, spy_on_resets
 
 
 def test_loop_inlining_regular_for():
@@ -321,6 +323,32 @@ def test_unique_block_name_after_in_place_rename():
 
     labels = [b.label for b in sdfg.nodes()]
     assert len(labels) == len(set(labels)), f'stale label cache reissued a taken name: {labels}'
+    sdfg.validate()
+
+
+def test_inlining_plain_regions_keeps_the_cfg_list_of_a_fresh_reset_without_resetting(monkeypatch):
+    """Every ``ControlFlowRegion.inline`` rebuilt the whole CFG list, and the pass and the helper once more."""
+    sdfg = dace.SDFG('inline_regions_in_place')
+    sdfg.add_symbol('n', dace.int64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    wrap = ControlFlowRegion('wrap')
+    carrier = wrap.add_state('carrier', is_start_block=True)
+    carrier.add_nested_sdfg(inner_sdfg('in', 1), {}, {}, symbol_mapping={'n': 'n'})
+    inner_wrap = ControlFlowRegion('inner_wrap')
+    inner_wrap.add_node(loop('deep_loop'), is_start_block=True)
+    wrap.add_node(inner_wrap)
+    wrap.add_edge(carrier, inner_wrap, dace.InterstateEdge())
+    sdfg.add_node(wrap)
+    sdfg.add_edge(entry, wrap, dace.InterstateEdge())
+    guard = conditional('after_if')
+    sdfg.add_node(guard)
+    sdfg.add_edge(wrap, guard, dace.InterstateEdge())
+    resets = spy_on_resets(monkeypatch)
+    assert InlineControlFlowRegions().apply_pass(sdfg, {}) == 2
+    monkeypatch.undo()
+    assert resets == []
+    assert not any(type(r) is ControlFlowRegion and r.parent_graph is sdfg for r in sdfg.nodes())
+    assert_tree_matches_a_reset(sdfg)
     sdfg.validate()
 
 

@@ -92,7 +92,6 @@ from typing import Any, Dict, List, Optional, Set
 
 from dace import SDFG, dtypes, properties
 from dace.sdfg import nodes
-from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion,
                              ReturnBlock, SDFGState)
@@ -174,11 +173,9 @@ class HoistParallelRegion(ppl.Pass):
         :returns: how many loops were hoisted, or ``None`` if none were.
         """
         self.hoisted = 0
+        # Outlining moves whole states into a new SDFG through ``add_node``, which re-homes every nested
+        # SDFG that travelled with them.
         self.visit_sdfg(sdfg)
-        if self.hoisted:
-            # Outlining moves whole states into a new SDFG, and a nested SDFG that travelled with
-            # them still names the SDFG it left as its parent. Validation reads that pointer.
-            sdutil.set_nested_sdfg_parent_references(sdfg)
         return self.hoisted or None
 
     def visit_sdfg(self, sdfg: SDFG) -> None:

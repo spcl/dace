@@ -13,6 +13,8 @@ import os
 import warnings
 import pytest
 
+from tests.cfg_tree import assert_tree_matches_a_reset, conditional, inner_sdfg, loop, spy_on_resets
+
 W = dace.symbol('W')
 H = dace.symbol('H')
 
@@ -1755,6 +1757,45 @@ def test_inline_shared_inout_connector_rejected(outer_context: str, in_map: bool
     sdfg, nested = make_shared_inout_sdfg('write_then_read', in_map, outer_context)
     with pytest.raises(ValueError, match='Transformation cannot be applied'):
         InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
+
+
+def single_state_caller_of_a_deeper_tree() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    mid = dace.SDFG('mid')
+    mid.add_symbol('n', dace.int64)
+    mid.add_array('x', [10], dace.float64)
+    body = mid.add_state('mid_s', is_start_block=True)
+    body.add_nested_sdfg(inner_sdfg('deep', 1), {}, {}, symbol_mapping={'n': 'n'})
+    tasklet = body.add_tasklet('t', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_write('x'), None, dace.Memlet('x[0]'))
+    sdfg = dace.SDFG('outer')
+    sdfg.add_symbol('n', dace.int64)
+    sdfg.add_array('a', [10], dace.float64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    top = loop('top_loop')
+    sdfg.add_node(top)
+    sdfg.add_edge(entry, top, dace.InterstateEdge())
+    host = top.nodes()[0]
+    node = host.add_nested_sdfg(mid, {}, {'x'}, symbol_mapping={'n': 'n'})
+    host.add_edge(node, 'x', host.add_write('a'), None, dace.Memlet('a[0:10]'))
+    guard = conditional('after_if')
+    sdfg.add_node(guard)
+    sdfg.add_edge(top, guard, dace.InterstateEdge())
+    return sdfg, host, node
+
+
+def test_inline_sdfg_keeps_the_cfg_list_of_a_fresh_reset_without_resetting(monkeypatch):
+    """InlineSDFG rebuilt the whole CFG list per inline (cloudsc: 2740 inlines); the node moves splice it in place."""
+    sdfg, host, node = single_state_caller_of_a_deeper_tree()
+    inline = InlineSDFG()
+    inline.setup_match(sdfg, host.parent_graph.cfg_id, host.block_id, {InlineSDFG.nested_sdfg: node}, 0, override=True)
+    assert inline.can_be_applied(host, 0, sdfg)
+    resets = spy_on_resets(monkeypatch)
+    inline.apply(host, sdfg)
+    monkeypatch.undo()
+    assert resets == []
+    assert not any(isinstance(n, dace_nodes.NestedSDFG) and n.sdfg.name == 'mid' for n in host.nodes())
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
 
 
 if __name__ == "__main__":

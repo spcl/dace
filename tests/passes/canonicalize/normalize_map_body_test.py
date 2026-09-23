@@ -27,6 +27,7 @@ from dace.transformation.interstate.state_fusion_with_happens_before import Stat
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -495,12 +496,16 @@ def test_a_map_with_one_nested_body_never_sorts_its_state(monkeypatch):
     assert calls == [], f'the state was sorted {len(calls)} times for maps with nothing to merge'
 
 
-def test_merging_conditional_block_siblings_keeps_the_cfg_list_of_a_fresh_reset():
+def test_merging_conditional_block_siblings_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """A sibling whose body IS a ``ConditionalBlock`` moves region blocks into the merge base; the
     CFG list the moves leave must equal what a fresh ``reset_cfg_list`` builds, or ``cfg_id`` disagrees
-    with the tree the next time anything resets it."""
+    with the tree the next time anything resets it. The moves keep it so without a reset of their own."""
     sdfg = guarded_siblings_sdfg(maps=1, siblings=2)
+    resets = spy_on_resets(monkeypatch)
     assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, 'the two siblings should merge'
+    monkeypatch.undo()
+    assert resets == []
+    assert_tree_matches_a_reset(sdfg)
     merged = [n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
     assert len(merged) == 1
     assert len([b for b in merged[0].sdfg.nodes() if isinstance(b, ConditionalBlock)]) == 2

@@ -20,6 +20,7 @@ import pytest
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_fusion import LoopFusion
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 N = dace.symbol("N")
 
@@ -913,3 +914,23 @@ def test_provable_read_behind_symbolic_still_fuses():
     pairs = adjacent_loop_pairs(sd)
     assert any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
         "provable read-behind a[i-K] must remain fusable"
+
+
+def test_fusion_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """Splicing the second loop's body into the first moves blocks between regions in place."""
+
+    @dace.program
+    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+        for i in range(1, N):
+            b[i] = b[i - 1] + a[i]
+        for i in range(1, N):
+            c[i] = c[i - 1] + b[i]
+
+    sd = prog.to_sdfg(simplify=True)
+    resets = spy_on_resets(monkeypatch)
+    assert sd.apply_transformations_repeated(LoopFusion) == 1
+    monkeypatch.undo()
+    assert resets == []
+    assert nloops(sd) == 1
+    assert_tree_matches_a_reset(sd)
+    sd.validate()

@@ -57,7 +57,6 @@ from dace.properties import CodeBlock
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import nest_state_subgraph
 
@@ -546,12 +545,9 @@ class MoveMapInvariantIfUp(ppl.Pass):
                 break
             isolated.add(key)
             progressed = self._isolate_inner_map(*inner)
-            set_nested_sdfg_parent_references(sdfg)
             if not progressed:
                 structural_changes += 1
                 break
-        if count:
-            set_nested_sdfg_parent_references(sdfg)
         return (count + structural_changes) or None
 
     @staticmethod

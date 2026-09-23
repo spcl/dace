@@ -16,7 +16,6 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG, AccessNode, Tasklet
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import transformation
 from dace.transformation import helpers as xfh
@@ -573,5 +572,3 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                 enclosing_sdfg.remove_node(s)
         if removed_start:
             enclosing_sdfg.start_block = enclosing_sdfg.node_id(new_branch_state)
-
-        set_nested_sdfg_parent_references(sdfg)

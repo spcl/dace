@@ -43,7 +43,6 @@ from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg import nodes
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 # Shared soundness kernel for the loop distribution below -- the same import route
 # ``fuse_loops.py`` uses, so fission, fusion and this hoist can never disagree.
@@ -350,9 +349,8 @@ def _split_guard_loop(sdfg: SDFG, require_full_hoist: bool) -> bool:
                 isinstance(n, nodes.CodeNode) and n.has_ordered_side_effects(st.sdfg) for st in loop.all_states()
                 for n in st.nodes()):
             continue
+        # Each per-group clone is re-homed, nested SDFGs included, as ``add_node`` claims it.
         LoopFission._fission_blocks(loop, groups)
-        # The per-group deepcopy leaves nested SDFGs pointing at the old parent.
-        set_nested_sdfg_parent_references(sdfg)
         return True
     return False
 
@@ -410,8 +408,6 @@ class MoveLoopInvariantIfUp(ppl.Pass):
                 continue
             self._move(*m)
             count += 1
-        if count:
-            set_nested_sdfg_parent_references(sdfg)
         return count or None
 
     @staticmethod

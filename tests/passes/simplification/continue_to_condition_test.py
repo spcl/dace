@@ -6,6 +6,7 @@ from dace.transformation.passes.simplification.continue_to_condition import Cont
 from dace.sdfg.state import ContinueBlock, LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.properties import CodeBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 
 def test_regular_loop():
@@ -388,6 +389,28 @@ def test_consecutive_continues():
     out = np.zeros(1, dtype=np.int64)
     sdfg(a=a, out=out)
     assert out[0] == int(a[a > 3].sum())
+
+
+def test_nested_loop_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """The blocks after the ``continue`` are copied into the branch and the originals dropped, in place."""
+
+    @dace.program
+    def tester(a: dace.float64[20, 20]):
+        for i in range(20):
+            for j in range(20):
+                if a[i, j] > 10:
+                    continue
+                a[i, j] = a[i, j] + 1
+
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
+    resets = spy_on_resets(monkeypatch)
+    assert ContinueToCondition().apply_pass(sdfg, {}) is not None
+    monkeypatch.undo()
+    assert resets == []
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
 
 
 if __name__ == '__main__':

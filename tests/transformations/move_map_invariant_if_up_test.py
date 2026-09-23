@@ -13,6 +13,7 @@ import pytest
 import dace
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 N = 8
 
@@ -408,6 +409,26 @@ def test_idempotent():
     sdfg = kern.to_sdfg(simplify=True)
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 1
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
+    sdfg.validate()
+
+
+def test_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """Each hoist and each inner-map isolation rebuilt the whole CFG list; the graph operations keep it."""
+    K = dace.symbol('K')
+
+    @dace.program
+    def kern(b: dace.float64[N, N]):
+        for i in dace.map[0:N]:
+            for j in dace.map[0:N]:
+                if K > 0:
+                    b[i, j] = 1.0
+
+    sdfg = kern.to_sdfg(simplify=True)
+    resets = spy_on_resets(monkeypatch)
+    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 2
+    monkeypatch.undo()
+    assert resets == []
+    assert_tree_matches_a_reset(sdfg)
     sdfg.validate()
 
 

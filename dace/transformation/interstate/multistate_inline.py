@@ -15,7 +15,7 @@ from dace.sdfg.tasklet_utils import tasklet_replace_code, token_replace_dict
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, CodeBlock
 from dace import data
-from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ReturnBlock, cfg_tree_list
 
 
 def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
@@ -37,8 +37,30 @@ def _trailing_returns(nsdfg: SDFG) -> List[ReturnBlock]:
     ]
 
 
+def listed_subtree(sdfg: SDFG) -> Dict[AbstractControlFlowRegion, bool]:
+    """``sdfg`` and every region below it in pre-order, each mapped to whether ``sdfg`` owns it directly.
+
+    Read off the CFG list, which the graph operations keep in reset order: a subtree is one contiguous
+    slice of it, and a region's parent is listed before it, so no state's dataflow has to be scanned for
+    nested SDFGs and no ancestor chain has to be climbed.
+    """
+    cfg_list = cfg_tree_list(sdfg) or sdfg.cfg_list
+    owned: Dict[AbstractControlFlowRegion, bool] = {sdfg: True}
+    for region in itertools.islice(cfg_list, sdfg.cfg_id + 1, None):
+        nested = isinstance(region, SDFG)
+        if nested:
+            parent = None if region.parent is None else region.parent.parent_graph
+        else:
+            parent = region.parent_graph
+        parent_owned = owned.get(parent)
+        if parent_owned is None:
+            break
+        owned[region] = parent_owned and not nested
+    return owned
+
+
 def outer_names(sdfg: SDFG) -> Tuple[Dict[str, Any], Set[str], Set[str]]:
-    """The names ``sdfg`` already uses that inlining must not reuse, from ONE walk of its tree.
+    """The names ``sdfg`` already uses that inlining must not reuse.
 
     :param sdfg: The SDFG the nested SDFG is inlined into.
     :returns: ``sdfg``'s symbols plus those its interstate edges define (untyped), every interstate
@@ -48,24 +70,14 @@ def outer_names(sdfg: SDFG) -> Tuple[Dict[str, Any], Set[str], Set[str]]:
     symbols = {str(k): v for k, v in sdfg.symbols.items()}
     assignments: Set[str] = set()
     labels: Set[str] = set()
-    # Pre-order, as ``all_control_flow_regions(recursive=True)`` walks; a region reached through a
-    # nested SDFG only contributes labels.
-    stack: List[Tuple[AbstractControlFlowRegion, bool]] = [(sdfg, True)]
-    while stack:
-        region, own = stack.pop()
-        children = []
-        for block in region.nodes():
-            labels.add(block.label)
-            if isinstance(block, SDFGState):
-                children.extend(
-                    (node.sdfg, False) for node in block.nodes() if isinstance(node, nodes.NestedSDFG) and node.sdfg)
-            elif isinstance(block, AbstractControlFlowRegion):
-                children.append((block, own))
-                if own and isinstance(block, LoopRegion) and block.loop_variable is not None:
-                    assignments.add(block.loop_variable)
-        stack.extend(reversed(children))
+    # A region reached through a nested SDFG only contributes labels.
+    for region, own in listed_subtree(sdfg).items():
+        labels.update([block.label for block in region.nodes()])
         if not own:
             continue
+        # A loop ``sdfg`` owns is a block of a region it owns.
+        if isinstance(region, LoopRegion) and region.loop_variable is not None:
+            assignments.add(region.loop_variable)
         for ise in region.edges():
             if ise.data.assignments:
                 assignments |= ise.data.assignments.keys()

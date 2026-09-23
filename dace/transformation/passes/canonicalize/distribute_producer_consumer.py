@@ -40,7 +40,6 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks, _is_per_iter_subset
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 
 
 def _interstate_reads(block) -> List[str]:
@@ -206,7 +205,6 @@ class DistributeProducerConsumerLoop(ppl.Pass):
                 if groups is None:
                     continue
                 LoopFission._fission_blocks(loop, groups)
-                set_nested_sdfg_parent_references(sdfg)
                 count += 1
                 changed = True
                 break

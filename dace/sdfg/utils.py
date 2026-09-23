@@ -1705,8 +1705,6 @@ def inline_control_flow_regions(sdfg: SDFG,
         from dace.transformation.passes.dead_state_elimination import DeadStateElimination
         DeadStateElimination().apply_pass(sdfg, {})
 
-    sdfg.reset_cfg_list()
-
     return count
 
 
@@ -2461,14 +2459,20 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
 def set_nested_sdfg_parent_references(sdfg: SDFG):
     """
-    Sets the parent_sdfg attribute for all NestedSDFGs recursively.
+    Sets the parent_sdfg attribute for all NestedSDFGs recursively, and rebuilds the CFG list once.
+
+    The graph operations keep both in place; this is the repair for a tree assembled around them.
     """
     sdfg.reset_cfg_list()
+    point_nested_sdfgs_at_their_parents(sdfg)
+
+
+def point_nested_sdfgs_at_their_parents(sdfg: SDFG):
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, NestedSDFG):
                 node.sdfg.parent_sdfg = sdfg
-                set_nested_sdfg_parent_references(node.sdfg)
+                point_nested_sdfgs_at_their_parents(node.sdfg)
 
 
 def get_used_data(scope: Union[ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG],

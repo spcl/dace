@@ -344,6 +344,21 @@ def test_outer_names_are_what_the_three_walks_collected():
     assert 'j' not in symbols and 'k' in symbols
 
 
+def test_outer_names_of_a_nested_sdfg_stop_at_its_subtree():
+    """The names are read off the kept CFG list; a nested SDFG's slice of it ends where its subtree does."""
+    sdfg = sdfg_with_names_everywhere()
+    late = LoopRegion('late_loop', 'p < n', 'p', 'p = 0', 'p = p + 1')
+    late.add_state('late_body', is_start_block=True)
+    sdfg.add_node(late)
+    sdfg.add_edge(next(b for b in sdfg.nodes() if b.label == 'after'), late, dace.InterstateEdge())
+    inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    assert sdfg.cfg_list[-1] is late
+    symbols, assignments, labels = outer_names(inner)
+    assert (set(symbols), assignments, labels) == outer_names_by_walks(inner)
+    assert labels == {'inner_first', 'inner_loop', 'inner_body'}
+    assert assignments == {'inner_only', 'q'}
+
+
 if __name__ == '__main__':
     test_inline_preserves_pre_and_post_numerics()
     test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment()
@@ -351,4 +366,5 @@ if __name__ == '__main__':
     test_inline_keeps_library_node_connectors_but_renames_tasklet_ones()
     test_inline_refuses_inside_map_scope()
     test_outer_names_are_what_the_three_walks_collected()
+    test_outer_names_of_a_nested_sdfg_stop_at_its_subtree()
     print('all ok')

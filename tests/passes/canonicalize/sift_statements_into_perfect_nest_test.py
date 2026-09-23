@@ -25,6 +25,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.canonicalize.sift_statements_into_perfect_nest import sift_imperfect_nests
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -403,6 +404,18 @@ def test_sift_is_idempotent():
     sdfg = _pre_only.to_sdfg(simplify=True)
     assert sift_imperfect_nests(sdfg) == 1
     assert sift_imperfect_nests(sdfg) == 0
+
+
+def test_sifting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """A sift deep-copies statements into guards inside the inner loop; ``add_node`` lists every copy."""
+    sdfg = _pre_and_post.to_sdfg(simplify=True)
+    resets = spy_on_resets(monkeypatch)
+    assert sift_imperfect_nests(sdfg) == 1
+    monkeypatch.undo()
+    assert resets == []
+    assert len(_conds(sdfg)) == 2
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
 
 
 if __name__ == '__main__':

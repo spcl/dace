@@ -35,6 +35,7 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
                                                                                   names_read_by)
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 N = dace.symbol('N')
 K = dace.symbol('K')
@@ -770,6 +771,24 @@ def test_constant_index_element_read_of_a_loop_written_array_stays_inside():
     got = np.arange(1, n + 1, dtype=np.int64)
     sdfg(A=got, N=n)
     assert got[0] == oracle[0], f'hoisted element read: {got[0]} != {oracle[0]}'
+
+
+def test_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """A hoist only adds states and moves assignments; it never needed a whole-tree CFG-list rebuild."""
+    sdfg = dace.SDFG('two_sibling_loops_cfg')
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_symbol('kp1', dace.int64)
+    l1 = _make_loop_with_iedge('loop_a', 'kp1', 'K + 1')
+    l2 = _make_loop_with_iedge('loop_b', 'kp1', 'K + 1')
+    sdfg.add_node(l1, is_start_block=True)
+    sdfg.add_node(l2)
+    sdfg.add_edge(l1, l2, InterstateEdge())
+    resets = spy_on_resets(monkeypatch)
+    assert _apply(sdfg) == 2
+    monkeypatch.undo()
+    assert resets == []
+    assert not _assignments_inside_loops(sdfg)
+    assert_tree_matches_a_reset(sdfg)
 
 
 if __name__ == '__main__':

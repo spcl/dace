@@ -8,58 +8,9 @@ import pytest
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-
-
-def assert_tree_consistent(sdfg: dace.SDFG) -> None:
-    """``cfg_list`` is the pre-order a reset would build, shared by every region, and every block and nested
-    SDFG points at where it sits."""
-    fresh = list(sdfg.all_control_flow_regions(recursive=True))
-    listed = sdfg.cfg_list
-    assert len(listed) == len(fresh) and all(a is b for a, b in zip(listed, fresh)), ([r.label for r in listed],
-                                                                                      [r.label for r in fresh])
-    for region in fresh:
-        assert region._cfg_list is listed, region.label
-        owner = region if isinstance(region, dace.SDFG) else region.sdfg
-        for block in region.nodes():
-            assert block.parent_graph is region, (block.label, region.label)
-            assert block.sdfg is owner, (block.label, region.label)
-            if isinstance(block, dace.SDFGState):
-                for node in block.nodes():
-                    if isinstance(node, nodes.NestedSDFG):
-                        assert node.sdfg.parent is block and node.sdfg.parent_nsdfg_node is node, node.label
-                        assert node.sdfg.parent_sdfg is owner, node.label
-
-
-def loop(label: str) -> LoopRegion:
-    region = LoopRegion(label, f'{label}_i < 4', f'{label}_i', f'{label}_i = 0', f'{label}_i = {label}_i + 1')
-    region.add_state(f'{label}_body', is_start_block=True)
-    return region
-
-
-def conditional(label: str) -> ConditionalBlock:
-    block = ConditionalBlock(label)
-    for k, condition in enumerate(('n > 0', None)):
-        branch = ControlFlowRegion(f'{label}_b{k}')
-        branch.add_state(f'{label}_b{k}_s', is_start_block=True)
-        block.add_branch(CodeBlock(condition) if condition else None, branch)
-    return block
-
-
-def inner_sdfg(label: str, depth: int) -> dace.SDFG:
-    sdfg = dace.SDFG(label)
-    sdfg.add_symbol('n', dace.int64)
-    first = sdfg.add_state(f'{label}_first', is_start_block=True)
-    body = loop(f'{label}_loop')
-    sdfg.add_node(body)
-    sdfg.add_edge(first, body, dace.InterstateEdge())
-    guard = conditional(f'{label}_if')
-    sdfg.add_node(guard)
-    sdfg.add_edge(body, guard, dace.InterstateEdge())
-    if depth > 0:
-        host = body.nodes()[0]
-        host.add_nested_sdfg(inner_sdfg(f'{label}_n', depth - 1), {}, {}, symbol_mapping={'n': 'n'})
-    return sdfg
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from tests.cfg_tree import (assert_tree_consistent, assert_tree_matches_a_reset, conditional, inner_sdfg, loop,
+                            spy_on_resets)
 
 
 def two_level_sdfg() -> dace.SDFG:
@@ -288,3 +239,17 @@ def test_a_region_pass_may_remove_the_region_it_visits():
     assert not any(isinstance(b, ConditionalBlock) for b in sdfg.nodes()), 'the empty ConditionalBlock is gone'
     assert_tree_consistent(sdfg)
     sdfg.validate()
+
+
+def test_set_nested_sdfg_parent_references_rebuilds_the_list_once_and_repairs_every_level(monkeypatch):
+    """It reset the whole tree once per nested SDFG, quadratic in their number (wfg NormalizeMapBody)."""
+    sdfg = two_level_sdfg()
+    nested = [n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]
+    assert len(nested) == 4
+    for sd in nested:
+        sd._parent_sdfg = None
+    resets = spy_on_resets(monkeypatch)
+    dace.sdfg.utils.set_nested_sdfg_parent_references(sdfg)
+    monkeypatch.undo()
+    assert resets == [sdfg]
+    assert_tree_matches_a_reset(sdfg)

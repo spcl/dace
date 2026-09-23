@@ -15,6 +15,7 @@ import numpy as np
 import dace
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -395,6 +396,36 @@ def test_scalar_guard_sifts_all_the_way_up_both_modes():
             sdfg(a=a.copy(), b=out, c=np.array([cv], np.float64), N=n, M=m)
             exp = a + 1.0 if cv > 0.5 else np.full((n, m), 6.0)
             assert np.allclose(out, exp), f"mismatch full={full} c={cv}"
+
+
+K = dace.symbol('K')
+
+
+@dace.program
+def guard_beside_an_independent_statement(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for k in range(N):
+        c[k] = a[k] * 2.0
+        if K > 0:
+            b[k] = a[k] + 1.0
+
+
+def test_splitting_and_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """The split clones the loop once per group and the hoist moves it under the guard; neither needs a
+    whole-tree CFG-list rebuild."""
+    n = 9
+    a = np.random.rand(n)
+    sdfg = guard_beside_an_independent_statement.to_sdfg(simplify=True)
+    resets = spy_on_resets(monkeypatch)
+    assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) == 1, "must split, then hoist"
+    monkeypatch.undo()
+    assert resets == []
+    assert _guard_wraps_a_loop(sdfg)
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
+    for kv in (1, 0):
+        b, c = np.full(n, 7.0), np.zeros(n)
+        sdfg(a=a.copy(), b=b, c=c, N=n, K=kv)
+        assert np.allclose(c, a * 2.0) and np.allclose(b, a + 1.0 if kv > 0 else 7.0), f"mismatch K={kv}"
 
 
 if __name__ == '__main__':

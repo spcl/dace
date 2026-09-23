@@ -94,7 +94,6 @@ from typing import Any
 from dace import SDFG, properties
 from dace.config import Config
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import _forward_flow_groups, _rw_subsets
@@ -244,10 +243,8 @@ def distribute_loops(sdfg: SDFG, diagnostics: list | None = None) -> int:
                 continue
             if diagnostics is not None:
                 diagnostics.append((loop.label, ) + parallel_level_diagnostic(loop, groups))
+            # ``add_node`` re-homes each per-group ``copy.deepcopy(loop)`` clone, nested SDFGs included.
             LoopFission._fission_blocks(loop, groups)
-            # The per-group ``copy.deepcopy(loop)`` clones leave any nested SDFG inside the body
-            # with a stale ``parent_sdfg``; reattach before the next scan re-reads the CFG.
-            set_nested_sdfg_parent_references(sdfg)
             count += 1
             changed = True
             break
