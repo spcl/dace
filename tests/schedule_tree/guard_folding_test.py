@@ -5,9 +5,9 @@ import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import (fold_guards, forward_substitute_conditions, merge_contiguous_loops,
-                                                     pair_complementary_guards, remove_dead_assignments,
-                                                     split_iteration_spaces)
+from dace.sdfg.analysis.schedule_tree.passes import (fold_guards, forward_substitute_conditions, fuse_rolled_loops,
+                                                     merge_contiguous_loops, pair_complementary_guards,
+                                                     remove_dead_assignments, reroll_statements, split_iteration_spaces)
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -607,6 +607,98 @@ def test_merge_restores_map_split_with_privatized_transients():
     assert np.allclose(b, a * 2.0)
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Rerolling
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _copy_tasklet(out: str, inp: str, code: str = 'b = a') -> tn.TaskletNode:
+    tasklet = dace.nodes.Tasklet('copy', {'a'}, {'b'}, code)
+    return tn.TaskletNode(node=tasklet, in_memlets={'a': dace.Memlet(inp)}, out_memlets={'b': dace.Memlet(out)})
+
+
+def _statements_tree(statements: list) -> tn.ScheduleTreeRoot:
+    sdfg = dace.SDFG('reroll')
+    sdfg.add_array('A', [6, 6], dace.float64)
+    sdfg.add_array('B', [6, 6], dace.float64)
+    sdfg.add_array('C', [6, 6], dace.float64)
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+    stree.children = []
+    stree.add_children(statements)
+    return stree
+
+
+def _check_statements(stree: tn.ScheduleTreeRoot, reference: tn.ScheduleTreeRoot):
+    a = np.random.rand(6, 6)
+    expected, result = [np.zeros((6, 6)), np.zeros((6, 6))], [np.zeros((6, 6)), np.zeros((6, 6))]
+    _run(reference, A=a, B=expected[0], C=expected[1])
+    _run(stree, A=a, B=result[0], C=result[1])
+    assert np.allclose(result[0], expected[0]) and np.allclose(result[1], expected[1])
+
+
+def test_reroll_corner_block_into_2d_loop():
+    """``B[x, y] = A[5 - y, x]`` for ``y`` outer and ``x`` inner (the SW corner fill of a cubed-sphere tile)."""
+    statements = lambda: [_copy_tasklet(f'B[{x}, {y}]', f'A[{5 - y}, {x}]') for y in range(3) for x in range(3)]
+    stree, reference = _statements_tree(statements()), _statements_tree(statements())
+    assert reroll_statements(stree) == 1
+    (outer, ) = stree.children
+    assert isinstance(outer, tn.ForScope) and isinstance(outer.children[0], tn.ForScope)
+    assert len(_nodes(stree, tn.TaskletNode)) == 1
+    _check_statements(stree, reference)
+
+
+def test_reroll_keeps_order_between_signatures():
+    """Runs are only formed from consecutive statements of one signature, so interleaved code keeps its order."""
+    statements = lambda: ([_copy_tasklet(f'B[0, {x}]', f'A[1, {x}]')
+                           for x in range(4)] + [_copy_tasklet('B[0, 1]', 'A[5, 5]', 'b = 2 * a')] +
+                          [_copy_tasklet(f'B[0, {x}]', f'A[2, {x}]') for x in range(4)])
+    stree, reference = _statements_tree(statements()), _statements_tree(statements())
+    assert reroll_statements(stree) == 2
+    assert [type(n).__name__ for n in stree.children] == ['ForScope', 'TaskletNode', 'ForScope']
+    _check_statements(stree, reference)
+
+
+def test_reroll_leaves_irregular_runs():
+    statements = lambda: [_copy_tasklet(f'B[0, {x}]', f'A[0, {x}]') for x in (0, 1, 3, 5)]
+    stree = _statements_tree(statements())
+    assert reroll_statements(stree) == 0
+    assert len(stree.children) == 4
+
+
+def test_reroll_stacks_equal_runs():
+    """Points 0, 1, 3, 4 are ``x + 3 * y`` over a 2x2 box."""
+    statements = lambda: [_copy_tasklet(f'B[0, {x}]', f'A[1, {x}]') for x in (0, 1, 3, 4)]
+    stree, reference = _statements_tree(statements()), _statements_tree(statements())
+    assert reroll_statements(stree) == 1
+    assert len(_nodes(stree, tn.ForScope)) == 2
+    _check_statements(stree, reference)
+
+
+def _two_corner_fills(second_input: str) -> list:
+    """SW corner fills of ``B`` (from ``A``) and then of ``C`` (from the mirrored corner of ``second_input``)."""
+    return ([_copy_tasklet(f'B[{x}, {y}]', f'A[{5 - y}, {x}]') for y in range(3) for x in range(3)] +
+            [_copy_tasklet(f'C[{x}, {y}]', f'{second_input}[{2 - x}, {2 - y}]') for y in range(3) for x in range(3)])
+
+
+def test_fuse_rolled_loops_of_independent_fields():
+    stree, reference = _statements_tree(_two_corner_fills('A')), _statements_tree(_two_corner_fills('A'))
+    assert reroll_statements(stree) == 2
+    assert fuse_rolled_loops(stree) == 1
+    (outer, ) = stree.children
+    assert len(outer.children[0].children) == 2  # Both fields in one 3x3 nest
+    _check_statements(stree, reference)
+
+
+def test_fuse_rolled_loops_not_across_dependence():
+    """``C[x, y]`` reads ``B[2 - x, 2 - y]``: in a merged nest, the first iterations would read ``B`` elements that
+    are written only in later ones."""
+    stree = _statements_tree(_two_corner_fills('B'))
+    assert reroll_statements(stree) == 2
+    assert fuse_rolled_loops(stree) == 0
+    assert len(stree.children) == 2
+
+
 if __name__ == '__main__':
     test_fold_atom_implied_by_loop_range()
     test_fold_removes_never_taken_and_splices_always_taken()
@@ -635,3 +727,9 @@ if __name__ == '__main__':
     test_merge_not_applied([(0, 3), (3, 8)], 3.0)
     test_merge_not_applied_when_first_body_changes_bound_of_second()
     test_merge_restores_map_split_with_privatized_transients()
+    test_reroll_corner_block_into_2d_loop()
+    test_reroll_keeps_order_between_signatures()
+    test_reroll_leaves_irregular_runs()
+    test_reroll_stacks_equal_runs()
+    test_fuse_rolled_loops_of_independent_fields()
+    test_fuse_rolled_loops_not_across_dependence()
