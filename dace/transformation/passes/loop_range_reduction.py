@@ -60,23 +60,25 @@ _SYMBOLIC_FUNCTIONS = {
 _SYMBOLIC_BOUND_NODES = (ast.Name, ast.Constant, ast.BinOp, ast.UnaryOp, ast.operator, ast.unaryop, ast.expr_context)
 _CONSTANT_ATOM_NODES = (ast.Compare, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Name, ast.Constant, ast.Subscript,
                         ast.Tuple, ast.operator, ast.unaryop, ast.cmpop, ast.boolop, ast.expr_context)
+_CONSTANT_FUNCTIONS = {'int', 'float', 'bool', 'abs', 'min', 'max'}
 
 # Upper bound on the number of conjunctive clauses a guard is allowed to expand into.
 _MAX_CLAUSES = 64
 
 
-class _Interval(NamedTuple):
+class Interval(NamedTuple):
     """A closed integer interval ``[lo, hi]``; ``None`` on either side means unbounded."""
     lo: Optional[sympy.Expr]
     hi: Optional[sympy.Expr]
 
 
-_UNBOUNDED = _Interval(None, None)
+UNBOUNDED = Interval(None, None)
 
 
-class _IterInfo(NamedTuple):
+class IterationSpace(NamedTuple):
     """One iteration space: a loop, or one dimension of a map."""
-    sdfg: SDFG  # The SDFG whose symbols and constants the bounds are expressed in
+    repository: Any  # Where names resolve: anything with ``constants``, ``arrays`` and ``symbols`` (an SDFG, or a
+    # schedule tree root adapter)
     itervar: str
     start: sympy.Expr
     end: sympy.Expr  # Inclusive last iterate under normal termination
@@ -89,13 +91,13 @@ class _IterInfo(NamedTuple):
         return self.stride > 0
 
     @property
-    def iteration_range(self) -> _Interval:
-        return _Interval(self.start, self.end) if self.ascending else _Interval(self.end, self.start)
+    def iteration_range(self) -> Interval:
+        return Interval(self.start, self.end) if self.ascending else Interval(self.end, self.start)
 
 
-class _Range(NamedTuple):
+class ReducedRange(NamedTuple):
     """One reduced loop: its iterate interval plus the guard atoms that could not be folded into the range."""
-    interval: _Interval
+    interval: Interval
     residual: List[ast.expr]
     clause: int
     position: int
@@ -119,7 +121,7 @@ def _num(expr) -> Optional[sympy.Number]:
     return simplified if getattr(simplified, 'is_number', False) else None
 
 
-def _intersect(a: _Interval, b: _Interval) -> _Interval:
+def intersect(a: Interval, b: Interval) -> Interval:
     if a.lo is None:
         lo = b.lo
     elif b.lo is None:
@@ -132,22 +134,22 @@ def _intersect(a: _Interval, b: _Interval) -> _Interval:
         hi = a.hi
     else:
         hi = sympy.Min(a.hi, b.hi)
-    return _Interval(lo, hi)
+    return Interval(lo, hi)
 
 
-def _provably_empty(iv: _Interval) -> bool:
+def provably_empty(iv: Interval) -> bool:
     if iv.lo is None or iv.hi is None:
         return False
     diff = _num(iv.hi - iv.lo)
-    return diff is not None and diff < 0
+    return diff is not None and bool(diff < 0)
 
 
-def _provably_before(a: _Interval, b: _Interval) -> bool:
+def provably_before(a: Interval, b: Interval) -> bool:
     """Whether every point of ``a`` lies strictly below every point of ``b``."""
     if a.hi is None or b.lo is None:
         return False
     gap = _num(b.lo - a.hi)
-    return gap is not None and gap > 0
+    return gap is not None and bool(gap > 0)
 
 
 def _names(node: ast.AST) -> Set[str]:
@@ -228,18 +230,19 @@ def _dnf(node: ast.AST, negate: bool = False) -> Optional[List[List[ast.expr]]]:
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _symbolic_namespace(sdfg: SDFG, names: Set[str]) -> Optional[Dict[str, Any]]:
-    """Evaluation namespace that turns an integer expression over ``names`` into a symbolic expression: SDFG symbols
+def _symbolic_namespace(repository, names: Set[str]) -> Optional[Dict[str, Any]]:
+    """Evaluation namespace that turns an integer expression over ``names`` into a symbolic expression: symbols
     become typed symbol objects, scalar constants their values. ``None`` if a name is data or a non-integer symbol."""
     namespace: Dict[str, Any] = dict(_SYMBOLIC_FUNCTIONS)
-    constants = sdfg.constants
+    constants = repository.constants
     for name in names:
         if name in constants and not isinstance(constants[name], np.ndarray):
             namespace[name] = constants[name]
-        elif name in sdfg.arrays or name in constants:
+        elif name in repository.arrays or name in constants:
             return None
-        elif name in sdfg.symbols:
-            dtype = sdfg.symbols[name]
+        elif name in repository.symbols:
+            dtype = repository.symbols[name]
+            dtype = getattr(dtype, 'dtype', dtype)  # A schedule tree root may hold symbol objects
             if not np.issubdtype(dtype.type, np.integer):
                 return None
             namespace[name] = symbolic.symbol(name, dtype)
@@ -248,7 +251,15 @@ def _symbolic_namespace(sdfg: SDFG, names: Set[str]) -> Optional[Dict[str, Any]]
     return namespace
 
 
-def _symbolic_atom(atom: ast.expr, info: _IterInfo) -> Optional[List[_Interval]]:
+def _constant_int(expr, repository) -> Optional[int]:
+    """``expr`` as an integer if it is one up to the repository's scalar constants, else ``None``."""
+    if symbolic.issymbolic(expr, repository.constants):
+        return None
+    value = symbolic.evaluate(expr, repository.constants)
+    return int(value) if float(value) == int(value) else None
+
+
+def _symbolic_atom(atom: ast.expr, info: IterationSpace) -> Optional[List[Interval]]:
     """Intervals of the iteration variable on which ``atom`` holds, for atoms of the shape ``i <cmp> C`` or
     ``C <cmp> i`` with a loop-invariant, integer, symbolic ``C``. ``None`` if the atom is not of that shape."""
     if not isinstance(atom, ast.Compare) or len(atom.ops) != 1:
@@ -278,7 +289,7 @@ def _symbolic_atom(atom: ast.expr, info: _IterInfo) -> Optional[List[_Interval]]
     names = _names(other)
     if names & info.body_defined:
         return None  # Depends on a symbol that changes inside the loop.
-    namespace = _symbolic_namespace(info.sdfg, names)
+    namespace = _symbolic_namespace(info.repository, names)
     if namespace is None:
         return None
     try:
@@ -291,19 +302,19 @@ def _symbolic_atom(atom: ast.expr, info: _IterInfo) -> Optional[List[_Interval]]
         return None
 
     if opcls is ast.Lt:
-        return [_Interval(None, bound - 1)]
+        return [Interval(None, bound - 1)]
     if opcls is ast.LtE:
-        return [_Interval(None, bound)]
+        return [Interval(None, bound)]
     if opcls is ast.Gt:
-        return [_Interval(bound + 1, None)]
+        return [Interval(bound + 1, None)]
     if opcls is ast.GtE:
-        return [_Interval(bound, None)]
+        return [Interval(bound, None)]
     if opcls is ast.Eq:
-        return [_Interval(bound, bound)]
-    return [_Interval(None, bound - 1), _Interval(bound + 1, None)]  # NotEq
+        return [Interval(bound, bound)]
+    return [Interval(None, bound - 1), Interval(bound + 1, None)]  # NotEq
 
 
-def _index_domain(index: ast.expr, extent: int, info: _IterInfo, constants: Dict[str, Any]) -> Optional[_Interval]:
+def _index_domain(index: ast.expr, extent: int, info: IterationSpace, constants: Dict[str, Any]) -> Optional[Interval]:
     """Iterates for which the constant-array index expression ``index`` (``a * i + b``) is within ``[0, extent)``.
     ``None`` if the index is not affine in the iteration variable with integer coefficients."""
     namespace = dict(_SYMBOLIC_FUNCTIONS)
@@ -322,18 +333,23 @@ def _index_domain(index: ast.expr, extent: int, info: _IterInfo, constants: Dict
     last = sympy.Rational(extent - 1 - offset, slope)
     if slope < 0:
         first, last = last, first
-    return _Interval(sympy.ceiling(first), sympy.floor(last))
+    return Interval(sympy.ceiling(first), sympy.floor(last))
 
 
-def _constant_atom(atom: ast.expr, info: _IterInfo, max_enumeration: int) -> Optional[List[_Interval]]:
+def _constant_atom(atom: ast.expr, info: IterationSpace, max_enumeration: int) -> Optional[List[Interval]]:
     """Intervals of the iteration variable on which ``atom`` holds, for atoms whose only inputs are the iteration
     variable and compile-time constants (``sdfg.constants``), e.g. ``cst[i] > 0``. The atom is evaluated for every
     iterate in its finite domain and consecutive true iterates form the intervals. ``None`` if the atom is not
     of that kind or its domain cannot be bounded."""
-    constants = info.sdfg.constants
+    constants = info.repository.constants
     itervar = info.itervar
-    if any(not isinstance(n, _CONSTANT_ATOM_NODES) for n in ast.walk(atom)):
-        return None
+    # Besides the operators, simple casts / builtins (``float(int(0))``) are allowed; ``eval`` provides them.
+    for n in ast.walk(atom):
+        if isinstance(n, ast.Call):
+            if not (isinstance(n.func, ast.Name) and n.func.id in _CONSTANT_FUNCTIONS):
+                return None
+        elif not isinstance(n, _CONSTANT_ATOM_NODES):
+            return None
     names = _names(atom)
     if not names <= set(constants) | {itervar}:
         return None
@@ -341,13 +357,13 @@ def _constant_atom(atom: ast.expr, info: _IterInfo, max_enumeration: int) -> Opt
     if itervar not in names:
         # Loop-invariant constant expression: a tautology or a contradiction.
         try:
-            return [_UNBOUNDED] if astutils.evalnode(atom, dict(constants)) else []
+            return [UNBOUNDED] if astutils.evalnode(atom, dict(constants)) else []
         except SyntaxError:
             return None
 
     # Bound the domain of the iteration variable from the constant arrays it indexes (an out-of-bounds index is
     # undefined behavior, so those iterates may be assumed never to be visited), and from a constant loop range.
-    domain = _UNBOUNDED
+    domain = UNBOUNDED
     for n in ast.walk(atom):
         if not isinstance(n, ast.Subscript):
             continue
@@ -370,10 +386,10 @@ def _constant_atom(atom: ast.expr, info: _IterInfo, max_enumeration: int) -> Opt
             index_domain = _index_domain(index, array.shape[dim], info, constants)
             if index_domain is None:
                 return None
-            domain = _intersect(domain, index_domain)
+            domain = intersect(domain, index_domain)
     start_num, end_num = _num(info.start), _num(info.end)
     if start_num is not None and end_num is not None:
-        domain = _intersect(domain, _Interval(sympy.Min(start_num, end_num), sympy.Max(start_num, end_num)))
+        domain = intersect(domain, Interval(sympy.Min(start_num, end_num), sympy.Max(start_num, end_num)))
     lo, hi = _num(domain.lo), _num(domain.hi)
     if lo is None or hi is None:
         return None
@@ -397,7 +413,7 @@ def _constant_atom(atom: ast.expr, info: _IterInfo, max_enumeration: int) -> Opt
     except SyntaxError:
         return None
 
-    intervals: List[_Interval] = []
+    intervals: List[Interval] = []
     run_start: Optional[int] = None
     previous: Optional[int] = None
     for k in candidates:
@@ -410,10 +426,10 @@ def _constant_atom(atom: ast.expr, info: _IterInfo, max_enumeration: int) -> Opt
                 run_start = k
             previous = k
         elif run_start is not None:
-            intervals.append(_Interval(sympy.Integer(run_start), sympy.Integer(previous)))
+            intervals.append(Interval(sympy.Integer(run_start), sympy.Integer(previous)))
             run_start = None
     if run_start is not None:
-        intervals.append(_Interval(sympy.Integer(run_start), sympy.Integer(previous)))
+        intervals.append(Interval(sympy.Integer(run_start), sympy.Integer(previous)))
     return intervals
 
 
@@ -459,9 +475,14 @@ def _symbols_defined_in(loop: LoopRegion) -> Set[str]:
     return defined
 
 
-def _loop_info(loop: LoopRegion) -> Optional[_IterInfo]:
-    """Iteration variable, bounds and (constant, non-zero) stride of a canonical for-loop, or ``None``."""
-    if loop.inverted or not loop.loop_variable or loop.sdfg is None:
+def loop_iteration_space(loop: LoopRegion, repository, body_defined: Set[str]) -> Optional[IterationSpace]:
+    """Iteration variable, bounds and (constant, non-zero) stride of a canonical for-loop header, or ``None``.
+
+    :param loop: The loop whose header is parsed (its body is not inspected).
+    :param repository: Where names resolve (see ``IterationSpace.repository``).
+    :param body_defined: Symbols assigned inside the loop body.
+    """
+    if loop.inverted or not loop.loop_variable:
         return None
     if any(code.language != dtypes.Language.Python for code in loop.get_meta_codeblocks()):
         return None
@@ -471,10 +492,9 @@ def _loop_info(loop: LoopRegion) -> Optional[_IterInfo]:
     stride_expr = loop_analysis.get_loop_stride(loop)
     if start is None or end is None or stride_expr is None:
         return None
-    stride_value = symbolic.resolve_symbol_to_constant(stride_expr, loop.sdfg)
-    if stride_value is None or float(stride_value) != int(stride_value) or int(stride_value) == 0:
+    stride = _constant_int(stride_expr, repository)
+    if not stride:
         return None
-    stride = int(stride_value)
     if itervar in map(str, start.free_symbols) or itervar in map(str, end.free_symbols):
         return None
 
@@ -490,28 +510,36 @@ def _loop_info(loop: LoopRegion) -> Optional[_IterInfo]:
     if op not in (ast.Lt, ast.LtE, ast.Gt, ast.GtE) or (stride > 0) != (op in (ast.Lt, ast.LtE)):
         return None
 
-    body_defined = _symbols_defined_in(loop)
     if itervar in body_defined:
         return None
     # The reduced loops evaluate the original init expression again (and the guard bounds only once), so the
     # symbols they depend on must not change inside the loop.
     if any(str(s) in body_defined for s in itertools.chain(start.free_symbols, end.free_symbols)):
         return None
-    return _IterInfo(loop.sdfg, itervar, start, end, stride, op, body_defined)
+    return IterationSpace(repository, itervar, start, end, stride, op, body_defined)
 
 
-def _map_dim_info(state: SDFGState, entry: nd.MapEntry, dim: int) -> Optional[_IterInfo]:
+def map_iteration_space(map_node: nd.Map, dim: int, repository) -> Optional[IterationSpace]:
     """Iteration space of one map dimension (ascending, constant step), or ``None``."""
-    sdfg = state.sdfg
-    param = entry.map.params[dim]
-    begin, end, step = entry.map.range.ranges[dim]
-    step_value = symbolic.resolve_symbol_to_constant(step, sdfg)
-    if step_value is None or float(step_value) != int(step_value) or int(step_value) <= 0:
+    param = map_node.params[dim]
+    begin, end, step = map_node.range.ranges[dim]
+    stride = _constant_int(step, repository)
+    if stride is None or stride <= 0:
         return None
-    others = {p for p in entry.map.params if p != param}
+    others = {p for p in map_node.params if p != param}
     if any(str(s) in others or str(s) == param for s in itertools.chain(begin.free_symbols, end.free_symbols)):
         return None
-    return _IterInfo(sdfg, param, begin, end, int(step_value), ast.LtE, others)
+    return IterationSpace(repository, param, begin, end, stride, ast.LtE, others)
+
+
+def _loop_info(loop: LoopRegion) -> Optional[IterationSpace]:
+    if loop.sdfg is None:
+        return None
+    return loop_iteration_space(loop, loop.sdfg, _symbols_defined_in(loop))
+
+
+def _map_dim_info(state: SDFGState, entry: nd.MapEntry, dim: int) -> Optional[IterationSpace]:
+    return map_iteration_space(entry.map, dim, state.sdfg)
 
 
 def _find_guard(region: ControlFlowRegion) -> Optional[_Guard]:
@@ -674,7 +702,7 @@ def _reparent(block, sdfg: SDFG) -> None:
                 node.sdfg.parent_nsdfg_node = node
 
 
-def _first_iterate(info: _IterInfo, interval: _Interval) -> Optional[sympy.Expr]:
+def _first_iterate(info: IterationSpace, interval: Interval) -> Optional[sympy.Expr]:
     """The first iterate of the iteration space that lies within ``interval``, or ``None`` if unchanged."""
     start, stride = info.start, info.stride
     if info.ascending:
@@ -692,7 +720,7 @@ def _first_iterate(info: _IterInfo, interval: _Interval) -> Optional[sympy.Expr]
     return start + stride * symbolic.int_ceil(sympy.Max(0, start - interval.hi), -stride)
 
 
-def _new_header(info: _IterInfo, interval: _Interval) -> Tuple[Optional[str], Optional[str]]:
+def reduced_loop_header(info: IterationSpace, interval: Interval) -> Tuple[Optional[str], Optional[str]]:
     """Init statement and condition of the loop restricted to ``interval`` (``None`` where unchanged)."""
     itervar, end = info.itervar, info.end
     init = condition = None
@@ -714,13 +742,35 @@ def _new_header(info: _IterInfo, interval: _Interval) -> Tuple[Optional[str], Op
     return init, condition
 
 
-def _specialize_guard(region: ControlFlowRegion, rng: _Range) -> None:
+def reduced_map_range(map_range: subsets.Range, dim: int, info: IterationSpace, interval: Interval) -> subsets.Range:
+    """``map_range`` with dimension ``dim`` (the iteration space ``info``) restricted to ``interval``."""
+    first = _first_iterate(info, interval)
+    last = info.end if interval.hi is None else sympy.Min(info.end, interval.hi)
+    new_ranges = [rng + (tile, ) for rng, tile in zip(map_range.ranges, map_range.tile_sizes)]
+    begin, _, step, tile = new_ranges[dim]
+    new_ranges[dim] = (begin if first is None else first, last, step, tile)
+    return subsets.Range(new_ranges)
+
+
+def residual_guard(rng: ReducedRange) -> Optional[CodeBlock]:
+    """The condition that must still guard the body within ``rng``, or ``None`` if the guard was folded entirely."""
+    return _code_block(_conjunction(rng.residual)) if rng.residual else None
+
+
+def guard_atoms(condition: ast.expr) -> List[ast.expr]:
+    """The conjuncts of ``condition`` if it is a conjunction (negations pushed inwards), else the condition itself."""
+    clauses = _dnf(condition)
+    return clauses[0] if clauses is not None and len(clauses) == 1 else [condition]
+
+
+def _specialize_guard(region: ControlFlowRegion, rng: ReducedRange) -> None:
     """Strip the folded guard of ``region`` (a loop body or nested SDFG), leaving only the residual condition."""
     guard = next(n for n in region.nodes() if isinstance(n, ConditionalBlock))
     live_branch = next(b for _, b in guard.branches if not _is_empty_region(b))
-    if rng.residual:
+    residual = residual_guard(rng)
+    if residual is not None:
         # Keep the conditional, guarded only by what could not be folded into the range.
-        guard._branches = [(_code_block(_conjunction(rng.residual)), live_branch)]
+        guard._branches = [(residual, live_branch)]
         return
     existing = {n.label for n in region.nodes()}
     before = {id(n) for n in region.nodes()}
@@ -733,9 +783,9 @@ def _specialize_guard(region: ControlFlowRegion, rng: _Range) -> None:
         _reparent(moved, sdfg)
 
 
-def _specialize_loop(new_loop: LoopRegion, info: _IterInfo, rng: _Range) -> None:
+def _specialize_loop(new_loop: LoopRegion, info: IterationSpace, rng: ReducedRange) -> None:
     """Restrict ``new_loop`` (the original or a deep copy of it) to one range and strip the folded guard."""
-    init, condition = _new_header(info, rng.interval)
+    init, condition = reduced_loop_header(info, rng.interval)
     if init is not None:
         new_loop.init_statement = CodeBlock(init)
     if condition is not None:
@@ -765,7 +815,7 @@ def _drop_dead_prologue_assignments(guard: _Guard, sdfg: SDFG) -> None:
             sdfg.remove_symbol(name)
 
 
-def _rewrite_loop(loop: LoopRegion, info: _IterInfo, guard: _Guard, ranges: List[_Range]) -> None:
+def _rewrite_loop(loop: LoopRegion, info: IterationSpace, guard: _Guard, ranges: List[ReducedRange]) -> None:
     parent = loop.parent_graph
     sdfg = loop.sdfg
     try:
@@ -808,8 +858,8 @@ def _rewrite_loop(loop: LoopRegion, info: _IterInfo, guard: _Guard, ranges: List
             parent.add_edge(pred, succ, InterstateEdge())
 
 
-def _rewrite_map(state: SDFGState, entry: nd.MapEntry, nsdfg: nd.NestedSDFG, dim: int, info: _IterInfo, guard: _Guard,
-                 ranges: List[_Range]) -> None:
+def _rewrite_map(state: SDFGState, entry: nd.MapEntry, nsdfg: nd.NestedSDFG, dim: int, info: IterationSpace,
+                 guard: _Guard, ranges: List[ReducedRange]) -> None:
     sdfg = state.sdfg
     scope = state.scope_subgraph(entry)
     if not ranges:
@@ -839,14 +889,80 @@ def _rewrite_map(state: SDFGState, entry: nd.MapEntry, nsdfg: nd.NestedSDFG, dim
 
     for new_scope, rng in zip(scopes, ranges):
         new_entry: nd.MapEntry = new_scope.entry
-        first = _first_iterate(info, rng.interval)
-        last = info.end if rng.interval.hi is None else sympy.Min(info.end, rng.interval.hi)
-        new_ranges = [rng_ + (tile, ) for rng_, tile in zip(new_entry.map.range.ranges, new_entry.map.range.tile_sizes)]
-        begin, _, step, tile = new_ranges[dim]
-        new_ranges[dim] = (begin if first is None else first, last, step, tile)
-        new_entry.map.range = subsets.Range(new_ranges)
+        new_entry.map.range = reduced_map_range(new_entry.map.range, dim, info, rng.interval)
         nsdfg = next(n for n in new_scope.nodes() if isinstance(n, nd.NestedSDFG))
         _specialize_guard(nsdfg.sdfg, rng)
+
+
+def reduced_ranges(condition: ast.expr,
+                   info: IterationSpace,
+                   translate: Optional[Callable[[ast.expr], Optional[ast.expr]]] = None,
+                   max_ranges: int = 32,
+                   max_enumeration: int = 1 << 20) -> Optional[List[ReducedRange]]:
+    """The reduced ranges implied by guard ``condition``, in iteration order, or ``None`` if the iteration space must
+    be left alone (nothing to gain, or ranges that cannot be proven disjoint). An empty list means the guard never
+    holds.
+
+    :param condition: The guard, as a Python expression over the names of ``info.repository`` (after ``translate``).
+    :param info: The iteration space the guard restricts.
+    :param translate: Optional rewriting of an atom into the names ``info`` is expressed in (``None`` if the atom
+                      cannot be expressed there). Residual guards keep the original atoms.
+    :param max_ranges: Give up if the guard splits the space into more than this many ranges.
+    :param max_enumeration: Upper bound on the iterates evaluated for an atom over compile-time constant data.
+    """
+    clauses = _dnf(condition)
+    if clauses is None:
+        return None
+    ranges: List[ReducedRange] = []
+    changed = False
+    for clause_index, clause in enumerate(clauses):
+        intervals = [UNBOUNDED]
+        residual: List[ast.expr] = []
+        if not clause:
+            changed = True  # A literal tautology: the guard can go.
+        for atom in clause:
+            analyzed = translate(atom) if translate is not None else atom
+            atom_intervals = None if analyzed is None else _symbolic_atom(analyzed, info)
+            if atom_intervals is None and analyzed is not None:
+                atom_intervals = _constant_atom(analyzed, info, max_enumeration)
+            if atom_intervals is None:
+                residual.append(atom)
+                continue
+            changed = True
+            intervals = [
+                iv for a in intervals for b in atom_intervals for iv in (intersect(a, b), ) if not provably_empty(iv)
+            ]
+            if not intervals:
+                break
+        if not intervals:
+            changed = True  # A clause that never holds is dropped.
+            continue
+        for position, interval in enumerate(intervals):
+            if provably_empty(intersect(interval, info.iteration_range)):
+                changed = True
+                continue
+            ranges.append(ReducedRange(interval, residual, clause_index, position))
+        if len(ranges) > max_ranges:
+            return None
+    if not changed:
+        return None
+
+    # Ranges of different clauses may only be emitted as separate loops if they are provably disjoint (else the
+    # body could run twice for one iterate); within a clause they are disjoint and ordered by construction.
+    for a, b in itertools.combinations(ranges, 2):
+        if a.clause != b.clause and not (provably_before(a.interval, b.interval)
+                                         or provably_before(b.interval, a.interval)):
+            return None
+
+    def compare(a: ReducedRange, b: ReducedRange) -> int:
+        if a.clause == b.clause:
+            return a.position - b.position
+        return -1 if provably_before(a.interval, b.interval) else 1
+
+    ranges.sort(key=cmp_to_key(compare))
+    if not info.ascending:
+        ranges.reverse()
+    return ranges
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -975,7 +1091,7 @@ class LoopRangeReduction(ppl.Pass):
         return False
 
     @staticmethod
-    def _can_specialize(guard: _Guard, ranges: List[_Range]) -> bool:
+    def _can_specialize(guard: _Guard, ranges: List[ReducedRange]) -> bool:
         # Splicing the branch body into the enclosing region needs a unique exit block.
         if any(not r.residual for r in ranges):
             return len([n for n in guard.branch.nodes() if guard.branch.out_degree(n) == 0]) == 1
@@ -983,65 +1099,6 @@ class LoopRangeReduction(ppl.Pass):
 
     def _analyze(self,
                  condition: ast.expr,
-                 info: _IterInfo,
-                 translate: Optional[Callable[[ast.expr], Optional[ast.expr]]] = None) -> Optional[List[_Range]]:
-        """The reduced ranges implied by ``condition``, in iteration order, or ``None`` if the iteration space must be
-        left alone (nothing to gain, or ranges that cannot be proven disjoint).
-
-        :param translate: Optional rewriting of an atom into the names ``info`` is expressed in (``None`` if the atom
-                          cannot be expressed there). Residual guards keep the original atoms.
-        """
-        clauses = _dnf(condition)
-        if clauses is None:
-            return None
-        ranges: List[_Range] = []
-        changed = False
-        for clause_index, clause in enumerate(clauses):
-            intervals = [_UNBOUNDED]
-            residual: List[ast.expr] = []
-            if not clause:
-                changed = True  # A literal tautology: the guard can go.
-            for atom in clause:
-                analyzed = translate(atom) if translate is not None else atom
-                atom_intervals = None if analyzed is None else _symbolic_atom(analyzed, info)
-                if atom_intervals is None and analyzed is not None:
-                    atom_intervals = _constant_atom(analyzed, info, self.max_enumeration)
-                if atom_intervals is None:
-                    residual.append(atom)
-                    continue
-                changed = True
-                intervals = [
-                    iv for a in intervals for b in atom_intervals for iv in (_intersect(a, b), )
-                    if not _provably_empty(iv)
-                ]
-                if not intervals:
-                    break
-            if not intervals:
-                changed = True  # A clause that never holds is dropped.
-                continue
-            for position, interval in enumerate(intervals):
-                if _provably_empty(_intersect(interval, info.iteration_range)):
-                    changed = True
-                    continue
-                ranges.append(_Range(interval, residual, clause_index, position))
-            if len(ranges) > self.max_ranges:
-                return None
-        if not changed:
-            return None
-
-        # Ranges of different clauses may only be emitted as separate loops if they are provably disjoint (else the
-        # body could run twice for one iterate); within a clause they are disjoint and ordered by construction.
-        for a, b in itertools.combinations(ranges, 2):
-            if a.clause != b.clause and not (_provably_before(a.interval, b.interval)
-                                             or _provably_before(b.interval, a.interval)):
-                return None
-
-        def compare(a: _Range, b: _Range) -> int:
-            if a.clause == b.clause:
-                return a.position - b.position
-            return -1 if _provably_before(a.interval, b.interval) else 1
-
-        ranges.sort(key=cmp_to_key(compare))
-        if not info.ascending:
-            ranges.reverse()
-        return ranges
+                 info: IterationSpace,
+                 translate: Optional[Callable[[ast.expr], Optional[ast.expr]]] = None) -> Optional[List[ReducedRange]]:
+        return reduced_ranges(condition, info, translate, self.max_ranges, self.max_enumeration)
