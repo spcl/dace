@@ -18,6 +18,7 @@ number of entries, which is exactly what separates it from the two above.
 import contextlib
 
 import dace
+import numpy as np
 import pytest
 from dace import dtypes
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
@@ -208,6 +209,42 @@ def test_the_runtime_guard_reaches_the_pragma_and_keeps_the_simd_clause():
     assert f'if(parallel: ((k)) >= {PINNED_MIN_WORK_PER_REGION})' in code or (
         f'if(parallel: (k) >= {PINNED_MIN_WORK_PER_REGION})' in code)
     assert 'omp parallel for' in code
+
+
+def test_the_runtime_guard_tests_the_whole_nest_after_the_simd_split():
+    """The guard is decided on the map's whole trip count, and still tests it once the map is split.
+
+    ``MarkSIMDMaps`` splits a multidimensional map at codegen so its innermost dimension can carry
+    ``simd``; the outer map keeps the guard while its own range shrinks to the leading dimension.
+    Testing that range alone serialized lavamd's interaction map: guarded on
+    ``particles_per_box * particles_per_box * (count + 1)`` iterations, it then tested
+    ``particles_per_box >= 2048``, which never holds, and the whole interaction ran on one thread.
+    """
+    sdfg = dace.SDFG('guarded_nest')
+    sdfg.add_array('a', [N, M], dace.float64)
+    sdfg.add_array('counts', [1], dace.int64)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    body = ControlFlowRegion('body', sdfg=sdfg)
+    map_state(body, sdfg, 'body', ['0:N', '0:k'])
+    sdfg.add_node(body)
+    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments={'k': 'counts[0]'}))
+    sdfg.validate()
+    with pinned_break_even():
+        SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+        guarded = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
+        assert guarded.map.omp_min_parallel_iterations == PINNED_MIN_WORK_PER_REGION
+        code = sdfg.generate_code()[0].clean_code
+    assert 'omp parallel for' in code and 'omp simd' in code, 'the map was not split for simd'
+    assert f'if(parallel: ((N * k)) >= {PINNED_MIN_WORK_PER_REGION})' in code
+    assert f'if(parallel: (N) >= {PINNED_MIN_WORK_PER_REGION})' not in code
+
+    counts = np.array([5], dtype=np.int64)
+    a = np.zeros((7, 9))
+    with pinned_break_even():
+        sdfg(a=a, counts=counts, N=7, M=9)
+    expected = np.zeros((7, 9))
+    expected[:, :5] = 1.0
+    assert np.array_equal(a, expected)
 
 
 def test_parameter_extent_carries_no_runtime_guard():

@@ -214,6 +214,40 @@ def map_schedule_is_sequential(node: nodes.MapEntry) -> bool:
     return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
 
 
+def parallel_region_trip_count(state: SDFGState, map_entry: nodes.MapEntry) -> symbolic.SymbolicType:
+    """Iterations one team runs when ``map_entry`` opens its parallel region: the map's own count
+    times the count of every ``Sequential`` map nested perfectly inside it.
+
+    This is the count the run-time fork/join guard (``omp_min_parallel_iterations``) tests. The cost
+    model rules on a map in the ``cpu_specialize`` band, and ``MarkSIMDMaps`` later splits a
+    multidimensional map at codegen so that its innermost dimension can carry ``simd``: the reused
+    outer map keeps the guard while its own range shrinks to the leading dimension, and the
+    split-off dimensions become ``Sequential`` maps nested perfectly inside it. Testing the outer
+    range alone asks a different question than the one the guard was set for -- lavamd's
+    interaction map, ``particles_per_box x particles_per_box * (count + 1)`` (58,000 iterations at
+    the fuzzed shape), was guarded on that product and then tested ``particles_per_box >= 2048``,
+    which never holds, so the whole interaction ran on one thread. Without a split the sequential
+    inner nest is part of the region's work just the same, and the guard only ever chooses between
+    forking this region and running all of it on one thread, so the product is the region's work
+    either way.
+
+    :param state: the state holding the map.
+    :param map_entry: the entry of the map that opens the region.
+    :returns: the product of the trip counts of the perfect nest rooted at ``map_entry``.
+    """
+    children = state.scope_children()
+    trip = map_entry.map.range.num_elements()
+    entry = map_entry
+    while True:
+        body = [n for n in children[entry] if not isinstance(n, nodes.MapExit)]
+        if len(body) != 1 or not isinstance(body[0], nodes.MapEntry):
+            return trip
+        entry = body[0]
+        if entry.map.schedule != dtypes.ScheduleType.Sequential:
+            return trip
+        trip = trip * entry.map.range.num_elements()
+
+
 def hoist_loop_decls(node: nodes.MapEntry, will_have_openmp_pragma: bool = False) -> bool:
     """Whether this map's induction variables are declared ahead of their loops (``T i = begin; for (;
     ...)``) instead of in the for-statement's init clause, per ``codegen_params.loop_decl_style``.
@@ -3773,10 +3807,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # The fork/join cost model, evaluated at run time. The modifier scopes the clause to
             # ``parallel`` alone, so a combined ``parallel for simd`` keeps vectorizing on the
-            # single-thread side instead of losing its simd clause with the team.
+            # single-thread side instead of losing its simd clause with the team. The count tested is
+            # the whole region's, which the SIMD split may have spread over a perfect nest.
             if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore and not in_persistent
                     and node.map.omp_min_parallel_iterations > 0):
-                trip = sym2cpp(node.map.range.num_elements())
+                trip = sym2cpp(parallel_region_trip_count(state_dfg, node))
                 map_header += f' if(parallel: ({trip}) >= {node.map.omp_min_parallel_iterations})'
 
             # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
