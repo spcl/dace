@@ -6,6 +6,18 @@ from dace.sdfg import nodes, utils as sdutils
 from dace.transformation.dataflow import MapFission
 from dace.transformation.interstate import InlineSDFG
 from dace.transformation.helpers import nest_state_subgraph
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
+
 import numpy as np
 
 
@@ -502,7 +514,11 @@ def test_single_data_multiple_connectors():
     ref_sdfg.name = f"{ref_sdfg.name}_ref"
     ref_sdfg(A=A, B=ref)
 
+    before = outer_sdfg.to_json()
+    assert MapFission.can_be_applied_to(outer_sdfg, expr_index=1, map_entry=me, nested_sdfg=inner_sdfg_node)
+    assert outer_sdfg.to_json() == before, 'can_be_applied rewrote the nested SDFG it was asked about'
     MapFission.apply_to(outer_sdfg, expr_index=1, map_entry=me, nested_sdfg=inner_sdfg_node)
+    assert_cfg_list_matches_reset(outer_sdfg)
     val = np.empty_like(A)
     outer_sdfg(A=A, B=val)
 
