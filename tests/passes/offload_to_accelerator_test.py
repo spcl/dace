@@ -721,6 +721,20 @@ def rows_with_a_full_stencil(agg: dace.int64[ROWS], w: dace.float64[ROWS], acc: 
             acc[j] = acc[j] * 0.5
 
 
+@dace.program
+def copy_into_a_host_recurrence(x: dace.float64[ROWS], flag: dace.int64, out: dace.float64[ROWS]):
+    """``u`` lives on the device (the first arm writes it there); the second copies into it, then scans it on the host."""
+    t = x * 2.0
+    u = np.empty_like(t)
+    if flag > 0:
+        u[:] = t + 1.0
+    else:
+        u[:] = t
+        for i in range(1, ROWS):
+            u[i] = u[i] + u[i - 1]
+    out[:] = u
+
+
 def copies_inside_loops(sdfg: dace.SDFG) -> list:
     return [
         b.label for loop in sdfg.all_control_flow_blocks(recursive=True) if isinstance(loop, LoopRegion)
@@ -748,6 +762,27 @@ def test_a_map_over_the_whole_shared_array_stays_a_kernel():
     sdfg.validate()
     full = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
     assert full and all(n.map.schedule == dtypes.ScheduleType.GPU_Device for n in full)
+
+
+def test_a_copy_hands_its_destination_the_side_of_its_source():
+    sdfg = copy_into_a_host_recurrence.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    sdfg.validate()
+    loop = next(b for b in sdfg.all_control_flow_blocks(recursive=True) if isinstance(b, LoopRegion))
+    arm = loop.parent_graph
+    fills = [b for b in arm.predecessors(loop) if b.label == 'copy_u_to_host']
+    assert fills, [b.label for b in arm.nodes()]
+
+
+@pytest.mark.gpu
+def test_a_copy_before_a_host_recurrence_computes_what_numpy_computes():
+    sdfg = copy_into_a_host_recurrence.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)
+    x = np.arange(8, dtype=np.float64)
+    for flag, want in ((1, x * 2.0 + 1.0), (0, np.cumsum(x * 2.0))):
+        out = np.zeros(8)
+        sdfg(x=x, flag=flag, out=out, ROWS=8)
+        np.testing.assert_allclose(out, want)
 
 
 @pytest.mark.gpu

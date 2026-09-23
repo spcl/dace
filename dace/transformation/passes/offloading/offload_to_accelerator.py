@@ -1857,6 +1857,8 @@ class OffloadToAccelerator(ppl.Pass):
             # first-come, an arm listed first made every execution copy to the host and back.
             block = node.open.block if node.type == OffloadingIRNode.CLOSE and node.open else node.block
             arm_tail = isinstance(block, ControlFlowBlock) and in_sequential_specialization_arm(block)
+            if node.type == OffloadingIRNode.STATE and isinstance(node.block, SDFGState):
+                self.place_copy_destinations(node)
             for next in node.next:
                 if arm_tail and next.type == OffloadingIRNode.CLOSE and not in_sequential_specialization_arm(
                         next.open.block):
@@ -1871,6 +1873,36 @@ class OffloadToAccelerator(ppl.Pass):
                         next.gpu_set.add(array)
 
         self.__traverse_IR(IR, propagate)
+
+    def place_copy_destinations(self, node: OffloadingIRNode) -> None:
+        """A top-level container-to-container copy writes its destination on its source's side.
+
+        The state analysis leaves such a copy unplaced, so without this the destination kept the
+        location it had before the copy and a later reader on the other side got no copy in
+        (cegterg: ``__inl9_a = hc`` on the device, then a host loop over ``__inl9_a_host``).
+        """
+        state = node.block
+        sdfg = state.sdfg
+        top = self.cached_scope_children[state][None]
+        for edge in state.edges():
+            src, dst = edge.src, edge.dst
+            if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)) or edge.data.is_empty():
+                continue
+            if src not in top or dst not in top or dst.data in node.cpu_set or dst.data in node.gpu_set:
+                continue
+            # A copy between a container and its own twin is this pass's placement, not the program's.
+            if self.are_twins(src.data, dst.data):
+                continue
+            if isinstance(sdfg.arrays[dst.data], data.View) or not self._is_array(dst.data, sdfg):
+                continue
+            if src.data in node.gpu_set:
+                node.gpu_set.add(dst.data)
+            elif src.data in node.cpu_set:
+                node.cpu_set.add(dst.data)
+
+    def are_twins(self, a: str, b: str) -> bool:
+        return b in (self._get_host_name(a), self._get_gpu_name(a)) or a in (self._get_host_name(b),
+                                                                             self._get_gpu_name(b))
 
     def _insert_copy_names_in_block(self,
                                     sdfg: SDFG,
@@ -1969,7 +2001,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         self.__traverse_IR(IR, _correct_transients)
 
-    def eval_IR(self, sdfg, IR: OffloadingIRNode):
+    def eval_IR(self, sdfg: SDFG, IR: OffloadingIRNode) -> None:
         # modifies SDFG in place & inserts all necessary copies
         # Filled after the renaming below, where a host-side write takes the host name.
         written: OrderedSet[str] = OrderedSet()
