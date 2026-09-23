@@ -125,7 +125,6 @@ class LoopPeeling(LoopUnroll):
             for e in src_state.edges():
                 new_state.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, copy.deepcopy(e.data))
             self._replace_loop_var_in_block(new_state, loop_var, value)
-            graph.reset_cfg_list()
             return new_state
 
         # Multi-state body: keep the CFR wrapping so internal interstate
@@ -145,7 +144,6 @@ class LoopPeeling(LoopUnroll):
         for e, _parent in new_cfr.all_edges_recursive():
             if isinstance(e.data, sd.InterstateEdge):
                 self._replace_loop_var_in_iedge(e.data, loop_var, value)
-        graph.reset_cfg_list()
         return new_cfr
 
     @staticmethod

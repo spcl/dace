@@ -12,6 +12,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
+from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, record_tree_resets
 
 N = dace.symbol('N', dtype=dace.int64)
 
@@ -55,6 +56,16 @@ def test_s244_is_rewritten_and_still_computes():
     sdfg(a=got_a, b=got_b, c=got_c, d=got_d, N=n)
     assert np.allclose(got_a, want_a), f'a: {got_a} != {want_a}'
     assert np.allclose(got_b, want_b), f'b: {got_b} != {want_b}'
+
+
+def test_the_peel_keeps_the_cfg_list_in_place(monkeypatch):
+    """The peel before the drop rebuilt the CFG list of the whole tree once per peeled iteration."""
+    sdfg = s244.to_sdfg(simplify=False)
+    resets = record_tree_resets(monkeypatch, lambda root: root is sdfg)
+    assert DeadCarriedStoreElimination().apply_pass(sdfg, {})
+    assert '_instantiate_peeled_iteration' not in resets, resets
+    assert_cfg_list_as_after_a_reset(sdfg)
+    sdfg.validate()
 
 
 def test_s244_parallelizes_through_the_pipeline():

@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.interstate.loop_peeling import LoopPeeling
+from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, loop_over_nested_sdfg, record_tree_resets
 
 
 @dace.program
@@ -337,3 +338,19 @@ def test_unroll_gives_each_copy_its_own_view():
     expected = A + 1.0
     sdfg(A=A)
     assert np.allclose(A, expected)
+
+
+@pytest.mark.parametrize('begin', [True, False])
+@pytest.mark.parametrize('multi_state', [False, True])
+def test_peeling_keeps_the_cfg_list_in_place(monkeypatch, multi_state, begin):
+    """Every peeled iteration used to rebuild the CFG list of the whole tree; the graph operations keep it."""
+    sdfg = loop_over_nested_sdfg(multi_state)
+    loop = next(n for n in sdfg.nodes() if isinstance(n, dace.sdfg.state.LoopRegion))
+    regions = len(sdfg.cfg_list)
+    resets = record_tree_resets(monkeypatch, lambda root: root is sdfg)
+    LoopPeeling().apply_to(sdfg=sdfg, loop=loop, verify=False, options={'count': 2, 'begin': begin})
+    assert resets == []
+    peeled = 2 * (regions - 1) if multi_state else 2 * (regions - 2)
+    assert len(sdfg.cfg_list) == regions + peeled, [r.label for r in sdfg.cfg_list]
+    assert_cfg_list_as_after_a_reset(sdfg)
+    sdfg.validate()
