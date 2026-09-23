@@ -30,7 +30,7 @@ from dace.transformation.transformation import ExpandTransformation
 
 from .._pure_codegen import half_disambiguated, nested_loops, tile_offset
 from .. import _isa_codegen
-from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, is_tile_shape, is_scalar_shape, edge_moves_a_tile,
+from .tile_binop import (TILE, SYMBOL, SCALAR, VALID_KINDS, is_tile_shape, edge_moves_one_element, edge_moves_a_tile,
                          scalar_operand_ref, promotion_ok)
 
 #: C++ spellings of every registered dtype narrower than ``float``; these operands take the
@@ -160,11 +160,11 @@ class ExpandTileFMAPure(ExpandTransformation):
             rhs_expr = f"{operand_dtype}(std::fma(double({a_ref}), double({b_ref}), double({c_ref})))"
         else:
             rhs_expr = f"std::fma({a_ref}, {b_ref}, {c_ref})"
-        # Output-kind dispatch (design 6.2): all inputs non-Tile and ``_o`` Scalar /
-        # length-1 -> a single assignment (no lane loop); otherwise the K-fold loop.
-        out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_o").data.data]
+        # Output-kind dispatch (design 6.2): all inputs non-Tile and an ``_o`` memlet moving
+        # one element -> a single assignment (no lane loop); otherwise the K-fold loop.
+        out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_o")
         out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and node.kind_c != TILE
-                         and is_scalar_shape(out_desc))
+                         and edge_moves_one_element(out_edge))
         if out_is_scalar:
             # Scalar output: no lane loop; one assignment. A volume-1 output (Scalar
             # or length-1 Array) is a by-value local (``T _o;``), so it -- and the

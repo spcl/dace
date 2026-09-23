@@ -61,13 +61,16 @@ def edge_moves_a_tile(edge: graph.MultiConnectorEdge[dace.Memlet], widths: Seque
     return dace.symbolic.shapes_equal(size[split:], tuple(widths))
 
 
-def is_scalar_shape(desc: dace.data.Data) -> bool:
-    """True iff ``desc`` is a :class:`dace.data.Scalar` or a length-1 :class:`Array`."""
-    if isinstance(desc, dace.data.Scalar):
-        return True
-    if isinstance(desc, dace.data.Array):
-        return all(bool(dace.symbolic.simplify(s - 1) == 0) for s in desc.shape)
-    return False
+def edge_moves_one_element(edge: graph.MultiConnectorEdge[dace.Memlet]) -> bool:
+    """True iff ``edge``'s MEMLET moves exactly one element, whatever its descriptor's shape.
+
+    Codegen binds a one-element connector BY VALUE (``T _c;``), so a lane-invariant op writing it
+    assigns ``_c`` once and never walks ``_c[off]``. The descriptor cannot tell: CloudSC's
+    ``imelt[4] = -99`` writes one element of an ``int[5]``.
+
+    :param edge: the ``_c`` / ``_o`` output edge.
+    """
+    return edge.data is not None and edge.data.subset is not None and edge.data.subset.num_elements() == 1
 
 
 def scalar_operand_ref(desc: dace.data.Data, conn: str, widths: Sequence[int], off: str) -> Tuple[str, bool]:
@@ -325,11 +328,11 @@ class ExpandTileBinopPure(ExpandTransformation):
         lhs = _operand_ref(node.kind_a, "_a", node.expr_a, ctype_b)
         rhs = _operand_ref(node.kind_b, "_b", node.expr_b, ctype_a)
         rhs_expr = _binop_rhs(node.op, lhs, rhs)
-        # Output kind dispatch (design 6.2): when all inputs are non-Tile and ``_c`` is Scalar /
-        # length-1, emit a single assignment with no lane loop. Otherwise emit the K-fold loop
+        # Output kind dispatch (design 6.2): when all inputs are non-Tile and the ``_c`` memlet moves
+        # one element, emit a single assignment with no lane loop. Otherwise emit the K-fold loop
         # ``_c[off] = ...`` over the tile.
-        out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-        out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and is_scalar_shape(out_desc))
+        out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_c")
+        out_is_scalar = (node.kind_a != TILE and node.kind_b != TILE and edge_moves_one_element(out_edge))
         if out_is_scalar:
             # The Scalar output path: no lane loop; one assignment. A volume-1
             # output (Scalar or length-1 Array) is a by-value local (``T _c;``),

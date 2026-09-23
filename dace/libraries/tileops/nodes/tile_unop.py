@@ -169,11 +169,11 @@ class ExpandTileUnopPure(ExpandTransformation):
         else:
             pre, post = UNOP_CPP[node.op]
             rhs_expr = f"{pre}{operand}{post}"
-        # Output kind dispatch (design 6.2): non-Tile input + Scalar / length-1 output -> single
-        # assignment (no lane loop). Otherwise the K-fold tile loop.
-        from .tile_binop import is_scalar_shape
-        out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-        out_is_scalar = (node.kind_a != TILE and is_scalar_shape(out_desc))
+        # Output kind dispatch (design 6.2): non-Tile input + a ``_c`` memlet moving one element ->
+        # single assignment (no lane loop). Otherwise the K-fold tile loop.
+        from .tile_binop import edge_moves_one_element
+        out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_c")
+        out_is_scalar = (node.kind_a != TILE and edge_moves_one_element(out_edge))
         if out_is_scalar:
             # A volume-1 output (Scalar / length-1 Array) is a by-value local
             # (``T _c;``), so it -- and the volume-1 ``_mask`` -- are referenced

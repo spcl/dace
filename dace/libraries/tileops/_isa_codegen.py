@@ -250,14 +250,14 @@ def make_binop_tasklet(node: TileBinop, parent_state: SDFGState, parent_sdfg: SD
     ``Broadcast=true``, casting to the output type); ``has_mask`` -> ``Masked``.
     """
     node.validate(parent_sdfg, parent_state)
-    # A scalar-shaped output (a volume-1 Scalar / length-1 Array, emitted by value as
+    # A one-element output (its memlet moves one element, emitted by value as
     # ``T _c;``) cannot bind to ``tile_binop``'s ``T* out`` pointer argument. Delegate
     # to the pure expansion's ``out_is_scalar`` branch (mirrors ``make_unop_tasklet``
     # and the differing-dtype deferral below). Gated on both operands non-Tile, matching
     # the pure path's own ``out_is_scalar`` predicate.
-    from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure, is_scalar_shape
-    out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-    if node.kind_a != TILE and node.kind_b != TILE and is_scalar_shape(out_desc):
+    from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure, edge_moves_one_element
+    out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_c")
+    if node.kind_a != TILE and node.kind_b != TILE and edge_moves_one_element(out_edge):
         return ExpandTileBinopPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
@@ -332,15 +332,15 @@ def make_fma_tasklet(node: TileFMA, parent_state: SDFGState, parent_sdfg: SDFG, 
     third operand (``_c``) and the ``_o`` output connector (no op char).
     """
     node.validate(parent_sdfg, parent_state)
-    # A scalar-shaped output (volume-1 Scalar / length-1 Array, emitted by value as
+    # A one-element output (its memlet moves one element, emitted by value as
     # ``T _o;``) cannot bind to ``tile_fma``'s ``T* out`` pointer argument. Delegate
     # to the pure expansion's ``out_is_scalar`` branch (mirrors make_binop_tasklet).
     # Gated on all operands non-Tile, matching the pure path's own predicate.
     from dace.libraries.tileops.nodes.tile_fma import ExpandTileFMAPure
-    from dace.libraries.tileops.nodes.tile_binop import is_scalar_shape
-    out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_o").data.data]
+    from dace.libraries.tileops.nodes.tile_binop import edge_moves_one_element
+    out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_o")
     no_tile = node.kind_a != TILE and node.kind_b != TILE and node.kind_c != TILE
-    if no_tile and is_scalar_shape(out_desc):
+    if no_tile and edge_moves_one_element(out_edge):
         return ExpandTileFMAPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
@@ -419,16 +419,16 @@ def make_unop_tasklet(node: TileUnop, parent_state: SDFGState, parent_sdfg: SDFG
     from dace.libraries.tileops.nodes.tile_unop import CAST_OP_TO_CPP, ExpandTileUnopPure
     if node.op in CAST_OP_TO_CPP:
         return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
-    # A scalar-shaped output (``_c`` a volume-1 Scalar / length-1 Array, which codegen
+    # A one-element output (``_c``'s memlet moves one element, which codegen
     # emits by value as ``T _c;``) cannot bind to ``tile_unop``'s ``T* out`` pointer
     # argument -- e.g. ``!`` of a scalar bool condition (s274). The pure expansion's
     # ``out_is_scalar`` branch emits the bare ``_c = <op>(...)`` assignment instead;
     # delegate to it (the same escape hatch the cast-op case above and the
     # differing-dtype case below use). Gated on a non-Tile operand to mirror the pure
     # path's own ``out_is_scalar`` predicate (a Tile operand always yields a tile output).
-    from dace.libraries.tileops.nodes.tile_binop import is_scalar_shape
-    out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_c").data.data]
-    if node.kind_a != TILE and is_scalar_shape(out_desc):
+    from dace.libraries.tileops.nodes.tile_binop import edge_moves_one_element
+    out_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == "_c")
+    if node.kind_a != TILE and edge_moves_one_element(out_edge):
         return ExpandTileUnopPure.expansion(node, parent_state, parent_sdfg)
     vlen = _require_k1(node)
     in_e = {e.dst_conn: e for e in parent_state.in_edges(node) if e.dst_conn is not None}
