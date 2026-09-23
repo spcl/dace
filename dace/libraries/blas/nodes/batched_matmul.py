@@ -1,7 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from dace import dtypes, memlet as mm, properties, data as dt
-from dace.symbolic import symstr, equal
+from dace.symbolic import symstr, equal, equal_valued
 import dace.library
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
@@ -49,6 +49,19 @@ def refuse_broadcast_batches(node, state, sdfg) -> None:
                              'materialize both operands at the same batch shape.')
 
 
+def format_scalar_literal(value, ctype: 'dtypes.typeclass') -> str:
+    """Render a compile-time alpha/beta value as a DaCe-typed Python-tasklet literal.
+
+    :param value: The scalar property value (real or complex).
+    :param ctype: The DaCe typeclass the literal is cast to.
+    :return: A ``dace.<type>(...)`` constructor expression, valid inside a Python tasklet body.
+    """
+    if ctype.is_complex():
+        cvalue = complex(value)
+        return f'dace.{ctype.to_string()}({cvalue.real}, {cvalue.imag})'
+    return f'dace.{ctype.to_string()}({float(value)})'
+
+
 @dace.library.expansion
 class ExpandBatchedMatMulPure(ExpandTransformation):
 
@@ -93,17 +106,29 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=storage)
         _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=storage)
 
-        # Add an initialization state
-        init_state = sdfg.add_state()
-        init_state.add_mapped_tasklet(
-            'batched_matmul_init', {
-                '_o%d' % i: '0:%s' % symstr(d)
-                for i, d in enumerate(shape_c)
-            }, {},
-            'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
-            external_edges=True)
-
-        state = sdfg.add_state_after(init_state, node.label + "_state")
+        # C is read and written in place through the sole "_c" connector -- BatchedMatMul carries
+        # no _cin, mirroring Gemm(cin=False). beta==1 leaves C for the WCR add below to accumulate
+        # onto directly (no init state at all); beta==0 zeroes it first; any other beta scales the
+        # existing value in an init state, reading and writing the same array.
+        c_dims = {'_o%d' % i: '0:%s' % symstr(d) for i, d in enumerate(shape_c)}
+        c_full_index = ','.join(['_o%d' % i for i in range(len(shape_c))])
+        if equal_valued(1, node.beta):
+            state = sdfg.add_state(node.label + "_state")
+        else:
+            init_state = sdfg.add_state(node.label + "_initstate")
+            if equal_valued(0, node.beta):
+                init_state.add_mapped_tasklet('batched_matmul_init',
+                                              c_dims, {},
+                                              'out = 0', {'out': dace.Memlet.simple('_c', c_full_index)},
+                                              external_edges=True)
+            else:
+                beta_lit = format_scalar_literal(node.beta, dace.dtype_to_typeclass(dtype_c))
+                init_state.add_mapped_tasklet('batched_matmul_beta_scale',
+                                              c_dims, {'inp': dace.Memlet.simple('_c', c_full_index)},
+                                              f'out = {beta_lit} * inp',
+                                              {'out': dace.Memlet.simple('_c', c_full_index)},
+                                              external_edges=True)
+            state = sdfg.add_state_after(init_state, node.label + "_state")
 
         # Calculate number of batch dimensions in output
         num_batch_dims = len(shape_c) - 2
@@ -148,12 +173,18 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         # For C: always has batch dimensions
         c_indices = ', '.join(['__i%d' % i for i in range(num_batch_dims)]) + ', __im, __in'
 
+        # Each product is scaled by alpha, so the summed result is alpha * (A @ B).
+        product = '__a * __b'
+        if not equal_valued(1, node.alpha):
+            alpha_lit = format_scalar_literal(node.alpha, dace.dtype_to_typeclass(dtype_c))
+            product = f'{alpha_lit} * {product}'
+
         state.add_mapped_tasklet('_BatchedMatMult_',
                                  map_params, {
                                      '__a': dace.Memlet.simple("_a", memlet_a),
                                      '__b': dace.Memlet.simple("_b", memlet_b)
                                  },
-                                 '__c = __a * __b',
+                                 f'__c = {product}',
                                  {'__c': dace.Memlet.simple("_c", c_indices, wcr_str='lambda x, y: x + y')},
                                  external_edges=True)
 
@@ -182,44 +213,52 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         func = to_blastype(dtype.type).lower() + 'gemm'
         # ``?gemm_batch`` is the Fortran-style call: the coefficient and operand arrays hold MKL's own
         # element type, so a complex one is MKL_Complex8/16 initialized by value, not dace::complex.
+        # Both structs are aggregates with no converting constructor, so a complex coefficient stays a
+        # brace literal. beta scales C in place -- there is no separate C read here, exactly like the
+        # pure expansion: ?gemm_batch reads and writes the same pointer, so beta != 0 is honored for
+        # free by passing node.beta through instead of hard-coding 0.
         ctype = cdesc.dtype.ctype
+
+        def mkl_coeff(value) -> str:
+            if dtype == dace.float32:
+                return f"{float(value)}f"
+            if dtype == dace.float64:
+                return f"{float(value)}"
+            cvalue = complex(value)
+            suffix = 'f' if dtype == dace.complex64 else ''
+            return f"{{{cvalue.real}{suffix}, {cvalue.imag}{suffix}}}"
+
         if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
             prefix = "s"
         elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
             prefix = "d"
         elif dtype == dace.complex64:
-            alpha = "{1.0f, 0.0f}"
-            beta = "{0.0f, 0.0f}"
             prefix = "c"
             ctype = "MKL_Complex8"
         elif dtype == dace.complex128:
-            alpha = "{1.0, 0.0}"
-            beta = "{0.0, 0.0}"
             prefix = "z"
             ctype = "MKL_Complex16"
         else:
             raise ValueError("Unsupported type for BLAS dot product: " + str(dtype))
+        alpha = mkl_coeff(node.alpha)
+        beta = mkl_coeff(node.beta)
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, ctype, func)
 
         opt['prefix'] = prefix
 
         code = '''
         const MKL_INT group_count = 1;
-        MKL_INT group_sizes[group_count] = {{ {BATCH} }};
-        MKL_INT m_array[group_count] = {{ {M} }};
-        MKL_INT n_array[group_count] = {{ {N} }};
-        MKL_INT k_array[group_count] = {{ {K} }};
+        MKL_INT group_sizes[group_count] = {{ (MKL_INT)({BATCH}) }};
+        MKL_INT m_array[group_count] = {{ (MKL_INT)({M}) }};
+        MKL_INT n_array[group_count] = {{ (MKL_INT)({N}) }};
+        MKL_INT k_array[group_count] = {{ (MKL_INT)({K}) }};
         char transa[group_count] = {{ '{ta}' }};
         char transb[group_count] = {{ '{tb}' }};
         {dtype} alpha_array[group_count] = {{ {alpha} }};
         {dtype} beta_array[group_count] = {{ {beta} }};
-        MKL_INT lda_array[group_count] = {{ {lda} }};
-        MKL_INT ldb_array[group_count] = {{ {ldb} }};
-        MKL_INT ldc_array[group_count] = {{ {ldc} }};
+        MKL_INT lda_array[group_count] = {{ (MKL_INT)({lda}) }};
+        MKL_INT ldb_array[group_count] = {{ (MKL_INT)({ldb}) }};
+        MKL_INT ldc_array[group_count] = {{ (MKL_INT)({ldc}) }};
 
         const {dtype}** __mkl_BMM_A = new const {dtype}*[{BATCH}];
         const {dtype}** __mkl_BMM_B = new const {dtype}*[{BATCH}];
@@ -259,28 +298,31 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + 'gemm'
-        if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
-        elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
-        elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
-        elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+        # cblas_[cz]gemm takes alpha/beta as ``const void*`` (see cblas.h), so a complex coefficient
+        # is materialized into a local and passed by address; the real ?gemm calls take them by
+        # value. beta scales C in place through the same pointer cblas already writes through, so
+        # passing node.beta needs no separate C read here (mirrors the pure expansion).
+        decls = ''
+        if dtype in (dace.float32, dace.float64):
+            alpha = f"{dtype.ctype}({node.alpha})"
+            beta = f"{dtype.ctype}({node.beta})"
+        elif dtype in (dace.complex64, dace.complex128):
+            calpha, cbeta = complex(node.alpha), complex(node.beta)
+            decls = (f"{dtype.ctype} __bmm_alpha = {dtype.ctype}({calpha.real}, {calpha.imag});\n"
+                     f"        {dtype.ctype} __bmm_beta = {dtype.ctype}({cbeta.real}, {cbeta.imag});\n        ")
+            alpha = "(const void*)&__bmm_alpha"
+            beta = "(const void*)&__bmm_beta"
         else:
             raise ValueError("Unsupported type for BLAS dot product: " + str(dtype))
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
+        opt['decls'] = decls
 
         # Adaptations for MKL/BLAS API
         opt['ta'] = 'CblasNoTrans' if opt['ta'] == 'N' else 'CblasTrans'
         opt['tb'] = 'CblasNoTrans' if opt['tb'] == 'N' else 'CblasTrans'
 
         code = '''
-        for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
+        {decls}for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
             cblas_{func}(CblasColMajor, {ta}, {tb}, {M}, {N}, {K}, {alpha},
                          (({dtype}*){x}) + __ib*{stride_a}, {lda},
                          (({dtype}*){y}) + __ib*{stride_b}, {ldb},
@@ -352,23 +394,30 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
 
         call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ''
-        # Handle alpha / beta
+        # Handle alpha / beta. cuBLAS/rocBLAS read and write C in place through the one pointer this
+        # call already takes, so a nonzero beta needs no separate C connector here -- only the value
+        # passed to the call, exactly like the CPU expansions. Both coefficients are evaluated the
+        # same way, independently: a 0/1 compile-time value uses the preallocated device constant,
+        # anything else switches the handle to host pointer mode for this call.
         constants = {
             1.0: f"__state->{cls.dialect.handle_field}.Constants().{factort}Pone()",
             0.0: f"__state->{cls.dialect.handle_field}.Constants().{factort}Zero()",
         }
-        if node.alpha not in constants:
-            # Deal with complex input constants
+        if node.alpha not in constants or node.beta not in constants:
             if isinstance(node.alpha, complex):
-                alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+                alpha_lit = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
             else:
-                alpha = f'{dtype.ctype}({node.alpha})'
+                alpha_lit = f'{dtype.ctype}({node.alpha})'
+            if isinstance(node.beta, complex):
+                beta_lit = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+            else:
+                beta_lit = f'{dtype.ctype}({node.beta})'
 
             # Set pointer mode to host
             call_prefix += f'''{cls.dialect.check_error}(
                 {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
-                {dtype.ctype} alpha = {alpha};
-                {dtype.ctype} beta = 0;
+                {dtype.ctype} alpha = {alpha_lit};
+                {dtype.ctype} beta = {beta_lit};
                 '''
             call_suffix += f'''
     {cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
@@ -377,7 +426,7 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
             alpha = f'({cdtype} *)&alpha'
         else:
             alpha = constants[node.alpha]
-            beta = f"__state->{cls.dialect.handle_field}.Constants().{factort}Zero()"
+            beta = constants[node.beta]
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
@@ -464,7 +513,19 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
                 dcopy_gpu.transient = True
                 dcopy_gpu.storage = dace.StorageType.GPU_Global
                 nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)
-            nstate = nsdfg.add_state()
+
+            # A nonzero beta needs the host C staged into `_c_gpu` BEFORE the call -- unlike A/B, C is
+            # not otherwise copied in, so a fresh GPU allocation would read uninitialized memory as
+            # the prior value. A separate state (not a second edge into the same access node) avoids
+            # a write/write conflict with the tasklet's own write below; `_c_gpu` has Scope lifetime,
+            # so the value persists into the next state exactly like the pure expansion's init state.
+            if not equal_valued(0, node.beta):
+                copyin_state = nsdfg.add_state(node.label + '_c_copyin')
+                copyin_state.add_nedge(copyin_state.add_read('_c'), copyin_state.add_access('_c_gpu'),
+                                       dace.Memlet.from_array('_c', cdesc))
+                nstate = nsdfg.add_state_after(copyin_state)
+            else:
+                nstate = nsdfg.add_state()
             a = nstate.add_read('_a')
             ga = nstate.add_access('_a_gpu')
             b = nstate.add_read('_b')
