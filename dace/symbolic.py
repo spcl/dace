@@ -4853,13 +4853,26 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
         # the parser and as ``floor(x/y)`` from Python's ``//``, and sympy relates neither head.
         args = [relax_int_floor(arg) for arg in equalize_symbols_across(*args)]
 
+    if sympy.assumptions.global_assumptions:
+        return ask_equal.__wrapped__(*args, is_length)
+    return ask_equal(*args, is_length)
+
+
+@lru_cache(maxsize=16384, typed=True)
+def ask_equal(a: SymbolicType, b: SymbolicType, is_length: bool) -> Union[bool, None]:
+    """The assumption solver's verdict on ``a == b``, for :func:`equal`.
+
+    Cached: a pure function of its arguments while no global assumption is active, which :func:`equal`
+    checks, and one ``ask`` costs tens of milliseconds while codegen repeats the same few questions per
+    copy (CloudSC GPU: 958 zero-size tests of 3 distinct extents, 43 s).
+    """
     facts = []
     if is_length:
-        for arg in args:
+        for arg in (a, b):
             facts += [sympy.Q.integer(arg), sympy.Q.positive(arg)]
 
     with sympy.assuming(*facts):
-        return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))
+        return sympy.ask(sympy.Q.is_true(sympy.Eq(a, b)))
 
 
 @lru_cache(maxsize=16384, typed=True)

@@ -13,7 +13,7 @@ import warnings
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import graph as gr, nodes
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, InterstateEdge, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
@@ -353,8 +353,14 @@ def smt_injective_verdict(key: SmtWriteKey) -> bool:
     return r is True
 
 
-def _smt_proves_disjoint_boxes(sub1: subsets.Subset, sub2: subsets.Subset, itersym, start, end, step,
-                               varying: Set[str]) -> bool:
+def _smt_proves_disjoint_boxes(sub1: subsets.Subset,
+                               sub2: subsets.Subset,
+                               itersym,
+                               start,
+                               end,
+                               step,
+                               varying: Set[str],
+                               verdicts: Optional[Dict[Tuple[str, ...], bool]] = None) -> bool:
     """Ask the SMT oracle whether two multi-dimensional RANGE accesses can collide across iterations.
 
     The range counterpart of :func:`_collision_forces_same_iteration`, which only accepts point
@@ -379,6 +385,13 @@ def _smt_proves_disjoint_boxes(sub1: subsets.Subset, sub2: subsets.Subset, iters
         for lo, hi in box1 + box2:
             if any(str(s) in varying for s in set(lo.free_symbols) | set(hi.free_symbols)):
                 return False
+        # Everything z3 is asked, as the texts it is parsed from; the verdict is a function of them alone
+        # (see ``LiftInvariants.smt_injective``), and a sweep re-asks it on every re-probe.
+        key = tuple(str(x) for rb, re_, _ in nd1 + nd2
+                    for x in (rb, re_)) + (str(itersym), str(start), str(end), str(step), str(len(nd1)))
+        cached = None if verdicts is None else verdicts.get(key)
+        if cached is not None:
+            return cached
         r = smt_dependence.prove_disjoint_access_boxes(box1,
                                                        box2,
                                                        str(itersym),
@@ -387,6 +400,8 @@ def _smt_proves_disjoint_boxes(sub1: subsets.Subset, sub2: subsets.Subset, iters
                                                        step=symbolic.pystr_to_symbolic(str(step)))
     except Exception:
         return False
+    if verdicts is not None:
+        verdicts[key] = r is True
     return r is True
 
 
@@ -433,7 +448,52 @@ def _smt_classify_read_write_pair(read_subset: subsets.Subset,
         return None
 
 
-def carried_local_transients(loop: LoopRegion, candidates: Set[str]) -> Set[str]:
+def write_refusal(sdfg: SDFG, state: SDFGState, dn: nodes.AccessNode, e: gr.MultiConnectorEdge[memlet.Memlet],
+                  itersym: sp.Symbol, a: sp.Wild, b: sp.Wild, start, end, step, permissive: bool,
+                  ctx: Optional['LiftContext']) -> Optional[str]:
+    """Why :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or ``None``."""
+    if e.data.dynamic and e.data.wcr is None:
+        # Dynamic write (no WCR) is safe across iterations if its dst subset
+        # pins an axis to the iter var (same ``a*i+b`` as non-dynamic below):
+        # each iteration writes a disjoint slab, so a lane firing or not can't
+        # race another iteration's write.
+        dst_subset = e.data.get_dst_subset(e, state)
+        if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
+            return (f"dynamic write to {dn.data} is not indexed by the iteration variable "
+                    f"- dst_subset={dst_subset}")
+
+    # Unique write index per iteration: match ``a*i+b``, ``|a| >= 1``, i the
+    # iteration variable (which must be used).
+    if e.data.wcr is None:
+        dst_subset = e.data.get_dst_subset(e, state)
+        ok = bool(dst_subset) and _check_range(dst_subset, a, itersym, b, step)
+        # NestedSDFG body propagates a whole-array external write hiding an
+        # inner per-iteration write; look past the connector.
+        if not ok and isinstance(e.src, nodes.NestedSDFG):
+            ok = _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step)
+            # NSDFG descent only proves WRITE uniqueness. A carried READ at a
+            # DIFFERENT iter position (``a[i+1]`` while writing ``a[i]``) is a
+            # forward/backward dependence that races. Require every inner read
+            # of ``conn`` to match the writes' ``a*i+b`` (or be loop-invariant).
+            if ok and not _nested_reads_match_writes(e.src, e.src_conn, itersym, a, b, step):
+                ok = False
+        if not ok and not permissive:
+            verdicts = None if ctx is None else ctx.invariants.smt_injective
+            if not smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts):
+                return (f"write to {dn.data} is not uniquely indexed by the iteration variable "
+                        f"(needs an a*i+b subset) - dst_subset={dst_subset}")
+    return None
+
+
+def counted_write(sdfg: SDFG, state: SDFGState, dn: nodes.AccessNode, e: gr.MultiConnectorEdge[memlet.Memlet]) -> bool:
+    """Whether the probe's write analysis looks at ``e`` at all: an empty memlet orders, a view's defining edge
+    binds, neither moves data."""
+    if e.data is None or e.data.is_empty():
+        return False
+    return not (isinstance(sdfg.arrays[dn.data], dt.View) and e is sdutil.get_view_edge(state, dn))
+
+
+def carried_local_transients(loop: LoopRegion, candidates: Set[str], ctx: Optional['LiftContext'] = None) -> Set[str]:
     """ Among ``candidates`` -- transients that appear ONLY inside ``loop`` -- the ones an iteration
         can READ before it writes them, so their value comes from the PREVIOUS iteration.
 
@@ -479,10 +539,44 @@ def carried_local_transients(loop: LoopRegion, candidates: Set[str]) -> Set[str]
     scan(loop, set())
     if not carried:
         return carried
-    return carried & observable_locals(loop, candidates)
+    return carried & observable_locals(loop, candidates, ctx)
 
 
-def observable_locals(loop: LoopRegion, candidates: Set[str]) -> Set[str]:
+def edge_read_symbols(edge: InterstateEdge, ctx: Optional['LiftContext']) -> Set[str]:
+    """``edge.read_symbols()``, memoized on ``ctx`` when one is available. Callers must not mutate it."""
+    if ctx is None:
+        return edge.read_symbols()
+    memo = ctx.invariants.edge_read_symbols
+    names = memo.get(edge)
+    if names is None:
+        names = memo[edge] = edge.read_symbols()
+    return names
+
+
+def control_flow_reads(loop: LoopRegion, ctx: Optional['LiftContext'] = None) -> Set[str]:
+    """The names read by ``loop``'s interstate edges and by the headers of ``loop`` and of the loops and
+    conditionals inside it, each edge's and header's share memoized on ``ctx`` when one is available."""
+    memo = None if ctx is None else ctx.invariants.control_flow_reads
+    reads: Set[str] = set()
+    for e in loop.all_interstate_edges():
+        names = None if memo is None else memo.get(e.data)
+        if names is None:
+            names = set(e.data.free_symbols)
+            if memo is not None:
+                memo[e.data] = names
+        reads |= names
+    headers = [loop] + [b for b in loop.all_control_flow_blocks() if isinstance(b, (LoopRegion, ConditionalBlock))]
+    for h in headers:
+        names = None if memo is None else memo.get(h)
+        if names is None:
+            names = {s for c in h.get_meta_codeblocks() for s in c.get_free_symbols()}
+            if memo is not None:
+                memo[h] = names
+        reads |= names
+    return reads
+
+
+def observable_locals(loop: LoopRegion, candidates: Set[str], ctx: Optional['LiftContext'] = None) -> Set[str]:
     """ Among ``candidates`` -- transients that appear ONLY inside ``loop`` -- the ones whose value
         can be observed outside the set: it flows into a container that is not a candidate, or a
         header/interstate edge of ``loop`` reads it.
@@ -504,9 +598,7 @@ def observable_locals(loop: LoopRegion, candidates: Set[str]) -> Set[str]:
                 if isinstance(reached, nodes.AccessNode) and reached is not dn:
                     downstream[dn.data].add(reached.data)
 
-    read_by_control_flow = {s for e in loop.all_interstate_edges() for s in e.data.free_symbols}
-    headers = [loop] + [b for b in loop.all_control_flow_blocks() if isinstance(b, (LoopRegion, ConditionalBlock))]
-    read_by_control_flow |= {s for h in headers for c in h.get_meta_codeblocks() for s in c.get_free_symbols()}
+    read_by_control_flow = control_flow_reads(loop, ctx)
 
     observable = {n for n in candidates if n in read_by_control_flow or (downstream[n] - candidates)}
     changed = True
@@ -755,6 +847,19 @@ class LiftInvariants:
     #: and no graph state enters the query. Every sweep restart re-probes each refused loop, and
     #: re-asking z3 the same question per lift was 21% of the pass on CloudSC.
     smt_injective: Dict[SmtWriteKey, bool] = field(default_factory=dict)
+    #: disjoint-box verdicts of :func:`_smt_proves_disjoint_boxes`, keyed by the texts z3 parses, on the
+    #: same grounds; a read witness re-asks every read-write pair of its container per re-probe.
+    smt_disjoint_boxes: Dict[Tuple[str, ...], bool] = field(default_factory=dict)
+    #: interstate edge or loop/conditional header -> the names it reads, for :func:`control_flow_reads`.
+    #: A lift edits neither: it moves the lifted loop's edges and headers as they are and re-attaches its
+    #: out-edges' data unchanged, so an entry never goes stale.
+    control_flow_reads: Dict[Any, Set[str]] = field(default_factory=dict)
+    #: interstate edge -> ``read_symbols()``, for :func:`edge_read_symbols`; stays exact for the same reason.
+    edge_read_symbols: Dict[Any, Set[str]] = field(default_factory=dict)
+    #: whether a lift in this SDFG already re-derived the parent references of every SDFG nested below
+    #: it. They stay exact from then on -- ``add_node`` re-homes the blocks a lift moves, and the body
+    #: SDFG is nested by ``add_nested_sdfg`` -- so the walk that re-derives them runs once per SDFG.
+    nested_references_current: bool = False
 
 
 def build_lift_invariants(sdfg: SDFG) -> LiftInvariants:
@@ -801,6 +906,10 @@ class LoopFacts:
     #: well: it is derived from the SDFG-wide access-state index, so a lift elsewhere can change
     #: which of the loop's transients are loop-local even though the body did not move.
     carried: Any = UNCOMPUTED
+    #: ``(kind, container)`` of the write (``kind='write'``) or read (``'read'``) the last probe refused the
+    #: loop on. Not a verdict: :meth:`LoopToMap.witnessed_refusal` re-checks it against the current graph,
+    #: and only a refusal it re-derives there stands. Kept across lifts inside the loop.
+    refusal_witness: Any = None
 
 
 def loop_facts_of(memo: Dict[Any, LoopFacts], loop) -> LoopFacts:
@@ -874,7 +983,7 @@ def index_block_symbols(ctx: LiftContext, block) -> None:
         ctx.symbol_uses.setdefault(name, []).append(block)
     killed = None
     for e in block.parent_graph.out_edges(block):
-        for name in e.data.read_symbols():
+        for name in edge_read_symbols(e.data, ctx):
             ctx.symbol_uses.setdefault(name, []).append(block)
         killed = set(e.data.assignments.keys()) if killed is None else killed & e.data.assignments.keys()
     for name in killed or ():
@@ -945,6 +1054,19 @@ def build_lift_context(sdfg: SDFG,
                        cfg_ids=cfg_ids)
 
 
+def iterator_type(loop: LoopRegion, rebound: Set[str], table: Dict[str,
+                                                                   dtypes.typeclass]) -> Optional[dtypes.typeclass]:
+    """The type ``loop`` gives its iterator when every other name its header reads keeps the type ``table``
+    declares (none is in ``rebound``), so the walk of ``defined_symbols`` would infer the same one."""
+    if not loop.init_statement:
+        return None
+    itervar = loop.loop_variable
+    header = ' '.join(c.as_string for c in (loop.init_statement, loop.loop_condition, loop.update_statement) if c)
+    if any(name in rebound for name in findall(r'[A-Za-z_]\w*', header) if name != itervar):
+        return None
+    return loop.new_symbols(table).get(itervar)
+
+
 def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: Optional[LiftContext] = None) -> None:
     """Declare in the lifted body the free symbols whose type the parent SDFG settles without a walk.
 
@@ -952,25 +1074,22 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: Optio
     over every interstate edge of ``sdfg``, and each lift leaves at least its own iterator undeclared.
     A symbol is declared here only when that walk provably yields the type used: one no interstate
     edge assigns and no other loop binds keeps the type the SDFG (or an array extent) declares, and
-    the iterator is typed by its own loop from header names that are all of that kind. Any other free
-    symbol is left for ``add_nested_sdfg`` to type as before.
+    the iterator of the lifted loop, or of a loop around it in ``sdfg`` that alone binds it, is typed by
+    that loop from header names that are all of that kind. Any other free symbol is left for
+    ``add_nested_sdfg`` to type as before.
     """
     free = nsdfg.free_symbols - {'NoneSymbol'} - nsdfg.symbols.keys()
     if not free:
         return
-    rebound: Set[str] = set()
     if ctx is not None:
-        # The same set from the context's counts: every assigned name, and every iterator some loop
-        # other than ``loop`` binds.
         edge_assignments, loop_variables = symbol_bindings(ctx, sdfg)
-        rebound.update(name for name, count in edge_assignments.items() if count > 0)
-        rebound.update(name for name, count in loop_variables.items() if count > (name == loop.loop_variable))
     else:
-        for edge in sdfg.all_interstate_edges():
-            rebound.update(edge.data.assignments.keys())
-        for region in sdfg.all_control_flow_regions(recursive=True):
-            if isinstance(region, LoopRegion) and region is not loop and region.loop_variable:
-                rebound.add(region.loop_variable)
+        edge_assignments = Counter(k for e in sdfg.all_interstate_edges() for k in e.data.assignments)
+        loop_variables = Counter(r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True)
+                                 if isinstance(r, LoopRegion) and r.loop_variable)
+    # Every assigned name, and every iterator some loop other than ``loop`` binds.
+    rebound: Set[str] = {name for name, count in edge_assignments.items() if count > 0}
+    rebound.update(name for name, count in loop_variables.items() if count > (name == loop.loop_variable))
     table: Dict[str, dtypes.typeclass] = dict(sdfg.symbols)
     for desc in sdfg.arrays.values():
         table.update({s.name: s.dtype for s in desc.free_symbols if s.dtype is not None})
@@ -978,14 +1097,20 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: Optio
     for name in sorted(free - rebound - {itervar}):
         if name in table:
             nsdfg.symbols[name] = table[name]
-    if itervar not in free or itervar in rebound or not loop.init_statement:
-        return
-    header = ' '.join(c.as_string for c in (loop.init_statement, loop.loop_condition, loop.update_statement) if c)
-    if any(name in rebound for name in findall(r'[A-Za-z_]\w*', header) if name != itervar):
-        return
-    itertype = loop.new_symbols(table).get(itervar)
-    if itertype is not None:
-        nsdfg.symbols[itervar] = itertype
+    if itervar in free and itervar not in rebound:
+        itertype = iterator_type(loop, rebound, table)
+        if itertype is not None:
+            nsdfg.symbols[itervar] = itertype
+    # An enclosing loop's iterator: the walk ends by re-typing it from that loop's header, which reads the
+    # same types as here when no edge assigns the iterator and no other loop binds it.
+    region = loop.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        name = region.loop_variable if isinstance(region, LoopRegion) else None
+        if name in free and edge_assignments[name] == 0 and loop_variables[name] == 1:
+            itertype = iterator_type(region, rebound, table)
+            if itertype is not None:
+                nsdfg.symbols[name] = itertype
+        region = region.parent_graph
 
 
 @properties.make_properties
@@ -1097,6 +1222,14 @@ class LoopToMap(xf.MultiStateTransformation):
         symbols_that_may_be_used: Set[str] = {itervar}
         used_before_assignment: Set[str] = set()
         facts = None if ctx is None else loop_facts_of(ctx.loop_facts, self.loop)
+        # Every accept above is behind us, so a refusal re-derived from the current graph is the verdict.
+        # A sweep re-probes the loops enclosing each lift; they stay refused on the same write or read,
+        # and this re-checks that one site instead of re-running the whole analysis (CloudSC: 8 loops,
+        # 3051 probes each).
+        if facts is not None and facts.refusal_witness is not None:
+            reason = self.witnessed_refusal(sdfg, facts, loop_states, ctx, itervar, start, end, step, permissive)
+            if reason is not None:
+                return refuse(reason)
         in_order_loop_blocks = None if facts is None else facts.block_order
         if in_order_loop_blocks is UNCOMPUTED or facts is None:
             in_order_loop_blocks = None
@@ -1138,8 +1271,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 for e in block.parent_graph.out_edges(block):
                     # Collect read-before-assigned symbols (states are in order; see
                     # blockorder_topological_sort above).
-                    read_symbols = e.data.read_symbols()
-                    read_symbols -= symbols_that_may_be_used
+                    read_symbols = edge_read_symbols(e.data, ctx) - symbols_that_may_be_used
                     used_before_assignment |= read_symbols
                     # If symbol was read before it is assigned, the loop cannot be parallel
                     assigned_symbols = set()
@@ -1213,7 +1345,7 @@ class LoopToMap(xf.MultiStateTransformation):
                for state in loop_states for n in state.data_nodes()):
             cached_carried = None if facts is None else facts.carried
             if cached_carried is UNCOMPUTED or cached_carried is None or cached_carried[0] != local_transients:
-                carried = carried_local_transients(self.loop, local_transients)
+                carried = carried_local_transients(self.loop, local_transients, ctx)
                 if facts is not None:
                     facts.carried = (set(local_transients), carried)
             else:
@@ -1253,8 +1385,6 @@ class LoopToMap(xf.MultiStateTransformation):
                         # (TSVC ``s1251``: ``s = b[i]+c[i]; b[i] = a[i]+d[i]; a[i] = s*e[i]`` fuses
                         # with ordering edges into ``a``/``d`` and stopped parallelizing).
                         # ``_read_and_write_sets`` already skips empty memlets for the same reason.
-                        if e.data is None or e.data.is_empty():
-                            continue
                         # The edge that DEFINES a view rebinds it; it moves no data. Every
                         # iteration re-establishes the same binding, so it carries no dependence --
                         # but its subset spans whatever the view looks at (``np.reshape(Xi, ...)``
@@ -1263,39 +1393,13 @@ class LoopToMap(xf.MultiStateTransformation):
                         # Real traffic THROUGH the view keeps its own edges and is still analyzed:
                         # a write-through view's defining edge is its OUT edge, which never appears
                         # here, and a store into the view node is a separate in-edge.
-                        if isinstance(sdfg.arrays[dn.data], dt.View) and e is sdutil.get_view_edge(state, dn):
+                        if not counted_write(sdfg, state, dn, e):
                             continue
-                        if e.data.dynamic and e.data.wcr is None:
-                            # Dynamic write (no WCR) is safe across iterations if its dst subset
-                            # pins an axis to the iter var (same ``a*i+b`` as non-dynamic below):
-                            # each iteration writes a disjoint slab, so a lane firing or not can't
-                            # race another iteration's write.
-                            dst_subset = e.data.get_dst_subset(e, state)
-                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
-                                return refuse(f"dynamic write to {dn.data} is not indexed by the iteration variable "
-                                              f"- dst_subset={dst_subset}")
-
-                        # Unique write index per iteration: match ``a*i+b``, ``|a| >= 1``, i the
-                        # iteration variable (which must be used).
-                        if e.data.wcr is None:
-                            dst_subset = e.data.get_dst_subset(e, state)
-                            ok = bool(dst_subset) and _check_range(dst_subset, a, itersym, b, step)
-                            # NestedSDFG body propagates a whole-array external write hiding an
-                            # inner per-iteration write; look past the connector.
-                            if not ok and isinstance(e.src, nodes.NestedSDFG):
-                                ok = _nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step)
-                                # NSDFG descent only proves WRITE uniqueness. A carried READ at a
-                                # DIFFERENT iter position (``a[i+1]`` while writing ``a[i]``) is a
-                                # forward/backward dependence that races. Require every inner read
-                                # of ``conn`` to match the writes' ``a*i+b`` (or be loop-invariant).
-                                if ok and not _nested_reads_match_writes(e.src, e.src_conn, itersym, a, b, step):
-                                    ok = False
-                            if not ok and not permissive:
-                                verdicts = None if ctx is None else ctx.invariants.smt_injective
-                                if not smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts):
-                                    return refuse(
-                                        f"write to {dn.data} is not uniquely indexed by the iteration variable "
-                                        f"(needs an a*i+b subset) - dst_subset={dst_subset}")
+                        reason = write_refusal(sdfg, state, dn, e, itersym, a, b, start, end, step, permissive, ctx)
+                        if reason is not None:
+                            if facts is not None:
+                                facts.refusal_witness = ('write', dn.data)
+                            return refuse(reason)
 
                         write_memlets[dn.data].append(e.data)
 
@@ -1366,6 +1470,8 @@ class LoopToMap(xf.MultiStateTransformation):
                         src_subset = e.data.get_src_subset(e, state)
                         if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
                                                      e.data, src_subset, varying):
+                            if facts is not None:
+                                facts.refusal_witness = ('read', data)
                             return refuse(f"read-after-write conflict on {data} within the loop body "
                                           f"- src_subset={src_subset}")
 
@@ -1384,9 +1490,9 @@ class LoopToMap(xf.MultiStateTransformation):
         # reassignment. First check the outgoing edges of the loop itself.
         reassigned_symbols: Set[str] = None
         for oe in graph.out_edges(self.loop):
-            if symbols_that_may_be_used & oe.data.read_symbols():
+            if symbols_that_may_be_used & edge_read_symbols(oe.data, ctx):
                 return refuse("loop-defined symbol(s) used after the loop on its outgoing edge - "
-                              f"{symbols_that_may_be_used & oe.data.read_symbols()}")
+                              f"{symbols_that_may_be_used & edge_read_symbols(oe.data, ctx)}")
             # Check for symbols that are set by all outgoing edges
             # TODO: Handle case of subset of out_edges
             if reassigned_symbols is None:
@@ -1432,9 +1538,9 @@ class LoopToMap(xf.MultiStateTransformation):
             # Check inter-state edges
             reassigned_symbols = None
             for e in block.parent_graph.out_edges(block):
-                if symbols_that_may_be_used & e.data.read_symbols():
+                if symbols_that_may_be_used & edge_read_symbols(e.data, ctx):
                     return refuse("loop-defined symbol(s) used after the loop on an inter-state edge - "
-                                  f"{symbols_that_may_be_used & e.data.read_symbols()}")
+                                  f"{symbols_that_may_be_used & edge_read_symbols(e.data, ctx)}")
 
                 # Check for symbols that are set by all outgoing edges
                 # TODO: Handle case of subset of out_edges
@@ -1448,6 +1554,56 @@ class LoopToMap(xf.MultiStateTransformation):
                 symbols_that_may_be_used -= reassigned_symbols
 
         return True
+
+    def witnessed_refusal(self, sdfg: SDFG, facts: LoopFacts, loop_states: OrderedSet, ctx: 'LiftContext', itervar: str,
+                          start, end, step, permissive: bool) -> Optional[str]:
+        """The refusal :attr:`LoopFacts.refusal_witness` names, if the current graph still refuses on it.
+
+        Re-derives what :meth:`can_be_applied` decides for the witness's container alone: the analysis
+        still looks at it (non-transient, or a transient the access index finds outside the loop -- a
+        subset of what the probe considers, so never more), and one of its writes, or one of its reads
+        against those writes, still fails. The container, not the edge: a lift inside the loop moves the
+        failing edge into the lifted body, and the write then leaves that body through a fresh one.
+        Anything else returns ``None`` and the full analysis runs.
+        """
+        kind, name = facts.refusal_witness
+        desc = sdfg.arrays.get(name)
+        if desc is None:
+            return None
+        if desc.transient:
+            holders = ctx.access_states.get(name)
+            if holders is None or all(st in loop_states for st in holders):
+                return None
+        if facts.read_write is UNCOMPUTED:
+            facts.read_write = self.loop.read_and_write_sets()
+        if name not in facts.read_write[1]:
+            return None
+        itersym = symbolic.pystr_to_symbolic(itervar)
+        a = sp.Wild('a', exclude=[itersym])
+        b = sp.Wild('b', exclude=[itersym])
+        # The probe visits the writes in this order, and a write that fails refuses the loop by itself.
+        writes: List[memlet.Memlet] = []
+        accesses = [(st, dn) for st in loop_states for dn in st.data_nodes() if dn.data == name]
+        for st, dn in accesses:
+            for w in st.in_edges(dn):
+                if not counted_write(sdfg, st, dn, w):
+                    continue
+                reason = write_refusal(sdfg, st, dn, w, itersym, a, b, start, end, step, permissive, ctx)
+                if reason is not None:
+                    return reason
+                writes.append(w.data)
+        if kind == 'write' or not writes:
+            return None
+        varying = loop_varying_symbols(self.loop)
+        for st, dn in accesses:
+            for e in st.out_edges(dn):
+                if e.data is None or e.data.is_empty():
+                    continue
+                src_subset = e.data.get_src_subset(e, st)
+                if not self.test_read_memlet(sdfg, st, e, itersym, itervar, start, end, step, {name: writes}, e.data,
+                                             src_subset, varying):
+                    return f"read-after-write conflict on {name} within the loop body - src_subset={src_subset}"
+        return None
 
     def test_read_memlet(self, sdfg: SDFG, state: SDFGState, edge: gr.MultiConnectorEdge[memlet.Memlet],
                          itersym: symbolic.SymbolicType, itervar: str, start: symbolic.SymbolicType,
@@ -1525,7 +1681,9 @@ class LoopToMap(xf.MultiStateTransformation):
             # triangular read against its mirrored write (covariance reads ``cov[i, i:M]`` back to
             # store ``cov[i:M, i]``) is decided here rather than falling through to the
             # propagate+intersect fallback, which widens both to the whole array and always aliases.
-            if _smt_proves_disjoint_boxes(read, write, itersym, start, end, step, varying):
+            ctx = vars(self).get('lift_context')
+            boxes = None if ctx is None else ctx.invariants.smt_disjoint_boxes
+            if _smt_proves_disjoint_boxes(read, write, itersym, start, end, step, varying, boxes):
                 continue
             # SMT fallback for non-affine read/write pairs. Only a proven 'none' (the accesses
             # never alias across iterations) admits the pair. A 'WAR' verdict is NOT enough:
@@ -2028,13 +2186,16 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Every nested SDFG of the tree, as ``all_nodes_recursive`` reaches them, without yielding every
         # dataflow node of every state on the way (7% of a lift on warpx_field_gather).
-        pending = [sdfg]
-        while pending:
-            for state in pending.pop().all_states():
-                for n in state.nodes():
-                    if isinstance(n, nodes.NestedSDFG):
-                        n.sdfg.parent = state
-                        n.sdfg.parent_nsdfg_node = n
-                        n.sdfg.parent_sdfg = state.sdfg
-                        if n.sdfg:
-                            pending.append(n.sdfg)
+        if lift_ctx is None or not lift_ctx.invariants.nested_references_current:
+            pending = [sdfg]
+            while pending:
+                for state in pending.pop().all_states():
+                    for n in state.nodes():
+                        if isinstance(n, nodes.NestedSDFG):
+                            n.sdfg.parent = state
+                            n.sdfg.parent_nsdfg_node = n
+                            n.sdfg.parent_sdfg = state.sdfg
+                            if n.sdfg:
+                                pending.append(n.sdfg)
+            if lift_ctx is not None:
+                lift_ctx.invariants.nested_references_current = True
