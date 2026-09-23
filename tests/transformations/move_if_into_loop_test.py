@@ -14,6 +14,17 @@ import pytest
 import dace
 from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
+
 
 N = dace.symbol('N')
 
@@ -62,6 +73,7 @@ def test_move_if_into_loop_basic():
         sdfg = guarded_loop.to_sdfg(simplify=True)
         assert MoveIfIntoLoop().apply_pass(sdfg, {}) is not None
         sdfg.validate()
+        assert_cfg_list_matches_reset(sdfg)
         # The loop is now hoisted to top level with the conditional inside it.
         loops = _loops(sdfg)
         assert len(loops) == 1
@@ -232,6 +244,34 @@ def test_the_cfg_list_is_never_rebuilt_by_the_pass(monkeypatch):
     assert len(lists) == 1, len(lists)
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
     sdfg.validate()
+
+
+@dace.program
+def guarded_imperfect_nest(a: dace.float64[N], b: dace.float64[N], c: dace.int32[1], d: dace.float64[1]):
+    if c[0] > 0:
+        for i in range(N):
+            b[i] = a[i] + 1.0
+        d[0] = 3.0
+
+
+def test_imperfect_nest_keeps_the_cfg_list_of_a_fresh_reset():
+    """Each sibling of an imperfect nest gets its own guard; the tree stays exact and the values hold."""
+    n = 8
+    a = np.random.rand(n)
+    base = guarded_imperfect_nest.to_sdfg(simplify=True)
+    for cval in (1, 0):
+        ref_b, ref_d = np.full(n, 7.0), np.zeros(1)
+        copy.deepcopy(base)(a=a.copy(), b=ref_b, c=np.array([cval], np.int32), d=ref_d, N=n)
+
+        sdfg = guarded_imperfect_nest.to_sdfg(simplify=True)
+        assert MoveIfIntoLoop().apply_pass(sdfg, {}) is not None
+        sdfg.validate()
+        assert_cfg_list_matches_reset(sdfg)
+        assert not any(isinstance(b, ConditionalBlock) for b in sdfg.nodes())
+
+        out_b, out_d = np.full(n, 7.0), np.zeros(1)
+        sdfg(a=a.copy(), b=out_b, c=np.array([cval], np.int32), d=out_d, N=n)
+        assert np.allclose(out_b, ref_b) and np.allclose(out_d, ref_d), cval
 
 
 if __name__ == "__main__":
