@@ -250,13 +250,18 @@ def dense_block_order(descs: Sequence[data.Data], axes: Sequence[int]) -> tuple[
     Returned with each descriptor's element stride (its fastest axis's stride): axis ``order[k]``
     steps by that stride times the extents of every later axis. The order is shared, since a plan's
     dimension list maps the same logical axis in the input and the output.
+
+    Compared through :func:`~dace.symbolic.relax_ipow`: canonicalization respells a packed stride
+    ``N**2`` as ``ipow(N, 2)``, which SymPy never relates to the ``N * N`` the extents multiply out
+    to, and every C-order ``(N, N, N)`` array then read as padded -- ls3df_scf's ``fftn`` fell back
+    to the separable DFT, whose host-level maps on device memory failed validation.
     """
     for order in itertools.permutations(axes):
         steps = []
         for desc in descs:
             step = span = desc.strides[order[-1]]
             for axis in reversed(order):
-                if symbolic.equal(desc.strides[axis], span) is not True:
+                if symbolic.equal(symbolic.relax_ipow(desc.strides[axis]), symbolic.relax_ipow(span)) is not True:
                     break
                 span = span * desc.shape[axis]
             else:

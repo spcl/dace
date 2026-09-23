@@ -7,6 +7,7 @@ graph, and only then materializes copies -- so a copy is emitted where the locat
 changes rather than around every kernel.
 """
 from copy import deepcopy
+import heapq
 from typing import Any, Optional
 
 from dace.ordered import OrderedSet
@@ -107,14 +108,22 @@ class OffloadingIRNode:
         # chain is as long as the program has blocks and a recursive walk overran Python's stack on
         # the first application-sized graph it met (CloudSC, ~2k blocks -- "RecursionError: maximum
         # recursion depth exceeded" out of ``apply_gpu_transformations``, which is where the whole
-        # GPU canonicalization of that kernel stopped). The stack below reproduces the recursion
-        # exactly, pre-order and duplicates included: children are pushed REVERSED so they pop in
+        # GPU canonicalization of that kernel stopped). Children are pushed REVERSED so they pop in
         # ``node.next`` order, and a node that reaches the close node contributes itself and none of
-        # its remaining children, which is what the recursive ``return`` did.
+        # its remaining children.
+        #
+        # Each node is walked ONCE. Every conditional in the section is a diamond whose arms meet
+        # again at its close node, so walking the section once per ROUTE doubles the work per
+        # conditional in a row: ls3df_scf's SCF loop holds 48 of them, 2^48 routes, and the canon
+        # GPU offload never finished. How many routes there are is :meth:`has_one_route`'s question.
         result: list = []
+        seen: set = set()
         stack = [self]
         while stack:
             node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
             children = []
             for next in node.next:
                 if next == self.close:  # a tail: a node that points at this section's end (close-node)
@@ -124,6 +133,31 @@ class OffloadingIRNode:
                 children.append(next)
             stack.extend(reversed(children))
         return result
+
+    def has_one_route(self) -> bool:
+        """Whether exactly one route leads from this open node to its close node.
+
+        A route ends at the first node that points at the close node, so this is whether
+        :meth:`get_all_tails` would list one tail if it walked the section once per route instead
+        of once per node: a conditional anywhere inside it makes two routes even when both arms
+        meet again before the section's single tail. Counted per node, saturating at two, so the
+        cost is one visit per node however many routes there are.
+        """
+        assert self.is_open_node()
+        routes: dict = {}
+        stack = [(self, False)]
+        while stack:
+            node, expanded = stack.pop()
+            if node in routes:
+                continue
+            if any(next is self.close for next in node.next):
+                routes[node] = 1
+            elif expanded:  # the IR is a DAG, so every child is counted before its parent pops again
+                routes[node] = min(2, sum(routes[next] for next in node.next))
+            else:
+                stack.append((node, True))
+                stack.extend((next, False) for next in node.next if next not in routes)
+        return routes[self] == 1
 
     # static makers
     def new_open_node(block: ControlFlowBlock):
@@ -1814,9 +1848,10 @@ class OffloadToAccelerator(ppl.Pass):
         assert tails, f"{IR.debug_name} doesn't have any tails! {IR}"
 
         # Behavior 1:
-        # if there is a single tail node (node that leads to this section's close node),
-        # then analyse the section & find last known location of each used array
-        if len(tails) == 1:
+        # if there is a single route to this section's close node, then analyse the section & find
+        # the last known location of each used array. A conditional inside the section is two routes
+        # even when its arms meet again before one tail: the walk below steps over it.
+        if IR.has_one_route():
             # define data gathering function
             location_on_gpu = {}
 
@@ -1870,7 +1905,40 @@ class OffloadToAccelerator(ppl.Pass):
                     if array not in next_arrays:
                         next.gpu_set.add(array)
 
-        self.__traverse_IR(IR, propagate)
+        for node in self.__topological_IR(IR):
+            propagate(node)
+
+    def __topological_IR(self, IR: OffloadingIRNode) -> list[OffloadingIRNode]:
+        """Every node of ``IR`` once, each after ALL of its predecessors, else in :meth:`__traverse_IR` order.
+
+        Propagation pushes a node's locations into its successors, so a node has to wait for every
+        predecessor. Walked in plain pre-order, the close node of a conditional is reached through its
+        first arm and passes its locations on before the other arms have pushed theirs, so what only a
+        later arm carries never reaches the blocks after it. A guarded specialization lists its
+        fallback arm first, and that arm pushes nothing into the close node at all: ls3df_scf's
+        ``b_frag``, written on the device before a run of such specializations, lost its location
+        behind the first of them and was read on the host after them with no copy in between -- the
+        read renamed to a host twin nothing ever declared. The first arm still comes first at a close
+        node, and where the pre-order already puts every predecessor first, this is that same order.
+        """
+        order: list[OffloadingIRNode] = []
+        self.__traverse_IR(IR, order.append)
+        rank = {node: position for position, node in enumerate(order)}
+        waiting = {node: 0 for node in order}
+        for node in order:
+            for next in node.next:
+                waiting[next] += 1
+        ready = [rank[IR]]
+        result: list[OffloadingIRNode] = []
+        while ready:
+            node = order[heapq.heappop(ready)]
+            result.append(node)
+            for next in node.next:
+                waiting[next] -= 1
+                if waiting[next] == 0:
+                    heapq.heappush(ready, rank[next])
+        assert len(result) == len(order), "the offloading IR has a cycle"
+        return result
 
     def _insert_copy_names_in_block(self,
                                     sdfg: SDFG,

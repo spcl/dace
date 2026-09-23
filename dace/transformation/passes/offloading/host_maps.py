@@ -203,10 +203,32 @@ def map_containers_and_traffic(state: SDFGState, entry: nodes.MapEntry):
 
 
 def provably_at_least(value, bound) -> bool:
-    """Whether ``value >= bound`` holds for every positive assignment of the extents they mention."""
-    difference = sympy.sympify(value) - sympy.sympify(bound)
+    """Whether ``value >= bound`` holds for every positive integer assignment of the extents they mention.
+
+    SymPy's sign inference gives up on a sum with a negative term, which is every such difference: srad's
+    stencil moves ``2*cols**2*rows + 8*cols*rows + 2*rows**2`` elements against a shared
+    ``cols*rows + 2*rows + 2*cols``, and read as unproven it stayed on the host with the whole program.
+    So the difference is also read with each extent written ``1 + k`` for a nonnegative integer ``k``: a
+    polynomial in those whose coefficients are all nonnegative is nonnegative wherever the extents are
+    positive. Anything that is not such a polynomial stays unproven.
+    """
+    difference = symbolic.relax_ipow(sympy.sympify(value) - sympy.sympify(bound))
     positive = {sym: sympy.Symbol(sym.name, positive=True, integer=True) for sym in difference.free_symbols}
-    return bool(symbolic.simplify(difference.subs(positive)).is_nonnegative)
+    difference = difference.subs(positive)
+    if symbolic.simplify(difference).is_nonnegative:
+        return True
+    if not difference.free_symbols:
+        return False  # a constant, and SymPy has already answered for it
+    offsets = {
+        sym: sympy.Symbol(f'{sym.name}_minus_1', nonnegative=True, integer=True)
+        for sym in difference.free_symbols
+    }
+    shifted = sympy.expand(difference.subs({sym: 1 + k for sym, k in offsets.items()}))
+    try:
+        polynomial = sympy.Poly(shifted, *offsets.values())
+    except sympy.PolynomialError:
+        return False
+    return all(coefficient.is_number and coefficient >= 0 for coefficient in polynomial.coeffs())
 
 
 def in_fallback_loop(loop: LoopRegion) -> bool:
@@ -232,10 +254,13 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
     algorithm, and its maps stay on the host. A loop with any other kernel -- a map that moves at
     least what it shares, one that shares nothing, a library call -- is a device loop, and keeps
     every kernel: cegterg's Davidson iteration shares a small ``ew`` with host code and pinning its
-    maps pulled its main work to the CPU. A pinned map must also be its state's sole device work:
-    the offload gives a state ONE location, so a host map beside a kernel over the same containers
-    would read device memory from the host (polybench durbin). Only this SDFG's own loops are read:
-    a loop in a nested SDFG under a map is kernel code.
+    maps pulled its main work to the CPU. The offload gives a state ONE location, so a host map
+    beside a kernel over the same containers would read device memory from the host (polybench
+    durbin); all or nothing keeps that from happening, since every map of every state in a pinned
+    loop is such a map. Several of them may share a state: ls3df_scf's Jacobi ``eigh`` rotates a row
+    and a column of its ``nstate x nstate`` matrix in one state per ``(p, q)`` pair, and as kernels
+    they cost two launches and the host's scalar reads of the matrix per rotation. Only this SDFG's
+    own loops are read: a loop in a nested SDFG under a map is kernel code.
     """
     pinned: OrderedSet = OrderedSet()
     for loop in sdfg.all_control_flow_regions():
@@ -250,7 +275,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
         for state in loop.all_states():
             work = [n for n in state.scope_children()[None] if isinstance(n, (nodes.MapEntry, nodes.LibraryNode))]
             for node in work:
-                if len(work) != 1 or not isinstance(node, nodes.MapEntry):
+                if not isinstance(node, nodes.MapEntry):
                     device_loop = True
                     continue
                 names, traffic = map_containers_and_traffic(state, node)
