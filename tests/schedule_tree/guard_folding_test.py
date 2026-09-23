@@ -65,6 +65,8 @@ def test_fold_atom_implied_by_loop_range():
                 B[i] = A[i] + 1.0
 
     stree = _tree(prog.to_sdfg())
+    # Without simplification, the frontend computes the condition into scalars first (``__tmp1 = ...; if __tmp1``)
+    forward_substitute_conditions(stree)
     assert _fold(stree) == 1
     (condition, ) = _conditions(stree)
     assert '>= 1' not in condition
