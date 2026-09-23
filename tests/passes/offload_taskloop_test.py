@@ -192,6 +192,180 @@ def blocked_nest_reference(A: np.ndarray) -> np.ndarray:
     return B
 
 
+def blocked_nest_beside_a_host_read() -> dace.SDFG:
+    """The ICON shape in a hybrid state: a free tasklet beside the ``nblks`` map reads ``A[0, 0, 0]``.
+
+    The host read makes the state hybrid, so the wrapper runs, and the ``nblks`` body -- one nested
+    SDFG that only launches -- is what it must leave alone.
+    """
+    sdfg = blocked_nest()
+    state = sdfg.start_block
+    sdfg.add_array('first', [1], dace.float64)
+    peek = state.add_tasklet('peek', {'x'}, {'y'}, 'y = x')
+    state.add_edge(state.add_read('A'), None, peek, 'x', dace.Memlet('A[0, 0, 0]'))
+    state.add_edge(peek, 'y', state.add_write('first'), None, dace.Memlet('first[0]'))
+    sdfg.validate()
+    return sdfg
+
+
+def rows_over_a_reducing_body(side_tasklet: bool) -> dace.SDFG:
+    """The npbench gem shape: a row map whose body is ONE nested SDFG that zeroes ``res`` and reduces.
+
+    The top level is hybrid -- ``negate`` is host code over ``k``, which the ``scale`` kernel reads
+    too. The ``Reduce`` makes ``rows`` a taskloop, and inside the nested SDFG the single-element
+    ``zero`` sits beside it. With ``side_tasklet`` the body also holds ``side``, scaling ``T[i, 0]``
+    into ``U``, which a ``copy`` kernel reads: host work beside the nested SDFG.
+    """
+    inner = dace.SDFG('row_body')
+    inner.add_array('a', [16], dace.float64)
+    inner.add_array('res', [1], dace.float64)
+    compute = inner.add_state('compute')
+    zero = compute.add_tasklet('zero', {}, {'o'}, 'o = 0')
+    zeroed = compute.add_access('res')
+    row = compute.add_read('a')
+    reduce_node = compute.add_reduce('lambda a, b: a + b', None, None)
+    compute.add_edge(zero, 'o', zeroed, None, dace.Memlet('res[0]'))
+    compute.add_nedge(zeroed, row, dace.Memlet())
+    compute.add_edge(row, None, reduce_node, '_in', dace.Memlet('a[0:16]'))
+    compute.add_edge(reduce_node, '_out', compute.add_write('res'), None, dace.Memlet('res[0]'))
+
+    sdfg = dace.SDFG('rows_over_a_reducing_body')
+    for name, shape in (('A', [8, 16]), ('B', [8]), ('C', [8]), ('k', [1])):
+        sdfg.add_array(name, shape, dace.float64)
+    sdfg.add_array('T', [8, 16], dace.float64, transient=True)
+    sdfg.add_array('U', [8], dace.float64, transient=True)
+    sdfg.add_array('nk', [1], dace.float64, transient=True)
+    state = sdfg.add_state('body')
+    negate = state.add_tasklet('negate', {'x'}, {'y'}, 'y = -x')
+    negated = state.add_access('nk')
+    state.add_edge(state.add_read('k'), None, negate, 'x', dace.Memlet('k[0]'))
+    state.add_edge(negate, 'y', negated, None, dace.Memlet('nk[0]'))
+    scaled = state.add_access('T')
+    state.add_mapped_tasklet('scale',
+                             dict(j='0:8', m='0:16'), {
+                                 'a': dace.Memlet('A[j, m]'),
+                                 's': dace.Memlet('nk[0]')
+                             },
+                             't = a * s', {'t': dace.Memlet('T[j, m]')},
+                             input_nodes={
+                                 'A': state.add_read('A'),
+                                 'nk': negated
+                             },
+                             output_nodes={'T': scaled},
+                             external_edges=True)
+    entry, exit_node = state.add_map('rows', dict(i='0:8'))
+    nested = state.add_nested_sdfg(inner, {'a'}, {'res'})
+    state.add_memlet_path(scaled, entry, nested, dst_conn='a', memlet=dace.Memlet('T[i, 0:16]'))
+    state.add_memlet_path(nested, exit_node, state.add_write('B'), src_conn='res', memlet=dace.Memlet('B[i]'))
+    if side_tasklet:
+        side = state.add_tasklet('side', {'x'}, {'u'}, 'u = x * 3')
+        state.add_memlet_path(scaled, entry, side, dst_conn='x', memlet=dace.Memlet('T[i, 0]'))
+        tripled = state.add_access('U')
+        state.add_memlet_path(side, exit_node, tripled, src_conn='u', memlet=dace.Memlet('U[i]'))
+        state.add_mapped_tasklet('copy',
+                                 dict(q='0:8'), {'v': dace.Memlet('U[q]')},
+                                 'c = v', {'c': dace.Memlet('C[q]')},
+                                 input_nodes={'U': tripled},
+                                 output_nodes={'C': state.add_write('C')},
+                                 external_edges=True)
+    sdfg.validate()
+    return sdfg
+
+
+def node_is_device_code(sdfg: dace.SDFG, label: str) -> bool:
+    """Whether the one tasklet, library node or nested SDFG labelled ``label`` runs inside a kernel."""
+    found = [(node, state) for node, state in sdfg.all_nodes_recursive()
+             if isinstance(node, (nodes.Tasklet, nodes.LibraryNode, nodes.NestedSDFG)) and node.label == label]
+    assert len(found) == 1, f"{label!r} matched {len(found)} nodes"
+    node, state = found[0]
+    return is_devicelevel_gpu(state.sdfg, state, node)
+
+
+def rows_over_a_scalar_body_with_inner_reduces() -> dace.SDFG:
+    """The npbench cp2k_density_matrix_trs4 shape: a row body of lone single-element states.
+
+    Each of ``flag0``..``flag2`` is its own state writing one element of ``F``, and a last state maps
+    ``j`` over a nested ``cell`` that reduces one row of the block -- the device-wide calls sit under
+    the body's own loop, not in its states. ``negate`` makes the top level hybrid, as in
+    :func:`rows_over_a_reducing_body`.
+    """
+    cell = dace.SDFG('cell')
+    cell.add_array('a', [4], dace.float64)
+    cell.add_array('r', [1], dace.float64)
+    reduce_state = cell.add_state('reduce')
+    reduce_node = reduce_state.add_reduce('lambda a, b: a + b', None, 0.0)
+    reduce_state.add_edge(reduce_state.add_read('a'), None, reduce_node, '_in', dace.Memlet('a[0:4]'))
+    reduce_state.add_edge(reduce_node, '_out', reduce_state.add_write('r'), None, dace.Memlet('r[0]'))
+
+    body = dace.SDFG('scalar_body')
+    body.add_array('blk', [4, 4], dace.float64)
+    body.add_array('res', [4], dace.float64)
+    body.add_array('flags', [3], dace.float64)
+    previous = None
+    for index in range(3):
+        flag = body.add_state(f'flag{index}', is_start_block=index == 0)
+        tasklet = flag.add_tasklet(f'flag{index}', {}, {'o'}, f'o = {index + 1}')
+        flag.add_edge(tasklet, 'o', flag.add_write('flags'), None, dace.Memlet(f'flags[{index}]'))
+        if previous is not None:
+            body.add_edge(previous, flag, dace.InterstateEdge())
+        previous = flag
+    cells = body.add_state_after(previous, 'cells')
+    entry, exit_node = cells.add_map('cells', dict(j='0:4'))
+    nested = cells.add_nested_sdfg(cell, {'a'}, {'r'})
+    cells.add_memlet_path(cells.add_read('blk'), entry, nested, dst_conn='a', memlet=dace.Memlet('blk[j, 0:4]'))
+    cells.add_memlet_path(nested, exit_node, cells.add_write('res'), src_conn='r', memlet=dace.Memlet('res[j]'))
+
+    sdfg = dace.SDFG('rows_over_a_scalar_body_with_inner_reduces')
+    for name, shape in (('A', [8, 4, 4]), ('B', [8, 4]), ('F', [8, 3]), ('k', [1])):
+        sdfg.add_array(name, shape, dace.float64)
+    sdfg.add_array('T', [8, 4, 4], dace.float64, transient=True)
+    sdfg.add_array('nk', [1], dace.float64, transient=True)
+    state = sdfg.add_state('body')
+    negate = state.add_tasklet('negate', {'x'}, {'y'}, 'y = -x')
+    negated = state.add_access('nk')
+    state.add_edge(state.add_read('k'), None, negate, 'x', dace.Memlet('k[0]'))
+    state.add_edge(negate, 'y', negated, None, dace.Memlet('nk[0]'))
+    scaled = state.add_access('T')
+    state.add_mapped_tasklet('scale',
+                             dict(p='0:8', q='0:4', m='0:4'), {
+                                 'a': dace.Memlet('A[p, q, m]'),
+                                 's': dace.Memlet('nk[0]')
+                             },
+                             't = a * s', {'t': dace.Memlet('T[p, q, m]')},
+                             input_nodes={
+                                 'A': state.add_read('A'),
+                                 'nk': negated
+                             },
+                             output_nodes={'T': scaled},
+                             external_edges=True)
+    entry, exit_node = state.add_map('rows', dict(i='0:8'))
+    rows_body = state.add_nested_sdfg(body, {'blk'}, {'res', 'flags'})
+    state.add_memlet_path(scaled, entry, rows_body, dst_conn='blk', memlet=dace.Memlet('T[i, 0:4, 0:4]'))
+    state.add_memlet_path(rows_body, exit_node, state.add_write('B'), src_conn='res', memlet=dace.Memlet('B[i, 0:4]'))
+    state.add_memlet_path(rows_body, exit_node, state.add_write('F'), src_conn='flags', memlet=dace.Memlet('F[i, 0:3]'))
+    sdfg.validate()
+    return sdfg
+
+
+def outermost_kernel(sdfg: dace.SDFG, label: str) -> nodes.MapEntry:
+    """The outermost GPU_Device map around the one tasklet labelled ``label``, across nested SDFGs."""
+    found = [(node, state) for node, state in sdfg.all_nodes_recursive()
+             if isinstance(node, nodes.Tasklet) and node.label == label]
+    assert len(found) == 1, f"{label!r} matched {len(found)} tasklets"
+    node, state = found[0]
+    kernel = None
+    while state is not None:
+        scope = state.scope_dict()[node]
+        while scope is not None:
+            if scope.map.schedule == dtypes.ScheduleType.GPU_Device:
+                kernel = scope
+            scope = state.scope_dict()[scope]
+        nested = state.sdfg.parent_nsdfg_node
+        node, state = nested, state.sdfg.parent
+    assert kernel is not None, f"{label!r} runs on the host"
+    return kernel
+
+
 def offloaded(sdfg: dace.SDFG, heuristics: bool) -> dace.SDFG:
     """The offloading pass's own output, which is what every assertion below is about.
 
@@ -297,6 +471,57 @@ def test_a_tasklet_beside_a_launched_library_node_becomes_a_kernel(heuristics):
                         if isinstance(node, nodes.Tasklet) and node.label == 'scale')
     assert is_devicelevel_gpu(state.sdfg, state, scale), 'the side tasklet stayed host code'
     sdfg.validate()
+
+
+@pytest.mark.parametrize('side_tasklet', [False, True])
+@pytest.mark.parametrize('heuristics', [True, False])
+def test_a_nested_body_around_a_reduce_is_not_wrapped_into_a_kernel(heuristics, side_tasklet):
+    """The nested SDFG is device work, not host work to lift: its ``Reduce`` stays a host-issued call.
+
+    Wrapped into a size-1 map, the whole body -- the device-wide ``Reduce`` included -- ran in one
+    GPU thread per row. npbench gem hit it on the GPU canonicalize column: no result within 420 s,
+    against 2.3 s a call without the wrap.
+    """
+    sdfg = offloaded(rows_over_a_reducing_body(side_tasklet), heuristics)
+    assert map_schedule(sdfg, 'rows') == dtypes.ScheduleType.Sequential
+    assert not node_is_device_code(sdfg, 'Reduce'), 'the Reduce was wrapped into a kernel'
+    sdfg.validate()
+
+
+@pytest.mark.parametrize('heuristics', [True, False])
+def test_the_single_element_tasklet_beside_the_nested_reduce_becomes_a_kernel(heuristics):
+    """``zero`` shares its state with the ``Reduce`` -- a hybrid state -- so it gets a size-1 kernel."""
+    sdfg = offloaded(rows_over_a_reducing_body(side_tasklet=False), heuristics)
+    assert node_is_device_code(sdfg, 'zero'), 'the tasklet beside the Reduce stayed host code'
+
+
+@pytest.mark.parametrize('heuristics', [True, False])
+def test_a_tasklet_beside_a_nested_reducing_body_becomes_a_kernel(heuristics):
+    """Host work beside the nested SDFG is the hybrid case: ``side`` may not read a device ``T`` on the host."""
+    sdfg = offloaded(rows_over_a_reducing_body(side_tasklet=True), heuristics)
+    assert node_is_device_code(sdfg, 'side'), 'the side tasklet stayed host code'
+    sdfg.validate()
+
+
+@pytest.mark.parametrize('heuristics', [True, False])
+def test_a_run_of_single_element_states_beside_inner_reduces_is_one_kernel(heuristics):
+    """One kernel for the row body, not one per lone single-element state inside it.
+
+    Each lone state wrapped on its own is a launch per state per row: npbench cp2k_density_matrix_trs4
+    ran 4x slower on the GPU canonicalize column (210 ms against 51 ms a call at preset M).
+    """
+    sdfg = offloaded(rows_over_a_scalar_body_with_inner_reduces(), heuristics)
+    kernels = {outermost_kernel(sdfg, f'flag{index}') for index in range(3)}
+    assert len(kernels) == 1, f'the lone states launch {len(kernels)} kernels'
+    sdfg.validate()
+
+
+def test_a_block_body_in_a_hybrid_state_is_not_wrapped_into_a_kernel():
+    """A nested SDFG that only launches keeps its maps as kernels instead of one thread running them."""
+    sdfg = offloaded(blocked_nest_beside_a_host_read(), heuristics=True)
+    assert map_schedule(sdfg, 'nblks') == dtypes.ScheduleType.Sequential
+    assert not node_is_device_code(sdfg, 'block_body'), 'the block body was wrapped into a kernel'
+    assert map_schedule(sdfg, 'scale') == dtypes.ScheduleType.GPU_Device
 
 
 def test_a_fill_does_not_make_its_parent_a_taskloop():
@@ -437,6 +662,17 @@ def test_a_tasklet_beside_a_launched_library_node_computes_its_values(heuristics
     sdfg(**arrays)
     assert np.allclose(arrays['B'].get(), (A + 1).sum(axis=1))
     assert np.allclose(arrays['C'].get(), (A[:, 0] + 1) * 3)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize('heuristics', [True, False])
+def test_a_nested_reducing_body_beside_a_tasklet_computes_its_values(heuristics):
+    sdfg = offloaded(rows_over_a_reducing_body(side_tasklet=True), heuristics)
+    A = np.random.default_rng(4).random((8, 16))
+    B, C = np.zeros(8), np.zeros(8)
+    sdfg(A=A.copy(), B=B, C=C, k=np.array([2.0]))
+    assert np.allclose(B, (A * -2.0).sum(axis=1))
+    assert np.allclose(C, A[:, 0] * -6.0)
 
 
 @pytest.mark.gpu

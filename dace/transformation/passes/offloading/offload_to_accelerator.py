@@ -28,7 +28,7 @@ from dace.transformation.passes.length_one_array_scalar_conversion import (Conve
 from dace.transformation.passes.offloading.offloading_helpers import (link_early_returns, remove_empty_return_entries,
                                                                       separate_early_returns)
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
-from dace.transformation.passes.offloading.taskloop import taskloop_maps
+from dace.transformation.passes.offloading.taskloop import is_device_wide_libnode, sdfg_only_launches, taskloop_maps
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps
 
 PRINT_NAMES = 500
@@ -2442,28 +2442,38 @@ class OffloadToAccelerator(ppl.Pass):
             new_maps |= self.wrap_free_computation(sdfg, state, scope_entry)
         return new_maps
 
-    def wrap_free_computation(self, sdfg: SDFG, state: SDFGState, scope_entry=None):
-        """Lift what is left of ONE host scope into kernels: GPU nodes partition it, the rest is wrapped.
+    def is_device_work(self, node: nodes.Node) -> bool:
+        """The one rule for what a host scope launches rather than runs: its device work.
 
-        A library node forces its parent onto the host, so a scope can hold a device-wide call and
-        real computation side by side. That computation is not host work -- it is a kernel nobody
-        wrapped yet, so a size-1 map around it makes it one.
+        A GPU map or GPU library node is device work, and so is a nested SDFG that launches: one
+        whose own states issue a device-wide call, or that computes only inside maps. Anything else
+        in a host scope -- a tasklet, a nested SDFG of scalar code -- is host work. A scope is hybrid
+        when host work touching device arrays sits beside device work, and only that host work is
+        wrapped, one size-1 kernel per connected run of it. A nested SDFG whose device-wide calls
+        sit under its own loops is per-element code (npbench cp2k_density_matrix_trs4's row body),
+        so it is host work and runs as one kernel; one that issues the call itself (npbench gem's
+        body around a Reduce) stays a host level, and wrapping it would run that call in one thread.
+        """
+        if isinstance(node, (nodes.MapEntry, nodes.MapExit, nodes.LibraryNode)):
+            return self.has_GPU_schedule(node)
+        if not isinstance(node, nodes.NestedSDFG):
+            return False
+        issued = (n for body in node.sdfg.states() for n in body.scope_children()[None])
+        return any(is_device_wide_libnode(n) for n in issued) or sdfg_only_launches(node.sdfg)
+
+    def wrap_free_computation(self, sdfg: SDFG, state: SDFGState, scope_entry=None):
+        """Lift the host work of ONE hybrid host scope into kernels; :meth:`is_device_work` has the rule.
+
+        A taskloop or host map is host code by decision, and ``host_level_scopes`` lifts from INSIDE
+        it, so it bounds the partitions like device work does: left out, closing a partition would
+        drag its whole body -- device-wide library calls included -- into a kernel.
         """
         scope_children = state.scope_children()
         members = scope_children[scope_entry]
-        lib_nodes = OrderedSet(node for node in members
-                               if isinstance(node, (nodes.LibraryNode)) and self.has_GPU_schedule(node))
-        map_entries = OrderedSet(node for node in members
-                                 if isinstance(node, (nodes.MapEntry)) and self.has_GPU_schedule(node))
-        map_exits = OrderedSet(state.exit_node(node) for node in map_entries)
-        # A taskloop or host map is host code by decision, and ``host_level_scopes`` lifts from
-        # INSIDE it. Left out of the boundary it reads as free computation, and closing the
-        # partition then drags its whole body -- device-wide library calls included -- into a kernel.
-        host_entries = OrderedSet(
-            node for node in members
-            if isinstance(node, nodes.MapEntry) and (node in self.taskloops or node in self._host_map_entries))
-        host_exits = OrderedSet(state.exit_node(node) for node in host_entries)
-        partition_nodes = lib_nodes | map_entries | map_exits | host_entries | host_exits
+        partition_nodes = OrderedSet(node for node in members if self.is_device_work(node) or (
+            isinstance(node, nodes.MapEntry) and (node in self.taskloops or node in self._host_map_entries)))
+        partition_nodes |= OrderedSet(
+            state.exit_node(node) for node in partition_nodes if isinstance(node, nodes.MapEntry))
         if scope_entry is not None:
             # The scope's own exit is its boundary, and scope_children lists it beside the body.
             partition_nodes.add(state.exit_node(scope_entry))
@@ -2475,15 +2485,10 @@ class OffloadToAccelerator(ppl.Pass):
         ctr = 0
         for partition in partitions:
 
-            # If only scalars are accessed, no wrap is needed. Check the memlets as well as the access
-            # nodes: inside a scope a tasklet reaches its arrays through the scope's entry and exit, so
-            # a partition holding just that tasklet has no access node at all. Counting such a partition
-            # as scalar-only left npbench cp2k_density_matrix_trs4's ``row_of * 3`` on the host inside
-            # a taskloop, reading a device array.
-            array_access = any(
-                (isinstance(node, nodes.AccessNode) and node.data and not self._is_scalar(node.data, sdfg)) or any(
-                    edge.data.data and not self._is_scalar(edge.data.data, sdfg) for edge in state.all_edges(node))
-                for node in partition)
+            # Host work that touches no array needs no kernel. Read the memlets, not the access
+            # nodes: inside a scope a tasklet reaches its arrays through the scope's entry and exit.
+            array_access = any(edge.data.data and not self._is_scalar(edge.data.data, sdfg) for node in partition
+                               for edge in state.all_edges(node))
             if not array_access:
                 continue
 
