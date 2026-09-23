@@ -549,7 +549,7 @@ class OffloadToAccelerator(ppl.Pass):
             region = region.parent_graph
         return False
 
-    def under_pinned_map(self, scopes: dict, node: nodes.Node) -> bool:
+    def under_pinned_map(self, scopes: dict[nodes.Node, nodes.EntryNode | None], node: nodes.Node) -> bool:
         """Whether a map pinned to the host by :func:`maps_pinned_by_host_loops` encloses ``node``."""
         scope = scopes[node]
         while scope is not None:

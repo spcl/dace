@@ -7,7 +7,6 @@ import functools
 import itertools
 import operator
 import warnings
-from typing import Any
 from collections.abc import Callable, Sequence
 
 from dace import data, dtypes, Memlet, SDFG, SDFGState, symbolic, library, nodes, properties
@@ -244,7 +243,8 @@ def fftw3_call(src: data.Data, out: data.Data, transformed: list[int], is_invers
                          language=dtypes.Language.CPP)
 
 
-def dense_block_order(descs: Sequence[data.Data], axes: Sequence[int]) -> tuple[list[int], list[Any]] | None:
+def dense_block_order(descs: Sequence[data.Data],
+                      axes: Sequence[int]) -> tuple[list[int], list[symbolic.SymbolicType]] | None:
     """An order of ``axes``, slowest first, in which every descriptor lays them out as ONE dense block.
 
     Returned with each descriptor's element stride (its fastest axis's stride): axis ``order[k]``
@@ -269,7 +269,7 @@ def dense_block_order(descs: Sequence[data.Data], axes: Sequence[int]) -> tuple[
 
 
 def gpu_fft_layout(src: data.Data, out: data.Data,
-                   transformed: list[int]) -> tuple[list, Any, Any, Any, Any, Any] | None:
+                   transformed: list[int]) -> tuple[list[symbolic.SymbolicType], ...] | None:
     """``(extents, istride, idist, ostride, odist, batch)`` of ``transformed`` as ONE ``MakePlanMany`` plan, else ``None``.
 
     With the embeds equal to the extents, a plan reads element ``(p, q, r)`` of batch ``b`` at

@@ -189,10 +189,11 @@ def host_code_containers(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet:
     return touched
 
 
-def map_containers_and_traffic(state: SDFGState, entry: nodes.MapEntry):
+def map_containers_and_traffic(state: SDFGState,
+                               entry: nodes.MapEntry) -> tuple[OrderedSet[str], symbolic.SymbolicType]:
     """The containers a top-level map reads or writes, and the elements it moves (dynamic memlets count 0)."""
-    names: OrderedSet = OrderedSet()
-    traffic = 0
+    names: OrderedSet[str] = OrderedSet()
+    traffic: symbolic.SymbolicType = sympy.Integer(0)
     for edge in itertools.chain(state.in_edges(entry), state.out_edges(state.exit_node(entry))):
         if edge.data.data is None:
             continue
@@ -202,7 +203,7 @@ def map_containers_and_traffic(state: SDFGState, entry: nodes.MapEntry):
     return names, traffic
 
 
-def provably_at_least(value, bound) -> bool:
+def provably_at_least(value: symbolic.SymbolicType, bound: symbolic.SymbolicType) -> bool:
     """Whether ``value >= bound`` holds for every positive assignment of the extents they mention."""
     difference = sympy.sympify(value) - sympy.sympify(bound)
     positive = {sym: sympy.Symbol(sym.name, positive=True, integer=True) for sym in difference.free_symbols}
