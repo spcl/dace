@@ -5,6 +5,7 @@ import warnings
 from typing import Any, Dict, Optional
 
 from dace import SDFG, dtypes, nodes, properties
+from dace.sdfg import state as dace_state
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
@@ -205,6 +206,32 @@ class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
         return bool(targets) or None
 
 
+def tile_every_kernel(sdfg: SDFG) -> None:
+    """``sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)`` in one sweep.
+
+    The generic loop re-enumerates every map of the SDFG after each application. Tiling a kernel only
+    rewrites that kernel's own scope and leaves a ``GPU_Device`` map around a ``GPU_ThreadBlock`` one,
+    which the transformation refuses, so no application enables or disables a match elsewhere: one
+    sweep over the maps in the matcher's order applies the same rewrites in the same order.
+    """
+    from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
+
+    for cfr in list(sdfg.all_control_flow_regions(recursive=True)):
+        for state_id, state in enumerate(cfr.nodes()):
+            if not isinstance(state, dace_state.SDFGState):
+                continue
+            for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
+                xform = AddThreadBlockMap()
+                xform.setup_match(cfr.sdfg,
+                                  cfr.cfg_id,
+                                  state_id, {AddThreadBlockMap.map_entry: entry},
+                                  0,
+                                  override=True)
+                if xform.can_be_applied(state, 0, cfr.sdfg):
+                    xform.apply(state, cfr.sdfg)
+    sdfg.validate()
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AddThreadBlockMaps(ppl.Pass):
@@ -223,11 +250,10 @@ class AddThreadBlockMaps(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, Any]:
-        from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
         from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
 
         old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
-        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
+        tile_every_kernel(sdfg)
         new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
         tb_inserted_kernels = {
             n
