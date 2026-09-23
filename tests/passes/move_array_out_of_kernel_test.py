@@ -209,6 +209,51 @@ def test_lifted_scratch_below_a_nested_sdfg_computes_the_right_values():
     assert np.allclose(cupy.asnumpy(out), expected)
 
 
+def wrap_kernel_around_a_body_it_never_reaches() -> dace.SDFG:
+    """``out[k] = 2 * a[NZ - 1 - k] + 1`` in a nested body under a size-1 kernel ``w in 0:1``.
+
+    The offload wraps host-level work this way (npbench spmv's ``size1_wrap_region``), and the
+    kernel's parameter is not bound into the body, which never needed it. The body's ``tmp[NZ]``
+    is lifted, so its accesses gain the ``w`` index.
+    """
+    body = dace.SDFG('wrapped_body')
+    body.add_array('a', [NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    body.add_array('out', [NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    body.add_array('tmp', [NZ], dace.float64, transient=True, storage=dtypes.StorageType.Register)
+    fill = body.add_state('fill', is_start_block=True)
+    fill.add_mapped_tasklet('scale', {'k': '0:NZ'}, {'__in': dace.Memlet('a[k]')},
+                            '__out = __in * 2.0', {'__out': dace.Memlet('tmp[k]')},
+                            schedule=dtypes.ScheduleType.Sequential,
+                            external_edges=True)
+    drain = body.add_state_after(fill, 'drain')
+    drain.add_mapped_tasklet('shift', {'k': '0:NZ'}, {'__in': dace.Memlet('tmp[NZ - 1 - k]')},
+                             '__out = __in + 1.0', {'__out': dace.Memlet('out[k]')},
+                             schedule=dtypes.ScheduleType.Sequential,
+                             external_edges=True)
+
+    sdfg = dace.SDFG('wrap_kernel_scratch')
+    sdfg.add_array('a', [NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('out', [NZ], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state('grid', is_start_block=True)
+    entry, exit_node = state.add_map('wrap', dict(w='0:1'), schedule=dtypes.ScheduleType.GPU_Device)
+    nsdfg = state.add_nested_sdfg(body, {'a'}, {'out'}, symbol_mapping=dict(NZ=NZ))
+    state.add_memlet_path(state.add_read('a'), entry, nsdfg, dst_conn='a', memlet=dace.Memlet('a[0:NZ]'))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write('out'), src_conn='out', memlet=dace.Memlet('out[0:NZ]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_lift_binds_the_kernel_parameter_it_indexes_by():
+    """The lift propagated into the nests only the symbols the kernel's scope already used, and the
+    new slice index is the kernel's own parameter, which the body never used. Validation then
+    failed with ``Missing symbols on nested SDFG: ['__wrap_i']`` (gpu_offload_corpus np-spmv)."""
+    from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
+
+    sdfg = wrap_kernel_around_a_body_it_never_reaches()
+    GPUCodegenPreprocessPipeline().apply_pass(sdfg, {})
+    sdfg.validate()
+
+
 def kernel_over_k_beside_a_nested_k_loop() -> dace.SDFG:
     """Two kernels in one SDFG: one whose map parameter is ``k``, one whose body OWNS a ``k`` loop.
 

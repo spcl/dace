@@ -613,6 +613,10 @@ class MoveArrayOutOfKernel(Pass):
             if next_map.map.schedule not in GPU_HIERARCHY_SCHEDULES:
                 continue
             all_symbols = all_symbols | next_map.used_symbols_within_scope(self._node_to_state_cache[next_map])
+            # The map's own parameters too: the lifted slice is indexed by them even where the body
+            # never used them before. A size-1 wrap region's ``__wrap_i`` then reached npbench spmv's
+            # nested loop body unmapped ("Missing symbols on nested SDFG").
+            all_symbols = all_symbols | set(next_map.map.params)
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             nsdfg_node = sdfg.parent_nsdfg_node
