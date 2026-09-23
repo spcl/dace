@@ -2,7 +2,7 @@
 import inspect
 import sys
 import types
-from typing import Set, List
+from typing import Set, List, TypeVar
 import contextlib
 from dace import graphlib as nx
 from dace.ordered import OrderedSet
@@ -102,8 +102,12 @@ def register_library(module_name, name):
                 register_transformation(value, module)
 
 
+#: A decorated class: the decorators return the class they were given, so its type is kept.
+T = TypeVar('T')
+
+
 # Use to decorate DaCe library nodes
-def node(n):
+def node(n: T) -> T:
     n = dace.properties.make_properties(n)
     if not issubclass(n, LibraryNode):
         raise TypeError("Library node class \"" + n.__name__ + "\" must derive from dace.sdfg.nodes.LibraryNode")
@@ -121,7 +125,7 @@ def node(n):
 
 
 # Use to decorate DaCe library expansions
-def expansion(exp):
+def expansion(exp: T) -> T:
     exp = dace.properties.make_properties(exp)
     if not issubclass(exp, ExpandTransformation):
         raise TypeError("Library node expansion \"" + exp.__name__ + "\" must derive from ExpandTransformation")
@@ -147,7 +151,7 @@ def register_expansion(library_node: LibraryNode, expansion_name: str):
 
 
 # Use to decorate DaCe library environments
-def environment(env):
+def environment(env: T) -> T:
     env = dace.properties.make_properties(env)
     for field in [
             "cmake_minimum_version", "cmake_packages", "cmake_variables", "cmake_includes", "cmake_libraries",

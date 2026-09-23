@@ -337,7 +337,7 @@ class PatternTransformation(TransformationBase):
                                   annotate: bool = True,
                                   permissive: bool = False,
                                   save: bool = True,
-                                  **where: Union[nd.Node, SDFGState]):
+                                  **where: Union[nd.Node, ControlFlowBlock]):
         """
         Applies `can_be_applied()` and/or `apply()` to a given subgraph, defined by
         a set of nodes.
@@ -429,7 +429,7 @@ class PatternTransformation(TransformationBase):
                  annotate: bool = True,
                  permissive: bool = False,
                  save: bool = True,
-                 **where: Union[nd.Node, SDFGState]):
+                 **where: Union[nd.Node, ControlFlowBlock]):
         """
         Applies this transformation to a given subgraph, defined by a set of
         nodes. Raises an error if arguments are invalid or transformation is
@@ -473,7 +473,7 @@ class PatternTransformation(TransformationBase):
                           options: Optional[Dict[str, Any]] = None,
                           expr_index: int = 0,
                           permissive: bool = False,
-                          **where: Union[nd.Node, SDFGState]) -> bool:
+                          **where: Union[nd.Node, ControlFlowBlock]) -> bool:
         """
         Checks if the given transformation can be applied to a subgraph, defined by
         a set of nodes.
