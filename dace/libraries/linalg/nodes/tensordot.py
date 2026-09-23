@@ -291,6 +291,7 @@ class ExpandGPUTensorDot(ExpandTransformation):
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg):
+        from dace.codegen.common import sym2cpp  # Avoid import loop
         left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
@@ -327,11 +328,11 @@ class ExpandGPUTensorDot(ExpandTransformation):
         # Modes are dense indices into the concatenated shapes, so a vector indexes them directly.
         extents = f"std::vector<int64_t> extent({len(left_ext) + len(right_ext)});\n"
         for i, s in zip(left_modes, left_ext):
-            extents += f"extent[{i}] = {s};\n"
+            extents += f"extent[{i}] = {sym2cpp(s)};\n"
         for i, s in zip(right_modes, right_ext):
             if i in node.right_axes:
                 continue
-            extents += f"extent[{i}] = {s};\n"
+            extents += f"extent[{i}] = {sym2cpp(s)};\n"
         extents += f"""
             std::vector<int64_t> extentA;
             for (auto mode : modeA) extentA.push_back(extent[mode]);
@@ -342,9 +343,9 @@ class ExpandGPUTensorDot(ExpandTransformation):
         """
 
         extents += f"""
-            std::vector<int64_t> stridesA{{{','.join(str(s) for s in left_tensor.strides)}}};
-            std::vector<int64_t> stridesB{{{','.join(str(s) for s in right_tensor.strides)}}};
-            std::vector<int64_t> stridesC{{{','.join(str(s) for s in out_tensor.strides)}}};
+            std::vector<int64_t> stridesA{{{','.join(sym2cpp(s) for s in left_tensor.strides)}}};
+            std::vector<int64_t> stridesB{{{','.join(sym2cpp(s) for s in right_tensor.strides)}}};
+            std::vector<int64_t> stridesC{{{','.join(sym2cpp(s) for s in out_tensor.strides)}}};
         """
 
         # cuTENSOR v2: descriptors take an alignment hint (bytes) instead of
@@ -458,6 +459,7 @@ class ExpandTBLIS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
+        from dace.codegen.common import sym2cpp  # Avoid import loop
         left_tensor, right_tensor, out_tensor, left_ext, right_ext, out_ext = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
@@ -472,7 +474,7 @@ class ExpandTBLIS(ExpandTransformation):
         def carr(name, vals):
             if len(vals) == 0:
                 return f"ptrdiff_t* {name} = nullptr;"
-            return f"ptrdiff_t {name}[] = {{{', '.join(symstr(v) for v in vals)}}};"
+            return f"ptrdiff_t {name}[] = {{{', '.join(sym2cpp(v) for v in vals)}}};"
 
         code = f"""
             {carr('lenA', list(left_ext))}
