@@ -375,7 +375,6 @@ def nest_sdfg_control_flow(sdfg: SDFG):
     for nd in sdfg.nodes():
         if isinstance(nd, AbstractControlFlowRegion):
             nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [nd]))
-            sdfg.reset_cfg_list()
 
 
 def drop_folded_boundary_edge(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge, kept: MultiConnectorEdge,

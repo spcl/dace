@@ -8,6 +8,8 @@ from dace.transformation.interstate import InlineSDFG
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
 
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
+
 
 def mapfission_sdfg():
     sdfg = dace.SDFG('mapfission')
@@ -1150,6 +1152,21 @@ def test_nested_loop_iterator_is_not_mapped_at_the_parent():
             for node in st.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     assert not (loop_vars & node.symbol_mapping.keys())
+
+
+def test_nesting_control_flow_keeps_the_cfg_list_of_a_fresh_reset_without_resetting(monkeypatch):
+    """``nest_sdfg_control_flow`` rebuilt the whole CFG list after every region it nested."""
+    from dace.transformation.helpers import nest_sdfg_control_flow
+    sdfg = map_over_carried_loop.to_sdfg(simplify=True)
+    nsdfg = next(n for st in sdfg.all_states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert any(isinstance(b, dace.sdfg.state.AbstractControlFlowRegion) for b in nsdfg.sdfg.nodes())
+    resets = spy_on_resets(monkeypatch)
+    nest_sdfg_control_flow(nsdfg.sdfg)
+    monkeypatch.undo()
+    assert resets == []
+    assert not any(isinstance(b, dace.sdfg.state.AbstractControlFlowRegion) for b in nsdfg.sdfg.nodes())
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
 
 
 N_border = dace.symbol('N_border')
