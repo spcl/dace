@@ -289,6 +289,10 @@ class ExpandGPUTensorDot(ExpandTransformation):
 
     environments = []
 
+    #: Whether the library reads C even though beta is 0. The output is then zeroed first: a stale
+    #: NaN or Inf in it survives the ``0 * C`` term.
+    reads_c_at_zero_beta = False
+
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg):
         from dace.codegen.common import sym2cpp  # Avoid import loop
@@ -296,7 +300,9 @@ class ExpandGPUTensorDot(ExpandTransformation):
 
         dtype = out_tensor.dtype.base_type
         supported = cls.environments[0].CONTRACTION_TYPE_MAP
-        if dtype not in supported:
+        out_subset = next(e.data.subset for e in parent_state.out_edges(node) if e.src_conn == '_out_tensor')
+        # Zeroing is one memset, so it needs the output to be one run of memory.
+        if dtype not in supported or (cls.reads_c_at_zero_beta and not out_subset.is_contiguous_subset(out_tensor)):
             # The vendor library cannot contract this dtype (hipTensor takes no complex one). The pure
             # expansion over GPU-resident operands is still a device map, as the environment documents.
             return ExpandPure.expansion(node, parent_state, parent_sdfg)
@@ -390,10 +396,15 @@ class ExpandGPUTensorDot(ExpandTransformation):
             if (worksize > 0) gpuMalloc(&work, worksize);
         """
 
+        zero = ""
+        if cls.reads_c_at_zero_beta:
+            zero = (f"gpuMemsetAsync(_out_tensor, 0, ({sym2cpp(_prod(out_ext))}) * sizeof({scalar_type}), "
+                    "__dace_current_stream);")
         execute = f"""
             {cls.vendor_lower}Plan_t plan;
             {cls.check}({cls.vendor_lower}CreatePlan(
                 {cls.handle}, &plan, opDesc, planPref, worksize));
+            {zero}
             {cls.vendor_lower}Status_t err = {cls.vendor_lower}Contract(
                 {cls.handle}, plan,
                 (const void*)&alpha, _left_tensor, _right_tensor,
@@ -529,6 +540,8 @@ class ExpandHipTensorDot(ExpandGPUTensorDot):
     jit_default = "HIPTENSOR_JIT_MODE_NONE"
     workspace_default = "HIPTENSOR_WORKSPACE_DEFAULT"
     status_success = "HIPTENSOR_STATUS_SUCCESS"
+    #: Measured in the ROCm 7.2 image on gfx90a, fp64: a NaN in C comes out in every element of D.
+    reads_c_at_zero_beta = True
 
 
 @library.node
