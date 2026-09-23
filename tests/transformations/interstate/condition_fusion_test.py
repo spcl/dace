@@ -10,6 +10,16 @@ from dace.transformation.interstate import ConditionFusion
 from dace.transformation.interstate.condition_fusion import simplify_conjunction
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
+
+
+def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
+    """The kept CFG list and ids equal a fresh copy's after ``reset_cfg_list``, and every parent pointer holds."""
+    fresh = copy.deepcopy(sdfg)
+    fresh.reset_cfg_list()
+    kept = [(type(r).__name__, r.label, r.cfg_id) for r in sdfg.cfg_list]
+    assert kept == [(type(r).__name__, r.label, r.cfg_id) for r in fresh.cfg_list]
+    assert_tree_consistent(sdfg)
 
 
 def _branch_conditions(sdfg):
@@ -489,6 +499,54 @@ def test_fusing_two_if_else_chains_builds_exactly_their_product():
     assert len(cbs) == 1, len(cbs)
     assert len(cbs[0].branches) <= 3, [c.as_string if c else None for c, _ in cbs[0].branches]
     for bv, dv in ((1, 2), (1, 3), (0, 2)):
+        ref, out = np.zeros(4), np.zeros(4)
+        copy.deepcopy(base)(a=ref, b=bv, d=dv)
+        sdfg(a=out, b=bv, d=dv)
+        assert np.allclose(out, ref), (bv, dv, out, ref)
+
+
+@dace.program
+def independent_guards(a: dace.float64[4], b: dace.int64, d: dace.int64):
+    s = 0.0
+    if b > 0:
+        s += 1.0
+    if d > 0:
+        s += 2.0
+    a[3] = s
+
+
+@dace.program
+def equal_guards(a: dace.float64[4], b: dace.int64, d: dace.int64):
+    if b > 0:
+        a[0] = 1.0
+    if b > 0:
+        a[1] = 2.0
+
+
+@dace.program
+def opposite_guards(a: dace.float64[4], b: dace.int64, d: dace.int64):
+    if b > 0:
+        a[0] = 1.0
+    if not (b > 0):
+        a[1] = 2.0
+
+
+@dace.program
+def nested_guards(a: dace.float64[4], b: dace.int64, d: dace.int64):
+    if b > 0:
+        if d > 0:
+            a[2] = 3.0
+
+
+@pytest.mark.parametrize('program', [independent_guards, equal_guards, opposite_guards, nested_guards])
+def test_moved_branch_bodies_keep_the_cfg_list_of_a_fresh_reset(program):
+    """The blocks of the dropped conditional move instead of being copied; the tree stays exact and the values hold."""
+    base = program.to_sdfg(simplify=True)
+    sdfg = program.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(ConditionFusion) > 0
+    sdfg.validate()
+    assert_cfg_list_matches_reset(sdfg)
+    for bv, dv in ((1, 1), (1, 0), (0, 1), (0, 0)):
         ref, out = np.zeros(4), np.zeros(4)
         copy.deepcopy(base)(a=ref, b=bv, d=dv)
         sdfg(a=out, b=bv, d=dv)
