@@ -151,10 +151,11 @@ def scope_contains_scope(sdict: ScopeDictType, node: nd.Node, other_node: nd.Nod
 
 
 def _scope_path(sdict: ScopeDictType, scope: nd.Node) -> List[nd.Node]:
+    """``scope``'s enclosing scopes, innermost first, ending with ``None`` (the top level)."""
     result = []
     curnode = scope
     while curnode is not None:
-        curnode = sdict[scope]
+        curnode = sdict[curnode]
         result.append(curnode)
     return result
 
@@ -183,7 +184,8 @@ def common_parent_scope(sdict: ScopeDictType, scope_a: nd.Node, scope_b: nd.Node
     spath_a = _scope_path(sdict, scope_a)
     spath_b = _scope_path(sdict, scope_b)
     common = None
-    for spa, spb in reversed(zip(spath_a, spath_b)):
+    # From the top level down: the last scope both paths share is the innermost common parent.
+    for spa, spb in zip(reversed(spath_a), reversed(spath_b)):
         if spa is spb:
             common = spa
         else:
