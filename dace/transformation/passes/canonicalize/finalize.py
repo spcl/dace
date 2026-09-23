@@ -27,6 +27,7 @@ from dace.sdfg import infer_types, nodes
 from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.libraries.blas.environments import openblas
 from dace.libraries.fft.environments import fftw3
+from dace.libraries.linalg.environments import cutensor, hiptensor
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _matrix_operand
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage, find_fast_library,
@@ -123,9 +124,16 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     :func:`canonicalize_set_fast_implementations`.
     """
     if device == dtypes.DeviceType.GPU:
-        # Each node's own environment gates the actual build. ``pure`` is auto_optimize's terminal
-        # fallback rather than a forced pick, so it is the one entry dropped here.
-        return [impl for impl in find_fast_library(device) if impl != 'pure']
+        # ``pure`` is auto_optimize's terminal fallback rather than a forced pick, so it is dropped
+        # here, and so is a tensor library this host cannot build against: ROCm 6.3 ships hipTensor
+        # without the v2 header its expansion includes, and cp2k_grid_integrate and ls3df_scf failed
+        # to compile on mi200. Their nodes take the next listed implementation instead.
+        unbuildable = {
+            name
+            for name, env in (('hipTENSOR', hiptensor.hipTensor), ('cuTENSOR', cutensor.cuTensor))
+            if not env.is_installed()
+        }
+        return [impl for impl in find_fast_library(device) if impl != 'pure' and impl not in unbuildable]
     prio = []
     if openblas.OpenBLAS.is_installed():
         prio.append('OpenBLAS')

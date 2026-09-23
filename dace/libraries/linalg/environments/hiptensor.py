@@ -82,4 +82,10 @@ hiptensorHandle_t &__dace_hiptensor_handle = __state->hiptensor_handle.Get();\n"
 
     @staticmethod
     def is_installed():
-        return ctypes.util.find_library('hiptensor') is not None
+        """Whether this host has a hipTensor ``dace_hiptensor.h`` compiles against: the library AND its
+        cuTENSOR-v2-shaped header ``hiptensor/hiptensor.h``. ROCm 6.3 ships the library with only the
+        older ``hiptensor.hpp`` API, and a node lowered to it failed to compile (cp2k_grid_integrate,
+        ls3df_scf on the canon GPU column on mi200)."""
+        if ctypes.util.find_library('hiptensor') is None:
+            return False
+        return any((pathlib.Path(root) / 'hiptensor' / 'hiptensor.h').is_file() for root in hipTensor.cmake_includes())

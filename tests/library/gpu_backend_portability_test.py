@@ -25,6 +25,7 @@ import dace.libraries.sort  # noqa: F401  (registers the CUB environments)
 from dace import dtypes
 from dace.codegen.compiler import get_environment_flags
 from dace.library import get_environments_and_dependencies
+from dace.libraries.linalg.environments import cutensor, hiptensor
 from dace.libraries.sort.nodes.integer_sort import IntegerSort
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.nodes.arg_reduce import ArgReduce
@@ -92,16 +93,49 @@ def test_no_frame_header_names_the_cuda_runtime_on_a_rocm_host(env_name: str) ->
     ('cuda', ('cuBLAS', 'cuSolverDn', 'cuTENSOR'), ('rocBLAS', 'rocSOLVER', 'hipTENSOR')),
     ('hip', ('rocBLAS', 'rocSOLVER', 'hipTENSOR'), ('cuBLAS', 'cuSolverDn', 'cuTENSOR')),
 ])
-def test_canonicalize_picks_the_backend_s_own_vendor_libraries(backend, vendors, foreign) -> None:
+def test_canonicalize_picks_the_backend_s_own_vendor_libraries(backend, vendors, foreign, monkeypatch) -> None:
     """The canonicalize perf tail forced a pick from a CUDA-only list, so every rocBLAS-lowered
     node fell back to the serial ``pure`` loop on a ROCm host -- the lowering existed and was
-    never selected."""
+    never selected. Both tensor libraries are pinned installed: whether THIS host can build them is
+    :func:`test_a_tensor_library_the_host_cannot_build_is_not_picked`'s question."""
+    monkeypatch.setattr(hiptensor.hipTensor, 'is_installed', staticmethod(lambda: True))
+    monkeypatch.setattr(cutensor.cuTensor, 'is_installed', staticmethod(lambda: True))
     with dace.config.set_temporary('compiler', 'cuda', 'backend', value=backend):
         priority = canonicalize_fast_library_priority(dtypes.DeviceType.GPU)
     assert set(vendors) <= set(priority), f'{backend}: {sorted(set(vendors) - set(priority))} missing from {priority}'
     assert not set(foreign) & set(priority), f'{backend}: {sorted(set(foreign) & set(priority))} leaked into {priority}'
     # The device-primitive keys serve both backends and must survive the split.
     assert {'GPUAuto', 'CUB', 'CUDA'} <= set(priority)
+
+
+@pytest.mark.parametrize('backend, tensor_library, env', [
+    ('cuda', 'cuTENSOR', cutensor.cuTensor),
+    ('hip', 'hipTENSOR', hiptensor.hipTensor),
+])
+def test_a_tensor_library_the_host_cannot_build_is_not_picked(backend, tensor_library, env, monkeypatch) -> None:
+    """A tensor library absent from the host drops out of the list and the rest stays.
+
+    ROCm 6.3 ships hipTensor without the v2 header its expansion includes, and the forced pick made
+    cp2k_grid_integrate and ls3df_scf fail to compile on the canon GPU column on mi200.
+    """
+    monkeypatch.setattr(env, 'is_installed', staticmethod(lambda: False))
+    with dace.config.set_temporary('compiler', 'cuda', 'backend', value=backend):
+        priority = canonicalize_fast_library_priority(dtypes.DeviceType.GPU)
+    assert tensor_library not in priority, priority
+    assert {'GPUAuto', 'CUB', 'CUDA'} <= set(priority), priority
+
+
+def test_hiptensor_counts_as_installed_only_with_its_v2_header(tmp_path, monkeypatch) -> None:
+    """The library alone is not enough: ``dace_hiptensor.h`` includes ``hiptensor/hiptensor.h``, which
+    ROCm 6.3 does not ship (it has ``hiptensor/hiptensor.hpp``, the older API)."""
+    monkeypatch.setattr(hiptensor.ctypes.util, 'find_library', lambda name: f'lib{name}.so')
+    monkeypatch.setenv('ROCM_PATH', str(tmp_path))
+    header = tmp_path / 'include' / 'hiptensor'
+    header.mkdir(parents=True)
+    (header / 'hiptensor.hpp').write_text('')
+    assert not hiptensor.hipTensor.is_installed()
+    (header / 'hiptensor.h').write_text('')
+    assert hiptensor.hipTensor.is_installed()
 
 
 #: A header only the CUDA toolkit ships. ``dace/cuda/...`` is backend-neutral and must not match.
