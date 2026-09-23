@@ -327,6 +327,12 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
         code = f"""
         {check}
         const long long __key[{len(key)}] = {{{', '.join(key)}}};
+        // An empty transform is numpy's empty result: nothing to plan, and the vendor planner raises
+        // SIGFPE on a zero extent or batch (cegterg with no unconverged vector left).
+        bool __empty = __key[{rank + 4}] == 0;
+        for (int __k = 0; __k < {rank}; ++__k)
+            __empty = __empty || __key[__k] == 0;
+        if (!__empty) {{
         bool __same = __state->{plan}_made;
         for (int __k = 0; __same && __k < {len(key)}; ++__k)
             __same = __state->{plan}_key[__k] == __key[__k];
@@ -345,6 +351,7 @@ def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
         }}
         __check("{dialect.api}SetStream", {dialect.api}SetStream(__state->{plan}, __dace_current_stream));
         __check("{dialect.api}XtExec", {dialect.api}XtExec(__state->{plan}, (void *)__in, (void *)__out, {direction}));
+        }}
         """
         return nodes.Tasklet(
             f'{dialect.api}_{"i" if is_inverse else ""}fft', {'__in'}, {'__out'},

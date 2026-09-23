@@ -332,5 +332,39 @@ def test_gpu_oppositely_ordered_sides_stage_the_source():
     run_strided_fftn(FORTRAN, C_ORDER)
 
 
+@pytest.mark.gpu
+def test_gpu_fft_over_an_empty_batch_is_a_no_op():
+    """A batch that is empty at run time transforms nothing, as numpy returns an empty array.
+
+    The vendor planner raises SIGFPE on a zero batch; cegterg's canon GPU run died there once no
+    unconverged vector was left (``__sym_notcnv_iter == 0``).
+    """
+    batch = dace.symbol('batch')
+    shape = (4, 5, 6, batch)
+    sdfg = dace.SDFG('empty_batch_fftn')
+    for name in ('x', 'y'):
+        sdfg.add_array(name, shape, dace.complex128, strides=FORTRAN)
+        sdfg.add_array(f'g{name}',
+                       shape,
+                       dace.complex128,
+                       strides=FORTRAN,
+                       storage=dtypes.StorageType.GPU_Global,
+                       transient=True)
+    state = sdfg.add_state()
+    node = FFT('fft', axes=[0, 1, 2])
+    node.implementation = gpu_implementation()
+    gx, gy = state.add_access('gx'), state.add_access('gy')
+    state.add_nedge(state.add_read('x'), gx, dace.Memlet.from_array('x', sdfg.arrays['x']))
+    state.add_edge(gx, None, node, '_inp', dace.Memlet.from_array('gx', sdfg.arrays['gx']))
+    state.add_edge(node, '_out', gy, None, dace.Memlet.from_array('gy', sdfg.arrays['gy']))
+    state.add_nedge(gy, state.add_write('y'), dace.Memlet.from_array('gy', sdfg.arrays['gy']))
+    compiled = sdfg.compile()
+    for extent in (3, 0):
+        x = np.asfortranarray(rng_complex((4, 5, 6, extent)))
+        y = np.zeros_like(x, order='F')
+        compiled(x=x, y=y, batch=extent)
+        np.testing.assert_allclose(y, np.fft.fftn(x, axes=(0, 1, 2)), rtol=1e-12, atol=1e-10)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
