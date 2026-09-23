@@ -224,6 +224,32 @@ def test_batchmm_4d_broadcast_lhs(implementation: str, dtype):
         assert np.allclose(ref, z)
 
 
+@pytest.mark.mkl
+@pytest.mark.parametrize("dtype, rtol", [(dace.complex64, 1e-5), (dace.complex128, 1e-12)])
+def test_batchmm_complex_mkl(dtype, rtol: float):
+    """MKL's ``?gemm_batch`` takes MKL_Complex8/16 coefficients and operands by value, not dace::complex."""
+    b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
+
+    @dace.program
+    def bmm_complex(A: dtype[b, m, k], B: dtype[b, k, n], C: dtype[b, m, n]):
+        C[:] = A @ B
+
+    sdfg = bmm_complex.to_sdfg()
+    sdfg.name = f'bmm_complex_mkl_{dtype.to_string()}'
+    with change_default(blas, 'MKL'):
+        sdfg.expand_library_nodes()
+
+    rng = np.random.default_rng(0)
+    npdtype = dtype.as_numpy_dtype()
+    x = (rng.standard_normal((3, 32, 30)) + 1j * rng.standard_normal((3, 32, 30))).astype(npdtype)
+    y = (rng.standard_normal((3, 30, 31)) + 1j * rng.standard_normal((3, 30, 31))).astype(npdtype)
+    z = np.zeros((3, 32, 31), dtype=npdtype)
+    sdfg(A=x, B=y, C=z, b=3, m=32, n=31, k=30)
+
+    ref = x @ y
+    np.testing.assert_allclose(z, ref, rtol=rtol, atol=rtol * np.abs(ref).max())
+
+
 if __name__ == "__main__":
     test_batchmm("pure", dace.float32)
     test_batchmm("pure", dace.float64)

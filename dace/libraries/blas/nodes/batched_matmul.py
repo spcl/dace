@@ -180,6 +180,9 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + 'gemm'
+        # ``?gemm_batch`` is the Fortran-style call: the coefficient and operand arrays hold MKL's own
+        # element type, so a complex one is MKL_Complex8/16 initialized by value, not dace::complex.
+        ctype = cdesc.dtype.ctype
         if dtype == dace.float32:
             alpha = "1.0f"
             beta = "0.0f"
@@ -189,19 +192,20 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
             beta = "0.0"
             prefix = "d"
         elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            alpha = "{1.0f, 0.0f}"
+            beta = "{0.0f, 0.0f}"
             prefix = "c"
+            ctype = "MKL_Complex8"
         elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            alpha = "{1.0, 0.0}"
+            beta = "{0.0, 0.0}"
             prefix = "z"
+            ctype = "MKL_Complex16"
         else:
             raise ValueError("Unsupported type for BLAS dot product: " + str(dtype))
-        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, ctype, func)
 
         opt['prefix'] = prefix
-        opt['dtype'] = cdesc.dtype.ctype
 
         code = '''
         const MKL_INT group_count = 1;
