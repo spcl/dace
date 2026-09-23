@@ -535,7 +535,9 @@ class InsertTileLoadStore(ppl.Pass):
                                                                name_hint=f"_idx_{an.data}_{k}",
                                                                mask_an=self._mask_an(inner_state, mask_name))
                         if idx_an is None:
-                            raise NotImplementedError(
+                            # A refusal, not a crash: SymbolSSA's ``j_0 + 1`` (TSVC s341's compaction
+                            # rank) has no tile-op lowering, and the map stays scalar and correct.
+                            raise VectorizeUnsupported(
                                 f"InsertTileLoadStore: could not build a tile-op gather index for "
                                 f"{begin_str!r} (read of '{an.data}' source dim {k}, iter_vars={iter_vars}). "
                                 f"The CPP per-lane materialiser was removed (user 2026-06-14: no CPP index "
@@ -1498,7 +1500,12 @@ class InsertTileLoadStore(ppl.Pass):
         for _state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
             params = map_entry.map.params
             iter_vars = tuple(params[len(params) - len(map_tile_widths(_state, map_entry, self.widths)):])
-            total += self._stage_inner_body(_state, nsdfg_node.sdfg, iter_vars)
+            try:
+                total += self._stage_inner_body(_state, nsdfg_node.sdfg, iter_vars)
+            except VectorizeUnsupported as unsupported:
+                # Confined to the map being staged when the raiser could not name one.
+                raise VectorizeUnsupported(str(unsupported), unsupported.maps
+                                           or (map_entry.map.label, )) from unsupported
             # Audit the design 3.8.3 lib-node-boundary invariant on every touched
             # body state: loud failure surfaces stale ``other_subset`` at staging
             # time, not as ``StopIteration`` in codegen's strided-copy shape inference.
