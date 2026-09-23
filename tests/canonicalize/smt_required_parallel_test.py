@@ -168,31 +168,24 @@ def test_unique_scatter_already_parallelizes_under_a_runtime_contract():
     assert residual_loops(sdfg) == 0, 'the guarded-scatter path should already parallelize this'
 
 
-def test_unique_scatter_guard_rejects_duplicate_indices():
-    """The other half of the contract: feed indices that VIOLATE uniqueness and the emitted
-    guard must stop the program rather than race. The trap aborts the process, so this runs in
-    a child -- an uncaught SIGILL/abort here is the guard doing its job.
+def test_duplicate_indices_take_the_sequential_fallback():
+    """The other half of the contract: indices that VIOLATE uniqueness must not race. The guard
+    dispatches to the original loop, so a colliding index array computes the sequential answer --
+    the last write to each slot wins -- instead of aborting the program.
 
-    Runs the OVERWRITING scatter. The accumulating form this used to use is exempt now, and
-    correctly so: ``forward_store_to_load`` turns it into a WCR that lowers to ``reduce_atomic``,
-    which gives the sequential answer under duplicates at any thread count (measured). Asking the
-    guard to abort on it would mean aborting a program that computes the right numbers.
+    Runs the OVERWRITING scatter. The accumulating form is exempt, and correctly so:
+    ``forward_store_to_load`` turns it into a WCR that lowers to ``reduce_atomic``, which gives the
+    sequential answer under duplicates at any thread count (measured).
     """
-    import subprocess
-    import sys
-    src = ('import numpy as np\n'
-           'from tests.canonicalize import smt_required_parallel_test as T\n'
-           'sdfg = T.cpu_canon(T.overwriting_scatter.to_sdfg(simplify=True))\n'
-           'idx = np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int64)\n'
-           'print("BUILT", flush=True)\n'
-           'sdfg(A=np.zeros(8), B=np.arange(1.0, 9.0), IDX=idx, N=8)\n'
-           'print("NO_TRAP")\n')
-    proc = subprocess.run([sys.executable, '-c', src], capture_output=True, text=True, timeout=900)
-    ctx = f'(rc={proc.returncode}, stdout={proc.stdout!r}, stderr={proc.stderr[-400:]!r})'
-    # Non-vacuity: without BUILT a child that crashed for any other reason prints nothing and the
-    # NO_TRAP check passes, so the test could never fail.
-    assert 'BUILT' in proc.stdout, f'child died before the guarded call {ctx}'
-    assert 'NO_TRAP' not in proc.stdout, f'duplicate indices must trip the guard, not run silently {ctx}'
+    sdfg = cpu_canon(overwriting_scatter.to_sdfg(simplify=True))
+    idx = np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int64)
+    b = np.arange(1.0, 9.0)
+    a = np.zeros(8)
+    sdfg(A=a, B=b, IDX=idx, N=8)
+    want = np.zeros(8)
+    for k in range(8):
+        want[idx[k]] = b[k]
+    assert np.array_equal(a, want), (a, want)
 
 
 def guard_check_nodes(sdfg: dace.SDFG) -> list:
@@ -216,20 +209,21 @@ def guard_trap_tasklets(sdfg: dace.SDFG) -> list:
 
 
 def test_overwriting_scatter_keeps_the_whole_guard():
-    """A plain indirect overwrite keeps check libnode, trap tasklet and abort in the emitted C++.
-
-    The trap reads its count through an interstate binding, which AccessNode-based analysis
-    cannot see, so ``side_effects`` is the only thing holding the tasklet against
-    DeadDataflowElimination -- pinned rather than trusted."""
+    """A plain indirect overwrite keeps its conflict check, and the check picks between the parallel
+    Map and the original loop, pinned sequential, at run time: no trap, no ``std::abort``."""
     sdfg = cpu_canon(overwriting_scatter.to_sdfg(simplify=True))
-    assert residual_loops(sdfg) == 0, 'a scatter left sequential would make the guard vacuous'
-    checks, traps = guard_check_nodes(sdfg), guard_trap_tasklets(sdfg)
+    loops = [
+        cfr for sd in sdfg.all_sdfgs_recursive() for cfr in sd.all_control_flow_regions()
+        if isinstance(cfr, LoopRegion) and cfr.loop_variable
+    ]
+    assert loops and all(loop.pinned_sequential for loop in loops), \
+        'every loop left must be the pinned fallback; any other would make the guard vacuous'
+    checks = guard_check_nodes(sdfg)
     assert len(checks) == 1, f'expected one conflict check, got {[n.label for n in checks]}'
-    assert len(traps) == 1, f'expected one trap tasklet, got {[n.label for n in traps]}'
-    assert traps[0].side_effects, 'the trap must be immune to dead-code elimination'
+    assert not guard_trap_tasklets(sdfg), 'a collision takes the fallback, it must not abort'
     code = '\n'.join(c.code for c in sdfg.generate_code())
-    assert re.search(r'if \(__scatter_guard_check_\w+ > 0\) \{ std::abort\(\); \}', code), \
-        'the trap must survive to codegen, not just to the SDFG'
+    assert re.search(r'if \(\(?__scatter_guard_check_\w+ > 0\)?\)', code), \
+        'the dispatch must survive to codegen, not just to the SDFG'
 
 
 def test_accumulating_scatter_is_exempt_and_stays_right_under_duplicates():

@@ -209,43 +209,56 @@ def provably_at_least(value, bound) -> bool:
     return bool(symbolic.simplify(difference.subs(positive)).is_nonnegative)
 
 
+def in_fallback_loop(loop: LoopRegion) -> bool:
+    """Whether ``loop`` is, or lies inside, a loop pinned sequential as a specialization's fallback."""
+    region = loop
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion) and region.pinned_sequential:
+            return True
+        region = region.parent_graph
+    return False
+
+
 def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
-    """Top-level maps inside a host loop that keep their whole subtree on the host.
+    """Top-level maps of a host loop that keep their whole subtree on the host.
 
     A host loop's own code runs on the host every iteration. Offloading a map beside it that shares
     a non-scalar container copies that container host<->device every iteration, and when the map
     moves fewer elements than those containers hold, the copies are the loop's cost: amg_setup's
     gather over a row's touched entries, inside the sequential loop over all ``n`` rows, copied the
     whole ``acc`` and ``touched`` arrays both ways per row and ran 344 s against 0.8 s on the CPU.
-    Such a map stays on the host, which pulls its own containers to the host side too, so the rule
-    runs to a fixed point. A map that moves at least what it shares (a stencil over the whole
-    array) keeps the device, and so does a loop that shares only single-element containers.
-    Only this SDFG's own loops are read: a loop in a nested SDFG under a map is kernel code. And
-    only a map that is its state's sole device work: the offload gives a state ONE location, so a
-    host map beside a kernel over the same containers would read device memory from the host
-    (polybench durbin's flip map beside its update kernels).
+
+    Decided per loop, all or nothing: a loop whose device work is ONLY such maps is a serial host
+    algorithm, and its maps stay on the host. A loop with any other kernel -- a map that moves at
+    least what it shares, one that shares nothing, a library call -- is a device loop, and keeps
+    every kernel: cegterg's Davidson iteration shares a small ``ew`` with host code and pinning its
+    maps pulled its main work to the CPU. A pinned map must also be its state's sole device work:
+    the offload gives a state ONE location, so a host map beside a kernel over the same containers
+    would read device memory from the host (polybench durbin). Only this SDFG's own loops are read:
+    a loop in a nested SDFG under a map is kernel code.
     """
     pinned: OrderedSet = OrderedSet()
     for loop in sdfg.all_control_flow_regions():
-        if not isinstance(loop, LoopRegion):
+        # A guarded specialization's fallback loop is placed by the arm rules, which copy into the
+        # arm around its own host code; pinning a map there left cegterg's arm reading host twins
+        # of arrays the arm had just written on the device, with no copy in between.
+        if not isinstance(loop, LoopRegion) or in_fallback_loop(loop):
             continue
         host = host_code_containers(sdfg, loop)
-        candidates = []
+        candidates: OrderedSet = OrderedSet()
+        device_loop = False
         for state in loop.all_states():
             work = [n for n in state.scope_children()[None] if isinstance(n, (nodes.MapEntry, nodes.LibraryNode))]
-            if len(work) == 1 and isinstance(work[0], nodes.MapEntry):
-                candidates.append((state, work[0]))
-        changed = True
-        while changed:
-            changed = False
-            for state, entry in candidates:
-                if entry in pinned:
+            for node in work:
+                if len(work) != 1 or not isinstance(node, nodes.MapEntry):
+                    device_loop = True
                     continue
-                names, traffic = map_containers_and_traffic(state, entry)
+                names, traffic = map_containers_and_traffic(state, node)
                 shared = [n for n in names & host if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
-                if not shared or provably_at_least(traffic, sum(sdfg.arrays[n].total_size for n in shared)):
-                    continue
-                pinned.add(entry)
-                host |= names
-                changed = True
+                if shared and not provably_at_least(traffic, sum(sdfg.arrays[n].total_size for n in shared)):
+                    candidates.add(node)
+                else:
+                    device_loop = True
+        if not device_loop:
+            pinned |= candidates
     return pinned
