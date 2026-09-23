@@ -788,30 +788,32 @@ def _overapproximate(expr):
     if isinstance(expr, (sympy.Number, TypedConstant)):
         return expr
 
-    a = sympy.Wild('a')
-    b = sympy.Wild('b')
-    c = sympy.Wild('c')
+    if expr.has(sympy.Min):
+        a = sympy.Wild('a')
+        b = sympy.Wild('b')
+        c = sympy.Wild('c')
 
-    # If Min(x, N-y), return the non-symbolic of the two components
-    match = expr.match(sympy.Min(a, b) + c)
-    if match is not None and len(match) == 3:
-        # First, construct the min expression with "c" inline
-        newexpr = sympy.Min(match[a] + match[c], match[b] + match[c])
-        # Match again
-        match = newexpr.match(sympy.Min(a, b))
+        # If Min(x, N-y), return the non-symbolic of the two components
+        match = expr.match(sympy.Min(a, b) + c)
+        if match is not None and len(match) == 3:
+            # First, construct the min expression with "c" inline
+            newexpr = sympy.Min(match[a] + match[c], match[b] + match[c])
+            # Match again
+            match = newexpr.match(sympy.Min(a, b))
+            if match is not None and len(match) == 2:
+                if issymbolic(match[a]) and not issymbolic(match[b]):
+                    return match[b]
+                if issymbolic(match[b]) and not issymbolic(match[a]):
+                    return match[a]
+
+    if expr.has(sympy.ceiling):
+        # If ceiling((k * ((N - 1) / k))) + k), return N
+        a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
+        b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
+        int_floor = sympy.Function('int_floor')
+        match = expr.match(sympy.ceiling(b * int_floor(a - 1, b)) + b)
         if match is not None and len(match) == 2:
-            if issymbolic(match[a]) and not issymbolic(match[b]):
-                return match[b]
-            if issymbolic(match[b]) and not issymbolic(match[a]):
-                return match[a]
-
-    # If ceiling((k * ((N - 1) / k))) + k), return N
-    a = sympy.Wild('a', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
-    int_floor = sympy.Function('int_floor')
-    match = expr.match(sympy.ceiling(b * int_floor(a - 1, b)) + b)
-    if match is not None and len(match) == 2:
-        return match[a]
+            return match[a]
 
     return expr
 

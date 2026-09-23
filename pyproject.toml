@@ -21,7 +21,7 @@ ml-testing = [
     "ipykernel",
     "nbconvert",
     "pytest-timeout",
-    "transformers==5.5.0",
+    "transformers==5.10.1",
     "jax<=0.6.2",
     "efficientnet_pytorch",
 ]
