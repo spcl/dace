@@ -1465,27 +1465,31 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
             candidates.append((state, e, e.dst.data, copy.deepcopy(e.data.subset)))
     if len(candidates) != 1:
         return None
-    _state, wcr_edge, accum_name, accum_subset = candidates[0]
-    if slot_accessed_besides(loop, wcr_edge, accum_name, accum_subset, sdfg.arrays[accum_name]):
+    wcr_edge, accum_name, accum_subset = candidates[0][1], candidates[0][2], candidates[0][3]
+    if slot_accessed_besides(loop, {wcr_edge}, accum_name, accum_subset, sdfg.arrays[accum_name]):
         return None
     return candidates[0]
 
 
-def slot_accessed_besides(loop: LoopRegion, wcr_edge, accum_name: str, accum_subset: subsets.Subset,
-                          accum_desc: data.Data) -> bool:
-    """True iff the loop reads or writes ``accum_name[accum_subset]`` through any edge but ``wcr_edge``.
+def slot_accessed_besides(loop: LoopRegion, own_edges: Set[gr.MultiConnectorEdge[mm.Memlet]], accum_name: str,
+                          accum_subset: subsets.Subset, accum_desc: data.Data) -> bool:
+    """True iff the loop reads or writes ``accum_name[accum_subset]`` through any edge but ``own_edges``.
 
-    The retarget redirects ``wcr_edge`` alone to the private scalar and writes that scalar back over
+    The retarget redirects its own accumulate to the private scalar and writes that scalar back over
     the slot after the loop. Every other access keeps using the original array: a plain
     read-modify-write chain on the slot accumulates there and the writeback then overwrites it, and a
-    read sees a value that is missing this loop's WCR terms. seissol_tensor_contraction has the first
+    read sees a value that is missing this loop's terms. seissol_tensor_contraction has the first
     case: after ``ShortLoopUnroll`` its ``l`` loop body holds nine accumulations into one output slot,
-    only the last of which ``AccumulatorCopyChainToWCR`` turned into a WCR write.
+    only the last of which ``AccumulatorCopyChainToWCR`` turned into a WCR write. cp2k_grid_integrate
+    has the second: its ``l`` loop reads the running ``binomial_k_lxa`` product that the enclosing
+    ``k`` loop's chain accumulates, so a retarget froze it at its seed. A read can also sit in an
+    interstate edge or a loop or branch condition, which are checked as well.
 
     :param loop: the loop being considered for retargeting, nested regions included.
-    :param wcr_edge: the WCR write the retarget would redirect.
+    :param own_edges: the edges the retarget itself rewrites (the WCR write, or the chain's carry
+                      read and final write).
     :param accum_name: the accumulator's data name.
-    :param accum_subset: the slot ``wcr_edge`` writes.
+    :param accum_subset: the slot the retarget privatizes.
     :param accum_desc: the accumulator's descriptor.
     """
     # An access is compared over every iteration of the loop: s118's ``a[i - j - 1]`` read names a
@@ -1498,10 +1502,10 @@ def slot_accessed_besides(loop: LoopRegion, wcr_edge, accum_name: str, accum_sub
         for node in state.data_nodes():
             if node.data != accum_name:
                 continue
-            touched = [(e, e.data.get_dst_subset(e, state)) for e in state.in_edges(node) if e is not wcr_edge]
+            touched = [(e, e.data.get_dst_subset(e, state)) for e in state.in_edges(node)]
             touched += [(e, e.data.get_src_subset(e, state)) for e in state.out_edges(node)]
             for edge, subset in touched:
-                if edge.data.is_empty():
+                if edge in own_edges or edge.data.is_empty():
                     continue
                 # ``intersects`` answers False for a missing subset and None when it cannot decide;
                 # both count as an access here, since a wrong retarget drops terms silently.
@@ -1512,7 +1516,23 @@ def slot_accessed_besides(loop: LoopRegion, wcr_edge, accum_name: str, accum_sub
                                               [loop.loop_variable], iterations).subset
                 if subsets.intersects(subset, accum_subset) is not False:
                     return True
-    return False
+    return accum_name in control_flow_reads(loop)
+
+
+def control_flow_reads(loop: LoopRegion) -> Set[str]:
+    """Every name ``loop`` reads outside its dataflow: interstate edges, branch conditions, and the
+    condition, init and update of ``loop`` and of every loop nested in it."""
+    names: Set[str] = set()
+    for edge in loop.all_interstate_edges(recursive=True):
+        names |= edge.data.read_symbols()
+    for block in [loop, *loop.all_control_flow_blocks(recursive=True)]:
+        if isinstance(block, LoopRegion):
+            for code in (block.loop_condition, block.init_statement, block.update_statement):
+                if code is not None:
+                    names |= code.get_free_symbols()
+        elif isinstance(block, ConditionalBlock):
+            names |= {sym for cond, _ in block.branches if cond is not None for sym in cond.get_free_symbols()}
+    return names
 
 
 def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_state: SDFGState, wcr_edge,
@@ -1776,6 +1796,12 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             # Same reason, other failure mode: the retarget rewrites ONE chain, so a second chain on
             # the slot is left accumulating into the original.
             if _slot_accumulated_more_than_once(loop, data_name, carry_subset):
+                continue
+
+            # The retarget leaves the original slot at its seed until the writeback, so a body that
+            # also reads the running value (a scan) would see that seed on every iteration.
+            if slot_accessed_besides(loop, {carry_in_edge, last_write_edge}, data_name, carry_subset,
+                                     sdfg.arrays[data_name]):
                 continue
 
             return (state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge, last_write_edge, src_an,

@@ -1838,7 +1838,7 @@ def _add_accumulate_states(loop: LoopRegion, terms: int, first: bool):
     prev = None
     for k in range(terms):
         state = loop.add_state(f'accumulate_{k}', is_start_block=first and prev is None)
-        task = state.add_tasklet('add', {'in_a', 'in_b'}, {'__out'}, '__out = in_a + in_b')
+        task = state.add_tasklet('add', {'in_a': None, 'in_b': None}, {'__out': None}, '__out = in_a + in_b')
         state.add_edge(state.add_read('acc'), None, task, 'in_a', mm.Memlet('acc[0]'))
         state.add_edge(state.add_read('src'), None, task, 'in_b', mm.Memlet(f'src[{k}, jl]'))
         through = state.add_access('tmp')
@@ -1882,7 +1882,7 @@ def _scratch_slot_loop(terms: int = 1) -> dace.SDFG:
     loop.add_edge(init, first, dace.InterstateEdge())
 
     tail = loop.add_state('store')
-    task = tail.add_tasklet('store', {'in_a', 'in_b'}, {'__out'}, '__out = in_a + in_b')
+    task = tail.add_tasklet('store', {'in_a': None, 'in_b': None}, {'__out': None}, '__out = in_a + in_b')
     tail.add_edge(tail.add_read('base'), None, task, 'in_a', mm.Memlet('base[jl]'))
     tail.add_edge(tail.add_read('acc'), None, task, 'in_b', mm.Memlet('acc[0]'))
     tail.add_edge(task, '__out', tail.add_write('out'), None, mm.Memlet('out[jl]'))
@@ -2074,6 +2074,59 @@ def test_wcr_write_beside_a_read_of_other_elements_is_retargeted():
     expected[i] += sum(bb[j] * a[i - j - 1] for j in range(i))
     sdfg(a=a, bb=bb, N=n, i=i)
     assert np.allclose(a, expected)
+
+
+def running_value_consumer_loop(nested: bool) -> dace.SDFG:
+    """``acc = 0; for jl: out[jl] = base[jl] + acc; acc += src[0, jl]`` -- an exclusive scan.
+
+    The chain is the same loop-carried accumulate the positive control claims, but the body also
+    READS the running value. With ``nested`` that read sits in a one-trip inner loop, CP2K's shape
+    (``alpha[...] += binomial_k_lxa * ...`` inside the ``l`` loop, ``binomial_k_lxa *= ...`` after).
+    """
+    sdfg, pre, loop = _chain_scaffold(f'chain_running_value_consumer_{int(nested)}', 1)
+    init = _add_zero_init(sdfg, 'init')
+    sdfg.add_edge(pre, init, dace.InterstateEdge())
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+
+    host = loop
+    if nested:
+        host = LoopRegion('m_loop',
+                          condition_expr='m < 1',
+                          loop_var='m',
+                          initialize_expr='m = 0',
+                          update_expr='m = m + 1')
+        loop.add_node(host, is_start_block=True)
+    consume = host.add_state('consume', is_start_block=True)
+    task = consume.add_tasklet('consume', {'in_a': None, 'in_b': None}, {'__out': None}, '__out = in_a + in_b')
+    consume.add_edge(consume.add_read('base'), None, task, 'in_a', mm.Memlet('base[jl]'))
+    consume.add_edge(consume.add_read('acc'), None, task, 'in_b', mm.Memlet('acc[0]'))
+    consume.add_edge(task, '__out', consume.add_write('out'), None, mm.Memlet('out[jl]'))
+
+    first = _add_accumulate_states(loop, 1, first=False)[0]
+    loop.add_edge(host if nested else consume, first, dace.InterstateEdge())
+
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize('nested', [False, True], ids=['sibling_state', 'nested_loop'])
+def test_accumulator_read_in_the_body_is_not_retargeted(nested):
+    """A body that reads the running accumulator is a scan, so the retarget must decline it.
+
+    The retarget accumulates into a private scalar and writes the slot back only after the loop, so
+    every read of the slot inside the loop sees the pre-loop seed. CP2K's ``cp2k_grid_integrate``
+    hit this through ``binomial_k_lxa``: the ``l`` loop read the running binomial product while the
+    ``k`` chain was privatized, every ``lxa == 2`` term lost its binomial factor, and ``hab`` came
+    out wrong in 10% of its elements with nothing raised -- hence the value assertion.
+    """
+    sdfg = running_value_consumer_loop(nested)
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, 'a scan must not be retargeted'
+    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    sdfg.validate()
+
+    out, src, base = _run_chain(sdfg, terms=1, seed=4118)
+    exclusive = np.concatenate(([0.0], np.cumsum(src[0])[:-1]))
+    assert np.allclose(out, base + exclusive), 'the body read a stale accumulator'
 
 
 def test_loop_to_reduce_doesnt_lift_break_loop():
