@@ -26,13 +26,17 @@ from dace import dtypes
 from dace.codegen.compiler import get_environment_flags
 from dace.library import get_environments_and_dependencies
 from dace.libraries.linalg.environments import cutensor, hiptensor
+from dace.libraries.linalg.nodes.tensordot import TensorDot
+from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 from dace.libraries.sort.nodes.integer_sort import IntegerSort
 from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.libraries.standard.nodes.arg_reduce import ArgReduce
 from dace.libraries.standard.nodes.find_first import FindFirst, INDEX_NAME, OUTPUT_CONNECTOR_NAME
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
-from dace.transformation.passes.canonicalize.finalize import canonicalize_fast_library_priority
+from dace.transformation.auto.auto_optimize import set_fast_implementations
+from dace.transformation.passes.canonicalize.finalize import (canonicalize_fast_library_priority,
+                                                              canonicalize_set_fast_implementations)
 
 #: Every environment on the CUB-backed nodes' dependency chain. Each one reaches the GPU runtime
 #: environment through ``dependencies``, which is what carried the CUDA package to a ROCm host.
@@ -123,6 +127,71 @@ def test_a_tensor_library_the_host_cannot_build_is_not_picked(backend, tensor_li
         priority = canonicalize_fast_library_priority(dtypes.DeviceType.GPU)
     assert tensor_library not in priority, priority
     assert {'GPUAuto', 'CUB', 'CUDA'} <= set(priority), priority
+
+
+def tensordot_sdfg() -> tuple[dace.SDFG, TensorDot]:
+    """``out = tensordot(a, b, ([1], [0]))`` over device-resident fp64, the shape cp2k_grid_integrate's
+    Cab transform contracts. fp64 is in both vendors' contraction maps, so only availability can
+    keep the node off the tensor library."""
+    sdfg = dace.SDFG('portability_tensordot')
+    for name, shape in (('a', (4, 5)), ('b', (5, 3)), ('out', (4, 3))):
+        sdfg.add_array(name, shape, dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = TensorDot('_TensorDot_', left_axes=[1], right_axes=[0])
+    state.add_edge(state.add_read('a'), None, node, '_left_tensor', dace.Memlet('a[0:4, 0:5]'))
+    state.add_edge(state.add_read('b'), None, node, '_right_tensor', dace.Memlet('b[0:5, 0:3]'))
+    state.add_edge(node, '_out_tensor', state.add_write('out'), None, dace.Memlet('out[0:4, 0:3]'))
+    return sdfg, node
+
+
+@pytest.mark.parametrize('backend, tensor_library, env', [
+    ('cuda', 'cuTENSOR', cutensor.cuTensor),
+    ('hip', 'hipTENSOR', hiptensor.hipTensor),
+])
+@pytest.mark.parametrize('select', [
+    canonicalize_set_fast_implementations,
+    set_fast_implementations,
+],
+                         ids=['canonicalize', 'auto_optimize'])
+def test_a_tensor_contraction_does_not_lower_to_a_library_the_host_cannot_build(backend, tensor_library, env, select,
+                                                                                monkeypatch) -> None:
+    """A TensorDot on the GPU stays off a tensor library this host lacks, under either pipeline.
+
+    Leaving the name out of canonicalize's own list was not enough: ``set_fast_implementations``
+    follows the caller's list with ``find_fast_library``'s, and TensorDot implements nothing on the
+    former, so it took hipTENSOR from the latter and cp2k_grid_integrate failed to compile on
+    ROCm 6.3 (``hiptensor/hiptensor.h`` not found).
+    """
+    monkeypatch.setattr(env, 'is_installed', staticmethod(lambda: False))
+    sdfg, node = tensordot_sdfg()
+    with dace.config.set_temporary('compiler', 'cuda', 'backend', value=backend):
+        select(sdfg, dtypes.DeviceType.GPU)
+    assert node.implementation != tensor_library, node.implementation
+    assert node.implementation in TensorDot.implementations, node.implementation
+
+
+@pytest.mark.parametrize('backend, env', [('cuda', cutensor.cuTensor), ('hip', hiptensor.hipTensor)])
+@pytest.mark.parametrize('dtype', [dace.float32, dace.float64])
+def test_a_tensor_permutation_does_not_delegate_to_a_library_the_host_cannot_build(backend, env, dtype,
+                                                                                   monkeypatch) -> None:
+    """TensorTranspose's ``CUDA`` key hands a rank-3 permutation to the backend's tensor library, and
+    that expansion's environment -- with its header -- came along even when the library was absent.
+    fp64 is the sharpest case: hipTensor permutes no doubles, so the body already falls back to the
+    pure map, and the build still included ``hiptensor/hiptensor.h`` (ROCm 6.3 has none)."""
+    monkeypatch.setattr(env, 'is_installed', staticmethod(lambda: False))
+    sdfg = dace.SDFG('portability_ttranspose')
+    sdfg.add_array('a', (2, 3, 4), dtype, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('b', (4, 3, 2), dtype, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = TensorTranspose('_TensorTranspose_', axes=[2, 1, 0])
+    node.implementation = 'CUDA'
+    state.add_edge(state.add_read('a'), None, node, '_inp_tensor', dace.Memlet('a[0:2, 0:3, 0:4]'))
+    state.add_edge(node, '_out_tensor', state.add_write('b'), None, dace.Memlet('b[0:4, 0:3, 0:2]'))
+    with dace.config.set_temporary('compiler', 'cuda', 'backend', value=backend):
+        node.expand(state)
+    expanded = [n for n in state.nodes() if isinstance(n, (dace.nodes.Tasklet, dace.nodes.NestedSDFG))]
+    assert len(expanded) == 1, expanded
+    assert env.full_class_path() not in expanded[0].environments, expanded[0].environments
 
 
 def test_hiptensor_counts_as_installed_only_with_its_v2_header(tmp_path, monkeypatch) -> None:
