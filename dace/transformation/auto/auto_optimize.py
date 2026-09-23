@@ -654,7 +654,10 @@ def set_fast_implementations(sdfg: SDFG,
             # NOTE: LibraryNodes with sequential schedule on GPU must be expanded to CUDA kernel-compatible code.
             # NOTE: Pure implementations are a safe choice for now but this should be revisited in the future.
             if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
-                node.implementation = "pure"
+                # Not every node has a ``pure`` expansion: a Copy has none, and its own selector
+                # already picks the in-kernel form.
+                if 'pure' in node.implementations:
+                    node.implementation = "pure"
                 continue
             for impl in implementation_prio:
                 if impl in node.implementations:
@@ -679,7 +682,8 @@ def set_fast_implementations(sdfg: SDFG,
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.LibraryNode) and node.auto_select_implementation:
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
-                    node.implementation = "pure"
+                    if 'pure' in node.implementations:
+                        node.implementation = "pure"
                     continue
                 # use GPUAuto expansion if applicable
                 if ('GPUAuto' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)

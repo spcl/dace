@@ -716,6 +716,24 @@ def test_a_device_copy_between_c_and_fortran_layouts_keeps_the_values():
     cp.testing.assert_array_equal(dst, src)
 
 
+def test_a_sequential_device_copy_keeps_an_implementation_it_has():
+    """``set_fast_implementations`` stamped ``pure`` on every sequential node for the GPU, and a Copy
+    has no ``pure`` expansion: the fp64 x 2 vectorized CloudSC SDFG then failed to expand with
+    ``KeyError: Unknown implementation for node CopyLibraryNode: pure``."""
+    from dace.transformation.auto.auto_optimize import set_fast_implementations
+
+    sdfg, libnode = _make_copy_sdfg(
+        _ArraySpec(shape=(8, ), storage=dace.dtypes.StorageType.GPU_Global),
+        _ArraySpec(shape=(8, ), storage=dace.dtypes.StorageType.GPU_Global),
+        name="sequential_device_copy",
+    )
+    libnode.schedule = dace.dtypes.ScheduleType.Sequential
+    set_fast_implementations(sdfg, dace.dtypes.DeviceType.GPU)
+    # None is the default: the node's own selector.
+    assert libnode.implementation is None or libnode.implementation in libnode.implementations, libnode.implementation
+    sdfg.expand_library_nodes()
+
+
 @pytest.mark.gpu
 def test_copy_fortran_packed_cpu_to_gpu_uses_outermost_chunk():
     """A cross-CPU/GPU copy of a Fortran-packed array expands and produces correct output."""
