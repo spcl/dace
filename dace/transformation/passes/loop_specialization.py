@@ -94,7 +94,6 @@ def specialize_loop_under_condition(
     parent.remove_node(loop)
     if is_start:
         parent.start_block = parent.node_id(conditional)
-    parent.reset_cfg_list()
 
     parallelize(par_loop, par_region, owner_sdfg)
     return conditional

@@ -30,6 +30,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.split_statements import (SplitStatements, local_transient_index,
                                                                       loop_local_transients)
+from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, record_tree_resets
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -332,6 +333,31 @@ def test_inner_loop_of_a_nest_splits_and_preserves_values():
     got_a, got_b = _run_2d(sdfg)
     assert np.array_equal(got_a, ref_a)
     assert np.array_equal(got_b, ref_b)
+
+
+def ordered_rmw_loop(name):
+    """``a[i] = a[i-1] + x[i]; b[i] = a[i-1] * 2``: the split must order the writer of ``a`` first."""
+    sdfg, _loop, st = _loop_sdfg(name)
+    ra = st.add_read('a')
+    tadd = st.add_tasklet('_Add_', {'prev', 'xx'}, {'out'}, 'out = prev + xx')
+    st.add_edge(ra, None, tadd, 'prev', dace.Memlet('a[i - 1]'))
+    st.add_edge(st.add_read('x'), None, tadd, 'xx', dace.Memlet('x[i]'))
+    st.add_edge(tadd, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    tmul = st.add_tasklet('_Mult_', {'av'}, {'out'}, 'out = av * 2.0')
+    st.add_edge(ra, None, tmul, 'av', dace.Memlet('a[i - 1]'))
+    st.add_edge(tmul, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+    return sdfg
+
+
+@pytest.mark.parametrize('build', [carry_loop, nested_carry, ordered_rmw_loop])
+def test_loop_split_keeps_the_cfg_list_in_place(monkeypatch, build):
+    """Outlining, cloning and inlining back rebuilt the CFG list of the whole tree three times per split."""
+    sdfg = build('split_cfg_list')
+    resets = record_tree_resets(monkeypatch, lambda root: root is sdfg)
+    assert _split(sdfg) == 1
+    assert '_split_one_loop' not in resets, resets
+    assert_cfg_list_as_after_a_reset(sdfg)
+    sdfg.validate()
 
 
 def test_loop_split_is_idempotent():

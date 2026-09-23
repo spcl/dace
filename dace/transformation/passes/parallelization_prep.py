@@ -561,7 +561,6 @@ class BestEffortLoopPeeling(ppl.Pass):
                                                 'version': dace.__version__
                                             })
             mini.add_node(mini_loop, is_start_block=True)
-            mini.reset_cfg_list()
             mini.validate()
             return mini, mini_loop
         except Exception:
@@ -1017,7 +1016,6 @@ class BestEffortLoopPeeling(ppl.Pass):
                 parent.remove_edge(oe)
         if not reuse_loop:
             parent.remove_node(loop)
-        parent.reset_cfg_list()
         return True
 
     def _split_range_relations(self, loop: LoopRegion, x):

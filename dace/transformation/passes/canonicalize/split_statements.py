@@ -1346,21 +1346,18 @@ class SplitStatements(ppl.Pass):
         rather than handed between the clones through one outer array.
         """
         outer = helpers.nest_sdfg_subgraph(sdfg, subgraph_cls(loop.parent_graph, [loop]))
-        sdfg.reset_cfg_list()
         node = next(n for n in outer.nodes() if isinstance(n, nodes.NestedSDFG))
         # The outlining decides the connector set itself; only split when it agrees with what the
         # refusal above was computed from, otherwise put the loop back untouched.
         covered = dict.fromkeys(o for grp in groups for o in grp)
         if dict.fromkeys(node.out_connectors) != covered:
             inline_cls.apply_to(sdfg, nested_sdfg=node, save=False, verify=False)
-            sdfg.reset_cfg_list()
             return False
         before = dict.fromkeys(n for n in outer.nodes() if isinstance(n, nodes.NestedSDFG))
         if ordered:
             clones = SplitStatements._split_ordered(outer, node, groups, simplify_cls)
             if clones is None:
                 inline_cls.apply_to(sdfg, nested_sdfg=node, save=False, verify=False)
-                sdfg.reset_cfg_list()
                 return False
         else:
             # ``rmw_read_is_dead``: the sibling split only runs once ``rmw_confined`` has proved a
@@ -1377,7 +1374,6 @@ class SplitStatements(ppl.Pass):
             clones = [n for n in outer.nodes() if isinstance(n, nodes.NestedSDFG) and n not in before]
         for clone in clones:
             inline_cls.apply_to(sdfg, nested_sdfg=clone, save=False, verify=False)
-        sdfg.reset_cfg_list()
         return True
 
     @staticmethod

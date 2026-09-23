@@ -245,6 +245,7 @@ class BlockReachability:
         self.numberings: Dict[AbstractControlFlowRegion, BlockNumbering] = {}
         self.single_level: Dict[AbstractControlFlowRegion, Dict[ControlFlowBlock, ReachSet]] = {}
         self.closure_bits: Dict[AbstractControlFlowRegion, int] = {}
+        self.loop_region_bits: Dict[LoopRegion, int] = {}
         self.closure_items: Dict[AbstractControlFlowRegion, List[ControlFlowBlock]] = {}
         self.below_items: Dict[AbstractControlFlowRegion, List[ControlFlowBlock]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
@@ -337,12 +338,22 @@ class BlockReachability:
         if single is not None:
             bits |= single.bits
             if isinstance(parent, LoopRegion):
-                for block in self.nodes[parent]:
-                    if isinstance(block, ControlFlowRegion):
-                        bits |= numbering.below(block)
+                bits |= self.regions_below(parent)
         for pivot in self.enclosing(parent):
             bits |= self.closure(pivot)
         self.closure_bits[region] = bits
+        return bits
+
+    def regions_below(self, loop: LoopRegion) -> int:
+        """Every block below the regions directly in ``loop``, once per loop rather than once per region in it."""
+        bits = self.loop_region_bits.get(loop)
+        if bits is None:
+            numbering = self.numberings[loop]
+            bits = 0
+            for block in self.nodes[loop]:
+                if isinstance(block, ControlFlowRegion):
+                    bits |= numbering.below(block)
+            self.loop_region_bits[loop] = bits
         return bits
 
     def enclosing(self, pivot: Optional[AbstractControlFlowRegion]) -> Iterator[AbstractControlFlowRegion]:

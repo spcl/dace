@@ -24,6 +24,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.induction_variable_substitution import LoopCarriedRotationSubstitution
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.dataflow import TrivialTaskletElimination
+from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, record_tree_resets
 
 N = dace.symbol('N')
 _LEN = 64
@@ -161,6 +162,17 @@ def test_pass_applies_once_per_stage():
     assert applied == 1, f'expected exactly one rotation substitution, got {applied}'
     _sdfg2, applied2, _b2 = _apply_rotation_alone(rotate_two_deep, 'rotate_two_deep_unit')
     assert applied2 == 2, f'a two-stage delay line needs two substitutions, got {applied2}'
+
+
+def test_the_peel_keeps_the_cfg_list_in_place(monkeypatch):
+    """Each stage's peel rebuilt the CFG list of the whole tree; the graph operations keep it."""
+    sdfg = rotate_two_deep.to_sdfg(simplify=True)
+    PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+    resets = record_tree_resets(monkeypatch, lambda root: root is sdfg)
+    assert LoopCarriedRotationSubstitution(peel_limit=4).apply_pass(sdfg, {}) == 2
+    assert '_instantiate_peeled_iteration' not in resets, resets
+    assert_cfg_list_as_after_a_reset(sdfg)
+    sdfg.validate()
 
 
 def test_accumulation_is_refused_without_mutating():
