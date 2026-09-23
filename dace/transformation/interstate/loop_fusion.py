@@ -43,7 +43,6 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
@@ -386,7 +385,6 @@ class LoopFusion(transformation.MultiStateTransformation):
         cfg.remove_node(second)  # also drops the first -> second sequencing edge
         for e in out_edges:
             cfg.add_edge(first, e.dst, copy.deepcopy(e.data))
-        set_nested_sdfg_parent_references(sdfg)
 
     # intermediate contraction (the buffer-shrink MapFusion does, for the loop path)
 

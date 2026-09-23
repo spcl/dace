@@ -3,7 +3,6 @@ import copy
 from typing import Dict, Optional, Any
 
 from dace import sdfg as sd, properties
-from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ContinueBlock, ConditionalBlock, LoopRegion
 from dace.transformation import transformation
 from dace.transformation import pass_pipeline as ppl
@@ -114,8 +113,6 @@ class ContinueToCondition(ppl.Pass):
                 )
             to_remove.append(node)
 
+        # ``cfg.add_node`` re-homed each copy, nested SDFGs included; the removals unlist the originals.
         for node in to_remove:
             outer_cfg.remove_node(node)
-
-        # Fix sdfg parents
-        sdutil.set_nested_sdfg_parent_references(sdfg)

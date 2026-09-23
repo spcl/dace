@@ -24,6 +24,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import _build_stages
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -247,6 +248,17 @@ def test_mask_read_through_an_interstate_edge_refuses():
                 ref_nn[i] = n
     assert np.array_equal(nn, ref_nn), f'{nn} != {ref_nn}'
     assert np.allclose(z, ref_z)
+
+
+def test_distribution_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """The split clones the coupled loop per group; the clones are listed where a reset would list them."""
+    sdfg = _to_loops(atax_loops)
+    resets = spy_on_resets(monkeypatch)
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
+    monkeypatch.undo()
+    assert resets == []
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
 
 
 if __name__ == '__main__':

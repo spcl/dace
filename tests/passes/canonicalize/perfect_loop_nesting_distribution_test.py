@@ -42,6 +42,7 @@ from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 #: The two kernels whose outer loop body holds sibling inner loops carrying in opposite directions.
 SIBLING_NESTS = ['s2233', 's233']
@@ -595,6 +596,19 @@ def test_distribution_order_is_stable_across_runs():
         UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, {})
         orders.append(emitted_write_order(sdfg))
     assert orders[0] == orders[1] == orders[2] == [['s'], ['p'], ['q'], ['r']]
+
+
+@pytest.mark.parametrize('name', SIBLING_NESTS)
+def test_distribution_keeps_the_cfg_list_of_a_fresh_reset(name, monkeypatch):
+    """Each distribution clones the parent loop per group; ``add_node`` lists and re-homes every clone."""
+    kernel, sdfg = build(name, f'cfg_{name}')
+    resets = spy_on_resets(monkeypatch)
+    assert PerfectLoopNesting().apply_pass(sdfg, {}) is not None
+    monkeypatch.undo()
+    assert resets == []
+    assert top_level_nests(sdfg) == 2
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
 
 
 if __name__ == '__main__':

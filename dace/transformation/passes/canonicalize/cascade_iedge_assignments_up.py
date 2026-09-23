@@ -64,7 +64,6 @@ from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
@@ -578,6 +577,4 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
             if not n:
                 break
             total += n
-        if total:
-            set_nested_sdfg_parent_references(sdfg)
         return total or None

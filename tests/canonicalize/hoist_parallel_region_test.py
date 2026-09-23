@@ -34,6 +34,7 @@ from dace.transformation.passes.cpu_specialization.hoist_parallel_region import 
 
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 N = dace.symbol('N')
 
@@ -244,10 +245,10 @@ def test_second_run_adds_no_second_team():
     assert teams(sdfg) == 1
 
 
-def test_nested_sdfg_inside_the_map_keeps_its_parent_pointers():
-    """Outlining moves states into a NEW SDFG, and a nested SDFG that rode along still names the one
-    it left. Validation reads that pointer, so the pass has to repair it -- the wavefront kernels,
-    whose skewed body is a nested SDFG under the map, are the ones that found this."""
+def test_nested_sdfg_inside_the_map_keeps_its_parent_pointers(monkeypatch):
+    """Outlining moves states into a NEW SDFG, and a nested SDFG that rode along must name the new one.
+    Validation reads that pointer -- the wavefront kernels, whose skewed body is a nested SDFG under the
+    map, are the ones that found this. ``add_node`` re-homes it, without a whole-tree rebuild."""
     sdfg = dace.SDFG('nested_in_map')
     sdfg.add_array('a', [N], dace.float64)
     body = loop_region(sdfg, 'outer', 'N').add_state('body', is_start_block=True)
@@ -262,7 +263,11 @@ def test_nested_sdfg_inside_the_map_keeps_its_parent_pointers():
     body.add_memlet_path(nsdfg, exit_node, body.add_access('a'), src_conn='o', memlet=dace.Memlet('a[i]'))
     sdfg.validate()
 
+    resets = spy_on_resets(monkeypatch)
     assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    monkeypatch.undo()
+    assert resets == []
+    assert_tree_matches_a_reset(sdfg)
     sdfg.validate()
 
 

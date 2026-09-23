@@ -14,6 +14,7 @@ import dace
 from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import MoveIfIntoMap
+from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 
 def _count_conditional_blocks(sdfg: dace.SDFG) -> int:
@@ -406,6 +407,27 @@ def test_move_if_into_map_with_an_implicit_region_entry():
     a_out = np.full(N_val, -1.0, dtype=np.float64)
     outer(A_in=a_in, A_out=a_out, N=N_val)
     np.testing.assert_allclose(a_out, 2 * a_in, rtol=1e-5, atol=1e-6)
+
+
+def test_move_if_into_map_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
+    """Moving the guard into a fresh nested SDFG splices the CFG list in place; no rebuild follows."""
+    N, M = 6, 5
+
+    @dace.program
+    def tester(A: dace.float64[N, M], cond: dace.int32):
+        for i in dace.map[0:N]:
+            if cond == 1:
+                for j in dace.map[0:M]:
+                    A[i, j] = A[i, j] + 1.0
+
+    sdfg = tester.to_sdfg(simplify=False)
+    resets = spy_on_resets(monkeypatch)
+    assert sdfg.apply_transformations_repeated(MoveIfIntoMap) == 1
+    monkeypatch.undo()
+    assert resets == []
+    assert _inner_nsdfg_contains_conditional(sdfg)
+    assert_tree_matches_a_reset(sdfg)
+    sdfg.validate()
 
 
 if __name__ == "__main__":

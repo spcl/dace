@@ -53,7 +53,6 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation.passes.analysis.loop_analysis import (get_init_assignment, get_loop_end, get_loop_stride)
 
 
@@ -334,12 +333,9 @@ def sift_imperfect_nests(sdfg: SDFG) -> int:
         m = _match(sdfg)
         if m is None:
             break
+        # _sift deep-copies blocks; ``add_node`` re-homes every nested SDFG a copy carries.
         _sift(*m)
         count += 1
-    if count:
-        # _sift deep-copies blocks; any nested SDFG carried along keeps a stale parent
-        # reference until repaired (mirrors MoveIfIntoLoop.apply_pass).
-        set_nested_sdfg_parent_references(sdfg)
     return count
 
 
