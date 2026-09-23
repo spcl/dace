@@ -22,6 +22,7 @@ from typing import Dict, List, Optional, Tuple
 
 import dace
 from dace import library, properties, symbolic
+from dace.codegen.common import global_code_id
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -162,8 +163,7 @@ class ExpandFindFirstCUDA(ExpandTransformation):
         node.validate(sdfg, state)
         refuse_wrong_machine(node, state, sdfg, want_device=True)
 
-        state_id = state.parent_graph.node_id(state)
-        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        idstr = global_code_id(sdfg, state, node)
         signature = find_first_signature(node, state, sdfg)
         members = '\n'.join(f'    {decl};' for _conn, decl in signature)
         params = ', '.join(decl for _conn, decl in signature)

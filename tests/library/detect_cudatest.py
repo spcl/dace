@@ -154,6 +154,45 @@ def test_scatter_conflict_check_cuda_leaves_the_index_on_the_device():
     assert 'cudaMemcpyDeviceToHost' not in code.split('__dace_scatter_conflict')[-1].split('}')[0]
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize('duplicate', [False, True])
+def test_scatter_conflict_checks_in_sibling_regions_build_and_agree(duplicate):
+    """Two checks at the same block/node ids of two sibling regions (the ``ls3df_scf`` shape) each
+    emit their own device wrapper: the program builds, and both flag the same answer."""
+    from dace.sdfg.state import ControlFlowRegion
+    n = 4096
+    sdfg = dace.SDFG('scatter_conflict_sibling_regions')
+    sdfg.add_array('ip', [N], dace.int64)
+    sdfg.add_transient('ip_dev', [N], dace.int64, storage=dace.StorageType.GPU_Global)
+    stage = sdfg.add_state('stage', is_start_block=True)
+    stage.add_edge(stage.add_read('ip'), None, stage.add_write('ip_dev'), None, dace.Memlet('ip[0:N]'))
+    previous = stage
+    for i in range(2):
+        sdfg.add_array(f'count{i}', [1], dace.int64)
+        sdfg.add_transient(f'owner{i}', [n], dace.int64, storage=dace.StorageType.CPU_Heap)
+        region = ControlFlowRegion(f'region{i}', sdfg=sdfg)
+        sdfg.add_node(region)
+        sdfg.add_edge(previous, region, dace.InterstateEdge())
+        state = region.add_state('check', is_start_block=True)
+        node = ScatterConflictCheck('check')
+        node.implementation = 'CUDA'
+        node.schedule = dace.ScheduleType.Sequential
+        state.add_node(node)
+        node.add_out_connector('_owner_out')
+        state.add_edge(state.add_read('ip_dev'), None, node, '_idx_in', dace.Memlet('ip_dev[0:N]'))
+        state.add_edge(node, '_count_out', state.add_write(f'count{i}'), None, dace.Memlet(f'count{i}[0]'))
+        state.add_edge(node, '_owner_out', state.add_write(f'owner{i}'), None, dace.Memlet(f'owner{i}[0:{n}]'))
+        previous = region
+    sdfg.validate()
+
+    ip = np.arange(n, dtype=np.int64)[::-1].copy()
+    if duplicate:
+        ip[n // 3] = ip[2 * n // 3]
+    counts = [np.full(1, -1, dtype=np.int64) for _ in range(2)]
+    sdfg(ip=ip, count0=counts[0], count1=counts[1], N=n)
+    assert [int(c[0]) for c in counts] == [int(duplicate)] * 2
+
+
 DETECT_ALL_POSITIVE_MAIN = """
 #include <cstdio>
 #include <vector>

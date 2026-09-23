@@ -3,6 +3,7 @@
 import dace
 import multiprocessing
 from dace import dtypes, library, nodes, properties, symbolic
+from dace.codegen.common import global_code_id
 from dace.data import core as datacore
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.transformation.transformation import ExpandTransformation
@@ -343,8 +344,7 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
         # The kernel takes leading dimensions separately, so the extents are the region's and the
         # strides stay the containers' -- that pair is what makes a subset transpose correct here.
         rows, cols = inp_shape
-        state_id = state.parent_graph.node_id(state)
-        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        idstr = global_code_id(sdfg, state, node)
         ctype = inp_tensor.dtype.base_type.ctype
         prototype = (f'DACE_EXPORTED gpuError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, '
                      f'int __tr_rows, int __tr_cols, int __tr_ldin, int __tr_ldout, gpuStream_t __tr_stream);')

@@ -47,6 +47,7 @@ from typing import Callable, Optional, Tuple
 
 import dace
 from dace import library, properties, symbolic
+from dace.codegen.common import global_code_id
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.ordered import OrderedSet
@@ -268,8 +269,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
         step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
         gathers = symbolic.equal(step, 1) is not True or bool(node.transform)
 
-        state_id = parent_state.parent_graph.node_id(parent_state)
-        idstr = f'{parent_sdfg.name}_{state_id}_{parent_state.node_id(node)}'
+        idstr = global_code_id(parent_sdfg, parent_state, node)
         vt, it = in_dtype.ctype, idx_dtype.ctype
         # The stride reaches the wrapper as an ARGUMENT, not baked into it: the wrapper is a free
         # function in the CUDA unit, where the symbol the stride is written in is not in scope. The

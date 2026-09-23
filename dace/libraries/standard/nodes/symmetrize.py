@@ -17,6 +17,7 @@ square array; the expansion reads the source triangle and writes the mirror.
 """
 import dace
 from dace import library, nodes, properties, symbolic
+from dace.codegen.common import global_code_id
 from dace.libraries.standard.environments.tiled_transpose import TiledTranspose
 from dace.transformation.transformation import ExpandTransformation
 
@@ -169,8 +170,7 @@ class ExpandSymmetrizeCUDA(ExpandTransformation):
             return ExpandSymmetrizeBoundingBox.expansion(node, parent_state, parent_sdfg)
         ExpandSymmetrizeCUDA.environments = [TiledTranspose]
 
-        state_id = parent_state.parent_graph.node_id(parent_state)
-        idstr = f'{parent_sdfg.name}_{state_id}_{parent_state.node_id(node)}'
+        idstr = global_code_id(parent_sdfg, parent_state, node)
         ctype = desc.dtype.base_type.ctype
         prototype = (f'DACE_EXPORTED gpuError_t __dace_symmetrize_{idstr}({ctype} *__sym_x, int __sym_n, '
                      f'int __sym_ld, int __sym_off, int __sym_upper, gpuStream_t __sym_stream);')

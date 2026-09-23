@@ -31,7 +31,7 @@ from typing import Dict, Optional, Tuple
 
 import dace
 from dace import dtypes, library, nodes
-from dace.codegen.common import sym2cpp
+from dace.codegen.common import global_code_id, sym2cpp
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers
 
@@ -190,8 +190,7 @@ class ExpandCUDA(ExpandTransformation):
         n, ct = _length(node, state), in_desc.dtype.ctype
         owner = _owner(node, state, owner_desc)
 
-        state_id = state.parent_graph.node_id(state)
-        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        idstr = global_code_id(sdfg, state, node)
         cap_param = '' if owner is None else ', long long __sc_capacity'
         cap_arg = '' if owner is None else ', __sc_capacity'
         prototype = (f'DACE_EXPORTED gpuError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, '

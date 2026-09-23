@@ -4,6 +4,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import symbolic
+from dace.codegen.common import global_code_id
 from dace.libraries.blas import blas_helpers
 from dace import symbolic
 from dace.libraries.blas import environments as blas_environments
@@ -391,8 +392,7 @@ class ExpandTransposeCUDA(ExpandTransformation):
             return ExpandTransposePure.make_sdfg(node, state, sdfg)
         ExpandTransposeCUDA.environments = [TiledTranspose]
 
-        state_id = state.parent_graph.node_id(state)
-        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        idstr = global_code_id(sdfg, state, node)
         ctype = dtype.base_type.ctype
         prototype = (f'DACE_EXPORTED gpuError_t __dace_transpose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, '
                      f'int __tr_rows, int __tr_cols, int __tr_ldin, int __tr_ldout, gpuStream_t __tr_stream);')

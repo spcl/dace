@@ -16,6 +16,7 @@ from dace.properties import Property, LambdaProperty, ListProperty
 from dace.frontend.operations import detect_reduction_type
 from dace import dtypes
 from dace import subsets
+from dace.codegen.common import global_code_id
 import warnings
 from dace.sdfg import scope
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
@@ -700,7 +701,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
 
         node_id = state.node_id(node)
         state_id = state.parent_graph.node_id(state)
-        idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
+        idstr = global_code_id(sdfg, state, node)
 
         # Element type comes from the memlet's data descriptor, never from a connector: a library
         # node connector types the tasklet INTERFACE, which the frame hands a pointer.
@@ -944,7 +945,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
 
         node_id = state.node_id(node)
         state_id = state.parent_graph.node_id(state)
-        idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
+        idstr = global_code_id(sdfg, state, node)
 
         # Obtain some SDFG-related information
         input_memlet = input_edge.data
@@ -1090,8 +1091,7 @@ class ExpandReduceCUDABlockStrided(pm.ExpandTransformation):
         credtype = 'dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:]
         redop = f'dace::_wcr_fixed<{credtype}, {ctype}>()'
 
-        state_id = state.parent_graph.node_id(state)
-        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        idstr = global_code_id(sdfg, state, node)
         code = block_reduce_code(idstr=idstr,
                                  ctype=ctype,
                                  lanes=BLOCK_COLLECTIVE_THREADS,
@@ -1157,7 +1157,7 @@ class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
         redtype = detect_reduction_type(node.wcr)
         node_id = state.node_id(node)
         state_id = state.parent_graph.node_id(state)
-        idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
+        idstr = global_code_id(sdfg, state, node)
 
         output_memlet = output_edge.data
         # Element type comes from the memlet's data descriptor, never from a connector: a library

@@ -152,6 +152,26 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
     return f'__state->gpu_context->streams[{stream}]'
 
 
+def global_code_id(sdfg: SDFG, state: 'sd.SDFGState', node) -> str:
+    """A name for the free function a library node's expansion appends to the global code.
+
+    Every such wrapper lands in the SAME translation unit, so its name has to be unique across the
+    whole program. A state's ``node_id`` is only local to the control-flow region holding it, so
+    ``<sdfg>_<state>_<node>`` repeats for two nodes in the same spot of two loop bodies. The id
+    therefore spells the region path down from the SDFG (``3r19``: block 19 of region 3); a
+    top-level state keeps its old ``<sdfg>_<state>_<node>`` name.
+    """
+    path = []
+    block = state
+    while True:
+        parent = block.parent_graph
+        path.append(str(parent.node_id(block)))
+        if isinstance(parent, SDFG):
+            break
+        block = parent
+    return f"{sdfg.name}_{'r'.join(reversed(path))}_{state.node_id(node)}"
+
+
 def cpp_standard() -> str:
     """The C++ standard version to build with, per ``compiler.cpp_standard`` -- clamped to a minimum
     of 20. DaCe assumes C++20 or newer everywhere (aligned ``operator new``, ``consteval``, ...), so a

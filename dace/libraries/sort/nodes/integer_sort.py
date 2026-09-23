@@ -27,7 +27,7 @@ from typing import Tuple
 
 import dace
 from dace import library, nodes
-from dace.codegen.common import sym2cpp
+from dace.codegen.common import global_code_id, sym2cpp
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers  # local helper functions kept out of this file for readability
 from .. import environments
@@ -176,8 +176,7 @@ class ExpandCUDA(ExpandTransformation):
         # The CUB call goes into the CUDA translation unit behind a wrapper, the same shape the
         # Scan libnode uses: this tasklet is at host schedule, and the host compiler gets only the
         # scratch header -- hipCUB in particular does not parse under g++.
-        state_id = state.parent_graph.node_id(state)
-        wrapper = f'__dace_isort_{sdfg.name}_{state_id}_{state.node_id(node)}'
+        wrapper = f'__dace_isort_{global_code_id(sdfg, state, node)}'
         params = f'const {in_dtype}* __ks_in, {in_dtype}* __ks_out, long long __ks_n, gpuStream_t __ks_stream'
         prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
         args = f'__ks_in, __ks_out, __ks_n, {bit_args}, __ks_stream'

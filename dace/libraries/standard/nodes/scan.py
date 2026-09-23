@@ -45,7 +45,7 @@ import numpy
 
 import dace
 from dace import dtypes, library, nodes, symbolic
-from dace.codegen.common import sym2cpp
+from dace.codegen.common import global_code_id, sym2cpp
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.properties import Property, EnumProperty, SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation
@@ -944,8 +944,7 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
     live_seed_value = seed is not None and not on_device
     seed_val = f'static_cast<{e_ctype}>({init_connector(0)})' if live_seed_value else f'static_cast<{e_ctype}>(0)'
 
-    state_id = state.parent_graph.node_id(state)
-    wrapper = f'__dace_scan_affine_{sdfg.name}_{state_id}_{state.node_id(node)}'
+    wrapper = f'__dace_scan_affine_{global_code_id(sdfg, state, node)}'
     params = (f'const {c_ctype}* __sc_c, const {d_ctype}* __sc_d, const {s_ctype}* __sc_seed_ptr, '
               f'{e_ctype} __sc_seed_val, {e_ctype}* __sc_out, long long __sc_n, gpuStream_t __sc_stream')
     prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
@@ -992,8 +991,7 @@ def strided_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, o
         raise NotImplementedError("Scan(CUDA, stride > 1): ``_scan_init`` is not yet supported.")
     ctype = out_desc.dtype.base_type.ctype
     suffix = _OP_TO_OMP_SUFFIX[node.op]
-    state_id = state.parent_graph.node_id(state)
-    wrapper = f'__dace_scan_strided_{sdfg.name}_{state_id}_{state.node_id(node)}'
+    wrapper = f'__dace_scan_strided_{global_code_id(sdfg, state, node)}'
     params = f'const {ctype}* __sc_in, {ctype}* __sc_out, long __sc_n, long __sc_s, gpuStream_t __sc_stream'
     prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
     sdfg.append_global_code(prototype + '\n')
@@ -1163,8 +1161,7 @@ class ExpandCUDA(ExpandTransformation):
         # compiler and cannot parse it, which is why the CUB call cannot be emitted here directly.
         # Emit a wrapper into the CUDA unit and CALL it from the host tasklet -- the same shape
         # ``ExpandFindFirstCUDA`` uses for ``dace::find_first_index_device``.
-        state_id = state.parent_graph.node_id(state)
-        idstr = f'{sdfg.name}_{state_id}_{state.node_id(node)}'
+        idstr = global_code_id(sdfg, state, node)
         in_ctype, out_ctype = in_desc.dtype.base_type.ctype, out_desc.dtype.base_type.ctype
         blocks = []
         for chain in range(node.chains):
