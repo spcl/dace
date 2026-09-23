@@ -26,6 +26,7 @@ from dace.config import Config
 from dace.sdfg import infer_types, nodes
 from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.libraries.blas.environments import openblas
+from dace.libraries.fft.environments import fftw3
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _matrix_operand
 from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage, find_fast_library,
@@ -101,11 +102,12 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     and add the non-BLAS fast expansions that :func:`find_fast_library` omits so a lifted library node
     never falls to the serial ``pure`` loop:
 
-    * CPU: ``OpenBLAS`` (if installed), ``HPTT`` (tensor transpose, if ``HPTT_ROOT`` is set),
+    * CPU: ``OpenBLAS`` (if installed), ``FFTW3`` (FFT / IFFT, if installed), ``HPTT`` (tensor
+      transpose, if ``HPTT_ROOT`` is set),
       ``TTGT`` (tensor contraction via transpose+GEMM, no external dependency), ``OpenMP`` (``Reduce``),
       ``CPU`` (OpenMP-5 ``Scan``, radix ``IntegerSort``, ``ska_sort`` ``ScatterConflictCheck``).
     * GPU: taken straight from ``auto_optimize``, so the per-backend rows cannot drift -- cuBLAS /
-      cuSolverDn / cuTENSOR on CUDA, rocBLAS / rocSOLVER / hipTENSOR on HIP, plus ``GPUAuto``,
+      cuSolverDn / cuTENSOR / cuFFT on CUDA, rocBLAS / rocSOLVER / hipTENSOR / hipFFT on HIP, plus ``GPUAuto``,
       ``CUB`` and ``CUDA`` (``gpucub::DeviceScan`` / device sort / ``DeviceReduce::ArgMax`` / the
       bounding-box ``Symmetrize``) on both.
 
@@ -127,6 +129,8 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     prio = []
     if openblas.OpenBLAS.is_installed():
         prio.append('OpenBLAS')
+    if fftw3.FFTW3.is_installed():
+        prio.append('FFTW3')
     if 'HPTT_ROOT' in os.environ:
         prio.append('HPTT')
     prio.append('TTGT')

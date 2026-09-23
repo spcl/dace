@@ -1,16 +1,22 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Implements Forward and Inverse Fast Fourier Transform (FFT) library nodes
 """
 
-from typing import List, Optional, Sequence
+import functools
+import itertools
+import operator
+import warnings
+from typing import Any
+from collections.abc import Callable, Sequence
 
-from dace import data, dtypes, SDFG, SDFGState, symbolic, library, nodes, properties
+from dace import data, dtypes, Memlet, SDFG, SDFGState, symbolic, library, nodes, properties
 from dace import transformation as xf
 from dace.libraries.fft import environments as env
+from dace.libraries.fft.gpu_dialect import CUFFT, HIPFFT, GpuFftDialect
 
 
-def normalize_fft_axes(ndim: int, axes: Optional[Sequence[int]]) -> List[int]:
+def normalize_fft_axes(ndim: int, axes: Sequence[int] | None) -> list[int]:
     """The axes an FFT over ``axes`` transforms, in order, as indices in ``0..ndim-1``; ``None`` means every axis."""
     if axes is None:
         return list(range(ndim))
@@ -104,278 +110,265 @@ class IDFTExpansion(xf.ExpandTransformation):
 
 
 ##################################################################################################
-# cuFFT expansions
+# Vendor expansions: FFTW3 / MKL on the CPU, cuFFT / hipFFT on the GPU
 ##################################################################################################
 
+#: The operand types every vendor transform takes: complex-to-complex only.
+COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 
-@library.register_expansion(FFT, 'cuFFT')
-class cuFFTFFTExpansion(xf.ExpandTransformation):
-    environments = [env.cuFFT]
-    plan_uid = 0
+#: The most axes one cuFFT / hipFFT plan transforms.
+MAX_GPU_FFT_RANK = 3
 
-    @staticmethod
-    def expansion(node: FFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        input, output = _get_input_and_output(parent_state, node)
-        indesc = parent_sdfg.arrays[input]
-        outdesc = parent_sdfg.arrays[output]
-        if str(node.factor) != '1':
-            raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_cufft_code(indesc, outdesc, parent_sdfg, False, node.axes)
+#: Suffix of each GPU plan's state fields, unique across every program in the process.
+PLAN_IDS = itertools.count()
+
+#: Builds the vendor call for ``(complex input descriptor, output descriptor, transformed axes,
+#: is_inverse)``, or returns ``None`` when the library cannot address that layout.
+VendorCall = Callable[[data.Data, data.Data, list[int], bool], nodes.Tasklet | None]
 
 
-@library.register_expansion(IFFT, 'cuFFT')
-class cuFFTIFFTExpansion(xf.ExpandTransformation):
-    environments = [env.cuFFT]
-    plan_uid = 0
+def vendor_fft_sdfg(node: nodes.LibraryNode, parent_state: SDFGState, parent_sdfg: SDFG, call: VendorCall,
+                    backend: str) -> SDFG:
+    """Wrap one vendor FFT call in the numpy semantics the library node carries.
 
-    @staticmethod
-    def expansion(node: IFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        input, output = _get_input_and_output(parent_state, node)
-        indesc = parent_sdfg.arrays[input]
-        outdesc = parent_sdfg.arrays[output]
-        if str(node.factor) != '1':
-            raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_cufft_code(indesc, outdesc, parent_sdfg, True, node.axes)
+    The vendor transforms are complex-to-complex and unnormalised, so the nested SDFG casts a real
+    input into a complex buffer first and scales the output by ``node.factor`` afterwards. A layout
+    the vendor cannot address (a repeated axis, or a GPU transform that is not one batched block)
+    falls back to the separable ``pure`` expansion, with a warning naming the backend.
+    """
+    from dace.libraries.fft.algorithms.dft import FloatingPrinter  # avoid import loop
+    is_inverse = isinstance(node, IFFT)
+    inp, out = _get_input_and_output(parent_state, node)
+    indesc, outdesc = parent_sdfg.arrays[inp], parent_sdfg.arrays[out]
+    transformed = normalize_fft_axes(len(indesc.shape), node.axes)
+    cast = indesc.dtype != outdesc.dtype
+    srcdesc = data.Array(outdesc.dtype, outdesc.shape, storage=outdesc.storage) if cast else indesc
+    tasklet = call(srcdesc, outdesc, transformed, is_inverse) if outdesc.dtype in COMPLEX_TYPES else None
+    if tasklet is None:
+        warnings.warn(
+            f'{backend} cannot transform axes {transformed} of {outdesc.dtype}{list(indesc.shape)} '
+            f'(strides {list(indesc.strides)}); falling back to the pure expansion',
+            stacklevel=2)
+        pure = IDFTExpansion if is_inverse else DFTExpansion
+        return pure.expansion(node, parent_state, parent_sdfg)
+
+    sdfg = SDFG(f'{node.label}_{backend}')
+    sdfg.add_array('_inp',
+                   indesc.shape,
+                   indesc.dtype,
+                   storage=indesc.storage,
+                   strides=indesc.strides,
+                   offset=indesc.offset)
+    sdfg.add_array('_out',
+                   outdesc.shape,
+                   outdesc.dtype,
+                   storage=outdesc.storage,
+                   strides=outdesc.strides,
+                   offset=outdesc.offset)
+    # Explicit on the GPU: the maps sit at host level next to a host-side library call.
+    schedule = (dtypes.ScheduleType.GPU_Device
+                if outdesc.storage == dtypes.StorageType.GPU_Global else dtypes.ScheduleType.Default)
+    ranges = {f'__i{d}': f'0:{symbolic.symstr(extent)}' for d, extent in enumerate(outdesc.shape)}
+    subset = ', '.join(ranges)
+
+    source = '_inp'
+    state = sdfg.add_state('fft', is_start_block=True)
+    if cast:
+        sdfg.add_transient('__cinp', outdesc.shape, outdesc.dtype, storage=outdesc.storage)
+        # The cast names the type: ``decltype(o)`` would be a reference to the target element.
+        state.add_mapped_tasklet('cast_in',
+                                 ranges, {'i': Memlet(data='_inp', subset=subset)},
+                                 f'o = dace.{outdesc.dtype.to_string()}(i)',
+                                 {'o': Memlet(data='__cinp', subset=subset)},
+                                 schedule=schedule,
+                                 external_edges=True)
+        source = '__cinp'
+        state = sdfg.add_state_after(state, 'fft')
+    state.add_edge(state.add_read(source), None, tasklet, '__in', Memlet.from_array(source, sdfg.arrays[source]))
+    state.add_edge(tasklet, '__out', state.add_write('_out'), None, Memlet.from_array('_out', sdfg.arrays['_out']))
+
+    if str(node.factor) != '1':
+        # Divide in floating point: ``1/N`` over an integer extent symbol is C integer division.
+        factor = FloatingPrinter().doprint(symbolic.pystr_to_symbolic(node.factor))
+        real = 'float32' if outdesc.dtype == dtypes.complex64 else 'float64'
+        state = sdfg.add_state_after(state, 'normalize')
+        state.add_mapped_tasklet('normalize',
+                                 ranges, {'i': Memlet(data='_out', subset=subset)},
+                                 f'o = i * dace.{real}({factor})', {'o': Memlet(data='_out', subset=subset)},
+                                 schedule=schedule,
+                                 external_edges=True)
+    return sdfg
 
 
-def _generate_cufft_code(indesc: data.Data,
-                         outdesc: data.Data,
-                         sdfg: SDFG,
-                         is_inverse: bool,
-                         axes: Optional[List[int]] = None):
-    from dace.codegen.targets import cpp  # Avoid import loops
-    if axes is not None and len(axes) != 1:
-        raise NotImplementedError(f'cuFFT expansion transforms every axis or a single one (got axes={axes})')
-    axis = None if axes is None else axes[0]
-    if len(indesc.shape) not in (1, 2, 3):
-        raise ValueError('cuFFT only supports 1/2/3-dimensional FFT')
-    if indesc.storage != dtypes.StorageType.GPU_Global:
-        raise ValueError('cuFFT implementation requires input array to be on GPU')
-    if outdesc.storage != dtypes.StorageType.GPU_Global:
-        raise ValueError('cuFFT implementation requires output array to be on GPU')
+def fftw3_call(src: data.Data, out: data.Data, transformed: list[int], is_inverse: bool) -> nodes.Tasklet | None:
+    """One ``fftw_plan_guru64_dft`` over the transformed axes, every other axis a ``howmany`` batch dimension.
 
-    cufft_type = _types_to_cufft(indesc.dtype, outdesc.dtype)
-    init_code = ''
-    exit_code = ''
-    callsite_code = ''
+    Both dimension lists step by the descriptors' own strides, so any rank, any axis set and any
+    strided view is one plan, and one buffer on both connectors is FFTW's in-place transform. FFTW's planner is
+    not thread-safe, so plan creation and destruction are serialised; execution is not.
+    """
+    from dace.codegen.targets import cpp  # avoid import loop
+    if len(set(transformed)) != len(transformed):
+        return None
+    prefix, complex_t = ('fftw_', 'fftw_complex') if out.dtype == dtypes.complex128 else ('fftwf_', 'fftwf_complex')
+    batch = [d for d in range(len(src.shape)) if d not in transformed]
 
-    # Make a unique name for this plan
-    if not is_inverse:
-        plan_name = f'fwdplan{cuFFTFFTExpansion.plan_uid}'
-        cuFFTFFTExpansion.plan_uid += 1
-        direction = 'CUFFT_FORWARD'
-        tasklet_prefix = ''
-    else:
-        plan_name = f'invplan{cuFFTIFFTExpansion.plan_uid}'
-        cuFFTIFFTExpansion.plan_uid += 1
-        direction = 'CUFFT_INVERSE'
-        tasklet_prefix = 'i'
+    def iodims(dims: list[int]) -> str:
+        return ', '.join(
+            f'{{{cpp.sym2cpp(src.shape[d])}, {cpp.sym2cpp(src.strides[d])}, {cpp.sym2cpp(out.strides[d])}}}'
+            for d in dims)
 
-    fields = [
-        f'cufftHandle {plan_name};',
-    ]
-    plan_name = f'__state->{plan_name}'
+    howmany = f'{prefix}iodim64 __howmany[{len(batch)}] = {{{iodims(batch)}}};' if batch else ''
+    direction = 'FFTW_BACKWARD' if is_inverse else 'FFTW_FORWARD'
+    code = f"""
+    {prefix}iodim64 __dims[{len(transformed)}] = {{{iodims(transformed)}}};
+    {howmany}
+    {prefix}plan __plan;
+    #pragma omp critical(dace_fftw_planner)
+    __plan = {prefix}plan_guru64_dft({len(transformed)}, __dims, {len(batch)}, {'__howmany' if batch else 'NULL'},
+                                    ({complex_t} *)__in, ({complex_t} *)__out, {direction}, FFTW_ESTIMATE);
+    {prefix}execute(__plan);
+    #pragma omp critical(dace_fftw_planner)
+    {prefix}destroy_plan(__plan);
+    """
+    return nodes.Tasklet(f'fftw3_{"i" if is_inverse else ""}fft', {'__in'}, {'__out'},
+                         code,
+                         language=dtypes.Language.CPP)
 
-    init_code += f'''
-    cufftCreate(&{plan_name});
-    '''
-    exit_code += f'''
-    cufftDestroy({plan_name});
-    '''
 
-    # Axis-aware lowering: ``cufftMakePlanMany`` (which fits both the
-    # full-N-D case via ``rank>=2`` and the batched-1-D case via
-    # ``rank=1, howmany=...``).  For the simple N-D case we keep the old
-    # ``cufftMakePlan{N}d`` since its ABI is leaner.
-    if axis is None:
-        cdims = ', '.join([cpp.sym2cpp(s) for s in indesc.shape])
-        # ``cufftMakePlan1d`` is the only variant that takes a ``batch`` argument;
-        # the 2-D / 3-D entry points do not.  Passing batch=1 to the higher-rank
-        # plans raised a "too many arguments" build error.
-        batch_arg = ", /*batch=*/1" if len(indesc.shape) == 1 else ""
-        make_plan = f'''
-        {{
+def gpu_fft_layout(src: data.Data, out: data.Data, transformed: list[int]) -> tuple[list, Any, Any, Any] | None:
+    """``(extents, stride, distance, batch)`` of ``transformed`` as ONE ``MakePlanMany`` plan, else ``None``.
+
+    A plan transforms up to three adjacent axes of a batch that steps by a single distance, so the
+    transformed axes must be one contiguous run touching either end of a C-contiguous array: the
+    trailing axes (stride 1, the leading axes are the batch) or the leading ones (stride and batch
+    are the extent of the trailing axes). numpy's result does not depend on the axis order, so the
+    axes are sorted first.
+    """
+    ndim = len(src.shape)
+    axes = sorted(transformed)
+    if (len(set(axes)) != len(axes) or len(axes) > MAX_GPU_FFT_RANK or axes != list(range(axes[0], axes[-1] + 1))
+            or (axes[0] != 0 and axes[-1] != ndim - 1)):
+        return None
+    if any(d.storage != dtypes.StorageType.GPU_Global or not d.is_packed_c_strides() for d in (src, out)):
+        return None
+    extents = [src.shape[a] for a in axes]
+    if axes[-1] == ndim - 1:
+        return extents, 1, functools.reduce(operator.mul, extents,
+                                            1), functools.reduce(operator.mul, src.shape[:axes[0]], 1)
+    inner = functools.reduce(operator.mul, src.shape[axes[-1] + 1:], 1)
+    return extents, inner, 1, inner
+
+
+def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
+    """The cuFFT / hipFFT call in ``dialect``'s spelling: a cached ``MakePlanMany64`` plan run on the SDFG's stream.
+
+    The plan lives in the SDFG state and is rebuilt only when its extents change between calls, so a
+    transform inside a loop plans once. One buffer on both connectors is the vendor's in-place transform.
+    """
+
+    def call(src: data.Data, out: data.Data, transformed: list[int], is_inverse: bool) -> nodes.Tasklet | None:
+        from dace.codegen.targets import cpp  # avoid import loop
+        layout = gpu_fft_layout(src, out, transformed)
+        if layout is None:
+            return None
+        extents, stride, distance, batch = layout
+        plan = f'{dialect.api}_plan_{next(PLAN_IDS)}'
+        key = [cpp.sym2cpp(e) for e in (*extents, stride, distance, batch)]
+        stride_dist = f'__key[{len(extents)}], __key[{len(extents) + 1}]'
+        kind = f'{dialect.enum}{"Z2Z" if out.dtype == dtypes.complex128 else "C2C"}'
+        direction = dialect.inverse if is_inverse else f'{dialect.enum}FORWARD'
+        check = (f'auto __check = [](const char *what, {dialect.api}Result result) {{ '
+                 f'if (result != {dialect.enum}SUCCESS) throw std::runtime_error(std::string("{dialect.name} ") + '
+                 f'what + " failed with status " + std::to_string((int)result)); }};')
+        code = f"""
+        {check}
+        const long long __key[{len(key)}] = {{{', '.join(key)}}};
+        bool __same = __state->{plan}_made;
+        for (int __k = 0; __same && __k < {len(key)}; ++__k)
+            __same = __state->{plan}_key[__k] == __key[__k];
+        if (!__same) {{
+            if (__state->{plan}_made)
+                __check("{dialect.api}Destroy", {dialect.api}Destroy(__state->{plan}));
+            __check("{dialect.api}Create", {dialect.api}Create(&__state->{plan}));
+            long long __n[{len(extents)}] = {{{', '.join(key[:len(extents)])}}};
             size_t __work_size = 0;
-            cufftMakePlan{len(indesc.shape)}d({plan_name}, {cdims}, {cufft_type}{batch_arg}, &__work_size);
+            // The embeds are the extents themselves: a NULL embed makes the vendor ignore stride and distance.
+            __check("{dialect.api}MakePlanMany64", {dialect.api}MakePlanMany64(__state->{plan}, {len(extents)}, __n,
+                __n, {stride_dist}, __n, {stride_dist}, {kind}, __key[{len(extents) + 2}], &__work_size));
+            for (int __k = 0; __k < {len(key)}; ++__k)
+                __state->{plan}_key[__k] = __key[__k];
+            __state->{plan}_made = true;
         }}
-        '''
-    else:
-        ndim = len(indesc.shape)
-        axis_norm = int(axis) if axis >= 0 else ndim + int(axis)
-        if axis_norm not in (0, ndim - 1):
-            raise NotImplementedError(f"cuFFT axis-aware expansion only handles axis=0 or axis=ndim-1 "
-                                      f"(got axis={axis} on shape {indesc.shape}); intermediate axes need "
-                                      f"``cufftXtMakePlanMany`` with explicit per-dim strides.")
-        n_sym = indesc.shape[axis_norm]
-        other_dims = [d for i, d in enumerate(indesc.shape) if i != axis_norm]
-        howmany_sym = 1
-        for d in other_dims:
-            howmany_sym = howmany_sym * d
-        if axis_norm == ndim - 1:
-            stride_sym, dist_sym = 1, n_sym
-        else:
-            stride_sym, dist_sym = howmany_sym, 1
-        make_plan = f'''
-        {{
-            size_t __work_size = 0;
-            int __n_arr[1] = {{ (int){cpp.sym2cpp(n_sym)} }};
-            int __stride = (int){cpp.sym2cpp(stride_sym)};
-            int __dist = (int){cpp.sym2cpp(dist_sym)};
-            int __howmany = (int){cpp.sym2cpp(howmany_sym)};
-            cufftMakePlanMany({plan_name}, /*rank=*/1, __n_arr,
-                              /*inembed=*/NULL, __stride, __dist,
-                              /*onembed=*/NULL, __stride, __dist,
-                              {cufft_type}, __howmany, &__work_size);
-        }}
-        '''
+        __check("{dialect.api}SetStream", {dialect.api}SetStream(__state->{plan}, __dace_current_stream));
+        __check("{dialect.api}XtExec", {dialect.api}XtExec(__state->{plan}, (void *)__in, (void *)__out, {direction}));
+        """
+        return nodes.Tasklet(
+            f'{dialect.api}_{"i" if is_inverse else ""}fft', {'__in'}, {'__out'},
+            code,
+            language=dtypes.Language.CPP,
+            state_fields=[f'{dialect.api}Handle {plan};', f'long long {plan}_key[{len(key)}];', f'bool {plan}_made;'],
+            code_init=f'__state->{plan}_made = false;',
+            code_exit=f'if (__state->{plan}_made) {dialect.api}Destroy(__state->{plan});')
 
-    # Make plan in init if not symbolic or not data-dependent, otherwise make at callsite.
-    symbols_that_change = set(s for ise in sdfg.edges() for s in ise.data.assignments.keys())
-    symbols_that_change &= set(map(str, sdfg.symbols.keys()))
-
-    def _fsyms(x):
-        if symbolic.issymbolic(x):
-            return set(map(str, x.free_symbols))
-        return set()
-
-    if symbols_that_change and any(_fsyms(s) & symbols_that_change for s in indesc.shape):
-        callsite_code += make_plan
-    else:
-        init_code += make_plan
-
-    # Execute plan
-    callsite_code += f'''
-    cufftSetStream({plan_name}, __dace_current_stream);
-    cufftXtExec({plan_name}, _inp, _out, {direction});
-    '''
-
-    return nodes.Tasklet(f'cufft_{tasklet_prefix}fft', {'_inp'}, {'_out'},
-                         callsite_code,
-                         language=dtypes.Language.CPP,
-                         state_fields=fields,
-                         code_init=init_code,
-                         code_exit=exit_code)
-
-
-# FFTW3 expansions
+    return call
 
 
 @library.register_expansion(FFT, 'FFTW3')
 class FFTW3FFTExpansion(xf.ExpandTransformation):
-    """CPU FFTW3 backend for :class:`FFT` over complex64 / complex128, for any ``node.axes`` without repeats."""
+    """CPU FFTW3 backend for :class:`FFT`: any rank, axes, strides, real or complex input, any ``norm``."""
 
     environments = [env.FFTW3]
 
     @staticmethod
-    def expansion(node: 'FFT', parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        input, output = _get_input_and_output(parent_state, node)
-        indesc = parent_sdfg.arrays[input]
-        outdesc = parent_sdfg.arrays[output]
-        if str(node.factor) != '1':
-            raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_fftw3_code(indesc, outdesc, is_inverse=False, axes=node.axes)
+    def expansion(node: FFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return vendor_fft_sdfg(node, parent_state, parent_sdfg, fftw3_call, 'FFTW3')
 
 
 @library.register_expansion(IFFT, 'FFTW3')
 class FFTW3IFFTExpansion(xf.ExpandTransformation):
-    """CPU FFTW3 backend for :class:`IFFT`. Same shape/dtype/axes constraints as :class:`FFTW3FFTExpansion`."""
+    """CPU FFTW3 backend for :class:`IFFT`. Same coverage as :class:`FFTW3FFTExpansion`."""
 
     environments = [env.FFTW3]
 
     @staticmethod
-    def expansion(node: 'IFFT', parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        input, output = _get_input_and_output(parent_state, node)
-        indesc = parent_sdfg.arrays[input]
-        outdesc = parent_sdfg.arrays[output]
-        if str(node.factor) != '1':
-            raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_fftw3_code(indesc, outdesc, is_inverse=True, axes=node.axes)
+    def expansion(node: IFFT, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return vendor_fft_sdfg(node, parent_state, parent_sdfg, fftw3_call, 'FFTW3')
 
 
-def _generate_fftw3_code(indesc: data.Data,
-                         outdesc: data.Data,
-                         is_inverse: bool,
-                         axes: Optional[List[int]] = None) -> nodes.Tasklet:
-    """Emit a self-contained ``fftw_plan_*`` -> ``execute`` -> ``destroy_plan`` tasklet.
+class ExpandGPUFFT(xf.ExpandTransformation):
+    """The one GPU FFT expansion; a backend subclass names its environment and :class:`GpuFftDialect`."""
 
-    A full transform of a rank 1-3 array drives ``fftw_plan_dft_{rank}d`` and a single leading or trailing axis
-    drives ``fftw_plan_many_dft``. Any other ``axes`` drives ``fftw_plan_guru_dft``: the transformed axes are the
-    plan dimensions, every other axis is a ``howmany`` batch dimension, and both step by the descriptors' strides.
-    """
-    from dace.codegen.targets import cpp  # avoid import loop
+    environments = []
+    dialect: GpuFftDialect
 
-    if indesc.dtype not in (dtypes.complex64, dtypes.complex128):
-        raise ValueError(f'FFTW3 expansion requires complex inputs (got {indesc.dtype})')
-    if outdesc.dtype != indesc.dtype:
-        raise ValueError('FFTW3 expansion requires matching input/output dtypes')
+    @classmethod
+    def expansion(cls, node: nodes.LibraryNode, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return vendor_fft_sdfg(node, parent_state, parent_sdfg, gpu_fft_call(cls.dialect), cls.dialect.name)
 
-    if indesc.dtype == dtypes.complex128:
-        prefix, complex_t = 'fftw_', 'fftw_complex'
-    else:
-        prefix, complex_t = 'fftwf_', 'fftwf_complex'
-    direction = 'FFTW_BACKWARD' if is_inverse else 'FFTW_FORWARD'
-    ndim = len(indesc.shape)
 
-    if axes is None and ndim in (1, 2, 3):
-        cdims = ', '.join(cpp.sym2cpp(s) for s in indesc.shape)
-        plan = f'{prefix}plan_dft_{ndim}d({cdims}, ({complex_t}*)_inp, ({complex_t}*)_out, {direction}, FFTW_ESTIMATE)'
-        code = f"""
-        {{
-            {prefix}plan __plan = {plan};
-            {prefix}execute(__plan);
-            {prefix}destroy_plan(__plan);
-        }}
-        """
-    elif axes is not None and len(axes) == 1 and axes[0] in (0, ndim - 1):
-        axis = axes[0]
-        n_sym = indesc.shape[axis]
-        # Consecutive transforms along the last axis are contiguous; along axis 0 they interleave with stride howmany.
-        howmany_sym = 1
-        for d in (d for i, d in enumerate(indesc.shape) if i != axis):
-            howmany_sym = howmany_sym * d
-        if axis == ndim - 1:
-            istride, idist = 1, n_sym
-        else:
-            istride, idist = howmany_sym, 1
-        code = f"""
-        {{
-            int __n = {cpp.sym2cpp(n_sym)};
-            {prefix}plan __plan = {prefix}plan_many_dft(
-                /*rank=*/1, &__n, /*howmany=*/{cpp.sym2cpp(howmany_sym)},
-                ({complex_t}*)_inp, /*inembed=*/NULL,
-                /*istride=*/{cpp.sym2cpp(istride)}, /*idist=*/{cpp.sym2cpp(idist)},
-                ({complex_t}*)_out, /*onembed=*/NULL,
-                /*ostride=*/{cpp.sym2cpp(istride)}, /*odist=*/{cpp.sym2cpp(idist)},
-                {direction}, FFTW_ESTIMATE);
-            {prefix}execute(__plan);
-            {prefix}destroy_plan(__plan);
-        }}
-        """
-    else:
-        transformed = list(range(ndim)) if axes is None else list(axes)
-        if not transformed or len(set(transformed)) != len(transformed):
-            raise NotImplementedError(f'FFTW3 expansion transforms each of one or more axes once (got axes={axes})')
-        batch = [d for d in range(ndim) if d not in transformed]
+@library.register_expansion(FFT, 'cuFFT')
+class cuFFTFFTExpansion(ExpandGPUFFT):
+    environments = [env.cuFFT]
+    dialect = CUFFT
 
-        def iodims(dims: List[int]) -> str:
-            return ', '.join(f'{{(int)({cpp.sym2cpp(indesc.shape[d])}), (int)({cpp.sym2cpp(indesc.strides[d])}), '
-                             f'(int)({cpp.sym2cpp(outdesc.strides[d])})}}' for d in dims)
 
-        batch_decl = f'{prefix}iodim __howmany[{len(batch)}] = {{{iodims(batch)}}};' if batch else ''
-        code = f"""
-        {{
-            {prefix}iodim __dims[{len(transformed)}] = {{{iodims(transformed)}}};
-            {batch_decl}
-            {prefix}plan __plan = {prefix}plan_guru_dft({len(transformed)}, __dims,
-                {len(batch)}, {'__howmany' if batch else 'NULL'},
-                ({complex_t}*)_inp, ({complex_t}*)_out, {direction}, FFTW_ESTIMATE);
-            {prefix}execute(__plan);
-            {prefix}destroy_plan(__plan);
-        }}
-        """
+@library.register_expansion(IFFT, 'cuFFT')
+class cuFFTIFFTExpansion(ExpandGPUFFT):
+    environments = [env.cuFFT]
+    dialect = CUFFT
 
-    name = f'fftw3_{"i" if is_inverse else ""}fft'
-    return nodes.Tasklet(name, {'_inp'}, {'_out'}, code, language=dtypes.Language.CPP)
+
+@library.register_expansion(FFT, 'hipFFT')
+class hipFFTFFTExpansion(ExpandGPUFFT):
+    environments = [env.hipFFT]
+    dialect = HIPFFT
+
+
+@library.register_expansion(IFFT, 'hipFFT')
+class hipFFTIFFTExpansion(ExpandGPUFFT):
+    environments = [env.hipFFT]
+    dialect = HIPFFT
 
 
 # MKL backend (uses FFTW-compat layer of MKL via the same FFTW3 C ABI)
@@ -423,13 +416,3 @@ def _get_input_and_output(state: SDFGState, node: nodes.LibraryNode):
     in_edge = next(e for e in state.in_edges(node) if e.dst_conn)
     out_edge = next(e for e in state.out_edges(node) if e.src_conn)
     return in_edge.data.data, out_edge.data.data
-
-
-def _types_to_cufft(indtype: dtypes.typeclass, outdtype: dtypes.typeclass):
-    typedict = {
-        dtypes.float32: 'R',
-        dtypes.float64: 'D',
-        dtypes.complex64: 'C',
-        dtypes.complex128: 'Z',
-    }
-    return f'CUFFT_{typedict[indtype]}2{typedict[outdtype]}'

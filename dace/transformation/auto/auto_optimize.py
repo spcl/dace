@@ -25,6 +25,7 @@ from dace.transformation import helpers as xfh, pass_pipeline as ppl
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
+from dace.libraries.fft.environments import fftw3
 
 # Enumerator
 from dace.transformation.estimator.enumeration import GreedyEnumerator
@@ -392,7 +393,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # ``FindFirst``, ``ScatterConflictCheck``, ``Symmetrize``'s parallel bounding box). Without
             # it every one of them fell through to the serial ``pure`` loop here while canonicalize
             # took the device form, so the GPU column compared library selection, not pipelines.
-            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'CUDA', 'pure']
+            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'cuFFT', 'CUB', 'CUDA', 'pure']
         elif backend == 'hip':
             # Mirrors the CUDA row entry for entry, and must keep doing so. The two backends are
             # compared column against column, so a node that takes a tuned expansion under one and
@@ -403,7 +404,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # ``Symmetrize``), and their emitted code names the backend-neutral ``gpucub`` /
             # ``gpu*`` aliases, so one expansion serves both. Each node's own environment still
             # gates whether the library is actually present.
-            return ['rocBLAS', 'rocSOLVER', 'GPUAuto', 'hipTENSOR', 'CUB', 'CUDA', 'pure']
+            return ['rocBLAS', 'rocSOLVER', 'GPUAuto', 'hipTENSOR', 'hipFFT', 'CUB', 'CUDA', 'pure']
         else:
             return ['GPUAuto', 'pure']
     elif device == dtypes.DeviceType.CPU:
@@ -414,6 +415,9 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             result.append('MKL')
         if openblas.OpenBLAS.is_installed():
             result.append('OpenBLAS')
+        # FFT / IFFT: the vendor transform, O(N log N) where ``pure`` is the O(N^2) separable DFT.
+        if fftw3.FFTW3.is_installed():
+            result.append('FFTW3')
 
         # Same order as canonicalize's ``canonicalize_fast_library_priority``, deliberately: the two
         # pipelines are compared column against column, so a node that lowers to a tuned expansion
