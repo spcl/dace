@@ -22,7 +22,7 @@ import pytest
 import dace
 from dace.transformation import pass_pipeline as ppl
 from dace import dtypes
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
@@ -555,6 +555,79 @@ def test_the_fused_wrappers_compute_what_the_host_tasklets_computed():
     assert np.allclose(arrays['C'].get(), [host_a[0] + 1.0])
     assert np.allclose(arrays['D'].get(), [host_a[1] + 2.0])
     assert np.allclose(arrays['E'].get(), host_a * 2.0 + host_a[0] * 2.0)
+
+
+def fallback_arm_first_then_an_interstate_read() -> dace.SDFG:
+    """A guard whose FIRST arm is the pinned fallback loop, a kernel, then an edge reading ``A[0]``.
+
+    Nothing before the edge touches ``A``, so only propagation carries its location to the edge.
+    """
+    sdfg = dace.SDFG('fallback_arm_first_then_an_interstate_read')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('A', [4], dace.int64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array('B', [16], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    start = sdfg.add_state('start', is_start_block=True)
+
+    dispatch = ConditionalBlock('dispatch')
+    fallback = ControlFlowRegion('fallback', sdfg=sdfg)
+    loop = LoopRegion('seq', 'i < 16', 'i', 'i = 0', 'i = i + 1')
+    loop.pinned_sequential = True
+    fallback.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    bump = body.add_tasklet('bump', {'inp': None}, {'out': None}, 'out = inp + 1.0')
+    body.add_edge(body.add_read('B'), None, bump, 'inp', dace.Memlet('B[i]'))
+    body.add_edge(bump, 'out', body.add_write('B'), None, dace.Memlet('B[i]'))
+    dispatch.add_branch(dace.properties.CodeBlock('N < 4'), fallback)
+    parallel = ControlFlowRegion('parallel', sdfg=sdfg)
+    parallel.add_state('par', is_start_block=True).add_mapped_tasklet('bump_all', {'i': '0:16'},
+                                                                      {'inp': dace.Memlet('B[i]')},
+                                                                      'out = inp + 1.0', {'out': dace.Memlet('B[i]')},
+                                                                      external_edges=True)
+    dispatch.add_branch(None, parallel)
+    sdfg.add_node(dispatch)
+    sdfg.add_edge(start, dispatch, dace.InterstateEdge())
+
+    between = sdfg.add_state('between')
+    between.add_mapped_tasklet('double', {'i': '0:16'}, {'inp': dace.Memlet('B[i]')},
+                               'out = inp * 2.0', {'out': dace.Memlet('B[i]')},
+                               external_edges=True)
+    sdfg.add_edge(dispatch, between, dace.InterstateEdge())
+    after = sdfg.add_state('after')
+    after.add_mapped_tasklet('shift', {'i': '0:16'}, {'inp': dace.Memlet('B[i]')},
+                             'out = inp + k', {'out': dace.Memlet('B[i]')},
+                             external_edges=True)
+    sdfg.add_edge(between, after, dace.InterstateEdge(assignments={'k': 'A[0]'}))
+    return sdfg
+
+
+def test_a_join_hands_on_the_locations_its_later_arm_carries():
+    """QE vexx_k: the edge read ``iexx_istart_host``, a copy nobody made.
+
+    The fallback arm's tail does not propagate into the guard's close, so only the parallel arm
+    carries ``A`` there. Walked depth-first, the close and everything after it were visited from the
+    fallback arm first, before the parallel arm arrived: the edge was renamed onto the host twin
+    while its predecessor recorded no location for ``A``, so no copy was placed.
+    """
+    sdfg = fallback_arm_first_then_an_interstate_read()
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    edge = next(edge for edge in sdfg.all_interstate_edges() if edge.dst.label == 'after')
+    assert set(edge.data.used_arrays(sdfg.arrays)) == {'A_host'}, edge.data.assignments
+    assert copy_blocks_for(sdfg, 'A') == ['copy_A_to_host'], 'the host read needs exactly one copy of A'
+
+
+@pytest.mark.gpu
+def test_a_join_hands_on_the_locations_its_later_arm_carries_and_computes():
+    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+    b = np.arange(16, dtype=np.float64)
+    sdfg = fallback_arm_first_then_an_interstate_read()
+    sdfg.apply_gpu_transformations()
+    compiled = sdfg.compile()
+    for n in (2, 8):  # both arms of the guard
+        arrays = {'A': cupy.asarray([5, 0, 0, 0]), 'B': cupy.asarray(b)}
+        compiled(**arrays, N=n)
+        np.testing.assert_array_equal(arrays['B'].get(), (b + 1.0) * 2.0 + 5.0)
 
 
 def free_computation_with_a_reading_and_a_sourceless_tasklet() -> dace.SDFG:
