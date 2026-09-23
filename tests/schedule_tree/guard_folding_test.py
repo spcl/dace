@@ -5,7 +5,7 @@ import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import (fold_guards, forward_substitute_conditions,
+from dace.sdfg.analysis.schedule_tree.passes import (fold_guards, forward_substitute_conditions, merge_contiguous_loops,
                                                      pair_complementary_guards, remove_dead_assignments,
                                                      split_iteration_spaces)
 
@@ -211,24 +211,29 @@ def test_split_outer_loop_on_guards_in_inner_loop():
         assert np.allclose(b, expected)
 
 
-def test_split_both_dimensions_of_nested_loops():
+@pytest.mark.parametrize('min_trip_count', [1, 8])
+def test_split_both_dimensions_of_nested_loops(min_trip_count):
+    """Splitting ``j`` yields a boundary row (1 iteration) and the interior (15). The inner loop is split in both
+    only without a trip-count threshold; with one, the boundary row keeps its (folded) guard on ``i``."""
 
     @dace.program
-    def prog(A: dace.float64[8, 8], B: dace.float64[8, 8]):
-        for j in range(8):
-            for i in range(8):
+    def prog(A: dace.float64[16, 16], B: dace.float64[16, 16]):
+        for j in range(16):
+            for i in range(16):
                 if i < 1 and j < 1:
                     B[j, i] = A[j, i] * 2.0
                 if i >= 1 and j >= 1:
                     B[j, i] = A[j, i] * 3.0
 
     stree = _tree(prog.to_sdfg())
-    assert _split(stree) >= 2
-    assert not _nodes(stree, tn.IfScope)
-    a = np.random.rand(8, 8)
-    b = np.zeros((8, 8))
+    forward_substitute_conditions(stree)
+    assert split_iteration_spaces(stree, min_trip_count=min_trip_count) >= 2
+    tn.validate_children_and_parents_align(stree, root=True)
+    assert _conditions(stree) == ([] if min_trip_count == 1 else ['(i < 1)'])
+    a = np.random.rand(16, 16)
+    b = np.zeros((16, 16))
     _run(stree, A=a, B=b)
-    expected = np.zeros((8, 8))
+    expected = np.zeros((16, 16))
     expected[0, 0] = a[0, 0] * 2.0
     expected[1:, 1:] = a[1:, 1:] * 3.0
     assert np.allclose(b, expected)
@@ -528,6 +533,80 @@ def test_pair_then_fold_uses_negation():
     assert _conditions(stree) == ['(k >= 4)', '(k < 2)']
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Merging of contiguous loops
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _loops_tree(ranges: list, bodies: list, prologue: list = None) -> tn.ScheduleTreeRoot:
+    """Consecutive ``for k in range(lo, hi): <body>`` loops over ``A``/``B`` of 8 elements."""
+    sdfg = dace.SDFG('merge_loops')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64)
+    sdfg.add_symbol('M', dace.int64)
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+    stree.children = []
+    stree.add_children(prologue or [])
+    for k, ((lo, hi), body) in enumerate(zip(ranges, bodies)):
+        loop = dace.sdfg.state.LoopRegion(f'loop{k}', f'k < {hi}', 'k', f'k = {lo}', 'k = k + 1')
+        stree.add_child(tn.ForScope(loop=loop, children=body))
+    return stree
+
+
+def test_merge_contiguous_identical_loops():
+    stree = _loops_tree([(0, 3), (3, 5), (5, 8)], [[_scale_tasklet('k', 2.0)] for _ in range(3)])
+    assert merge_contiguous_loops(stree) == 2
+    assert _for_headers(stree) == ['k = 0 ; (k < 8)']
+    a = np.random.rand(8)
+    b = np.zeros(8)
+    _run(stree, A=a, B=b)
+    assert np.allclose(b, a * 2.0)
+
+
+@pytest.mark.parametrize(
+    'ranges, second',
+    [
+        ([(0, 3), (3, 8)], 3.0),  # Same memlets, different code
+        ([(0, 3), (4, 8)], 2.0),  # Not contiguous
+        ([(0, 3), (2, 8)], 2.0),  # Overlapping
+    ])
+def test_merge_not_applied(ranges, second):
+    stree = _loops_tree(ranges, [[_scale_tasklet('k', 2.0)], [_scale_tasklet('k', second)]])
+    assert merge_contiguous_loops(stree) == 0
+    assert len(_nodes(stree, tn.ForScope)) == 2
+
+
+def test_merge_not_applied_when_first_body_changes_bound_of_second():
+    assign = tn.AssignNode(name='M', value=dace.properties.CodeBlock('8'), edge=dace.InterstateEdge())
+    stree = _loops_tree([(0, 3), (3, 'M')], [[_scale_tasklet('k', 2.0), assign], [_scale_tasklet('k', 2.0), assign]])
+    assert merge_contiguous_loops(stree) == 0
+
+
+def test_merge_restores_map_split_with_privatized_transients():
+    """Splitting on ``i < 3`` and ``i >= 3`` of a tautological guard yields two maps with equal bodies, the second
+    with its own copy of ``t``; merging restores a single map."""
+
+    @dace.program
+    def prog(A: dace.float64[10], B: dace.float64[10]):
+        for i in dace.map[0:10]:
+            t = A[i] * 2.0
+            if i < 3 or i >= 3:
+                B[i] = t
+
+    stree = _tree(prog.to_sdfg())
+    forward_substitute_conditions(stree)
+    assert _split(stree) == 1
+    assert len(_nodes(stree, tn.MapScope)) == 2 and not _nodes(stree, tn.IfScope)
+    assert merge_contiguous_loops(stree) == 1
+    (map_scope, ) = _nodes(stree, tn.MapScope)
+    assert str(map_scope.node.map.range) == '0:10'
+    a = np.random.rand(10)
+    b = np.zeros(10)
+    _run(stree, A=a, B=b)
+    assert np.allclose(b, a * 2.0)
+
+
 if __name__ == '__main__':
     test_fold_atom_implied_by_loop_range()
     test_fold_removes_never_taken_and_splices_always_taken()
@@ -536,7 +615,7 @@ if __name__ == '__main__':
     test_fold_constant_array_atom()
     test_fold_does_not_use_symbol_assigned_in_body()
     test_split_outer_loop_on_guards_in_inner_loop()
-    test_split_both_dimensions_of_nested_loops()
+    test_split_both_dimensions_of_nested_loops(8)
     test_split_map_privatizes_transients()
     test_split_loop_keeps_values_flowing_between_parts()
     test_split_constant_array_guard()
@@ -552,3 +631,7 @@ if __name__ == '__main__':
     test_pair_not_for_unrelated_conditions()
     test_pair_not_when_second_guard_has_else()
     test_pair_then_fold_uses_negation()
+    test_merge_contiguous_identical_loops()
+    test_merge_not_applied([(0, 3), (3, 8)], 3.0)
+    test_merge_not_applied_when_first_body_changes_bound_of_second()
+    test_merge_restores_map_split_with_privatized_transients()
