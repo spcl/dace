@@ -1307,12 +1307,7 @@ def reshaped_across_boundary(inner: data.Data, outer_subset: subsets.Subset,
     outer = outer_subset.size()
     if len(inner.shape) != len(outer):
         return False
-    # Only the entries renaming a name the extents use: the rest cannot change the verdict, and keying
-    # the memo on them missed it for every nested SDFG whose mapping differs elsewhere (warpx_field_gather:
-    # the same 271 extent pairs asked 3718 times, 57 s of the coalesce stage's map fusion).
-    used = {str(s) for extent in inner.shape for s in sympy.sympify(pystr_to_symbolic(extent)).free_symbols}
-    relevant = tuple((name, value) for name, value in symbol_mapping.items() if str(name) in used)
-    return extents_provably_differ(tuple(inner.shape), tuple(outer), relevant)
+    return extents_provably_differ(tuple(inner.shape), tuple(outer), tuple(symbol_mapping.items()))
 
 
 @functools.lru_cache(maxsize=16384, typed=True)
