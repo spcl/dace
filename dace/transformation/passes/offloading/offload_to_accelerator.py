@@ -1923,15 +1923,30 @@ class OffloadToAccelerator(ppl.Pass):
         # and IR edges resolve to the same block -- every branch of a conditional ends at the ConditionalBlock --
         # and each one stacked another identical copy state there (24 in a row after one CLOUDSC branch).
         placed: dict[tuple[Any, str], dict[str, set[bool]]] = {}
+        # Fills of containers nothing writes, by direction: placed ONCE, at the program's entry.
+        entry_fills: dict[bool, OrderedSet[str]] = {True: OrderedSet(), False: OrderedSet()}
+
+        def twin_of(name: str) -> str:
+            return self._get_host_name(name) if self.is_array_stored_on_GPU(sdfg, name) else self._get_gpu_name(name)
 
         def place_copy(before, after, array_names, to_gpu: bool):
-            # Copying back to the HOST is about device-side modifications, the mirror of the rule in
-            # ``insert_copies``: a host-born name whose device copy nothing writes still holds its value
-            # on the host (CloudSC's ``iphase_gpu -> iphase`` after the kernels that only read it).
-            if not to_gpu:
-                array_names = OrderedSet(
-                    name for name in array_names
-                    if self.is_array_stored_on_GPU(sdfg, name) or self._get_gpu_name(name) in written)
+            # A copy toward the container's home is about modifications of its twin: a twin nothing
+            # writes still holds what the home holds (CloudSC's ``iphase_gpu -> iphase`` after the
+            # kernels that only read it). Decided here, for every copy, and not only between two
+            # blocks: the end-of-iteration copies of a loop came through without it, and polybench
+            # nussinov copied ``seq_host -> seq`` after every ``j`` of its O(N^2) host loop nest.
+            array_names = OrderedSet(name for name in array_names
+                                     if self.is_array_stored_on_GPU(sdfg, name) != to_gpu or twin_of(name) in written)
+            # A fill of the twin of a container that NEITHER side writes copies the same bytes each
+            # time, so the first fill is the only one that carries anything. The IR still moves such
+            # a container back and forth around a loop -- that is what it records, not whether the
+            # data changed -- and the refill then runs every iteration: nussinov read ``seq`` on the
+            # host inside its ``j`` loop and refilled ``seq_host`` there, 6.4 million copies per call,
+            # and lavamd refilled all of ``box_offsets_host`` once per box, O(n_boxes^2) bytes. Its
+            # value on entry is its value throughout, so one fill at the entry serves every reader.
+            constant = OrderedSet(name for name in array_names if name not in written and twin_of(name) not in written)
+            entry_fills[to_gpu] |= constant
+            array_names = OrderedSet(name for name in array_names if name not in constant)
             point = (after, 'before') if after is not None else (before, 'after')
             directions = placed.setdefault(point, {})
             fresh = OrderedSet(name for name in array_names if directions.get(name) != {to_gpu})
@@ -1945,12 +1960,7 @@ class OffloadToAccelerator(ppl.Pass):
             # never written already matches on the device, and when it is a nested SDFG's input
             # connector the copy is not merely wasted -- it writes a container the body may only read
             # (npbench scattering_self_energies' ``neigh_idx``).
-            gpu_copies = {
-                name
-                for name in node.cpu_set & next.gpu_set
-                if (not self.is_array_stored_on_GPU(sdfg, name) or self._get_host_name(name) in written)
-                and name not in self.no_copy_in_needed
-            }
+            gpu_copies = {name for name in node.cpu_set & next.gpu_set if name not in self.no_copy_in_needed}
             if gpu_copies:
                 place_copy(node_block, next_block, gpu_copies, to_gpu=True)
 
@@ -2003,6 +2013,9 @@ class OffloadToAccelerator(ppl.Pass):
         self._insert_copy_names(sdfg, IR)
         written |= self.written_arrays(sdfg)
         self.__traverse_IR(IR, eval)
+        for to_gpu, names in entry_fills.items():
+            if names:
+                self.create_interstate_copy(sdfg, None, sdfg.start_block, names, to_gpu=to_gpu)
 
     # Step 4: Copy Insertion
     # create ONE copy state for all arrays in array_names
