@@ -9,7 +9,8 @@ import dace
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-from tests.cfg_tree import assert_tree_consistent, conditional, inner_sdfg, loop
+from tests.cfg_tree import (assert_tree_consistent, assert_tree_matches_a_reset, conditional, inner_sdfg, loop,
+                            spy_on_resets)
 
 
 def two_level_sdfg() -> dace.SDFG:
@@ -238,3 +239,17 @@ def test_a_region_pass_may_remove_the_region_it_visits():
     assert not any(isinstance(b, ConditionalBlock) for b in sdfg.nodes()), 'the empty ConditionalBlock is gone'
     assert_tree_consistent(sdfg)
     sdfg.validate()
+
+
+def test_set_nested_sdfg_parent_references_rebuilds_the_list_once_and_repairs_every_level(monkeypatch):
+    """It reset the whole tree once per nested SDFG, quadratic in their number (wfg NormalizeMapBody)."""
+    sdfg = two_level_sdfg()
+    nested = [n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]
+    assert len(nested) == 4
+    for sd in nested:
+        sd._parent_sdfg = None
+    resets = spy_on_resets(monkeypatch)
+    dace.sdfg.utils.set_nested_sdfg_parent_references(sdfg)
+    monkeypatch.undo()
+    assert resets == [sdfg]
+    assert_tree_matches_a_reset(sdfg)
