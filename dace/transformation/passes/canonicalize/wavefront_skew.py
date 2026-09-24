@@ -75,6 +75,7 @@ from dace.sdfg.analysis import cfg
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.interstate.loop_to_map import carried_local_transients, control_flow_reads
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (WAVEFRONT_DIAGONAL, WAVEFRONT_FRONT,
@@ -936,6 +937,18 @@ def collect_carrier(inners: List[Tuple[LoopRegion, str, List[object]]],
     the snapshotted read would be invisible and the skew decided on a partial
     dependence set."""
     snap_src = snap_src or {}
+    # Only 2-D dataflow accesses are modelled below; refuse anything else that can carry a value across iterations.
+    loops = [inner for inner, _, _ in inners]
+    nest = {st for lp in loops for st in lp.all_states()}
+    written = {n.data for st in nest for n in st.data_nodes() if st.in_degree(n) > 0}
+    others = {w for w in written if len(sdfg.arrays[w].shape) != 2}
+    cf_reads = set().union(*(control_flow_reads(lp) for lp in loops))
+    assigns = any(e.data.assignments for lp in loops for e in lp.all_interstate_edges())
+    outside = {n.data for st in sdfg.all_states() if st not in nest for n in st.data_nodes()}
+    if written & cf_reads or assigns or others & outside or any(not sdfg.arrays[w].transient for w in others):
+        return None
+    if any(carried_local_transients(lp, others) for lp in loops):
+        return None
     writes: Dict[str, List[List[Tuple[object, object]]]] = {}
     reads: Dict[str, List[Tuple[List[Tuple[object, object]], List[Tuple[str, object, object]], List[object]]]] = {}
     for inner, v_local, sibling_guard in inners:
