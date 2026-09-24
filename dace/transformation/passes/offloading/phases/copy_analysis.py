@@ -207,14 +207,15 @@ class CopyAnalysisPhase():
         assert tails, f"{IR.debug_name} doesn't have any tails! {IR}"
 
         # Behavior 1:
-        # if there are no or multiple direct children, leave the sets empty & propagate later
-        # there is no good heuristic which child to choose here, which copies to make and which not
+        # if more than one route leads to this section's close node (a conditional inside it counts,
+        # even when its arms meet again before one tail), leave the sets empty & propagate later
+        # there is no good heuristic which route to choose here, which copies to make and which not
         # (not without significantly more analysis)
-        if len(tails) > 1:
+        if not IR.has_one_route():
             return
 
         # Behavior 2:
-        # if there is a single tail node (node that leads to this section's close node),
+        # if there is a single route to this section's close node,
         # then analyse the section & find last known location of each used array
 
         # define data gathering function

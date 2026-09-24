@@ -74,14 +74,22 @@ class OffloadingIRNode:
         # chain is as long as the program has blocks and a recursive walk overran Python's stack on
         # the first application-sized graph it met (CloudSC, ~2k blocks -- "RecursionError: maximum
         # recursion depth exceeded" out of ``apply_gpu_transformations``, which is where the whole
-        # GPU canonicalization of that kernel stopped). The stack below reproduces the recursion
-        # exactly, pre-order and duplicates included: children are pushed REVERSED so they pop in
+        # GPU canonicalization of that kernel stopped). Children are pushed REVERSED so they pop in
         # ``node.next`` order, and a node that reaches the close node contributes itself and none of
-        # its remaining children, which is what the recursive ``return`` did.
+        # its remaining children.
+        #
+        # Each node is walked ONCE. Every conditional in the section is a diamond whose arms meet
+        # again at its close node, so walking the section once per ROUTE doubles the work per
+        # conditional in a row: ls3df_scf's SCF loop holds 48 of them, 2^48 routes, and the canon
+        # GPU offload never finished. How many routes there are is :meth:`has_one_route`'s question.
         result: List['OffloadingIRNode'] = []
+        seen: set = set()
         stack = [self]
         while stack:
             node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
             children = []
             for next in node.next:
                 if next == self.close:  # a tail: a node that points at this section's end (close-node)
@@ -91,6 +99,31 @@ class OffloadingIRNode:
                 children.append(next)
             stack.extend(reversed(children))
         return result
+
+    def has_one_route(self) -> bool:
+        """Whether exactly one route leads from this open node to its close node.
+
+        A route ends at the first node that points at the close node, so this is whether
+        :meth:`get_all_tails` would list one tail if it walked the section once per route instead
+        of once per node: a conditional anywhere inside it makes two routes even when both arms
+        meet again before the section's single tail. Counted per node, saturating at two, so the
+        cost is one visit per node however many routes there are.
+        """
+        assert self.is_open_node()
+        routes: dict = {}
+        stack = [(self, False)]
+        while stack:
+            node, expanded = stack.pop()
+            if node in routes:
+                continue
+            if any(next is self.close for next in node.next):
+                routes[node] = 1
+            elif expanded:  # the IR is a DAG, so every child is counted before its parent pops again
+                routes[node] = min(2, sum(routes[next] for next in node.next))
+            else:
+                stack.append((node, True))
+                stack.extend((next, False) for next in node.next if next not in routes)
+        return routes[self] == 1
 
     # static makers
     def new_open_node(block: ControlFlowBlock) -> 'OffloadingIRNode':

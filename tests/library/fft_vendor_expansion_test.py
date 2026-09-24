@@ -291,6 +291,17 @@ def test_a_gpu_fft_plans_each_side_s_own_dense_block():
     assert gpu_fft_layout(fortran, c_order, [0, 1, 2]) is None
 
 
+def test_a_gpu_fft_plans_a_stride_canonicalization_spelled_as_an_integer_power():
+    """Canonicalization respells the packed stride ``N**2`` as ``ipow(N, 2)``, which SymPy never
+    relates to the ``N * N`` the extents multiply out to. ls3df_scf's C-order ``(N, N, N)`` grid then
+    read as padded, its ``fftn`` fell back to the separable DFT, and that failed validation."""
+    n = dace.symbol('N')
+    grid = strided_array([n, n, n], [dace.symbolic.ipow(n, 2), n, 1])
+    extents, istride, idist, ostride, odist, batch = gpu_fft_layout(grid, grid, [0, 1, 2])
+    assert (extents, istride, ostride, batch) == ([n, n, n], 1, 1, 1)
+    assert dace.symbolic.simplify(idist - n**3) == 0 and dace.symbolic.simplify(odist - n**3) == 0
+
+
 def run_strided_fftn(src_strides, out_strides):
     """``fftn`` over axes (0, 1, 2) of a (4, 5, 6, 3) operand, each side in its own layout, on the GPU."""
     shape = (4, 5, 6, 3)
