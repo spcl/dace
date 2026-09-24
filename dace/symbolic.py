@@ -2852,8 +2852,12 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                                   f'(got slice in subscript of "{ast.unparse(node)}")')
 
         # Recursively visit the subscripted value (handles attributes and nested
-        # subscripts via visit_Attribute / visit_Subscript).
-        value = self.visit(node.value)
+        # subscripts via visit_Attribute / visit_Subscript). A bare container name is spelled as a
+        # Symbol, so no parser-namespace entry (``input``, ``rf``) can stand in for it.
+        if isinstance(node.value, ast.Name):
+            value = ast.Call(func=ast.Name(id='Symbol', ctx=ast.Load()), args=[ast.Constant(node.value.id)], keywords=[])
+        else:
+            value = self.visit(node.value)
 
         new_node = ast.Call(func=ast.Name(id='Subscript', ctx=ast.Load),
                             args=[value] + [self.visit(idx) for idx in indices],

@@ -136,11 +136,13 @@ def test_renaming_two_symbols_of_one_name_matches_subs() -> None:
     assert sympy.srepr(symbolic.rename_symbols(raw, repl)) == sympy.srepr(raw.subs(repl))
 
 
-def test_a_container_named_like_a_sympy_function_parses_as_a_subscript() -> None:
-    # ``rf`` is sympy's RisingFactorial; a subscript on a container of that name must stay a subscript.
-    parsed = symbolic.pystr_to_symbolic('rf[0, jl]')
+@pytest.mark.parametrize('name', ['rf', 'input', 'conj', 'N'])
+def test_a_container_named_like_a_parser_builtin_parses_as_a_subscript(name: str) -> None:
+    # ``rf`` is sympy's RisingFactorial, ``input`` a Python builtin: a subscript on a container of that
+    # name must stay a subscript on a symbol of that name.
+    parsed = symbolic.pystr_to_symbolic(f'{name}[__i0, __i1 + j]')
     assert isinstance(parsed, symbolic.Subscript)
-    assert isinstance(parsed.args[0], sympy.Symbol) and parsed.args[0].name == 'rf'
+    assert isinstance(parsed.args[0], sympy.Symbol) and parsed.args[0].name == name
 
 
 if __name__ == "__main__":
