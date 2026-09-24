@@ -5,7 +5,8 @@ import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import (fold_guards, forward_substitute_conditions, fuse_rolled_loops,
+from dace.sdfg.analysis.schedule_tree.passes import (convert_diamonds_to_selects, fold_guards,
+                                                     forward_substitute_conditions, fuse_rolled_loops,
                                                      merge_contiguous_loops, pair_complementary_guards,
                                                      remove_dead_assignments, reroll_statements, split_iteration_spaces,
                                                      unswitch_invariant_guards)
@@ -811,6 +812,123 @@ def test_unswitch_respects_copy_budget():
     assert len(_nodes(stree, tn.ForScope)) <= 4
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# If-conversion
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _tasklet(code: str, inputs: dict, outputs: dict) -> tn.TaskletNode:
+    """A tasklet from connector-to-memlet-string maps."""
+    tasklet = dace.nodes.Tasklet('t', {c: None for c in inputs}, {c: None for c in outputs}, code)
+    return tn.TaskletNode(node=tasklet,
+                          in_memlets={
+                              c: dace.Memlet(m)
+                              for c, m in inputs.items()
+                          },
+                          out_memlets={
+                              c: dace.Memlet(m)
+                              for c, m in outputs.items()
+                          })
+
+
+def _diamond_tree(then: list,
+                  otherwise: list,
+                  start: int = 1,
+                  condition: str = 'C[i] > 0',
+                  before: list = None,
+                  after: list = None,
+                  inner_loop: bool = False) -> tn.ScheduleTreeRoot:
+    """``<before>; for i in range(start, 7): [for j in range(2): pass]; if <condition>: <then> [else: <otherwise>];
+    <after>`` over arrays ``A``, ``B``, ``C`` and ``D`` of 8 elements and a transient scalar ``t``."""
+    sdfg = dace.SDFG('diamond')
+    for name in 'ABCD':
+        sdfg.add_array(name, [8], dace.float64)
+    sdfg.add_array('E', [8, 2], dace.float64)
+    sdfg.add_scalar('t', dace.float64, transient=True)
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+    body = [tn.IfScope(condition=dace.properties.CodeBlock(condition), children=then)]
+    if otherwise is not None:
+        body.append(tn.ElseScope(children=otherwise))
+    if inner_loop:
+        inner = dace.sdfg.state.LoopRegion('inner', 'j < 2', 'j', 'j = 0', 'j = j + 1')
+        body.insert(0, tn.ForScope(loop=inner, children=[_tasklet('b = a', {'a': 'A[j]'}, {'b': 'D[j]'})]))
+    loop = dace.sdfg.state.LoopRegion('loop', 'i < 7', 'i', f'i = {start}', 'i = i + 1')
+    stree.children = []
+    stree.add_children((before or []) + [tn.ForScope(loop=loop, children=body)] + (after or []))
+    return stree
+
+
+def _run_diamond(stree: tn.ScheduleTreeRoot, reference: tn.ScheduleTreeRoot):
+    a, c, e = np.random.rand(8), np.random.rand(8) - 0.5, np.random.rand(8, 2) - 0.5
+    results = []
+    for tree in (reference, stree):
+        b, d = np.zeros(8), np.zeros(8)
+        _run(tree, A=a, B=b, C=c, D=d, E=e)
+        results.append((b, d))
+    assert np.allclose(results[0][0], results[1][0]) and np.allclose(results[0][1], results[1][1])
+
+
+@pytest.mark.parametrize('condition', ['C[i] > 0', 'E[i, 1] > 0 and C[i - 1] < 0'])
+def test_convert_upwind_diamond(condition):
+    make = lambda: _diamond_tree([_tasklet('b = 2 * a', {'a': 'A[i - 1]'}, {'b': 'B[i]'})],
+                                 [_tasklet('b = 3 * a', {'a': 'A[i]'}, {'b': 'B[i]'})],
+                                 condition=condition)
+    stree, reference = make(), make()
+    assert convert_diamonds_to_selects(stree) == 1
+    assert not _nodes(stree, tn.IfScope) and not _nodes(stree, tn.ElseScope)
+    _run_diamond(stree, reference)
+
+
+def test_convert_diamond_with_branch_local_temporary():
+    make = lambda: _diamond_tree([
+        _tasklet('o = 2 * a', {'a': 'A[i]'}, {'o': 't[0]'}),
+        _tasklet('b = x + 1', {'x': 't[0]'}, {'b': 'B[i]'})
+    ], [_tasklet('o = 3 * a', {'a': 'A[i]'}, {'o': 't[0]'}),
+        _tasklet('b = x - 1', {'x': 't[0]'}, {'b': 'B[i]'})])
+    stree, reference = make(), make()
+    assert convert_diamonds_to_selects(stree) == 1
+    _run_diamond(stree, reference)
+
+
+def test_convert_diamond_with_loop_carried_value():
+    """``t`` accumulates across iterations: each branch reads it before writing, so it must be selected too."""
+    make = lambda: _diamond_tree([_tasklet('o = x + a', {
+        'x': 't[0]',
+        'a': 'A[i]'
+    }, {'o': 't[0]'})], [_tasklet('o = x - a', {
+        'x': 't[0]',
+        'a': 'A[i]'
+    }, {'o': 't[0]'})],
+                                 before=[_tasklet('o = 0', {}, {'o': 't[0]'})],
+                                 after=[_tasklet('b = x', {'x': 't[0]'}, {'b': 'B[0]'})])
+    stree, reference = make(), make()
+    assert convert_diamonds_to_selects(stree) == 1
+    _run_diamond(stree, reference)
+
+
+@pytest.mark.parametrize('case', ['out of bounds', 'triangle', 'one-sided write', 'unbalanced', 'not innermost'])
+def test_convert_not_applied(case):
+    then = [_tasklet('b = 2 * a', {'a': 'A[i]'}, {'b': 'B[i]'})]
+    otherwise = [_tasklet('b = 3 * a', {'a': 'A[i]'}, {'b': 'B[i]'})]
+    kwargs = {}
+    if case == 'out of bounds':  # ``A[i - 1]`` with ``i = 0``
+        then = [_tasklet('b = 2 * a', {'a': 'A[i - 1]'}, {'b': 'B[i]'})]
+        kwargs['start'] = 0
+    elif case == 'triangle':
+        otherwise = None
+    elif case == 'one-sided write':
+        otherwise = [_tasklet('b = 3 * a', {'a': 'A[i]'}, {'b': 'D[i]'})]
+    elif case == 'unbalanced':
+        then = [_tasklet('b = ((a * a + 1) * a + 2) * a / (a + 3) - a * a * a', {'a': 'A[i]'}, {'b': 'B[i]'})]
+        otherwise = [_tasklet('b = a', {'a': 'A[i]'}, {'b': 'B[i]'})]
+    elif case == 'not innermost':
+        kwargs['inner_loop'] = True
+    stree = _diamond_tree(then, otherwise, **kwargs)
+    assert convert_diamonds_to_selects(stree) == 0
+    assert _nodes(stree, tn.IfScope)
+
+
 if __name__ == '__main__':
     test_fold_atom_implied_by_loop_range()
     test_fold_removes_never_taken_and_splices_always_taken()
@@ -851,3 +969,7 @@ if __name__ == '__main__':
     test_unswitch_not_applied_to_varying_condition('B[0] > 1')
     test_unswitch_data_condition_only_out_of_nonempty_loops()
     test_unswitch_respects_copy_budget()
+    test_convert_upwind_diamond('E[i, 1] > 0 and C[i - 1] < 0')
+    test_convert_diamond_with_branch_local_temporary()
+    test_convert_diamond_with_loop_carried_value()
+    test_convert_not_applied('out of bounds')
