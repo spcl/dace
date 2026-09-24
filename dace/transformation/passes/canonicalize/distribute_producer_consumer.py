@@ -39,7 +39,7 @@ from dace import SDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks, _is_per_iter_subset
+from dace.transformation.passes.loop_fission import _linear_blocks, _is_per_iter_subset
 
 
 def _interstate_reads(block) -> List[str]:
@@ -191,24 +191,9 @@ class DistributeProducerConsumerLoop(ppl.Pass):
         return {}
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
-        count = 0
-        changed = True
-        # Each split rebuilds the CFG, so restart the scan after applying one
-        # (mirrors ``LoopFission.apply_pass``); distributing an outer loop can
-        # expose a newly-splittable inner one on the next sweep.
-        while changed:
-            changed = False
-            for loop in list(sdfg.all_control_flow_regions(recursive=True)):
-                if not isinstance(loop, LoopRegion):
-                    continue
-                groups = _forward_flow_groups(loop)
-                if groups is None:
-                    continue
-                LoopFission._fission_blocks(loop, groups)
-                count += 1
-                changed = True
-                break
-        return count or None
+        # Function-local: ``perfect_loop_nesting`` imports this module.
+        from dace.transformation.passes.canonicalize.perfect_loop_nesting import distribute_loops
+        return distribute_loops(sdfg) or None
 
 
 __all__ = ['DistributeProducerConsumerLoop', '_forward_flow_groups']
