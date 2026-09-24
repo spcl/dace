@@ -170,6 +170,24 @@ def test_refuses_true_branch_writes_extra_array():
     assert res is None
 
 
+def test_argument_written_before_the_guarded_accumulate_keeps_its_last_taken_value():
+
+    @dace.program
+    def kernel(a: dace.float64[N], c: dace.float64[1], b: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            if a[i] > 0.0:
+                c[0] = a[i] * 2.0
+                s = s + c[0]
+        b[0] = s
+
+    sdfg = kernel.to_sdfg(simplify=True)
+    a, b, c = np.array([2.0, 1.0, -1.0]), np.zeros(1), np.zeros(1)
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) is None
+    sdfg(a=a, b=b, c=c, N=3)
+    assert (b[0], c[0]) == (6.0, 2.0)
+
+
 def test_refuses_else_branch_with_content():
     """An else branch with side effects (``if cond: sum += a[i] else: ...``)
     isn't handled by the inline-ternary mask. Refuse."""
