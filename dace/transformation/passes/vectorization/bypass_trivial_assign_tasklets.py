@@ -31,6 +31,7 @@ The pass is body-NSDFG-scoped: the outer SDFG's ``AN -> AN`` edges may
 be scatter / gather staging, so they stay untouched. Mirrors
 :class:`EliminateDeadCopies`'s scoping.
 """
+import copy
 from typing import Any
 
 import dace
@@ -187,8 +188,9 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             if triple is None:
                 continue
             in_e, out_e = triple
-            # Copies into different elements are separate writes: ``c[0] = z; c[1] = z`` keeps both.
-            key = (in_e.src.data, str(in_e.data.subset), out_e.dst.data, str(out_e.data.subset))
+            # Copies into different elements are separate writes: ``c[0] = z; c[1] = z`` keeps both. Key on the
+            # source node: another node of ``x`` may follow a write to ``x``.
+            key = (in_e.src, str(in_e.data.subset), out_e.dst.data, str(out_e.data.subset))
             keep = seen.setdefault(key, (t, in_e.src, out_e.dst))
             if keep[0] is t:
                 continue
@@ -290,8 +292,12 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             # another node. Splicing the producer onto ``dst_an`` would leave that ordering on a node
             # nothing writes, and the write would run unordered.
             src_ordered = any(pe.data is None or pe.data.is_empty() for pe in istate.in_edges(src_an))
-            if (src_desc.transient and istate.in_edges(src_an) and not src_xstate and not src_at_scope
-                    and not src_accumulated and not src_ordered):
+            # Splice only a sole producer that writes exactly the element the copy reads.
+            src_in = istate.in_edges(src_an)
+            src_sole = len(src_in) == 1 and (src_in[0].data.get_dst_subset(
+                src_in[0], istate) or subsets.Range.from_array(src_desc)) == in_e.data.get_src_subset(in_e, istate)
+            if (src_desc.transient and src_sole and not src_xstate and not src_at_scope and not src_accumulated
+                    and not src_ordered):
                 # P -> AN(src) -> [_out=_in] -> AN(dst) becomes P -> AN(dst).
                 # Carry BOTH sides of the bypassed chain on the new memlet so
                 # ``an_side_subset`` can return the lane-dep subset for the
@@ -305,7 +311,7 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                     # rewriting it as dataflow would invent a copy the program never had.
                     if pe.data is None or pe.data.is_empty():
                         continue
-                    pe_subset = subsets.Range(list(pe.data.subset.ranges)) if pe.data.subset is not None else None
+                    pe_subset = copy.deepcopy(pe.data.get_src_subset(pe, istate))
                     out_subset = subsets.Range(list(
                         out_e.data.subset.ranges)) if out_e.data.subset is not None else None
                     if isinstance(pe.src, dace.nodes.AccessNode):
@@ -372,7 +378,7 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                     if de.data is None or de.data.is_empty():
                         continue
                     in_subset = subsets.Range(list(in_e.data.subset.ranges)) if in_e.data.subset is not None else None
-                    de_subset = subsets.Range(list(de.data.subset.ranges)) if de.data.subset is not None else None
+                    de_subset = copy.deepcopy(de.data.get_dst_subset(de, istate))
                     if isinstance(de.dst, dace.nodes.AccessNode):
                         new_memlet = dace.Memlet(data=src_an.data, subset=in_subset, other_subset=de_subset)
                     else:

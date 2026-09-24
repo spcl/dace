@@ -6,6 +6,8 @@ folds the targeted ``AN -> [_out=_in] -> AN`` triples without changing
 numerical results.
 """
 
+import numpy as np
+
 import dace
 from dace.memlet import Memlet
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
@@ -489,3 +491,75 @@ def test_a_producer_ordered_after_another_node_is_not_spliced_past_its_transient
     _bypass_count(outer)
 
     assert ordered_but_unwritten_transients(outer) == []
+
+
+def run_in_outer(body: dace.SDFG, **arrays: np.ndarray) -> list[str]:
+    outer = dace.SDFG(body.name + "_outer")
+    state = outer.add_state()
+    nested = state.add_nested_sdfg(body, dict.fromkeys(arrays), dict.fromkeys(arrays))
+    for name, value in arrays.items():
+        outer.add_array(name, value.shape, dace.float64)
+        state.add_edge(state.add_read(name), None, nested, name, Memlet(f"{name}[0:{value.size}]"))
+        state.add_edge(nested, name, state.add_write(name), None, Memlet(f"{name}[0:{value.size}]"))
+    _bypass_count(outer)
+    outer(**arrays)
+    return sorted(f"{e.src} -> {e.dst}: {e.data}" for e in body.start_state.edges())
+
+
+def test_bypass_writes_the_consumer_element_of_a_memlet_named_on_the_transient():
+    body = dace.SDFG("consumer_named_on_transient")
+    body.add_array("A", (4, ), dace.float64)
+    body.add_array("T", (2, ), dace.float64, transient=True)
+    st = body.add_state()
+    staged, t = st.add_access("T"), st.add_tasklet("assign", {"_in"}, {"_out"}, "_out = _in")
+    st.add_edge(st.add_read("A"), None, t, "_in", Memlet("A[0]"))
+    st.add_edge(t, "_out", staged, None, Memlet("T[1]"))
+    st.add_edge(staged, None, st.add_write("A"), None, Memlet("T[1] -> [3]"))
+    a = np.array([5.0, 0.0, 0.0, 0.0])
+
+    edges = run_in_outer(body, A=a)
+
+    assert edges == ["A -> A: A[0] -> [3]"]
+    np.testing.assert_array_equal(a, [5.0, 0.0, 0.0, 5.0])
+
+
+def test_bypass_leaves_a_transient_whose_other_element_has_another_producer():
+    body = dace.SDFG("two_producers")
+    body.add_array("A", (1, ), dace.float64)
+    body.add_array("T", (2, ), dace.float64, transient=True)
+    st = body.add_state()
+    staged, t = st.add_access("T"), st.add_tasklet("assign", {"_in"}, {"_out"}, "_out = _in")
+    for i in (0, 1):
+        st.add_edge(st.add_tasklet(f"p{i}", {}, {"o"}, f"o = {i + 1}.0"), "o", staged, None, Memlet(f"T[{i}]"))
+    st.add_edge(staged, None, t, "_in", Memlet("T[0]"))
+    st.add_edge(t, "_out", st.add_write("A"), None, Memlet("A[0]"))
+    a = np.zeros(1)
+
+    edges = run_in_outer(body, A=a)
+
+    assert "T -> assign: T[0]" in edges
+    np.testing.assert_array_equal(a, [1.0])
+
+
+def test_dedup_keeps_copies_taken_before_and_after_a_write_to_the_source():
+    body = dace.SDFG("copies_around_write")
+    body.add_array("X", (3, ), dace.float64)
+    body.add_array("T", (1, ), dace.float64, transient=True)
+    st = body.add_state()
+    x0, x1, x2 = st.add_read("X"), st.add_access("X"), st.add_write("X")
+    for src, name, dst, out in ((x0, "c0", x1, "X[0]"), (x1, "c1", x2, "X[1]")):  # T = X[0]; out = T + 1
+        t, staged = st.add_tasklet(name, {"_in"}, {"_out"}, "_out = _in"), st.add_access("T")
+        bump = st.add_tasklet(name + "b", {"_in"}, {"_out"}, "_out = _in + 1")
+        st.add_edge(src, None, t, "_in", Memlet("X[0]"))
+        st.add_edge(t, "_out", staged, None, Memlet("T[0]"))
+        st.add_edge(staged, None, bump, "_in", Memlet("T[0]"))
+        st.add_edge(bump, "_out", dst, None, Memlet(out))
+    negate = st.add_tasklet("negate", {"_in"}, {"_out"}, "_out = -_in")  # second reader keeps the first copy
+    st.add_edge(x0, None, negate, "_in", Memlet("X[2]"))
+    st.add_edge(negate, "_out", x2, None, Memlet("X[2]"))
+    x = np.array([10.0, 0.0, 3.0])
+
+    edges = run_in_outer(body, X=x)
+
+    assert "T -> c1b: T[0]" not in edges
+    np.testing.assert_array_equal(x, [11.0, 12.0, -3.0])
