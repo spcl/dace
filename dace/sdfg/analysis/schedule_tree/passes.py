@@ -918,7 +918,7 @@ def _trip_count(space) -> Optional[int]:
 def split_iteration_spaces(stree: tn.ScheduleTreeScope,
                            max_ranges: int = 32,
                            max_enumeration: int = 1 << 20,
-                           min_trip_count: int = 8) -> int:
+                           min_trip_count: int = 1) -> int:
     """
     Split loops and maps at the points where the conditions in their bodies change outcome (index-set splitting),
     and fold those conditions in each part.
@@ -935,15 +935,18 @@ def split_iteration_spaces(stree: tn.ScheduleTreeScope,
     A loop is only split if its iteration variable is not used after it and nothing breaks out of it; a map is only
     split along one dimension at a time (the parts are split along the others in turn).
 
-    Splitting every level multiplies the parts: a boundary row ``for j in range(0, 1)`` would carry its own copy of
-    every part of the inner ``i`` loop. Code that runs within fewer than ``min_trip_count`` iterations of an enclosing
-    loop (or of a map dimension already split) is therefore not split further; its conditions are still folded where
-    the enclosing ranges decide them. Iteration spaces of unknown size count as large.
+    Splitting every level multiplies the parts: a boundary row ``for j in range(0, 1)`` carries its own copy of every
+    part of the inner ``i`` loop. By default everything is split (full specialization, the fastest code measured).
+    To trade some speed for code size, code that runs within fewer than ``min_trip_count`` iterations of an enclosing
+    loop (or of a map dimension already split) is not split further; its conditions are still folded where the
+    enclosing ranges decide them, and the rest remain as runtime guards. Iteration spaces of unknown size count as
+    large.
 
     :param stree: The schedule tree (or subtree) to transform in place.
     :param max_ranges: Do not split a scope into more than this many copies.
     :param max_enumeration: Upper bound on the iterates evaluated for an atom over compile-time constant data.
-    :param min_trip_count: Do not split within loops (or split map dimensions) of fewer iterations than this.
+    :param min_trip_count: Do not split within loops (or split map dimensions) of fewer iterations than this; ``1``
+                           splits everything, e.g. ``4`` roughly halves the code of stencils with boundary cases.
     :return: The number of scopes split.
     """
     lrr = _lrr()
