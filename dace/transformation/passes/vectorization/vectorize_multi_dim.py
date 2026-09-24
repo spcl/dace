@@ -196,7 +196,7 @@ def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
 
 def _expandable_during_vectorization(node: dace.nodes.Node) -> bool:
     # Library nodes the vectorizer's ``expand_library_nodes`` may lower: ONLY its own tile-op nodes
-    # (:data:`_TILE_NODE_TYPES`), nothing else (user 2026-07-09).
+    # (:data:`_TILE_NODE_TYPES`), nothing else.
     return isinstance(node, _TILE_NODE_TYPES)
 
 
@@ -1027,7 +1027,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # subset (design 2.4). MUST run between Nest and the walker (see the class docstring).
         passes.append(_RunExpandNestedSDFGInputs())
         # Stage every ``Tasklet -> non-transient -> Tasklet`` bridge through per-subset
-        # transient scalars (user 2026-06-10). Width-independent: one scalar per distinct
+        # transient scalars. Width-independent: one scalar per distinct
         # subset, RMW subsets fold onto one, sibling write/read pairs join via WxR dep edges.
         # After this, no global access node mediates intermediate computation -- every
         # non-transient is a boundary source or sink.
@@ -1036,7 +1036,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # hiding the iter-var from the classifier; propagate the symbol's definition back in
         # (PropagateIndexSubsets: test_index_subset_propagation::test_iplusoffset_kernel_emits_no_gather).
         passes += [SymbolPropagation(), PropagateIndexSubsets()]
-        # Conceptual order (user 2026-06-09):
+        # Conceptual order:
         #   MarkTileDims              (tag the outer map with TileDimSpec)
         #   StrideMapByTileWidths     (map step 1 -> W; iter_var now means "tile start")
         #   WidenAccesses             (widen memlets + transient descriptors, AFTER stride)
@@ -1060,7 +1060,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # to the full source-array subset (2.4), so every inner TileLoad reads the same
         # full-array connector -- no per-tile windows to fuse.
         passes += [
-            # Unified WidenAccesses (user 2026-06-10/11): single pass widens non-transient
+            # Unified WidenAccesses: single pass widens non-transient
             # boundary subsets (``A[ii]`` -> ``A[ii:ii+W]``, both ``subset`` and
             # ``other_subset``), widens lane-dep transient descriptors (Scalar / (1,) Array ->
             # tile), and materialises per-lane idx tiles for every GATHER per-dim -- symmetric
@@ -1202,7 +1202,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # a caller running a bare ``LoopToMap`` + ``simplify`` never performs.
         prepare_for_vectorization(sdfg)
         # Infer connector types + assign default schedules/storage at the START of vectorization
-        # (user 2026-07-10). This gives every map a concrete schedule -- ``Sequential`` vs
+        #. This gives every map a concrete schedule -- ``Sequential`` vs
         # ``CPU_Multicore`` vs ``GPU_Device`` -- BEFORE the tile pipeline, so a downstream pass that
         # must distinguish a sequential (loop-carried) reduction from a parallel one
         # (``PrivatizeSequentialMapReductionAccumulator``) sees the real schedule, and so the tiler
@@ -1273,7 +1273,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         """Run a pipeline subpass, then ``sdfg.validate()`` for the cleaning / structural
         passes that leave a valid SDFG.
 
-        Validate after each such pass (user 2026-06-14) so a malformation is reported RIGHT
+        Validate after each such pass so a malformation is reported RIGHT
         AFTER the pass that produced it -- with the pass name -- instead of surfacing as a
         cryptic failure in a later consumer. Skips the passes that deliberately leave the SDFG
         transiently invalid (:data:`_SKIP_VALIDATE_AFTER`); the final validate in

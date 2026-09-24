@@ -42,7 +42,7 @@ from dace.ordered import OrderedSet
 
 
 def _assert_post_stage_invariants(state: SDFGState) -> None:
-    # Loud-fail audit of design 3.8.3 invariants after staging (user 2026-06-10).
+    # Loud-fail audit of design 3.8.3 invariants after staging.
     sdfg = state.sdfg
     for edge in state.edges():
         mem = edge.data
@@ -71,7 +71,7 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
             either_is_scalar = (isinstance(src_desc, data.Scalar) or isinstance(dst_desc, data.Scalar))
             bridge_to_output = (src_desc is not None and src_desc.transient and dst_desc is not None
                                 and not dst_desc.transient)
-            # Symmetric input-staging (user 2026-06-11): input bridge ``non-transient ->
+            # Symmetric input-staging: input bridge ``non-transient ->
             # widened-tile transient`` mirrors output writeback; both CopyND-handled via
             # memlet subset (``src[i:i+W]``).
             input_staging = (src_desc is not None and not src_desc.transient and dst_desc is not None
@@ -376,7 +376,7 @@ class InsertTileLoadStore(ppl.Pass):
         return set()
 
     def _stage_inner_body(self, state: SDFGState, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
-        # Two-phase staging (user 2026-06-10): all global READS then all global WRITES, both complete BEFORE
+        # Two-phase staging: all global READS then all global WRITES, both complete BEFORE
         # :class:`ConvertTaskletsToTileOps` emits vector ops.
         staged = 0
         mask_name = self._find_inner_mask_name(inner_sdfg)
@@ -448,7 +448,7 @@ class InsertTileLoadStore(ppl.Pass):
                         begin_str = str(g_subset.ranges[k][0])
                         # Per-lane index as TILE LIB NODES (TileLoad of the data-dep
                         # array read into a (W_d if dep else ONE) tile + TileBinop for
-                        # arithmetic). No CPP fallback (user 2026-06-14).
+                        # arithmetic). No CPP fallback.
                         idx_an = self._stage_index_via_tileops(inner_state,
                                                                inner_sdfg,
                                                                iter_vars,
@@ -605,7 +605,7 @@ class InsertTileLoadStore(ppl.Pass):
             if any(isinstance(e.src, (TileLoad, TileStore)) for e in pre_stage_in_edges):
                 continue  # Already staged by phase 1's bridge->output insertion.
             # Pure sink (writes, no reads) is common. Other staged shape = in-place RMW
-            # intermediate (user 2026-06-15): non-transient WRITTEN + re-READ in the SAME state
+            # intermediate: non-transient WRITTEN + re-READ in the SAME state
             # (cloudsc ``zqx_v = zqx_v + zqx_l`` then ``zqx_v = zqx_v + zqx_i``). Phase 1
             # bridged the read side (out-edges feed TileLoads), so the tile-producing write
             # still needs a TileStore, else the producer's lib-op output wires straight to the

@@ -1007,7 +1007,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         # Scalar src -> tile dst is a BROADCAST (e.g. ``c[jk, jc] = a[0]``): lower to
         # ``TileLoad(src_kind="Scalar")`` (per-lane splat), not a rank-mismatched AN->AN
-        # copy (user 2026-06-14).
+        # copy.
         if self._maybe_emit_scalar_broadcast(inner_state, tasklet, a_edge, out_edge):
             return True
         # Use the input-side memlet so the new edge's memlet.data matches its source, and keep the
@@ -1424,7 +1424,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 inner *= widths[q]
             parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
         flat = " + ".join(parts) if parts else "0"
-        # Reference the source by its connector ABI -- NO C-style cast (user 2026-06-15).
+        # Reference the source by its connector ABI -- NO C-style cast.
         # ABI follows the memlet's element COUNT, not the descriptor kind: a single-element
         # read (``Scalar`` or length-1 ``Array[0]``) is a by-value ``T _in``, referenced
         # bare; a multi-element source is a pointer ``T* _in``, element 0 via ``_in[0]``.
@@ -1494,7 +1494,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
             code_lines.append(f"{'    ' * d}DACE_UNROLL")
             code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
-        # No C-style cast (user 2026-06-15): the destination tile's element type drives
+        # No C-style cast: the destination tile's element type drives
         # the implicit conversion of the broadcast literal / symbolic expression.
         code_lines.append(f"{'    ' * K}_out[{flat}] = ({expr});")
         for d in reversed(range(K)):
@@ -1524,7 +1524,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         a_edge = in_edges[a_conn]
         b_edge = in_edges[b_conn]
-        # Mixed-dtype operands NOT supported (user 2026-06-10): the walker-primary pipeline
+        # Mixed-dtype operands NOT supported: the walker-primary pipeline
         # locks one dtype per lib node (tile transient + bridge + downstream copy all assume
         # it). Refuse -> NotImplementedError so callers add explicit casts.
         #
@@ -1552,7 +1552,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # Output transient shape is pre-set by WidenAccesses (design 6.2); the lib-node
         # output kind is implied by ``out_edge``'s destination descriptor (validate()
         # enforces consistency).
-        # Mask-when-partial (user 2026-06-12): when an iter_mask is in scope (remainder /
+        # Mask-when-partial: when an iter_mask is in scope (remainder /
         # cond-mask region), inactive lanes hold garbage that can trap (div-by-0,
         # log-of-neg) or propagate NaN -- mask the op so they skip the compute. The
         # divisible main map (no mask AN) stays unmasked (fast path).
@@ -1787,7 +1787,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 new_sub = subsets.Range(list(target_range.ranges))
                 edge.data.subset = new_sub
                 edge.data.volume = new_sub.num_elements()
-                # Widen ``other_subset`` symmetrically (user 2026-06-12) so the AN->AN
+                # Widen ``other_subset`` symmetrically so the AN->AN
                 # bridge ``a[0:W] -> b[0:W]`` is well-formed.
                 if edge.data.other_subset is not None:
                     edge.data.other_subset = subsets.Range(list(target_range.ranges))
