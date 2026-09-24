@@ -25,6 +25,8 @@ import dace.libraries.sort  # noqa: F401  (registers the CUB environments)
 from dace import dtypes
 from dace.codegen.compiler import get_environment_flags
 from dace.library import get_environments_and_dependencies
+from dace.libraries.blas.environments import openblas
+from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.linalg.environments import cutensor, hiptensor
 from dace.libraries.linalg.nodes.tensordot import TensorDot
 from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
@@ -129,18 +131,19 @@ def test_a_tensor_library_the_host_cannot_build_is_not_picked(backend, tensor_li
     assert {'GPUAuto', 'CUB', 'CUDA'} <= set(priority), priority
 
 
-def tensordot_sdfg() -> tuple[dace.SDFG, TensorDot]:
+def tensordot_sdfg(extent: int = 4) -> tuple[dace.SDFG, TensorDot]:
     """``out = tensordot(a, b, ([1], [0]))`` over device-resident fp64, the shape cp2k_grid_integrate's
     Cab transform contracts. fp64 is in both vendors' contraction maps, so only availability can
     keep the node off the tensor library."""
-    sdfg = dace.SDFG('portability_tensordot')
-    for name, shape in (('a', (4, 5)), ('b', (5, 3)), ('out', (4, 3))):
+    m, k, n = extent, extent + 1, extent - 1
+    sdfg = dace.SDFG(f'portability_tensordot_{extent}')
+    for name, shape in (('a', (m, k)), ('b', (k, n)), ('out', (m, n))):
         sdfg.add_array(name, shape, dace.float64, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state()
     node = TensorDot('_TensorDot_', left_axes=[1], right_axes=[0])
-    state.add_edge(state.add_read('a'), None, node, '_left_tensor', dace.Memlet('a[0:4, 0:5]'))
-    state.add_edge(state.add_read('b'), None, node, '_right_tensor', dace.Memlet('b[0:5, 0:3]'))
-    state.add_edge(node, '_out_tensor', state.add_write('out'), None, dace.Memlet('out[0:4, 0:3]'))
+    state.add_edge(state.add_read('a'), None, node, '_left_tensor', dace.Memlet(f'a[0:{m}, 0:{k}]'))
+    state.add_edge(state.add_read('b'), None, node, '_right_tensor', dace.Memlet(f'b[0:{k}, 0:{n}]'))
+    state.add_edge(node, '_out_tensor', state.add_write('out'), None, dace.Memlet(f'out[0:{m}, 0:{n}]'))
     return sdfg, node
 
 
@@ -168,6 +171,41 @@ def test_a_tensor_contraction_does_not_lower_to_a_library_the_host_cannot_build(
         select(sdfg, dtypes.DeviceType.GPU)
     assert node.implementation != tensor_library, node.implementation
     assert node.implementation in TensorDot.implementations, node.implementation
+
+
+@pytest.mark.parametrize('backend, blas, env', [
+    ('cuda', 'cuBLAS', cutensor.cuTensor),
+    ('hip', 'rocBLAS', hiptensor.hipTensor),
+])
+@pytest.mark.parametrize('select', [
+    canonicalize_set_fast_implementations,
+    set_fast_implementations,
+],
+                         ids=['canonicalize', 'auto_optimize'])
+def test_a_tensor_contraction_without_a_tensor_library_reaches_the_vendor_gemm(backend, blas, env, select,
+                                                                               monkeypatch) -> None:
+    """TTGT, not the pure loop nest, and its Gemm on the vendor BLAS rather than its own pure default.
+
+    Sized past canonicalize's tiny-matmul threshold, below which a Gemm keeps its ``rowwise`` form.
+    """
+    monkeypatch.setattr(env, 'is_installed', staticmethod(lambda: False))
+    sdfg, node = tensordot_sdfg(64)
+    with dace.config.set_temporary('compiler', 'cuda', 'backend', value=backend):
+        select(sdfg, dtypes.DeviceType.GPU)
+    gemms = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, Gemm)]
+    assert node.implementation == 'TTGT', node.implementation
+    assert gemms and all(n.implementation == blas for n in gemms), [n.implementation for n in gemms]
+
+
+def test_a_host_tensor_contraction_reaches_openblas(monkeypatch) -> None:
+    monkeypatch.setattr(openblas.OpenBLAS, 'is_installed', staticmethod(lambda: True))
+    sdfg, node = tensordot_sdfg(64)
+    for desc in sdfg.arrays.values():
+        desc.storage = dtypes.StorageType.Default
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
+    gemms = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, Gemm)]
+    assert node.implementation == 'TTGT', node.implementation
+    assert gemms and all(n.implementation == 'OpenBLAS' for n in gemms), [n.implementation for n in gemms]
 
 
 @pytest.mark.parametrize('backend, env', [('cuda', cutensor.cuTensor), ('hip', hiptensor.hipTensor)])

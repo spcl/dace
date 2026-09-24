@@ -725,6 +725,10 @@ class ExpandTransformation(PatternTransformation):
     #: Offloading reads this to decide whether a map around the node is a kernel or a host loop.
     runs_inside_kernel = False
 
+    #: The expansion builds further library nodes, which ``set_fast_implementations`` must then pick
+    #: implementations for too (TensorDot's TTGT emits transposes and a Gemm).
+    composite = False
+
     @classmethod
     def expressions(clc):
         return [sdutil.node_path_graph(clc._match_node)]

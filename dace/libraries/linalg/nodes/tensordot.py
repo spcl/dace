@@ -117,6 +117,7 @@ class ExpandTTGT(ExpandTransformation):
     """
 
     environments = []
+    composite = True
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):

@@ -401,7 +401,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # implements: a TensorDot took hipTENSOR on ROCm 6.3, whose hipTensor lacks the v2
             # header the expansion includes, and cp2k_grid_integrate failed to compile on mi200.
             tensor = ['cuTENSOR'] if cutensor.cuTensor.is_installed() else []
-            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', *tensor, 'cuFFT', 'CUB', 'CUDA', 'pure']
+            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', *tensor, 'TTGT', 'cuFFT', 'CUB', 'CUDA', 'pure']
         elif backend == 'hip':
             # Mirrors the CUDA row entry for entry, and must keep doing so. The two backends are
             # compared column against column, so a node that takes a tuned expansion under one and
@@ -414,7 +414,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # gates whether the library is actually present, except the tensor library's, which is
             # gated here as in the CUDA row.
             tensor = ['hipTENSOR'] if hiptensor.hipTensor.is_installed() else []
-            return ['rocBLAS', 'rocSOLVER', 'GPUAuto', *tensor, 'hipFFT', 'CUB', 'CUDA', 'pure']
+            return ['rocBLAS', 'rocSOLVER', 'GPUAuto', *tensor, 'TTGT', 'hipFFT', 'CUB', 'CUDA', 'pure']
         else:
             return ['GPUAuto', 'pure']
     elif device == dtypes.DeviceType.CPU:
@@ -659,28 +659,42 @@ def set_fast_implementations(sdfg: SDFG,
                                      & set(implementation_prio))) == 0):
                         node.expand(state)
 
+    def pick_implementations() -> None:
+        for node, _ in sdfg.all_nodes_recursive():
+            # ``auto_select_implementation`` opts a node out entirely: its lowering was chosen by a
+            # transformation (the tile ops, from the vectorizer's ``target_isa``), and every branch below
+            # would silently reset it to the generic fallback -- no error, just the ISA path gone.
+            if isinstance(node, nodes.LibraryNode) and node.auto_select_implementation:
+                # NOTE: LibraryNodes with sequential schedule on GPU must be expanded to CUDA kernel-compatible code.
+                # NOTE: Pure implementations are a safe choice for now but this should be revisited in the future.
+                if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
+                    # Not every node has a ``pure`` expansion: a Copy has none, and its own selector
+                    # already picks the in-kernel form.
+                    if 'pure' in node.implementations:
+                        node.implementation = "pure"
+                    continue
+                for impl in implementation_prio:
+                    if impl in node.implementations:
+                        if isinstance(
+                                node,
+                                dace.libraries.standard.nodes.reduce.Reduce) and node.implementation == 'CUDA (block)':
+                            continue
+                        node.implementation = impl
+                        break
+
     # general nodes
-    for node, _ in sdfg.all_nodes_recursive():
-        # ``auto_select_implementation`` opts a node out entirely: its lowering was chosen by a
-        # transformation (the tile ops, from the vectorizer's ``target_isa``), and every branch below
-        # would silently reset it to the generic fallback -- no error, just the ISA path gone.
-        if isinstance(node, nodes.LibraryNode) and node.auto_select_implementation:
-            # NOTE: LibraryNodes with sequential schedule on GPU must be expanded to CUDA kernel-compatible code.
-            # NOTE: Pure implementations are a safe choice for now but this should be revisited in the future.
-            if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
-                # Not every node has a ``pure`` expansion: a Copy has none, and its own selector
-                # already picks the in-kernel form.
-                if 'pure' in node.implementations:
-                    node.implementation = "pure"
-                continue
-            for impl in implementation_prio:
-                if impl in node.implementations:
-                    if isinstance(
-                            node,
-                            dace.libraries.standard.nodes.reduce.Reduce) and node.implementation == 'CUDA (block)':
-                        continue
-                    node.implementation = impl
-                    break
+    pick_implementations()
+    # A composite expansion builds further library nodes (TTGT: transposes and a Gemm), which would
+    # expand with their class default -- a pure GEMM loop. Expanded here, they are picked like the rest.
+    composites = [
+        (node, state) for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.LibraryNode) and node.auto_select_implementation and type(node).implementations.get(
+            node.implementation) is not None and type(node).implementations[node.implementation].composite
+    ]
+    for node, state in composites:
+        node.expand(state)
+    if composites:
+        pick_implementations()
 
     # CPU: the nodes whose parallel lowering depends on scope. ``implementation_prio`` names only the
     # vendor BLAS libraries, so a Reduce / ArgReduce / Scan / Copy / Fill fell through to the
