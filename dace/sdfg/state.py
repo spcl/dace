@@ -5,6 +5,7 @@ import ast
 import abc
 import collections
 import copy
+import re
 import inspect
 import itertools
 import warnings
@@ -771,12 +772,24 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
-        if isinstance(sdfg.start_block, AbstractControlFlowRegion):
-            update_if_not_none(defined_syms, sdfg.start_block.new_symbols(defined_syms))
+        try:
+            start_block = sdfg.start_block
+        except ValueError:
+            # The start block is ambiguous while the SDFG is still being built
+            start_block = None
+        if isinstance(start_block, AbstractControlFlowRegion):
+            update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
         for edge in sdfg.all_interstate_edges():
             update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
             if isinstance(edge.dst, AbstractControlFlowRegion):
                 update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
+        regions = []
+        region = state.parent_graph
+        while region is not None and region is not sdfg:
+            regions.append(region)
+            region = region.parent_graph
+        for region in reversed(regions):
+            update_if_not_none(defined_syms, region.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
         sdict = state.scope_dict()
@@ -974,6 +987,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             elif isinstance(self, SubgraphView):
                 if (desc.lifetime != dtypes.AllocationLifetime.Scope):
                     data_args[name] = desc
+                # Views allocate no memory, so their storage does not move them outside the subgraph
+                elif isinstance(desc, dt.View):
+                    continue
                 # Check for allocation constraints that would
                 # enforce array to be allocated outside subgraph
                 elif desc.lifetime == dtypes.AllocationLifetime.Scope:
@@ -1654,6 +1670,13 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # do not yet exist)
             for e in sdfg.edges():
                 symbols.update(e.data.new_symbols(sdfg, symbols))
+        regions = []
+        region = self.parent_graph
+        while region is not None and region is not sdfg:
+            regions.append(region)
+            region = region.parent_graph
+        for region in reversed(regions):
+            symbols.update({k: v for k, v in region.new_symbols(symbols).items() if v is not None})
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()
@@ -1744,19 +1767,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             location=location,
             side_effects=side_effects,
             debuginfo=debuginfo,
-        ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
-            name,
-            inputs,
-            outputs,
-            code,
-            language,
-            state_fields=state_fields,
-            code_global=code_global,
-            code_init=code_init,
-            code_exit=code_exit,
-            location=location,
-            side_effects=side_effects,
-            debuginfo=debuginfo,
         )
         self.add_node(tasklet)
         return tasklet
@@ -1834,9 +1844,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Validate missing symbols
             missing_symbols = [s for s in symbols if s not in symbol_mapping]
+            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
             if missing_symbols and self.sdfg is not None:
                 # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in self.sdfg.symbols}
+                parent_mapping = {s: s for s in missing_symbols if s in defined_symbols}
                 symbol_mapping.update(parent_mapping)
                 s.symbol_mapping = symbol_mapping
                 missing_symbols = [s for s in symbols if s not in symbol_mapping]
@@ -1846,9 +1857,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # Add new global symbols to nested SDFG
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
-                    # TODO: Think of a better way to avoid calling
-                    # symbols_defined_at in this moment
-                    sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
+                    sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
 
@@ -3330,6 +3339,8 @@ class LoopRegion(ControlFlowRegion):
         self.update_before_condition = update_before_condition
         self.unroll = unroll
         self.unroll_factor = unroll_factor
+        self._new_symbols_key = None
+        self._new_symbols_value = {}
 
     def inline(self, lower_returns: bool = False) -> Tuple[bool, Any]:
         """
@@ -3641,7 +3652,7 @@ class LoopRegion(ControlFlowRegion):
 
     def replace_meta_accesses(self, replacements):
         if self.loop_variable in replacements:
-            self.loop_variable = replacements[self.loop_variable]
+            self.loop_variable = str(replacements[self.loop_variable])
         replace_in_codeblock(self.loop_condition, replacements)
         if self.init_statement:
             replace_in_codeblock(self.init_statement, replacements)
@@ -3788,6 +3799,20 @@ class LoopRegion(ControlFlowRegion):
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.init_statement and self.loop_variable:
+            # Reuse the inferred type while the header text and the types of the names it reads are unchanged
+            texts = (self.loop_variable, self.init_statement.as_string, self.loop_condition.as_string,
+                     self.update_statement.as_string if self.update_statement else '')
+            if self._new_symbols_key is not None and self._new_symbols_key[0] == texts:
+                names = self._new_symbols_key[1]
+            else:
+                names = tuple(sorted(set(re.findall(r'[A-Za-z_]\w*', ' '.join(texts)))))
+            arrays = self.sdfg.arrays
+            key = (texts, names, tuple(symbols.get(n)
+                                       for n in names), tuple(arrays[n].dtype if n in arrays else None for n in names))
+            if key == self._new_symbols_key:
+                return dict(self._new_symbols_value)
+            self._new_symbols_key = key
+            self._new_symbols_value = {}
             alltypes = copy.copy(symbols)
             alltypes.update({k: v.dtype for k, v in self.sdfg.arrays.items()})
             l_end = loop_analysis.get_loop_end(self)
@@ -3797,7 +3822,8 @@ class LoopRegion(ControlFlowRegion):
                                                   infer_expr_type(l_end, alltypes))
             init_rhs = loop_analysis.get_init_assignment(self)
             if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
-                return {self.loop_variable: inferred_type}
+                self._new_symbols_value = {self.loop_variable: inferred_type}
+            return dict(self._new_symbols_value)
         return {}
 
     def replace_dict(self,
@@ -3807,7 +3833,7 @@ class LoopRegion(ControlFlowRegion):
                      replace_keys: bool = True):
         if replace_keys:
             if self.loop_variable and self.loop_variable in repl:
-                self.loop_variable = repl[self.loop_variable]
+                self.loop_variable = str(repl[self.loop_variable])
 
         from dace.sdfg.replace import replace_properties_dict
         replace_properties_dict(self, repl, symrepl)
@@ -3852,6 +3878,11 @@ class LoopRegion(ControlFlowRegion):
 
 @make_properties
 class ConditionalBlock(AbstractControlFlowRegion):
+    """
+    A control flow region that represents conditional code exectution (if/elif/else).
+
+    Add branches with `add_branch(condition, region)`, where the condition is optional.
+    """
 
     _branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]]
 
