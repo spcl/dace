@@ -73,7 +73,8 @@ SPLICEABLE_BUILTINS = dict.fromkeys(['True', 'False', 'None', 'abs', 'min', 'max
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses
+from dace.transformation.passes.canonicalize.split_statements import value_edges
+from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses, data_in_edges
 
 #: AST binop type -> closed-form template ``(init, c, n) -> str``.
 CLOSED_FORM = {
@@ -521,16 +522,11 @@ def plan_use_site_substitution(state: SDFGState, sdfg: SDFG, tasklet: nodes.Task
         return None
     post_node = cur
 
-    # An empty memlet is an ORDERING edge, not a write, so split on ``is_empty()`` before reading
-    # ``.data`` / ``.subset``. The frontend hangs ordering edges around the update for the
-    # read-before-update body (``a[i] = s*b[i]; s += 2``), to sequence the WAR.
-    def written_by(node: nodes.AccessNode) -> List[Any]:
-        return [e for e in state.in_edges(node) if e.data is not None and not e.data.is_empty()]
-
+    # Ordering (empty) edges are not writes; the frontend hangs them around the update to sequence the WAR.
     versions = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == iv.accum]
-    if [n for n in versions if written_by(n)] != [post_node]:
+    if [n for n in versions if data_in_edges(state, n)] != [post_node]:
         return None  # a second write to the slot -> the value a read sees is no longer this recurrence
-    (write_in, ) = written_by(post_node)
+    (write_in, ) = data_in_edges(state, post_node)
     if write_in.data.wcr is not None:  # an accumulation into the slot, not this recurrence's store
         return None
     written = write_in.data.subset if write_in.data.data == iv.accum else write_in.data.dst_subset
@@ -1410,12 +1406,6 @@ class RotationPlan(NamedTuple):
     remat: RematSource | None = None  #: producer to clone, when the carried value is computed
 
 
-def _data_edges(edges) -> List[Any]:
-    """Only the edges that MOVE DATA. An empty memlet is an ORDERING edge, so it must never be
-    counted as a write (or a read) of the container it hangs off."""
-    return [e for e in edges if e.data is not None and not e.data.is_empty()]
-
-
 def _subset_at(edge, node) -> Optional[subsets.Subset]:
     """The subset ``edge``'s memlet addresses in ``node``'s container (``node`` is one endpoint).
 
@@ -1497,7 +1487,7 @@ def _read_after_loop(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, co
             continue
         for st in ([blk] if isinstance(blk, SDFGState) else list(blk.all_states())):
             for n in st.nodes():
-                if isinstance(n, nodes.AccessNode) and n.data == container and _data_edges(st.out_edges(n)):
+                if isinstance(n, nodes.AccessNode) and n.data == container and value_edges(st.out_edges(n)):
                     return True
     return False
 
@@ -1510,7 +1500,7 @@ def _body_nodes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFGS
 
 def _body_writes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFGState, nodes.AccessNode, Any]]:
     """Every DATA write to ``container`` in the body, as ``(chain index, state, node, edge)``."""
-    return [(si, st, n, e) for si, st, n in _body_nodes(chain, container) for e in _data_edges(st.in_edges(n))]
+    return [(si, st, n, e) for si, st, n in _body_nodes(chain, container) for e in value_edges(st.in_edges(n))]
 
 
 def reaches(state: SDFGState, src: nodes.Node, dst: nodes.Node) -> bool:
@@ -1661,7 +1651,7 @@ def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, lo
     # The staging version dies with the update only when the update is its sole consumer and it holds
     # no value of its own; otherwise it stays and the update's write edge alone goes.
     write_state = chain[wsi]
-    dies = write_state.out_degree(stage) == 1 and not _data_edges(write_state.in_edges(stage))
+    dies = write_state.out_degree(stage) == 1 and not value_edges(write_state.in_edges(stage))
     return source._replace(stage=stage if dies else None)
 
 
@@ -1774,7 +1764,7 @@ def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain
     for container in touched:
         if container in (accum, src_data):
             continue
-        if sum(len(_data_edges(st.out_edges(n))) for chain_index, st, n in _body_nodes(chain, container)) != 1:
+        if sum(len(value_edges(st.out_edges(n))) for chain_index, st, n in _body_nodes(chain, container)) != 1:
             return None
         if _read_after_loop(parent, loop, sdfg, container):
             return None
@@ -1801,7 +1791,7 @@ def delete_rotation_update(chain: List[SDFGState], plan: RotationPlan) -> None:
         for n in list(st.nodes()):
             if not isinstance(n, nodes.AccessNode) or n.data not in plan.touched:
                 continue
-            if st.out_degree(n) == 0 and not _data_edges(st.in_edges(n)):
+            if st.out_degree(n) == 0 and not value_edges(st.in_edges(n)):
                 st.remove_node(n)
 
 

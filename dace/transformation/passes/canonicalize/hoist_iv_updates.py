@@ -50,6 +50,7 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.passes.loop_to_reduce import _chase_forward_to_accum, _one_elem, _uses
 
 
@@ -110,11 +111,6 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
     if not isinstance(src, nodes.AccessNode):
         return False
     return True
-
-
-def value_edges(edges) -> list:
-    """The edges carrying a VALUE; an empty memlet is an ordering edge and carries none."""
-    return [e for e in edges if e.data is not None and not e.data.is_empty()]
 
 
 def _tasklet_component(state: SDFGState, tasklet: nodes.Tasklet) -> Dict:

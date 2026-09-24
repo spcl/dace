@@ -37,11 +37,7 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
-
-
-def value_edges(edges) -> List:
-    """The edges carrying a VALUE; an empty memlet is an ordering edge and carries none."""
-    return [e for e in edges if e.data is not None and not e.data.is_empty()]
+from dace.transformation.passes.canonicalize.split_statements import value_edges
 
 
 def _const_int(value) -> Optional[int]:
