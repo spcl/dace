@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``MarkTileDims`` — validation-only: pick K innermost params per inner map, build a
+"""``MarkTileDims`` -- validation-only: pick K innermost params per inner map, build a
 :class:`TileDimSpec` per candidate.
 
 First per-map analysis step in the v2 orchestrator. Loud failure on any inner map that can't
@@ -14,8 +14,8 @@ from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import (is_gpu_resident_map, is_vectorizable_map,
-                                                                           map_tile_widths)
+from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_gpu_resident_map,
+                                                                           is_vectorizable_map, map_tile_widths)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
@@ -84,8 +84,7 @@ class MarkTileDims(ppl.Pass):
         :raises ValueError: If ``widths`` length not in ``{1, 2, 3}``.
         """
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"MarkTileDims: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("MarkTileDims", widths)
         self.widths = list(widths)
         self.skip_ineligible = skip_ineligible
         self.require_gpu_resident = require_gpu_resident
@@ -107,13 +106,7 @@ class MarkTileDims(ppl.Pass):
         return False
 
     def _classify_one(self, state: dace.SDFGState, map_entry: MapEntry) -> TileDimSpec | None:
-        """Build a :class:`TileDimSpec` for ``map_entry`` if eligible.
-
-        :param state: The state holding ``map_entry``.
-        :param map_entry: The candidate inner map entry.
-        :returns: Spec when the K innermost params each have step == 1; ``None`` otherwise.
-        :raises NotImplementedError: When ``skip_ineligible`` is ``False`` and map ineligible.
-        """
+        # Build a :class:`TileDimSpec` for ``map_entry`` if eligible.
         # ``__tile_k1_tail`` maps pin K=1 widths=(1,) regardless of orchestrator
         # widths: single-lane scalar-tile remainder over the innermost iter-var only.
         widths = (1, ) if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER) else map_tile_widths(
@@ -161,12 +154,7 @@ class MarkTileDims(ppl.Pass):
         )
 
     def _fail_or_skip(self, msg: str) -> TileDimSpec | None:
-        """Either raise or return ``None`` based on ``skip_ineligible``.
-
-        :param msg: Diagnostic message included in the raised error.
-        :returns: ``None`` when ``skip_ineligible`` is True.
-        :raises NotImplementedError: When ``skip_ineligible`` is False.
-        """
+        # Either raise or return ``None`` based on ``skip_ineligible``.
         if self.skip_ineligible:
             return None
         raise NotImplementedError(f"MarkTileDims: {msg}")

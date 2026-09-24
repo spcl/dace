@@ -351,6 +351,55 @@ def map_tile_widths(state: SDFGState, map_entry: dace.nodes.MapEntry, widths: tu
     return tuple(widths[len(widths) - count:])
 
 
+def check_tile_widths(owner: str, widths: tuple[int, ...] | list[int]) -> None:
+    """Raise ``ValueError`` unless ``widths`` has 1 to 3 entries.
+
+    :param owner: Name of the pass reporting the error.
+    :param widths: Per-dim tile widths, innermost-last.
+    """
+    if not (1 <= len(widths) <= 3):
+        raise ValueError(f"{owner}: widths length {len(widths)} not in {{1, 2, 3}}")
+
+
+def lane_widths(widths: tuple[int, ...], iter_vars: tuple[str, ...]) -> tuple[int, ...]:
+    """The innermost ``widths`` matching a map's tiled ``iter_vars``."""
+    return tuple(int(w) for w in widths[len(widths) - len(iter_vars):])
+
+
+def tile_body_nsdfgs(sdfg: dace.SDFG,
+                     widths: tuple[int, ...]) -> Iterator[tuple[SDFGState, dace.nodes.NestedSDFG, dace.nodes.MapEntry]]:
+    """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
+
+    A tile-tagged body is the single NestedSDFG of a vectorizable map with at least ``len(widths)``
+    params. The ``__scalar_tail`` and ``__tile_k1_tail`` postambles do not run the K-D tile chain
+    and are skipped.
+
+    :param sdfg: The SDFG to walk, recursively.
+    :param widths: Per-dim tile widths, innermost-last.
+    """
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                       TILE_K1_TAIL_MARKER)
+    for node, parent in sdfg.all_nodes_recursive():
+        if not isinstance(node, dace.nodes.MapEntry) or not isinstance(parent, SDFGState):
+            continue
+        try:
+            if not is_vectorizable_map(parent, node, len(widths)):
+                continue
+        except (StopIteration, ValueError):
+            continue
+        if len(node.map.params) < len(widths):
+            continue
+        if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
+            continue
+        try:
+            scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
+        except (StopIteration, ValueError):
+            continue
+        nsdfgs = [n for n in scope_nodes if isinstance(n, dace.nodes.NestedSDFG)]
+        if len(nsdfgs) == 1:
+            yield parent, nsdfgs[0], node
+
+
 def is_foreign_language_tasklet(node: dace.nodes.Node) -> bool:
     """True for a non-Python tasklet the tile emitters did not mint themselves.
 

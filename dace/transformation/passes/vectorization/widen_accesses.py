@@ -1,31 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unified ``WidenAccesses`` pass: widen lane-dep symbols, non-transient boundary subsets, and
-transient descriptors in ONE pass. Replaces the two-pass ``InferBodyTransientShapes`` +
-``WidenScalarsToTiles`` split.
+transient descriptors in one pass.
 
-Symmetry contract (locked): gather (indirect READ ``A[idx[i]]``) and scatter (indirect WRITE
-``A[idx[i]] = ...``) obey identical rules; tests enforce both directions.
+Symmetry: gather (``A[idx[i]]`` read) and scatter (``A[idx[i]] = ...`` write) obey identical
+rules; tests enforce both directions.
 
-Algorithm (5 steps, per tile-tagged body NSDFG):
+Algorithm, per tile-tagged body NSDFG:
 
-1. Classify non-transient ANs via ``classify_tile_access`` on the AN-side subset. Any
-   non-CONSTANT -> data name lane-dep. Read + write edges treated uniformly.
+1. Classify non-transient ANs via ``classify_tile_access``. Any non-CONSTANT dim -> lane-dep.
 2. Widen non-transient boundary memlets of lane-dep ANs: ``A[ii]`` -> ``A[ii:ii+W]`` on
-   iter-var-dominated dims. AN-side subset decides, not edge direction.
-3. Propagate lane-dep through Tasklets (fixed point): lane-dep input OR iter-var in code body ->
-   output lane-dep; else loop-invariant.
+   iter-var-dominated dims.
+3. Propagate lane-dep through Tasklets to a fixed point.
 4. Widen lane-dep transient descriptors Scalar / ``(1,)`` Array -> ``Array(widths)``; rewrite
    touching memlets to ``[0:W_0,...,0:W_{K-1}]``.
-5. Subset-widening strategy hook: gather-dim-only vs whole-dim, encoded by how step 2 widens;
-   symmetric. Reserved for a future ``widen_strategy`` knob; current impl widens all iter-var
-   dims (gather-dim-only conservative default).
+5. Seed per-lane symbols for Bypass-form gathers.
 
-Downstream chain ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``GatherLift`` ->
-``ConvertTaskletsToTileOps`` then emits gather/scatter.
+Downstream chain: ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``GatherLift`` ->
+``ConvertTaskletsToTileOps``.
 """
 import copy
 import re
-from collections.abc import Iterator
 from typing import Any
 
 import dace
@@ -35,13 +29,14 @@ from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.nodes import AccessNode, MapEntry, NestedSDFG, Tasklet
+from dace.sdfg.nodes import AccessNode, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import is_same_domain_constant
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
+from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, lane_widths,
+                                                                           map_tile_widths, tile_body_nsdfgs)
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
                                                                             lane_dep_transients_widened,
@@ -54,8 +49,7 @@ from dace.ordered import OrderedSet
 
 def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, Any]],
                 scan_cache: dict[int, Any]) -> dict[str, Any]:
-    """``build_symbol_definition_map(inner_sdfg, state)`` memoised per state. Caller owns both dicts
-    and must scope them to a span in which ``inner_sdfg`` is not mutated."""
+    # Memoised ``build_symbol_definition_map(inner_sdfg, state)`` per state.
     defs = cache.get(id(state))
     if defs is None:
         defs = cache[id(state)] = build_symbol_definition_map(inner_sdfg, state, scan_cache)
@@ -63,11 +57,7 @@ def _state_defs(inner_sdfg: SDFG, state: SDFGState, cache: dict[int, dict[str, A
 
 
 def _is_single_element(size: symbolic.SymbolicType | int) -> bool:
-    """``size`` (a descriptor ``total_size`` / memlet element count) is PROVABLY one element.
-
-    A symbolic size (``M`` for a per-row accumulator connector) is not provably one, and ``int()``
-    on it raises -- so decide it here rather than letting the raise escape the pass.
-    """
+    # True iff ``size`` is provably one element.
     try:
         return int(size) == 1
     except (TypeError, ValueError):
@@ -75,8 +65,7 @@ def _is_single_element(size: symbolic.SymbolicType | int) -> bool:
 
 
 def _find_iedge_defining_symbol(inner_sdfg: SDFG, sym_name: str) -> tuple[Edge[InterstateEdge] | None, str | None]:
-    """``(iedge, rhs_str)`` for the iedge defining ``sym_name``, else
-    ``(None, None)``. Detects Bypass form ``__sym = idx[i]`` for per-lane fanout."""
+    # Iedge defining ``sym_name`` and its RHS, else ``(None, None)``.
     for iedge in inner_sdfg.all_interstate_edges():
         if sym_name in iedge.data.assignments:
             return iedge, iedge.data.assignments[sym_name]
@@ -92,23 +81,21 @@ def emit_per_lane_symbol_fanout(
         resolver: scopes.ScopedSymbolResolver | None = None) -> dict[tuple[int, ...], str] | None:
     """Emit per-lane SDFG symbols + iedge assignments for a Bypass-form gather.
 
-    Idempotent: returns existing map if symbols already seeded. WidenAccesses owns this (sibling
-    of subset/other_subset widening) so downstream :class:`InsertTileLoadStore` gather-index path
-    sees a consistent name scheme.
+    Idempotent: returns the existing map if symbols were already seeded.
 
-    Remainder safety: with ``iter_var_ubs``, per-lane shift ``iv -> iv + lane`` is clamped
+    Remainder safety: with ``iter_var_ubs``, the per-lane shift ``iv -> iv + lane`` is clamped to
     ``Min(iv + lane, ub)`` so ``idx[i + lane]`` never reads past the array bound on the masked
-    tail. Caller passes each iter-var's inclusive ub (``map_entry.map.range[d][1]``).
+    tail.
 
     :param sdfg: Inner SDFG hosting the bare symbol.
     :param sym_name: Bare interstate symbol (e.g. ``__sym``).
     :param iter_vars: Tile iter-var names (length K, innermost-last).
     :param widths: Per-dim tile widths (length K).
     :param iter_var_ubs: Optional ``{iter_var: ub_expr}``; clamps shift to ``Min(iv + lane, ub)``.
-    :param resolver: The pass run's shared symbol resolver; one is built here when absent.
+    :param resolver: Shared symbol resolver; one is built here when absent.
     :returns: ``{dep_idx_tuple: plane_sym_name}`` over the dep-dim Cartesian product, or ``None``
-        if the symbol has no iedge definition / no iter-var dependency / no walkable RHS.
-    :raises UndeterminedSymbolDType: when nothing declares ``sym_name``, not even the edge binding it.
+        if the symbol has no iedge definition, no iter-var dependency, or no walkable RHS.
+    :raises UndeterminedSymbolDType: when nothing declares ``sym_name``.
     """
     import itertools
     from dace import symbolic
@@ -130,10 +117,8 @@ def emit_per_lane_symbol_fanout(
     except Exception:  # noqa: BLE001
         return None
     import sympy
-    # Loop-invariant, and it must NOT fall back to int64: an interstate assignment DEFINES its
-    # symbol, so a name absent from ``sdfg.symbols`` is still typed -- by the edge that binds it.
-    # Every per-lane plane inherits this dtype, so one guess here forks the whole fanout onto a
-    # second symbol of the same name, and Min(iv + lane, ub) stops folding against the map param.
+    # Must resolve via the binding edge, not fall back to int64: every per-lane plane inherits
+    # this dtype, and a mismatched guess forks the fanout onto a second symbol of the same name.
     origin_dtype = (resolver or scopes.ScopedSymbolResolver()).resolve_dtype(sym_name, sdfg, interstate_edge=iedge.data)
     for dep_idx in itertools.product(*(range(w) for w in dep_widths_iter)):
         chunks = tuple(zip(dep_iter_var_indices, dep_idx))
@@ -146,8 +131,7 @@ def emit_per_lane_symbol_fanout(
             for iv, lane in zip(dep_iter_var_names, dep_idx):
                 shifted = symbolic.symbol(iv) + lane
                 if iter_var_ubs is not None and iv in iter_var_ubs:
-                    # Clamp in-bounds: lane-fanout never reads past source on the masked tail.
-                    # Mask still gates the SCATTER write; safe-read only.
+                    # Clamp: lane-fanout must not read past source on masked tail (mask still gates the write).
                     shifted = sympy.Min(shifted, iter_var_ubs[iv])
                 repl[symbolic.symbol(iv)] = shifted
             iedge.data.assignments[plane] = str(rhs_sym.xreplace(repl))
@@ -173,8 +157,7 @@ class WidenAccesses(ppl.Pass):
 
     def __init__(self, widths: tuple[int, ...] = (8, )) -> None:
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"WidenAccesses: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("WidenAccesses", widths)
         self.widths = tuple(widths)
 
     def modifies(self) -> ppl.Modifies:
@@ -186,52 +169,9 @@ class WidenAccesses(ppl.Pass):
     def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
         return set()
 
-    def _body_nsdfgs(self, sdfg: SDFG) -> Iterator[tuple[SDFGState, NestedSDFG, MapEntry, tuple[int, ...]]]:
-        """Yield ``(state, nsdfg_node, map_entry, map_widths)`` per tile-tagged body NSDFG.
-
-        Same predicate as :class:`InsertTileLoadStore`. Skips ``__scalar_tail``
-        (sequential body) and ``__tile_k1_tail`` (pinned K=1) postambles.
-        """
-        from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                           TILE_K1_TAIL_MARKER)
-        for node, parent in sdfg.all_nodes_recursive():
-            if not isinstance(node, MapEntry):
-                continue
-            if not isinstance(parent, SDFGState):
-                continue
-            try:
-                if not is_vectorizable_map(parent, node, len(self.widths)):
-                    continue
-            except (StopIteration, ValueError):
-                continue
-            if len(node.map.params) < len(self.widths):
-                continue
-            if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
-                continue
-            try:
-                scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
-            except (StopIteration, ValueError):
-                continue
-            nsdfgs = [n for n in scope_nodes if isinstance(n, NestedSDFG)]
-            if len(nsdfgs) != 1:
-                continue
-            yield parent, nsdfgs[0], node, map_tile_widths(parent, node, self.widths)
-
-    def lane_widths(self, iter_vars: tuple[str, ...]) -> tuple[int, ...]:
-        """The innermost widths matching a map's tiled ``iter_vars``."""
-        return tuple(self.widths[len(self.widths) - len(iter_vars):])
-
     # Step 1: classify non-transient ANs
     def _classify_non_transients(self, inner_sdfg: SDFG, iter_vars: tuple[str, ...]) -> set[str]:
-        """Non-transient AN data names with >=1 non-CONSTANT adjacent edge; seed
-        the lane-dep propagation.
-
-        SYMMETRIC: walks in-edges (writes) AND out-edges (reads); non-CONSTANT on
-        either side marks the data lane-dep.
-
-        A View joins them: it is an ALIAS of the array it views, never a buffer of its own, so
-        its accesses widen in place (step 2) and it is never descriptor-swapped (step 4).
-        """
+        # Non-transient AN data names with >=1 non-CONSTANT adjacent edge; seed the lane-dep propagation.
         lane_dep: set[str] = set()
         # Safe: step 1 classifies only, so the whole-SDFG symbol scan is loop-invariant here.
         scan_cache: dict[int, Any] = {}
@@ -243,11 +183,9 @@ class WidenAccesses(ppl.Pass):
                 desc = inner_sdfg.arrays.get(an.data)
                 if desc is None:
                     continue
-                # A View is an ALIAS, and a LANE-INDEXED transient carries the lane axis in its own
-                # shape (CloudSC's ``zsolqa[jm, jn, jl]``): both are widened in place here rather
-                # than descriptor-swapped, so both are seeded like a non-transient. Skipping them
-                # left their memlets one element wide while their consumers became tiles -- the
-                # ``kind_a='Tile', kind_b='Scalar'`` refusal in ``_AssertTileOpsLowered``.
+                # View (alias) and lane-indexed transient (lane axis in own shape) are widened in
+                # place, not descriptor-swapped; skipping them left memlets scalar while their
+                # consumers became tiles.
                 if desc.transient and not isinstance(desc, dd.View):
                     if not data_is_lane_indexed(inner_sdfg, an.data, iter_vars):
                         continue
@@ -282,17 +220,8 @@ class WidenAccesses(ppl.Pass):
                               iter_vars: tuple[str, ...],
                               inner_sdfg: SDFG | None = None,
                               state: SDFGState | None = None) -> subsets.Range | None:
-        """Widen LINEAR/AFFINE/REPLICATE/MODULAR single-element dims of a subset.
-
-        Returns a new :class:`subsets.Range` if any dim widened, else ``None``. Centralised so
-        :attr:`Memlet.subset` and :attr:`Memlet.other_subset` share one widening path.
-
-        GATHER dims (begin is an array subscript on the iter-var, e.g. ``idx[i]``) LEFT UNCHANGED:
-        widening ``idx[i]`` to a contiguous range is false; ``InsertTileLoadStore`` routes them
-        through gather/scatter emission with a materialised idx tile of matching rank. Classifier
-        returns ``PerDimKind.GATHER`` -> skip here.
-        """
-        widths = self.lane_widths(iter_vars)
+        # Widen LINEAR/AFFINE/REPLICATE/MODULAR single-element dims of a subset.
+        widths = lane_widths(self.widths, iter_vars)
         K = len(iter_vars)
         if sub is None:
             return None
@@ -300,8 +229,7 @@ class WidenAccesses(ppl.Pass):
             ranges = list(sub.ranges)
         except Exception:  # noqa: BLE001
             return None
-        # Per-dim classification (needs inner SDFG context); skip GATHER dims
-        # (begin is an iter-var array subscript).
+        # Per-dim classification; skip GATHER dims (begin is an array subscript).
         per_dim_kinds = None
         if inner_sdfg is not None:
             try:
@@ -345,15 +273,7 @@ class WidenAccesses(ppl.Pass):
 
     @staticmethod
     def _lane_stride(beg: symbolic.SymbolicType, iter_var: str) -> symbolic.SymbolicType | None:
-        """Per-lane element step of index expression ``beg`` along ``iter_var``.
-
-        Lane ``l`` of a tile evaluates ``beg`` at ``iter_var + l``, so the widened window must be
-        ``beg : beg + c*W : c`` (exclusive end) where ``c`` is that step -- ``a[i * inc]`` walks ``inc`` cells
-        per lane, not one, and the contiguous ``beg : beg + W`` window names the wrong cells for
-        every ``inc != 1``. Returns ``None`` when ``beg`` is not affine in ``iter_var``
-        (``a[i % 4]``), or when the step is a negative constant: the tile-op base pointer is lane
-        0's address, which a descending window would no longer be.
-        """
+        # Per-lane element step of index expression ``beg`` along ``iter_var``.
         if not dace.symbolic.issymbolic(beg):
             return None
         # Resolve the iter-var INSTANCE out of ``beg`` instead of minting one from its name: a
@@ -369,11 +289,7 @@ class WidenAccesses(ppl.Pass):
         return step
 
     def _widen_non_transient_memlets(self, inner_sdfg: SDFG, name: str, iter_vars: tuple[str, ...]) -> bool:
-        """Widen single-element memlets on edges incident to a non-transient AN.
-
-        SYMMETRIC over read/write edges and subset/other_subset: per edge whose data is ``name``,
-        widen iter-var-dominated single-element dims on BOTH subsets to ``[beg : beg + W_k - 1]``.
-        """
+        # Widen single-element memlets on edges incident to a non-transient AN.
         changed = False
         for inner_state in inner_sdfg.states():
             for edge in inner_state.edges():
@@ -397,7 +313,7 @@ class WidenAccesses(ppl.Pass):
     # Step 3: propagate lane-dep through Tasklets (DFS / topological)
     @staticmethod
     def _tasklet_references_iter_var(tasklet: Tasklet, iter_vars: tuple[str, ...]) -> bool:
-        """True iff ``tasklet``'s code body references any tile iter-var name."""
+        # True iff ``tasklet``'s code body references any tile iter-var name.
         if tasklet.code is None:
             return False
         code_str = tasklet.code.as_string or ""
@@ -408,7 +324,7 @@ class WidenAccesses(ppl.Pass):
 
     @staticmethod
     def _data_names_of_edge(edge: MultiConnectorEdge[Memlet], side: str) -> list[str]:
-        """Collect all data names that ``edge`` references on ``side``."""
+        # Collect all data names that ``edge`` references on ``side``.
         # An ordering edge references no data at all; its endpoint's array name is not a touch.
         if edge.data is not None and edge.data.is_empty():
             return []
@@ -422,15 +338,9 @@ class WidenAccesses(ppl.Pass):
 
     @staticmethod
     def _index_promoted_names(inner_sdfg: SDFG) -> set[str]:
-        """Data names consumed as *index symbols*: appear as a free symbol in some interstate-edge
-        assignment RHS (``__sym_i_plus_offset1 = i_plus_offset1`` promotes scalar
-        ``i_plus_offset1`` to an index symbol used in subsets).
-
-        Such a transient is an address/index, not a data operand -> must NOT widen to a tile even
-        when its defining tasklet references an iter-var (tile load consumes it as the per-lane
-        base, kept scalar). Excluding these stops the index scalar becoming ``int64_t*`` and
-        breaking the ``__sym = i_plus_offset1`` codegen assignment.
-        """
+        # Data names consumed as *index symbols*: appear as a free symbol in some interstate-edge assignment RHS
+        # (``__sym_i_plus_offset1 = i_plus_offset1`` promotes scalar ``i_plus_offset1`` to an index symbol used in
+        # subsets).
         promoted: set[str] = set()
         names = set(inner_sdfg.arrays.keys())
         for edge in inner_sdfg.all_interstate_edges():
@@ -477,19 +387,7 @@ class WidenAccesses(ppl.Pass):
         return None
 
     def _propagate_lane_dep(self, inner_sdfg: SDFG, iter_vars: tuple[str, ...], nt_lane_dep: set[str]) -> set[str]:
-        """Forward-propagate lane-dep through Tasklets AND AN -> AN copies to a fixed point. Two
-        rules per step:
-
-        1. AN -> AN copy (``src --[src[i:i+W]]--> src_index``): lane-dep source -> dest transient
-           lane-dep. Needed when :class:`StageGlobalArrayThroughScalars` routes a lane-dep
-           non-transient through a bridge Scalar; widening the bridge lets
-           :class:`InsertTileLoadStore`'s input-staging audit accept the CopyND
-           ``src[i:i+W] -> bridge[0:W]`` edge.
-        2. Tasklet: any lane-dep input OR tile iter-var in the code body -> every output transient
-           lane-dep.
-
-        :returns: transient data names needing tile-shape widening.
-        """
+        # Forward-propagate lane-dep through Tasklets AND AN -> AN copies to a fixed point.
         lane_dep_transients: set[str] = set()
         # Index symbols (scalars promoted to symbols in subsets) are addresses,
         # not data -> stay scalar; excluded even if their tasklet uses an iter-var.
@@ -517,19 +415,9 @@ class WidenAccesses(ppl.Pass):
                     dst_name = edge.dst.data
                     if src_name not in nt_lane_dep and src_name not in lane_dep_transients:
                         continue
-                    # A CONSTANT (loop-invariant) read from a lane-dep source -- ``a[0]`` (or
-                    # ``a[j]`` with ``j`` an outer loop var) copied into a bridge, where ``a`` is
-                    # lane-dep only because ``a[i]`` is written elsewhere -- yields a value that is
-                    # identical across lanes. It must stay a Scalar broadcast operand (design 6.5),
-                    # NOT a per-lane tile: widening it leaves lanes 1..W-1 filled from a 1-element
-                    # copy (uninitialised) instead of broadcasting. Propagate lane-dep only when
-                    # THIS edge's source-side subset is itself lane-dependent -- EXCEPT when the
-                    # source is a scalar-like (widenable) lane-dep transient: it holds ONE per-lane
-                    # value, so a FULL copy of it is per-lane, never a fixed-element broadcast. Its
-                    # sole-element subset ``[0,...]`` only LOOKS constant; once the source is widened
-                    # to a tile the copy must widen too, else the copy's ``other_subset`` keeps the
-                    # stale pre-widen rank and ``validate`` rejects it ("other_subset does not match
-                    # node dimension").
+                    # A constant read (``a[0]``) from a lane-dep source is identical across lanes and must stay a Scalar
+                    # broadcast; propagate lane-dep only when this edge's source subset is lane-dependent. Exception: a
+                    # full copy of a scalar-like lane-dep transient is per-lane and must widen with its source.
                     src_desc = inner_sdfg.arrays.get(src_name)
                     src_is_scalar_like = (src_desc is not None and src_desc.transient and self._is_widenable(src_desc))
                     if not src_is_scalar_like:
@@ -590,20 +478,9 @@ class WidenAccesses(ppl.Pass):
 
     @staticmethod
     def _is_narrowed_constant_transient(inner_sdfg: SDFG, name: str, memo: dict[str, bool] | None = None) -> bool:
-        """True iff transient ``name`` is produced SOLELY by pure compile-time constant
-        assignments -- ``out = <numeric literal>`` or a SAME-DOMAIN dtype cast
-        ``out = TYPE(<numeric literal>)`` (fp -> fp / int -> int) with NO data inputs.
-
-        Such a scalar is a narrowed compile-time constant (design 6.5): the consuming tile
-        op splats it as a single-element broadcast operand, so it must stay a Scalar rather
-        than widen into a per-lane fill tile -- keeping ``dace.float16(0.125) * b`` on the
-        same broadcast path as the un-cast literal ``0.125 * b``. A cross-domain cast
-        (fp <-> int) is a real numeric conversion and is NOT matched (it stays widenable).
-        Any non-tasklet producer (a copy / lib node) or a data-input tasklet disqualifies
-        the name (it is a genuine produced per-lane value).
-
-        ``memo`` caches ``{name: bool}`` for one UNMUTATED ``inner_sdfg``.
-        """
+        # True iff transient ``name`` is produced SOLELY by pure compile-time constant assignments -- ``out = <numeric
+        # literal>`` or a SAME-DOMAIN dtype cast ``out = TYPE(<numeric literal>)`` (fp -> fp / int -> int) with NO data
+        # inputs.
         if memo is not None and name in memo:
             return memo[name]
         result = WidenAccesses._scan_narrowed_constant_transient(inner_sdfg, name)
@@ -613,7 +490,7 @@ class WidenAccesses(ppl.Pass):
 
     @staticmethod
     def _scan_narrowed_constant_transient(inner_sdfg: SDFG, name: str) -> bool:
-        """Uncached body of :meth:`_is_narrowed_constant_transient`."""
+        # Uncached body of :meth:`_is_narrowed_constant_transient`.
         desc = inner_sdfg.arrays.get(name)
         if desc is None:
             return False
@@ -647,21 +524,7 @@ class WidenAccesses(ppl.Pass):
                                    inner_sdfg: SDFG,
                                    iter_vars: tuple[str, ...],
                                    sym_defs: dict[str, Any] | None = None) -> bool:
-        """True if the copy edge's SOURCE-side subset has >=1 non-CONSTANT (lane-dependent) dim.
-
-        A fully-CONSTANT read (``a[0]``, or ``a[j]`` with ``j`` loop-invariant w.r.t. the tiled
-        iter-vars) produces a value identical across lanes, so the destination stays a Scalar
-        broadcast. Mirrors the CONSTANT test in :meth:`_classify_non_transients`; conservatively
-        returns ``True`` when the subset cannot be classified (matches that method's fallback).
-
-        :param edge: The AN -> AN copy edge.
-        :param state: The state holding the edge.
-        :param inner_sdfg: The body NSDFG.
-        :param iter_vars: The tiled iter-var names.
-        :param sym_defs: ``build_symbol_definition_map(inner_sdfg, state)``, when the caller holds
-            it; ``None`` rebuilds it inside ``classify_tile_access``, as before.
-        :returns: ``True`` if the read is lane-dependent (dest must widen), else ``False``.
-        """
+        # True if the copy edge's SOURCE-side subset has >=1 non-CONSTANT (lane-dependent) dim.
         try:
             sub = an_side_subset(edge, edge.src, inner_sdfg, state)
         except Exception:  # noqa: BLE001 -- helper may refuse exotic edges
@@ -681,7 +544,6 @@ class WidenAccesses(ppl.Pass):
     # Step 4: widen lane-dep transient descriptors
     def _accesses_bind_a_tile_var(self, inner_sdfg: SDFG, name: str, iter_vars: tuple[str, ...],
                                   memo: dict[str, bool]) -> bool:
-        """:func:`data_is_lane_indexed`, memoized for the duration of one fixpoint."""
         hit = memo.get(name)
         if hit is None:
             hit = data_is_lane_indexed(inner_sdfg, name, iter_vars)
@@ -690,12 +552,7 @@ class WidenAccesses(ppl.Pass):
 
     @staticmethod
     def _is_widenable(desc: dd.Data) -> bool:
-        """``Scalar`` or any length-1 ``Array`` transient -> widenable to tile.
-
-        Length-1 = literal ``(1,)`` OR any shape simplifying to all-1 (``(1, 1)``,
-        ``(k,)`` with k statically 1). Such scalar-like frontend artifacts get the
-        same treatment as ``dd.Scalar``.
-        """
+        # ``Scalar`` or any length-1 ``Array`` transient -> widenable to tile.
         if isinstance(desc, dd.Scalar):
             return True
         if isinstance(desc, dd.Array):
@@ -710,16 +567,7 @@ class WidenAccesses(ppl.Pass):
 
     @staticmethod
     def _unwidenable_lane_dep_error(name: str, desc: dd.Data) -> NotImplementedError:
-        """Build the refusal for a lane-dependent transient we cannot widen.
-
-        A lane-dependent transient must become a per-lane tile of shape ``widths``,
-        which only ``Scalar``/length-1 buffers support. A genuine multi-element
-        per-lane buffer (e.g. a 2-element sliding window ``tmp[0:2] = a[i:i+2]``)
-        would need a ``(W, ...)`` widening the descent does not implement. Refuse
-        loudly with ``NotImplementedError`` rather than silently leaving it
-        under-widened (which the post-widen invariant would later flag as a broken
-        invariant instead of an honest unsupported-pattern refusal).
-        """
+        # Build the refusal for a lane-dependent transient we cannot widen.
         return NotImplementedError(f"WidenAccesses: lane-dependent transient '{name}' has non-scalar shape "
                                    f"{tuple(desc.shape)}; widening a multi-element per-lane buffer to (W, ...) is "
                                    f"unsupported. Refusing rather than emitting an under-widened tile.")
@@ -729,14 +577,9 @@ class WidenAccesses(ppl.Pass):
                                inner_sdfg: SDFG,
                                iter_vars: tuple[str, ...],
                                iter_var_ubs: dict[str, Any] | None = None) -> int:
-        """Seed per-lane symbols + iedge assignments (via :func:`emit_per_lane_symbol_fanout`) for
-        every Bypass-form gather memlet on a non-transient AN (begin is a bare interstate symbol
-        from ``__sym = idx[i]``). Downstream :class:`InsertTileLoadStore` gather-index path
-        consumes them.
-
-        :returns: number of (AN, k) pairs seeded.
-        """
-        widths = self.lane_widths(iter_vars)
+        # Seed per-lane symbols + iedge assignments (via :func:`emit_per_lane_symbol_fanout`) for every Bypass-form
+        # gather memlet on a non-transient AN (begin is a bare interstate symbol from ``__sym = idx[i]``).
+        widths = lane_widths(self.widths, iter_vars)
         seeded = 0
         # Fanout adds interstate assignments, so both caches are dropped after every success.
         scan_cache: dict[int, Any] = {}
@@ -790,13 +633,7 @@ class WidenAccesses(ppl.Pass):
                          name: str,
                          to_widen: set[str],
                          widths: tuple[int, ...] | None = None) -> bool:
-        """Swap descriptor to ``Array(widths)`` + rewrite touching memlets.
-
-        Returns True on rewrite, False if not eligible.
-
-        ``to_widen`` is the full set of transients being widened this sweep; it tells the
-        ``other_subset`` rewrite which endpoints become tiles versus which stay scalar.
-        """
+        # Swap descriptor to ``Array(widths)`` + rewrite touching memlets.
         desc = inner_sdfg.arrays.get(name)
         if desc is None or not desc.transient or not self._is_widenable(desc):
             return False
@@ -817,13 +654,8 @@ class WidenAccesses(ppl.Pass):
                     own = "subset"
                 elif (edge.data.other_subset is not None
                       and any(isinstance(ep, AccessNode) and ep.data == name for ep in (edge.src, edge.dst))):
-                    # WHICH side ``subset`` describes is the memlet's orientation, not the endpoint
-                    # being widened: an AN-to-AN copy names one endpoint in ``data``, and a copy
-                    # built from the OTHER end carries this name's region in ``other_subset``.
-                    # Matching on ``data`` alone skipped such an edge entirely, leaving the copy at
-                    # its pre-widen single-element rank against a descriptor that is now a W-element
-                    # tile -- the "Dimensionality mismatch between src/dst subsets" the symmetric
-                    # widening below exists to prevent.
+                    # Which side ``subset`` describes follows the memlet orientation, not the endpoint being widened;
+                    # matching on ``data`` alone skipped copies built from the other end.
                     own = "other_subset"
                 else:
                     continue
@@ -836,19 +668,9 @@ class WidenAccesses(ppl.Pass):
                 # ``subset.num_elements()``. Stale ``volume=1`` from the Scalar memlet would copy
                 # only 1 element of the W-element tile.
                 edge.data.volume = new_sub.num_elements()
-                # Widen the opposite side symmetrically (AN -> AN copy ``a[i] -> b[0]``); else
-                # validator trips ``Dimensionality mismatch between src/dst subsets``. But a WCR
-                # SCALAR / single-element reduction target (a scalar accumulator ``_nnr_out``, or a
-                # broadcast SOURCE scalar read into a tile) stays single-element -- the tile folds
-                # INTO it (TileReduce) or broadcasts FROM it, never a per-lane copy. Over-widening
-                # it to ``[0:W]`` on a shape-``(1,)`` array is out-of-bounds. Keep it un-widened
-                # when the OTHER endpoint stays single-element (not itself a tile being widened
-                # this sweep).
-                # Only when ``subset`` IS this name's side. On the flipped orientation the opposite
-                # side is the other array's own region in its own terms (a non-transient read
-                # ``A[i]``, widened to ``A[i:i+W]`` by ``_widen_non_transient_memlets``, or another
-                # transient widened by its own sweep) -- overwriting it with the tile range would
-                # rewrite ``A[i]`` to ``A[0:W]`` and read the wrong elements.
+                # Widen the opposite side symmetrically (``a[i] -> b[0]``) unless it is a single-element WCR target
+                # or broadcast source the tile folds into or reads from. Only when ``subset`` is this name's side:
+                # on the flipped orientation the other side is another array's own region (``A[i]``).
                 if own == "subset" and edge.data.other_subset is not None and self._other_endpoint_widens(
                         edge, name, inner_sdfg, to_widen):
                     edge.data.other_subset = subsets.Range(list(target_range.ranges))
@@ -857,10 +679,8 @@ class WidenAccesses(ppl.Pass):
     @staticmethod
     def _other_endpoint_widens(edge: MultiConnectorEdge[Memlet], name: str, inner_sdfg: SDFG,
                                to_widen: set[str]) -> bool:
-        """True if the endpoint of ``edge`` OPPOSITE the ``name`` side becomes a tile -- so its
-        ``other_subset`` must widen too. False for a single-element endpoint that stays scalar (a
-        WCR reduction accumulator / broadcast source), whose ``other_subset`` must remain ``[0]``.
-        """
+        # True if the endpoint of ``edge`` OPPOSITE the ``name`` side becomes a tile -- so its ``other_subset`` must
+        # widen too.
         if isinstance(edge.src, AccessNode) and edge.src.data == name:
             other = edge.dst
         else:
@@ -879,12 +699,7 @@ class WidenAccesses(ppl.Pass):
 
     # Step 0: lower seeded reduction copybacks to a fold tasklet
     def _boundary_reduction_wcr(self, state: SDFGState, nsdfg_node: NestedSDFG, oc: str) -> str | None:
-        """The reduction WCR lambda on the OUTER boundary of output connector ``oc``, else ``None``.
-
-        ``NormalizeWCR`` routes a map reduction as ``NSDFG[oc] -> _nnr_out -[wcr:op]-> MapExit ->
-        acc``; the op rides an edge just past the connector -- directly on the connector out-edge,
-        or one hop later through the interposed ``_nnr_out`` AccessNode.
-        """
+        # The reduction WCR lambda on the OUTER boundary of output connector ``oc``, else ``None``.
         for oe in state.out_edges(nsdfg_node):
             if oe.src_conn != oc:
                 continue
@@ -903,15 +718,8 @@ class WidenAccesses(ppl.Pass):
         return None
 
     def _lower_reduction_copybacks(self, state: SDFGState, nsdfg_node: NestedSDFG, inner_sdfg: SDFG) -> int:
-        """Rewrite each seeded reduction copyback ``priv[0] -> oc[0]`` (plain body-local copy into a
-        write-only output connector whose boundary carries a reduction WCR) into a ``reduce_accum``
-        fold tasklet ``oc = oc <op> priv``. Returns the number rewritten.
-
-        The op is read off the OUTER boundary WCR (only WidenAccesses sees both the body and its
-        enclosing state). After ``priv`` widens to a tile, :class:`ConvertTaskletsToTileOps` folds
-        the tile-in scalar-out tasklet to a ``TileReduce`` -- the same shape the unmasked reduction
-        (``lower_reduction_wcr_in_body``'s ``reduce_accum``) already takes.
-        """
+        # Rewrite each seeded reduction copyback ``priv[0] -> oc[0]`` (plain body-local copy into a write-only output
+        # connector whose boundary carries a reduction WCR) into a ``reduce_accum`` fold tasklet ``oc = oc <op> priv``.
         from dace.transformation.dataflow.wcr_conversion import _wcr_augassign_body
         rewritten = 0
         for oc in list(nsdfg_node.out_connectors):
@@ -949,12 +757,7 @@ class WidenAccesses(ppl.Pass):
 
     def _rewrite_copyback_to_fold(self, ist: SDFGState, edge: MultiConnectorEdge[Memlet], oc: str,
                                   body_expr: str) -> None:
-        """Replace one ``priv[0] -> oc[0]`` copyback edge with ``oc = oc <op> priv``.
-
-        ``__in1`` reads the accumulator sink back (the standard aug-assign shape); the downstream
-        ``TileReduce`` conversion DANGLES this read (it folds the whole tile in one shot), so the
-        pre-fold value never contributes -- matching ``lower_reduction_wcr_in_body``.
-        """
+        # Replace one ``priv[0] -> oc[0]`` copyback edge with ``oc = oc <op> priv``.
         priv_node = edge.src
         priv_sub = copy.deepcopy(edge.data.subset)
         oc_sub = (copy.deepcopy(edge.data.other_subset) if edge.data.other_subset is not None else subsets.Range([(0, 0,
@@ -973,7 +776,8 @@ class WidenAccesses(ppl.Pass):
             the SDFG, or ``None`` if zero.
         """
         total = 0
-        for _state, nsdfg_node, map_entry, map_widths in self._body_nsdfgs(sdfg):
+        for state, nsdfg_node, map_entry in tile_body_nsdfgs(sdfg, self.widths):
+            map_widths = map_tile_widths(state, map_entry, self.widths)
             K = len(map_widths)
             iter_vars = tuple(map_entry.map.params[len(map_entry.map.params) - K:])
             inner_sdfg = nsdfg_node.sdfg
@@ -986,14 +790,9 @@ class WidenAccesses(ppl.Pass):
                     iter_var_ubs[iter_vars[d]] = map_entry.map.range[full_d][1]
             except Exception:  # noqa: BLE001
                 iter_var_ubs = {}
-            # Step 0: lower a seeded reduction COPYBACK (``priv[0] -> oc[0]`` plain copy into a
-            # write-only output connector whose boundary edge carries a reduction WCR) into an
-            # explicit ``reduce_accum`` tasklet, BEFORE widening. Once ``priv`` widens to a tile,
-            # ``ConvertTaskletsToTileOps`` folds the tile-in scalar-out tasklet to a ``TileReduce``.
-            # A masked map reduction (``if c: acc op= x``) reaches here as ``NormalizeWCR``'s
-            # seeded body-local accumulator + plain copyback, which -- left as a plain copy --
-            # over-widens the scalar sink instead of folding. No-op on non-reduction bodies.
-            total += self._lower_reduction_copybacks(_state, nsdfg_node, inner_sdfg)
+            # Step 0: lower a seeded reduction copyback (``priv[0] -> oc[0]`` into a WCR output connector) to a
+            # ``reduce_accum`` tasklet before widening, so it folds into a TileReduce instead of over-widening.
+            total += self._lower_reduction_copybacks(state, nsdfg_node, inner_sdfg)
             # Step 1: classify non-transients (which need lane-dep treatment).
             nt_lane_dep = self._classify_non_transients(inner_sdfg, iter_vars)
             # A per-lane gather index that only reaches its subset through a staged scalar has

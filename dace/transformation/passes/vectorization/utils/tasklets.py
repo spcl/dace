@@ -5,6 +5,7 @@
 path; the ``EmitCtx`` / ``_generate_code`` helpers pick per-template C++ from an
 operator classification, falling back to a scalar lane loop.
 """
+import ast
 from dataclasses import dataclass
 
 import dace
@@ -27,6 +28,22 @@ def is_python_tasklet(node: 'dace.nodes.Tasklet') -> bool:
     return node.language == dace.dtypes.Language.Python
 
 
+def stripped_tasklet_body(node: 'dace.nodes.Tasklet') -> str:
+    """``node``'s code with surrounding whitespace and trailing ``;`` removed."""
+    return node.code.as_string.strip().rstrip(";").strip()
+
+
+def single_assignment(code: str) -> ast.Assign | None:
+    """Parse ``code`` and return its body iff it is one bare ``Assign``."""
+    try:
+        tree = ast.parse((code or "").strip())
+    except SyntaxError:
+        return None
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+        return None
+    return tree.body[0]
+
+
 def is_vectorizable_tasklet(state: 'dace.SDFGState', node: 'dace.nodes.Tasklet') -> bool:
     """Whether the vectorizer may rewrite ``node`` INTO LANES.
 
@@ -38,6 +55,34 @@ def is_vectorizable_tasklet(state: 'dace.SDFGState', node: 'dace.nodes.Tasklet')
     if state.entry_node(node) is None:
         return False
     return is_python_tasklet(node)
+
+
+def lane_loop_code(widths: tuple[int, ...], rhs: str) -> str:
+    """C++ body writing ``rhs`` to every lane of the row-major ``_out`` tile of shape ``widths``.
+
+    Each dim is a ``constexpr``-bounded ``DACE_UNROLL`` loop over ``__l<d>``, which the compiler
+    lowers to SIMD.
+
+    :param widths: Tile shape, innermost-last.
+    :param rhs: C++ expression stored per lane; may reference ``__l<d>``.
+    """
+    K = len(widths)
+    parts = []
+    for i in range(K):
+        inner = 1
+        for q in range(i + 1, K):
+            inner *= widths[q]
+        parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
+    flat = " + ".join(parts) if parts else "0"
+    code_lines = []
+    for d in range(K):
+        code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
+        code_lines.append(f"{'    ' * d}DACE_UNROLL")
+        code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
+    code_lines.append(f"{'    ' * K}_out[{flat}] = {rhs};")
+    for d in reversed(range(K)):
+        code_lines.append(f"{'    ' * d}}}")
+    return "\n".join(code_lines)
 
 
 def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
@@ -67,7 +112,6 @@ def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
     from dace.codegen.common import sym2cpp
     sdfg = inner_state.sdfg
     widths = tuple(int(w) for w in widths)
-    K = len(widths)
     # Substitute each tile iter-var ``v -> (v + __l<k>)`` INSIDE the (possibly non-affine)
     # expression, then render to C++ via ``sym2cpp`` so ``**`` becomes multiplication, ``py_mod``
     # stays ``py_mod`` etc. -- a raw string keeps Python ``**`` which is invalid C++.
@@ -83,26 +127,10 @@ def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
                                           transient=True,
                                           storage=dtypes.StorageType.Register,
                                           find_new_name=True)
-    parts = []
-    for i in range(K):
-        inner = 1
-        for q in range(i + 1, K):
-            inner *= widths[q]
-        parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
-    flat = " + ".join(parts) if parts else "0"
-    code_lines = []
-    for d in range(K):
-        code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
-        code_lines.append(f"{'    ' * d}DACE_UNROLL")
-        code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
-    cast = index_desc.dtype.ctype
-    code_lines.append(f"{'    ' * K}_out[{flat}] = ({cast})({body_expr});")
-    for d in reversed(range(K)):
-        code_lines.append(f"{'    ' * d}}}")
     tasklet = inner_state.add_tasklet(name=f"{LANE_ID_MATERIALISER_PREFIX}{arr_name}",
                                       inputs=set(),
                                       outputs={"_out"},
-                                      code="\n".join(code_lines),
+                                      code=lane_loop_code(widths, f"({index_desc.dtype.ctype})({body_expr})"),
                                       language=dtypes.Language.CPP)
     out_an = inner_state.add_access(arr_name)
     out_subset = ", ".join(f"0:{w}" for w in widths)

@@ -19,6 +19,7 @@ import dace
 from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
+from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
 
 _INFIX_OPS = {"+", "-", "*", "/", "&", "|", "^"}
 _FUNCALL_OPS = {"max", "min"}
@@ -141,17 +142,6 @@ class ReductionInfo:
     identity: str
 
 
-def _single_assignment(code: str) -> ast.Assign | None:
-    """Parse ``code`` and return its body iff it is one bare ``Assign``."""
-    try:
-        tree = ast.parse((code or "").strip())
-    except SyntaxError:
-        return None
-    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-        return None
-    return tree.body[0]
-
-
 def _reduction_op_and_operands(rhs: ast.AST) -> tuple[str, list[ast.expr]] | None:
     """``(op_token, [operand_ast, ...])`` for a reduction RHS, or ``None``.
 
@@ -202,7 +192,7 @@ def recognize_reduction(state: "dace.SDFGState", tasklet: "dace.nodes.Tasklet") 
         return None
     if tasklet.code.language != dace.dtypes.Language.Python:
         return None
-    assign = _single_assignment(tasklet.code.as_string)
+    assign = single_assignment(tasklet.code.as_string)
     if assign is None or len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
         return None
     parsed = _reduction_op_and_operands(assign.value)
@@ -278,7 +268,7 @@ def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> str
     """
     if not isinstance(tasklet, dace.nodes.Tasklet) or tasklet.code.language != dace.dtypes.Language.Python:
         return None
-    assign = _single_assignment(tasklet.code.as_string)
+    assign = single_assignment(tasklet.code.as_string)
     if assign is None or len(assign.targets) != 1:
         return None
     parsed = _reduction_op_and_operands(assign.value)

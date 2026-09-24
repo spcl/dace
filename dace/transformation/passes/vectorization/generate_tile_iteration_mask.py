@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``GenerateTileIterationMask`` — allocate the K-dim ``_tile_iter_mask``
+"""``GenerateTileIterationMask`` -- allocate the K-dim ``_tile_iter_mask``
 transient and the producing :class:`TileMaskGen` lib node inside every
 K-dim eligible inner-map outer scope.
 
@@ -17,8 +17,8 @@ from dace.transformation.passes.analysis import scopes
 from dace.libraries.tileops import TileMaskGen
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER, TILE_MAIN_MARKER,
                                                                                    TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import (is_vectorizable_map, map_body_nodes,
-                                                                           map_tile_widths)
+from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
+                                                                           map_body_nodes, map_tile_widths)
 from dace.transformation.passes.vectorization.utils.mask_scaffold import (prepend_dominating_init_state,
                                                                           thread_symbols_into_nsdfg)
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
@@ -37,7 +37,7 @@ class GenerateTileIterationMask(ppl.Pass):
     every downstream :class:`TileLoad` / :class:`TileBinop` /
     :class:`TileStore` placed inside the same scope.
 
-    Idempotent — re-running on an already-masked map is a no-op.
+    Idempotent -- re-running on an already-masked map is a no-op.
     """
 
     CATEGORY: str = "Vectorization Preparation"
@@ -55,8 +55,7 @@ class GenerateTileIterationMask(ppl.Pass):
         :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}``.
         """
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"GenerateTileIterationMask: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("GenerateTileIterationMask", widths)
         self.widths = list(widths)
 
     def modifies(self) -> ppl.Modifies:
@@ -68,13 +67,7 @@ class GenerateTileIterationMask(ppl.Pass):
         return False
 
     def _spec_for(self, state: dace.SDFGState, map_entry: MapEntry) -> TileDimSpec | None:
-        """Rebuild a :class:`TileDimSpec` from a map's tiled params (:func:`map_tile_widths`).
-
-        :param state: The state holding ``map_entry``.
-        :param map_entry: Inner map entry.
-        :returns: A fresh :class:`TileDimSpec` covering the K innermost
-            dims; ``global_ubs[k]`` is ``str(ub_k + 1)`` (exclusive). ``None`` for an untiled map.
-        """
+        # Rebuild a :class:`TileDimSpec` from a map's tiled params (:func:`map_tile_widths`).
         widths = map_tile_widths(state, map_entry, tuple(self.widths))
         if not widths:
             return None
@@ -87,21 +80,7 @@ class GenerateTileIterationMask(ppl.Pass):
 
     def _attach_mask(self, resolver: scopes.ScopedSymbolResolver, parent_sdfg: dace.SDFG, parent_state: dace.SDFGState,
                      map_entry: MapEntry, spec: TileDimSpec) -> bool:
-        """Add the mask transient + producer :class:`TileMaskGen` INSIDE the body NSDFG.
-
-        Per design 6.5 / 6.7 + user direction 2026-06-10: the mask lives where
-        the lib nodes consume it — inside the body NSDFG. The walker + converter
-        detect the inner ``_tile_iter_mask`` AccessNode and wire ``has_mask=True``
-        + ``_mask`` onto TileLoad / TileStore / Tile{Binop,Unop,ITE,Reduce}.
-
-        :param resolver: The pass run's shared symbol resolver.
-        :param parent_sdfg: SDFG owning ``parent_state``.
-        :param parent_state: State holding the inner map.
-        :param map_entry: Inner map entry.
-        :param spec: Per-dim tile specification.
-        :returns: ``True`` when a mask was added; ``False`` if the body NSDFG
-            already has a ``TileMaskGen`` (idempotent per-map).
-        """
+        # Add the mask transient + producer :class:`TileMaskGen` INSIDE the body NSDFG.
         # Scope membership, NOT ``all_nodes_between``: that walk discards its whole result on reaching a
         # node with no out-edge -- a write-only scratch scalar is exactly one -- and the mask was then
         # skipped over a body that HAS its NSDFG. ``ConvertTaskletsToTileOps`` finds that same NSDFG
@@ -195,13 +174,13 @@ class GenerateTileIterationMask(ppl.Pass):
             if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: no mask
                 continue
             # ``__tile_k1_tail`` postamble: K=1 widths=(1,), runs element by
-            # element. Every iteration is in bounds by construction — no mask.
+            # element. Every iteration is in bounds by construction -- no mask.
             if n.map.label.endswith(TILE_K1_TAIL_MARKER):
                 continue
             if specs is not None and n not in specs:
                 continue
             # The all-main interior region of a ``masked_tail`` split is fully
-            # in bounds on every tiled dim — skip the mask so the descent / emit
+            # in bounds on every tiled dim -- skip the mask so the descent / emit
             # lower it with ``has_mask=False`` (the fast path).
             if n.map.label.endswith(TILE_MAIN_MARKER):
                 continue

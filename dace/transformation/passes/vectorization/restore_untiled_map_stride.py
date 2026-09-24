@@ -35,7 +35,7 @@ from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileIota, TileITE,
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.transformation.passes.vectorization.utils.map_predicates import map_tile_widths
+from dace.transformation.passes.vectorization.utils.map_predicates import check_tile_widths, map_tile_widths
 
 #: Every tile library node the emit stage can leave behind. A map whose scope holds one of these
 #: WAS tiled, whatever any predicate would say about its body now.
@@ -66,8 +66,7 @@ class RestoreUntiledMapStride(ppl.Pass):
         :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}``.
         """
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"RestoreUntiledMapStride: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("RestoreUntiledMapStride", widths)
         self.widths = list(widths)
 
     def modifies(self) -> ppl.Modifies:

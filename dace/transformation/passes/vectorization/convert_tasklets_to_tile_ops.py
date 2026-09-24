@@ -2,10 +2,10 @@
 """Convert in-body tasklets to ``TileBinop`` / ``TileUnop`` / ``TileITE`` / ``TileReduce``.
 
 After :class:`InsertTileLoadStore` stages non-transient reads through tile transients,
-the body still holds raw per-lane scalar tasklets. Walk the same tile-tagged body NSDFGs,
-replace each with the matching tile lib node → post-expansion pure-loop body operates on
-tile-shape register transients (design 5.1 + 6.7). Handles binary / unary / ITE /
-masked-write / reduction shapes over Tile / Scalar / Symbol operands.
+the body still holds raw per-lane scalar tasklets. Walk the tile-tagged body NSDFGs and
+replace each with the matching tile lib node, so the expanded loop body operates on
+tile-shape register transients. Handles binary/unary/ITE/masked-write/reduction shapes
+over Tile/Scalar/Symbol operands.
 """
 import copy
 import re
@@ -18,51 +18,47 @@ from dace import properties
 from dace.libraries.tileops import (TileBinop, TileIota, TileITE, TileLoad, TileMaskGen, TileReduce, TileStore,
                                     TileUnop)
 from dace.sdfg import SDFG
-from dace.sdfg.nodes import CodeBlock, MapEntry, NestedSDFG, Tasklet
+from dace.sdfg.nodes import CodeBlock, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.broadcast import (is_scalar_or_len1_source, splat_scalar_to_tile)
 from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
-from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map, map_tile_widths
+from dace.transformation.passes.vectorization.utils.tasklets import lane_loop_code, stripped_tasklet_body
+from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, map_tile_widths,
+                                                                           tile_body_nsdfgs)
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, logical_binops_are_bool,
                                                                             mask_connectors_are_bool,
                                                                             no_duplicate_connector_edges,
                                                                             no_memlet_dim_mismatch)
 
-#: Binary ops → :class:`TileBinop`. Comparisons (``< <= > >= == !=``) produce bool tile
-#: outputs → :class:`TileITE` cond input (design 7.5). Powers arrive as the function-form
-#: ``pow`` / ``ipow`` (``PowerOperatorExpansion`` rewrites a LITERAL integer exponent > 1 to an
-#: unrolled product; ``RelaxIntegerPowers`` relaxes an integer-exponent ``pow`` → ``ipow``).
-#: ``**`` is retained: every exponent the expansion does not take stays a bare operator.
+#: Binary ops -> :class:`TileBinop`. Comparisons produce bool tile outputs -> :class:`TileITE`
+#: cond input. ``pow``/``ipow`` are the function-form power spellings; ``**`` stays for any
+#: exponent ``PowerOperatorExpansion``/``RelaxIntegerPowers`` did not rewrite.
 _SUPPORTED_BINOPS = {
     "+", "-", "*", "/", "%", "py_mod", "**", "pow", "ipow", "min", "max", "atan2", "hypot", "fmod", "<", "<=", ">",
     ">=", "==", "!=", "&&", "||", "&", "|", "^"
 }
 
-#: Binops in function-call form ``op(a, b)``, not infix. ``pow`` / ``ipow`` are the canonical power spellings; ``**``
-#: keeps its own infix case below.
+#: Binops in function-call form ``op(a, b)``, not infix. ``**`` keeps its own infix case below.
 _FUNCTION_FORM_BINOPS = ("min", "max", "py_mod", "atan2", "hypot", "fmod", "pow", "ipow")
 
-#: Call spellings a function-form binop can carry in a tasklet body. ``Min`` / ``Max`` are
-#: CAPITALIZED by the symbolic printer -- sympy derives them from ``Application`` rather than
-#: ``Function``, and the printer emits the DaCe runtime's variadic ``Min`` / ``Max`` -- so a body
-#: reaching the converter spells them that way while the op label stays lowercase. CloudSC's
-#: ``Min(1.0, __t0)`` matched none of the lowercase forms and stayed a scalar tasklet, which the
-#: orchestrator can only answer by refusing the whole SDFG.
+#: Call spellings a function-form binop can carry. The sympy symbolic printer emits the
+#: runtime's variadic ``Min``/``Max`` (capitalized); missing this alias left CloudSC's
+#: ``Min(1.0, __t0)`` unmatched and forced the orchestrator to refuse the whole SDFG.
 _CALL_ALIASES = {"min": ("min", "Min"), "max": ("max", "Max")}
 
 
 def _call_spellings(op: str) -> Tuple[str, ...]:
-    """Every name ``op`` can appear under in a function-form call body."""
+    # Every name ``op`` can appear under in a function-form call body.
     return _CALL_ALIASES.get(op, (op, ))
 
 
 #: Comparison ops: result dtype ``bool`` regardless of operand dtype (``double > double
-#: → bool``). :meth:`_convert_binop`'s mixed-dtype guard excludes output dtype from
+#: -> bool``). :meth:`_convert_binop`'s mixed-dtype guard excludes output dtype from
 #: operand-uniformity for these.
 _COMPARISON_BINOPS = {"<", "<=", ">", ">=", "==", "!="}
 
-#: Reduction ops → :class:`TileReduce`: associative subset of :data:`_SUPPORTED_BINOPS`
+#: Reduction ops -> :class:`TileReduce`: associative subset of :data:`_SUPPORTED_BINOPS`
 #: (excludes non-associative ``-`` / ``/``).
 _SUPPORTED_REDUCE_OPS = {"+", "*", "min", "max"}
 
@@ -92,18 +88,15 @@ _SUPPORTED_UNOPS = {
 }
 
 #: Registered dtype-cast call names (``float64`` / ``int32`` / ...), from the dtype
-#: registry (never hardcoded). A call ``[dace.]<dtype>(<arg>)`` → ``TileUnop`` whose
+#: registry (never hardcoded). A call ``[dace.]<dtype>(<arg>)`` -> ``TileUnop`` whose
 #: ``op`` IS the dtype name (an explicit per-lane cast). Set membership (not a regex)
 #: excludes non-cast calls like ``int_floor``.
 _CAST_OP_NAMES = frozenset(s.split("::")[-1] for s in dace.dtypes.TYPECLASS_TO_STRING.values())
 
 
 def _cast_call_inner(rhs: str) -> Optional[Tuple[str, str]]:
-    """If ``rhs`` is a dtype-cast call ``[dace.]<dtype>(<arg>)``, return
-    ``(dtype_name, arg)`` (``dtype_name`` a registered cast op); else ``None``.
-
-    :param rhs: Tasklet-body RHS (paren-stripped).
-    """
+    # If ``rhs`` is a dtype-cast call ``[dace.]<dtype>(<arg>)``, return ``(dtype_name, arg)`` (``dtype_name`` a
+    # registered cast op); else ``None``.
     rhs = rhs.strip()
     open_idx = rhs.find("(")
     if open_idx < 0 or not rhs.endswith(")"):
@@ -223,19 +216,7 @@ def reanchor_order_edges(state: SDFGState, tasklet: Tasklet, replacement) -> Non
 
 
 def _normalize_python_tasklet_body(body: str) -> Optional[str]:
-    """Rewrite Python boolean syntax (``or`` / ``and``) to the C forms (``||`` / ``&&``)
-    the binop detectors match. Returns ``None`` for bodies containing ``@`` (matmul is
-    not per-lane element-wise, so refuse rather than mis-expand).
-
-    Lift-emitted tasklets (e.g. ``SameWriteSetIfElseToITECFG``'s ``combine_cond``) write
-    Python ``_o = (_c_0 or _c_1)``; without this the detectors miss them
-    (``_SUPPORTED_BINOPS`` only holds ``||`` / ``&&``) and codegen emits a scalar-bool
-    assign into a widened ``bool*`` tile — a hard compile error. Unary ``not`` is left
-    for ``_detect_unop`` (→ ``TileUnop(op='!')``); mapping it to ``x ^ 1`` would be
-    XOR-with-1, not logical NOT, and break on a scalar-bool ``x``.
-
-    :param body: Stripped tasklet body (no trailing ``;``).
-    """
+    # Rewrite Python boolean syntax (``or`` / ``and``) to the C forms (``||`` / ``&&``) the binop detectors match.
     if '@' in body:
         return None
     out = re.sub(r'\bor\b', '||', body)
@@ -314,8 +295,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         :raises ValueError: If ``widths`` length is not in ``{1, 2, 3}``.
         """
         super().__init__()
-        if not (1 <= len(widths) <= 3):
-            raise ValueError(f"ConvertTaskletsToTileOps: widths length {len(widths)} not in {{1, 2, 3}}")
+        check_tile_widths("ConvertTaskletsToTileOps", widths)
         self.widths = tuple(widths)
         self.body_widths = self.widths
 
@@ -329,15 +309,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return set()
 
     def _is_lane_id_dependent(self, expr: str, iter_vars: Tuple[str, ...]) -> bool:
-        """True if ``expr`` references any tile iter_var (lane-id-dependent Symbol).
-
-        Iter_var-dependent Symbols differ per lane → cannot broadcast; must materialise
-        as tile-shape transients. Independent ones are loop-invariant and embed inline as
-        ``expr_a`` / ``expr_b`` on the lib node.
-
-        :param expr: Expression string (e.g. ``"N + 1"``, ``"2 * ii + jj"``).
-        :param iter_vars: Tile dim iter_var names (e.g. ``("ii", "jj")``).
-        """
+        # True if ``expr`` references any tile iter_var (lane-id-dependent Symbol).
         try:
             tokens = set(dace.symbolic.SymExpr(expr).free_symbols)
         except Exception:  # noqa: BLE001
@@ -349,17 +321,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _resolve_symbol_operand(self, inner_state: SDFGState, expr: str,
                                 iter_vars: Tuple[str, ...]) -> Tuple[str, Optional[str], Optional[str]]:
-        """Resolve a Symbol-shaped operand into either:
-
-        * invariant ``Symbol`` → ``(kind="Symbol", expr=<expr>, an_name=None)``,
-        * lane-id-dependent ``Tile`` → ``(kind="Tile", expr=None, an_name=<tile>)``,
-          materialising an int64 per-lane tile via :meth:`_materialise_lane_id_tile`.
-
-        Distinct from the gather-index path
-        (:meth:`InsertTileLoadStore._stage_index_via_tileops`): here iter_var ``ii`` is
-        the OUTER tile start, per-lane value ``ii + __l``; gather reads a data-dependent
-        ``idx[...]`` into an index tile (lane offset IS ``__l``). Do not conflate.
-        """
+        # Resolve a Symbol-shaped operand into either:
         if not iter_vars or not self._is_lane_id_dependent(expr, iter_vars):
             if iter_vars:
                 hidden = lane_dependent_through_interstate_assignment(inner_state, expr, iter_vars)
@@ -373,29 +335,19 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     @staticmethod
     def _per_lane_expr(expr: str, iter_vars: Tuple[str, ...]) -> str:
-        """C++ spelling of ``expr`` with each tile iter-var ``v`` expanded to ``v + __l<k>``."""
+        # C++ spelling of ``expr`` with each tile iter-var ``v`` expanded to ``v + __l<k>``.
         from dace import symbolic
         from dace.codegen.common import sym2cpp
         subs = {symbolic.symbol(v): symbolic.symbol(v) + symbolic.symbol(f"__l{k}") for k, v in enumerate(iter_vars)}
         return sym2cpp(symbolic.pystr_to_symbolic(expr).subs(subs))
 
     def _materialise_lane_id_tile(self, inner_state: SDFGState, expr: str, iter_vars: Tuple[str, ...]) -> str:
-        """Mint a per-lane int64 tile = ``expr`` at ``(iter_var_k -> iter_var_k + __l_k)``.
-
-        Thin wrapper over the shared :func:`materialise_lane_id_index_tile` (also used by
-        :meth:`InsertTileLoadStore._stage_index_via_tileops` for modular / non-affine gather
-        indices), so the per-lane materialisation lives in one place.
-        """
+        # Mint a per-lane int64 tile = ``expr`` at ``(iter_var_k -> iter_var_k + __l_k)``.
         from dace.transformation.passes.vectorization.utils.tasklets import materialise_lane_id_index_tile
         return materialise_lane_id_index_tile(inner_state, expr, iter_vars, tuple(self.body_widths)).data
 
     def _find_mask_an(self, inner_state: SDFGState):
-        """Find the AccessNode that :class:`TileMaskGen` WRITES to (its ``_o`` target).
-
-        Every lib-node ``_mask`` consumer reads from this SAME AccessNode so the SDFG
-        scheduler orders TileMaskGen before the consumers. Returns ``None`` when no
-        iteration mask is in scope (the divisible / unmasked case).
-        """
+        # Find the AccessNode that :class:`TileMaskGen` WRITES to (its ``_o`` target).
         from dace.sdfg.nodes import AccessNode
         for n in inner_state.nodes():
             if not isinstance(n, TileMaskGen):
@@ -403,12 +355,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             for out_edge in inner_state.out_edges(n):
                 if out_edge.src_conn == "_o" and isinstance(out_edge.dst, AccessNode):
                     return out_edge.dst
-        # Cross-state fallback: a masked-tail body NSDFG can split compute and store
-        # across states (TileMaskGen in one, TileReduce / TileBinop in another). The mask
-        # transient is SDFG-wide and states run producer-first, so read it here through a
-        # fresh AccessNode. Skipping this lowers the masked op UNMASKED — benign for
-        # elementwise (the masked store discards inactive lanes) but WRONG for TileReduce
-        # (folds past-the-tail lanes into the result).
+        # Cross-state fallback: the mask may come from a TileMaskGen in an earlier state. Lowering the op
+        # unmasked is benign for elementwise ops but folds past-the-tail lanes into a TileReduce.
         sdfg = inner_state.sdfg
         mask_names = {
             e.dst.data
@@ -423,18 +371,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _wire_mask(self, inner_state: SDFGState, lib_node, mask_an) -> None:
-        """Wire ``mask_an → lib_node._mask`` with a full-tile subset memlet.
-
-        Mask-combine contract (user 2026-06-12): if a ``_mask`` edge is ALREADY wired,
-        AND-combine the new condition with the existing one (before the consumer) via
-        :class:`TileBinop` ``op='&'`` over two bool tiles — no dedicated ``TileMaskAnd``
-        node. Today the pipeline wires iter-mask once and never re-wires, so this AND
-        path is not exercised yet.
-
-        Connector-name contract (user 2026-06-12): every K-dim tile lib node's gating
-        predicate is wired via ``_mask`` (TileLoad / Store / Binop / Unop / Reduce /
-        ITE — the last previously used ``_cond``).
-        """
+        # Wire ``mask_an -> lib_node._mask`` with a full-tile subset memlet.
         if mask_an is None:
             return
         subset = ", ".join(f"0:{w}" for w in self.body_widths)
@@ -442,7 +379,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if existing:
             # AND-combine: a ``_mask`` edge is already wired (e.g. a masked-write ``cond``
             # on a store already carrying the tile iteration mask). Emit ``TileBinop(op='&')``
-            # over the two bool tiles and rewire — the new condition gates in addition.
+            # over the two bool tiles and rewire -- the new condition gates in addition.
             existing_edge = existing[0]
             combined = self._and_mask_tiles(inner_state, existing_edge.src, mask_an)
             inner_state.remove_edge(existing_edge)
@@ -453,15 +390,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(mask_an, None, lib_node, "_mask", dace.Memlet(f"{mask_an.data}[{subset}]"))
 
     def _lock_mask_storage(self, sdfg: SDFG, name: str) -> None:
-        """Give a mask tile the ``Register`` storage the section 10.2 descriptor lock demands.
-
-        The container wired to a ``_mask`` connector is not always one this pass minted: a
-        ``MapFusionVertical`` carrier reaches a ``TileStore``'s mask on npbench ``mandelbrot1``,
-        and a carrier is created with ``Default`` storage, which infers to ``CPU_Heap`` at the top
-        level of a state. The lock is the consumer's requirement, so it is established where the
-        edge is made rather than hoped for. A tile-shaped transient bool array is a mask by
-        construction, and ``Register`` is what every mask this pass mints already carries.
-        """
+        # Give a mask tile the ``Register`` storage the section 10.2 descriptor lock demands.
         desc = sdfg.arrays.get(name)
         if not isinstance(desc, dace.data.Array) or not desc.transient:
             return
@@ -470,9 +399,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         desc.storage = dace.dtypes.StorageType.Register
 
     def _and_mask_tiles(self, inner_state: SDFGState, an_a, an_b):
-        """Mint a bool tile ``= an_a && an_b`` via :class:`TileBinop`, return its output
-        AccessNode. Both operands are ``widths``-shaped bool mask tiles; ``&&`` lowers
-        per-lane to logical AND and satisfies ``logical_binops_are_bool`` (bool in/out)."""
+        # Mint a bool tile ``= an_a && an_b`` via :class:`TileBinop`, return its output AccessNode.
         sdfg = inner_state.sdfg
         widths = tuple(self.body_widths)
         name, _ = sdfg.add_array("_mask_and",
@@ -490,51 +417,13 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(binop, "_c", combined, None, dace.Memlet(f"{name}[{subset}]"))
         return combined
 
-    def _body_nsdfgs(self, sdfg: SDFG):
-        """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
-
-        Mirror of the walker shape used by :class:`InsertTileLoadStore`.
-        Skips ``__scalar_tail`` (postamble step-1 loop) and ``__tile_k1_tail``
-        (pinned-K=1 postamble) since neither runs the K-D tile-op chain.
-        """
-        from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                           TILE_K1_TAIL_MARKER)
-        for node, parent in sdfg.all_nodes_recursive():
-            if not isinstance(node, MapEntry):
-                continue
-            if not isinstance(parent, SDFGState):
-                continue
-            try:
-                if not is_vectorizable_map(parent, node, len(self.widths)):
-                    continue
-            except (StopIteration, ValueError):
-                continue
-            if len(node.map.params) < len(self.widths):
-                continue
-            if node.map.label.endswith(SCALAR_TAIL_MARKER) or node.map.label.endswith(TILE_K1_TAIL_MARKER):
-                continue
-            try:
-                scope_nodes = parent.scope_subgraph(node, include_entry=False, include_exit=False).nodes()
-            except (StopIteration, ValueError):
-                continue
-            nsdfgs = [n for n in scope_nodes if isinstance(n, NestedSDFG)]
-            if len(nsdfgs) != 1:
-                continue
-            yield parent, nsdfgs[0], node
-
     def _detect_binop(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
-        """If ``tasklet`` is a simple binary ``_out = _a <op> _b`` body, return
-        ``(out_conn, a_conn, b_conn, op)``. Otherwise ``None``.
-
-        Accepts the 1-in-connector ``_out = _a <op> _a`` shape (same connector both
-        sides) -- ``PowerOperatorExpansion`` emits this for ``x**2``.
-        """
+        # If ``tasklet`` is a simple binary ``_out = _a <op> _b`` body, return ``(out_conn, a_conn, b_conn, op)``.
         if len(tasklet.out_connectors) != 1:
             return None
         if len(tasklet.in_connectors) == 1:
             # Same-connector-twice shape: ``_out = _a <op> _a``.
-            body = tasklet.code.as_string
-            body = body.strip().rstrip(";").strip()
+            body = stripped_tasklet_body(tasklet)
             out_conn = next(iter(tasklet.out_connectors))
             a_conn = next(iter(tasklet.in_connectors))
             body = _normalize_python_tasklet_body(body)
@@ -549,8 +438,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         if len(tasklet.in_connectors) != 2:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
         body = _normalize_python_tasklet_body(body)
@@ -574,17 +462,13 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _detect_fma(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
-        """If ``tasklet`` is a fused multiply-add ``__out = fma(__a, __b, __c)`` over three data
-        connectors, return ``(out_conn, a_conn, b_conn, c_conn)`` (``a*b + c``); else ``None``.
-
-        :class:`~dace.transformation.passes.vectorization.fuse_multiply_add.FuseMultiplyAdd` mints
-        this shape -- all three operands are data connectors -- so it lowers to a :class:`TileFMA`.
-        """
+        # If ``tasklet`` is a fused multiply-add ``__out = fma(__a, __b, __c)`` over three data connectors, return
+        # ``(out_conn, a_conn, b_conn, c_conn)`` (``a*b + c``); else ``None``.
         if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 3:
             return None
         if tasklet.language is not dace.dtypes.Language.Python:
             return None
-        body = _normalize_python_tasklet_body(tasklet.code.as_string.strip().rstrip(";").strip())
+        body = _normalize_python_tasklet_body(stripped_tasklet_body(tasklet))
         if body is None:
             return None
         out_conn = next(iter(tasklet.out_connectors))
@@ -597,18 +481,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return out_conn, a, b, c
 
     def _detect_binop_with_symbol(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str, str]]:
-        """Detect a binop with ONE Tile/Scalar operand and ONE Symbol operand.
-
-        Matches ``_out = _a <op> <expr>`` or ``_out = <expr> <op> _a`` where ``<expr>``
-        is an outer-scope symbol or numeric literal (not a connector). Returns
-        ``(out_conn, tile_or_scalar_conn, op, symbol_side, symbol_expr)``, ``symbol_side``
-        "a" (symbol LHS) or "b" (symbol RHS). Complements ``_detect_binop`` (2 in-conns):
-        the Symbol case has ONE in-connector, the other operand an inline string.
-        """
+        # Detect a binop with ONE Tile/Scalar operand and ONE Symbol operand.
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
         body = _normalize_python_tasklet_body(body)
@@ -651,21 +527,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _detect_affine_unit_with_symbol(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str, str]]:
-        """Detect a 1-tile-operand body AFFINE in that operand with unit coefficient.
-
-        Complements :meth:`_detect_binop_with_symbol`, whose textual split cannot isolate
-        the operand when it is BURIED among symbolic terms — e.g. reverse gather index
-        ``_o = (LEN_1D - _in0) - 1`` (TSVC s4114 ``c[LEN_1D - ip[i] - 1]``). Such a body is
-        ``coeff * _in0 + offset`` (``offset`` free of ``_in0``); ``coeff == +1`` →
-        ``_in0 + offset`` (side b), ``coeff == -1`` → ``offset - _in0`` (side a), each a
-        single-symbol :class:`TileBinop`. Returns the :meth:`_detect_binop_with_symbol`
-        tuple shape. Non-unit coefficients (need a multiply too) → ``None``.
-        """
+        # Detect a 1-tile-operand body AFFINE in that operand with unit coefficient.
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
-        body = _normalize_python_tasklet_body(tasklet.code.as_string.strip().rstrip(";").strip())
+        body = _normalize_python_tasklet_body(stripped_tasklet_body(tasklet))
         if body is None or not body.startswith(f"{out_conn} = "):
             return None
         rhs = body[len(f"{out_conn} = "):].strip()
@@ -688,16 +555,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None  # |coeff| != 1 needs a multiply too -- deferred
 
     def _detect_const_assign(self, tasklet: Tasklet) -> Optional[Tuple[str, str]]:
-        """If ``tasklet`` is a 0-in-connector pure constant / Symbol assignment
-        (``_o = <expr>``, no operator — a literal or Symbol), return ``(out_conn, expr)``;
-        else ``None``. The simplest output-side Symbol case (memset / broadcast /
-        set-to-zero); :meth:`_convert_const_assign` lowers it to a Symbol-source
-        ``TileLoad`` broadcast.
-        """
+        # ``(out_conn, expr)`` for a 0-in-connector ``_o = <literal or Symbol>``; else ``None``.
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         if not body.startswith(f"{out_conn} = "):
             return None
@@ -719,18 +580,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return out_conn, rhs
 
     def _reads_scalar_operand_inline(self, node) -> bool:
-        """True if ``node`` is a compute tasklet that reads a Scalar operand as an INLINE
-        broadcast when converted -- a plain binop (``_o = _a <op> _b``), a binop with an
-        inline symbol operand, a unary op / dtype cast, or a trivial assign. Those lower a
-        single-element operand to a ``_bc[1]`` splat / scalar-in ``TileUnop`` /
-        ``TileLoad(src_kind='Scalar')`` without a per-lane fill, so a same-domain constant
-        feeding them can stay a Scalar broadcast.
-
-        A ``TileITE`` arm / masked-write / reduction consumer materialises a scalar arm
-        through a per-lane fill instead, so it returns ``False`` (the constant keeps the
-        widened ``TileLoad(src_kind='Symbol')`` broadcast). Non-tasklet consumers (a tile
-        lib node, an AccessNode copy) likewise return ``False``.
-        """
+        # True if ``node`` is a compute tasklet that reads a Scalar operand as an INLINE broadcast when converted -- a
+        # plain binop (``_o = _a <op> _b``), a binop with an inline symbol operand, a unary op / dtype cast, or a
+        # trivial assign.
         if not isinstance(node, Tasklet):
             return False
         # An ITE / masked-write consumer must NOT keep a scalar arm (it would fill per lane).
@@ -741,16 +593,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_const_assign(self, inner_state: SDFGState, tasklet: Tasklet, detected, iter_vars: Tuple[str,
                                                                                                          ...]) -> bool:
-        """Replace ``_o = <const_expr>`` (loop-invariant literal / symbol store) with a
-        ``TileLoad(src_kind='Symbol')`` broadcast writing the value to every lane — no CPP
-        fill, no intermediate transient, no AN→AN copy (user 2026-06-15: const/symbol→tile
-        broadcast is a tile op). Symbol-source ``TileLoad`` declares no ``_src``; the
-        expansion embeds ``src_expr`` inline. A non-tile (true scalar) output stays a
-        single-statement python scalar tasklet — scalar→scalar needs no tile op.
-
-        "0 in-connectors" does NOT imply "loop-invariant": the RHS can name a tile iter_var,
-        or a symbol an interstate assignment ties to one (``b_index = b[i]``). Broadcasting
-        either splats lane 0 across the tile, so refuse instead of assuming."""
+        # Replace ``_o = <const_expr>`` (loop-invariant literal / symbol store) with a ``TileLoad(src_kind='Symbol')``
+        # broadcast writing the value to every lane -- no CPP fill, no intermediate transient, no AN->AN copy (user
+        # 2026-06-15: const/symbol->tile broadcast is a tile op).
         out_conn, expr = detected
         out_edges = data_out_edges(inner_state, tasklet)
         if not out_edges:
@@ -765,35 +610,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                                            f"assignment defining {hidden!r}; splatting it across the tile would "
                                            f"write lane 0's value")
         out_edge = out_edges[0]
-        # A pure SAME-DOMAIN compile-time constant (fp literal into an fp scalar, int into an
-        # int scalar) is a narrowed constant, not a produced per-lane value: keep it a Scalar
-        # so the consuming compute op splats it (a single-element broadcast operand), instead
-        # of widening it to a tile materialised by a preceding per-lane fill loop. This makes
-        # ``k = 0.125; ... A[i] * dace.float16(k)`` lower to the same broadcast shape as the
-        # inline literal ``0.125 * A[i]``. A cross-domain literal (fp -> int / int -> fp) is a
-        # real conversion and keeps the materialised lowering below. Domain is inferred from
-        # the output descriptor dtype (never hardcoded). The dtype-cast constant form
-        # ``dace.float16(0.125)`` is caught earlier by ``_convert_unop_with_symbol`` (a Symbol
-        # operand), so this only sees bare literals / symbol exprs.
-        #
-        # Gate on the consumer: only a plain binop / unop / assign reads a Scalar operand as an
-        # INLINE broadcast (``_bc[1] = {(T)(scalar)}`` on the TileBinop, a scalar-in TileUnop,
-        # or a ``TileLoad(src_kind='Scalar')`` copy) -- so a constant feeding one of those stays
-        # a Scalar. A ``TileITE`` arm / masked-write / reduction consumer instead materialises a
-        # scalar through a per-lane fill, and a ``TileStore`` ``_src`` / other lib node / AN
-        # copy needs the tile outright; for those the ``TileLoad(src_kind='Symbol')`` broadcast
-        # below is the clean lowering, so keep the widened form. Require EVERY consumer to be an
-        # inline-broadcasting compute tasklet before keeping the scalar.
+        # Keep a same-domain compile-time constant (fp literal into fp scalar, int into int) a Scalar so
+        # the consumer splats it, matching the inline-literal shape; cross-domain literals are conversions.
+        # Only when every consumer is a plain binop / unop / assign that broadcasts a Scalar inline; ITE,
+        # masked-write, reduction and store consumers need the widened tile.
         const_dst = out_edge.dst
         if (out_edge.data is not None and isinstance(const_dst, dace.nodes.AccessNode)):
             const_desc = inner_state.sdfg.arrays.get(const_dst.data)
-            # The keep-scalar shortcut only applies when the output is STILL single-element. A
-            # reduction SEED (``_nnr_priv = <identity>``) whose accumulator ``WidenAccesses``
-            # already widened to a ``(W,)`` tile is no longer a scalar: assigning a scalar into
-            # the tile pointer will not compile, and lanes 1..W-1 would be uninitialised. Skip
-            # the shortcut for an already-widened tile output and fall through to the
-            # ``TileLoad(src_kind='Symbol')`` broadcast fill below (which splats the identity
-            # across every lane).
+            # Only when the output is still single-element: a reduction seed whose accumulator is already a
+            # ``(W,)`` tile falls through to the Symbol broadcast fill.
             out_is_tile = (isinstance(const_desc, dace.data.Array)
                            and tuple(const_desc.shape) == tuple(self.body_widths))
             # An ordering edge's dst is not a consumer; counting it only ever loses the shortcut.
@@ -805,7 +630,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # scalar (non-widenable) output stays the python scalar assign.
         self._ensure_output_widened(inner_state, out_edge)
         # Tile broadcast ONLY when the output writes a tile-shape AccessNode transient. A
-        # const feeding directly into another tasklet (``__t = 0`` → an ITE-select operand)
+        # const feeding directly into another tasklet (``__t = 0`` -> an ITE-select operand)
         # has a Tasklet (no ``.data``) as ``out_edge.dst``; leave it as the scalar tasklet
         # the downstream tile op reads as a Symbol/Scalar broadcast.
         out_dst = out_edge.dst
@@ -836,21 +661,16 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return True
 
     def _detect_unop_with_symbol(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
-        """If ``tasklet`` is a 0-in-connector unary symbol body (``_o = <op>(<expr>)`` or
-        ``_o = -<expr>``), return ``(out_conn, op_label, expr)``; else ``None``.
-
-        Downstream lib node gets ``kind_a=Symbol`` + ``expr_a=<expr>``, no ``_a`` connector
-        (design 6.2: Symbol operands embedded inline).
-        """
+        # If ``tasklet`` is a 0-in-connector unary symbol body (``_o = <op>(<expr>)`` or ``_o = -<expr>``), return
+        # ``(out_conn, op_label, expr)``; else ``None``.
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         rhs = body[len(f"{out_conn} = "):]
         if rhs.startswith("(") and rhs.endswith(")"):
             rhs = rhs[1:-1].strip()
-        # Explicit dtype cast ``_o = dace.float64(<expr>)`` → TileUnop kind_a=Symbol,
+        # Explicit dtype cast ``_o = dace.float64(<expr>)`` -> TileUnop kind_a=Symbol,
         # op = the dtype name.
         hit = _cast_call_inner(rhs)
         if hit is not None:
@@ -876,18 +696,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _detect_binop_with_two_symbols(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, str]]:
-        """If ``tasklet`` is a 0-in-connector binary symbol body (``_o = <expr_a> <op> <expr_b>``
-        or ``_o = <op>(<expr_a>, <expr_b>)``), return ``(out_conn, op, expr_a, expr_b)``;
-        else ``None``.
-
-        Both operands inline Symbol exprs; downstream lib node built with ``kind_a=Symbol``,
-        ``kind_b=Symbol``, ``expr_a / expr_b`` set. Output may be Scalar (design 6.2:
-        all-Symbol → Scalar output).
-        """
+        # If ``tasklet`` is a 0-in-connector binary symbol body (``_o = <expr_a> <op> <expr_b>`` or ``_o =
+        # <op>(<expr_a>, <expr_b>)``), return ``(out_conn, op, expr_a, expr_b)``; else ``None``.
         if len(tasklet.in_connectors) != 0 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         rhs = body[len(f"{out_conn} = "):]
         if rhs.startswith("(") and rhs.endswith(")"):
@@ -938,19 +751,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _detect_unop(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
-        """If ``tasklet`` is a simple unary ``_out = <op>(_a)`` body (or ``_out = -_a``),
-        return ``(out_conn, a_conn, op_label)``. Otherwise ``None``.
-
-        Accepts both the DaCe-emitted parenthesised RHS form and the bare form.
-        ``op_label`` is one of :data:`_SUPPORTED_UNOPS`.
-        """
+        # If ``tasklet`` is a simple unary ``_out = <op>(_a)`` body (or ``_out = -_a``), return ``(out_conn, a_conn,
+        # op_label)``.
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
-        # Explicit dtype cast ``_o = dace.float64(_a)`` → TileUnop whose op IS the dtype
+        # Explicit dtype cast ``_o = dace.float64(_a)`` -> TileUnop whose op IS the dtype
         # name. DaCe may wrap the RHS in an extra paren layer; try as-is and stripped.
         rhs = body[len(f"{out_conn} = "):].strip()
         for cand in (rhs, rhs[1:-1].strip() if rhs.startswith("(") and rhs.endswith(")") else None):
@@ -964,7 +772,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             if body == form:
                 return out_conn, a_conn, "neg"
         # Logical NOT: Python ``not _a`` (keyword, not call). ``SameWriteSetIfElseToITECFG``
-        # emits ``_o = (not _c_0)`` → per-lane TileUnop(op='!'). Body is Python, so only
+        # emits ``_o = (not _c_0)`` -> per-lane TileUnop(op='!'). Body is Python, so only
         # ``not`` appears (never C ``!``).
         for form in (f"{out_conn} = not {a_conn}", f"{out_conn} = (not {a_conn})"):
             if body == form:
@@ -982,13 +790,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _operand_kind(self, inner_state: SDFGState, edge) -> str:
-        """Classify the lib-node operand kind from the source descriptor (design 6.5):
-        Scalar / length-1 Array source → ``"Scalar"`` (hardware splat across lanes);
-        tile-shape source (LINEAR / AFFINE / REPLICATE / MODULAR / GATHER) → ``"Tile"``.
-
-        :param inner_state: Inner SDFGState holding the edge.
-        :param edge: The wired in-edge to the tasklet / lib node connector.
-        """
+        # Classify the lib-node operand kind from the source descriptor (design 6.5): Scalar / length-1 Array source ->
+        # ``"Scalar"`` (hardware splat across lanes); tile-shape source (LINEAR / AFFINE / REPLICATE / MODULAR / GATHER)
+        # -> ``"Tile"``.
         import dace.data as dd
         if edge.data is None or edge.data.data is None:
             return "Tile"
@@ -1006,16 +810,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return "Tile"
 
     def _detect_reduction(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
-        """If ``tasklet`` is an in-place RMW reduction ``_acc = _acc <op> _val`` (or the
-        commutative ``_acc = _val <op> _acc``), return ``(acc_conn, val_conn, op)``; else
-        ``None``. Criteria: 2 in-conns + 1 out-conn; out-conn name matches an in-conn
-        (in-place RMW); body exactly ``<out> = <out> <op> <other>`` (or symmetric) with op
-        in :data:`_SUPPORTED_REDUCE_OPS`.
-
-        Post-walker shape: tile input on ``_val`` (from a bridge), scalar accumulator on
-        ``_acc``; ``TileReduce`` folds the full tile to a single boundary scalar write
-        (user 2026-06-09).
-        """
+        # If ``tasklet`` is an in-place RMW reduction ``_acc = _acc <op> _val`` (or the commutative ``_acc = _val <op>
+        # _acc``), return ``(acc_conn, val_conn, op)``; else ``None``.
         if len(tasklet.in_connectors) != 2 or len(tasklet.out_connectors) != 1:
             return None
         out_conn = next(iter(tasklet.out_connectors))
@@ -1026,8 +822,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         if len(other_conns) != 1:
             return None
         other_conn = other_conns[0]
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         for op in _SUPPORTED_REDUCE_OPS:
             if op in _FUNCTION_FORM_BINOPS:
                 forms = tuple(f"{out_conn} = {name}({x}, {y})" for name in _call_spellings(op)
@@ -1047,27 +842,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _detect_augassign_reduction(self, inner_state: SDFGState, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
-        """Recognize the standard ``WCRToAugAssign`` reduction ``__out = __in1 op __in2``.
-
-        Unlike :meth:`_detect_reduction`'s same-connector RMW, ``WCRToAugAssign`` uses
-        DISTINCT connector names (one input reads the accumulator back, the other is the
-        addend, ``__out`` writes the accumulator). Recognized by SHAPE signature via edge
-        descriptors (invisible to the tasklet-only view): addend input is a TILE, output
-        accumulator a SCALAR / length-1 sink. Design 6.2: a TileBinop with a tile input
-        MUST produce a tile output, so tile-in + scalar-out is necessarily a fold. The
-        scalar read-back may be staged through a copy, so data-identity would miss it —
-        the shape signature does not.
-
-        Returns ``(acc_conn, val_conn, op)`` for :meth:`_convert_reduction`, or ``None``.
-        A plain element-wise binop (tile in → tile out) never matches.
-        """
+        # Recognize the standard ``WCRToAugAssign`` reduction ``__out = __in1 op __in2``.
         if len(tasklet.in_connectors) != 2 or len(tasklet.out_connectors) != 1:
             return None
         out_conn = next(iter(tasklet.out_connectors))
         if out_conn in tasklet.in_connectors:
             return None  # same-connector RMW -> _detect_reduction owns it
         a, b = list(tasklet.in_connectors)
-        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         matched_op = None
         for op in _SUPPORTED_REDUCE_OPS:
             if op in _FUNCTION_FORM_BINOPS:
@@ -1089,7 +871,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
 
         def _elems(edge) -> Optional[int]:
-            """Element count of an edge's memlet subset (the widened tile / scalar)."""
+            # Element count of an edge's memlet subset (the widened tile / scalar).
             desc = inner_state.sdfg.arrays.get(edge.data.data)
             if desc is None:
                 return None
@@ -1113,24 +895,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _detect_ite(self, tasklet: Tasklet) -> Optional[Tuple[str, ...]]:
-        """If ``tasklet`` is a ternary if-then-else, return
-        ``(out_conn, cond, t, e, has_t_sym, has_e_sym, has_cond_sym)``; else ``None``.
-
-        Recognised forms:
-
-        * Python ternary (3 in-conn): ``_o = _t if _cond else _e`` (maybe parenthesised).
-        * ITE call (3 in-conn): ``_o = ITE(_cond, _t, _e)``.
-        * ITE call with literal/Symbol arm (2 in-conn): ``_o = ITE(_cond, _t, <expr>)`` or
-          ``_o = ITE(_cond, <expr>, _e)``.
-        """
+        # If ``tasklet`` is a ternary if-then-else, return ``(out_conn, cond, t, e, has_t_sym, has_e_sym,
+        # has_cond_sym)``; else ``None``.
         n_in = len(tasklet.in_connectors)
-        # n_in == 1: ``ITE(cond, <sym>, <sym>)`` — only cond is a connector, both arms
+        # n_in == 1: ``ITE(cond, <sym>, <sym>)`` -- only cond is a connector, both arms
         # Symbols/literals (find-first phi ``ITE(pred, _loop_it_0, LEN_1D)``). n_in in
         # (2, 3): one or zero Symbol arms.
         if n_in not in (1, 2, 3) or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
         # Python ternary form -- 3 in-conn only.
@@ -1155,21 +928,13 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 is_cond_conn = cond_arg in in_conns
                 is_t_conn = t_arg in in_conns
                 is_e_conn = e_arg in in_conns
-                # cond is USUALLY a connector (the comparison result), but it can be a Symbol
-                # too: CloudSC reads a Fortran LOGICAL at a constant index into an interstate
-                # symbol (``llfall_index_2_0 = llfall[0]``), so the arm select comes out as
-                # ``ITE(llfall_index_2_0, _new, _old)``. Declining that left the tasklet scalar
-                # beside widened arms, which the orchestrator can only answer by refusing the
-                # whole SDFG -- while ``TileITE`` has carried ``kind_mask='Symbol'`` (predicate
-                # inlined, no ``_mask`` connector) for exactly this shape all along.
-                # ``_convert_ite`` still refuses a per-lane symbol; only a loop-invariant one
-                # may be inlined, or lane 0 would decide for the tile.
+                # cond may be a loop-invariant Symbol (CloudSC ``ITE(llfall_index_2_0, _new, _old)``); TileITE
+                # inlines it via ``kind_mask='Symbol'``. ``_convert_ite`` still refuses a per-lane symbol.
                 return (out_conn, cond_arg, t_arg, e_arg, not is_t_conn, not is_e_conn, not is_cond_conn)
         return None
 
     def _split_top_level_commas(self, s: str, expected_parts: int) -> Optional[list]:
-        """Split ``s`` on top-level commas (skipping commas inside parentheses).
-        Returns the parts when their count matches ``expected_parts``; else ``None``."""
+        # Split ``s`` on top-level commas (skipping commas inside parentheses).
         parts = []
         depth = 0
         current = []
@@ -1190,13 +955,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return parts if len(parts) == expected_parts else None
 
     def _detect_assign(self, tasklet: Tasklet) -> Optional[Tuple[str, str]]:
-        """If ``tasklet`` body is exactly ``_o = _a`` (a trivial assign), return
-        ``(out_conn, a_conn)``. Otherwise ``None``.
-        """
+        # If ``tasklet`` body is exactly ``_o = _a`` (a trivial assign), return ``(out_conn, a_conn)``.
         if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string
-        body = body.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         a_conn = next(iter(tasklet.in_connectors))
         if body in (f"{out_conn} = {a_conn}", f"{out_conn} = ({a_conn})"):
@@ -1204,13 +966,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _convert_assign(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
-        """Replace a trivial ``_o = _a`` tasklet with a direct AN→AN edge (DaCe copies
-        array-to-array natively).
-
-        The new memlet references the SOURCE bridge (read side) — a memlet typed against
-        the destination confuses the validator's data-vs-endpoint consistency check — and
-        carries the element the tasklet wrote as its ``other_subset``.
-        """
+        # Replace a trivial ``_o = _a`` tasklet with a direct AN->AN edge (DaCe copies array-to-array natively).
         out_conn, a_conn = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
@@ -1218,9 +974,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return False
         a_edge = in_edges[a_conn]
         out_edge = out_edges[0]
-        # Scalar src → tile dst is a BROADCAST (e.g. ``c[jk, jc] = a[0]``): lower to
-        # ``TileLoad(src_kind="Scalar")`` (per-lane splat), not a rank-mismatched AN→AN
-        # copy (user 2026-06-14).
+        # Scalar src -> tile dst is a BROADCAST (e.g. ``c[jk, jc] = a[0]``): lower to
+        # ``TileLoad(src_kind="Scalar")`` (per-lane splat), not a rank-mismatched AN->AN
+        # copy.
         if self._maybe_emit_scalar_broadcast(inner_state, tasklet, a_edge, out_edge):
             return True
         # Use the input-side memlet so the new edge's memlet.data matches its source, and keep the
@@ -1237,12 +993,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return True
 
     def _maybe_emit_scalar_broadcast(self, inner_state: SDFGState, tasklet: Tasklet, a_edge, out_edge) -> bool:
-        """Lower a trivial assign with a scalar SOURCE and ``widths``-shaped tile DEST to a
-        ``TileLoad(src_kind="Scalar")`` broadcast (single value splat across lanes).
-        Returns ``True`` when emitted (user 2026-06-14). The pure expansion handles
-        ``src_kind="Scalar"`` (reads ``_src[0]``, writes every lane); an intrinsic
-        hardware-splat is a TODO.
-        """
+        # Lower a trivial assign with a scalar SOURCE and ``widths``-shaped tile DEST to a
+        # ``TileLoad(src_kind="Scalar")`` broadcast (single value splat across lanes).
         sdfg = inner_state.sdfg
         src_desc = sdfg.arrays.get(a_edge.data.data) if a_edge.data is not None else None
         dst_desc = sdfg.arrays.get(out_edge.data.data) if out_edge.data is not None else None
@@ -1264,19 +1016,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return True
 
     def _detect_indirection(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str]]:
-        """If ``tasklet`` is a per-lane gather ``_out = _arr[_idx]`` (the frontend's
-        ``x[idx[i]]`` indirection shape), return ``(out_conn, arr_conn, idx_conn)``; else
-        ``None``.
-
-        ``_arr`` reads the whole base array; ``_idx`` is the per-lane index. The walker
-        widens ``_idx`` to a ``(W,)`` index tile and ``_out`` to a ``(W,)`` result tile but
-        leaves the tasklet body alone -- ``_out = _arr[_idx]`` then reads a tile *pointer*
-        as a scalar subscript (a hard ``double*[uint*]`` compile error). Lower it here to a
-        ``TileLoad`` gather (``_out[l] = _arr[_idx[l]]``).
-        """
+        # If ``tasklet`` is a per-lane gather ``_out = _arr[_idx]`` (the frontend's ``x[idx[i]]`` indirection shape),
+        # return ``(out_conn, arr_conn, idx_conn)``; else ``None``.
         if len(tasklet.in_connectors) != 2 or len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         in_conns = list(tasklet.in_connectors)
         for arr, idx in (in_conns, list(reversed(in_conns))):
@@ -1286,14 +1030,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return None
 
     def _convert_indirection(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
-        """Lower a per-lane gather ``_out = _arr[_idx]`` to a ``TileLoad(gather_dims=(0,))``.
-
-        Contract (post-walker): ``_arr`` a 1-D base array read whole, ``_idx`` a ``(W,)``
-        index tile, ``_out`` a ``(W,)`` result tile. The gather TileLoad emits
-        ``_out[l] = _arr[_idx[l]]`` per lane (``tile_gather`` intrinsic on the ISA backends,
-        per-lane ``pure`` loop otherwise). A shape outside the contract (multi-dim base, a
-        non-tile index / result) is declined so it is not silently mis-lowered.
-        """
+        # Lower a per-lane gather ``_out = _arr[_idx]`` to a ``TileLoad(gather_dims=(0,))``.
         out_conn, arr_conn, idx_conn = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
@@ -1339,30 +1076,17 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return True
 
     def _convert_one(self, inner_state: SDFGState, tasklet: Tasklet, iter_vars: Tuple[str, ...]) -> bool:
-        """Replace ``tasklet`` with a Tile lib node if its body matches a recognised
-        op shape. Dispatch (in order, by in-connector count): 0-in (Symbol-only) ->
-        1-in (assign / unop / binop-with-symbol) -> 2-in (reduction / binop) ->
-        3-in (ITE).
-
-        :param iter_vars: Tile dim iter_var names; used to decide whether a Symbol
-            operand is loop-invariant (broadcast) or lane-id-dependent (materialise
-            to a per-lane tile).
-
-        :returns: ``True`` on rewrite.
-        """
-        # Only PYTHON tasklets carry the scalar op shapes this pass lowers. A CPP tasklet
-        # is an already-lowered tile loop or a hand-written intrinsic — both pass through
-        # untouched (user direction: keep intrinsics). Re-parsing a CPP for-loop mis-reads
-        # its ``<`` bound as a comparison binop and emits garbage C++. Skip non-Python.
+        # Only Python tasklets carry the scalar op shapes; CPP tasklets are lowered tile loops or intrinsics
+        # and re-parsing them misreads a ``<`` loop bound as a comparison.
         if tasklet.language != dace.dtypes.Language.Python:
             return False
-        # Masked conditional write ``_o = IT(cond, val)`` — detect FIRST (``IT(`` prefix
+        # Masked conditional write ``_o = IT(cond, val)`` -- detect FIRST (``IT(`` prefix
         # unambiguous vs every op shape and vs ``ITE(``). Lowers to a masked ``TileStore``,
         # then re-dispatches the stripped ``_o = val`` through the normal path.
         cond_write = self._detect_conditional_write(tasklet)
         if cond_write is not None:
             return self._convert_conditional_write(inner_state, tasklet, cond_write, iter_vars)
-        # Per-lane gather ``_out = _arr[_idx]`` (the frontend ``x[idx[i]]`` indirection) —
+        # Per-lane gather ``_out = _arr[_idx]`` (the frontend ``x[idx[i]]`` indirection) --
         # detect FIRST among the 2-in shapes: the ``_arr[_idx]`` subscript is unambiguous vs
         # every arithmetic op form, and it lowers to a TileLoad gather, not a binop.
         indirection = self._detect_indirection(tasklet)
@@ -1398,7 +1122,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         fma_detected = self._detect_fma(tasklet)
         if fma_detected is not None:
             return self._convert_fma(inner_state, tasklet, fma_detected)
-        # ITE (``if..else`` or ``ITE(...)``) — detect before binop/reduction so the
+        # ITE (``if..else`` or ``ITE(...)``) -- detect before binop/reduction so the
         # 2-in-conn ``ITE(_cond, _t, <symbol>)`` isn't miscaptured. Precise body match
         # keeps binop fall-through safe.
         ite = self._detect_ite(tasklet)
@@ -1415,12 +1139,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         aug_reduction = self._detect_augassign_reduction(inner_state, tasklet)
         if aug_reduction is not None:
             return self._convert_reduction(inner_state, tasklet, aug_reduction)
-        # A ``reduce_accum`` is minted only by this package's own reduction lowerings, so one that
-        # reaches here is a reduction NEITHER detector recognised -- no TileReduce will be built for
-        # it, while the enclosing map still gets tiled. Every lane then writes the same scalar and
-        # the accumulation collapses to its seed: TSVC s4115/s4116 returned 0.0 for a nonzero sum.
-        # Refuse the kernel instead; the orchestrator restores it un-tiled, which is slow and right
-        # rather than fast and wrong.
+        # A ``reduce_accum`` no detector recognised would collapse every lane to its seed (TSVC s4115 /
+        # s4116 returned 0.0); refuse so the orchestrator restores the kernel untiled.
         if tasklet.label.startswith('reduce_accum'):
             raise VectorizeUnsupported(
                 f"reduction tasklet {tasklet.label!r} ({tasklet.code.as_string.strip()!r}) matches no tile-op "
@@ -1434,11 +1154,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         acc_conn, val_conn, op = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edge_list = data_out_edges(inner_state, tasklet)
-        # A reduction tasklet has exactly one output (the accumulator write). For the
-        # same-connector RMW form ``out_conn == acc_conn``; for the ``WCRToAugAssign``
-        # form (``_detect_augassign_reduction``) the output connector differs from the
-        # accumulator read-back connector -- so resolve the write by the SINGLE out edge
-        # rather than by ``out_edges[acc_conn]``.
+        # Resolve the accumulator write by the single out edge: in the WCRToAugAssign form the out
+        # connector differs from the accumulator read-back connector.
         if acc_conn not in in_edges or val_conn not in in_edges or len(out_edge_list) != 1:
             return False
         val_edge = in_edges[val_conn]
@@ -1451,8 +1168,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                                  has_mask=mask_an is not None)
         inner_state.add_node(reduce_node)
         self._wire_mask(inner_state, reduce_node, mask_an)
-        # TileReduce connectors: _src (tile input) → _dst (scalar accumulator). The acc-input
-        # edge dangles — TileReduce folds the whole tile in one shot, reading no separate
+        # TileReduce connectors: _src (tile input) -> _dst (scalar accumulator). The acc-input
+        # edge dangles -- TileReduce folds the whole tile in one shot, reading no separate
         # scalar accumulator; the new _dst edge writes the result on top.
         inner_state.add_edge(val_edge.src, val_edge.src_conn, reduce_node, "_src",
                              dace.Memlet.from_memlet(val_edge.data))
@@ -1463,7 +1180,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             inner_state.remove_edge(edge)
         reanchor_order_edges(inner_state, tasklet, reduce_node)
         inner_state.remove_node(tasklet)
-        # The dangled accumulator read-back may leave its source AccessNode isolated — drop
+        # The dangled accumulator read-back may leave its source AccessNode isolated -- drop
         # it (a shared accumulator AN still carrying other edges is left intact).
         from dace.sdfg.nodes import AccessNode
         if isinstance(acc_src, AccessNode) and inner_state.degree(acc_src) == 0:
@@ -1471,16 +1188,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return True
 
     def _convert_ite(self, inner_state: SDFGState, tasklet: Tasklet, detected, iter_vars: Tuple[str, ...]) -> bool:
-        """Convert a ternary tasklet to a TileITE lib node.
-
-        ``detected`` = ``(out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym, cond_is_sym)``; a
-        ``*_is_sym`` operand is a Symbol / literal expr, not an in-connector. Arm lowering
-        (user 2026-06-15): invariant Symbol → embedded inline (``kind_*='Symbol'`` +
-        ``expr_*``, no connector, broadcast at expansion); lane-id-dependent Symbol →
-        per-lane tile; connector reading a Scalar / length-1 source → broadcast full tile.
-        A Symbol CONDITION takes the same inline route (``kind_mask='Symbol'``), and only when
-        it is loop-invariant -- see the refusal below.
-        """
+        # Convert a ternary tasklet to a TileITE lib node.
         out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym, cond_is_sym = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
@@ -1507,9 +1215,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         subset = ", ".join(f"0:{w}" for w in self.body_widths)
 
         def _plan_arm(arg, is_sym):
-            """Decide an arm's lowering. Returns ``(kind, expr, wire)`` where ``wire``
-            is ``None`` for an inline Symbol arm or ``(src, src_conn, memlet)`` for a
-            connector arm. ``kind`` is one of ``'Symbol'`` / ``'Tile'``."""
+            # Decide an arm's lowering.
             from dace.sdfg.nodes import AccessNode
             if is_sym and not self._is_lane_id_dependent(arg, iter_vars):
                 return "Symbol", arg, None  # inline -- no connector, no CPP fill
@@ -1574,19 +1280,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return True
 
     def _detect_conditional_write(self, tasklet: Tasklet) -> Optional[Tuple[str, str, str, bool]]:
-        """If ``tasklet`` is a masked write ``_o = IT(cond, val)``, return
-        ``(out_conn, cond_conn, val_arg, val_is_sym)``; else ``None``.
-
-        ``IT(cond, val)`` is the write-only conditional write (``NormalizeMaskedWriteTasklets``
-        rewrites the frontend's ``if cond: _o = val`` boolean-mask assignment): write ``val``
-        where ``cond``, else leave the destination — NO old-value read. Lowers to a masked
-        ``TileStore`` (``cond`` gates it). ``cond`` is always an in-connector (bool tile /
-        scalar); ``val`` is an in-connector or an inline Symbol / literal (masked-const-write
-        ``_o = IT(cond, 2.0)``). ``IT(`` is unambiguous: ``'ITE('`` does not start with it.
-        """
+        # If ``tasklet`` is a masked write ``_o = IT(cond, val)``, return ``(out_conn, cond_conn, val_arg,
+        # val_is_sym)``; else ``None``.
         if len(tasklet.out_connectors) != 1:
             return None
-        body = tasklet.code.as_string.strip().rstrip(";").strip()
+        body = stripped_tasklet_body(tasklet)
         out_conn = next(iter(tasklet.out_connectors))
         if not body.startswith(f"{out_conn} = "):
             return None
@@ -1607,17 +1305,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_conditional_write(self, inner_state: SDFGState, tasklet: Tasklet, detected,
                                    iter_vars: Tuple[str, ...]) -> bool:
-        """Lower ``_o = IT(cond, val)`` to a masked ``TileStore`` + a plain value copy.
-
-        Steps: (1) find the downstream ``TileStore`` writing this tasklet's output tile;
-        (2) resolve ``cond`` to a bool tile (broadcasting a scalar cond); (3) gate the
-        store on ``cond`` -- first-wire when the store is unmasked (the divisible main
-        map), else AND-combine with the tile iteration mask already on it (a masked
-        remainder slab); (4) strip the ``IT`` wrapper, leaving ``_o = val``, and drop the
-        now-unused ``cond`` input; (5) re-dispatch that plain assign / const-broadcast
-        through the normal converter path. The value is computed for every lane (the
-        masked store discards inactive lanes), so no compute op needs the mask.
-        """
+        # Lower ``_o = IT(cond, val)`` to a masked ``TileStore`` + a plain value copy.
         out_conn, cond_conn, val_arg, _val_is_sym = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
@@ -1642,8 +1330,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return self._convert_one(inner_state, tasklet, iter_vars)
 
     def _find_downstream_store(self, inner_state: SDFGState, out_edge):
-        """Return the single downstream ``TileStore`` fed (via its ``_src``) by this
-        tasklet's output tile, or ``None`` when there is not exactly one."""
+        # Return the single downstream ``TileStore`` fed (via its ``_src``) by this tasklet's output tile, or ``None``
+        # when there is not exactly one.
         from dace.sdfg.nodes import AccessNode
         dst = out_edge.dst
         if isinstance(dst, TileStore) and out_edge.dst_conn == "_src":
@@ -1654,12 +1342,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return stores[0] if len(stores) == 1 else None
 
     def _resolve_cond_tile(self, inner_state: SDFGState, cond_edge):
-        """Resolve the masked-write condition to a ``widths``-shaped bool tile AccessNode.
-
-        A per-element mask (``m_tile`` / an upstream comparison's bool tile) is used as-is;
-        a scalar / length-1 cond is broadcast to a full bool tile (mirrors ``_convert_ite``'s
-        cond handling) so the store's ``_mask`` is always the locked bool[widths] shape.
-        """
+        # Resolve the masked-write condition to a ``widths``-shaped bool tile AccessNode.
         from dace.sdfg.nodes import AccessNode
         if self._is_scalar_or_len1_source(inner_state, cond_edge):
             bname = self._broadcast_scalar_to_tile(inner_state, cond_edge, dtype=dace.bool_)
@@ -1668,27 +1351,20 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return cond_edge.src
 
     def _apply_cond_mask_to_store(self, inner_state: SDFGState, store, cond_an) -> None:
-        """Gate ``store`` on ``cond_an``. Flips ``has_mask`` on + adds the ``_mask`` connector
-        when the store was unmasked (divisible main map), then wires ``cond_an`` -- first-wire,
-        or AND-combined with an existing iteration mask (masked remainder) via ``_wire_mask``."""
+        # Gate ``store`` on ``cond_an``.
         if not store.has_mask:
             store.has_mask = True
             store.add_in_connector("_mask")
         self._wire_mask(inner_state, store, cond_an)
 
     def _is_scalar_or_len1_source(self, inner_state: SDFGState, edge) -> bool:
-        """Return True when ``edge.src`` reads a Scalar or length-1 Array (the "scalar"
-        side of the transients-are-full-tile-or-scalar invariant)."""
+        # Return True when ``edge.src`` reads a Scalar or length-1 Array (the "scalar" side of the
+        # transients-are-full-tile-or-scalar invariant).
         return is_scalar_or_len1_source(inner_state, edge)
 
     def _broadcast_scalar_to_tile(self, inner_state: SDFGState, src_edge, dtype) -> str:
-        """Mint a FULL-TILE transient with element type ``dtype`` and emit a tasklet that
-        reads the Scalar / length-1 source via ``src_edge`` and writes the value to every
-        lane.
-
-        Reuses the producer's AccessNode as the input (so the SDFG scheduler orders the
-        comparison tasklet before the broadcast tasklet).
-        """
+        # Mint a FULL-TILE transient with element type ``dtype`` and emit a tasklet that reads the Scalar / length-1
+        # source via ``src_edge`` and writes the value to every lane.
         import dace.dtypes as dtypes
         from dace.memlet import Memlet
         sdfg = inner_state.sdfg
@@ -1699,34 +1375,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                                      transient=True,
                                      storage=dtypes.StorageType.Register,
                                      find_new_name=True)
-        K = len(widths)
-        parts = []
-        for i in range(K):
-            inner = 1
-            for q in range(i + 1, K):
-                inner *= widths[q]
-            parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
-        flat = " + ".join(parts) if parts else "0"
-        # Reference the source by its connector ABI — NO C-style cast (user 2026-06-15).
-        # ABI follows the memlet's element COUNT, not the descriptor kind: a single-element
-        # read (``Scalar`` or length-1 ``Array[0]``) is a by-value ``T _in``, referenced
-        # bare; a multi-element source is a pointer ``T* _in``, element 0 via ``_in[0]``.
-        # The destination tile's element type drives the implicit conversion.
+        # No C-style cast: a single-element source is a by-value ``T _in``, a multi-element one a
+        # pointer ``T* _in``; the destination tile's element type drives the conversion.
         src_ref = "_in" if src_edge.data.subset.num_elements() == 1 else "_in[0]"
-        code_lines = []
-        for d in range(K):
-            # constexpr width + DACE_UNROLL → lane loop lowers to SIMD.
-            code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
-            code_lines.append(f"{'    ' * d}DACE_UNROLL")
-            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
-        code_lines.append(f"{'    ' * K}_out[{flat}] = {src_ref};")
-        for d in reversed(range(K)):
-            code_lines.append(f"{'    ' * d}}}")
         tasklet = inner_state.add_tasklet(
             name=f"bcast_to_tile_{arr_name}",
             inputs={"_in"},
             outputs={"_out"},
-            code="\n".join(code_lines),
+            code=lane_loop_code(widths, src_ref),
             language=dtypes.Language.CPP,
         )
         # Wire from the source AN (reuse, not a fresh access) and to a fresh broadcast AN.
@@ -1737,10 +1393,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return arr_name
 
     def _materialise_symbol_to_tile(self, inner_state: SDFGState, expr: str, iter_vars: Tuple[str, ...], out_edge):
-        """Materialise a Symbol / literal expr as a FULL-TILE transient (design 7.5):
-        lane-id-dependent (references an iter_var) → :meth:`_materialise_lane_id_tile`
-        (int64); loop-invariant → OUTPUT-edge-dtype transient + constant-fill broadcast.
-        """
+        # Materialise a Symbol / literal expr as a FULL-TILE transient (design 7.5): lane-id-dependent (references an
+        # iter_var) -> :meth:`_materialise_lane_id_tile` (int64); loop-invariant -> OUTPUT-edge-dtype transient +
+        # constant-fill broadcast.
         if self._is_lane_id_dependent(expr, iter_vars):
             an_name = self._materialise_lane_id_tile(inner_state, expr, iter_vars)
         else:
@@ -1750,9 +1405,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return existing if existing is not None else inner_state.add_access(an_name)
 
     def _materialise_invariant_to_tile(self, inner_state: SDFGState, expr: str, out_edge) -> str:
-        """Mint a FULL-TILE transient = ``expr`` broadcast across every lane. Dtype matches
-        the OUTPUT edge (so the TileITE's _t / _e operand dtype matches _o).
-        """
+        # Mint a FULL-TILE transient = ``expr`` broadcast across every lane.
         import dace.dtypes as dtypes
         from dace.memlet import Memlet
         sdfg = inner_state.sdfg
@@ -1766,30 +1419,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                                      transient=True,
                                      storage=dtypes.StorageType.Register,
                                      find_new_name=True)
-        K = len(widths)
-        parts = []
-        for i in range(K):
-            inner = 1
-            for q in range(i + 1, K):
-                inner *= widths[q]
-            parts.append(f"__l{i}" if inner == 1 else f"(__l{i} * {inner})")
-        flat = " + ".join(parts) if parts else "0"
-        code_lines = []
-        for d in range(K):
-            # constexpr width + DACE_UNROLL → lane loop lowers to SIMD.
-            code_lines.append(f"{'    ' * d}constexpr std::size_t __W{d} = {widths[d]};")
-            code_lines.append(f"{'    ' * d}DACE_UNROLL")
-            code_lines.append(f"{'    ' * d}for (std::size_t __l{d} = 0; __l{d} < __W{d}; ++__l{d}) {{")
-        # No C-style cast (user 2026-06-15): the destination tile's element type drives
-        # the implicit conversion of the broadcast literal / symbolic expression.
-        code_lines.append(f"{'    ' * K}_out[{flat}] = ({expr});")
-        for d in reversed(range(K)):
-            code_lines.append(f"{'    ' * d}}}")
+        # No C-style cast: the destination tile's element type drives the conversion.
         tasklet = inner_state.add_tasklet(
             name=f"sym_broadcast_{arr_name}",
             inputs=set(),
             outputs={"_out"},
-            code="\n".join(code_lines),
+            code=lane_loop_code(widths, f"({expr})"),
             language=dtypes.Language.CPP,
         )
         out_an = inner_state.add_access(arr_name)
@@ -1810,13 +1445,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         a_edge = in_edges[a_conn]
         b_edge = in_edges[b_conn]
-        # Mixed-dtype operands NOT supported (user 2026-06-10): the walker-primary pipeline
-        # locks one dtype per lib node (tile transient + bridge + downstream copy all assume
-        # it). Refuse → NotImplementedError so callers add explicit casts.
-        #
-        # Comparison ops (``< <= > >= == !=``) are the exception: result dtype is ``bool``
-        # regardless of operand dtype, so enforce uniformity on the OPERANDS only and let
-        # the output be ``bool``.
+        # Mixed-dtype operands are refused (one dtype per lib node); comparisons only need uniform
+        # operands, their output is ``bool``.
         sdfg = inner_state.sdfg
         a_dtype = sdfg.arrays[a_edge.data.data].dtype if a_edge.data and a_edge.data.data else None
         b_dtype = sdfg.arrays[b_edge.data.data].dtype if b_edge.data and b_edge.data.data else None
@@ -1831,17 +1461,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 f"{tasklet.code.as_string!r} mixes dtypes {checked_dtypes}. Per design 6.2 + user "
                 f"direction the walker-primary path locks a single dtype per lib node. Rewrite the "
                 f"kernel with an explicit cast tasklet upstream OR widen the destination dtype.")
-        # Operand kind from the source descriptor: Scalar / length-1 Array → Scalar
+        # Operand kind from the source descriptor: Scalar / length-1 Array -> Scalar
         # broadcast operand (design 6.5).
         kind_a = self._operand_kind(inner_state, a_edge)
         kind_b = self._operand_kind(inner_state, b_edge)
-        # Output transient shape is pre-set by WidenAccesses (design 6.2); the lib-node
-        # output kind is implied by ``out_edge``'s destination descriptor (validate()
-        # enforces consistency).
-        # Mask-when-partial (user 2026-06-12): when an iter_mask is in scope (remainder /
-        # cond-mask region), inactive lanes hold garbage that can trap (div-by-0,
-        # log-of-neg) or propagate NaN — mask the op so they skip the compute. The
-        # divisible main map (no mask AN) stays unmasked (fast path).
+        # Output shape is preset by WidenAccesses. Under an iteration mask, mask the op so inactive lanes
+        # cannot trap (div-by-0, log of negative) or produce NaN; the divisible main map stays unmasked.
         mask_an = self._find_mask_an(inner_state)
         binop = TileBinop(name=f"{tasklet.label}_binop",
                           widths=tuple(self.body_widths),
@@ -1873,9 +1498,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return True
 
     def _convert_fma(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
-        """Replace a ``__out = fma(__a, __b, __c)`` tasklet with a :class:`TileFMA` node
-        (``a*b + c``). Mirror of :meth:`_convert_binop` with a third data operand (``_c``) and
-        the ``_o`` output connector."""
+        # Replace a ``__out = fma(__a, __b, __c)`` tasklet with a :class:`TileFMA` node (``a*b + c``).
         from dace.libraries.tileops import TileFMA
         out_conn, a_conn, b_conn, c_conn = detected
         in_edges = data_in_edges(inner_state, tasklet)
@@ -1925,30 +1548,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _classify_power_op(self, inner_state: SDFGState, op: str, symbol_side: str, exponent_expr: str,
                            base_edge) -> str:
-        """Resolve a power operator to its concrete tile op from the base dtype and exponent.
-
-        ``**`` (and the ``pow`` call form) are kept verbatim in the tasklet body; the tile
-        emitter decides ``pow`` vs ``ipow`` HERE. ``ipow`` (exact repeated-multiply
-        ``dace::math::ipow``) is chosen iff BOTH:
-
-        * the base is an integer tile (side ``a``) -- NumPy raises a float base to a power with
-          libm ``pow``, so ``ipow`` there is not bit-exact (it diverges in the low bits, badly
-          for a large exponent); only an integer base uses repeated multiply, which ``ipow`` is;
-        * the exponent (side ``b``) is a provable non-negative integer, via
-          :func:`~dace.transformation.passes.relax_integer_powers.exponent_relaxes_to_ipow` --
-          the SAME proof the pow->ipow relaxation applies to size powers, so both agree.
-
-        Otherwise (float base, runtime/tile exponent, or an unprovable exponent) -> ``pow``
-        (``std::pow``). A non-power ``op`` is returned unchanged.
-
-        :param inner_state: the state holding the tasklet (its SDFG roots the assumption scope).
-        :param op: the detected operator (``"**"`` / ``"pow"`` for a power, else unchanged).
-        :param symbol_side: which operand is the inline Symbol -- ``"b"`` = exponent (the
-            relaxable case), ``"a"`` = base (so the tile operand is the exponent -> ``pow``).
-        :param exponent_expr: the exponent's source text (a Symbol / literal, never a connector).
-        :param base_edge: the in-edge feeding the tile (base) operand, for its dtype.
-        :returns: ``"ipow"`` / ``"pow"`` for a power, else ``op``.
-        """
+        # Resolve a power operator to its concrete tile op from the base dtype and exponent.
         if op not in ("**", "pow"):
             return op
         # The tile operand must be the BASE (symbol on side b = exponent); otherwise the
@@ -1972,10 +1572,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_binop_with_symbol(self, inner_state: SDFGState, tasklet: Tasklet, detected,
                                    iter_vars: Tuple[str, ...]) -> bool:
-        """Emit a TileBinop whose second operand is a Symbol expr: loop-invariant →
-        ``kind=Symbol`` + ``expr_*`` (no connector, broadcast at expansion);
-        lane-id-dependent → per-lane tile (:meth:`_materialise_lane_id_tile`), ``kind=Tile``.
-        """
+        # Emit a TileBinop whose second operand is a Symbol expr: loop-invariant -> ``kind=Symbol`` + ``expr_*`` (no
+        # connector, broadcast at expansion); lane-id-dependent -> per-lane tile (:meth:`_materialise_lane_id_tile`),
+        # ``kind=Tile``.
         out_conn, a_conn, op, symbol_side, symbol_expr = detected
         in_edges = data_in_edges(inner_state, tasklet)
         out_edges = data_out_edges(inner_state, tasklet)
@@ -2036,7 +1635,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return True
 
     def _wire_materialised_tile(self, inner_state: SDFGState, lib_node, dst_conn: str, tile_name: str) -> None:
-        """Wire ``<materialised_tile_an> -> lib_node.<dst_conn>`` with the full tile subset."""
+        # Wire ``<materialised_tile_an> -> lib_node.<dst_conn>`` with the full tile subset.
         from dace.sdfg.nodes import AccessNode
         # Find or create the AN. The materialiser already adds it; reuse to keep scheduling.
         existing = next((n for n in inner_state.nodes() if isinstance(n, AccessNode) and n.data == tile_name), None)
@@ -2045,13 +1644,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(an, None, lib_node, dst_conn, dace.Memlet(f"{tile_name}[{subset}]"))
 
     def _ensure_output_widened(self, inner_state: SDFGState, out_edge, lib_node=None) -> bool:
-        """Widen the destination transient + memlets to ``(W_0, ..., W_{K-1})``.
-
-        Only fires when the destination is a WIDENABLE TRANSIENT (Scalar or
-        length-1 Array) AND at least one input to ``lib_node`` is a
-        tile-shape ``(W,)`` array. Per user direction: all-Scalar /
-        Scalar-Symbol / Symbol-Symbol op -> Scalar output stays Scalar.
-        """
+        # Widen the destination transient + memlets to ``(W_0, ..., W_{K-1})``.
         from dace import data
         from dace import subsets
         from dace.sdfg.nodes import AccessNode
@@ -2105,19 +1698,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 new_sub = subsets.Range(list(target_range.ranges))
                 edge.data.subset = new_sub
                 edge.data.volume = new_sub.num_elements()
-                # Widen ``other_subset`` symmetrically (user 2026-06-12) so the AN→AN
-                # bridge ``a[0:W] → b[0:W]`` is well-formed.
+                # Widen ``other_subset`` symmetrically so the AN->AN
+                # bridge ``a[0:W] -> b[0:W]`` is well-formed.
                 if edge.data.other_subset is not None:
                     edge.data.other_subset = subsets.Range(list(target_range.ranges))
         return True
 
     def _convert_unop_with_symbol(self, inner_state: SDFGState, tasklet: Tasklet, detected,
                                   iter_vars: Tuple[str, ...]) -> bool:
-        """0-in-conn unary: ``_o = <op>(<expr>)`` or ``_o = -<expr>``.
-
-        Resolves the Symbol like ``_convert_binop_with_symbol``: invariant -> Symbol with
-        ``expr_a``; lane-id-dependent -> materialised tile wired to ``_a``.
-        """
+        # 0-in-conn unary: ``_o = <op>(<expr>)`` or ``_o = -<expr>``.
         out_conn, op, symbol_expr = detected
         out_edges = data_out_edges(inner_state, tasklet)
         if not out_edges:
@@ -2157,10 +1746,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_binop_with_two_symbols(self, inner_state: SDFGState, tasklet: Tasklet, detected,
                                         iter_vars: Tuple[str, ...]) -> bool:
-        """0-in-conn binary: ``_o = <expr_a> <op> <expr_b>``.
-
-        Each operand resolved independently to invariant Symbol or materialised Tile.
-        """
+        # 0-in-conn binary: ``_o = <expr_a> <op> <expr_b>``.
         out_conn, op, expr_a_str, expr_b_str = detected
         out_edges = data_out_edges(inner_state, tasklet)
         if not out_edges:
@@ -2243,22 +1829,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         return True
 
     def _convert_inner(self, inner_sdfg: SDFG, iter_vars: Tuple[str, ...]) -> int:
-        """Walk every state of ``inner_sdfg`` and convert recognised tasklets.
-
-        :returns: Number of conversions performed.
-        """
+        # Walk every state of ``inner_sdfg`` and convert recognised tasklets.
         converted = 0
-        # Two phases so ITE arm sources are already full tiles when the ITE is planned. An
-        # ITE arm produced by a tile-producing op (e.g. ``_then_b = 0.0`` const-assign that
-        # ``_convert_const_assign`` widens to ``(W,)``) must wire to the TileITE directly.
-        # Planning the ITE FIRST would see the un-widened ``(1,)`` scalar and route it
-        # through ``_broadcast_scalar_to_tile``; once the producer widens, that broadcast
-        # reads a tile pointer as a scalar (malformed code).
-        #
-        # Spans ALL states: merge branch lowering puts producer (``compute_then``) and
-        # consumer ITE (``apply_ITE``) in SEPARATE states, not necessarily visited
-        # producer-first. Phase 1 lowers every non-ITE tasklet, phase 2 the ITEs — by
-        # which point every arm source has its final tile shape.
+        # Two phases over all states: lower every non-ITE tasklet first so ITE arm sources already have
+        # their final tile shape; merge lowering puts producer and ITE in separate states.
         for want_ite in (False, True):
             for inner_state in inner_sdfg.states():
                 for node in [n for n in inner_state.nodes() if isinstance(n, Tasklet)]:
@@ -2278,7 +1852,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         :returns: Number of tasklets converted, or ``None`` if zero.
         """
         total = 0
-        for state, nsdfg_node, map_entry in self._body_nsdfgs(sdfg):
+        for state, nsdfg_node, map_entry in tile_body_nsdfgs(sdfg, self.widths):
             self.body_widths = map_tile_widths(state, map_entry, self.widths)
             params = map_entry.map.params
             iter_vars = tuple(params[len(params) - len(self.body_widths):])
