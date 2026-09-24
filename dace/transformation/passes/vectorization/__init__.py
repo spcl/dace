@@ -1,16 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Public vectorization passes: the multi-dim CPU/GPU tile-op vectorizer.
 
-The pipeline entry points (``VectorizeMultiDim`` / ``VectorizeCPUMultiDim`` /
-``VectorizeGPUMultiDim``) are exported LAZILY via :pep:`562` ``__getattr__``.
-``vectorize_multi_dim`` imports ``dace.transformation.interstate`` at module load,
-and ``interstate`` in turn (through ``passes -> canonicalize``) imports back into
-this package -- eager-importing the pipeline here would close that cycle. Deferring
-it means importing a vectorization *submodule* does not drag in the whole pipeline,
-while ``from ...vectorization import VectorizeCPUMultiDim`` still works on demand.
+Pipeline entry points (``VectorizeMultiDim`` / ``VectorizeCPUMultiDim`` /
+``VectorizeGPUMultiDim``) are exported LAZILY via :pep:`562` ``__getattr__``:
+eager import would close an ``interstate -> canonicalize -> vectorization``
+cycle, since ``vectorize_multi_dim`` imports ``interstate`` at module load.
 """
-# Importing this module registers the ``"vectorized"`` implementation on the
-# standard ``Reduce`` library node (schedule-aware dispatcher). Cycle-safe.
+# Registers the "vectorized" impl on the standard Reduce library node. Cycle-safe.
 from dace.transformation.passes.vectorization import reduce_expansion  # noqa: F401
 
 _PIPELINE_EXPORTS = frozenset({"VectorizeMultiDim", "VectorizeCPUMultiDim", "VectorizeGPUMultiDim"})

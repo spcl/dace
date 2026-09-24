@@ -1,52 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``FuseBranchedTailRemainder`` — GPU-only post-transform that fuses a
-vectorized main-tiled map and its remainder map into ONE map whose body is a
-``ConditionalBlock`` (``if`` full-tile -> mask-free vectorized tile ops /
-``else`` -> the remainder body).
+"""``FuseBranchedTailRemainder`` -- GPU-only post-transform that fuses a tiled main map and its
+remainder map into ONE map whose body is a ``ConditionalBlock`` (full tile -> mask-free tile ops,
+else -> the remainder body), so the pair is one kernel launch and only the partial tile diverges.
 
-Two remainder strategies share this pass, differing only in what the ``else``
-arm holds:
+The ``else`` arm is, per strategy:
 
-* ``branched_masked_tail`` (the GPU K=1 DEFAULT) -- the tail is the W-strided
-  MASKED tile map :class:`SplitMapForTileRemainder` peels in ``tail_mode='masked_branch'``
-  (marked ``__masked_tail``). Both arms are tile ops over the SAME tile start, so a
-  full-tile iteration runs the widened mask-free body and NO scalar loop is emitted
-  anywhere in the kernel; the partial tile takes the masked (per-element, never
-  over-reading) arm, which is also where the alignment fact does not hold.
-* ``branched_tail`` -- the tail is the step-1 ``__scalar_tail`` map
-  (``tail_mode='scalar'``), reused verbatim inside a ``Sequential`` lane loop.
+* ``branched_masked_tail`` (GPU K=1 default): the W-strided masked tile map
+  :class:`SplitMapForTileRemainder` peels with ``tail_mode='masked_branch'`` (``__masked_tail``),
+  so no scalar loop is emitted anywhere in the kernel.
+* ``branched_tail``: the step-1 ``__scalar_tail`` map, reused inside a ``Sequential`` lane loop.
 
-Either way the mechanism is a control-flow BRANCH inside ONE kernel rather than a
-mask on every tile. It runs LAST in the GPU pipeline, after the split peeled a
-provably-divisible interior + a tail, and after the tile prep/emit passes
-vectorized the interior (marked ``__tile_main``) mask-free.
-
-Motivation (the two-kernel problem): on GPU the interior and the tail are two
-``GPU_Device`` maps -> two kernel launches. This pass fuses them into a single
-``GPU_Device`` map over the whole tile range, so there is ONE kernel launch;
-branch divergence happens only on the single partial (tail) tile.
-
-Mechanism (the exact split-then-fuse the maintainer specified)::
+Mechanism::
 
     for each tile-start s over [lb : ub : W]:      # ONE GPU_Device map
         if (s + W - 1) <= ub:  <MASK-FREE tile body>        # __tile_main NSDFG, unchanged
         else:                  <MASKED tile body>           # __masked_tail NSDFG, unchanged
                           -or- for t in [s : ub]: <scalar body>   # __scalar_tail NSDFG
 
-The vectorized tile ops (``TileLoad`` / ``TileBinop`` / ``TileStore`` / ...) are
-reused UNCHANGED inside the ``if`` branch -- NOT flattened to an arithmetic
-select (no ``LowerITEToFpFactor``). The masked tail NSDFG is likewise reused
-unchanged: only ONE tile start ever reaches the ``else`` (the one partial tile),
-and it is exactly the start the peeled slab map would have run, so its mask
-``s + lane < ub + 1`` and its subsets are already right. The scalar tail NSDFG is
-instead wrapped in a ``Sequential`` loop over the tail lanes, so the single thread
-that takes the ``else`` processes every remaining lane.
-
-Scope: K=1 (one tiled/innermost dim). The map may carry outer (prefix) params;
-only the innermost dim is tiled + fused. A pair is fused only when both bodies
-are a single nested SDFG whose boundary the fused map can carry (the canonical
-post-pipeline shape); any other shape is left as two maps (correct, un-fused)
-rather than mis-fused.
+Both bodies are reused unchanged: only the one partial tile start reaches the ``else``, and it is
+exactly the start the peeled slab would have run. Runs last in the GPU pipeline. Scope: K=1 (outer
+prefix params allowed); a pair whose bodies are not single fusable nested SDFGs stays two maps.
 """
 import copy
 
@@ -112,24 +85,17 @@ class FuseBranchedTailRemainder(ppl.Pass):
 
     @staticmethod
     def _base_label(label: str, marker: str) -> str:
-        """Strip a tile-remainder marker suffix to recover the shared base label."""
+        # Strip a tile-remainder marker suffix to recover the shared base label.
         return label[:-len(marker)] if label.endswith(marker) else label
 
     @staticmethod
     def _tail_marker(label: str) -> str | None:
-        """The remainder marker ``label`` carries, or ``None`` if it is not a fusable tail."""
+        # The remainder marker ``label`` carries, or ``None`` if it is not a fusable tail.
         return next((m for m in _TAIL_MARKERS if label.endswith(m)), None)
 
     @staticmethod
     def _is_split_sibling(main_entry: MapEntry, rem_entry: MapEntry) -> bool:
-        """Is ``rem_entry`` the tail :class:`SplitMapForTileRemainder` peeled off ``main_entry``?
-
-        The split leaves one structural signature: identical prefix dims, and an innermost tail
-        range starting exactly one past the interior's end (interior ``[lb : main_end]``, tail
-        ``[main_end + 1 : ub]``). Checked rather than assumed, because a map label is not unique --
-        an SDFG routinely holds several ``_Mult__map`` scopes -- so a shared base label alone can
-        name maps that were never split from each other.
-        """
+        # Is ``rem_entry`` the tail :class:`SplitMapForTileRemainder` peeled off ``main_entry``?
         main_ranges, rem_ranges = list(main_entry.map.range.ranges), list(rem_entry.map.range.ranges)
         if len(main_ranges) != len(rem_ranges) or not main_ranges:
             return False
@@ -140,15 +106,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         return symbolic.simplify(rem_ranges[-1][0] - main_ranges[-1][1] - 1) == 0
 
     def _find_pairs(self, state: dace.SDFGState) -> list[tuple[MapEntry, MapEntry]]:
-        """Pair every top-level ``__tile_main`` map with the remainder sibling it split from.
-
-        A tail is consumed by at most one main, and a main with no structural sibling is left
-        alone -- fusing it with some other map's tail would silently run that map's body over the
-        wrong range.
-
-        :param state: A dataflow state to scan.
-        :returns: ``[(main_entry, remainder_entry), ...]`` for pairs in ``state``.
-        """
+        # Pair every top-level ``__tile_main`` map with the remainder sibling it split from.
         scope = state.scope_dict()
         mains: dict[str, list[MapEntry]] = {}
         tails: dict[str, list[MapEntry]] = {}
@@ -174,7 +132,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
 
     @staticmethod
     def _sole_body_nsdfg(state: dace.SDFGState, entry: MapEntry) -> NestedSDFG | None:
-        """Return the single nested SDFG forming ``entry``'s body, or ``None`` if not that shape."""
+        # Return the single nested SDFG forming ``entry``'s body, or ``None`` if not that shape.
         # ``all_nodes_between`` deliberately, and it is inert here. The walk discards its whole result
         # on a body node with no out-edge, but an emptied body only ever REFUSES this predicate --
         # ``len(body) == 1`` fails on the empty list, both bodies must be recognised before anything is
@@ -193,15 +151,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
     @staticmethod
     def _symbol_dtype(resolver: scopes.ScopedSymbolResolver, sdfg: dace.SDFG, sym: str, state: dace.SDFGState,
                       node: NestedSDFG) -> dace.dtypes.typeclass:
-        """The dtype of an outer-scope symbol the fused body will re-declare.
-
-        Most of these names ARE the fused map's parameters, which no symbol table declares -- only
-        the scope at ``node`` sees them. Re-declaring one at a guessed int64 splits it from the
-        parameter it stands for, so the branch predicate ``i <= ub - W + 1`` never folds against
-        the map range.
-
-        :raises UndeterminedSymbolDType: when no rung of the ladder declares ``sym``.
-        """
+        # The dtype of an outer-scope symbol the fused body will re-declare.
         return resolver.resolve_dtype(sym, sdfg, state=state, node=node)
 
     def apply_pass(self, sdfg: dace.SDFG, _: dict[str, Any]) -> int | None:
@@ -225,15 +175,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
 
     def _fuse_one(self, resolver: scopes.ScopedSymbolResolver, sd: dace.SDFG, state: dace.SDFGState,
                   main_entry: MapEntry, rem_entry: MapEntry) -> bool:
-        """Fuse one main-tiled + remainder pair into a single conditional-body map.
-
-        :param resolver: The pass run's shared symbol resolver.
-        :param sd: The SDFG owning ``state``.
-        :param state: The state holding both map scopes.
-        :param main_entry: The ``__tile_main`` (mask-free vectorized) map entry.
-        :param rem_entry: The ``__masked_tail`` / ``__scalar_tail`` map entry.
-        :returns: ``True`` if fused; ``False`` if the pair was left un-fused (unhandled shape).
-        """
+        # Fuse one main-tiled + remainder pair into a single conditional-body map.
         main_exit = state.exit_node(main_entry)
         rem_exit = state.exit_node(rem_entry)
         main_nsdfg = self._sole_body_nsdfg(state, main_entry)
@@ -294,13 +236,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
     def _build_fused_body(self, resolver: scopes.ScopedSymbolResolver, sd: dace.SDFG, state: dace.SDFGState,
                           main_entry: MapEntry, main_nsdfg: NestedSDFG, rem_nsdfg: NestedSDFG, W: int, tiled_param: str,
                           tail_ub: symbolic.SymbolicType, masked_tail: bool) -> dace.SDFG:
-        """Construct the fused-body SDFG: one ``ConditionalBlock`` over the two reused bodies.
-
-        :param masked_tail: ``True`` when the tail is a ``__masked_tail`` TILE body (placed as is,
-            it already runs over the same tile start), ``False`` for a ``__scalar_tail`` step-1
-            body (wrapped in a ``Sequential`` lane loop).
-        :returns: A fresh SDFG whose sole block is the ``if(full-tile)/else(tail)`` conditional.
-        """
+        # Construct the fused-body SDFG: one ``ConditionalBlock`` over the two reused bodies.
         base = self._base_label(main_entry.map.label, TILE_MAIN_MARKER)
         body = dace.SDFG(f"{base}_fused_remainder")
 
@@ -350,22 +286,13 @@ class FuseBranchedTailRemainder(ppl.Pass):
 
     @staticmethod
     def _full_tile_condition(tiled_param: str, W: int, ub: symbolic.SymbolicType) -> str:
-        """Clean ``if``-branch predicate: a W-tile at start ``i`` is fully inside the extent.
-
-        ``i + W - 1 <= ub`` <=> ``i <= ub - W + 1``; the right-hand side is a pure expression in
-        the original extent end ``ub`` and ``W``, so ``symbolic.simplify`` folds it to a tidy bound
-        (e.g. ``i <= N - 9`` for ``ub = N - 2``, ``W = 8``) with no ``int_floor`` split residue.
-        """
+        # Clean ``if``-branch predicate: a W-tile at start ``i`` is fully inside the extent.
         bound = symbolic.simplify(symbolic.pystr_to_symbolic(str(ub)) - W + 1)
         return f"{tiled_param} <= {symbolic.symstr(bound)}"
 
     @staticmethod
     def _populate_tile_branch(body: dace.SDFG, region: ControlFlowRegion, tile_nsdfg: NestedSDFG, label: str) -> None:
-        """Place a reused TILE body NSDFG (mask-free main, or masked tail) into a branch state.
-
-        Both arms run over the same tile start -- the fused map's param -- so the body is reused
-        with its own symbol mapping untouched.
-        """
+        # Place a reused TILE body NSDFG (mask-free main, or masked tail) into a branch state.
         st = region.add_state(label, is_start_block=True)
         node = st.add_nested_sdfg(tile_nsdfg.sdfg,
                                   inputs=dict(tile_nsdfg.in_connectors),
@@ -381,14 +308,8 @@ class FuseBranchedTailRemainder(ppl.Pass):
     @staticmethod
     def _populate_scalar_branch(body: dace.SDFG, region: ControlFlowRegion, rem_nsdfg: NestedSDFG, tiled_param: str,
                                 tail_ub: symbolic.SymbolicType) -> None:
-        """Place the reused scalar body (remainder NSDFG) into the ``else`` branch, wrapped in a
-        Sequential loop over this partial tile's lanes ``[i : ub]`` of the innermost dim.
-
-        The loop starts at the CURRENT tile start ``i`` (the fused-map param), not the split's
-        ``main_end+1`` constant: only the single partial-tile thread (where ``i`` equals that split
-        point) ever enters the ``else``, so ``[i : ub]`` is exactly that thread's tail lanes and the
-        emitted loop bound is a clean expression (``i`` .. ``ub``) free of the ``int_floor`` split
-        residue."""
+        # Place the reused scalar body (remainder NSDFG) into the ``else`` branch, wrapped in a Sequential loop over
+        # this partial tile's lanes ``[i : ub]`` of the innermost dim.
         st = region.add_state("scalar_tail", is_start_block=True)
         loop_var = f"__rem_{tiled_param}"
         loop_lb = symbolic.pystr_to_symbolic(tiled_param)

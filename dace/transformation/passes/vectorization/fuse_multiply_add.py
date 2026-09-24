@@ -1,17 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Fuse a multiply feeding an add into a single fused multiply-add.
 
-``t = a * b ; d = t + c`` (the ``t`` a single-use transient) becomes ``d = fma(a, b, c)``,
-using the :class:`dace.symbolic.fma` function so the downstream tile-op lowering
-(:class:`~dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops.ConvertTaskletsToTileOps`)
-emits a single :class:`~dace.libraries.tileops.nodes.tile_fma.TileFMA` -- a native FMA on every
-ISA that has one (``__hfma2`` / ``_mm*_fmadd`` / ``vfmaq`` / ``svmla`` / ``std::fma``), and
-multiply-then-add where it does not. Runs BEFORE the tasklets become ``TileBinop`` nodes.
+``t = a * b ; d = t + c`` (single-use transient ``t``) becomes ``d = fma(a, b, c)``, so
+tile-op lowering emits a native FMA per ISA instead of multiply-then-add. Runs before
+tasklets become ``TileBinop`` nodes.
 
-A fused multiply-add rounds once where the separate ``*`` then ``+`` rounds twice, so the result
-differs from a plain ``a*b + c`` (and from a NumPy reference) by up to one ULP. The pass is
-therefore OFF by default and enabled only through ``VectorizeConfig.fuse_multiply_add`` -- a caller
-opts into the fused numerics for the throughput win.
+FMA rounds once vs. two roundings for plain ``a*b + c``, differing by up to 1 ULP from
+NumPy. OFF by default; enabled via ``VectorizeConfig.fuse_multiply_add``.
 """
 import ast
 
@@ -27,11 +22,7 @@ from dace.ordered import OrderedSet
 
 
 def _binop_tasklet(tasklet: nodes.Tasklet, op: str) -> tuple[str, list[str]] | None:
-    """If ``tasklet`` is a two-input ``__out = __a <op> __b`` body, return ``(out_conn, [a, b])``.
-
-    Matches the parenthesised (``__out = (__a + __b)``) and bare forms the frontend / tasklet
-    splitter emit. Refuses anything else (a single input, a call, a compound expression).
-    """
+    # Matches a two-input "__out = __a <op> __b" body; returns (out_conn, [a, b]).
     if len(tasklet.out_connectors) != 1 or len(tasklet.in_connectors) != 2:
         return None
     if tasklet.language is not dace.dtypes.Language.Python:
@@ -61,9 +52,8 @@ def _binop_tasklet(tasklet: nodes.Tasklet, op: str) -> tuple[str, list[str]] | N
 class FuseMultiplyAdd(ppl.Pass):
     """Fuse ``t = a*b ; d = t + c`` (single-use ``t``) into ``d = fma(a, b, c)``.
 
-    Off unless explicitly enabled (the fused single-rounding changes results by up to one ULP);
-    the vectorizer runs it -- gated on ``VectorizeConfig.fuse_multiply_add`` -- before the tasklets
-    are lowered to tile ops."""
+    Off by default (1-ULP result change); gated on ``VectorizeConfig.fuse_multiply_add``,
+    runs before tasklets lower to tile ops."""
 
     CATEGORY: str = 'Vectorization'
 
@@ -74,8 +64,7 @@ class FuseMultiplyAdd(ppl.Pass):
         return bool(modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges))
 
     def _data_used_elsewhere(self, sdfg: dace.SDFG, state: SDFGState, name: str) -> bool:
-        """True if ``name`` is referenced by any access node other than in ``state`` (a
-        cross-state / cross-scope reuse that would make removing the intermediate unsound)."""
+        # True if a cross-state access would make removing the intermediate unsound.
         for s in sdfg.states():
             for n in s.nodes():
                 if isinstance(n, nodes.AccessNode) and n.data == name and s is not state:
@@ -89,7 +78,7 @@ class FuseMultiplyAdd(ppl.Pass):
             if m is None:
                 continue
             mul_out_conn, mul_ins = m
-            # The product must flow into a single-use transient scalar access node.
+            # Product must flow into a single-use transient scalar access node.
             out_edges = [e for e in state.out_edges(mul) if e.src_conn == mul_out_conn]
             if len(out_edges) != 1:
                 continue
@@ -123,8 +112,7 @@ class FuseMultiplyAdd(ppl.Pass):
 
     def _rewrite(self, sdfg: dace.SDFG, state: SDFGState, mul: nodes.Tasklet, mul_ins: list[str],
                  prod: nodes.AccessNode, add: nodes.Tasklet, add_out_conn: str, addend_conn: str) -> None:
-        """Replace the ``mul -> prod -> add`` chain with one ``fma`` tasklet."""
-        # Source edges to preserve: the two multiplicands (into ``mul``) and the addend (into ``add``).
+        # Replace the mul -> prod -> add chain with one fma tasklet.
         a_edge = next(e for e in state.in_edges(mul) if e.dst_conn == mul_ins[0])
         b_edge = next(e for e in state.in_edges(mul) if e.dst_conn == mul_ins[1])
         c_edge = next(e for e in state.in_edges(add) if e.dst_conn == addend_conn)
@@ -139,7 +127,7 @@ class FuseMultiplyAdd(ppl.Pass):
         state.add_edge(c_edge.src, c_edge.src_conn, fma, '__in3', dace.Memlet.from_memlet(c_edge.data))
         state.add_edge(fma, '__out', out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
 
-        # Drop the fused nodes + the now-orphaned intermediate transient.
+        # Drop fused nodes + the now-orphaned intermediate transient.
         state.remove_node(mul)
         state.remove_node(add)
         state.remove_node(prod)

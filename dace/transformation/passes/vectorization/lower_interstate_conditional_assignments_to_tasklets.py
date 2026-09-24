@@ -136,12 +136,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         return demoted
 
     def _apply(self, cfg: ControlFlowRegion) -> bool:
-        """Recursively demote conditional-assignment free symbols within a control-flow region.
-
-        :param cfg: The control-flow region (or SDFG) to process.
-        :returns: ``True`` if a demotion was applied and ``apply_once`` requests early exit.
-        :raises Exception: If an unsupported control-flow node type is encountered.
-        """
+        # Recursively demote conditional-assignment free symbols within a control-flow region.
         if self._applied > 0 and self.apply_once:
             return False
 

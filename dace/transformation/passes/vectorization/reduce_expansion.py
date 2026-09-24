@@ -13,7 +13,7 @@ API requires):
   ``#pragma omp parallel for reduction(...)`` owns per-thread accumulators +
   cross-thread combine (thread count = OpenMP runtime concern,
   ``omp_get_max_threads()``, never an SDFG symbol; no manual ``M/NUM_CORES`` tiling).
-- Any other schedule (GPU, MPI, Snitch, …) or unsupported reduction op -> raise
+- Any other schedule (GPU, MPI, Snitch, ...) or unsupported reduction op -> raise
   ``NotImplementedError``. An unexpected schedule or a non-associative / custom
   reduction must surface, not be silently mis-lowered.
 """
@@ -34,7 +34,7 @@ from dace.transformation import transformation as pm
 
 #: Reduction ops with an associative identity + matching ``horizontal_reduce_<op>``
 #: primitive; value = op-token suffix used by ``cpu_vectorizable_math_*.h``. Sub /
-#: Div / Logical_* / *_Location / Exchange / Custom absent — no associative-fold
+#: Div / Logical_* / *_Location / Exchange / Custom absent -- no associative-fold
 #: identity, must raise rather than mis-reduce.
 REDTYPE_TO_OP = {
     dtypes.ReductionType.Sum: "add",
@@ -73,29 +73,13 @@ _OP_IDENTITY_CXX = {
 }
 
 #: horizontal-reduce primitive is templated on a compile-time lane count; use the
-#: pipeline default width (runtime header handles any width — single instruction
+#: pipeline default width (runtime header handles any width -- single instruction
 #: where the ISA has it, portable log-depth tree otherwise).
 _VEC_W = 8
 
 
 def _build_vectorized_full_reduction(node: Reduce, state: SDFGState, sdfg: SDFG, opname: str) -> SDFG | None:
-    """Vectorized 1-D full-reduction nested SDFG, or ``None`` if out of scope.
-
-    Scope: full reduction (every axis reduced) of a contiguous 1-D input to a
-    single output element — the shape the vectorizer's lifted accumulators
-    produce. Anything else (partial / multi-axis / multi-element output) ->
-    ``None``, caller delegates to :class:`ExpandReducePure` (still correct).
-
-    Kernel keeps ``_VEC_W`` partial accumulators, folds with one
-    ``horizontal_reduce_<op>`` intrinsic, then a scalar tail handles the
-    non-``W``-multiple remainder.
-
-    :param node: the ``Reduce`` node.
-    :param state: state containing ``node``.
-    :param sdfg: containing SDFG.
-    :param opname: the ``horizontal_reduce_<opname>`` suffix.
-    :returns: expanded nested SDFG, or ``None`` if unsupported here.
-    """
+    # Vectorized 1-D full-reduction nested SDFG, or ``None`` if out of scope.
     node.validate(sdfg, state)
     inedge = state.in_edges(node)[0]
     outedge = state.out_edges(node)[0]
