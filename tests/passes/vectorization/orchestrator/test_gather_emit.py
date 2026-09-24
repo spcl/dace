@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.tileops import TileLoad
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -91,6 +92,38 @@ def test_structured_int_floor_replication_matches_reference(n):
     ref.compile()(b=b.copy(), c=c.copy(), out=ro, N=n)
     vec.compile()(b=b.copy(), c=c.copy(), out=vo, N=n)
     np.testing.assert_allclose(vo, ro, rtol=1e-12, atol=1e-12)
+
+
+@dace.program
+def half_group_offset_kernel(a: dace.float64[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        b[i] = a[(i + 1) // 2]
+
+
+def test_floor_division_index_off_the_group_boundary_is_gathered() -> None:
+    a, b = np.arange(16.0), np.zeros(16)
+    sdfg = half_group_offset_kernel.to_sdfg(simplify=True)
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert {tuple(n.gather_dims) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileLoad)} == {(0, )}
+    sdfg(a=a, b=b, N=16)
+    np.testing.assert_array_equal(b, [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8])
+
+
+@dace.program
+def tasklet_index_kernel(a: dace.float64[2 * N], idx: dace.int32[N], b: dace.float64[N]):
+    for i in dace.map[0:N]:
+        k = idx[i] * 2
+        b[i] = a[k]
+
+
+@pytest.mark.xfail(strict=True,
+                   reason="WidenAccesses neither fans out nor refuses an index a tasklet computes per lane")
+def test_gather_through_a_tasklet_computed_index_matches_reference() -> None:
+    a, idx, b = np.arange(32.0), np.arange(16, dtype=np.int32)[::-1].copy(), np.zeros(16)
+    sdfg = tasklet_index_kernel.to_sdfg(simplify=True)
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    sdfg(a=a, idx=idx, b=b, N=16)
+    np.testing.assert_array_equal(b, 2 * idx)
 
 
 def _prepped(tag=""):

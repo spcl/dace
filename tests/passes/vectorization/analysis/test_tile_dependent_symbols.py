@@ -131,3 +131,18 @@ def test_classifier_outer_scope_symbol_does_not_force_gather():
     subset = Range([(dace.symbolic.pystr_to_symbolic("2*N + 1"), dace.symbolic.pystr_to_symbolic("2*N + 1"), 1)])
     record = classify_tile_access(subset, iter_vars=("i", ), inner_sdfg=sdfg)
     assert record.per_dim_kind == (PerDimKind.CONSTANT, )
+
+
+def test_tasklet_computed_index_from_gathered_value_is_a_gather() -> None:
+    """``k = idx[i] * 2; a[k]``: the index differs per lane, so the read is not CONSTANT."""
+    sdfg = dace.SDFG("body")
+    sdfg.add_array("idx", [16], dace.int64)
+    sdfg.add_scalar("k", dace.int64, transient=True)
+    compute, use = sdfg.add_state("compute", is_start_block=True), sdfg.add_state("use")
+    tasklet = compute.add_tasklet("times_two", {"__in1"}, {"__out"}, "__out = __in1 * 2")
+    compute.add_edge(compute.add_access("idx"), None, tasklet, "__in1", dace.Memlet("idx[i]"))
+    compute.add_edge(tasklet, "__out", compute.add_access("k"), None, dace.Memlet("k[0]"))
+    sdfg.add_edge(compute, use, dace.InterstateEdge(assignments={"__sym_k": "k"}))
+    subset = Range.from_string("__sym_k")
+    record = classify_tile_access(subset, iter_vars=("i", ), inner_sdfg=sdfg, state=use)
+    assert record.per_dim_kind == (PerDimKind.GATHER, )
