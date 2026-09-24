@@ -31,6 +31,9 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.rank_k_match import unit_stride
+from dace.transformation.passes.canonicalize.loop_to_transpose import (_is_copy_tasklet, _node_side_subset,
+                                                                       _single_body_state, _single_child_loop)
 
 
 def _const_nonneg_int(value) -> Optional[int]:
@@ -40,65 +43,6 @@ def _const_nonneg_int(value) -> Optional[int]:
     except Exception:
         return None
     return int(s) if s.is_Integer and int(s) >= 0 else None
-
-
-def _unit_stride(loop: LoopRegion) -> bool:
-    stride = loop_analysis.get_loop_stride(loop)
-    try:
-        return stride is not None and symbolic.simplify(stride) == 1
-    except Exception:
-        return False
-
-
-def _single_child_loop(region: ControlFlowRegion) -> Optional[LoopRegion]:
-    """The region's one child ``LoopRegion`` if every other block is an empty
-    state (perfect nest with connective tissue tolerated), else ``None``."""
-    loop = None
-    for b in region.nodes():
-        if isinstance(b, LoopRegion):
-            if loop is not None:
-                return None
-            loop = b
-        elif isinstance(b, SDFGState):
-            if b.nodes():
-                return None
-        else:
-            return None
-    return loop
-
-
-def _single_body_state(loop: LoopRegion) -> Optional[SDFGState]:
-    """The loop's one non-empty body state, or ``None`` if not a single compute
-    state (empty connective states tolerated)."""
-    blocks = list(loop.nodes())
-    if not all(isinstance(b, SDFGState) for b in blocks):
-        return None
-    non_empty = [b for b in blocks if b.nodes()]
-    return non_empty[0] if len(non_empty) == 1 else None
-
-
-def _is_copy_tasklet(node) -> bool:
-    """Whether ``node`` is a single-input pure-copy tasklet ``__out = __inp``."""
-    if not isinstance(node, nodes.Tasklet):
-        return False
-    code = node.code.as_string.strip()
-    if code.count("=") != 1:
-        return False
-    lhs, rhs = (s.strip() for s in code.split("=", 1))
-    return len(node.in_connectors) == 1 and len(node.out_connectors) == 1 and rhs in node.in_connectors and \
-        lhs in node.out_connectors
-
-
-def _node_side_subset(state, edge, node):
-    """The subset of ``edge`` on ``node``'s side, where ``node`` is an endpoint of ``edge``.
-
-    Which of ``subset`` / ``other_subset`` names the source is carried by the memlet's own
-    ``_is_data_src`` flag, NOT by the endpoint names -- and this pass matches exactly the case where
-    the names cannot disambiguate, a self-copy ``X -> X``. ``get_src_subset`` / ``get_dst_subset``
-    are the only correct readers of the pair.
-    """
-    mem = edge.data
-    return mem.get_src_subset(edge, state) if node is edge.src else mem.get_dst_subset(edge, state)
 
 
 def _point_indices(subset, outer: str, inner: str) -> Optional[list]:
@@ -144,10 +88,10 @@ class LoopToSymmetrize(ppl.Pass):
         return count or None
 
     def _try_lift(self, cfg: ControlFlowRegion, outer: LoopRegion, sdfg: dace.SDFG) -> bool:
-        if not outer.loop_variable or not _unit_stride(outer):
+        if not outer.loop_variable or not unit_stride(outer):
             return False
         inner = _single_child_loop(outer)
-        if inner is None or not inner.loop_variable or not _unit_stride(inner):
+        if inner is None or not inner.loop_variable or not unit_stride(inner):
             return False
         outer_var, inner_var = outer.loop_variable, inner.loop_variable
 

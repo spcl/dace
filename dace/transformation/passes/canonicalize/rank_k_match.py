@@ -33,7 +33,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import sympy
 
-from dace import SDFG, data as dt, subsets, symbolic
+from dace import SDFG, data as dt, memlet as mm, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation.passes.analysis import loop_analysis
@@ -214,6 +214,11 @@ def expressions_equal(actual: sympy.Basic, expected: sympy.Basic) -> bool:
         return bool(symbolic.simplify(sympy.expand(actual - expected)) == 0)
     except Exception:
         return False
+
+
+def full_memlet(root: SDFG, name: str) -> mm.Memlet:
+    """A whole-array memlet on ``name``, with a fresh ``Range`` (memlets never share subsets)."""
+    return mm.Memlet(data=name, subset=subsets.Range([(0, s - 1, 1) for s in root.arrays[name].shape]))
 
 
 def unit_stride(loop: LoopRegion) -> bool:

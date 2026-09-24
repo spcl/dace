@@ -60,7 +60,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.canonicalize.rank_k_match import (ArrayRead, StateValueResolver, equals,
+from dace.transformation.passes.canonicalize.rank_k_match import (ArrayRead, StateValueResolver, equals, full_memlet,
                                                                   expressions_equal, is_single_element, loop_extent,
                                                                   loop_invariant, nontransient_written,
                                                                   outer_loop_candidates, reaches,
@@ -78,14 +78,6 @@ SLICE_COL = sympy.Symbol("__symm_q")
 MAX_STAGING_HOPS = 4
 
 
-def _eq(a, b) -> bool:
-    """Symbolic equality of two index expressions (strings or sympy)."""
-    try:
-        return bool(symbolic.simplify(symbolic.pystr_to_symbolic(str(a)) - symbolic.pystr_to_symbolic(str(b))) == 0)
-    except Exception:
-        return False
-
-
 def _axes(subset) -> Optional[List[Tuple[object, object, object]]]:
     """The ``(begin, end, step)`` tuple of every axis of a 2-D ``Range``, else None."""
     if not isinstance(subset, Range) or len(subset) != 2:
@@ -96,20 +88,20 @@ def _axes(subset) -> Optional[List[Tuple[object, object, object]]]:
 def _is_point(axis, p) -> bool:
     """Axis is the single point ``p`` (``begin == end == p``, unit step)."""
     b, e, s = axis
-    return _eq(b, p) and _eq(e, p) and _eq(s, 1)
+    return equals(b, p) and equals(e, p) and equals(s, 1)
 
 
 def _is_lower_tri(axis, p) -> bool:
     """Axis is the half-open triangular range ``0:p`` (``begin 0``, ``end p-1``)."""
     b, e, s = axis
-    return _eq(b, 0) and _eq(e, symbolic.pystr_to_symbolic(str(p)) - 1) and _eq(s, 1)
+    return equals(b, 0) and equals(e, symbolic.pystr_to_symbolic(str(p)) - 1) and equals(s, 1)
 
 
 def _is_scalar_point(subset) -> bool:
     """Subset is a single element of a length-1 array (a scalar coefficient read)."""
     if not isinstance(subset, Range):
         return False
-    return all(_eq(b, e) for b, e, _ in subset.ndrange())
+    return all(equals(b, e) for b, e, _ in subset.ndrange())
 
 
 class SymmMatch:
@@ -413,7 +405,7 @@ class LoopToSymm(ppl.Pass):
         params = dict.fromkeys(me.map.params)
         for i, ax in enumerate(tri):
             b, e, _ = ax
-            if _eq(b, e) and str(b) in params:
+            if equals(b, e) and str(b) in params:
                 p_col = str(b)
                 p_row_axis = tri[1 - i]
                 # the other axis must be the triangle 0:p_row for some param p_row
@@ -508,15 +500,12 @@ class LoopToSymm(ppl.Pass):
         node = Symm(me.map.label + "_symm", side="L", uplo="L", alpha=1, beta=1, alpha_input=True, beta_input=True)
         state.add_node(node)
 
-        def full(name: str) -> mm.Memlet:
-            return mm.Memlet(data=name, subset=Range([(0, s - 1, 1) for s in sdfg.arrays[name].shape]))
-
-        state.add_edge(reads[match.a], None, node, "_a", full(match.a))
-        state.add_edge(reads[match.b], None, node, "_b", full(match.b))
-        state.add_edge(reads[match.c], None, node, "_c", full(match.c))
+        state.add_edge(reads[match.a], None, node, "_a", full_memlet(sdfg, match.a))
+        state.add_edge(reads[match.b], None, node, "_b", full_memlet(sdfg, match.b))
+        state.add_edge(reads[match.c], None, node, "_c", full_memlet(sdfg, match.c))
         state.add_edge(reads[match.alpha], None, node, "_alpha", mm.Memlet(f"{match.alpha}[0]"))
         state.add_edge(reads[match.beta], None, node, "_beta", mm.Memlet(f"{match.beta}[0]"))
-        state.add_edge(node, "_c", writes[match.c], None, full(match.c))
+        state.add_edge(node, "_c", writes[match.c], None, full_memlet(sdfg, match.c))
 
         state.remove_node(nsdfg)
         state.remove_node(me)
@@ -862,15 +851,11 @@ def replace_slice_form(parent: ControlFlowRegion, loop: LoopRegion, match: SymmS
     node = Symm(loop.label + "_symm", side="L", uplo="L", alpha=1, beta=1, alpha_input=True, beta_input=False)
     state.add_node(node)
 
-    def full(name: str) -> mm.Memlet:
-        # Fresh Range per edge -- DaCe forbids two memlets sharing one subset.
-        return mm.Memlet(data=name, subset=Range([(0, s - 1, 1) for s in root.arrays[name].shape]))
-
-    state.add_edge(state.add_read(match.a), None, node, "_a", full(match.a))
-    state.add_edge(state.add_read(match.b), None, node, "_b", full(match.b))
-    state.add_edge(state.add_read(match.c), None, node, "_c", full(match.c))
+    state.add_edge(state.add_read(match.a), None, node, "_a", full_memlet(root, match.a))
+    state.add_edge(state.add_read(match.b), None, node, "_b", full_memlet(root, match.b))
+    state.add_edge(state.add_read(match.c), None, node, "_c", full_memlet(root, match.c))
     state.add_edge(state.add_read(match.alpha), None, node, "_alpha", mm.Memlet(f"{match.alpha}[0]"))
-    state.add_edge(node, "_c", state.add_write(match.c), None, full(match.c))
+    state.add_edge(node, "_c", state.add_write(match.c), None, full_memlet(root, match.c))
 
 
 __all__ = ["LoopToSymm"]

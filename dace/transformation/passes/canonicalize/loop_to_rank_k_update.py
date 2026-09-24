@@ -21,10 +21,9 @@ import sympy
 
 from dace import SDFG, memlet as mm
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
-from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.canonicalize.rank_k_match import (RankKMatch, beta_and_inner_loop, expressions_equal,
-                                                                  internal_writes_contained, loop_extent,
+                                                                  full_memlet, internal_writes_contained, loop_extent,
                                                                   loop_invariant, match_beta_state, operand_shape_ok,
                                                                   outer_loop_candidates, replace_loop_with_state,
                                                                   resolve_accumulate, root_sdfg_of, single_body_state,
@@ -93,11 +92,6 @@ def update_operands(root: SDFG, loop: LoopRegion, nest: TriangularNest, value: s
     if not expressions_equal(value, roles["c"] + alpha_sym * pairing):
         return None
     return operands
-
-
-def full_memlet(root: SDFG, name: str) -> mm.Memlet:
-    # Fresh Range per edge -- DaCe forbids two memlets sharing one subset.
-    return mm.Memlet(data=name, subset=Range([(0, s - 1, 1) for s in root.arrays[name].shape]))
 
 
 @explicit_cf_compatible

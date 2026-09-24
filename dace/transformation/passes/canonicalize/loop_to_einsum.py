@@ -93,6 +93,7 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, map_scope
+from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_tasklet
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -492,16 +493,6 @@ def sweeps_whole_array(order: List[str], ends: Dict[str, object], desc: data.Dat
     """Whether ``order`` (one parameter per axis, each running ``0 .. ends[param]``) covers all of ``desc``."""
     return all(
         symbolic.simplify(pystr_to_symbolic(ends[p]) - (extent - 1)) == 0 for p, extent in zip(order, desc.shape))
-
-
-def _is_copy_tasklet(node: nodes.Tasklet) -> bool:
-    """A single-input single-output pure copy ``__out = __inp``."""
-    code = node.code.as_string.strip()
-    if code.count('=') != 1:
-        return False
-    lhs, rhs = (s.strip() for s in code.split('=', 1))
-    return len(node.in_connectors) == 1 and len(node.out_connectors) == 1 and rhs in node.in_connectors and \
-        lhs in node.out_connectors
 
 
 def _boundary_axis_order(edges, probe: SDFG, transient_ok: bool):
