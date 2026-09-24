@@ -969,16 +969,8 @@ class RerollUnrolledLoops(ppl.Pass):
     def _rewrite_step(self, loop: LoopRegion, loop_var: str, g: int, m: int) -> None:
         """Rewrite a step-``S`` loop to step ``g`` over the flattened range.
 
-        The original loop runs ``loop_var = init, init + S, ..., last_i`` where
-        ``last_i`` is the LAST iteration value -- which is ``init + S *
-        floor((end - init) / S)``, NOT ``end`` itself when the range is not a
-        multiple of the step (``get_loop_end`` returns the largest *value* below
-        the bound, ignoring step alignment). Lane 0 of that last iteration sweeps
-        up to ``last_i + (m - 1) * g``, so the re-rolled step-``g`` loop's
-        exclusive bound is ``last_i + m * g``. Using ``end`` directly would
-        over-cover the unaligned tail by extra positions the original loop never
-        visits -- for a reduction that silently adds spurious terms (TSVC s352:
-        ``for i in range(0, LEN_1D - 4, 5)`` skips the final partial group).
+        The exclusive bound is ``last_i + m * g`` with ``last_i`` the last visited value, not ``end``:
+        an unaligned tail would otherwise add terms the original never visits (TSVC s352).
 
         :param loop: The loop region to rewrite.
         :param loop_var: The loop variable name.

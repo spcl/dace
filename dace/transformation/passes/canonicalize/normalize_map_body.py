@@ -143,26 +143,12 @@ def _append_cfg(base: SDFG, tail: SDFG) -> None:
 
 
 def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
-    """Fold the redundant boundary plumbing that sibling consolidation created.
+    """Fold duplicate boundary reads left by sibling consolidation.
 
-    ``MapFusion`` co-locates independent computations that read the SAME outer
-    array (``g``) at the SAME iterator; the sibling merge renamed the second copy
-    to a fresh connector (``g_0``) and kept its own iterator symbol
-    (``_loop_it_1``, bound to the same outer value as ``_loop_it_0``). The two
-    now-consecutive guards then read ``g[_loop_it_0]`` vs ``g_0[_loop_it_1]`` --
-    the same predicate, but syntactically distinct, so the follow-up
-    ``ConditionFusion`` builds a cartesian product instead of folding them.
-
-    This collapses each duplicate onto its canonical name so the guards become
-    syntactically identical:
-
-    * an in-connector whose incoming memlet is identical (same source node +
-      source connector + data + subset) to an earlier one is redundant -- rename
-      its inner descriptor to the earlier connector and drop the extra edge;
-    * two symbol-mapping keys bound to the identical outer value collapse to one.
-
-    Value-preserving: the merged names denote the same data / same value. Only
-    reads (in-connectors) are deduplicated; writes are left untouched.
+    After MapFusion the merged siblings read ``g[_loop_it_0]`` and ``g_0[_loop_it_1]``: the same
+    predicate spelled twice, which ConditionFusion would multiply out. An in-connector whose memlet
+    duplicates an earlier one (source node, connector, data, subset) is renamed onto it, and
+    symbol-mapping keys bound to the same outer value collapse. Reads only; value-preserving.
     """
     base = keep.sdfg
 

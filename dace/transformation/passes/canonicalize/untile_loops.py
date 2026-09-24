@@ -653,23 +653,9 @@ class UntileLoops(ppl.Pass):
         return False
 
     def _maps_to_loops(self, sdfg: SDFG) -> int:
-        """Pre-round-trip step: lower every Map to a LoopRegion.
-
-        Sequence:
-
-        1. ``MapExpansion`` -- split multi-dim Maps so ``MapToForLoop``
-           (which only accepts uni-dim Maps) can handle them.
-        2. ``MapToForLoop`` -- each uni-dim Map becomes a LoopRegion at
-           the parent CFR. With ``inline_after=True`` (default), the
-           wrapping NSDFG is flattened in-place when it isn't itself
-           Map-scoped. NSDFGs that were created INSIDE another Map's
-           scope are left wrapped (per-iteration narrowing is
-           intentional inside a Map) and become un-scoped only after
-           their enclosing Map gets converted too.
-        3. ``ExpandNestedSDFGInputs`` + ``InlineMultistateSDFG`` --
-           post-sweep that catches the leftover wrappers from (2) once
-           every Map has become a LoopRegion. Run as a fixpoint to
-           handle deeply-nested cases.
+        """Lower every Map to a LoopRegion: ``MapExpansion`` (``MapToForLoop`` takes 1-D maps only),
+        ``MapToForLoop`` (inlining unscoped wrappers), then a fixpoint of ``ExpandNestedSDFGInputs`` +
+        ``InlineMultistateSDFG`` for wrappers that were map-scoped until their enclosing map lowered.
         """
         from dace.transformation.dataflow.map_expansion import MapExpansion
         from dace.transformation.dataflow.map_for_loop import MapToForLoop

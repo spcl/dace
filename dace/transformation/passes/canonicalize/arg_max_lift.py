@@ -1656,25 +1656,12 @@ class ArgMaxLift(ppl.Pass):
         reduce_state.add_edge(node, '_out', write, None, output_memlet)
 
     def _rewrite_with_index(self, m: _Match, sdfg: SDFG):
-        """Replace an argmax/argmin-with-index loop (TSVC s315) with an
-        :class:`~dace.libraries.standard.nodes.ArgReduce` libnode.
+        """Replace an argmax/argmin-with-index loop (TSVC s315) with a two-output ``ArgReduce``.
 
-        The lift mirrors the symbol-carrier value-only path but uses the
-        two-output ``ArgReduce`` (value + index). Both outputs are fresh
-        transient SCALARS -- ``val_buf`` (the array's dtype) and ``idx_buf``
-        (``int64``) -- bound back to the carrier symbols after the reduce:
-        ``carrier := val_buf`` and ``idx_carrier := slice_lo + idx_buf`` (the
-        ``ArgReduce`` index is slice-local; ``slice_lo`` recovers the
-        original-array position). The pre-loop seed iedges binding either
-        carrier are dropped -- the reduce subsumes them (the seed position is
-        kept by extending the input slice down to ``start - 1``).
-
-        Under a non-strict guard (``m.last_wins``) the sequential loop keeps the
-        LAST occurrence of the extreme while the ArgReduce scan keeps the first.
-        The scan is then run over a REVERSED copy of the slice (``rev[j] =
-        a[end-j]``, materialised by a parallel map), whose first extreme IS the
-        forward slice's last one; the position maps back as ``idx_carrier :=
-        end - idx_buf``.
+        Value and index land in fresh transient scalars bound back as ``carrier := val_buf`` and
+        ``idx_carrier := slice_lo + idx_buf``; the seed iedges are dropped (the slice extends to
+        ``start - 1``). Under ``m.last_wins`` the scan runs over a reversed copy and
+        ``idx_carrier := end - idx_buf``.
         """
         from dace.libraries.standard.nodes import ArgReduce
         start = symbolic.simplify(m.iter_start)

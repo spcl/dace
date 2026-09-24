@@ -675,19 +675,11 @@ def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, sta
 
 
 def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -> bool:
-    """Whether ``sym_name`` is also stepped by a loop NESTED INSIDE ``loop``.
+    """Whether ``sym_name`` is also stepped by a loop nested inside ``loop``.
 
-    Such a counter has no per-loop closed form here: ``loop``'s own step is not the only thing that
-    happens to it per iteration, so ``sym + trip * step`` under-counts by whatever the inner loop
-    added.
-
-    A step in an ENCLOSING or a SIBLING loop is a different matter and is allowed. The substitution
-    reads ``sym`` as the value live at THIS loop's entry and materialises ``sym + trips * step`` on
-    the way out, so the outer picture is preserved whatever else steps the symbol elsewhere. That is
-    what unwinds a two-level counter (TSVC ``s126``: ``k += 1`` in the inner loop and once more per
-    outer iteration): closing the inner loop turns its whole contribution into one exit assignment,
-    which leaves the outer loop with a single step per iteration for the next round of the pass'
-    fixed point to close in turn.
+    Then ``sym + trip * step`` under-counts. Steps in enclosing or sibling loops are fine: the
+    substitution starts from the value live at entry and materializes the exit value, which is how a
+    two-level counter unwinds over fixpoint rounds (TSVC s126).
 
     :param sdfg: The SDFG owning ``loop``.
     :param loop: The loop whose counter is being closed.
@@ -699,23 +691,11 @@ def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -
 
 def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
                              sdfg_free_symbols: Set[str]) -> bool:
-    """Hoist an IV increment that EVERY branch of a body ``ConditionalBlock``
-    performs identically (``sym := sym + step`` on all paths) out of the
-    conditional, so the branches share one increment on a single iedge.
+    """Hoist an increment every branch of a body ``ConditionalBlock`` performs identically onto one
+    iedge, before the conditional for post-increment reads and after it for pre-increment reads.
 
-    The increment lands BEFORE the conditional when the branches read ``sym``
-    post-increment, and AFTER it when they read ``sym`` pre-increment -- whichever
-    keeps the in-branch uses seeing exactly the value the sequential body gave them
-    (see the ``side`` dispatch below).
-
-    This is a structural enabler, not itself a substitution: after the hoist the
-    increment is a plain between-blocks iedge that :func:`_try_substitute_iedge_iv`
-    (next fixed-point round) closes. TSVC ``s124`` -- ``j += 1`` in BOTH the ``if``
-    and the ``else``, before the ``a[j]`` writes -- becomes ``j = i`` so ``a[j]`` is
-    the parallel ``a[i]``; the mirrored read-before-increment body closes the same
-    way with the pre-increment offset.
-    Requires an exhaustive conditional (an ``else`` branch): with an implicit
-    fall-through some path skips the increment and the hoist would be unsound.
+    An enabler for :func:`_try_substitute_iedge_iv` in the next round (TSVC s124: ``j += 1`` in both
+    branches becomes ``j = i``). Requires an ``else`` branch; a fall-through path would skip it.
     """
     for cb in [b for b in loop.nodes() if isinstance(b, ConditionalBlock)]:
         conds = [c for c, _ in cb.branches]
@@ -797,25 +777,11 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
 
 
 def _consistent_use_side(loop: LoopRegion, iv_edge, sym_name: str) -> Optional[str]:
-    """Whether every USE of ``sym_name`` in the loop body executes on ONE side of
-    the IV increment ``iv_edge`` (``sym := sym + step``).
+    """Which side of the IV increment ``iv_edge`` every use of ``sym_name`` runs on.
 
-    Returns ``'before'`` if all uses run before the increment (pre-increment: the
-    body sees ``sym_init + norm_iter * step``), ``'after'`` if all run after it
-    (post-increment: ``... + (norm_iter + 1) * step``), ``'unused'`` if the body
-    contains NO use at all (both sides are vacuously correct -- the caller is free
-    to pick either), or ``None`` if the uses straddle both sides, which genuinely
-    needs per-block offsets and is the only case that must refuse.
-
-    ``'unused'`` and ``None`` are deliberately distinct: conflating them would turn
-    "either answer is right" into "no answer exists" and refuse a liftable loop.
-
-    This generalizes the TOP / BOTTOM shape check to an IV increment sitting
-    *between* content blocks (TSVC ``s128``: ``k := j + 1`` before ``j := j + 2``
-    -- the only ``j`` use is the ``k`` iedge, which precedes the increment). Sides
-    are decided by reverse/forward reachability from the increment's endpoints;
-    the loop body is a DAG (the back-edge is the region boundary, not a body
-    edge), so reachability is exact.
+    ``'before'`` (body sees ``norm_iter * step``), ``'after'`` (``norm_iter + 1``), ``'unused'`` (either
+    works; distinct from refusal) or ``None`` when uses straddle it. Generalizes TOP / BOTTOM to an
+    increment between content blocks (TSVC s128). Reachability on the acyclic body is exact.
     """
     before = dict.fromkeys(sdutil.dfs_conditional(loop, sources=[iv_edge.src], reverse=True))
     before[iv_edge.src] = None

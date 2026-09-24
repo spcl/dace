@@ -222,26 +222,10 @@ def _nest_shape(loop: LoopRegion) -> _NestShape:
 
 
 def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Dict[str, None], live: Dict[str, None]) -> bool:
-    """Cheap NECESSARY conditions for the probe to collapse to one ``Einsum`` /
-    ``Transpose``. The probe pipeline (two ``SimplifyPass`` runs, ``LoopToMap``,
-    inlining, ...) costs seconds on a large nest and is pure waste on a nest that
-    cannot possibly lift, so screen the candidate structurally first:
-
-    1. Exactly ONE written array survives the probe as a boundary (non-transient)
-       descriptor. The lifted node writes exactly one output; any second visible
-       write would need a tasklet / map / loop, all of which the acceptance test in
-       :func:`_extract_einsum` / :func:`_extract_transpose` refuses. (Writes to
-       purely-internal transients do not count -- simplification removes them.)
-    2. At least TWO iteration dimensions. ``LiftEinsum`` needs a free output index
-       plus a second (contracted or outer-product) index, and the transpose shape
-       needs exactly two map parameters -- neither is reachable from a single axis.
-    3. A multiplication somewhere, OR a nest of pure copies. ``LiftEinsum`` requires
-       the fused tasklet's expression to be the PRODUCT of its input connectors, and
-       no pipeline step synthesizes a ``*``; the transpose shape instead needs the
-       map scope to hold nothing but ``__out = __inp`` copies.
-
-    (2) and (3) read the nest's states and the bodies of its ``NestedSDFG`` nodes, which the
-    probe inlines, so a nested body is screened like the nest itself."""
+    """Cheap necessary conditions for the (seconds-long) probe to collapse to one ``Einsum`` /
+    ``Transpose``: exactly one written non-transient array, at least two iteration dimensions, and a
+    multiplication or only pure copies. Nested SDFG bodies are screened too (the probe inlines them).
+    """
     boundary: Dict[str, None] = {}
     for name in written:
         desc = root.arrays.get(name)
