@@ -361,12 +361,8 @@ def _symbol_has_external_consumer(sdfg: dace.SDFG,
                 if symbolic.symbols_in_code(cond_text, potential_symbols=only):
                     return True
 
-    # ``recursive=True``: the DELETION (``_drop_interstate_symbol``) walks
-    # ``all_control_flow_regions(recursive=True)``, which descends through nested SDFGs, so a
-    # shallow consumer scan here is strictly weaker than what it removes -- CloudSC has the same
-    # guarded block at top level AND inside the ``loop_body`` NSDFG that ``LoopToMap`` minted, and
-    # the shallow scan let the top-level rewrite delete the NESTED block's assignment while that
-    # block still tested the symbol. The check must reach at least as deep as the deletion.
+    # Scan recursively: the deletion walks nested SDFGs too (CloudSC guards the same block at top level
+    # and inside the LoopToMap ``loop_body`` NSDFG), so the consumer check must reach as deep.
     for block in sdfg.all_control_flow_blocks(recursive=True):
         if isinstance(block, ConditionalBlock):
             if block is skip_cb:
@@ -422,12 +418,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
 
     CATEGORY: str = "Vectorization Preparation"
 
-    #: Buffered ``(sdfg, sym, edges, skip_cb)`` deletions while a COMPOUND cond lift is in
-    #: progress, ``None`` outside one. A compound lifts its names one at a time and each
-    #: name's own lift commits its interstate-definition deletion; a LATER name that refuses
-    #: aborts the whole compound, and the caller then bakes the ORIGINAL cond text into the
-    #: ITE tasklet -- naming symbols the committed names already deleted the definitions of.
-    #: Buffering makes the compound all-or-nothing, which is what "no partial lifts" means.
+    # Buffered ``(sdfg, sym, edges, skip_cb)`` deletions during a compound cond lift (``None`` outside
+    # one), so a later refusal leaves no committed deletion behind: no partial lifts.
     _deferred_drops = None
 
     def modifies(self) -> ppl.Modifies:
@@ -442,11 +434,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         :param sdfg: SDFG to transform in place.
         :returns: number of blocks rewritten, or ``None`` if none.
         """
-        # Python frontend often emits empty entry state in an arm whose only effect is
-        # an interstate symbol binding (``__sym_<x> = <x>``). That extra state bumps arm
-        # node count past the single-state guard below -> broken sequential-single-arm
-        # path in ``BranchNormalization``. Hoist those bindings out of every arm first so
-        # they're invisible to the match check.
+        # Hoist arm-entry symbol bindings (``__sym_<x> = <x>``) the frontend puts in an otherwise empty
+        # state, so they do not defeat the single-state guard below.
         from dace.transformation.passes.vectorization.branch_normalization import (  # avoid import cycle
             BranchNormalization, )
         normalizer = BranchNormalization()
@@ -584,12 +573,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         else_writes = self._collect_write_subsets(else_state) if else_state is not None else {}
 
         def _alloc(prefix: str, arr_name: str) -> str:
-            # Element-wise writes (each escaping arm-write subset size 1, per
-            # ``_collect_write_subsets``) need only a 1-element scratch, not full base
-            # shape. Full-shape forced a heap VLA for symbol-shaped bases (cloudsc
-            # ``zliqfrac[kfdia, klev]``) the K-dim tile path can't register-promote,
-            # leaving outer scope with untouched ``new[]``. Shape (1,) keeps temp
-            # Register-allocable everywhere.
+            # Element-wise writes need only a ``(1,)`` scratch; a full symbol-shaped base (cloudsc
+            # ``zliqfrac[kfdia, klev]``) would force a heap VLA the tile path cannot register-promote.
             base = local_sdfg.arrays[arr_name]
             name, _ = local_sdfg.add_array(name=f"{prefix}_{arr_name}",
                                            shape=(1, ),
@@ -628,16 +613,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         if else_state is not None:
             self._clone_with_redirect(else_state, ce_state, temp_else)
 
-        # Stitch ConditionalBlock in/out edges onto ct_state -> ce_state -> am_state and
-        # drop the original block *before* resolving the cond. Resolving on a still
-        # disconnected graph leaves the freshly-added states as a separate CFG component,
-        # so a staged-read symbol defined on an edge ahead of ``cb`` (``a_index_0 =
-        # a[_loop_it_1]`` guarding TSVC s279's nested ``if b[i] > a[i]``) no longer appears
-        # to dominate ``am_state`` and gets spuriously reported as a free symbol of the
-        # (nested) SDFG. ``_protected_symbols`` then refuses to inline/drop it, leaving an
-        # orphaned free symbol -> "Missing symbols on nested SDFG". Wiring the states in
-        # first keeps the definition dominating the merge state so the lift stages + prunes
-        # it correctly.
+        # Wire the new states in and drop the block before resolving the cond, so a staged-read symbol
+        # defined ahead of ``cb`` still dominates ``am_state`` (TSVC s279) and is not reported free.
         in_edges = list(parent.in_edges(cb))
         out_edges = list(parent.out_edges(cb))
         for e in in_edges + out_edges:
@@ -684,11 +661,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         sdfg = dst.sdfg
         # Pass 1: escape-write redirects (caller-supplied).
         redirected_nodes: set = set()
-        # Predicated WCR escape (``c[i] += s`` under ``if``) carries reduction on write
-        # memlet; redirecting to ``_then`` temp while keeping WCR makes temp accumulate
-        # onto its identity (``0`` for ``+``), dropping base ``c[i]``. Capture such edges
-        # here (before subset rebound to ``[0]``), rebuild as explicit base-read
-        # accumulate in Pass 3.
+        # A predicated WCR write (``c[i] += s`` under ``if``) redirected to ``_then`` would accumulate onto
+        # the identity and drop ``c[i]``; capture it here and rebuild as an explicit base-read accumulate.
         wcr_escapes: list = []  # (edge, base_name, base_subset)
         for _old, new in node_map.items():
             if not isinstance(new, dace.nodes.AccessNode):
@@ -818,12 +792,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         direct = self._lift_interstate_cond_to_tasklet(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
         if direct is not None:
             return direct
-        # Recipe 2.5: cond DIRECTLY reads an array subscript (data-dependent guard
-        # ``A[i] > K`` never routed through an interstate symbol). Stage each element
-        # through an in-connector -> per-lane tile; free-symbol text would inline array
-        # head as scalar -> tile-op converter emits ``(int)(A)`` pointer cast. Runs before
-        # compound recipe (boolean combination of interstate-defined symbols, not array
-        # reads).
+        # Recipe 2.5: the cond reads an array subscript directly (``A[i] > K``); stage each element through
+        # an in-connector so the converter does not see the array head as a scalar.
         array_pred = self._lift_array_predicate_cond(sdfg, state, cond_text, subset_str, skip_cb=skip_cb)
         if array_pred is not None:
             return array_pred
@@ -856,13 +826,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         if not names or cond_text in names:
             return None
 
-        # Recurse; every name must resolve to an array (no partial lifts).
-        # ``_resolve_cond_to_array`` -> ``(array_name, producer_access)``; producer_access
-        # = node a lift/combine tasklet in *this* state writes through (``None`` when name
-        # was already a pre-existing array).
-        # Buffer every component lift's symbol deletions (see ``_deferred_drops``). A nested
-        # compound shares the open buffer and marks its own slice, so an inner refusal discards
-        # only what the inner compound added.
+        # Recurse; every name must resolve to an array (no partial lifts). Buffer each component's symbol
+        # deletions (see ``_deferred_drops``); a nested compound discards only its own slice on refusal.
         outer_buffer = self._deferred_drops
         buffer = [] if outer_buffer is None else outer_buffer
         mark = len(buffer)
@@ -914,11 +879,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                               code=f"{out_conn} = ({cleaned})")
         for name, conn in in_conn_names.items():
             lifted_name, lifted_producer = lifted[name]
-            # Reuse producing access node so ``lift_cond -> transient -> combine_cond`` =
-            # one connected path. Fresh ``state.add_access`` leaves producer disconnected
-            # -> codegen may emit combine before lift (TSVC s271: ``_cond_compound =
-            # _cond_b_index>0`` ahead of ``_cond_b_index = b``). Only already-an-array case
-            # (producer ``None``) needs a fresh read node.
+            # Reuse the producing access node so lift -> transient -> combine is one connected path (TSVC s271
+            # otherwise ran combine before lift).
             lifted_access = lifted_producer if lifted_producer is not None else state.add_access(lifted_name)
             lifted_total = sdfg.arrays[lifted_name].total_size
             lifted_subset = "0" if lifted_total == 1 else subset_str
@@ -999,16 +961,9 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
 
     def _inline_interstate_scalar_symbols(self, sdfg: dace.SDFG, rhs_text: str,
                                           exclude: set[str]) -> tuple[str, dict[str, list[Edge[InterstateEdge]]]]:
-        # Substitute interstate-defined scalar symbols in ``rhs_text`` with their definitions, recursively, so a lifted
-        # cond tasklet references only SDFG arrays (staged through connectors) and mapped symbols (loop iterators /
-        # kernel params).
-        # Everything below is built ON DEMAND. This runs speculatively, once per candidate guard,
-        # and most guards name no interstate-defined symbol at all -- so the whole-SDFG scans are
-        # deferred behind the names actually present in the text. ``self._protected_symbols`` in
-        # particular recomputes ``sdfg.free_symbols`` (an uncached walk that re-parses every
-        # interstate assignment), which measured 17% of the vectorizer on CloudSC purely because it
-        # ran before anyone asked whether there was a candidate to protect. Same classification,
-        # same order of checks -- only the point at which each is paid moves.
+        # Substitute interstate-defined scalar symbols in ``rhs_text`` recursively so the lifted cond reads
+        # only arrays and mapped symbols. Scans are deferred to the names present: ``_protected_symbols``
+        # re-walks ``sdfg.free_symbols`` and cost 17% of the vectorizer on CloudSC when run eagerly.
         arrays = set(sdfg.arrays.keys())
         all_defs: dict[str, list] | None = None
         protected: set | None = None
@@ -1144,18 +1099,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # definitions so the lifted tasklet stages them through connectors instead of
         # leaving orphaned free symbols on the (nested) SDFG.
         rhs, inlined_syms = self._inline_interstate_scalar_symbols(sdfg, str(rhs), exclude={cond_sym})
-        # NO mutation yet: every refusal below still returns ``None``, and the caller then keeps the
-        # cond as free-symbol TEXT in the ITE tasklet (``_o = ITE(<cond_sym>, _t, _e)``). Deleting
-        # the assignments here would leave that text naming a symbol with no definition left --
-        # "Missing symbols on nested SDFG" on the enclosing loop body. The prune moved to the
-        # committed path below, which is the rule the sibling ``_lift_array_predicate_cond``
-        # already follows.
+        # No mutation yet: a refusal below keeps the cond as free-symbol text, which must still have its
+        # definition. The prune happens on the committed path.
 
-        # A GATHER read in the cond value (``w[idx[i], k]``) is an un-representable nested
-        # subscript for a plain memlet. Promote each nested index read ``idx[i]`` to a fresh
-        # interstate INTEGER symbol (``_gidx = idx[i]`` on the edge feeding this state), so the
-        # staged read becomes a symbolic-indexed memlet ``w[_gidx, k]`` -- the same shape a body
-        # gather carries, which the tile machinery vectorizes. No-op when the RHS is not indirect.
+        # Promote nested gather index reads in the cond value (``w[idx[i], k]``) to interstate integer
+        # symbols so the staged read is a symbolic-indexed memlet ``w[_gidx, k]``.
         rhs = self._promote_gather_indices(sdfg, [def_edge], rhs)
         # An un-promotable gather (no def edge, or an out-of-scope index) cannot be staged as a
         # memlet -- refuse the lift rather than emit a bare-pointer read that miscompiles.
@@ -1172,27 +1120,13 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             return None
         arr_reads = sorted(v for v in free_vars if v in sdfg.arrays)
 
-        # Size lifted transient to cond range. ``cond_sym``'s RHS is often a *value*
-        # operand a downstream comparison consumes (``cond_sym = b[i]`` feeding
-        # ``b[i] > 0.0``), not a boolean; typing ``bool`` truncates float to ``b != 0`` ->
-        # wrong comparison (TSVC s271 -> all negative-b lanes wrongly taken). Bare-value
-        # RHS carries RHS's own dtype (first array read's).
-        #
-        # RHS *itself* a predicate -- comparison (``c1 > c0``) or boolean combination
-        # (``a or b``, ``not a``) -- -> lifted element is a bool downstream boolean ops
-        # (``_cond_compound`` combine / ITE mask) consume. Typing it after operand dtype
-        # (``int64`` from ``c0``) collides with ``bool`` combine output -> tile-op
-        # converter rejects mixed-dtype binop. Type predicate RHSs ``bool`` -> single-dtype
-        # boolean chain.
+        # Type the lifted transient by the RHS: a bare value (``cond_sym = b[i]``) keeps its own dtype (bool
+        # would truncate it, TSVC s271); a predicate RHS is ``bool`` so the boolean chain stays single-dtype.
         if arr_reads and not _rhs_is_predicate(rhs):
             template = sdfg.arrays[arr_reads[0]]
             cond_dtype = template.dtype
-            # Size to cond range's TOTAL element count, not full source-array shape. TSVC
-            # s343 (``if bb[j, i] > 0.0``) reads one element; ``bb``'s full
-            # ``(LEN_2D, LEN_2D)`` shape leaves downstream 1-D ``[k]`` merge memlet
-            # dim-mismatched with 2-D transient -> ``StateFusionExtended`` refuses
-            # ("expected 2, got 1"). Flat 1-D extent matches what cond holds; codegen
-            # treats length-1 transient as scalar automatically.
+            # Size to the cond range's element count, not the source shape (TSVC s343 reads one element of
+            # ``bb``; a 2-D transient mismatches the 1-D merge memlet).
             try:
                 subset_obj = dace.subsets.Range.from_string(subset_str)
                 total = subset_obj.num_elements_exact()
@@ -1246,12 +1180,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             cond_subset = subset_str
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
 
-        # Committed: the lift tasklet now supplies the per-lane form, so the interstate definitions
-        # it replaced can go. Delete the cond symbol's assignment(s) + drop it only when no other
-        # consumer -- with consumers the kept assignment serves them while the tasklet feeds the
-        # ITE. Collect ALL edges assigning ``cond_sym`` (not just ``def_edge``) so a multi-edge
-        # symbol is not left dangling by removing it globally after deleting one. Collected HERE,
-        # after the rewrites above, so the list reflects the edges as they now stand.
+        # Committed: delete every edge assigning ``cond_sym`` and drop it only when nothing else reads it.
+        # Collected after the rewrites above so the edge list is current.
         cond_edges = [
             e for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges()
             if cond_sym in (e.data.assignments or {})
@@ -1271,19 +1201,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                                    subset_str: str,
                                    *,
                                    skip_cb: ConditionalBlock | None = None) -> tuple[str, dace.nodes.AccessNode] | None:
-        # Stage a guard that DIRECTLY reads array subscripts (``A[i] > K``) into a per-lane bool transient, each element
-        # read through an in-connector.
-        # Expand interstate staged-read symbols (no mutation yet -- the prune below only
-        # fires once the recipe has committed to producing a lift, so a fall-through return
-        # leaves the SDFG pristine for the caller's next recipe).
+        # Stage a guard that directly reads array subscripts (``A[i] > K``) into a per-lane bool transient.
+        # Symbol expansion does not mutate; the prune fires only once the recipe commits.
         expanded, inlined_syms = self._inline_interstate_scalar_symbols(sdfg, cond_text, exclude=set())
-        # A GATHER read in the guard (``w[idx[i], k] > K``) is a NESTED subscript no plain
-        # memlet can express; string-rebuilt at the wiring below it degenerates to a bare
-        # pointer read (``w > K`` -> "invalid operands 'double*' and 'double'"). Promote each
-        # nested index ``idx[i]`` to a fresh interstate integer symbol on EVERY edge feeding
-        # this merge state (so ``_gidx`` is defined on every path, not just one), so ``w``
-        # stages through the symbolic-indexed memlet ``w[_gidx, k]`` the tiler vectorizes --
-        # mirroring the interstate recipe (line ~936). No-op when the guard reads no gather.
+        # Promote nested gather indices in the guard (``w[idx[i], k] > K``) to integer symbols on every edge
+        # feeding this state; a string-rebuilt nested subscript degenerates to a pointer read.
         expanded = self._promote_gather_indices(sdfg, state.parent_graph.in_edges(state), expanded)
         # If a gather index survives (no dominating edge to hoist onto -- a CFG start block --
         # or an out-of-scope index symbol), the guard cannot be represented as a memlet;
@@ -1291,11 +1213,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # bare-pointer read that miscompiles.
         if self._has_nested_subscript(sdfg, expanded):
             return None
-        # Union both accessors: ``symbolic.arrays`` catches a bracketed read (``A[i]``)
-        # array-head ``free_symbols`` misses; ``free_symbols_and_functions`` catches a
-        # BARE array ref (``A`` as current-lane element, the shape the ConditionalBlock
-        # cond carries here -- ``threshold_data > K``). Bare read has no captured subset ->
-        # wired at ``subset_str`` (write's per-lane subset).
+        # Union both accessors: ``symbolic.arrays`` catches bracketed reads, ``free_symbols_and_functions``
+        # a bare array ref (current-lane element), which is wired at ``subset_str``.
         try:
             free_vars = set(symbolic.arrays(expanded)) | set(symbolic.free_symbols_and_functions(expanded))
         except Exception:  # noqa: BLE001 -- unparsable expr: let the caller fall back
