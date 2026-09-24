@@ -27,6 +27,7 @@
 #include "perf/reporting.h"
 #include "comm.h"
 #include "serialization.h"
+#include "stochastic_rounding.h"
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
 #include "cuda/cudacommon.cuh"
